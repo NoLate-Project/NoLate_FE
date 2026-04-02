@@ -1,0 +1,28 @@
+{
+  "name": "NoLate_FE",
+  "displayName": "NoLate_FE",
+  "scheme": "nolate",
+  "plugins": [
+    "expo-router",
+    "expo-secure-store",
+    "@react-native-community/datetimepicker",
+    [
+      "@react-native-seoul/kakao-login",
+      {
+        "kakaoAppKey": "9586a8e3a28f3a6fbe3e23b9b34ec206"
+      }
+    ]
+  ],
+  "android": {
+    "package": "com.anonymous.nolate_fe",
+    "usesCleartextTraffic": true
+  },
+  "ios": {
+    "bundleIdentifier": "com.anonymous.nolatefe",
+    "infoPlist": {
+      "NSAppTransportSecurity": {
+        "NSAllowsArbitraryLoadsInWebContent": true
+      }
+    }
+  }
+}

@@ -20,7 +20,7 @@ const ITEM_HEIGHT = 49; // 아이템 1개 높이 (paddingVertical 12*2 + 텍스�
 export default function CategorySelectBox({
     label = "카테고리",
     categories,
-    value,
+    value, 
     onChange,
 }: Props) {
     const { colors } = useTheme();
