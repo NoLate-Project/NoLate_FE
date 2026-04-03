@@ -110,9 +110,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         pathOverlays = [],
         pathCoords = [],
         pathColor = "#1D72FF",
-        pathWidth = 5,
+        pathWidth = 10,
         pathOutlineColor = "#FFFFFF",
-        pathOutlineWidth = 2,
+        pathOutlineWidth = 3,
         nightModeEnabled = false,
         showLocationButton = true,
         showZoomControls = true,
@@ -338,20 +338,20 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var label = labelRaw.trim();
         if (!label) label = item && item.caption ? String(item.caption) : "구간";
 
-        var bg = item && item.tintColor ? String(item.tintColor) : "#22C55E";
-        var textColor = item && item.badgeTextColor ? String(item.badgeTextColor) : "#FFFFFF";
-        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(15,23,42,0.35)";
+        var accent = item && item.tintColor ? String(item.tintColor) : "#2F80FF";
+        var textColor = item && item.badgeTextColor ? String(item.badgeTextColor) : "#1F2937";
+        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(148,163,184,0.62)";
         var glyph = item && item.badgeGlyph ? String(item.badgeGlyph) : "";
         var hasGlyph = glyph.trim().length > 0;
 
         var labelLen = label.length;
-        var width = (hasGlyph ? 26 : 14) + Math.max(10, Math.min(84, Math.round(labelLen * 7)));
-        width = Math.max(44, Math.min(110, width));
+        var width = (hasGlyph ? 30 : 14) + Math.max(12, Math.min(98, Math.round(labelLen * 7.4)));
+        width = Math.max(48, Math.min(132, width));
         return {
           width: width,
-          height: 24,
+          height: 27,
           label: label,
-          bg: bg,
+          accent: accent,
           textColor: textColor,
           borderColor: borderColor,
           glyph: glyph,
@@ -365,22 +365,24 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var glyph = escapeXml(cfg.glyph);
         var w = cfg.width;
         var bubbleH = cfg.height;
-        var pointerH = 5;
+        var pointerH = 6;
         var h = bubbleH + pointerH;
         var centerY = Math.round(bubbleH / 2);
         var pointerCenterX = Math.round(w / 2);
         var pointerHalfW = 4;
+        var iconCenterX = 13;
+        var cardFill = "#FFFFFF";
         var iconCircle = cfg.hasGlyph
-          ? '<circle cx="12" cy="' + centerY + '" r="6" fill="rgba(255,255,255,0.2)" />'
+          ? '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="7" fill="' + cfg.accent + '" />'
           : '';
         var glyphText = cfg.hasGlyph
-          ? '<text x="12" y="' + (centerY + 3) + '" text-anchor="middle" font-size="8" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + glyph + '</text>'
+          ? '<text x="' + iconCenterX + '" y="' + (centerY + 3) + '" text-anchor="middle" font-size="9" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + glyph + '</text>'
           : '';
-        var labelText = '<text x="' + (cfg.hasGlyph ? 21 : 10) + '" y="' + (centerY + 4) + '" font-size="10" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
+        var labelText = '<text x="' + (cfg.hasGlyph ? 24 : 11) + '" y="' + (centerY + 4) + '" font-size="11" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="12" ry="12" fill="' + cfg.bg + '" stroke="' + cfg.borderColor + '" stroke-width="1.3" />' +
-            '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cfg.bg + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />' +
+            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="13" ry="13" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" />' +
+            '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />' +
             iconCircle +
             glyphText +
             labelText +
@@ -393,17 +395,17 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       }
 
       function markerArrowIcon(item) {
-        var bg = item && item.tintColor ? String(item.tintColor) : "rgba(226,236,252,0.92)";
-        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(8,12,20,0.35)";
+        var bg = item && item.tintColor ? String(item.tintColor) : "#2F80FF";
+        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.92)";
         var rotation = Number(item && item.rotationDeg);
         if (!isFinite(rotation)) rotation = 0;
-        var size = 11;
+        var size = 12;
         var center = Math.round(size / 2);
         var groupTransform = 'rotate(' + rotation + ' ' + center + ' ' + center + ')';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<g transform="' + groupTransform + '">' +
-              '<path d="M2.1 1.9 L8.8 5.5 L2.1 9.1 Z" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="0.8" stroke-linejoin="round" />' +
+              '<path d="M2.2 2.2 L9.8 6 L2.2 9.8 L4 6 Z" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="1" stroke-linejoin="round" />' +
             '</g>' +
           '</svg>';
         return {
@@ -417,9 +419,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var bg = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.95)";
         var rawSize = Number(item && item.dotSize);
-        var size = isFinite(rawSize) ? Math.max(4, Math.min(12, Math.round(rawSize))) : 7;
+        var size = isFinite(rawSize) ? Math.max(4, Math.min(16, Math.round(rawSize))) : 8;
         var center = Math.round(size / 2);
-        var borderWidth = borderColor === "transparent" ? 0 : 1.6;
+        var borderWidth = borderColor === "transparent" ? 0 : Math.max(1.2, size * 0.22);
         var radius = Math.max(1.3, center - (borderWidth > 0 ? 1.6 : 1.0));
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
@@ -786,9 +788,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             renderPath(
               Array.isArray(overlay.coords) ? overlay.coords : [],
               overlay.color || "#1D72FF",
-              Number(overlay.width) || 5,
+              Number(overlay.width) || 10,
               overlay.outlineColor || "#FFFFFF",
-              Number(overlay.outlineWidth) || 1
+              Number(overlay.outlineWidth) || 2.5
             );
           });
           return;
@@ -797,9 +799,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         renderPath(
           Array.isArray(payload.pathCoords) ? payload.pathCoords : [],
           payload.pathColor || "#1D72FF",
-          Number(payload.pathWidth) || 5,
+          Number(payload.pathWidth) || 10,
           payload.pathOutlineColor || "#FFFFFF",
-          Number(payload.pathOutlineWidth) || 2
+          Number(payload.pathOutlineWidth) || 3
         );
       }
 

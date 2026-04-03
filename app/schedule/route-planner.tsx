@@ -41,14 +41,14 @@ import { getRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules
 const FALLBACK_LAT = 37.5665;
 const FALLBACK_LNG = 126.978;
 const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"];
-const ORIGIN_COLOR = "#4A78C9";
-const DESTINATION_COLOR = "#C46A59";
-const SELECTED_ROUTE_COLOR = "#1D72FF";
-const INACTIVE_ROUTE_COLOR = "rgba(125, 138, 158, 0.72)";
+const ORIGIN_COLOR = "#21B85A";
+const DESTINATION_COLOR = "#FF6A3D";
+const SELECTED_ROUTE_COLOR = "#2F80FF";
+const INACTIVE_ROUTE_COLOR = "rgba(120, 135, 154, 0.5)";
 const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
-    SUBWAY: "#22C55E",
-    BUS: "#80B92E",
-    WALK: "#4F8CFF",
+    SUBWAY: "#24B348",
+    BUS: "#1D72FF",
+    WALK: "#6B7280",
     ETC: "#94A3B8",
 };
 const ALTERNATIVE_CARD_GAP = 10;
@@ -56,11 +56,26 @@ const ALTERNATIVE_CARD_MIN_SIZE = 146;
 const ALTERNATIVE_CARD_MAX_SIZE = 178;
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
 const TRANSIT_SEGMENT_DETAIL_MIN_ZOOM = 13.8;
-const TRANSIT_BADGE_MIN_ZOOM = 14.95;
-const TRANSIT_BADGE_MAX_COUNT = 24;
-const TRANSIT_WALK_GUIDE_DOT_MIN_ZOOM = 15.55;
-const TRANSIT_WALK_GUIDE_DOT_MAX_COUNT = 320;
-const TRANSIT_TRANSFER_COLOR = "#F59E0B";
+const TRANSIT_BADGE_MIN_ZOOM = 14.2;
+const TRANSIT_BADGE_MAX_COUNT = 30;
+const TRANSIT_WALK_GUIDE_DOT_MIN_ZOOM = 12;
+const TRANSIT_WALK_GUIDE_DOT_MAX_COUNT = 360;
+const TRANSIT_RIDE_DOT_MIN_ZOOM = 11.5;
+const TRANSIT_RIDE_DOT_MAX_COUNT = 400;
+const TRANSIT_TRANSFER_COLOR = "#F4A100";
+const KAKAO_LABEL_TEXT_COLOR = "#1F2937";
+const KAKAO_LABEL_BORDER_COLOR = "rgba(148,163,184,0.62)";
+const ROUTE_STYLE = {
+    inactiveWidth: 6,
+    inactiveOutlineWidth: 2,
+    selectedWidth: 10,
+    selectedOutlineWidth: 3,
+    transitRideWidth: 10,
+    transitRideOutlineWidth: 2.5,
+    transitWalkWidth: 6,
+    transitWalkOutlineWidth: 1.8,
+    connectorWalkWidth: 3,
+} as const;
 type RoutePointTarget = "origin" | "destination";
 type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
 
@@ -325,22 +340,61 @@ function offsetBusStopCoordFromPath(
     baseCoord: RoutePathCoord | undefined,
     position: "BOARD" | "ALIGHT"
 ): RoutePathCoord | undefined {
-    if (leg.kind !== "BUS") return baseCoord;
-    if (!baseCoord) return baseCoord;
     if (!Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) return baseCoord;
+    if (leg.kind !== "BUS") return baseCoord;
 
-    const lastIndex = leg.pathCoords.length - 1;
-    const anchorIndex = position === "BOARD" ? 0 : lastIndex;
-    const neighborIndex = position === "BOARD"
-        ? Math.min(lastIndex, 3)
-        : Math.max(0, lastIndex - 3);
-    const anchor = leg.pathCoords[anchorIndex];
-    const neighbor = leg.pathCoords[neighborIndex];
-    if (!anchor || !neighbor) return baseCoord;
+    const pathAnchor = position === "BOARD"
+        ? getTransitLegBoardAnchorOnPath(leg)
+        : getTransitLegAlightAnchorOnPath(leg);
+    if (pathAnchor) {
+        const pathCoords = leg.pathCoords;
+        let anchorIndex = 0;
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        for (let index = 0; index < pathCoords.length; index += 1) {
+            const point = pathCoords[index];
+            const distance = squaredDistance(point, pathAnchor);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                anchorIndex = index;
+            }
+        }
+
+        const directionStep = position === "BOARD" ? 1 : -1;
+        const neighborIndex = Math.max(0, Math.min(pathCoords.length - 1, anchorIndex + (directionStep * 2)));
+        const neighbor = pathCoords[neighborIndex];
+        if (neighbor && (neighbor.lat !== pathAnchor.lat || neighbor.lng !== pathAnchor.lng)) {
+            const dLat = neighbor.lat - pathAnchor.lat;
+            const dLng = neighbor.lng - pathAnchor.lng;
+            const norm = Math.hypot(dLat, dLng);
+            if (Number.isFinite(norm) && norm >= 1e-9) {
+                const unitPerpLat = -dLng / norm;
+                const unitPerpLng = dLat / norm;
+                const reference = baseCoord ?? pathAnchor;
+                const referenceDistance = routeCoordDistanceMeters(reference, pathAnchor);
+                const anchorBlend = referenceDistance <= 36
+                    ? interpolateRouteCoord(pathAnchor, reference, 0.35)
+                    : pathAnchor;
+                const refLat = reference.lat - pathAnchor.lat;
+                const refLng = reference.lng - pathAnchor.lng;
+                const cross = (dLat * refLng) - (dLng * refLat);
+                const side = cross >= 0 ? 1 : -1;
+                const offsetMeters = referenceDistance <= 16 ? 11 : 14;
+                return offsetCoordByMeters(
+                    anchorBlend,
+                    unitPerpLat * side * offsetMeters,
+                    unitPerpLng * side * offsetMeters
+                );
+            }
+        }
+        return baseCoord ?? pathAnchor;
+    }
+
+    return baseCoord;
+    /*
 
     const distanceToAnchor = routeCoordDistanceMeters(baseCoord, anchor);
     // 정류장 좌표가 지나치게 멀면(오탐 가능성) 보정하지 않는다.
-    if (distanceToAnchor > 85) return baseCoord;
+    if (distanceToAnchor > 95) return baseCoord;
 
     const dLat = neighbor.lat - anchor.lat;
     const dLng = neighbor.lng - anchor.lng;
@@ -353,13 +407,14 @@ function offsetBusStopCoordFromPath(
     const refLng = baseCoord.lng - anchor.lng;
     const cross = (dLat * refLng) - (dLng * refLat);
     const side = cross >= 0 ? 1 : -1;
-    const offsetMeters = 34;
+    const offsetMeters = 18;
 
     return offsetCoordByMeters(
         baseCoord,
         unitPerpLat * side * offsetMeters,
         unitPerpLng * side * offsetMeters
     );
+    */
 }
 
 function getWalkLegStartCoord(leg: TransitLegDetail | undefined): RoutePathCoord | undefined {
@@ -383,7 +438,7 @@ function nudgeBusStopTowardReference(
     if (!baseCoord || !referenceCoord) return undefined;
     const distanceMeters = routeCoordDistanceMeters(baseCoord, referenceCoord);
     if (!Number.isFinite(distanceMeters) || distanceMeters < 2 || distanceMeters > 90) return undefined;
-    const moveMeters = Math.min(32, Math.max(12, distanceMeters * 0.8));
+    const moveMeters = Math.min(5, Math.max(1, distanceMeters * 0.15));
     const ratio = Math.min(1, moveMeters / distanceMeters);
     return interpolateRouteCoord(baseCoord, referenceCoord, ratio);
 }
@@ -407,16 +462,37 @@ function getRideStopDisplayCoord(
 ): RoutePathCoord | undefined {
     if (!Array.isArray(legs) || legIndex < 0 || legIndex >= legs.length) return undefined;
     const leg = legs[legIndex];
-    const baseCoord = position === "BOARD"
-        ? (getTransitLegBoardCoord(leg) ?? getTransitLegBoardAnchorOnPath(leg) ?? getTransitLegStartCoord(leg))
-        : (getTransitLegAlightCoord(leg) ?? getTransitLegAlightAnchorOnPath(leg) ?? getTransitLegEndCoord(leg));
-    if (!baseCoord) return undefined;
-    if (leg.kind !== "BUS") return baseCoord;
 
+    const rideStopCoord = position === "BOARD" ? getTransitLegBoardCoord(leg) : getTransitLegAlightCoord(leg);
+    const pathAnchorCoord = position === "BOARD"
+        ? getTransitLegBoardAnchorOnPath(leg)
+        : getTransitLegAlightAnchorOnPath(leg);
+    const fallbackCoord = position === "BOARD" ? getTransitLegStartCoord(leg) : getTransitLegEndCoord(leg);
+    const resolvedBase = rideStopCoord ?? pathAnchorCoord ?? fallbackCoord;
+    if (!resolvedBase) return undefined;
+    if (leg.kind !== "BUS") return resolvedBase;
+
+    let resolvedCoord = pathAnchorCoord ?? resolvedBase;
     const walkReference = getAdjacentWalkReferenceCoord(legs, legIndex, position);
-    const towardWalk = nudgeBusStopTowardReference(baseCoord, walkReference) ?? baseCoord;
 
-    return offsetBusStopCoordFromPath(leg, towardWalk, position) ?? towardWalk;
+    if (rideStopCoord && pathAnchorCoord) {
+        const stopToPathMeters = routeCoordDistanceMeters(rideStopCoord, pathAnchorCoord);
+        resolvedCoord = stopToPathMeters <= 32
+            ? interpolateRouteCoord(pathAnchorCoord, rideStopCoord, 0.3)
+            : pathAnchorCoord;
+    }
+
+    if (walkReference) {
+        const walkDistance = routeCoordDistanceMeters(resolvedCoord, walkReference);
+        if (walkDistance >= 2 && walkDistance <= 140) {
+            const pullRatio = walkDistance > 45 ? 0.68 : 0.48;
+            resolvedCoord = interpolateRouteCoord(resolvedCoord, walkReference, pullRatio);
+        }
+    }
+
+    const pathOffsetCoord = offsetBusStopCoordFromPath(leg, resolvedCoord, position) ?? resolvedCoord;
+    return nudgeBusStopTowardReference(pathOffsetCoord, walkReference) ?? pathOffsetCoord;
+
 }
 
 function getTransitLegMidCoord(leg: TransitLegDetail): RoutePathCoord | undefined {
@@ -502,21 +578,15 @@ function samplePathCoordsBySpacing(pathCoords: RoutePathCoord[] | undefined, spa
 
 function buildTransitWalkGuideDotMarkers(
     selectedAlternativeId: string | undefined,
-    legs: TransitLegDetail[] | undefined,
+    _legs: TransitLegDetail[] | undefined,
     connectorOverlays: TmapPathOverlay[] | undefined,
     mapZoom: number
 ): TmapMarker[] {
     if (mapZoom < TRANSIT_WALK_GUIDE_DOT_MIN_ZOOM) return [];
     const allWalkPaths: RoutePathCoord[][] = [];
 
-    if (Array.isArray(legs) && legs.length > 0) {
-        legs.forEach((leg) => {
-            if (leg.kind !== "WALK") return;
-            if (Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2) {
-                allWalkPaths.push(leg.pathCoords);
-            }
-        });
-    }
+    // 대중교통 API의 leg.pathCoords는 도로 중앙선을 따르므로 사용하지 않음.
+    // 보행자 API로 별도 조회한 커넥터 오버레이 경로만 사용.
 
     if (Array.isArray(connectorOverlays) && connectorOverlays.length > 0) {
         connectorOverlays.forEach((overlay) => {
@@ -537,7 +607,8 @@ function buildTransitWalkGuideDotMarkers(
 
     if (!allWalkPaths.length) return [];
 
-    const spacingMeters = mapZoom >= 18.2 ? 10 : mapZoom >= 17.3 ? 12 : mapZoom >= 16.4 ? 14 : 16;
+    const spacingMeters = mapZoom >= 18.2 ? 8 : mapZoom >= 17.3 ? 10 : mapZoom >= 16.4 ? 12 : mapZoom >= 15 ? 14 : mapZoom >= 13.5 ? 22 : 35;
+    const dotSize = mapZoom >= 17.4 ? 8 : mapZoom >= 15 ? 7 : 6;
     const markers: TmapMarker[] = [];
     let index = 0;
 
@@ -548,16 +619,52 @@ function buildTransitWalkGuideDotMarkers(
                 id: `transit-walk-dot-${selectedAlternativeId ?? "selected"}-${pathIndex}-${index}`,
                 latitude: dot.lat,
                 longitude: dot.lng,
-                tintColor: "#5EA6FF",
+                tintColor: "#6B7280",
                 displayType: "dot",
-                dotSize: mapZoom >= 17.4 ? 4 : 3.5,
-                badgeBorderColor: "rgba(255,255,255,0.96)",
+                dotSize,
+                badgeBorderColor: "rgba(255,255,255,0.98)",
             });
             index += 1;
         });
     });
 
     return markers.slice(0, TRANSIT_WALK_GUIDE_DOT_MAX_COUNT);
+}
+
+function buildTransitRideGuideDotMarkers(
+    selectedAlternativeId: string | undefined,
+    legs: TransitLegDetail[] | undefined,
+    mapZoom: number
+): TmapMarker[] {
+    if (!Array.isArray(legs) || !legs.length || mapZoom < TRANSIT_RIDE_DOT_MIN_ZOOM) return [];
+
+    const spacingMeters = mapZoom >= 17.5 ? 10 : mapZoom >= 16 ? 14 : mapZoom >= 14.5 ? 20 : mapZoom >= 13 ? 28 : 42;
+    const dotSize = mapZoom >= 16.5 ? 14 : mapZoom >= 14.5 ? 13 : 12;
+    const markers: TmapMarker[] = [];
+    let index = 0;
+
+    legs.forEach((leg, legIndex) => {
+        if (!isRideLegKind(leg.kind)) return;
+        if (!Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) return;
+
+        const color = TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
+        const dots = samplePathCoordsBySpacing(leg.pathCoords, spacingMeters);
+
+        dots.forEach((dot) => {
+            markers.push({
+                id: `transit-ride-dot-${selectedAlternativeId ?? "selected"}-${legIndex}-${index}`,
+                latitude: dot.lat,
+                longitude: dot.lng,
+                tintColor: color,
+                displayType: "dot",
+                dotSize,
+                badgeBorderColor: "rgba(255,255,255,0.95)",
+            });
+            index += 1;
+        });
+    });
+
+    return markers.slice(0, TRANSIT_RIDE_DOT_MAX_COUNT);
 }
 
 function computeHeadingDeg(from: RoutePathCoord, to: RoutePathCoord): number {
@@ -600,7 +707,7 @@ function buildTransitDirectionArrowMarkers(
     mapZoom: number,
     isDark: boolean
 ): TmapMarker[] {
-    if (!Array.isArray(legs) || !legs.length || mapZoom < 15.8) return [];
+    if (!Array.isArray(legs) || !legs.length || mapZoom < 15.2) return [];
 
     const markers: TmapMarker[] = [];
     legs.forEach((leg, legIndex) => {
@@ -629,10 +736,10 @@ function buildTransitDirectionArrowMarkers(
                 id: `transit-direction-${selectedAlternativeId ?? "selected"}-${legIndex}-${markerIndex}`,
                 latitude: item.point.lat,
                 longitude: item.point.lng,
-                tintColor: "rgba(248, 252, 255, 0.98)",
+                tintColor: "rgba(255, 255, 255, 0.98)",
                 caption: `${getTransitLegKindMeta(leg.kind).label} 진행`,
                 displayType: "arrow",
-                badgeBorderColor: isDark ? "rgba(4,8,16,0.58)" : "rgba(15,23,42,0.24)",
+                badgeBorderColor: isDark ? "rgba(15,23,42,0.46)" : "rgba(51,65,85,0.3)",
                 rotationDeg: item.headingDeg,
             });
         });
@@ -711,11 +818,49 @@ type TransitEventDraft = {
     order: number;
 };
 
+function buildBusStopMarkers(
+    selectedAlternativeId: string | undefined,
+    legs: TransitLegDetail[] | undefined,
+    mapZoom: number
+): TmapMarker[] {
+    if (!Array.isArray(legs) || !legs.length || mapZoom < 13) return [];
+
+    const markers: TmapMarker[] = [];
+    const seen = new Set<string>();
+
+    legs.forEach((leg, index) => {
+        if (leg.kind !== "BUS") return;
+
+        const pushStop = (coord: RoutePathCoord | undefined, role: "BOARD" | "ALIGHT", stopName?: string) => {
+            if (!coord) return;
+            const key = `${coord.lat.toFixed(5)}:${coord.lng.toFixed(5)}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            const dotSize = mapZoom >= 15 ? 13 : mapZoom >= 13.5 ? 11 : 9;
+            markers.push({
+                id: `bus-stop-${role.toLowerCase()}-${selectedAlternativeId ?? "sel"}-${index}`,
+                latitude: coord.lat,
+                longitude: coord.lng,
+                tintColor: "#1D72FF",
+                displayType: "dot",
+                dotSize,
+                caption: stopName ?? (role === "BOARD" ? "승차 정류장" : "하차 정류장"),
+                badgeBorderColor: "#FFFFFF",
+            });
+        };
+
+        pushStop(getTransitLegBoardCoord(leg), "BOARD", leg.startName);
+        pushStop(getTransitLegAlightCoord(leg), "ALIGHT", leg.endName);
+    });
+
+    return markers;
+}
+
 function buildTransitEventMarkers(
     selectedAlternativeId: string | undefined,
     legs: TransitLegDetail[] | undefined,
     mapZoom: number,
-    isDark: boolean
+    _isDark: boolean
 ): TmapMarker[] {
     if (!Array.isArray(legs) || !legs.length || mapZoom < TRANSIT_BADGE_MIN_ZOOM) return [];
 
@@ -723,8 +868,14 @@ function buildTransitEventMarkers(
     let rideLegSeen = false;
 
     legs.forEach((leg, index) => {
-        const boardMarkerCoord = getRideStopDisplayCoord(legs, index, "BOARD");
-        const alightMarkerCoord = getRideStopDisplayCoord(legs, index, "ALIGHT");
+        const boardMarkerCoord =
+            getTransitLegBoardCoord(leg) ??
+            getTransitLegStartCoord(leg) ??
+            getTransitLegBoardAnchorOnPath(leg);
+        const alightMarkerCoord =
+            getTransitLegAlightCoord(leg) ??
+            getTransitLegEndCoord(leg) ??
+            getTransitLegAlightAnchorOnPath(leg);
         const lineLabel = compactTransitLineLabel(leg.lineName);
         const baseOrder = index * 10;
 
@@ -739,7 +890,7 @@ function buildTransitEventMarkers(
                     order: baseOrder + 1,
                 });
             }
-            if (alightMarkerCoord) {
+            if (alightMarkerCoord && leg.kind !== "BUS") {
                 drafts.push({
                     coord: alightMarkerCoord,
                     intent: "ALIGHT",
@@ -804,8 +955,9 @@ function buildTransitEventMarkers(
                 ?.replace(/^(승차|하차|환승|승|하|환)\s*/i, "")
                 .trim();
             badgeLabel = normalizedLine ?? kindMeta.label;
-            badgeGlyph = "";
+            badgeGlyph = "승";
             tintColor = TRANSIT_LEG_COLOR[board.kind] ?? kindMeta.color;
+            if (board.kind === "BUS") badgeGlyph = "버";
             caption = board.stopName ? `${board.stopName} 승차` : `${kindMeta.label} 승차 지점`;
         } else if (intents.has("ALIGHT")) {
             const alight = group.find((item) => item.intent === "ALIGHT") ?? base;
@@ -814,7 +966,7 @@ function buildTransitEventMarkers(
                 ?.replace(/^(승차|하차|환승|승|하|환)\s*/i, "")
                 .trim();
             badgeLabel = normalizedLine ?? kindMeta.label;
-            badgeGlyph = "";
+            badgeGlyph = "하";
             tintColor = TRANSIT_LEG_COLOR[alight.kind] ?? kindMeta.color;
             caption = alight.stopName ? `${alight.stopName} 하차` : `${kindMeta.label} 하차 지점`;
         }
@@ -828,8 +980,8 @@ function buildTransitEventMarkers(
             displayType: "badge",
             badgeLabel,
             badgeGlyph,
-            badgeTextColor: "#FFFFFF",
-            badgeBorderColor: isDark ? "rgba(15,23,42,0.62)" : "rgba(15,23,42,0.28)",
+            badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
+            badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
         };
     });
 }
@@ -838,7 +990,7 @@ function buildTransitLegLabelMarkers(
     selectedAlternativeId: string | undefined,
     legs: TransitLegDetail[] | undefined,
     mapZoom: number,
-    isDark: boolean
+    _isDark: boolean
 ): TmapMarker[] {
     if (!Array.isArray(legs) || !legs.length || mapZoom < 15.6) return [];
 
@@ -872,8 +1024,8 @@ function buildTransitLegLabelMarkers(
             displayType: "badge",
             badgeLabel,
             badgeGlyph,
-            badgeTextColor: "#FFFFFF",
-            badgeBorderColor: isDark ? "rgba(15,23,42,0.62)" : "rgba(15,23,42,0.3)",
+            badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
+            badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
         });
     });
 
@@ -1346,14 +1498,14 @@ export default function RoutePlannerScreen() {
         const firstLegForBoundary = transitLegs[firstRideLegIndex >= 0 ? firstRideLegIndex : 0];
         const lastLegForBoundary = transitLegs[lastRideLegIndex >= 0 ? lastRideLegIndex : (transitLegs.length - 1)];
         const firstAnchorPoint = (firstRideLegIndex >= 0
-            ? getRideStopDisplayCoord(transitLegs, firstRideLegIndex, "BOARD")
+            ? getTransitLegBoardCoord(transitLegs[firstRideLegIndex])
             : undefined)
             ?? getTransitLegBoardCoord(firstLegForBoundary)
             ?? getTransitLegBoardAnchorOnPath(firstLegForBoundary)
             ?? getTransitLegStartCoord(firstLegForBoundary)
             ?? firstPointFromPath;
         const lastAnchorPoint = (lastRideLegIndex >= 0
-            ? getRideStopDisplayCoord(transitLegs, lastRideLegIndex, "ALIGHT")
+            ? getTransitLegAlightCoord(transitLegs[lastRideLegIndex])
             : undefined)
             ?? getTransitLegAlightCoord(lastLegForBoundary)
             ?? getTransitLegAlightAnchorOnPath(lastLegForBoundary)
@@ -1404,16 +1556,10 @@ export default function RoutePlannerScreen() {
         for (let legIndex = 0; legIndex < transitLegs.length - 1; legIndex += 1) {
             const currentLeg = transitLegs[legIndex];
             const nextLeg = transitLegs[legIndex + 1];
-            const currentAnchor = (isRideLegKind(currentLeg.kind)
-                ? getRideStopDisplayCoord(transitLegs, legIndex, "ALIGHT")
-                : undefined)
-                ?? getTransitLegAlightCoord(currentLeg)
+            const currentAnchor = getTransitLegAlightCoord(currentLeg)
                 ?? getTransitLegAlightAnchorOnPath(currentLeg)
                 ?? getTransitLegEndCoord(currentLeg);
-            const nextAnchor = (isRideLegKind(nextLeg.kind)
-                ? getRideStopDisplayCoord(transitLegs, legIndex + 1, "BOARD")
-                : undefined)
-                ?? getTransitLegBoardCoord(nextLeg)
+            const nextAnchor = getTransitLegBoardCoord(nextLeg)
                 ?? getTransitLegBoardAnchorOnPath(nextLeg)
                 ?? getTransitLegStartCoord(nextLeg);
             pushConnectorRequest(`${selectedAlternative.id}-walk-gap-${legIndex}`, currentAnchor, nextAnchor, false, false);
@@ -1441,13 +1587,13 @@ export default function RoutePlannerScreen() {
                     }
                 }
                 const from = (prevRideIndex >= 0
-                    ? getRideStopDisplayCoord(transitLegs, prevRideIndex, "ALIGHT")
+                    ? getTransitLegAlightCoord(transitLegs[prevRideIndex])
                     : undefined)
                     ?? getTransitLegBoardCoord(leg)
                     ?? getTransitLegBoardAnchorOnPath(leg)
                     ?? getTransitLegStartCoord(leg);
                 const to = (nextRideIndex >= 0
-                    ? getRideStopDisplayCoord(transitLegs, nextRideIndex, "BOARD")
+                    ? getTransitLegBoardCoord(transitLegs[nextRideIndex])
                     : undefined)
                     ?? getTransitLegAlightCoord(leg)
                     ?? getTransitLegAlightAnchorOnPath(leg)
@@ -1567,8 +1713,8 @@ export default function RoutePlannerScreen() {
                     overlays.push({
                         id: `${request.id}-path`,
                         coords: displayCoords,
-                        color: "rgba(94, 166, 255, 0.26)",
-                        width: 1.2,
+                        color: "rgba(0,0,0,0)",
+                        width: 0.5,
                         outlineColor: "rgba(0,0,0,0)",
                         outlineWidth: 0,
                     });
@@ -1596,8 +1742,8 @@ export default function RoutePlannerScreen() {
                     walkDetailOverlays.push({
                         id: `${request.id}-path`,
                         coords: displayCoords,
-                        color: "rgba(94, 166, 255, 0.28)",
-                        width: 1.2,
+                        color: "rgba(0,0,0,0)",
+                        width: 0.5,
                         outlineColor: "rgba(0,0,0,0)",
                         outlineWidth: 0,
                     });
@@ -1683,9 +1829,9 @@ export default function RoutePlannerScreen() {
                     id: option.id,
                     coords,
                     color: INACTIVE_ROUTE_COLOR,
-                    width: 3,
-                    outlineColor: "rgba(255,255,255,0.55)",
-                    outlineWidth: 1,
+                    width: ROUTE_STYLE.inactiveWidth,
+                    outlineColor: isDark ? "rgba(15,20,35,0.7)" : "rgba(255,255,255,0.82)",
+                    outlineWidth: ROUTE_STYLE.inactiveOutlineWidth,
                 } as TmapPathOverlay;
             })
             .filter((value: TmapPathOverlay | null): value is TmapPathOverlay => value !== null);
@@ -1717,25 +1863,17 @@ export default function RoutePlannerScreen() {
                     const isWalkLeg = leg.kind === "WALK";
 
                     if (isWalkLeg) {
-                        return [{
-                            id: `${selectedRoute.id}-walk-segment-${index}`,
-                            coords: legCoords,
-                            color: "rgba(94, 166, 255, 0.34)",
-                            width: 1.35,
-                            outlineColor: "rgba(0,0,0,0)",
-                            outlineWidth: 0,
-                        } as TmapPathOverlay];
+                        // 도보 구간은 dot 마커로 표시 (polyline 없음)
+                        return [];
                     }
 
                     return [{
                         id: `${selectedRoute.id}-segment-${index}`,
                         coords: legCoords,
-                        color: isWalkLeg
-                            ? "rgba(79, 140, 255, 0.62)"
-                            : (TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR),
-                        width: isWalkLeg ? 1.8 : 5.6,
-                        outlineColor: isWalkLeg ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.88)",
-                        outlineWidth: isWalkLeg ? 0 : 1,
+                        color: TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR,
+                        width: ROUTE_STYLE.transitRideWidth,
+                        outlineColor: isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.96)",
+                        outlineWidth: ROUTE_STYLE.transitRideOutlineWidth,
                     } as TmapPathOverlay];
                 })
             : [];
@@ -1754,17 +1892,29 @@ export default function RoutePlannerScreen() {
                     color: selectedTransitSegmentOverlays.length > 0
                         ? "rgba(180, 193, 211, 0.82)"
                         : SELECTED_ROUTE_COLOR,
-                    width: selectedTransitSegmentOverlays.length > 0 ? 4 : 5,
+                    width: selectedTransitSegmentOverlays.length > 0
+                        ? Math.max(ROUTE_STYLE.transitWalkWidth + 1.4, 4.8)
+                        : ROUTE_STYLE.selectedWidth,
                     outlineColor: selectedTransitSegmentOverlays.length > 0
-                        ? "rgba(255,255,255,0.62)"
-                        : "rgba(255,255,255,0.9)",
-                    outlineWidth: selectedTransitSegmentOverlays.length > 0 ? 1 : 2,
+                        ? (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.62)")
+                        : (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.9)"),
+                    outlineWidth: selectedTransitSegmentOverlays.length > 0
+                        ? Math.max(ROUTE_STYLE.transitWalkOutlineWidth + 0.2, 2)
+                        : ROUTE_STYLE.selectedOutlineWidth,
                 } as TmapPathOverlay;
             })()
             : null;
 
+        // ride dot 마커가 표시되는 줌 레벨에서는 실선 오버레이 대신 dot 마커만 사용
+        // 세그먼트 오버레이가 있으면 우선 표시 (hasRideDots 보다 우선)
         if (selectedTransitSegmentOverlays.length > 0 || transitConnectorOverlays.length > 0) {
             return [...inactiveOverlays, ...transitConnectorOverlays, ...selectedTransitSegmentOverlays];
+        }
+
+        // 상세 세그먼트 없을 때 ride dot 표시 구간: 선택 경로선 없이 dot 마커만 사용
+        const hasRideDots = travelMode === "TRANSIT" && mapZoom >= TRANSIT_RIDE_DOT_MIN_ZOOM;
+        if (hasRideDots) {
+            return inactiveOverlays;
         }
 
         if (!inactiveOverlays.length && !selectedMainOverlay) {
@@ -1773,9 +1923,9 @@ export default function RoutePlannerScreen() {
                     id: "route-selected-fallback",
                     coords: pathOverlayCoords,
                     color: SELECTED_ROUTE_COLOR,
-                    width: 6,
-                    outlineColor: "rgba(255,255,255,0.95)",
-                    outlineWidth: 2,
+                    width: ROUTE_STYLE.selectedWidth,
+                    outlineColor: isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.95)",
+                    outlineWidth: ROUTE_STYLE.selectedOutlineWidth,
                 }];
             }
             return [];
@@ -1799,6 +1949,7 @@ export default function RoutePlannerScreen() {
         mapZoom,
         transitConnectorOverlays,
         transitWalkDetailOverlays,
+        isDark,
     ]);
 
     const mapMarkers = useMemo<TmapMarker[]>(() => {
@@ -1809,6 +1960,11 @@ export default function RoutePlannerScreen() {
                 latitude: originLat,
                 longitude: originLng,
                 tintColor: ORIGIN_COLOR,
+                displayType: "badge",
+                badgeLabel: "출발",
+                badgeGlyph: "출",
+                badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
+                badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
                 caption: "출발",
             });
         }
@@ -1818,6 +1974,11 @@ export default function RoutePlannerScreen() {
                 latitude: destinationLat,
                 longitude: destinationLng,
                 tintColor: DESTINATION_COLOR,
+                displayType: "badge",
+                badgeLabel: "도착",
+                badgeGlyph: "도",
+                badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
+                badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
                 caption: "도착",
             });
         }
@@ -1827,8 +1988,15 @@ export default function RoutePlannerScreen() {
             Array.isArray(selectedAlternative?.transitLegs) &&
             selectedAlternative.transitLegs.length > 0
         ) {
-            const showLegLabels = mapZoom >= 16.35 && mapZoom < 17.15;
-            const showEventMarkers = mapZoom >= 15.9;
+            const showLegLabels = false;
+            const showEventMarkers = mapZoom >= 14.2;
+            markers.push(
+                ...buildTransitRideGuideDotMarkers(
+                    selectedAlternative.id,
+                    selectedAlternative.transitLegs,
+                    mapZoom
+                )
+            );
             markers.push(
                 ...buildTransitWalkGuideDotMarkers(
                     selectedAlternative.id,
@@ -1855,6 +2023,13 @@ export default function RoutePlannerScreen() {
                     )
                 );
             }
+            markers.push(
+                ...buildBusStopMarkers(
+                    selectedAlternative.id,
+                    selectedAlternative.transitLegs,
+                    mapZoom
+                )
+            );
             if (showEventMarkers) {
                 const transitEventMarkers = buildTransitEventMarkers(
                     selectedAlternative.id,
@@ -2236,7 +2411,7 @@ export default function RoutePlannerScreen() {
                 ref={mapRef}
                 style={styles.fullMap}
                 camera={INITIAL_CAMERA}
-                nightModeEnabled={isDark}
+                nightModeEnabled={false}
                 showLocationButton={true}
                 showZoomControls={false}
                 onTapMap={onTapMap}
@@ -2246,9 +2421,9 @@ export default function RoutePlannerScreen() {
                 pathOverlays={mapPathOverlays}
                 pathCoords={pathOverlayCoords}
                 pathColor={SELECTED_ROUTE_COLOR}
-                pathWidth={5}
-                pathOutlineColor="#FFFFFF"
-                pathOutlineWidth={2}
+                pathWidth={10}
+                pathOutlineColor={isDark ? "rgba(15,20,35,0.55)" : "#FFFFFF"}
+                pathOutlineWidth={3}
                 fallbackBackgroundColor={colors.surface2}
                 fallbackTextColor={colors.textSecondary}
             />

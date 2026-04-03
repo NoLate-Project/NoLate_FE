@@ -58,26 +58,8 @@ export default function Login() {
     }, [router]);
 
     const onLogin = async () => {
-        if (!id || !pwd) {
-            Alert.alert("입력 확인", "이메일과 비밀번호를 입력해 주세요.");
-            return;
-        }
-
-        try {
-            setSubmitting(true);
-            const member = await loginMember({
-                email: id.trim(),
-                password: pwd,
-            });
-
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            router.replace("/schedule");
-        } catch (error) {
-            const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
-            Alert.alert("로그인 실패", message);
-        } finally {
-            setSubmitting(false);
-        }
+        // TODO: 임시 바이패스 — API 연동 전 테스트용
+        router.replace("/schedule");
     };
 
     const onSocialLogin = async (provider: SocialProvider) => {
