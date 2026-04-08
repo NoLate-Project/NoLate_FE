@@ -31,6 +31,8 @@ export type TransitLegDetail = {
     startCoord?: RoutePathCoord;
     endCoord?: RoutePathCoord;
     pathCoords?: RoutePathCoord[];
+    /** steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우 true. itinerary snap fallback이면 false. */
+    pathCoordsIsExact?: boolean;
 };
 
 export type TransitRouteOption = {
@@ -507,6 +509,20 @@ function snapTransitLegPathFromItinerary(
     };
 }
 
+function parseTransitStepsLinestring(leg: any): RoutePathCoord[] | undefined {
+    const steps = Array.isArray(leg?.steps) ? leg.steps as any[] : [];
+    if (steps.length === 0) return undefined;
+    const coords: RoutePathCoord[] = [];
+    for (const step of steps) {
+        const stepPath = parseTransitPathCoords(step?.linestring ?? step?.path);
+        if (Array.isArray(stepPath) && stepPath.length > 0) {
+            coords.push(...stepPath);
+        }
+    }
+    if (coords.length < 2) return undefined;
+    return clampPathCoords(dedupePathCoords(coords));
+}
+
 function parseTransitLegPathCoords(leg: any): RoutePathCoord[] | undefined {
     const direct = parseTransitPathCoords(
         leg?.passShape?.linestring ??
@@ -516,6 +532,9 @@ function parseTransitLegPathCoords(leg: any): RoutePathCoord[] | undefined {
         leg?.geometry
     );
     if (direct) return direct;
+    // WALK 레그는 passShape.linestring 대신 steps[].linestring에 보행자 경로가 담겨 있음
+    const stepsPath = parseTransitStepsLinestring(leg);
+    if (stepsPath) return stepsPath;
     const stationPath = parseTransitLegStationPath(leg);
     if (stationPath) return stationPath;
     // 구간 세부 path가 없는 경우 직선 보간을 그리면 화면에 부정확한 장거리 직선이 생긴다.
@@ -580,8 +599,10 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 : undefined;
             const forceEndToTail = kind === "WALK" && legIndex === legArray.length - 1;
             let pathCoords = parseTransitLegPathCoords(leg);
+            // steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우만 exact로 표시
+            let pathCoordsIsExact = Array.isArray(pathCoords) && pathCoords.length >= 2;
 
-            if ((!Array.isArray(pathCoords) || pathCoords.length < 2) && Array.isArray(itineraryPath) && itineraryPath.length >= 2) {
+            if (!pathCoordsIsExact && Array.isArray(itineraryPath) && itineraryPath.length >= 2) {
                 const snapped = snapTransitLegPathFromItinerary(
                     itineraryPath,
                     startCoord,
@@ -592,6 +613,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 );
                 if (Array.isArray(snapped.pathCoords) && snapped.pathCoords.length >= 2) {
                     pathCoords = snapped.pathCoords;
+                    // itinerary snap은 도로 중앙 경로 — exact 아님
                 }
                 itineraryPathCursor = snapped.nextStartIndex;
             } else if (Array.isArray(pathCoords) && pathCoords.length >= 2 && Array.isArray(itineraryPath) && itineraryPath.length >= 2) {
@@ -624,6 +646,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 startCoord: normalizedStartCoord,
                 endCoord: normalizedEndCoord,
                 pathCoords,
+                pathCoordsIsExact,
             };
 
             const label = buildTransitLegLabel(base);
@@ -813,14 +836,7 @@ function parseTransitItineraryPath(itinerary: any): RoutePathCoord[] | undefined
 
     const legs = Array.isArray(itinerary?.legs) ? itinerary.legs : [];
     const legCoords = legs
-        .map((leg: any) =>
-            parseTransitPathCoords(
-                leg?.passShape?.linestring ??
-                leg?.passShape?.coordinates ??
-                leg?.shape ??
-                leg?.path
-            )
-        )
+        .map((leg: any) => parseTransitLegPathCoords(leg))
         .filter((value: RoutePathCoord[] | undefined): value is RoutePathCoord[] => Array.isArray(value) && value.length >= 2)
         .flat();
 
@@ -847,15 +863,25 @@ function composeTmapAddress(poi: any): string {
     return jibunAddress;
 }
 
+function pickPoiSearchCoord(poi: any): RoutePathCoord | undefined {
+    // Prefer the parcel/building center so named POIs stay aligned with the building footprint.
+    // Entrance(front) coordinates tend to bias the marker toward the road and looked off for places like 아울타워.
+    return pickFirstValidCoordinatePair([
+        [poi?.noorLat, poi?.noorLon],
+        [poi?.newLat, poi?.newLon],
+        [poi?.lat, poi?.lon],
+        [poi?.frontLat, poi?.frontLon],
+    ]);
+}
+
 function parsePoiResults(data: any): PlaceSearchItem[] {
     const rawPoi = data?.searchPoiInfo?.pois?.poi;
     const poiList = ensureArray(rawPoi);
 
     return poiList
         .map((poi: any) => {
-            const lat = safeNumber(poi?.frontLat ?? poi?.noorLat ?? poi?.newLat ?? poi?.lat);
-            const lng = safeNumber(poi?.frontLon ?? poi?.noorLon ?? poi?.newLon ?? poi?.lon);
-            if (typeof lat !== "number" || typeof lng !== "number") return null;
+            const coord = pickPoiSearchCoord(poi);
+            if (!coord) return null;
 
             const name = typeof poi?.name === "string" && poi.name.trim()
                 ? poi.name.trim()
@@ -877,8 +903,8 @@ function parsePoiResults(data: any): PlaceSearchItem[] {
             return {
                 name,
                 address: address || name,
-                lat,
-                lng,
+                lat: coord.lat,
+                lng: coord.lng,
                 category,
             } as PlaceSearchItem;
         })

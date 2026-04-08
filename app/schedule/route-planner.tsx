@@ -44,7 +44,7 @@ const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"]
 const ORIGIN_COLOR = "#21B85A";
 const DESTINATION_COLOR = "#FF6A3D";
 const SELECTED_ROUTE_COLOR = "#2F80FF";
-const INACTIVE_ROUTE_COLOR = "rgba(120, 135, 154, 0.5)";
+const INACTIVE_ROUTE_COLOR = "rgba(128, 145, 166, 0.62)";
 const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
     SUBWAY: "#24B348",
     BUS: "#1D72FF",
@@ -58,29 +58,93 @@ const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
 const TRANSIT_SEGMENT_DETAIL_MIN_ZOOM = 13.8;
 const TRANSIT_BADGE_MIN_ZOOM = 14.2;
 const TRANSIT_BADGE_MAX_COUNT = 30;
-const TRANSIT_WALK_GUIDE_DOT_MIN_ZOOM = 12;
-const TRANSIT_WALK_GUIDE_DOT_MAX_COUNT = 360;
-const TRANSIT_RIDE_DOT_MIN_ZOOM = 11.5;
-const TRANSIT_RIDE_DOT_MAX_COUNT = 400;
 const TRANSIT_TRANSFER_COLOR = "#F4A100";
 const KAKAO_LABEL_TEXT_COLOR = "#1F2937";
 const KAKAO_LABEL_BORDER_COLOR = "rgba(148,163,184,0.62)";
 const ROUTE_STYLE = {
-    inactiveWidth: 6,
-    inactiveOutlineWidth: 2,
-    selectedWidth: 10,
-    selectedOutlineWidth: 3,
-    transitRideWidth: 10,
-    transitRideOutlineWidth: 2.5,
-    transitWalkWidth: 6,
-    transitWalkOutlineWidth: 1.8,
-    connectorWalkWidth: 3,
+    inactiveWidth: 4.5,
+    inactiveOutlineWidth: 1.4,
+    selectedWidth: 8.5,
+    selectedOutlineWidth: 2.2,
+    transitRideWidth: 8.5,
+    transitRideOutlineWidth: 1.8,
+    transitWalkWidth: 5,
+    transitWalkOutlineWidth: 1.4,
+    connectorWalkWidth: 4,
 } as const;
 type RoutePointTarget = "origin" | "destination";
 type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
+type RoutePlannerFocusTarget = "origin" | "destination" | "startRide" | "firstSubway";
+type DebugSheetState = "collapsed" | "hidden" | "expanded";
+const DEBUG_FOCUS_MIN_ZOOM = 5;
+const DEBUG_FOCUS_MAX_ZOOM = 18;
+const INACTIVE_MAP_ALTERNATIVE_LIMIT = 2;
 
 // 모듈 레벨 상수 — 렌더마다 새 객체를 만들면 지도가 카메라를 계속 리셋할 수 있음
 const INITIAL_CAMERA = { latitude: FALLBACK_LAT, longitude: FALLBACK_LNG, zoom: 12 };
+
+function getSingleParam(value: string | string[] | undefined): string | undefined {
+    if (Array.isArray(value)) return value[0];
+    return typeof value === "string" ? value : undefined;
+}
+
+function parseNumberParam(value: string | string[] | undefined): number | undefined {
+    const raw = getSingleParam(value);
+    if (typeof raw !== "string" || raw.trim().length === 0) return undefined;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseIntegerParam(value: string | string[] | undefined): number | undefined {
+    const parsed = parseNumberParam(value);
+    if (typeof parsed !== "number") return undefined;
+    return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+function parseTravelModeParam(value: string | string[] | undefined): TravelMode | undefined {
+    const raw = getSingleParam(value)?.trim().toUpperCase();
+    if (!raw) return undefined;
+    return SELECTABLE_TRAVEL_MODES.includes(raw as TravelMode)
+        ? (raw as TravelMode)
+        : undefined;
+}
+
+function parseFocusTargetParam(value: string | string[] | undefined): RoutePlannerFocusTarget | undefined {
+    const raw = getSingleParam(value)?.trim();
+    if (raw === "origin" || raw === "destination" || raw === "startRide" || raw === "firstSubway") return raw;
+    return undefined;
+}
+
+function parseFocusZoomParam(value: string | string[] | undefined): number | undefined {
+    const parsed = parseNumberParam(value);
+    if (typeof parsed !== "number") return undefined;
+    return Math.max(DEBUG_FOCUS_MIN_ZOOM, Math.min(DEBUG_FOCUS_MAX_ZOOM, parsed));
+}
+
+function parseSheetStateParam(value: string | string[] | undefined): DebugSheetState | undefined {
+    const raw = getSingleParam(value)?.trim().toLowerCase();
+    if (raw === "collapsed" || raw === "hidden" || raw === "expanded") return raw;
+    return undefined;
+}
+
+function parseRouteParamPlace(
+    params: Record<string, string | string[] | undefined>,
+    prefix: "origin" | "destination"
+): Place | undefined {
+    const lat = parseNumberParam(params[`${prefix}Lat`]);
+    const lng = parseNumberParam(params[`${prefix}Lng`]);
+    if (typeof lat !== "number" || typeof lng !== "number") return undefined;
+
+    const name = getSingleParam(params[`${prefix}Name`])?.trim();
+    const address = getSingleParam(params[`${prefix}Address`])?.trim();
+
+    return {
+        name: name || address || (prefix === "origin" ? "출발지" : "도착지"),
+        address: address || name || "",
+        lat,
+        lng,
+    };
+}
 
 function formatDistance(distanceMeters?: number): string | undefined {
     if (typeof distanceMeters !== "number") return undefined;
@@ -99,6 +163,31 @@ function formatDuration(minutes?: number): string {
 }
 
 type CameraCoord = { latitude: number; longitude: number };
+const SUBWAY_LINE_COLOR_RULES: Array<{ pattern: RegExp; color: string }> = [
+    { pattern: /1호선/, color: "#0052A4" },
+    { pattern: /2호선/, color: "#00A84D" },
+    { pattern: /3호선/, color: "#EF7C1C" },
+    { pattern: /4호선/, color: "#00A5DE" },
+    { pattern: /5호선/, color: "#996CAC" },
+    { pattern: /6호선/, color: "#CD7C2F" },
+    { pattern: /7호선/, color: "#747F00" },
+    { pattern: /8호선/, color: "#E6186C" },
+    { pattern: /9호선/, color: "#BDB092" },
+    { pattern: /공항철도|AREX/i, color: "#0090D2" },
+    { pattern: /경의중앙/, color: "#77C4A3" },
+    { pattern: /수인분당|분당선|수인선/, color: "#E7B416" },
+    { pattern: /신분당/, color: "#D31145" },
+    { pattern: /경춘/, color: "#178C72" },
+    { pattern: /경강/, color: "#0054A6" },
+    { pattern: /서해/, color: "#8FC31F" },
+    { pattern: /김포골드|김포도시철도/, color: "#A17800" },
+    { pattern: /우이신설/, color: "#B7C452" },
+    { pattern: /신림선/, color: "#6789CA" },
+    { pattern: /용인경전철|에버라인/, color: "#6FB245" },
+    { pattern: /의정부경전철/, color: "#FDA600" },
+    { pattern: /인천1호선/, color: "#7CA8D5" },
+    { pattern: /인천2호선/, color: "#ED8B00" },
+];
 
 function haversineDistanceKm(from: CameraCoord, to: CameraCoord): number {
     const toRadians = (value: number) => (value * Math.PI) / 180;
@@ -242,6 +331,29 @@ function compactTransitLineLabel(lineName?: string): string | undefined {
     return first.length > 10 ? `${first.slice(0, 10)}…` : first;
 }
 
+function compactTransitStopLabel(stopName?: string, maxLength = 10): string | undefined {
+    if (!stopName) return undefined;
+    const normalized = stopName
+        .replace(/\s+/g, "")
+        .replace(/[()]/g, "")
+        .replace(/\.+/g, " ")
+        .trim();
+    if (!normalized) return undefined;
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}…` : normalized;
+}
+
+function getSubwayLineColor(lineName?: string): string {
+    const normalized = lineName?.trim();
+    if (!normalized) return TRANSIT_LEG_COLOR.SUBWAY;
+    const matched = SUBWAY_LINE_COLOR_RULES.find((item) => item.pattern.test(normalized));
+    return matched?.color ?? TRANSIT_LEG_COLOR.SUBWAY;
+}
+
+function getTransitLegVisualColor(leg: Pick<TransitLegDetail, "kind" | "lineName">): string {
+    if (leg.kind === "SUBWAY") return getSubwayLineColor(leg.lineName);
+    return TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
+}
+
 function isRideLegKind(kind: TransitLegDetail["kind"]): boolean {
     return kind === "SUBWAY" || kind === "BUS";
 }
@@ -372,13 +484,13 @@ function offsetBusStopCoordFromPath(
                 const reference = baseCoord ?? pathAnchor;
                 const referenceDistance = routeCoordDistanceMeters(reference, pathAnchor);
                 const anchorBlend = referenceDistance <= 36
-                    ? interpolateRouteCoord(pathAnchor, reference, 0.35)
+                    ? interpolateRouteCoord(pathAnchor, reference, 0.45)
                     : pathAnchor;
                 const refLat = reference.lat - pathAnchor.lat;
                 const refLng = reference.lng - pathAnchor.lng;
                 const cross = (dLat * refLng) - (dLng * refLat);
                 const side = cross >= 0 ? 1 : -1;
-                const offsetMeters = referenceDistance <= 16 ? 11 : 14;
+                const offsetMeters = referenceDistance <= 16 ? 15 : 18;
                 return offsetCoordByMeters(
                     anchorBlend,
                     unitPerpLat * side * offsetMeters,
@@ -463,36 +575,127 @@ function getRideStopDisplayCoord(
     if (!Array.isArray(legs) || legIndex < 0 || legIndex >= legs.length) return undefined;
     const leg = legs[legIndex];
 
-    const rideStopCoord = position === "BOARD" ? getTransitLegBoardCoord(leg) : getTransitLegAlightCoord(leg);
+    const stopCoord = position === "BOARD" ? getTransitLegBoardCoord(leg) : getTransitLegAlightCoord(leg);
+    const fallbackCoord = position === "BOARD" ? getTransitLegStartCoord(leg) : getTransitLegEndCoord(leg);
+
+    if (leg.kind !== "BUS") return stopCoord ?? fallbackCoord;
+
     const pathAnchorCoord = position === "BOARD"
         ? getTransitLegBoardAnchorOnPath(leg)
         : getTransitLegAlightAnchorOnPath(leg);
+
+    const base = stopCoord ?? pathAnchorCoord ?? fallbackCoord;
+    if (!base) return undefined;
+    if (!pathAnchorCoord || !stopCoord) return base;
+
+    const dist = routeCoordDistanceMeters(stopCoord, pathAnchorCoord);
+    if (dist < 2) {
+        // 정류장이 경로 위에 있음 — 경로 수직 방향으로 오프셋
+        return offsetBusStopCoordFromPath(leg, stopCoord, position) ?? stopCoord;
+    }
+
+    // Tmap API 좌표가 도로 위(차선 위치)에 있음.
+    // pathAnchor → stopCoord 방향으로 충분히 더 밀어서 정류장 점이 차도 중앙에 뜨지 않게 한다.
+    const latMetersPerDeg = 111_320;
+    const lngMetersPerDeg = 111_320 * Math.cos((stopCoord.lat * Math.PI) / 180);
+    const northMeters = (stopCoord.lat - pathAnchorCoord.lat) * latMetersPerDeg;
+    const eastMeters = (stopCoord.lng - pathAnchorCoord.lng) * lngMetersPerDeg;
+    const unitNorth = northMeters / dist;
+    const unitEast = eastMeters / dist;
+    return {
+        lat: stopCoord.lat + (unitNorth * 10) / latMetersPerDeg,
+        lng: stopCoord.lng + (unitEast * 10) / lngMetersPerDeg,
+    };
+}
+
+function getRideStopConnectorCoord(
+    legs: TransitLegDetail[] | undefined,
+    legIndex: number,
+    position: "BOARD" | "ALIGHT"
+): RoutePathCoord | undefined {
+    if (!Array.isArray(legs) || legIndex < 0 || legIndex >= legs.length) return undefined;
+    const leg = legs[legIndex];
+    const stopCoord = position === "BOARD" ? getTransitLegBoardCoord(leg) : getTransitLegAlightCoord(leg);
     const fallbackCoord = position === "BOARD" ? getTransitLegStartCoord(leg) : getTransitLegEndCoord(leg);
-    const resolvedBase = rideStopCoord ?? pathAnchorCoord ?? fallbackCoord;
-    if (!resolvedBase) return undefined;
-    if (leg.kind !== "BUS") return resolvedBase;
 
-    let resolvedCoord = pathAnchorCoord ?? resolvedBase;
-    const walkReference = getAdjacentWalkReferenceCoord(legs, legIndex, position);
+    if (leg.kind !== "BUS") return stopCoord ?? fallbackCoord;
 
-    if (rideStopCoord && pathAnchorCoord) {
-        const stopToPathMeters = routeCoordDistanceMeters(rideStopCoord, pathAnchorCoord);
-        resolvedCoord = stopToPathMeters <= 32
-            ? interpolateRouteCoord(pathAnchorCoord, rideStopCoord, 0.3)
-            : pathAnchorCoord;
+    const displayCoord = getRideStopDisplayCoord(legs, legIndex, position);
+    const walkReferenceCoord = getAdjacentWalkReferenceCoord(legs, legIndex, position);
+
+    return nudgeBusStopTowardReference(displayCoord, walkReferenceCoord)
+        ?? nudgeBusStopTowardReference(stopCoord, walkReferenceCoord)
+        ?? displayCoord
+        ?? stopCoord
+        ?? fallbackCoord;
+}
+
+function getTransitRouteStartFocusCoord(legs: TransitLegDetail[] | undefined): RoutePathCoord | undefined {
+    if (!Array.isArray(legs) || legs.length === 0) return undefined;
+
+    const firstRideLegIndex = legs.findIndex((leg) => isRideLegKind(leg.kind));
+    if (firstRideLegIndex < 0) {
+        return getWalkLegStartCoord(legs[0]) ?? getWalkLegEndCoord(legs[0]);
     }
 
-    if (walkReference) {
-        const walkDistance = routeCoordDistanceMeters(resolvedCoord, walkReference);
-        if (walkDistance >= 2 && walkDistance <= 140) {
-            const pullRatio = walkDistance > 45 ? 0.68 : 0.48;
-            resolvedCoord = interpolateRouteCoord(resolvedCoord, walkReference, pullRatio);
-        }
+    const firstRideLeg = legs[firstRideLegIndex];
+    if (firstRideLeg.kind === "BUS") {
+        return getRideStopConnectorCoord(legs, firstRideLegIndex, "BOARD")
+            ?? getRideStopDisplayCoord(legs, firstRideLegIndex, "BOARD")
+            ?? getTransitLegBoardCoord(firstRideLeg)
+            ?? getTransitLegBoardAnchorOnPath(firstRideLeg);
     }
 
-    const pathOffsetCoord = offsetBusStopCoordFromPath(leg, resolvedCoord, position) ?? resolvedCoord;
-    return nudgeBusStopTowardReference(pathOffsetCoord, walkReference) ?? pathOffsetCoord;
+    return getTransitLegBoardCoord(firstRideLeg)
+        ?? getAdjacentWalkReferenceCoord(legs, firstRideLegIndex, "BOARD")
+        ?? getTransitLegBoardAnchorOnPath(firstRideLeg)
+        ?? getTransitLegStartCoord(firstRideLeg);
+}
 
+function getTransitRouteFirstSubwayFocusCoord(legs: TransitLegDetail[] | undefined): RoutePathCoord | undefined {
+    if (!Array.isArray(legs) || legs.length === 0) return undefined;
+    const firstSubwayLeg = legs.find((leg) => leg.kind === "SUBWAY");
+    if (!firstSubwayLeg) return undefined;
+
+    return getTransitLegMidCoord(firstSubwayLeg)
+        ?? getTransitLegBoardCoord(firstSubwayLeg)
+        ?? getTransitLegBoardAnchorOnPath(firstSubwayLeg)
+        ?? getTransitLegStartCoord(firstSubwayLeg);
+}
+
+function getMinimumDistanceToPathMeters(point: RoutePathCoord, pathCoords: RoutePathCoord[]): number {
+    if (!Array.isArray(pathCoords) || pathCoords.length === 0) return Number.POSITIVE_INFINITY;
+    return pathCoords.reduce((minimum, pathPoint) => (
+        Math.min(minimum, routeCoordDistanceMeters(point, pathPoint))
+    ), Number.POSITIVE_INFINITY);
+}
+
+function trimWalkApproachTail(
+    rawPath: RoutePathCoord[] | undefined,
+    stopCoord: RoutePathCoord | undefined,
+    ridePath: RoutePathCoord[]
+): RoutePathCoord[] | undefined {
+    if (!Array.isArray(rawPath) || rawPath.length < 3 || !stopCoord) return rawPath;
+
+    const stopTrimDistanceMeters = ridePath.length > 0 ? 12 : 8;
+    const ridePathTrimDistanceMeters = 5.5;
+    let trimIdx = rawPath.length;
+
+    while (trimIdx > 2) {
+        const point = rawPath[trimIdx - 1];
+        const distanceToStop = routeCoordDistanceMeters(point, stopCoord);
+        if (distanceToStop >= stopTrimDistanceMeters) break;
+
+        const distanceToRidePath = ridePath.length > 0
+            ? getMinimumDistanceToPathMeters(point, ridePath)
+            : distanceToStop;
+        if (distanceToRidePath >= ridePathTrimDistanceMeters) break;
+
+        trimIdx -= 1;
+    }
+
+    if (trimIdx >= rawPath.length) return rawPath;
+    return rawPath.slice(0, trimIdx);
 }
 
 function getTransitLegMidCoord(leg: TransitLegDetail): RoutePathCoord | undefined {
@@ -526,6 +729,194 @@ function interpolateRouteCoord(from: RoutePathCoord, to: RoutePathCoord, ratio: 
     };
 }
 
+function routeCoordHeadingDeg(from: RoutePathCoord, to: RoutePathCoord): number | undefined {
+    const averageLatRad = ((from.lat + to.lat) * 0.5 * Math.PI) / 180;
+    const eastMeters = (to.lng - from.lng) * 111_320 * Math.cos(averageLatRad);
+    const northMeters = (to.lat - from.lat) * 111_320;
+    if (!Number.isFinite(eastMeters) || !Number.isFinite(northMeters)) return undefined;
+    if (Math.hypot(eastMeters, northMeters) < 0.8) return undefined;
+    return (Math.atan2(-northMeters, eastMeters) * 180) / Math.PI;
+}
+
+function buildDirectionalMarkersForPath(
+    idPrefix: string,
+    pathCoords: RoutePathCoord[] | undefined,
+    tintColor: string,
+    spacingMeters: number,
+    edgeInsetMeters: number,
+    maxMarkers: number
+): TmapMarker[] {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2 || maxMarkers <= 0) return [];
+
+    const segmentDistances: number[] = [];
+    let totalDistance = 0;
+    for (let index = 1; index < pathCoords.length; index += 1) {
+        const distance = routeCoordDistanceMeters(pathCoords[index - 1], pathCoords[index]);
+        segmentDistances.push(distance);
+        totalDistance += distance;
+    }
+
+    if (!Number.isFinite(totalDistance) || totalDistance < Math.max(28, edgeInsetMeters * 2)) return [];
+
+    const inset = Math.min(edgeInsetMeters, totalDistance * 0.32);
+    const endLimit = totalDistance - inset;
+    let nextDistance = totalDistance < spacingMeters * 1.45
+        ? totalDistance * 0.5
+        : inset + (spacingMeters * 0.5);
+    const markers: TmapMarker[] = [];
+    let traveled = 0;
+
+    for (let index = 1; index < pathCoords.length && markers.length < maxMarkers; index += 1) {
+        const from = pathCoords[index - 1];
+        const to = pathCoords[index];
+        const segmentDistance = segmentDistances[index - 1];
+        if (!Number.isFinite(segmentDistance) || segmentDistance < 4) {
+            traveled += Number.isFinite(segmentDistance) ? segmentDistance : 0;
+            continue;
+        }
+
+        const heading = routeCoordHeadingDeg(from, to);
+        if (typeof heading !== "number") {
+            traveled += segmentDistance;
+            continue;
+        }
+
+        while (nextDistance <= endLimit && (traveled + segmentDistance) >= nextDistance && markers.length < maxMarkers) {
+            const ratio = (nextDistance - traveled) / segmentDistance;
+            const coord = interpolateRouteCoord(from, to, ratio);
+            markers.push({
+                id: `${idPrefix}-arrow-${markers.length}`,
+                latitude: coord.lat,
+                longitude: coord.lng,
+                tintColor,
+                badgeBorderColor: "rgba(255,255,255,0.96)",
+                displayType: "arrow",
+                rotationDeg: heading,
+            });
+            nextDistance += spacingMeters;
+        }
+
+        traveled += segmentDistance;
+    }
+
+    return markers;
+}
+
+function samplePathCoordAtDistance(
+    pathCoords: RoutePathCoord[] | undefined,
+    distanceMeters: number,
+    fromEnd = false
+): RoutePathCoord | undefined {
+    if (!Array.isArray(pathCoords) || pathCoords.length === 0) return undefined;
+    if (pathCoords.length === 1) return pathCoords[0];
+    const target = Math.max(0, distanceMeters);
+    if (!fromEnd) {
+        let traveled = 0;
+        for (let index = 1; index < pathCoords.length; index += 1) {
+            const from = pathCoords[index - 1];
+            const to = pathCoords[index];
+            const segmentDistance = routeCoordDistanceMeters(from, to);
+            if (!Number.isFinite(segmentDistance) || segmentDistance <= 0.1) continue;
+            if ((traveled + segmentDistance) >= target) {
+                return interpolateRouteCoord(from, to, (target - traveled) / segmentDistance);
+            }
+            traveled += segmentDistance;
+        }
+        return pathCoords[pathCoords.length - 1];
+    }
+
+    let traveled = 0;
+    for (let index = pathCoords.length - 1; index > 0; index -= 1) {
+        const from = pathCoords[index];
+        const to = pathCoords[index - 1];
+        const segmentDistance = routeCoordDistanceMeters(from, to);
+        if (!Number.isFinite(segmentDistance) || segmentDistance <= 0.1) continue;
+        if ((traveled + segmentDistance) >= target) {
+            return interpolateRouteCoord(from, to, (target - traveled) / segmentDistance);
+        }
+        traveled += segmentDistance;
+    }
+    return pathCoords[0];
+}
+
+function getPathTotalDistanceMeters(pathCoords: RoutePathCoord[] | undefined): number {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return 0;
+    let total = 0;
+    for (let index = 1; index < pathCoords.length; index += 1) {
+        total += routeCoordDistanceMeters(pathCoords[index - 1], pathCoords[index]);
+    }
+    return total;
+}
+
+function resolveTransitPinDistanceMeters(
+    totalDistanceMeters: number,
+    ratio: number,
+    minDistanceMeters: number,
+    maxDistanceMeters: number,
+    edgePaddingMeters: number
+): number | undefined {
+    if (!Number.isFinite(totalDistanceMeters) || totalDistanceMeters <= 0) return undefined;
+    const upperBound = Math.max(18, Math.min(maxDistanceMeters, totalDistanceMeters - edgePaddingMeters));
+    if (!Number.isFinite(upperBound) || upperBound < 18) return undefined;
+    const lowerBound = Math.min(minDistanceMeters, upperBound);
+    return Math.max(lowerBound, Math.min(upperBound, totalDistanceMeters * ratio));
+}
+
+function getTransitOriginDisplayCoord(
+    legs: TransitLegDetail[] | undefined,
+    fallback: RoutePathCoord | undefined
+): RoutePathCoord | undefined {
+    if (!Array.isArray(legs) || !fallback) return fallback;
+    const firstRideIndex = legs.findIndex((leg) => isRideLegKind(leg.kind));
+    if (firstRideIndex <= 0) return fallback;
+    const firstRideLeg = legs[firstRideIndex];
+    const firstWalkLeg = legs[firstRideIndex - 1];
+    if (!firstWalkLeg || firstWalkLeg.kind !== "WALK") return fallback;
+
+    const walkPath = smoothWalkPathForDisplay(firstWalkLeg.pathCoords);
+    const totalDistance = getPathTotalDistanceMeters(walkPath);
+    if (walkPath.length < 2 || totalDistance < 24) return fallback;
+
+    const isBusBoard = firstRideLeg?.kind === "BUS";
+    const displayDistance = resolveTransitPinDistanceMeters(
+        totalDistance,
+        isBusBoard ? 0.58 : 0.46,
+        isBusBoard ? 64 : 34,
+        isBusBoard ? 118 : 86,
+        isBusBoard ? 20 : 18
+    );
+    if (typeof displayDistance !== "number") return fallback;
+    return samplePathCoordAtDistance(walkPath, displayDistance) ?? fallback;
+}
+
+function getTransitDestinationDisplayCoord(
+    legs: TransitLegDetail[] | undefined,
+    fallback: RoutePathCoord | undefined
+): RoutePathCoord | undefined {
+    if (!Array.isArray(legs) || !fallback) return fallback;
+    const lastRideIndex = [...legs].reverse().findIndex((leg) => isRideLegKind(leg.kind));
+    if (lastRideIndex < 0) return fallback;
+    const lastRideLeg = legs[legs.length - 1 - lastRideIndex];
+    const walkIndex = legs.length - lastRideIndex;
+    const lastWalkLeg = legs[walkIndex];
+    if (!lastWalkLeg || lastWalkLeg.kind !== "WALK") return fallback;
+
+    const walkPath = smoothWalkPathForDisplay(lastWalkLeg.pathCoords);
+    const totalDistance = getPathTotalDistanceMeters(walkPath);
+    if (walkPath.length < 2 || totalDistance < 24) return fallback;
+
+    const endsAfterBus = lastRideLeg?.kind === "BUS";
+    const displayDistance = resolveTransitPinDistanceMeters(
+        totalDistance,
+        endsAfterBus ? 0.54 : 0.42,
+        endsAfterBus ? 56 : 28,
+        endsAfterBus ? 102 : 78,
+        endsAfterBus ? 18 : 16
+    );
+    if (typeof displayDistance !== "number") return fallback;
+    return samplePathCoordAtDistance(walkPath, displayDistance, true) ?? fallback;
+}
+
 function filterDensePathCoords(pathCoords: RoutePathCoord[] | undefined, minSegmentMeters: number): RoutePathCoord[] {
     if (!Array.isArray(pathCoords) || pathCoords.length < 2) return [];
     const minimum = Math.max(0.5, minSegmentMeters);
@@ -545,208 +936,140 @@ function smoothWalkPathForDisplay(pathCoords: RoutePathCoord[] | undefined): Rou
     return filterDensePathCoords(pathCoords, 2.8);
 }
 
-function toDisplayOverlayCoords(pathCoords: RoutePathCoord[] | undefined, kind?: TransitLegDetail["kind"]): TmapLatLng[] {
-    const normalized = kind === "WALK"
+function normalizeDisplayPathCoords(pathCoords: RoutePathCoord[] | undefined, kind?: TransitLegDetail["kind"]): RoutePathCoord[] {
+    return kind === "WALK"
         ? smoothWalkPathForDisplay(pathCoords)
         : filterDensePathCoords(pathCoords, 1.6);
+}
+
+function toDisplayOverlayCoords(pathCoords: RoutePathCoord[] | undefined, kind?: TransitLegDetail["kind"]): TmapLatLng[] {
+    const normalized = normalizeDisplayPathCoords(pathCoords, kind);
     if (!normalized.length) return [];
     return normalized.map((point) => ({ latitude: point.lat, longitude: point.lng }));
 }
 
-function samplePathCoordsBySpacing(pathCoords: RoutePathCoord[] | undefined, spacingMeters: number): RoutePathCoord[] {
-    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return [];
-    const spacing = Math.max(10, spacingMeters);
-    const sampled: RoutePathCoord[] = [];
-    let carry = spacing * 0.5;
-
-    for (let index = 1; index < pathCoords.length; index += 1) {
-        const from = pathCoords[index - 1];
-        const to = pathCoords[index];
-        const segmentMeters = routeCoordDistanceMeters(from, to);
-        if (segmentMeters < 0.8) continue;
-        while (carry <= segmentMeters) {
-            const ratio = carry / segmentMeters;
-            sampled.push(interpolateRouteCoord(from, to, ratio));
-            carry += spacing;
-        }
-        carry -= segmentMeters;
-        if (carry < 0) carry = spacing;
-    }
-
-    return sampled;
-}
-
-function buildTransitWalkGuideDotMarkers(
-    selectedAlternativeId: string | undefined,
-    _legs: TransitLegDetail[] | undefined,
-    connectorOverlays: TmapPathOverlay[] | undefined,
-    mapZoom: number
-): TmapMarker[] {
-    if (mapZoom < TRANSIT_WALK_GUIDE_DOT_MIN_ZOOM) return [];
-    const allWalkPaths: RoutePathCoord[][] = [];
-
-    // 대중교통 API의 leg.pathCoords는 도로 중앙선을 따르므로 사용하지 않음.
-    // 보행자 API로 별도 조회한 커넥터 오버레이 경로만 사용.
-
-    if (Array.isArray(connectorOverlays) && connectorOverlays.length > 0) {
-        connectorOverlays.forEach((overlay) => {
-            if (typeof overlay.id !== "string" || !overlay.id.endsWith("-path")) return;
-            const coords = Array.isArray(overlay.coords)
-                ? overlay.coords
-                    .map((point) => {
-                        if (typeof point?.latitude !== "number" || typeof point?.longitude !== "number") return null;
-                        return { lat: point.latitude, lng: point.longitude } as RoutePathCoord;
-                    })
-                    .filter((point): point is RoutePathCoord => !!point)
-                : [];
-            if (coords.length >= 2) {
-                allWalkPaths.push(coords);
-            }
-        });
-    }
-
-    if (!allWalkPaths.length) return [];
-
-    const spacingMeters = mapZoom >= 18.2 ? 8 : mapZoom >= 17.3 ? 10 : mapZoom >= 16.4 ? 12 : mapZoom >= 15 ? 14 : mapZoom >= 13.5 ? 22 : 35;
-    const dotSize = mapZoom >= 17.4 ? 8 : mapZoom >= 15 ? 7 : 6;
-    const markers: TmapMarker[] = [];
-    let index = 0;
-
-    allWalkPaths.forEach((pathCoords, pathIndex) => {
-        const dots = samplePathCoordsBySpacing(pathCoords, spacingMeters);
-        dots.forEach((dot) => {
-            markers.push({
-                id: `transit-walk-dot-${selectedAlternativeId ?? "selected"}-${pathIndex}-${index}`,
-                latitude: dot.lat,
-                longitude: dot.lng,
-                tintColor: "#6B7280",
-                displayType: "dot",
-                dotSize,
-                badgeBorderColor: "rgba(255,255,255,0.98)",
-            });
-            index += 1;
-        });
-    });
-
-    return markers.slice(0, TRANSIT_WALK_GUIDE_DOT_MAX_COUNT);
-}
-
-function buildTransitRideGuideDotMarkers(
-    selectedAlternativeId: string | undefined,
-    legs: TransitLegDetail[] | undefined,
-    mapZoom: number
-): TmapMarker[] {
-    if (!Array.isArray(legs) || !legs.length || mapZoom < TRANSIT_RIDE_DOT_MIN_ZOOM) return [];
-
-    const spacingMeters = mapZoom >= 17.5 ? 10 : mapZoom >= 16 ? 14 : mapZoom >= 14.5 ? 20 : mapZoom >= 13 ? 28 : 42;
-    const dotSize = mapZoom >= 16.5 ? 14 : mapZoom >= 14.5 ? 13 : 12;
-    const markers: TmapMarker[] = [];
-    let index = 0;
-
-    legs.forEach((leg, legIndex) => {
-        if (!isRideLegKind(leg.kind)) return;
-        if (!Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) return;
-
-        const color = TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
-        const dots = samplePathCoordsBySpacing(leg.pathCoords, spacingMeters);
-
-        dots.forEach((dot) => {
-            markers.push({
-                id: `transit-ride-dot-${selectedAlternativeId ?? "selected"}-${legIndex}-${index}`,
-                latitude: dot.lat,
-                longitude: dot.lng,
-                tintColor: color,
-                displayType: "dot",
-                dotSize,
-                badgeBorderColor: "rgba(255,255,255,0.95)",
-            });
-            index += 1;
-        });
-    });
-
-    return markers.slice(0, TRANSIT_RIDE_DOT_MAX_COUNT);
-}
-
-function computeHeadingDeg(from: RoutePathCoord, to: RoutePathCoord): number {
-    const dLat = to.lat - from.lat;
-    const dLng = to.lng - from.lng;
-    const rad = Math.atan2(dLng, dLat);
-    return ((rad * 180) / Math.PI + 360) % 360;
-}
-
-function samplePathDirectionPoints(
+function offsetPathLaterally(
     pathCoords: RoutePathCoord[] | undefined,
-    spacingMeters: number
-): Array<{ point: RoutePathCoord; headingDeg: number }> {
-    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return [];
-    const spacing = Math.max(18, spacingMeters);
-    const sampled: Array<{ point: RoutePathCoord; headingDeg: number }> = [];
-    let carry = spacing * 0.7;
-
-    for (let index = 1; index < pathCoords.length; index += 1) {
-        const from = pathCoords[index - 1];
-        const to = pathCoords[index];
-        const segmentMeters = routeCoordDistanceMeters(from, to);
-        if (segmentMeters < 1.2) continue;
-        const headingDeg = computeHeadingDeg(from, to);
-        while (carry <= segmentMeters) {
-            const ratio = carry / segmentMeters;
-            sampled.push({ point: interpolateRouteCoord(from, to, ratio), headingDeg });
-            carry += spacing;
-        }
-        carry -= segmentMeters;
-        if (carry < 0) carry = spacing;
+    offsetMeters: number,
+    edgeBlendFloor = 0
+): RoutePathCoord[] {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2 || Math.abs(offsetMeters) < 0.1) {
+        return Array.isArray(pathCoords) ? pathCoords : [];
     }
 
-    return sampled;
+    const lastIndex = pathCoords.length - 1;
+    const fadeSpan = Math.max(3, Math.min(10, Math.floor(lastIndex * 0.18)));
+
+    return pathCoords.map((point, index) => {
+        const prev = pathCoords[Math.max(0, index - 1)] ?? point;
+        const next = pathCoords[Math.min(lastIndex, index + 1)] ?? point;
+        const dLat = next.lat - prev.lat;
+        const dLng = next.lng - prev.lng;
+        const norm = Math.hypot(dLat, dLng);
+        if (!Number.isFinite(norm) || norm < 1e-9) return point;
+
+        const startBlend = fadeSpan <= 0 ? 1 : Math.min(1, index / fadeSpan);
+        const endBlend = fadeSpan <= 0 ? 1 : Math.min(1, (lastIndex - index) / fadeSpan);
+        const baseBlend = Math.max(0, Math.min(1, startBlend, endBlend));
+        const blend = edgeBlendFloor + ((1 - edgeBlendFloor) * baseBlend);
+        if (blend <= 0) return point;
+
+        return offsetCoordByMeters(
+            point,
+            (-dLng / norm) * offsetMeters * blend,
+            (dLat / norm) * offsetMeters * blend
+        );
+    });
 }
 
-function buildTransitDirectionArrowMarkers(
-    selectedAlternativeId: string | undefined,
+function getAlternativeOffsetMeters(displayIndex: number, mapZoom: number): number {
+    const baseOffset = mapZoom >= 17.2 ? 6 : mapZoom >= 15.3 ? 8 : 10;
+    const rank = Math.floor(displayIndex / 2) + 1;
+    const direction = displayIndex % 2 === 0 ? 1 : -1;
+    return direction * rank * baseOffset;
+}
+
+function resolveRidePathOffsetMeters(
     legs: TransitLegDetail[] | undefined,
-    mapZoom: number,
-    isDark: boolean
-): TmapMarker[] {
-    if (!Array.isArray(legs) || !legs.length || mapZoom < 15.2) return [];
+    legIndex: number
+): number {
+    if (!Array.isArray(legs) || legIndex < 0 || legIndex >= legs.length) return 0;
+    const leg = legs[legIndex];
+    if (leg.kind !== "BUS" || !Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) return 0;
 
-    const markers: TmapMarker[] = [];
-    legs.forEach((leg, legIndex) => {
-        if (!isRideLegKind(leg.kind)) return;
-        if (!Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) return;
-        let legMeters = 0;
-        for (let pathIndex = 1; pathIndex < leg.pathCoords.length; pathIndex += 1) {
-            legMeters += routeCoordDistanceMeters(leg.pathCoords[pathIndex - 1], leg.pathCoords[pathIndex]);
-        }
-        if (legMeters < 70) return;
+    const boardAnchor = getTransitLegBoardAnchorOnPath(leg) ?? getTransitLegBoardCoord(leg);
+    const boardDisplay = getRideStopDisplayCoord(legs, legIndex, "BOARD");
+    const alightAnchor = getTransitLegAlightAnchorOnPath(leg) ?? getTransitLegAlightCoord(leg);
+    const alightDisplay = getRideStopDisplayCoord(legs, legIndex, "ALIGHT");
+    const pathCoords = leg.pathCoords;
 
-        const spacingMeters = mapZoom >= 18.8
-            ? 34
-            : mapZoom >= 17.8
-                ? 46
-                : mapZoom >= 16.9
-                    ? 58
-                    : 74;
-        const sampled = samplePathDirectionPoints(leg.pathCoords, spacingMeters);
-        const boardCoord = getTransitLegBoardAnchorOnPath(leg) ?? getTransitLegStartCoord(leg);
-        const alightCoord = getTransitLegAlightAnchorOnPath(leg) ?? getTransitLegEndCoord(leg);
-        sampled.forEach((item, markerIndex) => {
-            if (boardCoord && routeCoordDistanceMeters(boardCoord, item.point) < 12) return;
-            if (alightCoord && routeCoordDistanceMeters(alightCoord, item.point) < 12) return;
-            markers.push({
-                id: `transit-direction-${selectedAlternativeId ?? "selected"}-${legIndex}-${markerIndex}`,
-                latitude: item.point.lat,
-                longitude: item.point.lng,
-                tintColor: "rgba(255, 255, 255, 0.98)",
-                caption: `${getTransitLegKindMeta(leg.kind).label} 진행`,
-                displayType: "arrow",
-                badgeBorderColor: isDark ? "rgba(15,23,42,0.46)" : "rgba(51,65,85,0.3)",
-                rotationDeg: item.headingDeg,
-            });
-        });
-    });
+    const resolveSide = (
+        anchor: RoutePathCoord | undefined,
+        reference: RoutePathCoord | undefined,
+        fromIndex: number,
+        toIndex: number
+    ): { side: number; distanceMeters: number } | undefined => {
+        if (!anchor || !reference) return undefined;
+        const from = pathCoords[fromIndex];
+        const to = pathCoords[toIndex];
+        if (!from || !to) return undefined;
+        const dLat = to.lat - from.lat;
+        const dLng = to.lng - from.lng;
+        const norm = Math.hypot(dLat, dLng);
+        if (!Number.isFinite(norm) || norm < 1e-9) return undefined;
+        const refLat = reference.lat - anchor.lat;
+        const refLng = reference.lng - anchor.lng;
+        const cross = (dLat * refLng) - (dLng * refLat);
+        if (!Number.isFinite(cross) || Math.abs(cross) < 1e-12) return undefined;
+        const distanceMeters = routeCoordDistanceMeters(anchor, reference);
+        if (!Number.isFinite(distanceMeters) || distanceMeters < 2) return undefined;
+        return {
+            side: cross >= 0 ? 1 : -1,
+            distanceMeters,
+        };
+    };
 
-    const maxArrowCount = mapZoom >= 18.5 ? 220 : mapZoom >= 17.3 ? 150 : 90;
-    return markers.slice(0, maxArrowCount);
+    const boardSide = resolveSide(boardAnchor, boardDisplay, 0, Math.min(pathCoords.length - 1, 2));
+    const alightSide = resolveSide(
+        alightAnchor,
+        alightDisplay,
+        Math.max(0, pathCoords.length - 3),
+        pathCoords.length - 1
+    );
+    const candidates = [boardSide, alightSide]
+        .filter((value): value is { side: number; distanceMeters: number } => value !== undefined)
+        .sort((left, right) => right.distanceMeters - left.distanceMeters);
+    const preferred = candidates[0];
+    if (!preferred) return 0;
+
+    // 정류장 마커가 차도 밖으로 밀린 만큼 버스 레그도 같은 쪽으로 따라가야
+    // 네이버 지도처럼 차도 중앙이 아니라 가장자리 쪽에 안정적으로 보인다.
+    const offsetMagnitude = Math.max(10, Math.min(14, preferred.distanceMeters * 0.55));
+    return preferred.side * offsetMagnitude;
+}
+
+function getRideLegDisplayPathCoords(
+    legs: TransitLegDetail[] | undefined,
+    legIndex: number
+): RoutePathCoord[] {
+    if (!Array.isArray(legs) || legIndex < 0 || legIndex >= legs.length) return [];
+    const leg = legs[legIndex];
+    const basePath = Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2
+        ? normalizeDisplayPathCoords(leg.pathCoords, leg.kind)
+        : [];
+    if (basePath.length < 2) return [];
+    if (leg.kind !== "BUS") return basePath;
+
+    const offsetMeters = resolveRidePathOffsetMeters(legs, legIndex);
+    return offsetPathLaterally(basePath, offsetMeters, 0.9);
+}
+
+function getRideLegDisplayCoords(
+    legs: TransitLegDetail[] | undefined,
+    legIndex: number
+): TmapLatLng[] {
+    return getRideLegDisplayPathCoords(legs, legIndex)
+        .map((point) => ({ latitude: point.lat, longitude: point.lng }));
 }
 
 function normalizeTransitStopName(name?: string): string | undefined {
@@ -830,18 +1153,40 @@ function buildBusStopMarkers(
 
     legs.forEach((leg, index) => {
         if (leg.kind !== "BUS") return;
+        const hasEarlierRide = legs.slice(0, index).some((item) => isRideLegKind(item.kind));
+        const lineLabel = compactTransitLineLabel(leg.lineName);
 
         const pushStop = (coord: RoutePathCoord | undefined, role: "BOARD" | "ALIGHT", stopName?: string) => {
             if (!coord) return;
             const key = `${coord.lat.toFixed(5)}:${coord.lng.toFixed(5)}`;
             if (seen.has(key)) return;
             seen.add(key);
-            const dotSize = mapZoom >= 15 ? 13 : mapZoom >= 13.5 ? 11 : 9;
+            const dotSize = mapZoom >= 15 ? 11 : mapZoom >= 13.5 ? 9 : 8;
+            const compactStop = compactTransitStopLabel(stopName, 9);
+            const shouldUseBoardBadge = role === "BOARD" && mapZoom >= 15.1 && !hasEarlierRide;
+            if (shouldUseBoardBadge) {
+                const badgeLabel = lineLabel && compactStop
+                    ? `${lineLabel} (${compactStop})`
+                    : lineLabel ?? compactStop ?? "버스 정류장";
+                markers.push({
+                    id: `bus-stop-${role.toLowerCase()}-${selectedAlternativeId ?? "sel"}-${index}`,
+                    latitude: coord.lat,
+                    longitude: coord.lng,
+                    tintColor: "#26A65B",
+                    markerStyle: "bus",
+                    displayType: "badge",
+                    badgeLabel: badgeLabel || "버스 정류장",
+                    badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
+                    badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
+                    caption: stopName ?? "승차 정류장",
+                });
+                return;
+            }
             markers.push({
                 id: `bus-stop-${role.toLowerCase()}-${selectedAlternativeId ?? "sel"}-${index}`,
                 latitude: coord.lat,
                 longitude: coord.lng,
-                tintColor: "#1D72FF",
+                tintColor: role === "BOARD" ? "#26A65B" : "#1D72FF",
                 displayType: "dot",
                 dotSize,
                 caption: stopName ?? (role === "BOARD" ? "승차 정류장" : "하차 정류장"),
@@ -849,8 +1194,16 @@ function buildBusStopMarkers(
             });
         };
 
-        pushStop(getTransitLegBoardCoord(leg), "BOARD", leg.startName);
-        pushStop(getTransitLegAlightCoord(leg), "ALIGHT", leg.endName);
+        pushStop(
+            getRideStopConnectorCoord(legs, index, "BOARD") ?? getRideStopDisplayCoord(legs, index, "BOARD"),
+            "BOARD",
+            leg.startName
+        );
+        pushStop(
+            getRideStopConnectorCoord(legs, index, "ALIGHT") ?? getRideStopDisplayCoord(legs, index, "ALIGHT"),
+            "ALIGHT",
+            leg.endName
+        );
     });
 
     return markers;
@@ -868,19 +1221,21 @@ function buildTransitEventMarkers(
     let rideLegSeen = false;
 
     legs.forEach((leg, index) => {
-        const boardMarkerCoord =
-            getTransitLegBoardCoord(leg) ??
-            getTransitLegStartCoord(leg) ??
-            getTransitLegBoardAnchorOnPath(leg);
-        const alightMarkerCoord =
-            getTransitLegAlightCoord(leg) ??
-            getTransitLegEndCoord(leg) ??
-            getTransitLegAlightAnchorOnPath(leg);
+        const boardMarkerCoord = leg.kind === "BUS"
+            ? getRideStopDisplayCoord(legs, index, "BOARD")
+            : (getTransitLegBoardCoord(leg) ??
+               getTransitLegStartCoord(leg) ??
+               getTransitLegBoardAnchorOnPath(leg));
+        const alightMarkerCoord = leg.kind === "BUS"
+            ? getRideStopDisplayCoord(legs, index, "ALIGHT")
+            : (getTransitLegAlightCoord(leg) ??
+               getTransitLegEndCoord(leg) ??
+               getTransitLegAlightAnchorOnPath(leg));
         const lineLabel = compactTransitLineLabel(leg.lineName);
         const baseOrder = index * 10;
 
         if (isRideLegKind(leg.kind)) {
-            if (boardMarkerCoord) {
+            if (leg.kind !== "BUS" && boardMarkerCoord) {
                 drafts.push({
                     coord: boardMarkerCoord,
                     intent: "BOARD",
@@ -941,11 +1296,13 @@ function buildTransitEventMarkers(
         let badgeGlyph = "도";
         let tintColor = TRANSIT_LEG_COLOR.WALK;
         let caption = "도보 구간";
+        let markerStyle: TmapMarker["markerStyle"] = "default";
 
         if (intents.has("TRANSFER")) {
-            badgeLabel = "환승";
+            badgeLabel = compactTransitStopLabel(group.find((item) => item.intent === "TRANSFER")?.stopName, 11) ?? "환승";
             badgeGlyph = "환";
             tintColor = TRANSIT_TRANSFER_COLOR;
+            markerStyle = "transfer";
             const transferLine = group.find((item) => item.intent === "TRANSFER")?.lineLabel;
             caption = transferLine ? `${transferLine} 환승` : "환승 지점";
         } else if (intents.has("BOARD")) {
@@ -954,10 +1311,13 @@ function buildTransitEventMarkers(
             const normalizedLine = board.lineLabel
                 ?.replace(/^(승차|하차|환승|승|하|환)\s*/i, "")
                 .trim();
-            badgeLabel = normalizedLine ?? kindMeta.label;
+            badgeLabel = board.kind === "SUBWAY"
+                ? (compactTransitStopLabel(board.stopName, 11) ?? normalizedLine ?? kindMeta.label)
+                : (normalizedLine ?? kindMeta.label);
             badgeGlyph = "승";
-            tintColor = TRANSIT_LEG_COLOR[board.kind] ?? kindMeta.color;
+            tintColor = getTransitLegVisualColor(board);
             if (board.kind === "BUS") badgeGlyph = "버";
+            if (board.kind === "SUBWAY") markerStyle = "subway";
             caption = board.stopName ? `${board.stopName} 승차` : `${kindMeta.label} 승차 지점`;
         } else if (intents.has("ALIGHT")) {
             const alight = group.find((item) => item.intent === "ALIGHT") ?? base;
@@ -965,9 +1325,12 @@ function buildTransitEventMarkers(
             const normalizedLine = alight.lineLabel
                 ?.replace(/^(승차|하차|환승|승|하|환)\s*/i, "")
                 .trim();
-            badgeLabel = normalizedLine ?? kindMeta.label;
+            badgeLabel = alight.kind === "SUBWAY"
+                ? (compactTransitStopLabel(alight.stopName, 11) ?? normalizedLine ?? kindMeta.label)
+                : (normalizedLine ?? kindMeta.label);
             badgeGlyph = "하";
-            tintColor = TRANSIT_LEG_COLOR[alight.kind] ?? kindMeta.color;
+            tintColor = getTransitLegVisualColor(alight);
+            if (alight.kind === "SUBWAY") markerStyle = "subway";
             caption = alight.stopName ? `${alight.stopName} 하차` : `${kindMeta.label} 하차 지점`;
         }
 
@@ -976,6 +1339,7 @@ function buildTransitEventMarkers(
             latitude: base.coord.lat,
             longitude: base.coord.lng,
             tintColor,
+            markerStyle,
             caption,
             displayType: "badge",
             badgeLabel,
@@ -995,9 +1359,8 @@ function buildTransitLegLabelMarkers(
     if (!Array.isArray(legs) || !legs.length || mapZoom < 15.6) return [];
 
     const markers: TmapMarker[] = [];
-    let walkLabelUsed = false;
     legs.forEach((leg, legIndex) => {
-        if (leg.kind === "ETC") return;
+        if (leg.kind === "ETC" || leg.kind === "WALK" || leg.kind === "BUS") return;
         const coord = getTransitLegMidCoord(leg);
         if (!coord) return;
 
@@ -1005,21 +1368,13 @@ function buildTransitLegLabelMarkers(
         const compactLine = compactTransitLineLabel(leg.lineName);
         let badgeLabel = compactLine ?? meta.label;
         let badgeGlyph = meta.short;
-        if (leg.kind === "WALK") {
-            const walkDistance = typeof leg.distanceMeters === "number" ? leg.distanceMeters : 0;
-            const walkMinutes = typeof leg.durationMinutes === "number" ? leg.durationMinutes : 0;
-            if (walkDistance < 90 && walkMinutes < 2) return;
-            if (walkLabelUsed) return;
-            walkLabelUsed = true;
-            badgeLabel = "도보 따라가기";
-            badgeGlyph = "도";
-        }
 
         markers.push({
             id: `transit-leg-label-${selectedAlternativeId ?? "selected"}-${legIndex}`,
             latitude: coord.lat,
             longitude: coord.lng,
-            tintColor: TRANSIT_LEG_COLOR[leg.kind] ?? meta.color,
+            tintColor: getTransitLegVisualColor(leg),
+            markerStyle: leg.kind === "SUBWAY" ? "subway" : "default",
             caption: `${meta.label} 구간`,
             displayType: "badge",
             badgeLabel,
@@ -1030,6 +1385,50 @@ function buildTransitLegLabelMarkers(
     });
 
     return markers.slice(0, mapZoom >= 16.25 ? 6 : 4);
+}
+
+function buildSelectedRouteDirectionMarkers(
+    selectedAlternative: RouteAlternativeOption | undefined,
+    travelMode: TravelMode,
+    mapZoom: number
+): TmapMarker[] {
+    if (!selectedAlternative) return [];
+    if (travelMode === "TRANSIT") {
+        if (mapZoom < 13.9 || !Array.isArray(selectedAlternative.transitLegs)) return [];
+        return selectedAlternative.transitLegs.flatMap((leg, index) => {
+            if (leg.kind !== "BUS" && leg.kind !== "SUBWAY") return [];
+            const displayPath = leg.kind === "BUS"
+                ? getRideLegDisplayPathCoords(selectedAlternative.transitLegs, index)
+                : normalizeDisplayPathCoords(
+                    Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2 ? leg.pathCoords : undefined,
+                    leg.kind
+                );
+            const spacingMeters = leg.kind === "SUBWAY"
+                ? (mapZoom >= 17 ? 64 : mapZoom >= 15.5 ? 86 : 110)
+                : (mapZoom >= 17 ? 48 : mapZoom >= 15.5 ? 68 : 88);
+            return buildDirectionalMarkersForPath(
+                `${selectedAlternative.id}-${leg.kind.toLowerCase()}-${index}`,
+                displayPath,
+                getTransitLegVisualColor(leg),
+                spacingMeters,
+                18,
+                leg.kind === "SUBWAY" ? 14 : 10
+            );
+        });
+    }
+
+    if (travelMode !== "CAR" || mapZoom < 12.8) return [];
+    const displayPath = Array.isArray(selectedAlternative.pathCoords) && selectedAlternative.pathCoords.length >= 2
+        ? normalizeDisplayPathCoords(selectedAlternative.pathCoords, undefined)
+        : [];
+    return buildDirectionalMarkersForPath(
+        `${selectedAlternative.id}-car`,
+        displayPath,
+        SELECTED_ROUTE_COLOR,
+        mapZoom >= 16.5 ? 72 : mapZoom >= 14.5 ? 96 : 124,
+        24,
+        18
+    );
 }
 
 function formatTransitDepartureNow(date = new Date()): string {
@@ -1047,9 +1446,42 @@ export default function RoutePlannerScreen() {
     const overlayBoxBg = isDark ? "rgba(8, 12, 20, 0.78)" : "rgba(255, 255, 255, 0.9)";
     const overlayPanelBg = isDark ? "rgba(7, 11, 18, 0.9)" : "rgba(248, 250, 255, 0.92)";
     const overlayCardBg = isDark ? "rgba(18, 24, 34, 0.9)" : "rgba(255, 255, 255, 0.95)";
-    const params = useLocalSearchParams<{ sessionId?: string }>();
+    const params = useLocalSearchParams<{
+        sessionId?: string;
+        routeIndex?: string;
+        travelMode?: string;
+        focusTarget?: string;
+        focusZoom?: string;
+        sheetState?: string;
+        originName?: string;
+        originAddress?: string;
+        originLat?: string;
+        originLng?: string;
+        destinationName?: string;
+        destinationAddress?: string;
+        destinationLat?: string;
+        destinationLng?: string;
+    }>();
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
-    const initial = sessionId ? getRoutePlannerInitial(sessionId) : undefined;
+    const sessionInitial = sessionId ? getRoutePlannerInitial(sessionId) : undefined;
+    const paramOrigin = useMemo(() => parseRouteParamPlace(params, "origin"), [params]);
+    const paramDestination = useMemo(() => parseRouteParamPlace(params, "destination"), [params]);
+    const paramTravelMode = useMemo(() => parseTravelModeParam(params.travelMode), [params.travelMode]);
+    const initial = useMemo(() => (
+        sessionInitial ?? (
+            paramOrigin || paramDestination || paramTravelMode
+                ? {
+                    origin: paramOrigin,
+                    destination: paramDestination,
+                    travelMode: paramTravelMode ?? "CAR",
+                }
+                : undefined
+        )
+    ), [sessionInitial, paramOrigin, paramDestination, paramTravelMode]);
+    const forcedFocusTarget = useMemo(() => parseFocusTargetParam(params.focusTarget), [params.focusTarget]);
+    const forcedFocusZoom = useMemo(() => parseFocusZoomParam(params.focusZoom), [params.focusZoom]);
+    const forcedSheetState = useMemo(() => parseSheetStateParam(params.sheetState), [params.sheetState]);
+    const forcedRouteIndex = useMemo(() => parseIntegerParam(params.routeIndex), [params.routeIndex]);
 
     const [originName, setOriginName] = useState(initial?.origin?.name ?? "");
     const [destinationName, setDestinationName] = useState(initial?.destination?.name ?? "");
@@ -1059,10 +1491,12 @@ export default function RoutePlannerScreen() {
     const [originLng, setOriginLng] = useState<number | undefined>(initial?.origin?.lng);
     const [destinationLat, setDestinationLat] = useState<number | undefined>(initial?.destination?.lat);
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
-    const [travelMode, setTravelMode] = useState<TravelMode>("CAR");
+    const [travelMode, setTravelMode] = useState<TravelMode>(initial?.travelMode ?? "CAR");
     const [activeTarget, setActiveTarget] = useState<RoutePointTarget | null>(() => {
         const hasInitialOrigin = typeof initial?.origin?.lat === "number" && typeof initial?.origin?.lng === "number";
         const hasInitialDestination = typeof initial?.destination?.lat === "number" && typeof initial?.destination?.lng === "number";
+        if (forcedFocusTarget === "origin" && hasInitialOrigin) return "origin";
+        if (forcedFocusTarget === "destination" && hasInitialDestination) return "destination";
         if (hasInitialOrigin && hasInitialDestination) return null;
         return hasInitialOrigin ? "destination" : "origin";
     });
@@ -1101,6 +1535,7 @@ export default function RoutePlannerScreen() {
     const initializedOriginRef = useRef(false);
     const prevHasRouteReadyRef = useRef(false);
     const lastCameraActionKeyRef = useRef("");
+    const lastAppliedInitialKeyRef = useRef("");
     const transitConnectorCacheRef = useRef<Map<string, RoutePathCoord[]>>(new Map());
 
     const mapRef = useRef<TmapMapViewHandle | null>(null);
@@ -1165,6 +1600,16 @@ export default function RoutePlannerScreen() {
         hasRouteReady &&
         transitLegendKinds.length > 0 &&
         mapZoom < TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
+    const initialSyncKey = useMemo(() => JSON.stringify({
+        sessionId,
+        origin: initial?.origin ?? null,
+        destination: initial?.destination ?? null,
+        travelMode: initial?.travelMode ?? "CAR",
+        focusTarget: forcedFocusTarget ?? null,
+        focusZoom: forcedFocusZoom ?? null,
+        sheetState: forcedSheetState ?? null,
+        routeIndex: typeof forcedRouteIndex === "number" ? forcedRouteIndex : null,
+    }), [sessionId, initial, forcedFocusTarget, forcedFocusZoom, forcedSheetState, forcedRouteIndex]);
     const visibleAlternatives = useMemo(() => {
         if (!isTransitMode || transitRouteFilter === "ALL") return routeAlternatives;
         return routeAlternatives.filter((option) => getTransitRouteCategory(option) === transitRouteFilter);
@@ -1277,13 +1722,63 @@ export default function RoutePlannerScreen() {
     }, [travelMode, transitRouteFilter]);
 
     useEffect(() => {
+        if (!initialSyncKey || lastAppliedInitialKeyRef.current === initialSyncKey) return;
+        lastAppliedInitialKeyRef.current = initialSyncKey;
+
+        setOriginName(initial?.origin?.name ?? "");
+        setDestinationName(initial?.destination?.name ?? "");
+        setOriginAddress(initial?.origin?.address ?? "");
+        setDestinationAddress(initial?.destination?.address ?? "");
+        setOriginLat(initial?.origin?.lat);
+        setOriginLng(initial?.origin?.lng);
+        setDestinationLat(initial?.destination?.lat);
+        setDestinationLng(initial?.destination?.lng);
+        setTravelMode(initial?.travelMode ?? "CAR");
+        setTransitRouteFilter("ALL");
+        setSelectedAlternativeId(undefined);
+        selectedAlternativeIdRef.current = undefined;
+        lastCameraActionKeyRef.current = "";
+        const hasInitialOrigin = typeof initial?.origin?.lat === "number" && typeof initial?.origin?.lng === "number";
+        const hasInitialDestination = typeof initial?.destination?.lat === "number" && typeof initial?.destination?.lng === "number";
+        if (forcedFocusTarget === "origin" && hasInitialOrigin) {
+            setActiveTarget("origin");
+        } else if (forcedFocusTarget === "destination" && hasInitialDestination) {
+            setActiveTarget("destination");
+        } else if (hasInitialOrigin && hasInitialDestination) {
+            setActiveTarget(null);
+        } else {
+            setActiveTarget(hasInitialOrigin ? "destination" : "origin");
+        }
+        setIsRoutePointEditMode(!(hasInitialOrigin && hasInitialDestination));
+        if (forcedSheetState === "hidden") {
+            setIsBottomSheetHidden(true);
+            setIsBottomSheetCollapsed(true);
+        } else if (forcedSheetState === "collapsed") {
+            setIsBottomSheetHidden(false);
+            setIsBottomSheetCollapsed(true);
+        } else if (forcedSheetState === "expanded") {
+            setIsBottomSheetHidden(false);
+            setIsBottomSheetCollapsed(false);
+        }
+    }, [initial, initialSyncKey, forcedFocusTarget, forcedSheetState]);
+
+    useEffect(() => {
         if (!visibleAlternatives.length) return;
+        if (typeof forcedRouteIndex === "number") {
+            const boundedIndex = Math.min(Math.max(forcedRouteIndex, 0), visibleAlternatives.length - 1);
+            const forced = visibleAlternatives[boundedIndex];
+            if (forced && forced.id !== selectedAlternativeId) {
+                setSelectedAlternativeId(forced.id);
+                selectedAlternativeIdRef.current = forced.id;
+            }
+            return;
+        }
         const hasSelectedVisible = visibleAlternatives.some((item) => item.id === selectedAlternativeId);
         if (hasSelectedVisible) return;
         const fallback = visibleAlternatives[0];
         setSelectedAlternativeId(fallback.id);
         selectedAlternativeIdRef.current = fallback.id;
-    }, [visibleAlternatives, selectedAlternativeId]);
+    }, [visibleAlternatives, selectedAlternativeId, forcedRouteIndex]);
 
     useEffect(() => {
         if (!hasRouteReady && !isRoutePointEditMode) {
@@ -1315,6 +1810,7 @@ export default function RoutePlannerScreen() {
 
     useEffect(() => {
         if (!isMapInitialized || !hasBottomSheetMeasured) return;
+        if (forcedSheetState) return;
         const prevHasRouteReady = prevHasRouteReadyRef.current;
         prevHasRouteReadyRef.current = hasRouteReady;
 
@@ -1335,7 +1831,7 @@ export default function RoutePlannerScreen() {
         if (!prevHasRouteReady) {
             setIsBottomSheetCollapsed(false);
         }
-    }, [isMapInitialized, hasBottomSheetMeasured, isBottomSheetHidden, hasRouteReady]);
+    }, [forcedSheetState, isMapInitialized, hasBottomSheetMeasured, isBottomSheetHidden, hasRouteReady]);
 
     // 경로 대안 계산
     useEffect(() => {
@@ -1498,15 +1994,21 @@ export default function RoutePlannerScreen() {
         const firstLegForBoundary = transitLegs[firstRideLegIndex >= 0 ? firstRideLegIndex : 0];
         const lastLegForBoundary = transitLegs[lastRideLegIndex >= 0 ? lastRideLegIndex : (transitLegs.length - 1)];
         const firstAnchorPoint = (firstRideLegIndex >= 0
-            ? getTransitLegBoardCoord(transitLegs[firstRideLegIndex])
+            ? getRideStopConnectorCoord(transitLegs, firstRideLegIndex, "BOARD")
             : undefined)
+            ?? getRideStopConnectorCoord(transitLegs, firstRideLegIndex >= 0 ? firstRideLegIndex : 0, "BOARD")
             ?? getTransitLegBoardCoord(firstLegForBoundary)
             ?? getTransitLegBoardAnchorOnPath(firstLegForBoundary)
             ?? getTransitLegStartCoord(firstLegForBoundary)
             ?? firstPointFromPath;
         const lastAnchorPoint = (lastRideLegIndex >= 0
-            ? getTransitLegAlightCoord(transitLegs[lastRideLegIndex])
+            ? getRideStopConnectorCoord(transitLegs, lastRideLegIndex, "ALIGHT")
             : undefined)
+            ?? getRideStopConnectorCoord(
+                transitLegs,
+                lastRideLegIndex >= 0 ? lastRideLegIndex : (transitLegs.length - 1),
+                "ALIGHT"
+            )
             ?? getTransitLegAlightCoord(lastLegForBoundary)
             ?? getTransitLegAlightAnchorOnPath(lastLegForBoundary)
             ?? getTransitLegEndCoord(lastLegForBoundary)
@@ -1549,17 +2051,39 @@ export default function RoutePlannerScreen() {
             connectorRequests.push({ id, from, to, snapFrom, snapTo });
         };
 
+        // WALK 레그가 steps[].linestring으로 정밀 경로를 가진 경우 → walkLegRequests에서 직접 처리하므로
+        // 해당 구간에 대한 connector 재조회를 건너뜀 (중복 dot 방지 및 도로 중앙선 라우팅 회피)
+        const walkLegHasPrecisePath = (leg: TransitLegDetail | undefined): boolean =>
+            leg?.kind === "WALK" &&
+            !!leg.pathCoordsIsExact &&
+            Array.isArray(leg.pathCoords) &&
+            (leg.pathCoords.length ?? 0) >= 3;
+
+        const firstWalkLeg = transitLegs[0]?.kind === "WALK" ? transitLegs[0] : undefined;
+        const lastWalkLeg = transitLegs[transitLegs.length - 1]?.kind === "WALK"
+            ? transitLegs[transitLegs.length - 1]
+            : undefined;
+
         // 출발/도착은 고정하고, 승/하차측 끝점은 보행 API가 반환한 실제 보행 가능점(보도측)을 우선한다.
-        pushConnectorRequest(`${selectedAlternative.id}-walk-boundary-start`, originPoint, firstAnchorPoint, true, false);
-        pushConnectorRequest(`${selectedAlternative.id}-walk-boundary-end`, lastAnchorPoint, destinationPoint, false, true);
+        // 첫/마지막 WALK 레그에 정밀 경로가 있으면 해당 connector는 walkLegRequests가 담당
+        if (!walkLegHasPrecisePath(firstWalkLeg)) {
+            pushConnectorRequest(`${selectedAlternative.id}-walk-boundary-start`, originPoint, firstAnchorPoint, true, false);
+        }
+        if (!walkLegHasPrecisePath(lastWalkLeg)) {
+            pushConnectorRequest(`${selectedAlternative.id}-walk-boundary-end`, lastAnchorPoint, destinationPoint, false, true);
+        }
 
         for (let legIndex = 0; legIndex < transitLegs.length - 1; legIndex += 1) {
             const currentLeg = transitLegs[legIndex];
             const nextLeg = transitLegs[legIndex + 1];
-            const currentAnchor = getTransitLegAlightCoord(currentLeg)
+            // 현재/다음 레그 중 하나가 WALK이고 정밀 경로를 가진다면 walkLegRequests가 처리
+            if (walkLegHasPrecisePath(currentLeg) || walkLegHasPrecisePath(nextLeg)) continue;
+            const currentAnchor = getRideStopConnectorCoord(transitLegs, legIndex, "ALIGHT")
+                ?? getTransitLegAlightCoord(currentLeg)
                 ?? getTransitLegAlightAnchorOnPath(currentLeg)
                 ?? getTransitLegEndCoord(currentLeg);
-            const nextAnchor = getTransitLegBoardCoord(nextLeg)
+            const nextAnchor = getRideStopConnectorCoord(transitLegs, legIndex + 1, "BOARD")
+                ?? getTransitLegBoardCoord(nextLeg)
                 ?? getTransitLegBoardAnchorOnPath(nextLeg)
                 ?? getTransitLegStartCoord(nextLeg);
             pushConnectorRequest(`${selectedAlternative.id}-walk-gap-${legIndex}`, currentAnchor, nextAnchor, false, false);
@@ -1587,14 +2111,16 @@ export default function RoutePlannerScreen() {
                     }
                 }
                 const from = (prevRideIndex >= 0
-                    ? getTransitLegAlightCoord(transitLegs[prevRideIndex])
+                    ? getRideStopConnectorCoord(transitLegs, prevRideIndex, "ALIGHT")
                     : undefined)
+                    ?? (prevRideIndex >= 0 ? getTransitLegAlightCoord(transitLegs[prevRideIndex]) : undefined)
                     ?? getTransitLegBoardCoord(leg)
                     ?? getTransitLegBoardAnchorOnPath(leg)
                     ?? getTransitLegStartCoord(leg);
                 const to = (nextRideIndex >= 0
-                    ? getTransitLegBoardCoord(transitLegs[nextRideIndex])
+                    ? getRideStopConnectorCoord(transitLegs, nextRideIndex, "BOARD")
                     : undefined)
+                    ?? (nextRideIndex >= 0 ? getTransitLegBoardCoord(transitLegs[nextRideIndex]) : undefined)
                     ?? getTransitLegAlightCoord(leg)
                     ?? getTransitLegAlightAnchorOnPath(leg)
                     ?? getTransitLegEndCoord(leg);
@@ -1701,13 +2227,28 @@ export default function RoutePlannerScreen() {
             const walkDetailOverlays: TmapPathOverlay[] = [];
 
             for (const request of connectorRequests) {
-                const connectorPath = await fetchConnectorPath(
+                const rawConnectorPath = await fetchConnectorPath(
                     request.from,
                     request.to,
                     request.snapFrom,
                     request.snapTo
                 );
-                if (connectorPath && !cancelled) {
+                if (rawConnectorPath && !cancelled) {
+                    // WALK→BUS/SUBWAY: 경로 끝이 버스/지하철 도로 위로 진입하는 구간 제거
+                    // snapTo=false → 버스/지하철 승차지점(도로 중앙)이 목적지
+                    let connectorPath: RoutePathCoord[] = rawConnectorPath;
+                    if (!request.snapTo) {
+                        // 승차 지점에 인접한 버스/지하철 레그 경로 좌표 취득 (도로 중앙선)
+                        const adjacentRideLeg = transitLegs.find((leg) => {
+                            if (!isRideLegKind(leg.kind)) return false;
+                            const boardCoord = getTransitLegBoardCoord(leg);
+                            return boardCoord && distanceMeters(boardCoord, request.to) < 40;
+                        });
+                        const ridePath = Array.isArray(adjacentRideLeg?.pathCoords)
+                            ? (adjacentRideLeg!.pathCoords as RoutePathCoord[]).slice(0, 25)
+                            : [];
+                        connectorPath = trimWalkApproachTail(rawConnectorPath, request.to, ridePath) ?? rawConnectorPath;
+                    }
                     const displayCoords = toDisplayOverlayCoords(connectorPath, "WALK");
                     if (displayCoords.length < 2) continue;
                     overlays.push({
@@ -1722,12 +2263,32 @@ export default function RoutePlannerScreen() {
             }
 
             for (const request of walkLegRequests) {
-                const walkPath = await fetchConnectorPath(
+                if (cancelled) break;
+                // 대중교통 API steps linestring은 도로 인도를 따라가는 경우가 많아
+                // 보행자 전용 API(fetchConnectorPath)를 사용해 이면도로 우선 경로를 구한다
+                const rawWalkPath = await fetchConnectorPath(
                     request.from,
                     request.to,
                     request.snapFrom,
                     request.snapTo
                 );
+                // WALK→BUS/SUBWAY: 경로 끝이 버스/지하철 도로 위로 진입하는 구간 제거
+                // request.snapTo=false → 버스/지하철 승차지점(도로 중앙)이 목적지
+                let walkPath = rawWalkPath;
+                if (rawWalkPath && !request.snapTo) {
+                    const legIdxMatch = request.id.match(/-walk-leg-(\d+)$/);
+                    const legIdx = legIdxMatch ? parseInt(legIdxMatch[1], 10) : -1;
+                    const adjacentRideLeg = transitLegs.find((leg, i) => {
+                        if (!isRideLegKind(leg.kind)) return false;
+                        if (legIdx >= 0 && i <= legIdx) return false;
+                        const boardCoord = getTransitLegBoardCoord(leg);
+                        return boardCoord && distanceMeters(boardCoord, request.to) < 40;
+                    });
+                    const ridePath = Array.isArray(adjacentRideLeg?.pathCoords)
+                        ? (adjacentRideLeg!.pathCoords as RoutePathCoord[]).slice(0, 25)
+                        : [];
+                    walkPath = trimWalkApproachTail(rawWalkPath, request.to, ridePath) ?? rawWalkPath;
+                }
                 if (walkPath && !cancelled) {
                     const displayCoords = toDisplayOverlayCoords(walkPath, "WALK");
                     if (displayCoords.length < 2) continue;
@@ -1802,7 +2363,7 @@ export default function RoutePlannerScreen() {
         if (!hasRouteReady) return [];
 
         const allowStraightFallback = travelMode !== "TRANSIT";
-        const fallbackCoords = (
+        const fallbackPathCoords = (
             allowStraightFallback &&
             typeof originLat === "number" &&
             typeof originLng === "number" &&
@@ -1814,14 +2375,28 @@ export default function RoutePlannerScreen() {
                 { latitude: destinationLat, longitude: destinationLng },
             ]
             : [];
+        const fallbackRoutePath = fallbackPathCoords.map((point) => ({ lat: point.latitude, lng: point.longitude }));
 
         const selectedRoute = routeAlternatives.find((option) => option.id === selectedAlternativeId);
-        const inactiveOverlays = routeAlternatives
-            .map((option) => {
-                if (option.id === selectedAlternativeId) return null;
-                const coords = Array.isArray(option.pathCoords) && option.pathCoords.length >= 2
-                    ? toDisplayOverlayCoords(option.pathCoords, option.mode === "WALK" ? "WALK" : undefined)
-                    : fallbackCoords;
+        const shouldShowInactiveMapAlternatives = mapZoom < 16.8;
+        const inactiveOptions = shouldShowInactiveMapAlternatives
+            ? routeAlternatives
+                .filter((option) => option.id !== selectedAlternativeId)
+                .slice(0, INACTIVE_MAP_ALTERNATIVE_LIMIT)
+            : [];
+        const inactiveOverlays = inactiveOptions
+            .map((option, displayIndex) => {
+                const sourcePath = Array.isArray(option.pathCoords) && option.pathCoords.length >= 2
+                    ? normalizeDisplayPathCoords(option.pathCoords, option.mode === "WALK" ? "WALK" : undefined)
+                    : fallbackRoutePath;
+                const offsetPath = offsetPathLaterally(
+                    sourcePath,
+                    getAlternativeOffsetMeters(displayIndex, mapZoom)
+                );
+                const coords = offsetPath.map((point) => ({
+                    latitude: point.lat,
+                    longitude: point.lng,
+                }));
 
                 if (coords.length < 2) return null;
 
@@ -1850,7 +2425,9 @@ export default function RoutePlannerScreen() {
                 .flatMap((leg, index) => {
                     const walkOverlayId = `${selectedRoute.id}-walk-leg-${index}`;
                     const walkDetailCoords = walkOverlayById.get(walkOverlayId);
-                    const legCoords = (leg.kind === "WALK" && Array.isArray(walkDetailCoords) && walkDetailCoords.length >= 2)
+                    const legCoords = leg.kind === "BUS"
+                        ? getRideLegDisplayCoords(selectedRoute.transitLegs, index)
+                        : (leg.kind === "WALK" && Array.isArray(walkDetailCoords) && walkDetailCoords.length >= 2)
                         ? toDisplayOverlayCoords(
                             walkDetailCoords.map((point) => ({ lat: point.latitude, lng: point.longitude })),
                             "WALK"
@@ -1863,19 +2440,39 @@ export default function RoutePlannerScreen() {
                     const isWalkLeg = leg.kind === "WALK";
 
                     if (isWalkLeg) {
-                        // 도보 구간은 dot 마커로 표시 (polyline 없음)
+                        // 도보 구간은 별도 walk overlay로 정리해 표시한다.
                         return [];
                     }
 
                     return [{
                         id: `${selectedRoute.id}-segment-${index}`,
                         coords: legCoords,
-                        color: TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR,
+                        color: getTransitLegVisualColor(leg),
                         width: ROUTE_STYLE.transitRideWidth,
                         outlineColor: isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.96)",
                         outlineWidth: ROUTE_STYLE.transitRideOutlineWidth,
                     } as TmapPathOverlay];
                 })
+            : [];
+        const selectedTransitWalkOverlays = (
+            travelMode === "TRANSIT" &&
+            shouldShowDetailedTransitSegments
+        )
+            ? [...transitConnectorOverlays, ...transitWalkDetailOverlays]
+                .filter((overlay) => (
+                    typeof overlay.id === "string" &&
+                    overlay.id.endsWith("-path") &&
+                    Array.isArray(overlay.coords) &&
+                    overlay.coords.length >= 2
+                ))
+                .map((overlay, index) => ({
+                    id: `selected-walk-${index}-${overlay.id}`,
+                    coords: overlay.coords,
+                    color: isDark ? "rgba(157,167,180,0.88)" : "rgba(120,128,140,0.92)",
+                    width: ROUTE_STYLE.transitWalkWidth,
+                    outlineColor: isDark ? "rgba(15,20,35,0.42)" : "rgba(255,255,255,0.9)",
+                    outlineWidth: ROUTE_STYLE.transitWalkOutlineWidth,
+                } as TmapPathOverlay))
             : [];
         const selectedMainOverlay = selectedRoute
             ? (() => {
@@ -1884,7 +2481,7 @@ export default function RoutePlannerScreen() {
                         selectedRoute.pathCoords,
                         selectedRoute.mode === "WALK" ? "WALK" : undefined
                     )
-                    : fallbackCoords;
+                    : fallbackPathCoords;
                 if (selectedCoords.length < 2) return null;
                 return {
                     id: `${selectedRoute.id}-selected`,
@@ -1905,16 +2502,14 @@ export default function RoutePlannerScreen() {
             })()
             : null;
 
-        // ride dot 마커가 표시되는 줌 레벨에서는 실선 오버레이 대신 dot 마커만 사용
-        // 세그먼트 오버레이가 있으면 우선 표시 (hasRideDots 보다 우선)
-        if (selectedTransitSegmentOverlays.length > 0 || transitConnectorOverlays.length > 0) {
-            return [...inactiveOverlays, ...transitConnectorOverlays, ...selectedTransitSegmentOverlays];
-        }
-
-        // 상세 세그먼트 없을 때 ride dot 표시 구간: 선택 경로선 없이 dot 마커만 사용
-        const hasRideDots = travelMode === "TRANSIT" && mapZoom >= TRANSIT_RIDE_DOT_MIN_ZOOM;
-        if (hasRideDots) {
-            return inactiveOverlays;
+        if (selectedTransitSegmentOverlays.length > 0 || selectedTransitWalkOverlays.length > 0) {
+            const overlays = [...inactiveOverlays, ...selectedTransitWalkOverlays];
+            if (selectedTransitSegmentOverlays.length > 0) {
+                overlays.push(...selectedTransitSegmentOverlays);
+            } else if (selectedMainOverlay) {
+                overlays.push(selectedMainOverlay);
+            }
+            return overlays;
         }
 
         if (!inactiveOverlays.length && !selectedMainOverlay) {
@@ -1954,65 +2549,58 @@ export default function RoutePlannerScreen() {
 
     const mapMarkers = useMemo<TmapMarker[]>(() => {
         const markers: TmapMarker[] = [];
+        const originMarkerCoord = (
+            travelMode === "TRANSIT" &&
+            Array.isArray(selectedAlternative?.transitLegs)
+        )
+            ? getTransitOriginDisplayCoord(
+                selectedAlternative.transitLegs,
+                hasOriginCoords ? { lat: originLat, lng: originLng } : undefined
+            )
+            : (hasOriginCoords ? { lat: originLat, lng: originLng } : undefined);
+        const destinationMarkerCoord = (
+            travelMode === "TRANSIT" &&
+            Array.isArray(selectedAlternative?.transitLegs)
+        )
+            ? getTransitDestinationDisplayCoord(
+                selectedAlternative.transitLegs,
+                hasDestinationCoords ? { lat: destinationLat, lng: destinationLng } : undefined
+            )
+            : (hasDestinationCoords ? { lat: destinationLat, lng: destinationLng } : undefined);
         if (hasOriginCoords) {
             markers.push({
                 id: "origin",
-                latitude: originLat,
-                longitude: originLng,
+                latitude: originMarkerCoord?.lat ?? originLat,
+                longitude: originMarkerCoord?.lng ?? originLng,
                 tintColor: ORIGIN_COLOR,
-                displayType: "badge",
-                badgeLabel: "출발",
-                badgeGlyph: "출",
-                badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
-                badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
+                markerStyle: "origin",
+                displayType: "pin",
+                pinLabel: "출발",
                 caption: "출발",
             });
         }
         if (hasDestinationCoords) {
             markers.push({
                 id: "destination",
-                latitude: destinationLat,
-                longitude: destinationLng,
+                latitude: destinationMarkerCoord?.lat ?? destinationLat,
+                longitude: destinationMarkerCoord?.lng ?? destinationLng,
                 tintColor: DESTINATION_COLOR,
-                displayType: "badge",
-                badgeLabel: "도착",
-                badgeGlyph: "도",
-                badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
-                badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
+                markerStyle: "destination",
+                displayType: "pin",
+                pinLabel: "도착",
                 caption: "도착",
             });
         }
+
+        markers.push(...buildSelectedRouteDirectionMarkers(selectedAlternative, travelMode, mapZoom));
 
         if (
             travelMode === "TRANSIT" &&
             Array.isArray(selectedAlternative?.transitLegs) &&
             selectedAlternative.transitLegs.length > 0
         ) {
-            const showLegLabels = false;
+            const showLegLabels = mapZoom >= 16.8;
             const showEventMarkers = mapZoom >= 14.2;
-            markers.push(
-                ...buildTransitRideGuideDotMarkers(
-                    selectedAlternative.id,
-                    selectedAlternative.transitLegs,
-                    mapZoom
-                )
-            );
-            markers.push(
-                ...buildTransitWalkGuideDotMarkers(
-                    selectedAlternative.id,
-                    selectedAlternative.transitLegs,
-                    [...transitConnectorOverlays, ...transitWalkDetailOverlays],
-                    mapZoom
-                )
-            );
-            markers.push(
-                ...buildTransitDirectionArrowMarkers(
-                    selectedAlternative.id,
-                    selectedAlternative.transitLegs,
-                    mapZoom,
-                    isDark
-                )
-            );
             if (showLegLabels) {
                 markers.push(
                     ...buildTransitLegLabelMarkers(
@@ -2052,8 +2640,6 @@ export default function RoutePlannerScreen() {
         travelMode,
         mapZoom,
         selectedAlternative,
-        transitConnectorOverlays,
-        transitWalkDetailOverlays,
         isDark,
     ]);
 
@@ -2072,6 +2658,78 @@ export default function RoutePlannerScreen() {
 
         const hasOrigin = typeof originLat === "number" && typeof originLng === "number";
         const hasDest = typeof destinationLat === "number" && typeof destinationLng === "number";
+        if (
+            forcedFocusTarget === "startRide" &&
+            travelMode === "TRANSIT" &&
+            Array.isArray(selectedAlternative?.transitLegs) &&
+            selectedAlternative.transitLegs.length > 0
+        ) {
+            const focusCoord = getTransitRouteStartFocusCoord(selectedAlternative.transitLegs);
+            if (focusCoord) {
+                const focusKey = `focus:start-ride:${selectedAlternativeId ?? "none"}:${focusCoord.lat.toFixed(5)}:${focusCoord.lng.toFixed(5)}`;
+                if (lastCameraActionKeyRef.current === focusKey) return;
+                lastCameraActionKeyRef.current = focusKey;
+                const shiftedCenter = offsetCoordByMeters(focusCoord, -70, 0);
+                map.animateCameraTo({
+                    latitude: shiftedCenter.lat,
+                    longitude: shiftedCenter.lng,
+                    zoom: forcedFocusZoom ?? 16.6,
+                    duration: 800,
+                    easing: "Fly",
+                });
+                return;
+            }
+        }
+        if (
+            forcedFocusTarget === "firstSubway" &&
+            travelMode === "TRANSIT" &&
+            Array.isArray(selectedAlternative?.transitLegs) &&
+            selectedAlternative.transitLegs.length > 0
+        ) {
+            const focusCoord = getTransitRouteFirstSubwayFocusCoord(selectedAlternative.transitLegs);
+            if (focusCoord) {
+                const focusKey = `focus:first-subway:${selectedAlternativeId ?? "none"}:${focusCoord.lat.toFixed(5)}:${focusCoord.lng.toFixed(5)}`;
+                if (lastCameraActionKeyRef.current === focusKey) return;
+                lastCameraActionKeyRef.current = focusKey;
+                const shiftedCenter = offsetCoordByMeters(focusCoord, -70, 0);
+                map.animateCameraTo({
+                    latitude: shiftedCenter.lat,
+                    longitude: shiftedCenter.lng,
+                    zoom: forcedFocusZoom ?? 16.6,
+                    duration: 800,
+                    easing: "Fly",
+                });
+                return;
+            }
+        }
+        if (forcedFocusTarget === "origin" && hasOrigin) {
+            const focusKey = `focus:origin-forced:${originLat.toFixed(5)}:${originLng.toFixed(5)}`;
+            if (lastCameraActionKeyRef.current === focusKey) return;
+            lastCameraActionKeyRef.current = focusKey;
+            const shiftedCenter = offsetCoordByMeters({ lat: originLat, lng: originLng }, -70, 0);
+            map.animateCameraTo({
+                latitude: shiftedCenter.lat,
+                longitude: shiftedCenter.lng,
+                zoom: forcedFocusZoom ?? 16.1,
+                duration: 750,
+                easing: "Fly",
+            });
+            return;
+        }
+        if (forcedFocusTarget === "destination" && hasDest) {
+            const focusKey = `focus:destination-forced:${destinationLat.toFixed(5)}:${destinationLng.toFixed(5)}`;
+            if (lastCameraActionKeyRef.current === focusKey) return;
+            lastCameraActionKeyRef.current = focusKey;
+            const shiftedCenter = offsetCoordByMeters({ lat: destinationLat, lng: destinationLng }, -70, 0);
+            map.animateCameraTo({
+                latitude: shiftedCenter.lat,
+                longitude: shiftedCenter.lng,
+                zoom: forcedFocusZoom ?? 16.1,
+                duration: 750,
+                easing: "Fly",
+            });
+            return;
+        }
 
         if (hasOrigin && hasDest) {
             const routePoints = pathOverlayCoords?.length ? pathOverlayCoords : [
@@ -2174,8 +2832,12 @@ export default function RoutePlannerScreen() {
         originLng,
         destinationLat,
         destinationLng,
+        forcedFocusTarget,
+        forcedFocusZoom,
         pathOverlayCoords,
+        selectedAlternative,
         selectedAlternativeId,
+        travelMode,
     ]);
 
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {

@@ -22,6 +22,8 @@ export type TmapMarker = {
     tintColor?: string;
     caption?: string;
     displayType?: "pin" | "badge" | "arrow" | "dot";
+    markerStyle?: "default" | "origin" | "destination" | "bus" | "subway" | "transfer";
+    pinLabel?: string;
     badgeLabel?: string;
     badgeTextColor?: string;
     badgeBorderColor?: string;
@@ -327,10 +329,30 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           .replace(/'/g, "&apos;");
       }
 
-      function markerIcon(color) {
-        var fill = color || "#1D72FF";
-        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 24 24"><path fill="' + fill + '" d="M12 2C7.6 2 4 5.6 4 10c0 5.2 6.1 11 7.4 12.2c.3.3.9.3 1.2 0C13.9 21 20 15.2 20 10c0-4.4-3.6-8-8-8Zm0 11.2c-1.8 0-3.2-1.4-3.2-3.2S10.2 6.8 12 6.8s3.2 1.4 3.2 3.2s-1.4 3.2-3.2 3.2Z"/></svg>';
-        return "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg);
+      function markerIcon(item) {
+        var fill = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
+        var label = item && item.pinLabel ? String(item.pinLabel).trim() : "";
+        if (!label) {
+          var fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 24 24"><path fill="' + fill + '" d="M12 2C7.6 2 4 5.6 4 10c0 5.2 6.1 11 7.4 12.2c.3.3.9.3 1.2 0C13.9 21 20 15.2 20 10c0-4.4-3.6-8-8-8Zm0 11.2c-1.8 0-3.2-1.4-3.2-3.2S10.2 6.8 12 6.8s3.2 1.4 3.2 3.2s-1.4 3.2-3.2 3.2Z"/></svg>';
+          return { uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(fallbackSvg), width: 34, height: 42 };
+        }
+
+        var w = 52;
+        var h = 64;
+        var centerX = Math.round(w / 2);
+        var textSize = label.length >= 3 ? 9.4 : 10.4;
+        var svg = '' +
+          '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+            '<ellipse cx="' + centerX + '" cy="58" rx="8.7" ry="2.9" fill="rgba(15,23,42,0.16)" />' +
+            '<path d="M26 4C35.8 4 43.5 11.6 43.5 21.2c0 8.6-6.2 15.6-12.6 22.4L26 51l-4.9-7.4C14.7 36.8 8.5 29.8 8.5 21.2C8.5 11.6 16.2 4 26 4Z" fill="' + fill + '" stroke="#FFFFFF" stroke-width="2.5" stroke-linejoin="round" />' +
+            '<path d="M16.8 12.4C19 10.1 22.1 8.9 26 8.9c3.7 0 6.8 1 9 3.1" stroke="rgba(255,255,255,0.28)" stroke-width="1.7" stroke-linecap="round" fill="none" />' +
+            '<text x="' + centerX + '" y="24.6" text-anchor="middle" font-size="' + textSize + '" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + escapeXml(label) + '</text>' +
+          '</svg>';
+        return {
+          uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
+          width: w,
+          height: h,
+        };
       }
 
       function buildBadgeConfig(item) {
@@ -338,24 +360,25 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var label = labelRaw.trim();
         if (!label) label = item && item.caption ? String(item.caption) : "구간";
 
+        var style = item && item.markerStyle ? String(item.markerStyle) : "default";
         var accent = item && item.tintColor ? String(item.tintColor) : "#2F80FF";
         var textColor = item && item.badgeTextColor ? String(item.badgeTextColor) : "#1F2937";
-        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(148,163,184,0.62)";
+        var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(148,163,184,0.72)";
         var glyph = item && item.badgeGlyph ? String(item.badgeGlyph) : "";
-        var hasGlyph = glyph.trim().length > 0;
-
+        var hasGlyph = glyph.trim().length > 0 || style === "bus" || style === "subway" || style === "transfer";
         var labelLen = label.length;
-        var width = (hasGlyph ? 30 : 14) + Math.max(12, Math.min(98, Math.round(labelLen * 7.4)));
-        width = Math.max(48, Math.min(132, width));
+        var width = (hasGlyph ? 42 : 18) + Math.max(20, Math.min(150, Math.round(labelLen * 6.8)));
+        width = Math.max(style === "default" ? 60 : 74, Math.min(style === "default" ? 148 : 186, width));
         return {
           width: width,
-          height: 27,
+          height: style === "default" ? 28 : 30,
           label: label,
           accent: accent,
           textColor: textColor,
           borderColor: borderColor,
           glyph: glyph,
           hasGlyph: hasGlyph,
+          style: style,
         };
       }
 
@@ -365,27 +388,56 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var glyph = escapeXml(cfg.glyph);
         var w = cfg.width;
         var bubbleH = cfg.height;
-        var pointerH = 6;
-        var h = bubbleH + pointerH;
+        var specialStyle = cfg.style === "bus" || cfg.style === "subway" || cfg.style === "transfer";
+        var h = specialStyle ? (bubbleH + 18) : (bubbleH + 6);
         var centerY = Math.round(bubbleH / 2);
         var pointerCenterX = Math.round(w / 2);
         var pointerHalfW = 4;
-        var iconCenterX = 13;
+        var iconCenterX = 18;
         var cardFill = "#FFFFFF";
-        var iconCircle = cfg.hasGlyph
-          ? '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="7" fill="' + cfg.accent + '" />'
+        var labelX = cfg.hasGlyph ? 37 : 13;
+        var shadow = specialStyle
+          ? '<ellipse cx="' + pointerCenterX + '" cy="' + (h - 2.7) + '" rx="6.4" ry="2" fill="rgba(15,23,42,0.14)" />'
           : '';
-        var glyphText = cfg.hasGlyph
-          ? '<text x="' + iconCenterX + '" y="' + (centerY + 3) + '" text-anchor="middle" font-size="9" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + glyph + '</text>'
-          : '';
-        var labelText = '<text x="' + (cfg.hasGlyph ? 24 : 11) + '" y="' + (centerY + 4) + '" font-size="11" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
+        var iconMarkup = '';
+        if (cfg.style === "bus") {
+          iconMarkup =
+            '<rect x="7" y="' + (centerY - 9.5) + '" width="22" height="19" rx="6.5" fill="' + cfg.accent + '" />' +
+            '<rect x="11.1" y="' + (centerY - 5.4) + '" width="13.3" height="7.1" rx="1.8" fill="#FFFFFF" />' +
+            '<rect x="12.7" y="' + (centerY - 3.9) + '" width="4" height="2.4" rx="0.7" fill="' + cfg.accent + '" />' +
+            '<rect x="17.7" y="' + (centerY - 3.9) + '" width="4" height="2.4" rx="0.7" fill="' + cfg.accent + '" />' +
+            '<circle cx="14.3" cy="' + (centerY + 3.4) + '" r="1.45" fill="' + cfg.accent + '" />' +
+            '<circle cx="21.5" cy="' + (centerY + 3.4) + '" r="1.45" fill="' + cfg.accent + '" />';
+        } else if (cfg.style === "subway") {
+          iconMarkup =
+            '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="10" fill="' + cfg.accent + '" />' +
+            '<rect x="12.2" y="' + (centerY - 6.3) + '" width="11.4" height="9.8" rx="2.5" fill="#FFFFFF" />' +
+            '<rect x="13.8" y="' + (centerY - 4.4) + '" width="2.7" height="2.3" rx="0.8" fill="' + cfg.accent + '" />' +
+            '<rect x="18.8" y="' + (centerY - 4.4) + '" width="2.7" height="2.3" rx="0.8" fill="' + cfg.accent + '" />' +
+            '<path d="M13.8 ' + (centerY + 5.9) + ' L16.1 ' + (centerY + 3.1) + ' M22.2 ' + (centerY + 5.9) + ' L19.9 ' + (centerY + 3.1) + '" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" />';
+        } else if (cfg.style === "transfer") {
+          iconMarkup =
+            '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="10" fill="' + cfg.accent + '" />' +
+            '<path d="M11.2 ' + (centerY - 1.4) + ' H20.3 L17.8 ' + (centerY - 3.9) + ' M22.8 ' + (centerY + 1.4) + ' H13.7 L16.2 ' + (centerY + 3.9) + '" stroke="#FFFFFF" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" fill="none" />';
+        } else {
+          iconMarkup = cfg.hasGlyph
+            ? '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="8" fill="' + cfg.accent + '" />' +
+              '<text x="' + iconCenterX + '" y="' + (centerY + 3) + '" text-anchor="middle" font-size="9" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + glyph + '</text>'
+            : '';
+        }
+        var labelText = '<text x="' + labelX + '" y="' + (centerY + 4.2) + '" font-size="11.1" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
+        var connectorMarkup = specialStyle
+          ? '<path d="M' + pointerCenterX + ' ' + (bubbleH - 0.8) + ' L' + pointerCenterX + ' ' + (bubbleH + 7.2) + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linecap="round" />' +
+            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 11.8) + '" r="4.2" fill="#FFFFFF" stroke="' + cfg.borderColor + '" stroke-width="1.25" />' +
+            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 11.8) + '" r="1.65" fill="' + cfg.accent + '" />'
+          : '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="13" ry="13" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" />' +
-            '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />' +
-            iconCircle +
-            glyphText +
+            shadow +
+            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="15" ry="15" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.35" />' +
+            iconMarkup +
             labelText +
+            connectorMarkup +
           '</svg>';
         return {
           uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
@@ -399,13 +451,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.92)";
         var rotation = Number(item && item.rotationDeg);
         if (!isFinite(rotation)) rotation = 0;
-        var size = 12;
+        var size = 14;
         var center = Math.round(size / 2);
         var groupTransform = 'rotate(' + rotation + ' ' + center + ' ' + center + ')';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<g transform="' + groupTransform + '">' +
-              '<path d="M2.2 2.2 L9.8 6 L2.2 9.8 L4 6 Z" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="1" stroke-linejoin="round" />' +
+              '<path d="M2.1 2.5 L11.6 7 L2.1 11.5 L4.9 7 Z" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="1.1" stroke-linejoin="round" />' +
             '</g>' +
           '</svg>';
         return {
@@ -585,13 +637,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           var isBadge = displayType === "badge";
           var isArrow = displayType === "arrow";
           var isDot = displayType === "dot";
-          var iconInfo = isBadge
-            ? markerBadgeIcon(item)
-            : isArrow
-              ? markerArrowIcon(item)
-              : isDot
-                ? markerDotIcon(item)
-              : { uri: markerIcon(item.tintColor), width: 34, height: 42 };
+              var iconInfo = isBadge
+                ? markerBadgeIcon(item)
+                : isArrow
+                  ? markerArrowIcon(item)
+                  : isDot
+                    ? markerDotIcon(item)
+                  : markerIcon(item);
 
           var markerOption = {
             position: toLatLng(item),
@@ -603,8 +655,10 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 
           if (window.Tmapv2 && Tmapv2.Point) {
             try {
+              var markerStyle = item && item.markerStyle ? String(item.markerStyle) : "default";
+              var isFloatingBadge = isBadge && (markerStyle === "bus" || markerStyle === "subway" || markerStyle === "transfer");
               markerOption.iconAnchor = isBadge
-                ? new Tmapv2.Point(Math.round(iconInfo.width / 2), iconInfo.height)
+                ? new Tmapv2.Point(Math.round(iconInfo.width / 2), isFloatingBadge ? (iconInfo.height - 6) : iconInfo.height)
                 : isArrow
                   ? new Tmapv2.Point(Math.round(iconInfo.width / 2), Math.round(iconInfo.height / 2))
                   : isDot
