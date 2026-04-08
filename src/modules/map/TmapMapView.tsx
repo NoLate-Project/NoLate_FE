@@ -329,6 +329,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           .replace(/'/g, "&apos;");
       }
 
+      // 출발/도착처럼 "지도 포인트 자체"를 강조할 때 쓰는 핀 렌더러.
       function markerIcon(item) {
         var fill = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var label = item && item.pinLabel ? String(item.pinLabel).trim() : "";
@@ -355,6 +356,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         };
       }
 
+      // 버스/지하철/환승 캡슐 마커는 텍스트 길이에 따라 폭을 먼저 계산해 둔다.
       function buildBadgeConfig(item) {
         var labelRaw = (item && item.badgeLabel) ? String(item.badgeLabel) : "";
         var label = labelRaw.trim();
@@ -382,6 +384,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         };
       }
 
+      // 승차 정류장, 지하철역, 환승 지점을 네이버 지도 느낌의 캡슐 배지로 렌더링한다.
       function markerBadgeIcon(item) {
         var cfg = buildBadgeConfig(item);
         var label = escapeXml(cfg.label);
@@ -486,6 +489,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         };
       }
 
+      // Tmap SDK마다 dark/light mapType 이름이 조금씩 달라서 런타임에 후보를 수집해 둔다.
       function resolveNativeMapTypes() {
         if (nativeDarkMapTypeReady) return;
         nativeDarkMapTypeReady = true;
@@ -560,6 +564,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         }
       }
 
+      // 후보 mapType을 순서대로 시도해 현재 SDK/기기에서 실제로 동작하는 타입을 고른다.
       function trySetMapType(candidates) {
         if (!map || !map.setMapType || !Array.isArray(candidates) || candidates.length === 0) {
           return false;
@@ -577,6 +582,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         return false;
       }
 
+      // 다크모드 적용은 "네이티브 mapType 우선, 실패 시 CSS 필터 fallback" 순서로 처리한다.
       function applyTheme(isDark) {
         isDarkTheme = !!isDark;
         var mapEl = document.getElementById("map");
@@ -629,6 +635,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         markers = {};
       }
 
+      // React 쪽 marker 모델(displayType / markerStyle)을 실제 Tmap Marker/SVG로 변환해 배치한다.
       function renderMarkers(markerItems) {
         if (!map) return;
         clearMarkers();
@@ -687,6 +694,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         pathLayers = [];
       }
 
+      // 모든 안내선은 outline + main stroke 2중 레이어로 그려서 밝은 지도에서도 또렷하게 보이게 한다.
       function renderPath(pathCoords, color, width, outlineColor, outlineWidth) {
         if (!map) return;
         if (!Array.isArray(pathCoords) || pathCoords.length < 2) return;
@@ -734,6 +742,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         return 16;
       }
 
+      // camera 이동은 확대 레벨 포함 단일 지점 포커스용.
       function setCamera(payload) {
         if (!map || !payload) return;
         var lat = Number(payload.latitude);
@@ -746,6 +755,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         emitZoomChanged();
       }
 
+      // region 이동은 경로 전체를 한 화면에 담는 fit 동작용.
       function setRegion(payload) {
         if (!payload) return;
         var lat = Number(payload.latitude);
@@ -762,6 +772,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         });
       }
 
+      // 경로 전체 bounds fit용 보조 함수. SDK의 panToBounds가 실패하면 center/zoom 계산으로 fallback 한다.
       function fitBounds(payload) {
         if (!map || !payload || !Array.isArray(payload.coords) || payload.coords.length < 2) return;
         var bounds = new Tmapv2.LatLngBounds();
@@ -915,6 +926,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         return { latitude: lat, longitude: lng };
       }
 
+      // 지도 탭 좌표를 React Native 쪽으로 다시 올려, 출발/도착 직접 지정 같은 상호작용에 사용한다.
       function bindMapTap() {
         if (!map) return;
         var tapHandler = function (eventObj) {
@@ -946,6 +958,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         } catch (_error) {}
       }
 
+      // 현재 zoom 변화를 React 상태로 다시 보내 route-planner가 안내선/마커 레벨을 바꿀 수 있게 한다.
       function bindMapZoom() {
         if (!map) return;
         var zoomHandler = function () {
@@ -979,6 +992,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         } catch (_error) {}
       }
 
+      // 현재 위치 버튼은 WebView 안에서 직접 geolocation을 호출해 지도 중심만 이동시킨다.
       function goToCurrentLocation() {
         if (!navigator.geolocation || !map) return;
         navigator.geolocation.getCurrentPosition(
@@ -994,6 +1008,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         );
       }
 
+      // 실제 Tmap 인스턴스를 만들고 테마/이벤트/초기 data를 붙이는 지도 초기화 루틴.
       function initMap() {
         if (!window.Tmapv2 || !window.Tmapv2.Map) {
           initRetry += 1;

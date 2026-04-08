@@ -1,6 +1,7 @@
 import { Linking, Platform } from "react-native";
 import { getMapConfig } from "./mapConfig";
 
+// 앱 내부 지도 대신 외부 지도 앱으로 넘길 때 사용하는 입력 형식.
 type OpenMapInput = {
     name?: string;
     lat?: number;
@@ -11,6 +12,8 @@ function encode(value: string): string {
     return encodeURIComponent(value);
 }
 
+// 기본 공급자 설정에 맞춰 외부 지도 앱 deep link를 만든다.
+// 좌표가 있으면 바로 장소/경로 화면으로, 없으면 검색 화면으로 보낸다.
 function buildMapUrl({ name, lat, lng }: OpenMapInput): string | null {
     const { defaultProvider } = getMapConfig();
 
@@ -72,6 +75,7 @@ function buildMapUrl({ name, lat, lng }: OpenMapInput): string | null {
     return `geo:0,0?q=${encode(query)}`;
 }
 
+// 전용 앱 deep link가 실패하면 웹 Google Maps 검색으로 한 번 더 fallback 한다.
 export async function openExternalMap(input: OpenMapInput): Promise<void> {
     const url = buildMapUrl(input);
     if (!url) {

@@ -7,6 +7,8 @@ type Position = {
     coords: Coords;
 };
 
+// 현재 위치는 route-planner / 위치 선택 모달 등에서 공통으로 사용하므로
+// 브라우저 geolocation 접근을 여기서 한 번 감싸서 에러 메시지와 옵션을 통일한다.
 export async function getCurrentLocation(): Promise<Coords> {
     const geolocation = (globalThis as any)?.navigator?.geolocation;
     if (!geolocation || typeof geolocation.getCurrentPosition !== "function") {

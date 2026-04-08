@@ -4,6 +4,7 @@ import { getEnv } from "../../api/env";
 import { estimateTravelMinutesByStraightDistance, TRAVEL_MODE_META } from "../schedule/travelMode";
 import type { Place, TravelMode } from "../schedule/types";
 
+// 지도 검색/역지오코딩/대중교통/길찾기 결과를 앱 공용 형태로 맞추는 핵심 API 래퍼.
 export type PlaceSearchItem = {
     name: string;
     address: string;
@@ -97,6 +98,7 @@ const nominatimClient = axios.create({
     },
 });
 
+// 아래 유틸리티 블록은 외부 응답값을 숫자/좌표/path로 안전하게 정규화하는 역할을 한다.
 function safeNumber(value: unknown): number | undefined {
     const n = typeof value === "string" ? Number(value) : (value as number);
     return Number.isFinite(n) ? n : undefined;
@@ -277,6 +279,8 @@ function normalizeTransitLegDurationToMinutes(
     return asMinutes;
 }
 
+// 대중교통 itinerary 파싱 블록.
+// 공급자별 필드 차이를 흡수해 leg 종류/역 이름/정류장 좌표/path를 앱 기준으로 뽑아낸다.
 function formatDistanceMetersCompact(distanceMeters?: number): string | undefined {
     if (typeof distanceMeters !== "number" || !Number.isFinite(distanceMeters)) return undefined;
     if (distanceMeters >= 1000) return `${(distanceMeters / 1000).toFixed(1)}km`;
@@ -1289,6 +1293,8 @@ function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
     return parsed.sort((a: TransitRouteOption, b: TransitRouteOption) => a.minutes - b.minutes);
 }
 
+// Tmap 원본 API 호출 블록.
+// 실제 네트워크 요청은 여기서만 하고, 화면 쪽은 아래 exported helper만 사용한다.
 async function getTransitRouteViaTmap(origin: Place, destination: Place): Promise<TransitRouteOption[]> {
     const client = tmapClient();
     const response = await client.post(
@@ -1424,6 +1430,8 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
     return dedupeRouteAlternatives(options);
 }
 
+// 주소 검색은 Tmap POI + 주소 지오코딩을 우선 합치고,
+// 키가 없거나 실패한 경우에만 Nominatim으로 fallback 한다.
 export async function searchAddressByKeyword(query: string): Promise<PlaceSearchItem[]> {
     const normalized = query.trim();
     if (!normalized) return [];
@@ -1459,6 +1467,7 @@ export async function searchAddressByKeyword(query: string): Promise<PlaceSearch
     }
 }
 
+// 역지오코딩은 도로명 주소 품질이 더 좋은 Tmap을 우선 사용한다.
 export async function reverseGeocodeToAddress(lat: number, lng: number): Promise<string | undefined> {
     if (hasTmapAppKey()) {
         try {
@@ -1476,6 +1485,8 @@ export async function reverseGeocodeToAddress(lat: number, lng: number): Promise
     }
 }
 
+// 대중교통 전용 옵션 API.
+// UI에서는 상세 leg/path가 필요하므로 단순 ETA가 아니라 TransitRouteOption 전체를 내려준다.
 export async function getTransitRouteOptions(
     origin: Place | undefined,
     destination: Place | undefined
@@ -1526,6 +1537,8 @@ export async function getTransitRouteOptions(
     }];
 }
 
+// 화면에서 쓰는 "대안 경로"의 메인 진입점.
+// 모드별로 Tmap/OSRM/직선 fallback을 조합해 항상 최소한의 선택지를 돌려주도록 구성한다.
 export async function getRouteAlternativeOptions(
     origin: Place | undefined,
     destination: Place | undefined,
@@ -1678,6 +1691,7 @@ export async function getRouteAlternativeOptions(
     return [];
 }
 
+// ETA는 대안 경로 목록 중 가장 빠른 옵션을 골라 단일 요약값만 돌려준다.
 export async function getRouteEta(
     origin: Place | undefined,
     destination: Place | undefined,

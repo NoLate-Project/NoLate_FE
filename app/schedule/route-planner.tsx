@@ -68,8 +68,8 @@ const ROUTE_STYLE = {
     selectedOutlineWidth: 2.2,
     transitRideWidth: 8.5,
     transitRideOutlineWidth: 1.8,
-    transitWalkWidth: 5,
-    transitWalkOutlineWidth: 1.4,
+    transitWalkWidth: 5.8,
+    transitWalkOutlineWidth: 1.75,
     connectorWalkWidth: 4,
 } as const;
 type RoutePointTarget = "origin" | "destination";
@@ -358,6 +358,7 @@ function isRideLegKind(kind: TransitLegDetail["kind"]): boolean {
     return kind === "SUBWAY" || kind === "BUS";
 }
 
+// 지도에 안내선을 그릴 때 leg별 시작/종료/승하차 기준점을 안정적으로 뽑아내는 보조 함수들.
 function getTransitLegStartCoord(leg: TransitLegDetail): RoutePathCoord | undefined {
     if (typeof leg.startCoord?.lat === "number" && typeof leg.startCoord?.lng === "number") {
         return leg.startCoord;
@@ -447,6 +448,8 @@ function offsetCoordByMeters(coord: RoutePathCoord, northMeters: number, eastMet
     };
 }
 
+// 버스 승하차 좌표는 API 원본만 쓰면 차도 중앙선에 붙기 쉬워서,
+// 정류장 마커 / 보행 연결선 / 버스 레그 표시선을 같은 시각 기준으로 보정한다.
 function offsetBusStopCoordFromPath(
     leg: TransitLegDetail,
     baseCoord: RoutePathCoord | undefined,
@@ -588,6 +591,8 @@ function getRideStopDisplayCoord(
     if (!base) return undefined;
     if (!pathAnchorCoord || !stopCoord) return base;
 
+    // Tmap 정류장 좌표가 차도 중앙으로 내려오는 케이스를 줄이기 위해
+    // 정류장 마커는 "노선 path 앵커 → 정류장" 방향으로 한 번 더 차도 바깥으로 민다.
     const dist = routeCoordDistanceMeters(stopCoord, pathAnchorCoord);
     if (dist < 2) {
         // 정류장이 경로 위에 있음 — 경로 수직 방향으로 오프셋
@@ -620,6 +625,8 @@ function getRideStopConnectorCoord(
 
     if (leg.kind !== "BUS") return stopCoord ?? fallbackCoord;
 
+    // 보행 connector는 정류장 마커(displayCoord)보다 한 번 더 보도 쪽 reference에 붙여서,
+    // "출발/도보 선 ↔ 승차 정류장"이 서로 다른 점을 가리키는 느낌을 줄인다.
     const displayCoord = getRideStopDisplayCoord(legs, legIndex, position);
     const walkReferenceCoord = getAdjacentWalkReferenceCoord(legs, legIndex, position);
 
@@ -677,6 +684,8 @@ function trimWalkApproachTail(
 ): RoutePathCoord[] | undefined {
     if (!Array.isArray(rawPath) || rawPath.length < 3 || !stopCoord) return rawPath;
 
+    // 보행 API가 버스/지하철 선형 위로 살짝 들어가는 꼬리를 줄 때가 있어
+    // 승차 직전/하차 직후의 "도로 중앙으로 파고드는" 마지막 몇 미터만 잘라낸다.
     const stopTrimDistanceMeters = ridePath.length > 0 ? 12 : 8;
     const ridePathTrimDistanceMeters = 5.5;
     let trimIdx = rawPath.length;
@@ -738,6 +747,7 @@ function routeCoordHeadingDeg(from: RoutePathCoord, to: RoutePathCoord): number 
     return (Math.atan2(-northMeters, eastMeters) * 180) / Math.PI;
 }
 
+// 네이버 지도처럼 selected path 위에 진행 방향을 보여 주기 위한 화살표 마커 생성.
 function buildDirectionalMarkersForPath(
     idPrefix: string,
     pathCoords: RoutePathCoord[] | undefined,
@@ -936,6 +946,8 @@ function smoothWalkPathForDisplay(pathCoords: RoutePathCoord[] | undefined): Rou
     return filterDensePathCoords(pathCoords, 2.8);
 }
 
+// 지도 오버레이는 leg 원본 path를 그대로 쓰지 않고,
+// 도보/대중교통 종류에 맞게 밀도와 모양을 먼저 정리한 뒤 전달한다.
 function normalizeDisplayPathCoords(pathCoords: RoutePathCoord[] | undefined, kind?: TransitLegDetail["kind"]): RoutePathCoord[] {
     return kind === "WALK"
         ? smoothWalkPathForDisplay(pathCoords)
@@ -1042,8 +1054,8 @@ function resolveRidePathOffsetMeters(
     const preferred = candidates[0];
     if (!preferred) return 0;
 
-    // 정류장 마커가 차도 밖으로 밀린 만큼 버스 레그도 같은 쪽으로 따라가야
-    // 네이버 지도처럼 차도 중앙이 아니라 가장자리 쪽에 안정적으로 보인다.
+    // 정류장 마커만 옆으로 밀고 버스 path는 중앙에 두면 둘이 서로 어긋나 보인다.
+    // 그래서 버스 레그 자체도 같은 쪽으로 옮겨 노선과 정류장이 한 세트처럼 보이게 맞춘다.
     const offsetMagnitude = Math.max(10, Math.min(14, preferred.distanceMeters * 0.55));
     return preferred.side * offsetMagnitude;
 }
@@ -1060,6 +1072,7 @@ function getRideLegDisplayPathCoords(
     if (basePath.length < 2) return [];
     if (leg.kind !== "BUS") return basePath;
 
+    // 버스 레그는 원본 중심선 대신, 정류장 위치 보정 결과와 같은 측면 오프셋을 적용한 표시 path를 쓴다.
     const offsetMeters = resolveRidePathOffsetMeters(legs, legIndex);
     return offsetPathLaterally(basePath, offsetMeters, 0.9);
 }
@@ -1141,6 +1154,7 @@ type TransitEventDraft = {
     order: number;
 };
 
+// 확대 수준에 따라 출발/정류장/환승/지하철 마커를 조합하는 지도 전용 마커 빌더들.
 function buildBusStopMarkers(
     selectedAlternativeId: string | undefined,
     legs: TransitLegDetail[] | undefined,
@@ -1910,6 +1924,8 @@ export default function RoutePlannerScreen() {
         destinationLng,
     ]);
 
+    // 선택된 경로 옵션에서 "지도 전체 polyline"의 기준이 될 경로를 정리한다.
+    // 대중교통은 option.pathCoords가 비어 있을 수 있어 leg path들을 다시 합쳐 fallback으로 쓴다.
     useEffect(() => {
         if (!selectedAlternative) {
             setEtaMinutes(undefined);
@@ -1938,6 +1954,8 @@ export default function RoutePlannerScreen() {
         setRoutePathCoords(routePath);
     }, [selectedAlternative]);
 
+    // 대중교통의 도보 연결선은 "출발/도착 ↔ 승하차점", "환승 ↔ 다음 승차점"을 따로 계산한다.
+    // 이 useEffect는 보행자 전용 API로 connector/walk detail path를 구해 지도 오버레이용 state로 저장한다.
     useEffect(() => {
         if (
             travelMode !== "TRANSIT" ||
@@ -2359,6 +2377,8 @@ export default function RoutePlannerScreen() {
         return undefined;
     }, [routePathCoords, originLat, originLng, destinationLat, destinationLng, travelMode]);
 
+    // 지도에 전달할 실제 polyline 목록.
+    // inactive 대안 경로, 선택된 대중교통 ride/walk 세그먼트, fallback 메인 경로를 한곳에서 조합한다.
     const mapPathOverlays = useMemo((): TmapPathOverlay[] => {
         if (!hasRouteReady) return [];
 
@@ -2468,9 +2488,10 @@ export default function RoutePlannerScreen() {
                 .map((overlay, index) => ({
                     id: `selected-walk-${index}-${overlay.id}`,
                     coords: overlay.coords,
-                    color: isDark ? "rgba(157,167,180,0.88)" : "rgba(120,128,140,0.92)",
+                    // 도보가 "사라진 것처럼" 보이지 않도록 라이트맵 기준 대비를 조금 더 높인다.
+                    color: isDark ? "rgba(170,180,194,0.94)" : "rgba(100,109,123,0.98)",
                     width: ROUTE_STYLE.transitWalkWidth,
-                    outlineColor: isDark ? "rgba(15,20,35,0.42)" : "rgba(255,255,255,0.9)",
+                    outlineColor: isDark ? "rgba(15,20,35,0.5)" : "rgba(255,255,255,0.96)",
                     outlineWidth: ROUTE_STYLE.transitWalkOutlineWidth,
                 } as TmapPathOverlay))
             : [];
@@ -2547,6 +2568,8 @@ export default function RoutePlannerScreen() {
         isDark,
     ]);
 
+    // 지도에 전달할 실제 marker 목록.
+    // 출발/도착 pin, 방향 화살표, 버스 정류장, 환승/승하차 배지까지 최종 단계에서 모은다.
     const mapMarkers = useMemo<TmapMarker[]>(() => {
         const markers: TmapMarker[] = [];
         const originMarkerCoord = (
@@ -2651,7 +2674,8 @@ export default function RoutePlannerScreen() {
         return () => clearInterval(interval);
     }, [travelMode, hasRouteReady]);
 
-    // 카메라 애니메이션 — ref로만 제어, camera prop은 INITIAL_CAMERA 고정
+    // 카메라는 prop으로 계속 넘기지 않고 imperative ref로만 제어한다.
+    // 그래야 경로 재계산/마커 갱신 때 불필요한 카메라 리셋 없이 원하는 포커스만 이동시킬 수 있다.
     useEffect(() => {
         const map = mapRef.current;
         if (!map) return;
