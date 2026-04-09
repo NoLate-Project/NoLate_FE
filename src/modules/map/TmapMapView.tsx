@@ -27,6 +27,7 @@ export type TmapMarker = {
     badgeLabel?: string;
     badgeTextColor?: string;
     badgeBorderColor?: string;
+    badgeConnectorColor?: string;
     badgeGlyph?: string;
     dotSize?: number;
     rotationDeg?: number;
@@ -307,9 +308,10 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       var pendingData = null;
       var initRetry = 0;
       var isDarkTheme = ${darkFlag};
-      var nativeLightMapTypeCandidates = [];
-      var nativeDarkMapTypeCandidates = [];
-      var nativeDarkMapTypeReady = false;
+      var nativeMapTypeCandidates = null;
+      var fallbackTileFilter = "invert(0.89) hue-rotate(182deg) saturate(0.72) brightness(0.84) contrast(1.14)";
+      var fallbackTileFilterObserver = null;
+      var fallbackTileFilterEnabled = false;
 
       function post(type, payload) {
         if (!window.ReactNativeWebView) return;
@@ -366,18 +368,39 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var accent = item && item.tintColor ? String(item.tintColor) : "#2F80FF";
         var textColor = item && item.badgeTextColor ? String(item.badgeTextColor) : "#1F2937";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(148,163,184,0.72)";
+        // badgeConnectorColor가 주어지면 배지 하단의 수직 가이드/링 색을 강제로 맞춘다.
+        // 주지 않으면 기존 동작(버스는 파랑, 그 외는 accent)을 유지한다.
+        var connectorColor = item && item.badgeConnectorColor
+          ? String(item.badgeConnectorColor)
+          // 정류장/역/환승 배지 아래 포인트는 보행 점선과 다른 역할이다.
+          // 기본값을 중립 톤으로 두어 "접근 점선(파랑)"과 "실제 승하차 지점(링)"을 구분한다.
+          : ((style === "bus" || style === "subway" || style === "transfer")
+            ? "rgba(17,24,39,0.78)"
+            : accent);
         var glyph = item && item.badgeGlyph ? String(item.badgeGlyph) : "";
         var hasGlyph = glyph.trim().length > 0 || style === "bus" || style === "subway" || style === "transfer";
         var labelLen = label.length;
-        var width = (hasGlyph ? 42 : 18) + Math.max(20, Math.min(150, Math.round(labelLen * 6.8)));
-        width = Math.max(style === "default" ? 60 : 74, Math.min(style === "default" ? 148 : 186, width));
+        // 버스/지하철 배지는 텍스트 + 아이콘이 함께 들어가므로 기본 폭을 더 크게 잡아
+        // 찌그러져 보이거나 줄임표가 너무 빨리 붙는 문제를 줄인다.
+        var iconBaseWidth = hasGlyph ? 40 : 18;
+        if (style === "bus") iconBaseWidth = 62;
+        if (style === "subway") iconBaseWidth = 56;
+        var width = iconBaseWidth + Math.max(22, Math.min(200, Math.round(labelLen * 7.0)));
+        var minWidth = style === "default"
+          ? 60
+          : (style === "bus" ? 116 : style === "subway" ? 108 : 76);
+        var maxWidth = style === "default"
+          ? 148
+          : (style === "bus" ? 280 : 248);
+        width = Math.max(minWidth, Math.min(maxWidth, width));
         return {
           width: width,
-          height: style === "default" ? 28 : 30,
+          height: style === "default" ? 28 : 34,
           label: label,
           accent: accent,
           textColor: textColor,
           borderColor: borderColor,
+          connectorColor: connectorColor,
           glyph: glyph,
           hasGlyph: hasGlyph,
           style: style,
@@ -392,32 +415,37 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var w = cfg.width;
         var bubbleH = cfg.height;
         var specialStyle = cfg.style === "bus" || cfg.style === "subway" || cfg.style === "transfer";
-        var h = specialStyle ? (bubbleH + 18) : (bubbleH + 6);
+        var h = specialStyle ? (bubbleH + 15) : (bubbleH + 6);
         var centerY = Math.round(bubbleH / 2);
         var pointerCenterX = Math.round(w / 2);
         var pointerHalfW = 4;
-        var iconCenterX = 18;
+        var iconCenterX = 23;
         var cardFill = "#FFFFFF";
-        var labelX = cfg.hasGlyph ? 37 : 13;
+        var connectorColor = cfg.connectorColor || cfg.accent;
+        var labelX = cfg.hasGlyph
+          ? ((cfg.style === "bus" || cfg.style === "subway") ? 50 : 39)
+          : 13;
         var shadow = specialStyle
-          ? '<ellipse cx="' + pointerCenterX + '" cy="' + (h - 2.7) + '" rx="6.4" ry="2" fill="rgba(15,23,42,0.14)" />'
+          ? '<ellipse cx="' + pointerCenterX + '" cy="' + (h - 2.5) + '" rx="5.7" ry="1.8" fill="rgba(15,23,42,0.12)" />'
           : '';
         var iconMarkup = '';
         if (cfg.style === "bus") {
           iconMarkup =
-            '<rect x="7" y="' + (centerY - 9.5) + '" width="22" height="19" rx="6.5" fill="' + cfg.accent + '" />' +
-            '<rect x="11.1" y="' + (centerY - 5.4) + '" width="13.3" height="7.1" rx="1.8" fill="#FFFFFF" />' +
-            '<rect x="12.7" y="' + (centerY - 3.9) + '" width="4" height="2.4" rx="0.7" fill="' + cfg.accent + '" />' +
-            '<rect x="17.7" y="' + (centerY - 3.9) + '" width="4" height="2.4" rx="0.7" fill="' + cfg.accent + '" />' +
-            '<circle cx="14.3" cy="' + (centerY + 3.4) + '" r="1.45" fill="' + cfg.accent + '" />' +
-            '<circle cx="21.5" cy="' + (centerY + 3.4) + '" r="1.45" fill="' + cfg.accent + '" />';
+            '<rect x="' + (iconCenterX - 11.2) + '" y="' + (centerY - 10.3) + '" width="22.4" height="20.6" rx="6.9" fill="' + cfg.accent + '" />' +
+            '<rect x="' + (iconCenterX - 7.6) + '" y="' + (centerY - 5.8) + '" width="15.2" height="7.8" rx="2.0" fill="#FFFFFF" />' +
+            '<rect x="' + (iconCenterX - 5.6) + '" y="' + (centerY - 4.1) + '" width="4.4" height="3.0" rx="0.8" fill="' + cfg.accent + '" opacity="0.94" />' +
+            '<rect x="' + (iconCenterX + 1.2) + '" y="' + (centerY - 4.1) + '" width="4.4" height="3.0" rx="0.8" fill="' + cfg.accent + '" opacity="0.94" />' +
+            '<circle cx="' + (iconCenterX - 4.7) + '" cy="' + (centerY + 5.0) + '" r="1.6" fill="#FFFFFF" opacity="0.9" />' +
+            '<circle cx="' + (iconCenterX + 4.7) + '" cy="' + (centerY + 5.0) + '" r="1.6" fill="#FFFFFF" opacity="0.9" />';
         } else if (cfg.style === "subway") {
           iconMarkup =
-            '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="10" fill="' + cfg.accent + '" />' +
-            '<rect x="12.2" y="' + (centerY - 6.3) + '" width="11.4" height="9.8" rx="2.5" fill="#FFFFFF" />' +
-            '<rect x="13.8" y="' + (centerY - 4.4) + '" width="2.7" height="2.3" rx="0.8" fill="' + cfg.accent + '" />' +
-            '<rect x="18.8" y="' + (centerY - 4.4) + '" width="2.7" height="2.3" rx="0.8" fill="' + cfg.accent + '" />' +
-            '<path d="M13.8 ' + (centerY + 5.9) + ' L16.1 ' + (centerY + 3.1) + ' M22.2 ' + (centerY + 5.9) + ' L19.9 ' + (centerY + 3.1) + '" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" />';
+            '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="11.0" fill="' + cfg.accent + '" />' +
+            '<rect x="' + (iconCenterX - 7.1) + '" y="' + (centerY - 7.2) + '" width="14.2" height="12.8" rx="3.0" fill="#FFFFFF" />' +
+            '<rect x="' + (iconCenterX - 4.9) + '" y="' + (centerY - 5.0) + '" width="3.0" height="2.6" rx="0.8" fill="' + cfg.accent + '" />' +
+            '<rect x="' + (iconCenterX + 1.9) + '" y="' + (centerY - 5.0) + '" width="3.0" height="2.6" rx="0.8" fill="' + cfg.accent + '" />' +
+            '<path d="M' + (iconCenterX - 5.3) + ' ' + (centerY + 2.5) + ' H' + (iconCenterX + 5.3) + '" stroke="' + cfg.accent + '" stroke-width="1.35" stroke-linecap="round" />' +
+            '<path d="M' + (iconCenterX - 4.1) + ' ' + (centerY + 7.0) + ' L' + (iconCenterX - 2.1) + ' ' + (centerY + 4.7) +
+              ' M' + (iconCenterX + 4.1) + ' ' + (centerY + 7.0) + ' L' + (iconCenterX + 2.1) + ' ' + (centerY + 4.7) + '" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" />';
         } else if (cfg.style === "transfer") {
           iconMarkup =
             '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="10" fill="' + cfg.accent + '" />' +
@@ -429,10 +457,14 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             : '';
         }
         var labelText = '<text x="' + labelX + '" y="' + (centerY + 4.2) + '" font-size="11.1" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
+        // specialStyle(bus/subway/transfer)은 말풍선 꼬리 대신 "수직 가이드 + 하단 링"으로 렌더링해
+        // 레퍼런스 지도 UI처럼 배지와 실제 지점의 연결 관계를 명확히 보여 준다.
         var connectorMarkup = specialStyle
-          ? '<path d="M' + pointerCenterX + ' ' + (bubbleH - 0.8) + ' L' + pointerCenterX + ' ' + (bubbleH + 7.2) + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linecap="round" />' +
-            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 11.8) + '" r="4.2" fill="#FFFFFF" stroke="' + cfg.borderColor + '" stroke-width="1.25" />' +
-            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 11.8) + '" r="1.65" fill="' + cfg.accent + '" />'
+          // 레퍼런스에서는 배지 하단 연결부가 짧고, 끝 포인트도 "작은 링 + 진한 점"에 가깝다.
+          // 길고 두꺼운 스템보다 얇고 짧은 스템을 써야 배지와 지도 지점이 자연스럽게 연결된다.
+          ? '<path d="M' + pointerCenterX + ' ' + (bubbleH - 0.6) + ' L' + pointerCenterX + ' ' + (bubbleH + 5.6) + '" stroke="' + connectorColor + '" stroke-width="1.15" stroke-linecap="round" />' +
+            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 9.2) + '" r="3.4" fill="#FFFFFF" stroke="' + connectorColor + '" stroke-width="1.25" />' +
+            '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 9.2) + '" r="1.15" fill="' + connectorColor + '" />'
           : '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
@@ -454,13 +486,21 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.92)";
         var rotation = Number(item && item.rotationDeg);
         if (!isFinite(rotation)) rotation = 0;
-        var size = 14;
+        // 최대 줌에서 화살표가 크면 노선보다 화살표 패턴이 먼저 보여서 UI가 거칠어진다.
+        // 본체를 한 단계 줄여 "방향 보조 힌트"로만 읽히게 하고, 라인 실루엣을 먼저 남긴다.
+        var size = 8;
         var center = Math.round(size / 2);
         var groupTransform = 'rotate(' + rotation + ' ' + center + ' ' + center + ')';
+        var hasVisibleBorder = borderColor && borderColor !== "transparent" && borderColor !== "rgba(0,0,0,0)";
+        var arrowPath = '<path d="M0.9 1.4 L7.1 4 L0.9 6.6 L2.6 4 Z" fill="' + bg + '"' +
+          (hasVisibleBorder
+            ? ' stroke="' + borderColor + '" stroke-width="0.58" stroke-linejoin="round"'
+            : '') +
+          ' />';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<g transform="' + groupTransform + '">' +
-              '<path d="M2.1 2.5 L11.6 7 L2.1 11.5 L4.9 7 Z" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="1.1" stroke-linejoin="round" />' +
+              arrowPath +
             '</g>' +
           '</svg>';
         return {
@@ -474,10 +514,11 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var bg = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.95)";
         var rawSize = Number(item && item.dotSize);
-        var size = isFinite(rawSize) ? Math.max(4, Math.min(16, Math.round(rawSize))) : 8;
+        // 접근 점선은 작고 균일한 점처럼 보여야 해서 허용 범위를 조금 더 낮춘다.
+        var size = isFinite(rawSize) ? Math.max(3, Math.min(14, Math.round(rawSize))) : 8;
         var center = Math.round(size / 2);
-        var borderWidth = borderColor === "transparent" ? 0 : Math.max(1.2, size * 0.22);
-        var radius = Math.max(1.3, center - (borderWidth > 0 ? 1.6 : 1.0));
+        var borderWidth = borderColor === "transparent" ? 0 : Math.max(0.95, size * 0.18);
+        var radius = Math.max(1.1, center - (borderWidth > 0 ? 1.2 : 0.8));
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<circle cx="' + center + '" cy="' + center + '" r="' + radius + '" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="' + borderWidth + '" />' +
@@ -488,101 +529,196 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           height: size,
         };
       }
+      // 다크모드 적용은 \"네이티브 mapType 우선, 실패 시 CSS 필터 fallback\" 순서로 처리한다.
+      // Tmap Web SDK는 dark mapType 이름이 런타임마다 달라 보이지만,
+      // 지원하지 않는 값을 넣어도 setMapType()이 조용히 통과하는 경우가 있다.
+      // 기존 구현처럼 후보를 넓게 추측하면 \"적용 성공\"으로 오판해서 CSS fallback이 꺼지고
+      // 결과적으로 지도 타일은 계속 라이트로 남는다.
+      // 그래서 아래 로직은:
+      // 1) SDK가 실제로 export한 정확한 키만 후보로 사용하고
+      // 2) getter로 mapType 변화가 확인될 때만 native theme 성공으로 인정한다.
+      // 검증이 불가능하면 false를 반환해 CSS dark fallback을 유지한다.
+      function resolveVerifiedNativeMapTypeCandidates() {
+        if (nativeMapTypeCandidates) return nativeMapTypeCandidates;
 
-      // Tmap SDK마다 dark/light mapType 이름이 조금씩 달라서 런타임에 후보를 수집해 둔다.
-      function resolveNativeMapTypes() {
-        if (nativeDarkMapTypeReady) return;
-        nativeDarkMapTypeReady = true;
+        nativeMapTypeCandidates = {
+          light: [],
+          dark: [],
+        };
 
         try {
           var mapTypeObj = (window.Tmapv2 && Tmapv2.MapType) ? Tmapv2.MapType : null;
-          if (!mapTypeObj || typeof mapTypeObj !== "object") return;
+          if (!mapTypeObj || typeof mapTypeObj !== "object") return nativeMapTypeCandidates;
 
-          var entries = Object.keys(mapTypeObj).map(function (key) {
-            return { key: key, value: mapTypeObj[key] };
+          // 여기서는 "SDK가 실제로 export한 키"만 후보로 쓴다.
+          // 추정 문자열까지 섞어 넣으면 setMapType()이 조용히 통과하는 런타임에서
+          // dark theme 성공으로 오판할 수 있어서, 후보 집합 자체를 보수적으로 유지한다.
+          var appendUniqueCandidate = function (bucket, key) {
+            var value = mapTypeObj[key];
+            if (value === undefined || value === null) return;
+            if (bucket.some(function (candidate) { return String(candidate) === String(value); })) return;
+            bucket.push(value);
+          };
+
+          ["ROAD", "BASIC", "NORMAL", "DEFAULT", "STANDARD", "BASE", "DAY"].forEach(function (key) {
+            appendUniqueCandidate(nativeMapTypeCandidates.light, key);
           });
-          var lightKeys = ["ROAD", "BASIC", "NORMAL", "DEFAULT", "STANDARD", "BASE", "DAY"];
-          var darkKeys = ["NIGHT", "DARK", "MIDNIGHT", "NAVI", "NAVI_NIGHT", "BLACK", "DARKMODE"];
-          var seenLight = {};
-          var seenDark = {};
-
-          lightKeys.forEach(function (key) {
-            var direct = mapTypeObj[key];
-            if (direct !== undefined && direct !== null && !seenLight[String(direct)]) {
-              nativeLightMapTypeCandidates.push(direct);
-              seenLight[String(direct)] = true;
-            }
-          });
-
-          entries.forEach(function (entry) {
-            var upper = String(entry.key).toUpperCase();
-            var valueKey = String(entry.value);
-
-            if (
-              (upper.indexOf("ROAD") >= 0
-                || upper.indexOf("BASIC") >= 0
-                || upper.indexOf("NORMAL") >= 0
-                || upper.indexOf("DEFAULT") >= 0
-                || upper.indexOf("STANDARD") >= 0
-                || upper.indexOf("BASE") >= 0
-                || upper.indexOf("DAY") >= 0)
-              && !seenLight[valueKey]
-            ) {
-              nativeLightMapTypeCandidates.push(entry.value);
-              seenLight[valueKey] = true;
-            }
-
-            if (
-              (upper.indexOf("NIGHT") >= 0
-                || upper.indexOf("DARK") >= 0
-                || upper.indexOf("MIDNIGHT") >= 0
-                || upper.indexOf("NAVI") >= 0
-                || upper.indexOf("BLACK") >= 0)
-              && !seenDark[valueKey]
-            ) {
-              nativeDarkMapTypeCandidates.push(entry.value);
-              seenDark[valueKey] = true;
-            }
-          });
-
-          // 일부 환경은 문자열 mapType 식별자를 허용하므로 보조 후보를 같이 둔다.
-          darkKeys.forEach(function (key) {
-            if (!seenDark[key]) {
-              nativeDarkMapTypeCandidates.push(key);
-              seenDark[key] = true;
-            }
-          });
-          lightKeys.forEach(function (key) {
-            if (!seenLight[key]) {
-              nativeLightMapTypeCandidates.push(key);
-              seenLight[key] = true;
-            }
+          ["NIGHT", "NAVI_NIGHT", "MIDNIGHT", "DARK", "BLACK", "DARKMODE"].forEach(function (key) {
+            appendUniqueCandidate(nativeMapTypeCandidates.dark, key);
           });
         } catch (_error) {
-          nativeLightMapTypeCandidates = [];
-          nativeDarkMapTypeCandidates = [];
+          nativeMapTypeCandidates = {
+            light: [],
+            dark: [],
+          };
         }
+
+        return nativeMapTypeCandidates;
       }
 
-      // 후보 mapType을 순서대로 시도해 현재 SDK/기기에서 실제로 동작하는 타입을 고른다.
-      function trySetMapType(candidates) {
-        if (!map || !map.setMapType || !Array.isArray(candidates) || candidates.length === 0) {
+      // 현재 mapType을 읽어 검증할 수 있는 런타임인지 먼저 확인한다.
+      // setter만 있고 getter가 전혀 없으면 "실제로 바뀌었는지"를 증명할 수 없으므로
+      // native theme 적용 성공으로 보지 않고 CSS fallback 경로를 유지한다.
+      function canInspectMapType() {
+        if (!map) return false;
+        if (typeof map.getMapType === "function") return true;
+        if (typeof map.mapType !== "undefined") return true;
+        if (typeof map.mapTypeId !== "undefined") return true;
+        return false;
+      }
+
+      function readCurrentMapType() {
+        if (!map) return undefined;
+
+        try {
+          // SDK 버전에 따라 노출하는 getter/field 이름이 달라서 읽기 경로를 순서대로 시도한다.
+          if (typeof map.getMapType === "function") {
+            return map.getMapType();
+          }
+          if (typeof map.mapType !== "undefined") {
+            return map.mapType;
+          }
+          if (typeof map.mapTypeId !== "undefined") {
+            return map.mapTypeId;
+          }
+        } catch (_error) {}
+
+        return undefined;
+      }
+
+      function isSameMapTypeValue(left, right) {
+        if (left === right) return true;
+        if (left === undefined || left === null || right === undefined || right === null) return false;
+        return String(left) === String(right);
+      }
+
+      function trySetVerifiedMapType(candidates) {
+        if (!map || !map.setMapType || !Array.isArray(candidates) || candidates.length === 0 || !canInspectMapType()) {
           return false;
         }
 
         for (var i = 0; i < candidates.length; i += 1) {
           var candidate = candidates[i];
+          var before = readCurrentMapType();
+
           try {
             map.setMapType(candidate);
-            return true;
+            var after = readCurrentMapType();
+            // setter 호출 직후에도 값을 읽지 못하면 "적용 여부를 입증할 수 없는 상태"다.
+            // 이런 경우는 성공으로 치지 않고 다음 후보를 보거나 fallback으로 넘긴다.
+            if (after === undefined || after === null) {
+              continue;
+            }
+            // 1) getter가 후보 값을 그대로 돌려주거나
+            // 2) before/after 값이 명확히 달라져 실제 변경이 관측될 때만
+            // native mapType 적용이 성공했다고 판정한다.
+            if (isSameMapTypeValue(after, candidate)) {
+              return true;
+            }
+            if (before !== undefined && before !== null && !isSameMapTypeValue(before, after)) {
+              return true;
+            }
           } catch (_error) {
-            // 다음 후보 시도
+            // 다음 후보를 확인한다.
           }
         }
+
         return false;
       }
 
-      // 다크모드 적용은 "네이티브 mapType 우선, 실패 시 CSS 필터 fallback" 순서로 처리한다.
+      function resolveVerifiedNativeThemeApplied(isDark) {
+        var candidates = resolveVerifiedNativeMapTypeCandidates();
+        if (isDark) {
+          return trySetVerifiedMapType(candidates.dark);
+        }
+        // 라이트 모드는 대부분의 런타임에서 기본 상태다.
+        // 전용 light mapType 상수가 없어도 굳이 실패로 볼 필요가 없고,
+        // false를 반환하면 라이트 모드에서 불필요한 fallback tint가 깔릴 수 있으므로
+        // 이런 경우는 "이미 정상 상태"로 간주한다.
+        if (!Array.isArray(candidates.light) || candidates.light.length === 0) {
+          return true;
+        }
+        return trySetVerifiedMapType(candidates.light);
+      }
+
+      function isFallbackTileImage(imgEl) {
+        if (!imgEl || !imgEl.getAttribute) return false;
+        var src = "";
+        try {
+          src = String(imgEl.getAttribute("src") || imgEl.src || "");
+        } catch (_error) {
+          return false;
+        }
+        if (!src) return false;
+        // 우리가 만든 badge/arrow/dot marker는 data URI SVG라서,
+        // 타일 dark filter가 여기에까지 걸리면 흰 배지가 검게 반전되고
+        // 작은 화살표 외곽도 탁해져서 사용자 스크린샷처럼 깨진 인상으로 보인다.
+        if (/^(data|blob):/i.test(src)) return false;
+        return true;
+      }
+
+      function syncFallbackTileFilter() {
+        var mapEl = document.getElementById("map");
+        if (!mapEl || !mapEl.querySelectorAll) return;
+        var imgNodes = mapEl.querySelectorAll("img");
+        for (var index = 0; index < imgNodes.length; index += 1) {
+          var imgEl = imgNodes[index];
+          if (!imgEl || !imgEl.style) continue;
+          if (!isFallbackTileImage(imgEl)) {
+            imgEl.style.filter = "none";
+            imgEl.style.transition = "";
+            continue;
+          }
+          // fallback dark mode는 "지도 타일을 어둡게 보정"하는 용도다.
+          // 팬/줌 때 타일 img가 자주 갈아끼워지므로 observer와 함께 매번 다시 적용해,
+          // 새 타일만 밝게 남는 현상 없이 기본 지도 톤만 안정적으로 유지한다.
+          imgEl.style.filter = fallbackTileFilterEnabled ? fallbackTileFilter : "none";
+          imgEl.style.transition = "filter 180ms ease";
+        }
+      }
+
+      function bindFallbackTileFilterObserver() {
+        var mapEl = document.getElementById("map");
+        if (!mapEl || typeof MutationObserver === "undefined") return;
+        if (fallbackTileFilterObserver) {
+          fallbackTileFilterObserver.disconnect();
+          fallbackTileFilterObserver = null;
+        }
+        // Tmap은 이동/확대 때 타일 DOM을 계속 교체한다.
+        // 그래서 테마 적용을 한 번만 해두면 이후에 로드된 타일은 다시 밝아질 수 있어서,
+        // map 내부 변경을 감지할 때마다 tile filter를 재동기화한다.
+        fallbackTileFilterObserver = new MutationObserver(function () {
+          syncFallbackTileFilter();
+        });
+        fallbackTileFilterObserver.observe(mapEl, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ["src"],
+        });
+        syncFallbackTileFilter();
+      }
+
       function applyTheme(isDark) {
         isDarkTheme = !!isDark;
         var mapEl = document.getElementById("map");
@@ -590,19 +726,22 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var locationBtn = document.getElementById("locationBtn");
         var nativeThemeApplied = false;
 
-        resolveNativeMapTypes();
-        if (isDarkTheme) {
-          nativeThemeApplied = trySetMapType(nativeDarkMapTypeCandidates);
-        } else {
-          nativeThemeApplied = trySetMapType(nativeLightMapTypeCandidates);
-        }
+        // 지도는 "SDK가 후보를 받았다"가 아니라 "실제로 mapType이 바뀐 증거가 있다"일 때만
+        // native theme 적용 성공으로 본다.
+        // 증거가 없으면 의도적으로 CSS fallback을 유지해서,
+        // 다크 UI 안에 밝은 타일 지도가 끼어드는 회귀를 막는다.
+        nativeThemeApplied = resolveVerifiedNativeThemeApplied(isDarkTheme);
 
         if (mapEl) {
-          mapEl.style.filter = (isDarkTheme && !nativeThemeApplied)
-            ? "invert(0.89) hue-rotate(182deg) saturate(0.72) brightness(0.84) contrast(1.14)"
-            : "none";
-          mapEl.style.transition = "filter 180ms ease";
+          // #map 전체를 뒤집으면 base tile만 아니라 marker svg도 함께 반전된다.
+          // 그 결과 버스 배지는 검은 캡슐처럼 보이고, 화살표도 흐릿하게 깨져 보이므로
+          // 컨테이너 filter는 비우고 tile img에만 fallback dark filter를 분리 적용한다.
+          mapEl.style.filter = "none";
+          mapEl.style.transition = "none";
         }
+
+        fallbackTileFilterEnabled = isDarkTheme && !nativeThemeApplied;
+        syncFallbackTileFilter();
 
         if (toneEl) {
           toneEl.style.background = isDarkTheme
@@ -1029,6 +1168,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           scrollwheel: true,
         });
 
+        bindFallbackTileFilterObserver();
         applyTheme(isDarkTheme);
 
         bindMapTap();

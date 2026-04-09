@@ -27,6 +27,12 @@ export type TransitLegDetail = {
     distanceMeters?: number;
     stationCount?: number;
     lineName?: string;
+    /**
+     * Tmap 원본이 직접 내려 준 노선 색상.
+     * 버스 routeColor / lane.color 같은 "실제 운영 노선색"을 우선 보존해서
+     * 화면 쪽에서 추정 규칙보다 정확한 색을 쓸 수 있게 한다.
+     */
+    lineColor?: string;
     startName?: string;
     endName?: string;
     startCoord?: RoutePathCoord;
@@ -306,6 +312,30 @@ function parseTransitLegLineName(leg: any): string | undefined {
     if (typeof raw !== "string") return undefined;
     const normalized = raw.trim();
     return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeTransitColorCandidate(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const normalized = value.trim();
+    if (!normalized) return undefined;
+
+    // Tmap 원본 응답은 "53B332"처럼 # 없이 내려 주는 경우가 있어
+    // 화면 레이어에서 바로 쓸 수 있는 CSS hex 형태로 맞춘다.
+    if (/^[0-9A-Fa-f]{6}$/.test(normalized)) return `#${normalized.toUpperCase()}`;
+    if (/^#[0-9A-Fa-f]{6}$/.test(normalized)) return normalized.toUpperCase();
+    return undefined;
+}
+
+function parseTransitLegLineColor(leg: any): string | undefined {
+    const firstLane = Array.isArray(leg?.lane) ? leg.lane[0] : undefined;
+    return normalizeTransitColorCandidate(
+        leg?.routeColor ??
+        leg?.lineColor ??
+        firstLane?.routeColor ??
+        firstLane?.color ??
+        firstLane?.lineColor ??
+        firstLane?.hexColor
+    );
 }
 
 function parseTransitLegStationCount(leg: any): number | undefined {
@@ -594,6 +624,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
             );
             const stationCount = parseTransitLegStationCount(leg);
             const lineName = parseTransitLegLineName(leg);
+            const lineColor = parseTransitLegLineColor(leg);
             const startName = parseTransitLegStartName(leg);
             const endName = parseTransitLegEndName(leg);
             const startCoord = parseTransitLegStartCoord(leg);
@@ -645,6 +676,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 distanceMeters,
                 stationCount,
                 lineName,
+                lineColor,
                 startName,
                 endName,
                 startCoord: normalizedStartCoord,
