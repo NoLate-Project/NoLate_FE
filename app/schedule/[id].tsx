@@ -167,7 +167,7 @@ export default function ScheduleDetail() {
         });
 
         setRoutePlannerSessionId(sessionId);
-        router.push({ pathname: "/schedule/route-planner", params: { sessionId } });
+        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
     }, [
         destinationAddress,
         destinationLat,
@@ -183,7 +183,11 @@ export default function ScheduleDetail() {
     ]);
 
     useEffect(() => {
-        if (!routePlannerSessionId || pathname === "/schedule/route-planner") return;
+        if (
+            !routePlannerSessionId ||
+            pathname === "/schedule/route-select" ||
+            pathname === "/schedule/route-planner"
+        ) return;
         const result = consumeRoutePlannerResult(routePlannerSessionId);
         if (!result) return;
 

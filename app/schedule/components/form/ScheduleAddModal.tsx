@@ -140,7 +140,7 @@ export default function ScheduleNewModal({
         });
 
         setRoutePlannerSessionId(sessionId);
-        router.push({ pathname: "/schedule/route-planner", params: { sessionId } });
+        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
     }, [
         destinationAddress,
         destinationLat,
@@ -156,7 +156,12 @@ export default function ScheduleNewModal({
     ]);
 
     useEffect(() => {
-        if (!visible || !routePlannerSessionId || pathname === "/schedule/route-planner") return;
+        if (
+            !visible ||
+            !routePlannerSessionId ||
+            pathname === "/schedule/route-select" ||
+            pathname === "/schedule/route-planner"
+        ) return;
         const result = consumeRoutePlannerResult(routePlannerSessionId);
         if (!result) return;
 

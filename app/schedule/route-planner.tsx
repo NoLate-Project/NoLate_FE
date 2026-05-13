@@ -55,32 +55,38 @@ const ALTERNATIVE_CARD_GAP = 10;
 const ALTERNATIVE_CARD_MIN_SIZE = 146;
 const ALTERNATIVE_CARD_MAX_SIZE = 178;
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
+// UI tuning: 바텀시트는 최소 20%를 남기고(=최대 80%까지만) 내려간다.
+const BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO = 0.2;
 const TRANSIT_SEGMENT_DETAIL_MIN_ZOOM = 13.8;
-const TRANSIT_BADGE_MIN_ZOOM = 14.2;
-const TRANSIT_BADGE_MAX_COUNT = 30;
+// 대중교통 이벤트 배지 노출 최소 줌.
+const TRANSIT_BADGE_MIN_ZOOM = 5.5;
+// 화면 혼잡을 줄이기 위한 이벤트 배지 최대 개수.
+const TRANSIT_BADGE_MAX_COUNT = 18;
+// 버스 정류장 마커 노출 최소 줌.
+const TRANSIT_BUS_STOP_MIN_ZOOM = 5.5;
+const TRANSIT_BOARD_BADGE_MIN_ZOOM = 10.5;
 const TRANSIT_TRANSFER_COLOR = "#F4A100";
 const KAKAO_LABEL_TEXT_COLOR = "#1F2937";
 const KAKAO_LABEL_BORDER_COLOR = "rgba(148,163,184,0.62)";
-// 2번째 레퍼런스 이미지처럼 "환승/접근 보행 안내선"을 파란 점선 계열로 통일한다.
-// - 노선(버스/지하철)과 시각적으로 분리되어야 하고
-// - 버스 정류장 배지 하단의 연결 링 색상과도 동일해야 한다.
+// 환승/접근 보행 안내선 점선 계열 색상.
 const TRANSIT_CONNECTOR_DOT_COLOR = "#2F7BFF";
 const TRANSIT_CONNECTOR_DOT_BORDER_COLOR = "#FFFFFF";
-// 실제 승하차 지점(역/정류장)은 파란 접근 점선과 분리해서 보여야 한다.
-// 레퍼런스처럼 "작은 흰 링 + 진한 외곽선"으로 보이게 하기 위한 중립 포인트 색이다.
+// 실제 승하차 지점을 나타내는 중립 링 포인트 색상.
 const TRANSIT_STOP_POINT_COLOR = "#FFFFFF";
 const TRANSIT_STOP_POINT_BORDER_COLOR = "rgba(17,24,39,0.78)";
-// 접근 점선은 작은 파란 점만 이어져 보여야 해서 테두리를 없애거나 거의 느껴지지 않게 유지한다.
+// 접근 점선은 fill 위주로 보이게 border를 제거한다.
 const TRANSIT_WALK_DOT_BORDER_COLOR = "transparent";
 const ROUTE_STYLE = {
-    inactiveWidth: 4.5,
-    inactiveOutlineWidth: 1.4,
-    selectedWidth: 8.5,
-    selectedOutlineWidth: 2.2,
-    transitRideWidth: 8.5,
-    transitRideOutlineWidth: 1.8,
-    transitWalkWidth: 5.8,
-    transitWalkOutlineWidth: 1.75,
+    // 지도 라인 기본 두께/외곽선 설정.
+    inactiveWidth: 3.8,
+    inactiveOutlineWidth: 1.1,
+    selectedWidth: 7.2,
+    selectedOutlineWidth: 1.8,
+    transitRideWidth: 6.6,
+    transitRideOutlineWidth: 1.3,
+    // 도보 보조선은 차/대중교통보다 얇게 유지한다.
+    transitWalkWidth: 3.2,
+    transitWalkOutlineWidth: 0.95,
     connectorWalkWidth: 4,
 } as const;
 type RoutePointTarget = "origin" | "destination";
@@ -1146,37 +1152,39 @@ type TransitEventDraft = {
     order: number;
 };
 
-// 확대 수준에 따라 출발/정류장/환승/지하철 마커를 조합하는 지도 전용 마커 빌더들.
+// 확대 수준에 따라 버스 정류장 마커를 생성한다.
 function buildBusStopMarkers(
     selectedAlternativeId: string | undefined,
     legs: TransitLegDetail[] | undefined,
     mapZoom: number
 ): TmapMarker[] {
-    if (!Array.isArray(legs) || !legs.length || mapZoom < 13) return [];
+    // 저배율에서는 정류장 마커를 숨겨 지도 혼잡을 줄인다.
+    if (!Array.isArray(legs) || !legs.length || mapZoom < TRANSIT_BUS_STOP_MIN_ZOOM) return [];
 
     const markers: TmapMarker[] = [];
     const seen = new Set<string>();
 
     legs.forEach((leg, index) => {
         if (leg.kind !== "BUS") return;
-        const hasEarlierRide = legs.slice(0, index).some((item) => isRideLegKind(item.kind));
-
-        const pushStop = (coord: RoutePathCoord | undefined, role: "BOARD" | "ALIGHT", stopName?: string) => {
+        const pushStop = (
+            coord: RoutePathCoord | undefined,
+            role: "BOARD" | "ALIGHT",
+            stopName?: string,
+            lineName?: string
+        ) => {
             if (!coord) return;
             const key = `${coord.lat.toFixed(5)}:${coord.lng.toFixed(5)}`;
             if (seen.has(key)) return;
             seen.add(key);
-            // 정류장/하차 포인트는 레퍼런스처럼 "작은 링"에 가까워야 해서
-            // 보행 점선보다 약간만 크게 두고 과하게 튀지 않도록 크기를 낮춘다.
-            const dotSize = mapZoom >= 15 ? 8 : mapZoom >= 13.5 ? 7 : 6;
+            // 줌 단계별 정류장 도트 크기.
+            const dotSize = mapZoom >= 16.2 ? 10 : mapZoom >= 15 ? 9 : 8;
             const compactStop = compactTransitStopLabel(stopName, 9);
-            const shouldUseBoardBadge = role === "BOARD" && mapZoom >= 15.1 && !hasEarlierRide;
-            if (shouldUseBoardBadge) {
-                // 승차 정류장 배지는 노선 번호보다 "어느 정류장으로 가야 하는지"를 먼저 알려야 한다.
-                // 현재 응답에서는 stopName은 안정적이지만 ARS 정류장 번호는 일관되게 확보되지 않아서,
-                // lineName을 앞에 붙이면 3411(...)처럼 정류장 배지가 노선 배지로 오해되는 문제가 생긴다.
-                // 실제 정류장 코드 파싱을 추가하기 전까지는 정류장명만 배지 본문으로 사용한다.
-                const badgeLabel = compactStop ?? "버스 정류장";
+            const compactLine = compactTransitLineLabel(lineName);
+            // 승/하차 지점에 번호+정류장 배지 노출.
+            const shouldUseStopBadge = mapZoom >= TRANSIT_BOARD_BADGE_MIN_ZOOM;
+            if (shouldUseStopBadge) {
+                // 배지 본문: 노선번호 + 정류장명.
+                const badgeLabel = [compactLine, compactStop].filter(Boolean).join(" ") || compactLine || compactStop || "버스";
                 markers.push({
                     id: `bus-stop-${role.toLowerCase()}-${selectedAlternativeId ?? "sel"}-${index}`,
                     latitude: coord.lat,
@@ -1187,10 +1195,9 @@ function buildBusStopMarkers(
                     badgeLabel: badgeLabel || "버스 정류장",
                     badgeTextColor: KAKAO_LABEL_TEXT_COLOR,
                     badgeBorderColor: KAKAO_LABEL_BORDER_COLOR,
-                    // 정류장 배지 하단 링은 접근 점선과 같은 파랑으로 두지 않고,
-                    // 실제 승차 지점을 찍는 "중립 포인트"처럼 보여야 레퍼런스와 가까워진다.
+                    // 정류장 실지점은 접근 점선과 구분되는 중립 링 색상 사용.
                     badgeConnectorColor: TRANSIT_STOP_POINT_BORDER_COLOR,
-                    caption: stopName ?? "승차 정류장",
+                    caption: [compactLine, stopName].filter(Boolean).join(" · ") || (role === "BOARD" ? "승차 정류장" : "하차 정류장"),
                 });
                 return;
             }
@@ -1198,8 +1205,7 @@ function buildBusStopMarkers(
                 id: `bus-stop-${role.toLowerCase()}-${selectedAlternativeId ?? "sel"}-${index}`,
                 latitude: coord.lat,
                 longitude: coord.lng,
-                // 버스 승하차 지점 자체는 접근 점선과 분리해서 "작은 링 포인트"처럼 보이게 한다.
-                // 그래야 파란 점선은 보행 안내, 이 마커는 실제 정차 지점으로 인지가 갈린다.
+                // 승하차 지점은 접근 점선과 구분되는 작은 링 포인트로 렌더링.
                 tintColor: TRANSIT_STOP_POINT_COLOR,
                 displayType: "dot",
                 dotSize,
@@ -1209,16 +1215,17 @@ function buildBusStopMarkers(
         };
 
         pushStop(
-            // 정류장 마커는 connector 기준점보다 실제 정류장 표시점(displayCoord)을 우선 사용해
-            // 마커가 경로와 어긋나 보이는 문제를 줄인다.
+            // connector 좌표보다 실제 정류장 표시 좌표(displayCoord)를 우선 사용한다.
             getRideStopDisplayCoord(legs, index, "BOARD") ?? getRideStopConnectorCoord(legs, index, "BOARD"),
             "BOARD",
-            leg.startName
+            leg.startName,
+            leg.lineName
         );
         pushStop(
             getRideStopDisplayCoord(legs, index, "ALIGHT") ?? getRideStopConnectorCoord(legs, index, "ALIGHT"),
             "ALIGHT",
-            leg.endName
+            leg.endName,
+            leg.lineName
         );
     });
 
@@ -1315,11 +1322,20 @@ function buildTransitEventMarkers(
         let markerStyle: TmapMarker["markerStyle"] = "default";
 
         if (intents.has("TRANSFER")) {
-            badgeLabel = compactTransitStopLabel(group.find((item) => item.intent === "TRANSFER")?.stopName, 11) ?? "환승";
+            const transfer = group.find((item) => item.intent === "TRANSFER") ?? base;
+            badgeLabel = compactTransitStopLabel(transfer.stopName, 11) ?? "환승";
             badgeGlyph = "환";
             tintColor = TRANSIT_TRANSFER_COLOR;
             markerStyle = "transfer";
-            const transferLine = group.find((item) => item.intent === "TRANSFER")?.lineLabel;
+            // 환승 지점은 실제 환승 수단 아이콘(bus/subway)을 우선 사용한다.
+            if (transfer.kind === "SUBWAY") {
+                markerStyle = "subway";
+                tintColor = getSubwayLineColor(transfer.lineLabel);
+            } else if (transfer.kind === "BUS") {
+                markerStyle = "bus";
+                tintColor = getBusLineColor(transfer.lineLabel);
+            }
+            const transferLine = transfer.lineLabel;
             caption = transferLine ? `${transferLine} 환승` : "환승 지점";
         } else if (intents.has("BOARD")) {
             const board = group.find((item) => item.intent === "BOARD") ?? base;
@@ -1332,7 +1348,11 @@ function buildTransitEventMarkers(
                 : (normalizedLine ?? kindMeta.label);
             badgeGlyph = "승";
             tintColor = getTransitLegVisualColor(board);
-            if (board.kind === "BUS") badgeGlyph = "버";
+            if (board.kind === "BUS") {
+                badgeGlyph = "버";
+                // 버스 승차 이벤트는 버스 아이콘 스타일로 고정.
+                markerStyle = "bus";
+            }
             if (board.kind === "SUBWAY") markerStyle = "subway";
             caption = board.stopName ? `${board.stopName} 승차` : `${kindMeta.label} 승차 지점`;
         } else if (intents.has("ALIGHT")) {
@@ -1346,6 +1366,10 @@ function buildTransitEventMarkers(
                 : (normalizedLine ?? kindMeta.label);
             badgeGlyph = "하";
             tintColor = getTransitLegVisualColor(alight);
+            if (alight.kind === "BUS") {
+                // 버스 하차 이벤트는 버스 아이콘 스타일로 고정.
+                markerStyle = "bus";
+            }
             if (alight.kind === "SUBWAY") markerStyle = "subway";
             caption = alight.stopName ? `${alight.stopName} 하차` : `${kindMeta.label} 하차 지점`;
         }
@@ -1410,34 +1434,8 @@ function buildSelectedRouteDirectionMarkers(
 ): TmapMarker[] {
     if (!selectedAlternative) return [];
     if (travelMode === "TRANSIT") {
-        if (mapZoom < 13.9 || !Array.isArray(selectedAlternative.transitLegs)) return [];
-        return selectedAlternative.transitLegs.flatMap((leg, index) => {
-            if (leg.kind !== "BUS" && leg.kind !== "SUBWAY") return [];
-            const displayPath = leg.kind === "BUS"
-                ? getRideLegDisplayPathCoords(selectedAlternative.transitLegs, index)
-                : normalizeDisplayPathCoords(
-                    Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2 ? leg.pathCoords : undefined,
-                    leg.kind
-                );
-            // 레퍼런스(2번째 이미지)처럼 노선 위에 "촘촘한 흰색 화살표"가 보이도록
-            // 색 테두리가 도드라지지 않게 완전한 흰 화살표를 더 촘촘히 깔아 준다.
-            // 최대 줌에서 화살표가 너무 촘촘하면 노선 실루엣보다 반복 패턴이 먼저 보여 거칠어진다.
-            // spacing을 키워서 "노선이 먼저 읽히고, 화살표는 방향 보조"가 되도록 밀도를 낮춘다.
-            const spacingMeters = leg.kind === "SUBWAY"
-                ? (mapZoom >= 17 ? 34 : mapZoom >= 15.5 ? 44 : 56)
-                : (mapZoom >= 17 ? 26 : mapZoom >= 15.5 ? 34 : 44);
-            return buildDirectionalMarkersForPath(
-                `${selectedAlternative.id}-${leg.kind.toLowerCase()}-${index}`,
-                displayPath,
-                // 레퍼런스 화살표는 노선색 외곽보다 "흰 삼각형" 인상이 더 강해서
-                // fill만 살리고 외곽선은 지운다.
-                "#FFFFFF",
-                spacingMeters,
-                12,
-                leg.kind === "SUBWAY" ? 22 : 26,
-                "transparent"
-            );
-        });
+        // 대중교통은 노선 자체 정보(색/구간)를 우선 보여 주고 화살표는 생략한다.
+        return [];
     }
 
     if (travelMode !== "CAR" || mapZoom < 12.8) return [];
@@ -1461,10 +1459,11 @@ function buildTransitWalkGuideMarkers(
     connectorOverlays: TmapPathOverlay[],
     _walkDetailOverlays: TmapPathOverlay[]
 ): TmapMarker[] {
+    // 저배율에서는 보행 점선을 숨겨 지도 노이즈를 줄인다.
+    // UI tuning: 안내선을 한 단계 이른 줌부터 노출한다.
     if (travelMode !== "TRANSIT" || !selectedAlternative || mapZoom < 13.2) return [];
 
-    // 점선 안내는 "전체 도보 경로"가 아니라 환승/연결 connector 위주로만 표시한다.
-    // walkDetail까지 함께 쓰면 점이 과도하게 많아져 레퍼런스 대비 난잡하게 보인다.
+    // 점선 안내는 전체 도보 대신 환승/연결 connector 위주로만 표시한다.
     const walkGuideOverlays = [...connectorOverlays]
         .filter((overlay) => (
             typeof overlay.id === "string" &&
@@ -1474,12 +1473,11 @@ function buildTransitWalkGuideMarkers(
         ));
     if (!walkGuideOverlays.length) return [];
 
-    // 레퍼런스는 "작은 파란 점이 여러 개 이어지는" 쪽에 더 가깝다.
-    // 그래서 기존보다 점 크기를 줄이고, 간격은 좁히고, 총 개수는 늘려서 보행 유도감을 만든다.
-    const spacingMeters = mapZoom >= 16.4 ? 10 : mapZoom >= 15.2 ? 12 : 14;
-    const dotSize = mapZoom >= 16.4 ? 5 : mapZoom >= 15.2 ? 4 : 4;
-    const maxTotalMarkers = mapZoom >= 16.2 ? 40 : mapZoom >= 15 ? 34 : 26;
-    const maxPerPath = Math.max(8, Math.floor(maxTotalMarkers / walkGuideOverlays.length));
+    // 줌 단계별 점선 간격/크기 설정.
+    const spacingMeters = mapZoom >= 16.4 ? 14 : mapZoom >= 15.2 ? 16 : mapZoom >= 14 ? 18 : 22;
+    const dotSize = mapZoom >= 16.4 ? 5 : mapZoom >= 14.2 ? 4 : 3;
+    const maxTotalMarkers = mapZoom >= 16.2 ? 20 : mapZoom >= 15 ? 16 : mapZoom >= 14 ? 13 : 10;
+    const maxPerPath = Math.max(6, Math.floor(maxTotalMarkers / walkGuideOverlays.length));
     const markers: TmapMarker[] = [];
 
     walkGuideOverlays.forEach((overlay, overlayIndex) => {
@@ -1638,14 +1636,20 @@ export default function RoutePlannerScreen() {
     const hasDestinationCoords = typeof destinationLat === "number" && typeof destinationLng === "number";
     const hasRouteReady = hasOriginCoords && hasDestinationCoords;
     const isRoutePointLocked = hasRouteReady && !isRoutePointEditMode;
+    // 경로 선택 단계는 별도 /schedule/route-select 화면으로 분리했다.
+    const isRouteSelectionStage = false;
     const hasActiveTarget = activeTarget === "origin" || activeTarget === "destination";
     const isAlternativeScrollable = alternativeContentWidth > alternativeViewportWidth + 2;
     const originDisplay = originName.trim() || originAddress.trim() || "출발지 미선택";
     const destinationDisplay = destinationName.trim() || destinationAddress.trim() || "도착지 미선택";
     const bottomSheetPeekHeight = BOTTOM_SHEET_HANDLE_PEEK_HEIGHT;
-    const bottomSheetCollapsedOffset = useMemo(
-        () => Math.max(0, bottomPanelHeight - bottomSheetPeekHeight),
+    const bottomSheetCollapsedVisibleHeight = useMemo(
+        () => Math.max(bottomSheetPeekHeight, Math.round(bottomPanelHeight * BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO)),
         [bottomPanelHeight, bottomSheetPeekHeight]
+    );
+    const bottomSheetCollapsedOffset = useMemo(
+        () => Math.max(0, bottomPanelHeight - bottomSheetCollapsedVisibleHeight),
+        [bottomPanelHeight, bottomSheetCollapsedVisibleHeight]
     );
     const bottomSheetHiddenOffset = useMemo(() => {
         if (!hasBottomSheetMeasured) return 420;
@@ -1860,6 +1864,13 @@ export default function RoutePlannerScreen() {
     useEffect(() => {
         if (!hasRouteReady && !isRoutePointEditMode) {
             setIsRoutePointEditMode(true);
+        }
+    }, [hasRouteReady, isRoutePointEditMode]);
+
+    useEffect(() => {
+        // 경로 편집으로 돌아가거나 좌표가 사라지면 상세 단계는 자동 해제한다.
+        if (!hasRouteReady || isRoutePointEditMode) {
+            setIsBottomSheetCollapsed(true);
         }
     }, [hasRouteReady, isRoutePointEditMode]);
 
@@ -2575,13 +2586,14 @@ export default function RoutePlannerScreen() {
                         ? "rgba(180, 193, 211, 0.82)"
                         : SELECTED_ROUTE_COLOR,
                     width: selectedTransitSegmentOverlays.length > 0
-                        ? Math.max(ROUTE_STYLE.transitWalkWidth + 1.4, 4.8)
+                        // 대중교통 결합 경로에서는 도보 보조선을 더 얇게 유지.
+                        ? Math.max(ROUTE_STYLE.transitWalkWidth + 0.8, 3.8)
                         : ROUTE_STYLE.selectedWidth,
                     outlineColor: selectedTransitSegmentOverlays.length > 0
                         ? (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.62)")
                         : (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.9)"),
                     outlineWidth: selectedTransitSegmentOverlays.length > 0
-                        ? Math.max(ROUTE_STYLE.transitWalkOutlineWidth + 0.2, 2)
+                        ? Math.max(ROUTE_STYLE.transitWalkOutlineWidth + 0.1, 1.2)
                         : ROUTE_STYLE.selectedOutlineWidth,
                 } as TmapPathOverlay;
             })()
@@ -2650,6 +2662,8 @@ export default function RoutePlannerScreen() {
                 displayType: "pin",
                 pinLabel: "출발",
                 caption: "출발",
+                // 출발 마커를 최상단 우선순위로 렌더링.
+                zIndex: 4000,
             });
         }
         if (hasDestinationCoords) {
@@ -2662,6 +2676,8 @@ export default function RoutePlannerScreen() {
                 displayType: "pin",
                 pinLabel: "도착",
                 caption: "도착",
+                // 도착 마커는 출발보다 한 단계 낮은 우선순위.
+                zIndex: 3990,
             });
         }
 
@@ -2672,8 +2688,10 @@ export default function RoutePlannerScreen() {
             Array.isArray(selectedAlternative?.transitLegs) &&
             selectedAlternative.transitLegs.length > 0
         ) {
-            const showLegLabels = mapZoom >= 16.8;
-            const showEventMarkers = mapZoom >= 14.2;
+            // 라인 라벨은 고배율에서만 표시한다.
+            const showLegLabels = mapZoom >= 17.2;
+            // 승/하차/환승 이벤트 배지 노출 여부.
+            const showEventMarkers = mapZoom >= TRANSIT_BADGE_MIN_ZOOM;
             if (showLegLabels) {
                 markers.push(
                     ...buildTransitLegLabelMarkers(
@@ -2684,7 +2702,7 @@ export default function RoutePlannerScreen() {
                     )
                 );
             }
-            // 환승/정류장 접근 보행을 "파란 점선"으로 보이게 하는 dot marker 묶음.
+            // 환승/정류장 접근 보행용 점선(dot) 마커.
             markers.push(
                 ...buildTransitWalkGuideMarkers(
                     selectedAlternative,
@@ -2870,15 +2888,20 @@ export default function RoutePlannerScreen() {
                             ? 1.42
                             : 1.28;
 
-            const minSpanMeters = routeDistanceKm < 2 ? 650 : routeDistanceKm < 10 ? 900 : 1200;
+            // 경로 선택 단계는 전체 뷰, 상세 단계는 조금 더 가깝게 보이도록 span을 분리한다.
+            const fitScale = isBottomSheetCollapsed ? 1.02 : 0.95;
+            const minSpanMeters = isBottomSheetCollapsed
+                ? (routeDistanceKm < 2 ? 680 : routeDistanceKm < 10 ? 920 : 1220)
+                : (routeDistanceKm < 2 ? 540 : routeDistanceKm < 10 ? 780 : 1020);
             const minLatDelta = minSpanMeters / 111_320;
             const minLngDelta = minSpanMeters / lngMetersPerDegree;
 
-            const latitudeDelta = Math.max(minLatDelta, rawLatDelta * marginScale * 1.18);
-            const longitudeDelta = Math.max(minLngDelta, rawLngDelta * marginScale);
+            const latitudeDelta = Math.max(minLatDelta, rawLatDelta * marginScale * fitScale);
+            const longitudeDelta = Math.max(minLngDelta, rawLngDelta * marginScale * fitScale);
 
             const paddedMinLat = minLat - (latitudeDelta - rawLatDelta) / 2;
             const paddedMinLng = minLng - (longitudeDelta - rawLngDelta) / 2;
+            const pivotY = isBottomSheetCollapsed ? 0.42 : 0.34;
 
             map.animateRegionTo({
                 latitude: paddedMinLat,
@@ -2887,7 +2910,7 @@ export default function RoutePlannerScreen() {
                 longitudeDelta,
                 duration: 900,
                 easing: "Fly",
-                pivot: { x: 0.5, y: 0.37 },
+                pivot: { x: 0.5, y: pivotY },
             });
         } else if (activeTarget === "destination" && hasDest) {
             const focusKey = `focus:destination:${destinationLat.toFixed(5)}:${destinationLng.toFixed(5)}`;
@@ -2924,6 +2947,7 @@ export default function RoutePlannerScreen() {
         selectedAlternative,
         selectedAlternativeId,
         travelMode,
+        isBottomSheetCollapsed,
     ]);
 
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {
@@ -3152,6 +3176,10 @@ export default function RoutePlannerScreen() {
     const onMapZoomChanged = useCallback((nextZoom: number) => {
         setMapZoom((prev) => (Math.abs(prev - nextZoom) < 0.05 ? prev : nextZoom));
     }, []);
+    const canEnterRouteDetail = false;
+    const onEnterRouteDetailView = useCallback(() => {
+        // no-op: route selection flow moved to /schedule/route-select
+    }, []);
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}> 
@@ -3337,10 +3365,136 @@ export default function RoutePlannerScreen() {
                             )}
                         </View>
                     )}
+
                 </View>
             </View>
 
-            <View style={styles.bottomOverlay}>
+            {isRouteSelectionStage && (
+                <View style={styles.routeSelectionStageOverlay} pointerEvents="box-none">
+                    <View
+                        style={[
+                            styles.routeSelectionStagePanel,
+                            styles.overlaySurface,
+                            { borderColor: colors.border, backgroundColor: overlayPanelBg, paddingBottom: Math.max(insets.bottom + 12, 20) },
+                        ]}
+                    >
+                        <Text style={[styles.routeSelectionStageTitle, { color: colors.textPrimary }]}>
+                            경로를 먼저 선택해주세요
+                        </Text>
+                        <Text style={[styles.routeSelectionStageSubtitle, { color: colors.textSecondary }]}>
+                            선택한 뒤 지도에서 상세 경로를 확인할 수 있습니다.
+                        </Text>
+
+                        <View style={styles.modeRow}>
+                            {SELECTABLE_TRAVEL_MODES.map((travelModeItem) => (
+                                <Pressable
+                                    key={`selection-stage-${travelModeItem}`}
+                                    onPress={() => setTravelMode(travelModeItem)}
+                                    style={[
+                                        styles.modeChip,
+                                        {
+                                            borderColor: travelMode === travelModeItem ? colors.selectedDayBg : colors.border,
+                                            backgroundColor: travelMode === travelModeItem ? colors.selectedDayBg : overlayBoxBg,
+                                        },
+                                    ]}
+                                >
+                                    <Text style={{ color: travelMode === travelModeItem ? colors.selectedDayText : colors.textPrimary, fontSize: 12, fontWeight: "700" }}>
+                                        {TRAVEL_MODE_META[travelModeItem].label}
+                                    </Text>
+                                </Pressable>
+                            ))}
+                        </View>
+
+                        <View style={[styles.routeSelectionStageListWrap, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
+                            {etaLoading ? (
+                                <View style={styles.alternativeLoadingRow}>
+                                    <ActivityIndicator size="small" color={colors.selectedDayBg} />
+                                    <Text style={[styles.alternativeLoadingText, { color: colors.textSecondary }]}>
+                                        경로 옵션 계산 중..
+                                    </Text>
+                                </View>
+                            ) : null}
+
+                            {!etaLoading && !!alternativesError ? (
+                                <Text style={[styles.alternativeErrorText, { color: colors.textSecondary }]}>
+                                    {alternativesError}
+                                </Text>
+                            ) : null}
+
+                            {!etaLoading && !alternativesError && !visibleAlternatives.length ? (
+                                <Text style={[styles.alternativeEmptyText, { color: colors.textSecondary }]}>
+                                    표시할 경로가 없습니다.
+                                </Text>
+                            ) : null}
+
+                            {!etaLoading && !alternativesError && !!visibleAlternatives.length && (
+                                <ScrollView
+                                    bounces={false}
+                                    alwaysBounceVertical={false}
+                                    contentContainerStyle={styles.routeSelectionStageList}
+                                >
+                                    {visibleAlternatives.map((option, index) => {
+                                        const selected = option.id === selectedAlternativeId;
+                                        const routeLabel = index === 0 ? "추천 경로" : `대안 경로 ${index}`;
+                                        const summary = option.transitModeSummary ?? formatAlternativeInfo(option);
+                                        const stepSummary = option.stepSummary?.trim();
+                                        return (
+                                            <Pressable
+                                                key={`stage-${option.id}`}
+                                                onPress={() => selectAlternativeByIndex(index, false)}
+                                                style={[
+                                                    styles.routeSelectionStageCard,
+                                                    {
+                                                        borderColor: selected ? colors.selectedDayBg : colors.border,
+                                                        backgroundColor: selected
+                                                            ? (isDark ? "rgba(29,114,255,0.22)" : "#EAF2FF")
+                                                            : overlayCardBg,
+                                                    },
+                                                ]}
+                                            >
+                                                <View style={styles.routeSelectionStageCardTop}>
+                                                    <Text style={[styles.alternativeRouteLabel, { color: colors.textPrimary }]}>
+                                                        {routeLabel}
+                                                    </Text>
+                                                    <Text style={[styles.routeSelectionStageDuration, { color: colors.textPrimary }]}>
+                                                        {formatDuration(option.minutes)}
+                                                    </Text>
+                                                </View>
+                                                <Text numberOfLines={1} style={[styles.routeSelectionStageSummary, { color: colors.textSecondary }]}>
+                                                    {summary}
+                                                </Text>
+                                                {!!stepSummary && (
+                                                    <Text numberOfLines={2} style={[styles.routeSelectionStageStep, { color: colors.textSecondary }]}>
+                                                        {stepSummary}
+                                                    </Text>
+                                                )}
+                                            </Pressable>
+                                        );
+                                    })}
+                                </ScrollView>
+                            )}
+                        </View>
+
+                        <Pressable
+                            onPress={onEnterRouteDetailView}
+                            disabled={!canEnterRouteDetail}
+                            style={[
+                                styles.confirmBtn,
+                                {
+                                    marginTop: 10,
+                                    backgroundColor: canEnterRouteDetail ? colors.selectedDayBg : colors.border,
+                                },
+                            ]}
+                        >
+                            <Text style={[styles.confirmText, { color: colors.selectedDayText }]}>
+                                지도에서 상세 경로 보기
+                            </Text>
+                        </Pressable>
+                    </View>
+                </View>
+            )}
+
+            <View style={styles.bottomOverlay} pointerEvents={isBottomSheetHidden ? "none" : "box-none"}>
                 <Animated.View
                     pointerEvents={isBottomSheetHidden ? "none" : "auto"}
                     onLayout={(event) => {
@@ -3834,6 +3988,20 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         lineHeight: 15,
     },
+    routePreviewActionRow: {
+        marginTop: 2,
+        flexDirection: "row",
+        justifyContent: "flex-end",
+    },
+    routePreviewActionBtn: {
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+    },
+    routePreviewActionText: {
+        fontSize: 11,
+        fontWeight: "800",
+    },
     transitLegendInlineRow: {
         flexDirection: "row",
         alignItems: "center",
@@ -3862,6 +4030,69 @@ const styles = StyleSheet.create({
     transitLegendText: {
         fontSize: 11,
         fontWeight: "800",
+    },
+    routeSelectionStageOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: "flex-end",
+        paddingHorizontal: 12,
+        paddingBottom: 8,
+    },
+    routeSelectionStagePanel: {
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingHorizontal: 12,
+        paddingTop: 12,
+        maxHeight: "68%",
+        gap: 10,
+    },
+    routeSelectionStageTitle: {
+        fontSize: 17,
+        fontWeight: "900",
+        lineHeight: 22,
+    },
+    routeSelectionStageSubtitle: {
+        fontSize: 12,
+        fontWeight: "600",
+        lineHeight: 16,
+    },
+    routeSelectionStageListWrap: {
+        borderWidth: 1,
+        borderRadius: 12,
+        minHeight: 170,
+        maxHeight: 330,
+        overflow: "hidden",
+    },
+    routeSelectionStageList: {
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        gap: 8,
+    },
+    routeSelectionStageCard: {
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 11,
+        paddingVertical: 10,
+        gap: 4,
+    },
+    routeSelectionStageCardTop: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    routeSelectionStageDuration: {
+        fontSize: 17,
+        fontWeight: "900",
+        letterSpacing: -0.4,
+    },
+    routeSelectionStageSummary: {
+        fontSize: 12,
+        fontWeight: "700",
+    },
+    routeSelectionStageStep: {
+        fontSize: 11,
+        fontWeight: "600",
+        lineHeight: 15,
     },
     zoomOverlay: {
         position: "absolute",

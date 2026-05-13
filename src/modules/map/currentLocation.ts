@@ -7,8 +7,11 @@ type Position = {
     coords: Coords;
 };
 
-// 현재 위치는 route-planner / 위치 선택 모달 등에서 공통으로 사용하므로
-// 브라우저 geolocation 접근을 여기서 한 번 감싸서 에러 메시지와 옵션을 통일한다.
+// 위치 조회 옵션은 앱 전역에서 동일하게 유지한다.
+const GEO_TIMEOUT_MS = 12000;
+const GEO_MAX_AGE_MS = 5000;
+
+// route-planner/위치 선택 모달에서 공통으로 쓰는 현재 위치 조회 래퍼.
 export async function getCurrentLocation(): Promise<Coords> {
     const geolocation = (globalThis as any)?.navigator?.geolocation;
     if (!geolocation || typeof geolocation.getCurrentPosition !== "function") {
@@ -21,8 +24,8 @@ export async function getCurrentLocation(): Promise<Coords> {
             () => reject(new Error("위치 권한을 허용해 주세요.")),
             {
                 enableHighAccuracy: true,
-                timeout: 12000,
-                maximumAge: 5000,
+                timeout: GEO_TIMEOUT_MS,
+                maximumAge: GEO_MAX_AGE_MS,
             }
         );
     });

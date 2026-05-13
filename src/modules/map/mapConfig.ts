@@ -1,6 +1,6 @@
 import { getEnv } from "../../api/env";
 
-// 앱에서 어떤 지도 공급자/TMS SDK를 기본으로 쓸지 결정하는 공용 설정 모듈.
+// 지도 공급자 선택과 API 키를 읽어 오는 공용 설정 모듈.
 export type MapProvider = "APPLE" | "GOOGLE" | "NAVER" | "KAKAO" | "TMAP";
 const NAVER_MAP_DEFAULT_CLIENT_ID = "q25m6dcvfx";
 
@@ -11,9 +11,10 @@ export type MapConfig = {
     googleMapsApiKey?: string;
 };
 
-// 환경변수 값을 앱 내부에서 바로 쓰기 좋은 형태로 정규화한다.
+// 환경변수를 안전한 기본값과 함께 정규화해 반환한다.
 export function getMapConfig(): MapConfig {
     const provider = (getEnv("EXPO_PUBLIC_MAP_PROVIDER") ?? "TMAP").toUpperCase();
+    // 지원하지 않는 값은 APPLE로 fallback 한다.
     const defaultProvider: MapProvider =
         provider === "GOOGLE" || provider === "NAVER" || provider === "KAKAO" || provider === "TMAP"
             ? provider

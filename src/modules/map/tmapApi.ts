@@ -18,6 +18,8 @@ export type RoutePathCoord = {
     lng: number;
 };
 
+export type RouteApiProvider = "tmap" | "kakao" | "naver";
+
 export type TransitLegKind = "SUBWAY" | "BUS" | "WALK" | "ETC";
 
 export type TransitLegDetail = {
@@ -54,6 +56,7 @@ export type TransitRouteOption = {
     transitLegs?: TransitLegDetail[];
     pathCoords?: RoutePathCoord[];
     source: "api" | "fallback";
+    provider?: RouteApiProvider;
     fallbackKind?: "road" | "straight";
 };
 
@@ -71,6 +74,7 @@ export type RouteAlternativeOption = {
     stepSummary?: string;
     transitModeSummary?: string;
     transitLegs?: TransitLegDetail[];
+    provider?: RouteApiProvider;
 };
 
 type RouteEtaResult = {
@@ -82,11 +86,17 @@ type RouteEtaResult = {
 };
 
 const TMAP_API_BASE_URL = "https://apis.openapi.sk.com";
+const KAKAO_MOBILITY_API_BASE_URL = "https://apis-navi.kakaomobility.com";
+const KAKAO_LOCAL_API_BASE_URL = "https://dapi.kakao.com";
+const NAVER_MAP_API_BASE_URL = "https://naveropenapi.apigw.ntruss.com";
 const TMAP_REQUEST_TIMEOUT_MS = 12000;
+const DOMESTIC_REQUEST_TIMEOUT_MS = 12000;
 const STRAIGHT_LINE_ALTERNATIVE_LIMIT = 3;
 const TMAP_TRANSIT_REQUEST_COUNT = 12;
 const SEARCH_RESULT_LIMIT = 12;
+// 경로 렌더링 시 메모리/성능 보호를 위한 최대 path point 수.
 const MAX_PATH_POINTS = 1200;
+// 모드별로 UI에 노출할 경로 대안 최대 개수.
 const ROUTE_ALTERNATIVE_LIMIT_BY_MODE: Record<TravelMode, number> = {
     CAR: 6,
     ETC: 5,
@@ -110,6 +120,7 @@ function safeNumber(value: unknown): number | undefined {
     return Number.isFinite(n) ? n : undefined;
 }
 
+// WGS84 범위 좌표인지 검증한다.
 function isWgs84Coordinate(lat: number, lng: number): boolean {
     return Number.isFinite(lat) &&
         Number.isFinite(lng) &&
@@ -119,6 +130,7 @@ function isWgs84Coordinate(lat: number, lng: number): boolean {
         lng <= 180;
 }
 
+// 여러 후보 좌표쌍 중 첫 번째 유효 좌표를 선택한다.
 function pickFirstValidCoordinatePair(pairs: Array<[unknown, unknown]>): RoutePathCoord | undefined {
     for (let index = 0; index < pairs.length; index += 1) {
         const [rawLat, rawLng] = pairs[index];
@@ -131,12 +143,14 @@ function pickFirstValidCoordinatePair(pairs: Array<[unknown, unknown]>): RoutePa
     return undefined;
 }
 
+// null/단일값/배열 입력을 배열로 통일한다.
 function ensureArray<T>(value: T | T[] | null | undefined): T[] {
     if (Array.isArray(value)) return value;
     if (value === null || value === undefined) return [];
     return [value];
 }
 
+// 앱에서 사용하는 Tmap API 키를 환경변수에서 읽는다.
 function resolveTmapAppKey(): string | undefined {
     return getEnv("EXPO_PUBLIC_TMAP_APP_KEY") ?? getEnv("EXPO_PUBLIC_TMAP_API_KEY");
 }
@@ -145,6 +159,7 @@ function hasTmapAppKey(): boolean {
     return !!resolveTmapAppKey();
 }
 
+// Tmap API 요청 공통 헤더를 구성한다.
 function getTmapHeaders() {
     const appKey = resolveTmapAppKey();
     if (!appKey) {
@@ -156,6 +171,7 @@ function getTmapHeaders() {
     };
 }
 
+// Tmap 호출 전용 axios 인스턴스.
 function tmapClient() {
     return axios.create({
         baseURL: TMAP_API_BASE_URL,
@@ -164,6 +180,83 @@ function tmapClient() {
     });
 }
 
+function resolveKakaoRestApiKey(): string | undefined {
+    return getEnv("EXPO_PUBLIC_KAKAO_MOBILITY_REST_API_KEY") ??
+        getEnv("EXPO_PUBLIC_KAKAO_LOCAL_REST_API_KEY") ??
+        getEnv("EXPO_PUBLIC_KAKAO_REST_API_KEY") ??
+        getEnv("EXPO_PUBLIC_KAKAO_MAP_APP_KEY");
+}
+
+function hasKakaoRestApiKey(): boolean {
+    return !!resolveKakaoRestApiKey();
+}
+
+function getKakaoHeaders(includeServiceHeader = false) {
+    const restApiKey = resolveKakaoRestApiKey();
+    if (!restApiKey) {
+        throw new Error("Kakao REST API key is missing. Set EXPO_PUBLIC_KAKAO_REST_API_KEY.");
+    }
+
+    return {
+        Authorization: `KakaoAK ${restApiKey}`,
+        ...(includeServiceHeader ? { service: "nol ate" } : {}),
+    };
+}
+
+function kakaoMobilityClient(includeServiceHeader = false) {
+    return axios.create({
+        baseURL: KAKAO_MOBILITY_API_BASE_URL,
+        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
+        headers: getKakaoHeaders(includeServiceHeader),
+    });
+}
+
+function kakaoLocalClient() {
+    return axios.create({
+        baseURL: KAKAO_LOCAL_API_BASE_URL,
+        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
+        headers: getKakaoHeaders(),
+    });
+}
+
+function resolveNaverClientId(): string | undefined {
+    return getEnv("EXPO_PUBLIC_NAVER_MAP_CLIENT_ID") ??
+        getEnv("EXPO_PUBLIC_NAVER_CLIENT_ID") ??
+        getEnv("EXPO_PUBLIC_NAVER_CONSUMER_KEY");
+}
+
+function resolveNaverClientSecret(): string | undefined {
+    return getEnv("EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET") ??
+        getEnv("EXPO_PUBLIC_NAVER_CLIENT_SECRET") ??
+        getEnv("EXPO_PUBLIC_NAVER_CONSUMER_SECRET");
+}
+
+function hasNaverMapKeys(): boolean {
+    return !!resolveNaverClientId() && !!resolveNaverClientSecret();
+}
+
+function getNaverHeaders() {
+    const clientId = resolveNaverClientId();
+    const clientSecret = resolveNaverClientSecret();
+    if (!clientId || !clientSecret) {
+        throw new Error("Naver Maps API key is missing. Set EXPO_PUBLIC_NAVER_MAP_CLIENT_ID and EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET.");
+    }
+
+    return {
+        "X-NCP-APIGW-API-KEY-ID": clientId,
+        "X-NCP-APIGW-API-KEY": clientSecret,
+    };
+}
+
+function naverMapClient() {
+    return axios.create({
+        baseURL: NAVER_MAP_API_BASE_URL,
+        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
+        headers: getNaverHeaders(),
+    });
+}
+
+// Axios 에러를 사용자 메시지로 정규화한다.
 function tmapApiErrorMessage(error: unknown): string {
     if (!axios.isAxiosError(error)) {
         return error instanceof Error ? error.message : "알 수 없는 오류";
@@ -180,6 +273,7 @@ function tmapApiErrorMessage(error: unknown): string {
     return `HTTP ${status ?? "??"} → ${message ?? error.message}`;
 }
 
+// 과도하게 긴 path는 샘플링해 점 개수를 제한한다.
 function clampPathCoords(coords: RoutePathCoord[], maxPoints = MAX_PATH_POINTS): RoutePathCoord[] {
     if (coords.length <= maxPoints) return coords;
     const step = Math.ceil(coords.length / maxPoints);
@@ -190,6 +284,7 @@ function clampPathCoords(coords: RoutePathCoord[], maxPoints = MAX_PATH_POINTS):
     return sampled;
 }
 
+// 인접한 중복 좌표를 제거한다.
 function dedupePathCoords(coords: RoutePathCoord[]): RoutePathCoord[] {
     if (coords.length < 2) return coords;
     const result: RoutePathCoord[] = [];
@@ -202,6 +297,7 @@ function dedupePathCoords(coords: RoutePathCoord[]): RoutePathCoord[] {
     return result;
 }
 
+// 거리 기반으로 예상 소요시간(분)을 계산한다.
 function estimateMinutesByDistanceMeters(distanceMeters: number, mode: TravelMode): number | undefined {
     if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return undefined;
     const speedKmh = TRAVEL_MODE_META[mode]?.speedKmh;
@@ -991,6 +1087,73 @@ function dedupeSearchResults(items: PlaceSearchItem[]): PlaceSearchItem[] {
     return result;
 }
 
+function parseKakaoLocalDocuments(data: any, query: string): PlaceSearchItem[] {
+    const documents = ensureArray(data?.documents);
+
+    return documents
+        .map((document: any, index: number) => {
+            const lat = safeNumber(document?.y);
+            const lng = safeNumber(document?.x);
+            if (typeof lat !== "number" || typeof lng !== "number") return null;
+
+            const roadAddress = typeof document?.road_address_name === "string"
+                ? document.road_address_name.trim()
+                : "";
+            const address = typeof document?.address_name === "string"
+                ? document.address_name.trim()
+                : "";
+            const nestedRoadAddress = typeof document?.road_address?.address_name === "string"
+                ? document.road_address.address_name.trim()
+                : "";
+            const nestedAddress = typeof document?.address?.address_name === "string"
+                ? document.address.address_name.trim()
+                : "";
+            const placeName = typeof document?.place_name === "string"
+                ? document.place_name.trim()
+                : "";
+
+            const normalizedAddress = roadAddress || nestedRoadAddress || address || nestedAddress || query;
+            const name = placeName || normalizedAddress.split(" ").slice(0, 3).join(" ") || `${query} ${index + 1}`;
+            const category = typeof document?.category_name === "string" && document.category_name.trim()
+                ? document.category_name.trim()
+                : undefined;
+
+            return {
+                name,
+                address: normalizedAddress,
+                lat,
+                lng,
+                category,
+            } as PlaceSearchItem;
+        })
+        .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
+}
+
+function parseNaverGeocodeResults(data: any, query: string): PlaceSearchItem[] {
+    const addresses = ensureArray(data?.addresses);
+
+    return addresses
+        .map((item: any, index: number) => {
+            const lat = safeNumber(item?.y);
+            const lng = safeNumber(item?.x);
+            if (typeof lat !== "number" || typeof lng !== "number") return null;
+
+            const roadAddress = typeof item?.roadAddress === "string" ? item.roadAddress.trim() : "";
+            const jibunAddress = typeof item?.jibunAddress === "string" ? item.jibunAddress.trim() : "";
+            const address = roadAddress || jibunAddress || query;
+            const name = address.split(" ").slice(0, 3).join(" ") || `${query} ${index + 1}`;
+
+            return {
+                name,
+                address,
+                lat,
+                lng,
+                category: "주소",
+            } as PlaceSearchItem;
+        })
+        .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
+}
+
 async function searchViaTmapPoi(query: string): Promise<PlaceSearchItem[]> {
     const client = tmapClient();
     const response = await client.get("/tmap/pois", {
@@ -1067,6 +1230,100 @@ async function reverseViaTmap(lat: number, lng: number): Promise<string | undefi
         .join(" ");
     if (jibun) return jibun;
 
+    return undefined;
+}
+
+async function searchViaKakaoLocal(query: string): Promise<PlaceSearchItem[]> {
+    const client = kakaoLocalClient();
+    const [keywordResponse, addressResponse] = await Promise.all([
+        client.get("/v2/local/search/keyword.json", {
+            params: {
+                query,
+                size: 10,
+                sort: "accuracy",
+            },
+        }),
+        client.get("/v2/local/search/address.json", {
+            params: {
+                query,
+                size: 10,
+            },
+        }),
+    ]);
+
+    return dedupeSearchResults([
+        ...parseKakaoLocalDocuments(keywordResponse.data, query),
+        ...parseKakaoLocalDocuments(addressResponse.data, query),
+    ]);
+}
+
+async function reverseViaKakaoLocal(lat: number, lng: number): Promise<string | undefined> {
+    const client = kakaoLocalClient();
+    const response = await client.get("/v2/local/geo/coord2address.json", {
+        params: {
+            x: String(lng),
+            y: String(lat),
+        },
+    });
+
+    const first = ensureArray(response.data?.documents)[0] as any;
+    const roadAddress = first?.road_address?.address_name;
+    if (typeof roadAddress === "string" && roadAddress.trim()) return roadAddress.trim();
+
+    const address = first?.address?.address_name;
+    if (typeof address === "string" && address.trim()) return address.trim();
+    return undefined;
+}
+
+async function geocodeViaNaver(query: string): Promise<PlaceSearchItem[]> {
+    const client = naverMapClient();
+    const response = await client.get("/map-geocode/v2/geocode", {
+        params: {
+            query,
+        },
+    });
+
+    return parseNaverGeocodeResults(response.data, query);
+}
+
+function composeNaverReverseAddress(item: any): string | undefined {
+    const region = item?.region;
+    const land = item?.land;
+    const regionParts = [
+        region?.area1?.name,
+        region?.area2?.name,
+        region?.area3?.name,
+        region?.area4?.name,
+    ]
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .map((value) => (value as string).trim());
+
+    const roadParts = [
+        land?.name,
+        [land?.number1, land?.number2].filter(Boolean).join("-"),
+    ]
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .map((value) => (value as string).trim());
+
+    const address = [...regionParts, ...roadParts].join(" ").trim();
+    return address || undefined;
+}
+
+async function reverseViaNaver(lat: number, lng: number): Promise<string | undefined> {
+    const client = naverMapClient();
+    const response = await client.get("/map-reversegeocode/v2/gc", {
+        params: {
+            coords: `${lng},${lat}`,
+            orders: "roadaddr,addr",
+            output: "json",
+        },
+    });
+
+    const results = ensureArray(response.data?.results);
+    for (const item of results) {
+        const address = composeNaverReverseAddress(item);
+        if (address) return address;
+    }
     return undefined;
 }
 
@@ -1231,6 +1488,103 @@ async function getRouteAlternativesViaOSRM(
     return parsed;
 }
 
+function routeSummaryLooksUsable(route: Pick<RouteAlternativeOption, "minutes" | "distanceMeters" | "pathCoords">): boolean {
+    return typeof route.minutes === "number" ||
+        typeof route.distanceMeters === "number" ||
+        (Array.isArray(route.pathCoords) && route.pathCoords.length >= 2);
+}
+
+function parseKakaoRoutePath(route: any): RoutePathCoord[] | undefined {
+    const coords: RoutePathCoord[] = [];
+    const sections = ensureArray(route?.sections);
+
+    sections.forEach((section: any) => {
+        ensureArray(section?.roads).forEach((road: any) => {
+            const vertexes = Array.isArray(road?.vertexes) ? road.vertexes : [];
+            for (let index = 0; index + 1 < vertexes.length; index += 2) {
+                const lng = safeNumber(vertexes[index]);
+                const lat = safeNumber(vertexes[index + 1]);
+                if (typeof lat === "number" && typeof lng === "number" && isWgs84Coordinate(lat, lng)) {
+                    coords.push({ lat, lng });
+                }
+            }
+        });
+    });
+
+    if (coords.length < 2) return undefined;
+    return clampPathCoords(dedupePathCoords(coords));
+}
+
+function parseKakaoRouteAlternatives(data: any, mode: TravelMode, idPrefix: string): RouteAlternativeOption[] {
+    const routes = ensureArray(data?.routes);
+
+    return routes
+        .map((route: any, index: number) => {
+            const resultCode = safeNumber(route?.result_code);
+            if (typeof resultCode === "number" && resultCode !== 0) return null;
+
+            const durationSeconds = safeNumber(route?.summary?.duration);
+            const distanceMeters = safeNumber(route?.summary?.distance);
+            const minutes = typeof durationSeconds === "number"
+                ? Math.max(1, Math.ceil(durationSeconds / 60))
+                : undefined;
+            const pathCoords = parseKakaoRoutePath(route);
+            const fareWon = safeNumber(route?.summary?.fare?.toll);
+
+            const parsed: RouteAlternativeOption = {
+                id: buildAlternativeId(idPrefix, index),
+                mode,
+                minutes,
+                distanceMeters,
+                fareWon,
+                pathCoords,
+                source: "api",
+                provider: "kakao",
+            };
+
+            return routeSummaryLooksUsable(parsed) ? parsed : null;
+        })
+        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
+}
+
+function parseNaverRoutePath(route: any): RoutePathCoord[] | undefined {
+    const path = Array.isArray(route?.path) ? route.path : [];
+    const coords = path
+        .map((point: unknown) => parseLatLngPair(point))
+        .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null)
+        .filter((coord) => isWgs84Coordinate(coord.lat, coord.lng));
+
+    if (coords.length < 2) return undefined;
+    return clampPathCoords(dedupePathCoords(coords));
+}
+
+function parseNaverRouteAlternatives(data: any, option: string, mode: "CAR" | "ETC", idPrefix: string): RouteAlternativeOption[] {
+    const routes = ensureArray(data?.route?.[option]);
+
+    return routes
+        .map((route: any, index: number) => {
+            const durationMs = safeNumber(route?.summary?.duration);
+            const distanceMeters = safeNumber(route?.summary?.distance);
+            const minutes = typeof durationMs === "number" ? Math.max(1, Math.ceil(durationMs / 60000)) : undefined;
+            const pathCoords = parseNaverRoutePath(route);
+            const fareWon = safeNumber(route?.summary?.tollFare);
+
+            const parsed: RouteAlternativeOption = {
+                id: buildAlternativeId(`${idPrefix}-${option}`, index),
+                mode,
+                minutes,
+                distanceMeters,
+                fareWon,
+                pathCoords,
+                source: "api",
+                provider: "naver",
+            };
+
+            return routeSummaryLooksUsable(parsed) ? parsed : null;
+        })
+        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
+}
+
 async function getDrivingRouteViaTmap(
     origin: Place,
     destination: Place,
@@ -1286,6 +1640,110 @@ async function getWalkingRouteViaTmap(
     );
 
     return parseRouteSummaryFromFeatureCollection(response.data);
+}
+
+async function getDrivingAlternativesViaKakao(origin: Place, destination: Place, mode: "CAR" | "ETC"): Promise<RouteAlternativeOption[]> {
+    const priorities = ["RECOMMEND", "TIME", "DISTANCE"];
+    const options: RouteAlternativeOption[] = [];
+
+    for (let index = 0; index < priorities.length; index += 1) {
+        const priority = priorities[index];
+        try {
+            const client = kakaoMobilityClient();
+            const response = await client.get("/v1/directions", {
+                params: {
+                    origin: `${origin.lng},${origin.lat}`,
+                    destination: `${destination.lng},${destination.lat}`,
+                    priority,
+                    alternatives: true,
+                    road_details: false,
+                    summary: false,
+                },
+            });
+            options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
+        } catch (error) {
+            console.warn(`[대안경로] Kakao driving(${priority}) 실패 →`, tmapApiErrorMessage(error));
+        }
+    }
+
+    return dedupeRouteAlternatives(options);
+}
+
+async function getAffiliateRouteAlternativesViaKakao(
+    origin: Place,
+    destination: Place,
+    mode: "WALK" | "BIKE",
+    endpoint: string,
+    priorities: string[]
+): Promise<RouteAlternativeOption[]> {
+    const options: RouteAlternativeOption[] = [];
+
+    for (let index = 0; index < priorities.length; index += 1) {
+        const priority = priorities[index];
+        try {
+            const client = kakaoMobilityClient(true);
+            const response = await client.get(endpoint, {
+                params: {
+                    origin: `${origin.lng},${origin.lat}`,
+                    destination: `${destination.lng},${destination.lat}`,
+                    waypoints: "",
+                    priority,
+                    summary: false,
+                },
+            });
+            options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
+        } catch (error) {
+            console.warn(`[대안경로] Kakao ${mode.toLowerCase()}(${priority}) 실패 →`, tmapApiErrorMessage(error));
+        }
+    }
+
+    return dedupeRouteAlternatives(options);
+}
+
+async function getWalkingAlternativesViaKakao(origin: Place, destination: Place): Promise<RouteAlternativeOption[]> {
+    return getAffiliateRouteAlternativesViaKakao(
+        origin,
+        destination,
+        "WALK",
+        "/affiliate/walking/v1/directions",
+        ["DISTANCE", "MAIN_STREET"]
+    );
+}
+
+async function getBicycleAlternativesViaKakao(origin: Place, destination: Place): Promise<RouteAlternativeOption[]> {
+    return getAffiliateRouteAlternativesViaKakao(
+        origin,
+        destination,
+        "BIKE",
+        "/affiliate/bicycle/v1/directions",
+        ["RECOMMEND", "TIME", "DISTANCE"]
+    );
+}
+
+async function getDrivingAlternativesViaNaver(origin: Place, destination: Place, mode: "CAR" | "ETC"): Promise<RouteAlternativeOption[]> {
+    const naverOptions = mode === "CAR"
+        ? ["trafast", "tracomfort", "traoptimal", "traavoidtoll", "traavoidcaronly"]
+        : ["trafast", "traoptimal"];
+    const alternatives: RouteAlternativeOption[] = [];
+
+    for (let index = 0; index < naverOptions.length; index += 1) {
+        const option = naverOptions[index];
+        try {
+            const client = naverMapClient();
+            const response = await client.get("/map-direction/v1/driving", {
+                params: {
+                    start: `${origin.lng},${origin.lat}`,
+                    goal: `${destination.lng},${destination.lat}`,
+                    option,
+                },
+            });
+            alternatives.push(...parseNaverRouteAlternatives(response.data, option, mode, `naver-${mode.toLowerCase()}`));
+        } catch (error) {
+            console.warn(`[대안경로] Naver driving(${option}) 실패 →`, tmapApiErrorMessage(error));
+        }
+    }
+
+    return dedupeRouteAlternatives(alternatives);
 }
 
 function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {

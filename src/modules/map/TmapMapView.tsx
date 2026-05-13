@@ -31,6 +31,7 @@ export type TmapMarker = {
     badgeGlyph?: string;
     dotSize?: number;
     rotationDeg?: number;
+    zIndex?: number;
 };
 
 export type TmapPathOverlay = {
@@ -104,6 +105,9 @@ function safeNumber(value: unknown): number | undefined {
 
 const DEFAULT_FALLBACK_BACKGROUND = "#E5E7EB";
 const DEFAULT_FALLBACK_TEXT = "#6B7280";
+// WebView 내부 SVG <image>에서 안정적으로 렌더되도록 아이콘을 data URI로 고정한다.
+const BUS_BADGE_GLYPH_URI = "data:image/png;base64,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";
+const SUBWAY_BADGE_GLYPH_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAMAAADDpiTIAAAAA3NCSVQICAjb4U/gAAAACXBIWXMAAEt/AABLfwGCdY8rAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAwBQTFRF////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACyO34QAAAP90Uk5TAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+6wjZNQAAH/RJREFUeNrtXQd8VUX2npdCeiOEJBACJHRCMSBVmop0UBDBCIj4VwQFse66a1lcC+C6qwuICiJgoSkQOii9SgmdIGBoCUloIaSR9u4/AXUpmXtn7rtlyvn48Qh5986dM993z5k+DsQs/O/v2SwoONAd87XCye+zTp85fSyxAAHocO/SQkUcXP6oNlBKg+ZLFcFQmhgLtJLCfXyJIh5yxzgYLGsW81Tzu/ZiCnvTiBQQgDZarQwV1bVdG7yKOW/LXCE9tDJI2Njm9XjuDhCAOgYv9Ba4duPoVmOVEwSggheme4hdwY1vvMgJAsBi/EQHEhwN6yxRQAAVw+2zVyRo5DaJWgYCqJj/74ZL0c0RH7oKBFARPn0ayYFWvj+DAO7Ga28iWdAebQIB3ImEaQ5pBIA6528HAdyOBxZ6IInQ9dgRNjLCylvXbHMgkgr5bQ+CAP6HmjsikWQ41fIKE00vJgojcJV0/KPa85gIv2zUAeZ0RvIh1ucnEMBNjHodyYj2vx6GOkA57tnhJaUAUH67AyAAhAKS6iBJcapFFggAzRtEemVO0t4rxcUK05wGhIdHxFQjvXpuApIezxHOqSz5sZMbJyY5Os28RmjVY9Lz37yAqKCuflyLK7N8h58lWzAQKTn/XkdJiinvFX/uLPP7kGhly0rJBfABSSHtqc+lbfXXkRj3rNT831NMEPzf8+TUOrd3SrXNy4mRmH+PfdoFlMLzKpFul7QN3OImrwD+rl08O6twbWH0QW0TX5eW/0ba1aRlvpzbWHmPpo0FsgYBtx2aZTPDnXsrg7StXC2pAF7SLJl3RTAzYLOmnYOk5D8yV6tcPhbDUN+ftQw9HyijAL7UKpYFoswS9V6pZeoUGWuAWptAbBZnkLjSEq39Q+6VTwDLNcokOUSkDo9lGtYmucvGfxeNEkmvJZS5/lr9AS9Kxr9Do3mcEy+YwTUz1Q3ODpVLAAnqxVHcQziL211XN3mSVPx7nVYvjf8T0OZh6ibnR8gkgFcl6AC6Cx+qGz1ZIv4rZ6kWxSxB6z3qjcHCmvII4N+qJXFA1FnifvtV7f5KGv5rq44CFsQJa3hsjurMl7qyCGCe6oswTmDLn1K1/HtJ+G/lVCuFtULvE7FQtUO4iRwC2KQ6T7qa0LaHnFMzfrEU/PdVdYOPCm59F9V5ojKMCXkkq5XA18LbP0nN/DUSCEB1KVhKgPD2V0pSK4COwtvvmarWEGovwRvQIE9tEoTw5qv2iP9TikrQy2pF0E106w+oGL9Ljp3i3NWWw+wW3PiuagFAkmYwaqXWEnhYbNvXqJj+GZIFU1VK4ZDQK8Waqlh+RZ45MUHpKuXQV2TLZ6sYPhbJg0Eq5fCzwHZXK8LbfUSqvYJXqyigkbhmT1Axu6tM/KOYfHxJTBPWan+ViUCJSC68o3LEaLCoRo9TmQ8l216BAZfxhfGyqB0gKlOBJyLZ8Aa+MH4TtCWoUvVND5BOAP4qu8f0EdPk3XiLn0Ly4S8qs6KENLiTyj5wDgkF4HcBXyANRTRYZYFsLyQjXpOrV7wBfiroPin5R7749aK5Ap6g/qW88wBxeAVfJC8JZ2wYflPoZFl3SvTNwJbJSeHKRGVLsKFIVqgUSm/RbMUvi0vxkFYAPunSzA9uhtf6SCQvXsSWirOBWJZ+jLU0tZLEAvBOk2TnOI8MKdeCamMMfpckP5Hs7IW184Kv1ALwwi+TsOY8KYtaG8Ow3/wnX2oBFOJnfzwukJnB2B2ysgKR3IjAzpIrqiyOBxiE3fRl1jXJBZCBnQrlOVAcK7fJOAGSEA9gy2ajMDbWxdq4VXr+keM4tisgSpQQgK8CTgcBKF9gpTFYFI1j5wJe9QEBoFDsMFmSIBZ2hnMSVDEHWz71xTBwJtbAZsB+Gdphy2e8Be7Z/Ef4ZuCm/O5uZcgDRkerRNjJ511/QEJVR1lBOW583PLDjY+T37me/kHcuvgT9UQQ+BCz9wTfqXoUh+vHTj9v9pFvo7GptxRBAGuxwx3+FghAWebqYSzdSswWQCD2/LR/C8B/dex2GF8iKwTg6jbsjbMV0zd2w86XTBNgZtgY0/3bTjOP46l6SjFfAPHY5LvwL4A1pk8G1xJAqQt7bnhv10jcmEU8u3DJ899T5o8dCHzNKgEoufpPoPpesUQAI7D75nA/X+oRbNHVtkwAyvkaOpP+h2bSPxliQjB2ULifyfyYXsnATm/ec8o6FUau0Lf6+PF3LMrg1Q24bwZyLgAHdtnfQiv9UJMFehqDbQm2rjaoJ20RthHKeTvgXqzvjDHsGdohQN/GO7UuEKRr0J5eEdjGcmu+PQA2AuxNsVaJz71K3T2zPMy67GXswH3TnW8BYPe6+MFqXzSxP9317gsaE8U4g7KHjQF8n6FaHes6Y417CFEIUJR8uqGnqWSprjPIiNrYXoxQnj0Atgq47zcDK5pkl/kspTmZcexoQx+uiVP7cQw9xLMAejPRBvgd4SvJt13oafkwzGIRY4A39nAMI7cF/EUhxU+kC5GbXCNNcoNRVsThnpDp4NcD3I9b97X/pC2CfPBzQl+x3Ppt6w6fwHxRtQW/AmAqApTj6b8SOa7EaKMrIK7EgO6IW5y1ZDIgeQhQFOdjBJzOp0hwo2FmtMY9Yhu3/GOPh8hw2CUApaCtZnr/VGwRgAO3ULgkhNcQgO0FWqfYVy9N1OqDHvKmCW1QAihLcF1SD/EqAGwV4Ccb3VLYCvUXqv0Mu3K2SLRKQBXsAEd1Q59DFQLKW25qkyxiLtIlZuBJjx64uaHpDj49QAdc4slptgqzs8o8q6DlVWzLV8l2zBcRzfkUwH0sRoByDHsL+xIupN2m2ciXc4sNMcBUD8CqANC7uP13Jtt6chE2nPDZG+xXjNv7xN/YB+1SqHG9YnGOo0/JyB0OvHETaIsDefQAbXEd7ztzbRen1+K6FbVaPrY3V9dxBwd7tOFRAOxGgDKErrh7mL3ZXB2lYWgFHRsD2oEAjEbdJXduXBWxzN/uTNkgAPPgiRsKvupu8JN01AHKcce6bh99yRjaUR+AW4ea7cafB2iBGwreXMqGQhPevc2Vz7lXVyqGhoAc3LSgwDj+BICNAL+w4qPeevKW/7zHxLEl1scAGwSwi5koNb3znz8++TedaTg4F4BpcOCORnUafjKuzjpA+dLLPzbl71CoN4kdxjZOcCdrneTOAzTC7XR7/Co7Kg1ZcXPtR+xi3YtwjfUAl49ivoitypsA2K8ClCMm0bvsM3hFKCsZ2mJ1DLBeALtYEgBqO9uBPH50YT8+g0dqN4svAKY8AEKPfYA+u5+d7AhTC6yJHYbxNPxZ+iuBN7cRc+luo/WMO020oBJfHgDrAPYVG9/gcO323nY+/C4cxvzeO14QAexCADUcsjgGmCWA9pxUAex2P8QegDMB+DQAD2CwANpyJYA43IjfFesXBV7iygMcwS2ZqFaTJwFgl34dsf6dWufKPJ9day3Obc4Za2OASQLAzmM+ZoNXfX2p7ltP98232APgY0ArITyAHQJwJuzXeefVnpnsNAOaciQAB1MCQHl90nXdVzwgmaFaIE8CqB3AlABQal9dB9Q+u976SiBeAFUi+BEAtgpQeNqextWeoTrWI/9zlh1ZPVZiqQswRwDYCHDCaVPzehH9jJ/v3rajGYiKjgsgAKYaATcpmkD7Om8eYZNWsTGgiQAe4Jh5DGth5CaqRI8/UnTjX8VqD2BxLdAUAQTXZKsOeNO19qfphLzU84pdGcW2Axt68CIA/BZQNgoAXemdRXzt9X6kO5la6AG86vMiAPx+Br/aKAD066OkcxGUJ7fbl80zipWVAGs9QJq964LXE+7/i95YYHAFhAbFF6ysBFjrAY4jezHjX0SXTZ9oay7TeBeARyNq06zCXxIJLlo72t5MpvIeAhp64b5Jt6M8b3XSzie0Tys8NPDWvjjrm4H41yQ6mA8B4BsB5+32ACivj1Ye0ntdQ4x6ADNcgLUCSLddAChNY1wor/c53f7FbA/AiwAaMOwBENo7RM2rlw5Osj2HeA/QlA8B1GFaAGjxGypfjlvuQg3DdA/AhwDcYlgOAWWYiD8P8pMpDOQP7wHiHDwIoAZ2EVN2vikFRl0qIzdivkh8xfyHayMXWwsNqMaDAOoy7gDKp3pVfDzLngQnE/nDu4BYHgTAWhWggne04nGhM30q8FB2nGyArwTEgACMwfEBd48LZffKsCL+yOwB0pkRANow6q648OgRVjLHuQeoy4EHQOirj+74xXP6zgEHD3BXieBVepEhAaC/3n5Ez/sz2claGtcCiPLGt29YEoBzyK19fnPfsqoNSgD8ctYqAewLQOVQWKYEgPL6/u9N2/qUwlDOVMopFgRg3Dua1jfv959OPFyIGPIAOVwLoC4vHgChpCE3O34u97yMvUZhywPEgAcwEktuHCVc2M+FXSvAA1AIIIc1AaCPvip7x4ezdjhvUTHHHsARy5EHQGjUBvTmPOZylcOxB6jmi/2quMjiWh4Bige884FtD9chgGgP1gVQhysHgFDWuwxmCl9SHtEgALZgsQcwPAYYLoBazAnANYoUtjyA4bVAwwUQxVMjADyA8QKoLlkIsNoD8CyAEvAArnuAKI4F4AavtusCqMa4APyCQACmhoAIB9sCUHEAyF1ErqwOAR5h/AoAPAAp1Aanq4EAmOoHMMUDuPErgCjZQgCyWgCR4AEseQltfTjHHgDqACAAaAVACAAPYJ6q2PYA7hEgAKlDQLg7hACTWQl3Y1kAUYg9D8DhfAC1kjK4K9BgUqozKADBPIDBMQAEwFsdwOBmAAgAPICRiLC8rKRrBrItAD/wAHKHAF+oA3AWAgxeaOJjhwA+ClMUBWH/nnMp8dk7bjYFcX/zLRdACMsCsMUDfG/my7hqFWseIMC6R0EIYDEEBLIsAB8QAHgAaAaa27QADyC5B/CqBHUAqQVgbAwwlhSHt6p0gVlDWAlkVwCqEQB5A7OiewBfdf9QCagV3AOoCwBcgPAewAcEYH4zEDwAhADwABACwAOIDF9BPYAPUEuG2rx6AA/wAIYghlcP4AABGIGAKiAAiABchgANAfgDtwZEAJYFoJHavcAtEeqpf+3FrQfoBNwSoY+FnFkqgKbBQC4Boturf+/OrgA0UnPrAOwSYLCDWwFozfrrBuwSIAEJK4AnQ4BeTTRqZiVn1m434T8K+HXZAfDsAdAYmBeohaBRIgsgYigwrIHXK1sqAGMxQtFCeihQrP6K5GmW4TmOPQCKmAYcq2KSr7WcWS0ANDABSFarARLESH47gm5gSnWgGYsYEgfpzrUHQCGJQUA0Bn7zAsUXAGqxCoaFK4Z3ItF4KcMCIEPb5TA5sCJ4LnzAes5s8AAIdUoMALrvQsCPvckudOdeAKjrvpZA+B1osKsP4l4AxIjd9jLsF3IbHt3VANkhAGPxvEKOFXWA9f81/5ZSlJzCrh0v0JhRMgskcBP+4wsUCQVQLoE4YB81npJNV2wKu9FzjEKL05/18ZOYfI82b2ymLjPFyIqbsWIa+6mOmwqTMzMvZObKxr0jpEpYZCtd7WF3p4EStL8kvJpDGLDvrXVjNmcAEACANwEAwAMA+AIIADwAAAQAHgAEAAIAAQCgEggeADwACAAEAAABgAcAAYAAoBIIAA8AHgAEAAIAAQBAAOABoBIIAA8AHgAEAAIAAQBAAOABoBIIAgAPAAABgJxAACAAEAAIACqBUAkEDwAeAAQAAAEApBUA1AEkrwSCB4AQAAABACAEAKASCIAQAIAQAAAPAIA6AABCAABCAAA8AAA8AAAqgQAIAQAIAQDwABhkl4pY1Eo2ix7A2DODXM5ZxqGjZbjiVjm8anhUrw7uYlB/fcOxlFMppwt8omvWrNm4u7e4Va3FiivInt7hdtOqjvy5ROEdeT8M9r/NqqAR60tdS7IRswJIdMGqLYMrOlS+yitXuab/4jjfCqyq/lqaK4k2ZlYAy3TblDEEl2b4LCe39OeMx50LGPAfF3wbu+etrtBpUenkIJVU2yVxyv/8qipWNdsmoABW6nz9W2k0LsbxWBUoGqNRlXtab3RrwqwAVuuy50SMZsJ9C7jj/2wbTaviL9ovAAa6bva0S9G8ZmnXq5w1/Q7F79S8JqnTecF6AvVgfZeLBFdt7XieK/5PPnSJ4KqjHU9LL4DfBpCdG36ofSpH/Kd1zSCzvsNxobqC6aWZ35/Ut58e4uSG/6yupG926sPX5fYAzx4kvnTTJG4EMDaZ+NLkN5BAWENbn51Kk7rnHk4aAEuoXud11OnfI4wHyPo7zdXFCXlcvAaXR9JcrQynHiUUZ0bQh3SNu+N8uMtxmVSXnxsrTiWQEqmTKW+YkcUB/ynfU97w7VlZK4Fv09aAC77mQACf0rZWnF9JKoCLc6hvmaYwz3/2TOpbZto4A8rOOsASertPrmVeANNzqW9JXS2nB/hBxz1TmRfAYj2ikbISmLVex00rixjnv3CvjptWXJfRAySW6Lip9BTjAthdqOOmkjMy9gPs1fWIk4wLYKuuu07LGAL0Gf0b4wLYa0FZOEAA7CIXPIC5RrMeAoqk9gA0Obus7125wHorQNddFwURgAXwE1IAXhKGgMr6Fv4FMC4AfVZ5S+gBHJWFFEAVqQVAlbMwIQUQZoEABGkF6CsqfxCAKJXAOAsLmHUBRMnoATrruqs74wJoaIFVgtQBOup5Qu3mjAvgAR8dN0U2F0QAVKiqZ6OLRxjnH/k8qOOmHvZt+mJnR9BgHff0Z10AqI+Oe3rSXV4kiABG0vd/RbRlXgC96YvUsyvd9bnMCoBuYkvVQdQPGMJ+13XkE9S3jAqku57d9TE/0C1xoh47j8jmYGFYiielVcGXKJ8QzqwHoJRm/DDK9P8ViNhH7Wcpb3grFIniAT6jlPKFELqeAz7WhmbQjVjGFtI+wE0UD4DCJlDVlaYiLhBOt459YiXK9LOdzAqAunr6DE0X2KuN+BAAGj2c4uJnB9Amn4KE8QDIMY+863TQe4gXTGtJ3gXwGXXqJwUSAApaRjotoPc3/Mxe8l5EOiYUP99dJAFcpr8ldgnZCH+XhZ6IH9RYX43ouujlOoa3GRbAQR33dNgcQXBV66XeiCfEba9PcFXM6kgdaTM8M94tT1fPST3NhPtncbdT6KXWmlb102dVNYaFv0OXRZc1hoWCv+Fxq+jckepjfB7/0pcu0ztmTtNZWIvUeje7nuN0t/Atau3W6lv17kFurNM2VgD7dN73yNHRuBgfPHVNFOIT9+17F2dV1QnJ7XWmupVlk1vpf13SX62oQtxqZj7fJ4ZMqFWBVVGfumAV03OifFzZ2P/yjP63Nwn9nklSuEfp0h63u4Gg7tMLXUgvm+2zPg+7dp5N8dYD51JTz6WjmPr1G9Rv7o+EQFHS9m17b6wZ8219331xrjG4ugfTApjwFyNScZZ6IkDFePk/TAug2X6gyFQo0cZum290//qBY8CRqdhm8LEJhg+wzAWOTMV8g9MzfEJ6vV+BJBPhrJ7BuAc4ngQsmYhNBvNvwroAiAFmYo7RCRq/JqnGGQfwZBbO1y5i3gOcmw88mYZPi9j3AKhOsgcwZQ6u1biGmPcA6OQMYMokfGE4/2Z4ABR50he4MgNFtY2fDGLGTNv0/wJXpuBLEyYDmVJjD04JAbaMx4X6Jpyg7W5GTq+jB4Eu4zH6F8SJB0A+R2oDX0ZjawczUjVntU3BY0VAmMEoGW1Ksu7m5Pb81Z5AmbH45BueBIB2NWoMnBmJ3UPMOVzQtH77gL11gTXjcKnFWXMSNm3Fbc7A60CbYXAmmMS/aSEAoczMvkCcUXhzNuJOACipVnNgzhgsfQFxKAC0PKYpcGcE1g0o5lIASmJkC2DPdfzctwBxKQCkLA9qC/y5ip/6mci/uQJAaI1HR2DQNaztZ2pzymQBoA2FMC7kEhaZ3Jw2WwBo65XuMElUN0r/NrbE3CdYQE6XOVHApD5cHLze7EdYsPfehqYwT1gffok3nX9LDozIGjzsGrBJj6kdU81/iEXxudY39wGhdEgetcmKx7hbY83V2UUd3YFUchT8Y1gKEkgASNmyMLwRNAdIsbr30lJrnmTdBszHHotfAcySef+BPVKsepa1L2Xb97sAvVrY98Eip3VPs9orP/BeG6BYDTvet9ZPWh+Wuwwf4Ac8V4ziFZPXW/xIO+pl/gOGdYH64N3YO3vuJcsfahMR0UOH1QPGb0X6t7OP2PFc+97E1t06t/EB4stRuG3t2v2KPc+21RV7te4svQiKj2xcuynfvufbHou9WrevF1snUkburxzYf2B/ss2L6BipjPnF1omtE+3ncwNeAr/v18txMTU1rexPJgs5YrE2XuMw4RHBaZN//+HP+Klo/GvgF3/86zuJuDu9pDVsokiiyZ9It87vxUR+PyHf6/9gJaBXG2NIi/NbNvIbmEGugA+BXk00ID1NJTOUkRwPJRdACUyT14LHbtLCHMhMnreQK+A4bKCmgfGkRfkjO3luRnFS0mSgWBWtigkL8koEQ7n+L7kAnA8AySrw/ZW0IJ9kKdtBmeQKOBsENOMxlbQYV7GV7ycpzn2bBTRj0Y20EK/VYKzvYhuFAvoB0RhUTiMtw+dYy3pzinpgRhWgumLMIy3Cjez1YE+mcAE/ANUV4nHSAsyvw17mgy9QKOAJILsCRGWRlt/LLGb/KQoBXKkOdN9djyIeA9rpxmT+t1MoYDXwfReIx4AKG7FpwD2lFAoYCYTfAeIxIOVN7jsxypATA5TfBvIxoP3MHiwecpFCAZsZiWOsHPD1VkvSK4sq2DXbofdXxl6WS9HA7/DSx2xUXdjgv9U26Y6aK4w/CgL4A777JFwmsrdNCQO5YGPXhk+6S1jtqaZsBA9wE93kbBaXtNkLAihH5UPV5Gz6HG1h/5kKLISAr2WdKRnmsxY8AEIJ3yFZ4ey8BQQQdShYWgGglGa5socAx4+N5OUfhYQutzkHtndIviD3buIj7W4A2x0CGiRJvj/A+bgsmUOAx4qacvOPAmosktkDjH+bosp84+i8m6uylds/aP9vSCIq/28URlEGAyWeIki8Dqgck/ixqx3FHGHlYri0/JOvAyrDYZ42DhlPYZiSKK0AaKbQFMXzZJk7zQRBZbik/HejKaS3+bIt5hqFbdnRUvJPvg6oDLt5mzAyjEbdP0u5cep8ihIqaMideXNpFPCChPwn0BTQy/zZF3yGwr68utLxT74OqAyb3Di0sCPNOoEddvXI2fVcqjGg3G5ZHArgjFcHivfh+la5HMAYmgDwLJ82euyisLGwqVT8k68DKsNKXq2sk0Nh5X6ZNpEkXwdUvpSW3xmDI2j83PsSCYCqp/Rxjg1dSGFnSWtp+KcaA1rAs6Uh5ygs/VWWqRFUY0Ccb6jThaYt+KkkAqAZA1L6cG7sRApbnfdLwT/VGNBM3q313Eth7ZlACfinGgM6y3+J1M+XSe8EoBkDUh6Src+rj/D8U40BzRDBYvLdr8qQHio4/1RjQOeC5LN5gdj8U70NSg9BrH5Cln4vbYylKYqvhTF7AYXVl0VeK081BpQmzqLR0PMyjH1pg2oMiJFD4YxBDxrDnxFWAFRjQLOFMv1zmk0kawvKfxua9TLnQ4Sy3e+k6DPgCMrgBI0D6CuY9VSrxV4SUgBf0PD/rXDmfyD2LHht9KbhP6OycPZX2ifyOhhthGXQCOARAd+AuOviroQjwBIa/ucKGQNfFXYtLAGopkdmijki4rZJ1NXw2oihmSCtDBC0HVyLZsmwRfthWLMs1X1Te4qrFwximUWH9h/sF8P/Qf4cZ8dt4gjgb1Rz3rdcoS9a3RdSpmkhfmuWJ4oA4nd6IgA1po0WRADeSQ2BTT3oZsFe0lb0Ok8E/vXhKwsGxC1YHt51sgO41IXAqMUCCCBkTSBQqRNNDyXzHwI+h3NyXSi8qtwL4InHgEb9CPuC9xBQY7k30OgCGpw6wHUz0LGuC5DoErLjUnkOAS8B/y4iaKa576i5ISBuvgdQ6CJiL+zmNgRU2t0UCHQZ+c1O8hoC3gP+DYDvbDNJMjMEdPoCugANaUnlmzgwbCJFgQdrAnmGoLDlYR5DwGTg3yB4fWPecLp5IeDR94E5oxDh2MBdCIg8FArEGYbSdrt4CwFfA/9GOurZZm0iaVYIeH4ssGYkqvit4SoE1N/nA6QZCuX+jRwJwGNHS6DMYJxummMKVaZk9m0a/l+cIy+rn5Mvgaj1b352DmlbAlvikCH4rIh75lDtBHEpQmrH3oliN/HzvKyZ/5JmHWB/yUM7zb4R8/gwqQ8N/7Nkr9t50uycNogHi8IyKSw6BVPG6+UKFi8TKfgv7YAAz1AU2HL2zfk/mgAwAegvw2KKEnuadWNi4ag8aoRSHKFxjfExdvdtFPxfjwPyb6Crk7zQNrA9y+rvNAHgJaD+d3xMUWovsmxIiyIKS9bBjME/4LWfvNjy67Nrh08yBf9ZNYD4P9G4gLzgfnFn1oz/0gSABKD9FrxAUXJvsmrEQxR1GUH3gtSPFRSbSDZn0wSqAwFTQ4Dz2xBO0YF6kM3mM83BOM4HgfI70Iv3DrQhNBWASUD4XZhC0YXejr3sR1+l2Q0d9g2soA11hLwAT/iylnu3DTSH4tQBuitA80LyIpzCWuZptkJXhgHZFeIVfitRTWgOQ/gWqK4YNOeqnmXqWF2vgxT8/xYAVGNQ7RKnx+p9RMF/cSsgGov+FAX5MDvZ7kwxtVX5K9CsghkU56qEMZPruTRjgG7Asgr8jlvcEjCEDopx3UtDncCyCvKeKCG+NoQZAVBgxHkgWRW73yG+1MmhAKYsA4o1MGGzwAI4+CoQrEnr0GxhBVDweCEQrImzzwkrgHFHgV4CzPvWQgEYsj/A1YyyDwVpfWz6EsglwvOto/9oW/35cfv/bnwYIoD/B3lHBCIFtWtOAAAAAElFTkSuQmCC";
 
 const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function TmapMapView(
     {
@@ -127,8 +131,10 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     },
     ref
 ) {
+    // WebView 인스턴스와 초기화 이전 명령 큐를 별도로 유지한다.
     const webViewRef = useRef<any>(null);
     const commandQueueRef = useRef<string[]>([]);
+    // isReady=true 이후에만 postMessage를 즉시 보낸다.
     const [isReady, setIsReady] = useState(false);
     const [runtimeErrorMessage, setRuntimeErrorMessage] = useState<string | undefined>(undefined);
 
@@ -144,6 +150,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         }
     }, [canRender, onInitialized]);
 
+    // WebView 준비 전에는 명령을 큐에 쌓아 초기화 직후 순차 전송한다.
     const postCommand = useCallback((command: Record<string, unknown>) => {
         const json = JSON.stringify(command);
         if (!isReady || !webViewRef.current) {
@@ -196,6 +203,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         postCommand,
     ]);
 
+    // WebView -> React Native 메시지를 파싱해 탭/줌/초기화 이벤트로 분기한다.
     const onWebViewMessage = useCallback((event: any) => {
         const data = event?.nativeEvent?.data;
         if (!data) return;
@@ -246,6 +254,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         }
     }, [onInitialized, onTapMap, onZoomChanged]);
 
+    // Tmap SDK를 포함한 WebView HTML을 생성한다.
     const html = useMemo(() => {
         if (!appKey) return "";
         const initialZoom = Math.max(5, Math.min(18, Math.round(camera.zoom ?? 12)));
@@ -312,6 +321,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       var fallbackTileFilter = "invert(0.89) hue-rotate(182deg) saturate(0.72) brightness(0.84) contrast(1.14)";
       var fallbackTileFilterObserver = null;
       var fallbackTileFilterEnabled = false;
+      var busBadgeGlyphUri = ${JSON.stringify(BUS_BADGE_GLYPH_URI)};
+      var subwayBadgeGlyphUri = ${JSON.stringify(SUBWAY_BADGE_GLYPH_URI)};
 
       function post(type, payload) {
         if (!window.ReactNativeWebView) return;
@@ -331,31 +342,80 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           .replace(/'/g, "&apos;");
       }
 
+      // 색상 문자열(hex/rgb/rgba)을 alpha가 포함된 rgba 형태로 변환한다.
+      function colorWithAlpha(color, alpha) {
+        var value = color ? String(color).trim() : "";
+        if (!value) return "rgba(248,250,252," + alpha + ")";
+        if (value.indexOf("rgba(") === 0) return value.replace(/rgba\(([^)]+)\)/, function (_m, body) {
+          var p = body.split(",");
+          if (p.length < 3) return value;
+          return "rgba(" + p[0].trim() + "," + p[1].trim() + "," + p[2].trim() + "," + alpha + ")";
+        });
+        if (value.indexOf("rgb(") === 0) return value.replace(/rgb\(([^)]+)\)/, function (_m, body) {
+          var p = body.split(",");
+          if (p.length < 3) return value;
+          return "rgba(" + p[0].trim() + "," + p[1].trim() + "," + p[2].trim() + "," + alpha + ")";
+        });
+        var hex = value.replace("#", "");
+        if (hex.length === 3) hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+        if (hex.length !== 6) return value;
+        var r = parseInt(hex.slice(0, 2), 16);
+        var g = parseInt(hex.slice(2, 4), 16);
+        var b = parseInt(hex.slice(4, 6), 16);
+        if (!isFinite(r) || !isFinite(g) || !isFinite(b)) return value;
+        return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+      }
+
       // 출발/도착처럼 "지도 포인트 자체"를 강조할 때 쓰는 핀 렌더러.
       function markerIcon(item) {
         var fill = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var label = item && item.pinLabel ? String(item.pinLabel).trim() : "";
-        if (!label) {
-          var fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 24 24"><path fill="' + fill + '" d="M12 2C7.6 2 4 5.6 4 10c0 5.2 6.1 11 7.4 12.2c.3.3.9.3 1.2 0C13.9 21 20 15.2 20 10c0-4.4-3.6-8-8-8Zm0 11.2c-1.8 0-3.2-1.4-3.2-3.2S10.2 6.8 12 6.8s3.2 1.4 3.2 3.2s-1.4 3.2-3.2 3.2Z"/></svg>';
-          return { uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(fallbackSvg), width: 34, height: 42 };
-        }
-
-        var w = 52;
-        var h = 64;
+        // 출발/도착 핀 가시성을 위해 기본 크기를 넉넉하게 유지한다.
+        var w = label ? 60 : 42;
+        var h = label ? 66 : 52;
         var centerX = Math.round(w / 2);
-        var textSize = label.length >= 3 ? 9.4 : 10.4;
+        var textSize = label.length >= 3 ? 10.2 : 11.3;
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
-            '<ellipse cx="' + centerX + '" cy="58" rx="8.7" ry="2.9" fill="rgba(15,23,42,0.16)" />' +
-            '<path d="M26 4C35.8 4 43.5 11.6 43.5 21.2c0 8.6-6.2 15.6-12.6 22.4L26 51l-4.9-7.4C14.7 36.8 8.5 29.8 8.5 21.2C8.5 11.6 16.2 4 26 4Z" fill="' + fill + '" stroke="#FFFFFF" stroke-width="2.5" stroke-linejoin="round" />' +
-            '<path d="M16.8 12.4C19 10.1 22.1 8.9 26 8.9c3.7 0 6.8 1 9 3.1" stroke="rgba(255,255,255,0.28)" stroke-width="1.7" stroke-linecap="round" fill="none" />' +
-            '<text x="' + centerX + '" y="24.6" text-anchor="middle" font-size="' + textSize + '" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + escapeXml(label) + '</text>' +
+            (label
+              ? (
+                '<ellipse cx="' + centerX + '" cy="62" rx="9.8" ry="3.1" fill="rgba(15,23,42,0.14)" />' +
+                '<circle cx="' + centerX + '" cy="24.8" r="16.8" fill="' + fill + '" stroke="#FFFFFF" stroke-width="2.5" />' +
+                '<path d="M' + (centerX - 4.2) + ' 38.2 L' + centerX + ' 47.8 L' + (centerX + 4.2) + ' 38.2 Z" fill="' + fill + '" stroke="#FFFFFF" stroke-width="1.9" stroke-linejoin="round" />' +
+                '<text x="' + centerX + '" y="28.4" text-anchor="middle" font-size="' + textSize + '" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + escapeXml(label) + '</text>'
+              )
+              : '<path fill="' + fill + '" d="M17 2C12.6 2 9 5.6 9 10c0 5.2 6.1 11 7.4 12.2c.3.3.9.3 1.2 0C18.9 21 25 15.2 25 10c0-4.4-3.6-8-8-8Zm0 11.2c-1.8 0-3.2-1.4-3.2-3.2S15.2 6.8 17 6.8s3.2 1.4 3.2 3.2s-1.4 3.2-3.2 3.2Z"/>') +
           '</svg>';
         return {
           uri: "data:image/svg+xml;charset=UTF-8," + encodeURIComponent(svg),
           width: w,
           height: h,
         };
+      }
+
+      // 문자 종류별 가중치로 텍스트 폭을 추정한다.
+      // 한글/숫자/영문의 실제 폭 차이를 반영해 배지 width 오차를 줄인다.
+      function estimateBadgeTextWidth(label) {
+        var text = String(label || "");
+        var width = 0;
+        for (var i = 0; i < text.length; i += 1) {
+          var ch = text.charAt(i);
+          var code = text.charCodeAt(i);
+          if (/\s/.test(ch)) {
+            width += 4.2;
+          } else if (/[0-9]/.test(ch)) {
+            width += 7.1;
+          } else if (/[A-Z]/.test(ch)) {
+            width += 7.8;
+          } else if (/[a-z]/.test(ch)) {
+            width += 6.8;
+          } else if ((code >= 0x1100 && code <= 0x11ff) || (code >= 0x3130 && code <= 0x318f) || (code >= 0xac00 && code <= 0xd7af)) {
+            width += 10.8;
+          } else {
+            width += 8.2;
+          }
+        }
+        return Math.max(16, Math.round(width));
       }
 
       // 버스/지하철/환승 캡슐 마커는 텍스트 길이에 따라 폭을 먼저 계산해 둔다.
@@ -379,19 +439,20 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             : accent);
         var glyph = item && item.badgeGlyph ? String(item.badgeGlyph) : "";
         var hasGlyph = glyph.trim().length > 0 || style === "bus" || style === "subway" || style === "transfer";
-        var labelLen = label.length;
-        // 버스/지하철 배지는 텍스트 + 아이콘이 함께 들어가므로 기본 폭을 더 크게 잡아
-        // 찌그러져 보이거나 줄임표가 너무 빨리 붙는 문제를 줄인다.
-        var iconBaseWidth = hasGlyph ? 40 : 18;
-        if (style === "bus") iconBaseWidth = 62;
-        if (style === "subway") iconBaseWidth = 56;
-        var width = iconBaseWidth + Math.max(22, Math.min(200, Math.round(labelLen * 7.0)));
+        var textWidth = estimateBadgeTextWidth(label);
+        // 버스/지하철 배지는 아이콘 영역 + 텍스트 영역을 분리해 폭을 계산한다.
+        var iconAreaWidth = hasGlyph
+          ? ((style === "bus" || style === "subway") ? 34 : 24)
+          : 0;
+        var horizontalPadding = style === "default" ? 22 : 26;
+        var width = Math.round(textWidth + iconAreaWidth + horizontalPadding);
         var minWidth = style === "default"
-          ? 60
-          : (style === "bus" ? 116 : style === "subway" ? 108 : 76);
+          ? 58
+          : (style === "bus" ? 100 : style === "subway" ? 100 : 82);
         var maxWidth = style === "default"
-          ? 148
-          : (style === "bus" ? 280 : 248);
+          // 버스/지하철 노선명+정류장명 조합을 고려해 상한을 크게 둔다.
+          ? 210
+          : (style === "bus" ? 360 : style === "subway" ? 340 : 280);
         width = Math.max(minWidth, Math.min(maxWidth, width));
         return {
           width: width,
@@ -420,7 +481,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var pointerCenterX = Math.round(w / 2);
         var pointerHalfW = 4;
         var iconCenterX = 23;
-        var cardFill = "#FFFFFF";
+        // 지도 배경 위에서도 텍스트 대비가 유지되도록 배지 배경을 충분히 불투명하게 둔다.
+        var cardFill = specialStyle ? colorWithAlpha(cfg.accent, 0.86) : "#FFFFFF";
+        // 배지 경계를 분명하게 보이게 하는 보조 외곽선.
+        var cardBorder = specialStyle ? "rgba(15,23,42,0.30)" : cfg.borderColor;
+        // 진한 배경색 위 텍스트 가독성을 위한 색/스트로크.
+        var labelFill = specialStyle ? "#FFFFFF" : cfg.textColor;
+        var labelStroke = specialStyle ? "rgba(15,23,42,0.44)" : "none";
         var connectorColor = cfg.connectorColor || cfg.accent;
         var labelX = cfg.hasGlyph
           ? ((cfg.style === "bus" || cfg.style === "subway") ? 50 : 39)
@@ -430,22 +497,25 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           : '';
         var iconMarkup = '';
         if (cfg.style === "bus") {
+          // 사용자 제공 버스 PNG 아이콘을 사용한다.
+          // URI의 특수문자는 XML escape 처리해 SVG 파싱 오류를 막는다.
+          var busGlyphHref = busBadgeGlyphUri ? escapeXml(String(busBadgeGlyphUri)) : "";
+          var busIconMarkup = busGlyphHref
+            ? '<image href="' + busGlyphHref + '" xlink:href="' + busGlyphHref + '" x="' + (iconCenterX - 9.4) + '" y="' + (centerY - 9.4) + '" width="18.8" height="18.8" preserveAspectRatio="xMidYMid meet" />'
+            : '<text x="' + iconCenterX + '" y="' + (centerY + 4.2) + '" text-anchor="middle" font-size="9.8" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">버</text>';
           iconMarkup =
-            '<rect x="' + (iconCenterX - 11.2) + '" y="' + (centerY - 10.3) + '" width="22.4" height="20.6" rx="6.9" fill="' + cfg.accent + '" />' +
-            '<rect x="' + (iconCenterX - 7.6) + '" y="' + (centerY - 5.8) + '" width="15.2" height="7.8" rx="2.0" fill="#FFFFFF" />' +
-            '<rect x="' + (iconCenterX - 5.6) + '" y="' + (centerY - 4.1) + '" width="4.4" height="3.0" rx="0.8" fill="' + cfg.accent + '" opacity="0.94" />' +
-            '<rect x="' + (iconCenterX + 1.2) + '" y="' + (centerY - 4.1) + '" width="4.4" height="3.0" rx="0.8" fill="' + cfg.accent + '" opacity="0.94" />' +
-            '<circle cx="' + (iconCenterX - 4.7) + '" cy="' + (centerY + 5.0) + '" r="1.6" fill="#FFFFFF" opacity="0.9" />' +
-            '<circle cx="' + (iconCenterX + 4.7) + '" cy="' + (centerY + 5.0) + '" r="1.6" fill="#FFFFFF" opacity="0.9" />';
+            '<rect x="' + (iconCenterX - 10.8) + '" y="' + (centerY - 10.8) + '" width="21.6" height="21.6" rx="6.6" fill="' + colorWithAlpha(cfg.accent, 0.22) + '" stroke="rgba(17,24,39,0.15)" stroke-width="1.0" />' +
+            busIconMarkup;
         } else if (cfg.style === "subway") {
+          // 사용자 제공 지하철 PNG 아이콘을 사용한다.
+          // URI의 특수문자는 XML escape 처리해 SVG 파싱 오류를 막는다.
+          var subwayGlyphHref = subwayBadgeGlyphUri ? escapeXml(String(subwayBadgeGlyphUri)) : "";
+          var subwayIconMarkup = subwayGlyphHref
+            ? '<image href="' + subwayGlyphHref + '" xlink:href="' + subwayGlyphHref + '" x="' + (iconCenterX - 9.4) + '" y="' + (centerY - 9.4) + '" width="18.8" height="18.8" preserveAspectRatio="xMidYMid meet" />'
+            : '<text x="' + iconCenterX + '" y="' + (centerY + 4.2) + '" text-anchor="middle" font-size="9.8" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">지</text>';
           iconMarkup =
-            '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="11.0" fill="' + cfg.accent + '" />' +
-            '<rect x="' + (iconCenterX - 7.1) + '" y="' + (centerY - 7.2) + '" width="14.2" height="12.8" rx="3.0" fill="#FFFFFF" />' +
-            '<rect x="' + (iconCenterX - 4.9) + '" y="' + (centerY - 5.0) + '" width="3.0" height="2.6" rx="0.8" fill="' + cfg.accent + '" />' +
-            '<rect x="' + (iconCenterX + 1.9) + '" y="' + (centerY - 5.0) + '" width="3.0" height="2.6" rx="0.8" fill="' + cfg.accent + '" />' +
-            '<path d="M' + (iconCenterX - 5.3) + ' ' + (centerY + 2.5) + ' H' + (iconCenterX + 5.3) + '" stroke="' + cfg.accent + '" stroke-width="1.35" stroke-linecap="round" />' +
-            '<path d="M' + (iconCenterX - 4.1) + ' ' + (centerY + 7.0) + ' L' + (iconCenterX - 2.1) + ' ' + (centerY + 4.7) +
-              ' M' + (iconCenterX + 4.1) + ' ' + (centerY + 7.0) + ' L' + (iconCenterX + 2.1) + ' ' + (centerY + 4.7) + '" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" />';
+            '<rect x="' + (iconCenterX - 10.8) + '" y="' + (centerY - 10.8) + '" width="21.6" height="21.6" rx="6.6" fill="' + colorWithAlpha(cfg.accent, 0.22) + '" stroke="rgba(17,24,39,0.15)" stroke-width="1.0" />' +
+            subwayIconMarkup;
         } else if (cfg.style === "transfer") {
           iconMarkup =
             '<circle cx="' + iconCenterX + '" cy="' + centerY + '" r="10" fill="' + cfg.accent + '" />' +
@@ -456,20 +526,18 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
               '<text x="' + iconCenterX + '" y="' + (centerY + 3) + '" text-anchor="middle" font-size="9" font-family="Arial, sans-serif" font-weight="800" fill="#FFFFFF">' + glyph + '</text>'
             : '';
         }
-        var labelText = '<text x="' + labelX + '" y="' + (centerY + 4.2) + '" font-size="11.1" font-family="Arial, sans-serif" font-weight="800" fill="' + cfg.textColor + '">' + label + '</text>';
-        // specialStyle(bus/subway/transfer)은 말풍선 꼬리 대신 "수직 가이드 + 하단 링"으로 렌더링해
-        // 레퍼런스 지도 UI처럼 배지와 실제 지점의 연결 관계를 명확히 보여 준다.
+        var labelText = '<text x="' + labelX + '" y="' + (centerY + 4.2) + '" font-size="11.1" font-family="Arial, sans-serif" font-weight="800" fill="' + labelFill + '" stroke="' + labelStroke + '" stroke-width="' + (specialStyle ? 0.75 : 0) + '" paint-order="stroke fill">' + label + '</text>';
+        // bus/subway/transfer 배지는 "수직 가이드 + 하단 링"으로 지점 연결을 표현한다.
         var connectorMarkup = specialStyle
-          // 레퍼런스에서는 배지 하단 연결부가 짧고, 끝 포인트도 "작은 링 + 진한 점"에 가깝다.
-          // 길고 두꺼운 스템보다 얇고 짧은 스템을 써야 배지와 지도 지점이 자연스럽게 연결된다.
+          // 짧고 얇은 스템으로 배지와 지점 연결을 최소 노이즈로 표현한다.
           ? '<path d="M' + pointerCenterX + ' ' + (bubbleH - 0.6) + ' L' + pointerCenterX + ' ' + (bubbleH + 5.6) + '" stroke="' + connectorColor + '" stroke-width="1.15" stroke-linecap="round" />' +
             '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 9.2) + '" r="3.4" fill="#FFFFFF" stroke="' + connectorColor + '" stroke-width="1.25" />' +
             '<circle cx="' + pointerCenterX + '" cy="' + (bubbleH + 9.2) + '" r="1.15" fill="' + connectorColor + '" />'
-          : '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.4" stroke-linejoin="round" />';
+          : '<path d="M' + (pointerCenterX - pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + (pointerCenterX + pointerHalfW) + ' ' + (bubbleH - 1) + ' L' + pointerCenterX + ' ' + (h - 1) + ' Z" fill="' + cardFill + '" stroke="' + cardBorder + '" stroke-width="1.4" stroke-linejoin="round" />';
         var svg = '' +
-          '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' +
             shadow +
-            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="15" ry="15" fill="' + cardFill + '" stroke="' + cfg.borderColor + '" stroke-width="1.35" />' +
+            '<rect x="1" y="1" width="' + (w - 2) + '" height="' + (bubbleH - 2) + '" rx="15" ry="15" fill="' + cardFill + '" stroke="' + cardBorder + '" stroke-width="1.35" />' +
             iconMarkup +
             labelText +
             connectorMarkup +
@@ -486,15 +554,14 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.92)";
         var rotation = Number(item && item.rotationDeg);
         if (!isFinite(rotation)) rotation = 0;
-        // 최대 줌에서 화살표가 크면 노선보다 화살표 패턴이 먼저 보여서 UI가 거칠어진다.
-        // 본체를 한 단계 줄여 "방향 보조 힌트"로만 읽히게 하고, 라인 실루엣을 먼저 남긴다.
-        var size = 8;
+        // 진행 방향 화살표는 라인 실루엣을 가리지 않게 작은 보조 힌트 크기로 유지한다.
+        var size = 6;
         var center = Math.round(size / 2);
         var groupTransform = 'rotate(' + rotation + ' ' + center + ' ' + center + ')';
         var hasVisibleBorder = borderColor && borderColor !== "transparent" && borderColor !== "rgba(0,0,0,0)";
-        var arrowPath = '<path d="M0.9 1.4 L7.1 4 L0.9 6.6 L2.6 4 Z" fill="' + bg + '"' +
+        var arrowPath = '<path d="M0.7 1.2 L5.3 3 L0.7 4.8 L1.9 3 Z" fill="' + bg + '"' +
           (hasVisibleBorder
-            ? ' stroke="' + borderColor + '" stroke-width="0.58" stroke-linejoin="round"'
+            ? ' stroke="' + borderColor + '" stroke-width="0.46" stroke-linejoin="round"'
             : '') +
           ' />';
         var svg = '' +
@@ -514,11 +581,11 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var bg = item && item.tintColor ? String(item.tintColor) : "#1D72FF";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.95)";
         var rawSize = Number(item && item.dotSize);
-        // 접근 점선은 작고 균일한 점처럼 보여야 해서 허용 범위를 조금 더 낮춘다.
-        var size = isFinite(rawSize) ? Math.max(3, Math.min(14, Math.round(rawSize))) : 8;
+        // 도트 점선은 최소/최대 크기 범위를 제한해 줌 변화 시 모양을 안정화한다.
+        var size = isFinite(rawSize) ? Math.max(4, Math.min(14, Math.round(rawSize))) : 8;
         var center = Math.round(size / 2);
-        var borderWidth = borderColor === "transparent" ? 0 : Math.max(0.95, size * 0.18);
-        var radius = Math.max(1.1, center - (borderWidth > 0 ? 1.2 : 0.8));
+        var borderWidth = borderColor === "transparent" ? 0 : Math.max(0.7, size * 0.16);
+        var radius = Math.max(0.9, center - (borderWidth > 0 ? 1.0 : 0.7));
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<circle cx="' + center + '" cy="' + center + '" r="' + radius + '" fill="' + bg + '" stroke="' + borderColor + '" stroke-width="' + borderWidth + '" />' +
@@ -778,18 +845,37 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       function renderMarkers(markerItems) {
         if (!map) return;
         clearMarkers();
-        markerItems.forEach(function (item) {
+        // zIndex 낮은 순으로 생성해 고우선순위 마커(출발/도착)가 마지막에 그려지게 한다.
+        var sortedItems = Array.isArray(markerItems) ? markerItems.slice() : [];
+        sortedItems.sort(function (a, b) {
+          var az = Number(a && a.zIndex);
+          var bz = Number(b && b.zIndex);
+          if (!isFinite(az)) az = 0;
+          if (!isFinite(bz)) bz = 0;
+          return az - bz;
+        });
+        sortedItems.forEach(function (item) {
           var displayType = item && item.displayType ? String(item.displayType) : "pin";
           var isBadge = displayType === "badge";
           var isArrow = displayType === "arrow";
           var isDot = displayType === "dot";
-              var iconInfo = isBadge
-                ? markerBadgeIcon(item)
-                : isArrow
-                  ? markerArrowIcon(item)
-                  : isDot
-                    ? markerDotIcon(item)
-                  : markerIcon(item);
+          // 아이콘 생성 실패 시 기본 pin 아이콘으로 fallback 한다.
+          var iconInfo = null;
+          try {
+            iconInfo = isBadge
+              ? markerBadgeIcon(item)
+              : isArrow
+                ? markerArrowIcon(item)
+                : isDot
+                  ? markerDotIcon(item)
+                : markerIcon(item);
+          } catch (_iconError) {
+            try {
+              iconInfo = markerIcon(item);
+            } catch (_fallbackIconError) {
+              return;
+            }
+          }
 
           var markerOption = {
             position: toLatLng(item),
@@ -798,6 +884,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             title: item.caption || "",
             map: map,
           };
+          var markerZIndex = Number(item && item.zIndex);
+          if (!isFinite(markerZIndex)) markerZIndex = undefined;
 
           if (window.Tmapv2 && Tmapv2.Point) {
             try {
@@ -813,15 +901,24 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             } catch (_error) {}
           }
 
-          var marker = new Tmapv2.Marker({
-            position: markerOption.position,
-            icon: markerOption.icon,
-            iconSize: markerOption.iconSize,
-            title: markerOption.title,
-            map: markerOption.map,
-            iconAnchor: markerOption.iconAnchor,
-          });
-          markers[item.id] = marker;
+          try {
+            var marker = new Tmapv2.Marker({
+              position: markerOption.position,
+              icon: markerOption.icon,
+              iconSize: markerOption.iconSize,
+              title: markerOption.title,
+              map: markerOption.map,
+              iconAnchor: markerOption.iconAnchor,
+            });
+            if (isFinite(markerZIndex) && marker && typeof marker.setZIndex === "function") {
+              try {
+                marker.setZIndex(markerZIndex);
+              } catch (_error) {}
+            }
+            markers[item.id] = marker;
+          } catch (_markerError) {
+            // 개별 마커 생성 실패는 무시하고 다음 마커 렌더를 계속 진행한다.
+          }
         });
       }
 
