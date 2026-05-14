@@ -22,6 +22,13 @@ export type RouteApiProvider = "tmap" | "kakao" | "naver";
 
 export type TransitLegKind = "SUBWAY" | "BUS" | "WALK" | "ETC";
 
+export type TransitPassStop = {
+    name: string;
+    coord?: RoutePathCoord;
+    sequence?: number;
+    code?: string;
+};
+
 export type TransitLegDetail = {
     kind: TransitLegKind;
     label: string;
@@ -39,6 +46,7 @@ export type TransitLegDetail = {
     endName?: string;
     startCoord?: RoutePathCoord;
     endCoord?: RoutePathCoord;
+    passStops?: TransitPassStop[];
     pathCoords?: RoutePathCoord[];
     /** steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우 true. itinerary snap fallback이면 false. */
     pathCoordsIsExact?: boolean;
@@ -485,6 +493,45 @@ function parseStationName(station: any): string | undefined {
     return normalized.length > 0 ? normalized : undefined;
 }
 
+function parseStationCode(station: any): string | undefined {
+    if (!station || typeof station !== "object") return undefined;
+    const raw = station?.stationID ?? station?.stationId ?? station?.stationCode ?? station?.arsId ?? station?.id;
+    if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+    if (typeof raw !== "string") return undefined;
+    const normalized = raw.trim();
+    return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseTransitLegPassStops(leg: any): TransitPassStop[] {
+    const seen = new Set<string>();
+
+    return parseTransitLegStations(leg)
+        .map((station, index) => {
+            const name = parseStationName(station);
+            if (!name) return undefined;
+
+            const coord = parseStationCoord(station);
+            const code = parseStationCode(station);
+            const key = [
+                name,
+                code ?? "",
+                coord ? coord.lat.toFixed(6) : "",
+                coord ? coord.lng.toFixed(6) : "",
+            ].join("|");
+            if (seen.has(key)) return undefined;
+            seen.add(key);
+
+            const stop: TransitPassStop = {
+                name,
+                sequence: index + 1,
+            };
+            if (coord) stop.coord = coord;
+            if (code) stop.code = code;
+            return stop;
+        })
+        .filter((stop): stop is TransitPassStop => !!stop);
+}
+
 function parseTransitLegStationName(leg: any, position: "first" | "last"): string | undefined {
     const stations = parseTransitLegStations(leg);
     if (!stations.length) return undefined;
@@ -723,6 +770,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
             const lineColor = parseTransitLegLineColor(leg);
             const startName = parseTransitLegStartName(leg);
             const endName = parseTransitLegEndName(leg);
+            const passStops = parseTransitLegPassStops(leg);
             const startCoord = parseTransitLegStartCoord(leg);
             const endCoord = parseTransitLegEndCoord(leg);
             const nextStartCoordHint = legIndex < legArray.length - 1
@@ -775,6 +823,7 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 lineColor,
                 startName,
                 endName,
+                passStops,
                 startCoord: normalizedStartCoord,
                 endCoord: normalizedEndCoord,
                 pathCoords,
