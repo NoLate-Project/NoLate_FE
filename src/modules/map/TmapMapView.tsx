@@ -30,6 +30,7 @@ export type TmapMarker = {
     badgeConnectorColor?: string;
     badgeGlyph?: string;
     dotSize?: number;
+    arrowSize?: number;
     rotationDeg?: number;
     zIndex?: number;
 };
@@ -553,20 +554,28 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var bg = item && item.tintColor ? String(item.tintColor) : "#2F80FF";
         var borderColor = item && item.badgeBorderColor ? String(item.badgeBorderColor) : "rgba(255,255,255,0.92)";
         var rotation = Number(item && item.rotationDeg);
+        var rawSize = Number(item && item.arrowSize);
         if (!isFinite(rotation)) rotation = 0;
-        // 진행 방향 화살표는 라인 실루엣을 가리지 않게 작은 보조 힌트 크기로 유지한다.
-        var size = 6;
+        // 원형 배경은 지도 위에서 "흰 점"처럼 먼저 읽혀서 진행 방향보다 노이즈가 커진다.
+        // 그래서 배경 없이 흰 chevron + 얇은 그림자만 남겨 네이버 지도에 더 가까운 방향 힌트로 렌더링한다.
+        var size = isFinite(rawSize) ? Math.max(10, Math.min(18, Math.round(rawSize))) : 14;
         var center = Math.round(size / 2);
         var groupTransform = 'rotate(' + rotation + ' ' + center + ' ' + center + ')';
         var hasVisibleBorder = borderColor && borderColor !== "transparent" && borderColor !== "rgba(0,0,0,0)";
-        var arrowPath = '<path d="M0.7 1.2 L5.3 3 L0.7 4.8 L1.9 3 Z" fill="' + bg + '"' +
-          (hasVisibleBorder
-            ? ' stroke="' + borderColor + '" stroke-width="0.46" stroke-linejoin="round"'
-            : '') +
-          ' />';
+        var lineWidth = Math.max(1.45, Math.round(size * 0.13 * 100) / 100);
+        var shadowWidth = lineWidth + 0.95;
+        var inset = Math.round(size * 0.31);
+        var tipX = Math.round(size - inset + 0.5);
+        var leftX = Math.round(inset - 0.5);
+        var topY = Math.round(inset);
+        var bottomY = Math.round(size - inset);
+        var shadowColor = hasVisibleBorder ? borderColor : "rgba(15,23,42,0.28)";
+        var shadow = '<path d="M' + leftX + ' ' + topY + ' L' + tipX + ' ' + center + ' L' + leftX + ' ' + bottomY + '" fill="none" stroke="' + shadowColor + '" stroke-width="' + shadowWidth + '" stroke-linecap="round" stroke-linejoin="round" />';
+        var arrowPath = '<path d="M' + leftX + ' ' + topY + ' L' + tipX + ' ' + center + ' L' + leftX + ' ' + bottomY + '" fill="none" stroke="' + bg + '" stroke-width="' + lineWidth + '" stroke-linecap="round" stroke-linejoin="round" />';
         var svg = '' +
           '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '">' +
             '<g transform="' + groupTransform + '">' +
+              shadow +
               arrowPath +
             '</g>' +
           '</svg>';

@@ -1552,7 +1552,7 @@ function parseNaverRoutePath(route: any): RoutePathCoord[] | undefined {
     const coords = path
         .map((point: unknown) => parseLatLngPair(point))
         .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null)
-        .filter((coord) => isWgs84Coordinate(coord.lat, coord.lng));
+        .filter((coord: RoutePathCoord) => isWgs84Coordinate(coord.lat, coord.lng));
 
     if (coords.length < 2) return undefined;
     return clampPathCoords(dedupePathCoords(coords));
@@ -1662,7 +1662,7 @@ async function getDrivingAlternativesViaKakao(origin: Place, destination: Place,
             });
             options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
         } catch (error) {
-            console.warn(`[대안경로] Kakao driving(${priority}) 실패 →`, tmapApiErrorMessage(error));
+            console.info(`[대안경로] Kakao driving(${priority}) 실패 →`, tmapApiErrorMessage(error));
         }
     }
 
@@ -1693,7 +1693,7 @@ async function getAffiliateRouteAlternativesViaKakao(
             });
             options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
         } catch (error) {
-            console.warn(`[대안경로] Kakao ${mode.toLowerCase()}(${priority}) 실패 →`, tmapApiErrorMessage(error));
+            console.info(`[대안경로] Kakao ${mode.toLowerCase()}(${priority}) 실패 →`, tmapApiErrorMessage(error));
         }
     }
 
@@ -1739,7 +1739,7 @@ async function getDrivingAlternativesViaNaver(origin: Place, destination: Place,
             });
             alternatives.push(...parseNaverRouteAlternatives(response.data, option, mode, `naver-${mode.toLowerCase()}`));
         } catch (error) {
-            console.warn(`[대안경로] Naver driving(${option}) 실패 →`, tmapApiErrorMessage(error));
+            console.info(`[대안경로] Naver driving(${option}) 실패 →`, tmapApiErrorMessage(error));
         }
     }
 
@@ -1881,7 +1881,7 @@ async function getDrivingAlternatives(origin: Place, destination: Place, mode: "
                 source: "api",
             });
         } catch (error) {
-            console.warn(`[대안경로] Tmap driving(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            console.info(`[대안경로] Tmap driving(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
         }
     }
 
@@ -1913,7 +1913,7 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
                 source: "api",
             });
         } catch (error) {
-            console.warn(`[대안경로] Tmap pedestrian(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            console.info(`[대안경로] Tmap pedestrian(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
         }
     }
 
@@ -1933,14 +1933,14 @@ export async function searchAddressByKeyword(query: string): Promise<PlaceSearch
             const poiResults = await searchViaTmapPoi(normalized);
             merged.push(...poiResults);
         } catch (error) {
-            console.warn("[주소검색] Tmap POI 실패 →", tmapApiErrorMessage(error));
+            console.info("[주소검색] Tmap POI 실패 →", tmapApiErrorMessage(error));
         }
 
         try {
             const geocoded = await geocodeViaTmap(normalized);
             merged.push(...geocoded);
         } catch (error) {
-            console.warn("[주소검색] Tmap FullAddrGeo 실패 →", tmapApiErrorMessage(error));
+            console.info("[주소검색] Tmap FullAddrGeo 실패 →", tmapApiErrorMessage(error));
         }
 
         const unique = dedupeSearchResults(merged);
@@ -1964,7 +1964,7 @@ export async function reverseGeocodeToAddress(lat: number, lng: number): Promise
             const address = await reverseViaTmap(lat, lng);
             if (address) return address;
         } catch (error) {
-            console.warn("[역지오코딩] Tmap 실패 →", tmapApiErrorMessage(error));
+            console.info("[역지오코딩] Tmap 실패 →", tmapApiErrorMessage(error));
         }
     }
 
@@ -1997,7 +1997,7 @@ export async function getTransitRouteOptions(
             const tmapOptions = await getTransitRouteViaTmap(origin, destination);
             if (tmapOptions.length > 0) return tmapOptions;
         } catch (error) {
-            console.warn("[대중교통옵션] Tmap transit 실패 →", tmapApiErrorMessage(error));
+            console.info("[대중교통옵션] Tmap transit 실패 →", tmapApiErrorMessage(error));
         }
     }
 
@@ -2058,7 +2058,7 @@ export async function getRouteAlternativeOptions(
                     return limitAlternativesByMode("TRANSIT", dedupeRouteAlternatives(transitAlternatives));
                 }
             } catch (error) {
-                console.warn("[대안경로] Tmap transit 실패 →", tmapApiErrorMessage(error));
+                console.info("[대안경로] Tmap transit 실패 →", tmapApiErrorMessage(error));
             }
         }
 
@@ -2096,7 +2096,7 @@ export async function getRouteAlternativeOptions(
                 const alternatives = await getDrivingAlternatives(origin, destination, mode);
                 if (alternatives.length > 0) return limitAlternativesByMode(mode, alternatives);
             } catch (error) {
-                console.warn("[대안경로] Tmap driving 실패 →", tmapApiErrorMessage(error));
+                console.info("[대안경로] Tmap driving 실패 →", tmapApiErrorMessage(error));
             }
         }
 
@@ -2143,7 +2143,7 @@ export async function getRouteAlternativeOptions(
                     if (merged.length > 0) return limitAlternativesByMode("WALK", merged);
                 }
             } catch (error) {
-                console.warn("[대안경로] Tmap pedestrian 실패 →", tmapApiErrorMessage(error));
+                console.info("[대안경로] Tmap pedestrian 실패 →", tmapApiErrorMessage(error));
             }
         }
 
@@ -2164,7 +2164,7 @@ export async function getRouteAlternativeOptions(
                 const converted = convertRoadAlternativesToMode(drivingAlternatives, "BIKE", "bike-road");
                 if (converted.length > 0) return limitAlternativesByMode("BIKE", dedupeRouteAlternatives(converted));
             } catch (error) {
-                console.warn("[대안경로] Tmap bike-convert 실패 →", tmapApiErrorMessage(error));
+                console.info("[대안경로] Tmap bike-convert 실패 →", tmapApiErrorMessage(error));
             }
         }
 

@@ -4,15 +4,12 @@ import {
     ActivityIndicator,
     Animated,
     PanResponder,
-    NativeScrollEvent,
-    NativeSyntheticEvent,
     Pressable,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
     View,
-    useWindowDimensions,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -44,27 +41,28 @@ const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"]
 const ORIGIN_COLOR = "#21B85A";
 const DESTINATION_COLOR = "#FF6A3D";
 const SELECTED_ROUTE_COLOR = "#2F80FF";
-const INACTIVE_ROUTE_COLOR = "rgba(128, 145, 166, 0.62)";
 const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
     SUBWAY: "#24B348",
     BUS: "#1D72FF",
-    WALK: "#6B7280",
+    // 도보는 버스보다 한 톤 밝은 파랑으로 두어 "보행 안내"라는 느낌을 유지한다.
+    WALK: "#5A96FF",
     ETC: "#94A3B8",
 };
-const ALTERNATIVE_CARD_GAP = 10;
-const ALTERNATIVE_CARD_MIN_SIZE = 146;
-const ALTERNATIVE_CARD_MAX_SIZE = 178;
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
 // UI tuning: 바텀시트는 최소 20%를 남기고(=최대 80%까지만) 내려간다.
 const BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO = 0.2;
+// 전체 경로 화면에서도 지하철/버스 노선색이 바로 읽혀야 해서
+// 세그먼트 렌더링은 저배율부터 허용하고, 배지/범례만 별도 줌에서 제어한다.
+const TRANSIT_SEGMENT_RENDER_MIN_ZOOM = 8.8;
 const TRANSIT_SEGMENT_DETAIL_MIN_ZOOM = 13.8;
+const TRANSIT_DIRECTION_MARKER_MIN_ZOOM = 16.8;
 // 대중교통 이벤트 배지 노출 최소 줌.
-const TRANSIT_BADGE_MIN_ZOOM = 5.5;
+const TRANSIT_BADGE_MIN_ZOOM = 14.6;
 // 화면 혼잡을 줄이기 위한 이벤트 배지 최대 개수.
 const TRANSIT_BADGE_MAX_COUNT = 18;
 // 버스 정류장 마커 노출 최소 줌.
-const TRANSIT_BUS_STOP_MIN_ZOOM = 5.5;
-const TRANSIT_BOARD_BADGE_MIN_ZOOM = 10.5;
+const TRANSIT_BUS_STOP_MIN_ZOOM = 15.2;
+const TRANSIT_BOARD_BADGE_MIN_ZOOM = 16.6;
 const TRANSIT_TRANSFER_COLOR = "#F4A100";
 const KAKAO_LABEL_TEXT_COLOR = "#1F2937";
 const KAKAO_LABEL_BORDER_COLOR = "rgba(148,163,184,0.62)";
@@ -76,18 +74,21 @@ const TRANSIT_STOP_POINT_COLOR = "#FFFFFF";
 const TRANSIT_STOP_POINT_BORDER_COLOR = "rgba(17,24,39,0.78)";
 // 접근 점선은 fill 위주로 보이게 border를 제거한다.
 const TRANSIT_WALK_DOT_BORDER_COLOR = "transparent";
+// 도보 실선은 회색 대신 밝은 블루 톤으로 그려 버스/지하철과 연결감이 생기게 한다.
+const TRANSIT_WALK_ROUTE_COLOR_LIGHT = "rgba(90, 150, 255, 0.98)";
+const TRANSIT_WALK_ROUTE_COLOR_DARK = "rgba(112, 182, 255, 0.96)";
 const ROUTE_STYLE = {
     // 지도 라인 기본 두께/외곽선 설정.
-    inactiveWidth: 3.8,
-    inactiveOutlineWidth: 1.1,
-    selectedWidth: 7.2,
-    selectedOutlineWidth: 1.8,
-    transitRideWidth: 6.6,
-    transitRideOutlineWidth: 1.3,
-    // 도보 보조선은 차/대중교통보다 얇게 유지한다.
-    transitWalkWidth: 3.2,
-    transitWalkOutlineWidth: 0.95,
-    connectorWalkWidth: 4,
+    inactiveWidth: 5,
+    inactiveOutlineWidth: 1.6,
+    selectedWidth: 9.8,
+    selectedOutlineWidth: 2.5,
+    transitRideWidth: 12.8,
+    transitRideOutlineWidth: 2.8,
+    // 도보 보조선은 ride보다 얇게 유지하되, 지도 위에서 사라지지 않을 정도로 확보한다.
+    transitWalkWidth: 6.4,
+    transitWalkOutlineWidth: 1.9,
+    connectorWalkWidth: 4.8,
 } as const;
 type RoutePointTarget = "origin" | "destination";
 type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
@@ -95,8 +96,12 @@ type RoutePlannerFocusTarget = "origin" | "destination" | "startRide" | "firstSu
 type DebugSheetState = "collapsed" | "hidden" | "expanded";
 const DEBUG_FOCUS_MIN_ZOOM = 5;
 const DEBUG_FOCUS_MAX_ZOOM = 18;
-const INACTIVE_MAP_ALTERNATIVE_LIMIT = 2;
-
+const TRANSIT_FILTER_ITEMS: Array<{ key: TransitRouteFilter; label: string }> = [
+    { key: "ALL", label: "전체" },
+    { key: "BUS", label: "버스" },
+    { key: "SUBWAY", label: "지하철" },
+    { key: "MIXED", label: "버스+지하철" },
+];
 // 모듈 레벨 상수 — 렌더마다 새 객체를 만들면 지도가 카메라를 계속 리셋할 수 있음
 const INITIAL_CAMERA = { latitude: FALLBACK_LAT, longitude: FALLBACK_LNG, zoom: 12 };
 
@@ -805,6 +810,7 @@ function buildDirectionalMarkersForPath(
     spacingMeters: number,
     edgeInsetMeters: number,
     maxMarkers: number,
+    arrowSize = 16,
     arrowBorderColor = "rgba(255,255,255,0.96)"
 ): TmapMarker[] {
     if (!Array.isArray(pathCoords) || pathCoords.length < 2 || maxMarkers <= 0) return [];
@@ -852,7 +858,9 @@ function buildDirectionalMarkersForPath(
                 tintColor,
                 badgeBorderColor: arrowBorderColor,
                 displayType: "arrow",
+                arrowSize,
                 rotationDeg: heading,
+                zIndex: 3400,
             });
             nextDistance += spacingMeters;
         }
@@ -861,6 +869,106 @@ function buildDirectionalMarkersForPath(
     }
 
     return markers;
+}
+
+// marker 대신 polyline chevron을 사용해 안내선 위에 자연스럽게 얹히는 방향 표시를 만든다.
+function buildDirectionalChevronOverlaysForPath(
+    idPrefix: string,
+    pathCoords: RoutePathCoord[] | undefined,
+    spacingMeters: number,
+    edgeInsetMeters: number,
+    maxChevrons: number,
+    arrowLengthMeters: number,
+    arrowHalfWidthMeters: number,
+    width: number,
+    outlineColor: string,
+    outlineWidth: number
+): TmapPathOverlay[] {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2 || maxChevrons <= 0) return [];
+
+    const segmentDistances: number[] = [];
+    let totalDistance = 0;
+    for (let index = 1; index < pathCoords.length; index += 1) {
+        const distance = routeCoordDistanceMeters(pathCoords[index - 1], pathCoords[index]);
+        segmentDistances.push(distance);
+        totalDistance += distance;
+    }
+
+    if (!Number.isFinite(totalDistance) || totalDistance < Math.max(18, edgeInsetMeters * 2)) return [];
+
+    const inset = Math.min(edgeInsetMeters, totalDistance * 0.24);
+    const endLimit = totalDistance - inset;
+    let nextDistance = totalDistance < spacingMeters * 1.35
+        ? totalDistance * 0.5
+        : inset + (spacingMeters * 0.5);
+    const overlays: TmapPathOverlay[] = [];
+    let traveled = 0;
+
+    for (let index = 1; index < pathCoords.length && overlays.length < maxChevrons; index += 1) {
+        const from = pathCoords[index - 1];
+        const to = pathCoords[index];
+        const segmentDistance = segmentDistances[index - 1];
+        if (!Number.isFinite(segmentDistance) || segmentDistance < 3) {
+            traveled += Number.isFinite(segmentDistance) ? segmentDistance : 0;
+            continue;
+        }
+
+        const averageLatRad = ((from.lat + to.lat) * 0.5 * Math.PI) / 180;
+        const eastMeters = (to.lng - from.lng) * 111_320 * Math.cos(averageLatRad);
+        const northMeters = (to.lat - from.lat) * 111_320;
+        const vectorLength = Math.hypot(eastMeters, northMeters);
+        if (!Number.isFinite(vectorLength) || vectorLength < 0.8) {
+            traveled += segmentDistance;
+            continue;
+        }
+        const unitEast = eastMeters / vectorLength;
+        const unitNorth = northMeters / vectorLength;
+        const leftEast = -unitNorth;
+        const leftNorth = unitEast;
+
+        while (nextDistance <= endLimit && (traveled + segmentDistance) >= nextDistance && overlays.length < maxChevrons) {
+            const ratio = (nextDistance - traveled) / segmentDistance;
+            const center = interpolateRouteCoord(from, to, ratio);
+            const tip = offsetCoordByMeters(
+                center,
+                unitNorth * arrowLengthMeters * 0.55,
+                unitEast * arrowLengthMeters * 0.55
+            );
+            const tailCenter = offsetCoordByMeters(
+                center,
+                -unitNorth * arrowLengthMeters * 0.45,
+                -unitEast * arrowLengthMeters * 0.45
+            );
+            const tailLeft = offsetCoordByMeters(
+                tailCenter,
+                leftNorth * arrowHalfWidthMeters,
+                leftEast * arrowHalfWidthMeters
+            );
+            const tailRight = offsetCoordByMeters(
+                tailCenter,
+                -leftNorth * arrowHalfWidthMeters,
+                -leftEast * arrowHalfWidthMeters
+            );
+
+            overlays.push({
+                id: `${idPrefix}-chevron-${overlays.length}`,
+                coords: [
+                    { latitude: tailLeft.lat, longitude: tailLeft.lng },
+                    { latitude: tip.lat, longitude: tip.lng },
+                    { latitude: tailRight.lat, longitude: tailRight.lng },
+                ],
+                color: "#FFFFFF",
+                width,
+                outlineColor,
+                outlineWidth,
+            });
+            nextDistance += spacingMeters;
+        }
+
+        traveled += segmentDistance;
+    }
+
+    return overlays;
 }
 
 function buildDotMarkersForPath(
@@ -923,6 +1031,36 @@ function buildDotMarkersForPath(
     }
 
     return markers;
+}
+
+function mergeConnectedGuidePaths(paths: RoutePathCoord[][]): RoutePathCoord[][] {
+    const merged: RoutePathCoord[][] = [];
+
+    paths.forEach((path) => {
+        if (!Array.isArray(path) || path.length < 2) return;
+        if (!merged.length) {
+            merged.push(path.slice());
+            return;
+        }
+
+        const previous = merged[merged.length - 1];
+        const previousEnd = previous[previous.length - 1];
+        const currentStart = path[0];
+        const currentEnd = path[path.length - 1];
+
+        if (routeCoordDistanceMeters(previousEnd, currentStart) <= 22) {
+            merged[merged.length - 1] = previous.concat(path.slice(1));
+            return;
+        }
+        if (routeCoordDistanceMeters(previousEnd, currentEnd) <= 22) {
+            merged[merged.length - 1] = previous.concat(path.slice(0, -1).reverse());
+            return;
+        }
+
+        merged.push(path.slice());
+    });
+
+    return merged;
 }
 
 function filterDensePathCoords(pathCoords: RoutePathCoord[] | undefined, minSegmentMeters: number): RoutePathCoord[] {
@@ -990,13 +1128,6 @@ function offsetPathLaterally(
             (dLat / norm) * offsetMeters * blend
         );
     });
-}
-
-function getAlternativeOffsetMeters(displayIndex: number, mapZoom: number): number {
-    const baseOffset = mapZoom >= 17.2 ? 6 : mapZoom >= 15.3 ? 8 : 10;
-    const rank = Math.floor(displayIndex / 2) + 1;
-    const direction = displayIndex % 2 === 0 ? 1 : -1;
-    return direction * rank * baseOffset;
 }
 
 function resolveRidePathOffsetMeters(
@@ -1434,21 +1565,22 @@ function buildSelectedRouteDirectionMarkers(
 ): TmapMarker[] {
     if (!selectedAlternative) return [];
     if (travelMode === "TRANSIT") {
-        // 대중교통은 노선 자체 정보(색/구간)를 우선 보여 주고 화살표는 생략한다.
         return [];
     }
 
-    if (travelMode !== "CAR" || mapZoom < 12.8) return [];
+    if (travelMode !== "CAR" || mapZoom < 11.2) return [];
     const displayPath = Array.isArray(selectedAlternative.pathCoords) && selectedAlternative.pathCoords.length >= 2
         ? normalizeDisplayPathCoords(selectedAlternative.pathCoords, undefined)
         : [];
     return buildDirectionalMarkersForPath(
         `${selectedAlternative.id}-car`,
         displayPath,
-        SELECTED_ROUTE_COLOR,
-        mapZoom >= 16.5 ? 72 : mapZoom >= 14.5 ? 96 : 124,
-        24,
-        18
+        "#FFFFFF",
+        mapZoom >= 16.5 ? 64 : mapZoom >= 14.5 ? 86 : mapZoom >= 12.8 ? 108 : 132,
+        20,
+        20,
+        mapZoom >= 16.2 ? 18 : mapZoom >= 13.8 ? 16 : 14,
+        "rgba(15,23,42,0.18)"
     );
 }
 
@@ -1457,14 +1589,15 @@ function buildTransitWalkGuideMarkers(
     travelMode: TravelMode,
     mapZoom: number,
     connectorOverlays: TmapPathOverlay[],
-    _walkDetailOverlays: TmapPathOverlay[]
+    walkDetailOverlays: TmapPathOverlay[]
 ): TmapMarker[] {
     // 저배율에서는 보행 점선을 숨겨 지도 노이즈를 줄인다.
     // UI tuning: 안내선을 한 단계 이른 줌부터 노출한다.
     if (travelMode !== "TRANSIT" || !selectedAlternative || mapZoom < 13.2) return [];
 
-    // 점선 안내는 전체 도보 대신 환승/연결 connector 위주로만 표시한다.
-    const walkGuideOverlays = [...connectorOverlays]
+    // 점선 안내는 connector뿐 아니라 실제 WALK 상세 경로에도 함께 찍어
+    // 확대 시 "실선 도보"가 아니라 점선 안내가 먼저 읽히게 한다.
+    const walkGuideOverlays = [...connectorOverlays, ...walkDetailOverlays]
         .filter((overlay) => (
             typeof overlay.id === "string" &&
             overlay.id.endsWith("-path") &&
@@ -1473,19 +1606,23 @@ function buildTransitWalkGuideMarkers(
         ));
     if (!walkGuideOverlays.length) return [];
 
-    // 줌 단계별 점선 간격/크기 설정.
-    const spacingMeters = mapZoom >= 16.4 ? 14 : mapZoom >= 15.2 ? 16 : mapZoom >= 14 ? 18 : 22;
-    const dotSize = mapZoom >= 16.4 ? 5 : mapZoom >= 14.2 ? 4 : 3;
-    const maxTotalMarkers = mapZoom >= 16.2 ? 20 : mapZoom >= 15 ? 16 : mapZoom >= 14 ? 13 : 10;
-    const maxPerPath = Math.max(6, Math.floor(maxTotalMarkers / walkGuideOverlays.length));
-    const markers: TmapMarker[] = [];
-
-    walkGuideOverlays.forEach((overlay, overlayIndex) => {
-        if (markers.length >= maxTotalMarkers) return;
-        const routePath = normalizeDisplayPathCoords(
+    const mergedGuidePaths = mergeConnectedGuidePaths(
+        walkGuideOverlays.map((overlay) => normalizeDisplayPathCoords(
             overlay.coords.map((point) => ({ lat: point.latitude, lng: point.longitude })),
             "WALK"
-        );
+        ))
+    );
+    if (!mergedGuidePaths.length) return [];
+
+    // 줌 단계별 점선 간격/크기 설정.
+    const spacingMeters = mapZoom >= 16.4 ? 11 : mapZoom >= 15.2 ? 13 : mapZoom >= 14 ? 16 : 20;
+    const dotSize = mapZoom >= 16.4 ? 7 : mapZoom >= 15.2 ? 6 : mapZoom >= 14.2 ? 5 : 4;
+    const maxTotalMarkers = mapZoom >= 16.2 ? 34 : mapZoom >= 15 ? 26 : mapZoom >= 14 ? 18 : 12;
+    const maxPerPath = Math.max(8, Math.floor(maxTotalMarkers / mergedGuidePaths.length));
+    const markers: TmapMarker[] = [];
+
+    mergedGuidePaths.forEach((routePath, overlayIndex) => {
+        if (markers.length >= maxTotalMarkers) return;
         if (routePath.length < 2) return;
 
         const remaining = maxTotalMarkers - markers.length;
@@ -1495,7 +1632,7 @@ function buildTransitWalkGuideMarkers(
                 routePath,
                 TRANSIT_CONNECTOR_DOT_COLOR,
                 spacingMeters,
-                5,
+                1.5,
                 Math.min(maxPerPath, remaining),
                 dotSize,
                 TRANSIT_WALK_DOT_BORDER_COLOR
@@ -1515,7 +1652,6 @@ function formatTransitDepartureNow(date = new Date()): string {
 export default function RoutePlannerScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { width: windowWidth } = useWindowDimensions();
     const { colors, mode } = useTheme();
     const isDark = mode === "dark";
     const overlayBoxBg = isDark ? "rgba(8, 12, 20, 0.78)" : "rgba(255, 255, 255, 0.9)";
@@ -1614,24 +1750,10 @@ export default function RoutePlannerScreen() {
     const transitConnectorCacheRef = useRef<Map<string, RoutePathCoord[]>>(new Map());
 
     const mapRef = useRef<TmapMapViewHandle | null>(null);
-    const alternativeScrollRef = useRef<ScrollView | null>(null);
     const bottomSheetTranslateY = useRef(new Animated.Value(420)).current;
     const bottomSheetStartYRef = useRef(0);
-    const [alternativeViewportWidth, setAlternativeViewportWidth] = useState(0);
-    const [alternativeContentWidth, setAlternativeContentWidth] = useState(0);
 
     const isTransitMode = travelMode === "TRANSIT";
-    const alternativeCardWidth = useMemo(() => {
-        if (isTransitMode) {
-            const estimated = Math.round(windowWidth * 0.72);
-            return Math.min(320, Math.max(248, estimated));
-        }
-        const estimated = Math.round(windowWidth * 0.39);
-        return Math.min(ALTERNATIVE_CARD_MAX_SIZE, Math.max(ALTERNATIVE_CARD_MIN_SIZE, estimated));
-    }, [isTransitMode, windowWidth]);
-    const alternativeCardHeight = isTransitMode ? 206 : alternativeCardWidth;
-    const alternativeSnapSize = alternativeCardWidth + ALTERNATIVE_CARD_GAP;
-
     const hasOriginCoords = typeof originLat === "number" && typeof originLng === "number";
     const hasDestinationCoords = typeof destinationLat === "number" && typeof destinationLng === "number";
     const hasRouteReady = hasOriginCoords && hasDestinationCoords;
@@ -1639,7 +1761,6 @@ export default function RoutePlannerScreen() {
     // 경로 선택 단계는 별도 /schedule/route-select 화면으로 분리했다.
     const isRouteSelectionStage = false;
     const hasActiveTarget = activeTarget === "origin" || activeTarget === "destination";
-    const isAlternativeScrollable = alternativeContentWidth > alternativeViewportWidth + 2;
     const originDisplay = originName.trim() || originAddress.trim() || "출발지 미선택";
     const destinationDisplay = destinationName.trim() || destinationAddress.trim() || "도착지 미선택";
     const bottomSheetPeekHeight = BOTTOM_SHEET_HANDLE_PEEK_HEIGHT;
@@ -1675,12 +1796,17 @@ export default function RoutePlannerScreen() {
         });
         return counts;
     }, [routeAlternatives]);
+    const visibleTransitFilterItems = useMemo(
+        () => TRANSIT_FILTER_ITEMS.filter((item) => item.key === "ALL" || transitFilterCounts[item.key] > 0),
+        [transitFilterCounts]
+    );
     const shouldShowTransitLegend = transitLegendKinds.length > 0 && mapZoom >= TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
     const shouldShowTransitLegendHint =
         isTransitMode &&
         hasRouteReady &&
         transitLegendKinds.length > 0 &&
         mapZoom < TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
+    const shouldShowZoomControls = !hasRouteReady || isBottomSheetHidden;
     const initialSyncKey = useMemo(() => JSON.stringify({
         sessionId,
         origin: initial?.origin ?? null,
@@ -1695,9 +1821,17 @@ export default function RoutePlannerScreen() {
         if (!isTransitMode || transitRouteFilter === "ALL") return routeAlternatives;
         return routeAlternatives.filter((option) => getTransitRouteCategory(option) === transitRouteFilter);
     }, [isTransitMode, routeAlternatives, transitRouteFilter]);
-    const visibleSelectedAlternativeIndex = useMemo(
-        () => visibleAlternatives.findIndex((item) => item.id === selectedAlternativeId),
-        [visibleAlternatives, selectedAlternativeId]
+    const selectedAlternativeMetricTags = useMemo(
+        () => (selectedAlternative ? getAlternativeMetricTags(selectedAlternative) : []),
+        [selectedAlternative]
+    );
+    const selectedAlternativeTransitModeLabels = useMemo(
+        () => getTransitModeLabels(selectedAlternative?.transitLegs),
+        [selectedAlternative]
+    );
+    const selectedAlternativeStepPreview = useMemo(
+        () => buildTransitLegPreview(selectedAlternative?.transitLegs) ?? selectedAlternative?.stepSummary,
+        [selectedAlternative]
     );
 
     const animateBottomSheetTo = useCallback((toValue: number) => {
@@ -1762,7 +1896,7 @@ export default function RoutePlannerScreen() {
         },
     }), [bottomSheetCollapsedOffset, bottomSheetTranslateY, isBottomSheetHidden, shouldCollapseFromGesture, snapBottomSheet]);
 
-    const selectAlternativeByIndex = useCallback((index: number, scrollToCard = false) => {
+    const selectAlternativeByIndex = useCallback((index: number, _scrollToCard = false) => {
         if (!visibleAlternatives.length) return;
         const bounded = Math.min(Math.max(index, 0), visibleAlternatives.length - 1);
         const target = visibleAlternatives[bounded];
@@ -1770,37 +1904,19 @@ export default function RoutePlannerScreen() {
 
         setSelectedAlternativeId(target.id);
         selectedAlternativeIdRef.current = target.id;
-
-        if (scrollToCard && alternativeScrollRef.current) {
-            alternativeScrollRef.current.scrollTo({
-                x: bounded * alternativeSnapSize,
-                y: 0,
-                animated: true,
-            });
-        }
-    }, [visibleAlternatives, alternativeSnapSize]);
-
-    const onAlternativeSwipeEnd = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-        if (!visibleAlternatives.length || !isAlternativeScrollable) return;
-        const offsetX = event.nativeEvent.contentOffset.x;
-        const nextIndex = Math.round(offsetX / alternativeSnapSize);
-        selectAlternativeByIndex(nextIndex, false);
-    }, [visibleAlternatives, isAlternativeScrollable, alternativeSnapSize, selectAlternativeByIndex]);
-
-    useEffect(() => {
-        if (visibleSelectedAlternativeIndex < 0 || !alternativeScrollRef.current) return;
-        alternativeScrollRef.current.scrollTo({
-            x: visibleSelectedAlternativeIndex * alternativeSnapSize,
-            y: 0,
-            animated: false,
-        });
-    }, [visibleSelectedAlternativeIndex, alternativeSnapSize]);
+    }, [visibleAlternatives]);
 
     useEffect(() => {
         if (travelMode !== "TRANSIT" && transitRouteFilter !== "ALL") {
             setTransitRouteFilter("ALL");
         }
     }, [travelMode, transitRouteFilter]);
+
+    useEffect(() => {
+        if (!isTransitMode || transitRouteFilter === "ALL") return;
+        if (transitFilterCounts[transitRouteFilter] > 0) return;
+        setTransitRouteFilter("ALL");
+    }, [isTransitMode, transitRouteFilter, transitFilterCounts]);
 
     useEffect(() => {
         if (!initialSyncKey || lastAppliedInitialKeyRef.current === initialSyncKey) return;
@@ -2463,49 +2579,17 @@ export default function RoutePlannerScreen() {
             typeof originLng === "number" &&
             typeof destinationLat === "number" &&
             typeof destinationLng === "number"
-        )
+            )
             ? [
                 { latitude: originLat, longitude: originLng },
                 { latitude: destinationLat, longitude: destinationLng },
             ]
             : [];
-        const fallbackRoutePath = fallbackPathCoords.map((point) => ({ lat: point.latitude, lng: point.longitude }));
 
         const selectedRoute = routeAlternatives.find((option) => option.id === selectedAlternativeId);
-        const shouldShowInactiveMapAlternatives = mapZoom < 16.8;
-        const inactiveOptions = shouldShowInactiveMapAlternatives
-            ? routeAlternatives
-                .filter((option) => option.id !== selectedAlternativeId)
-                .slice(0, INACTIVE_MAP_ALTERNATIVE_LIMIT)
-            : [];
-        const inactiveOverlays = inactiveOptions
-            .map((option, displayIndex) => {
-                const sourcePath = Array.isArray(option.pathCoords) && option.pathCoords.length >= 2
-                    ? normalizeDisplayPathCoords(option.pathCoords, option.mode === "WALK" ? "WALK" : undefined)
-                    : fallbackRoutePath;
-                const offsetPath = offsetPathLaterally(
-                    sourcePath,
-                    getAlternativeOffsetMeters(displayIndex, mapZoom)
-                );
-                const coords = offsetPath.map((point) => ({
-                    latitude: point.lat,
-                    longitude: point.lng,
-                }));
-
-                if (coords.length < 2) return null;
-
-                return {
-                    id: option.id,
-                    coords,
-                    color: INACTIVE_ROUTE_COLOR,
-                    width: ROUTE_STYLE.inactiveWidth,
-                    outlineColor: isDark ? "rgba(15,20,35,0.7)" : "rgba(255,255,255,0.82)",
-                    outlineWidth: ROUTE_STYLE.inactiveOutlineWidth,
-                } as TmapPathOverlay;
-            })
-            .filter((value: TmapPathOverlay | null): value is TmapPathOverlay => value !== null);
-
-        const shouldShowDetailedTransitSegments = travelMode === "TRANSIT" && mapZoom >= TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
+        const shouldShowDetailedTransitSegments =
+            travelMode === "TRANSIT" && mapZoom >= TRANSIT_SEGMENT_RENDER_MIN_ZOOM;
+        const shouldShowWalkBaseLine = mapZoom < 15.3;
         const walkOverlayById = new Map(
             transitWalkDetailOverlays.map((overlay) => [overlay.id, overlay.coords])
         );
@@ -2550,7 +2634,8 @@ export default function RoutePlannerScreen() {
             : [];
         const selectedTransitWalkOverlays = (
             travelMode === "TRANSIT" &&
-            shouldShowDetailedTransitSegments
+            shouldShowDetailedTransitSegments &&
+            shouldShowWalkBaseLine
         )
             ? [...transitConnectorOverlays, ...transitWalkDetailOverlays]
                 .filter((overlay) => (
@@ -2562,13 +2647,41 @@ export default function RoutePlannerScreen() {
                 .map((overlay, index) => ({
                     id: `selected-walk-${index}-${overlay.id}`,
                     coords: overlay.coords,
-                    // 점선 보행 가이드는 marker(dot)로 렌더링하고,
-                    // 여기는 좌표 전달 호환을 위한 투명 오버레이로만 유지한다.
-                    color: "rgba(0,0,0,0)",
-                    width: 0.5,
-                    outlineColor: "rgba(0,0,0,0)",
-                    outlineWidth: 0,
+                    // 상세 줌 전에는 바탕선을 유지하고,
+                    // 상세 줌에서는 점선 마커만 남겨 도보 안내선을 점선으로 읽히게 한다.
+                    color: isDark ? TRANSIT_WALK_ROUTE_COLOR_DARK : TRANSIT_WALK_ROUTE_COLOR_LIGHT,
+                    width: ROUTE_STYLE.transitWalkWidth,
+                    outlineColor: isDark ? "rgba(15,20,35,0.64)" : "rgba(255,255,255,0.95)",
+                    outlineWidth: ROUTE_STYLE.transitWalkOutlineWidth,
                 } as TmapPathOverlay))
+            : [];
+        const selectedDirectionOverlays: TmapPathOverlay[] = (
+            travelMode === "TRANSIT" &&
+            mapZoom >= TRANSIT_DIRECTION_MARKER_MIN_ZOOM &&
+            selectedRoute &&
+            Array.isArray(selectedRoute.transitLegs)
+        )
+            ? selectedRoute.transitLegs.flatMap((leg, index) => {
+                if (leg.kind !== "BUS" && leg.kind !== "SUBWAY") return [];
+                const displayPath = leg.kind === "BUS"
+                    ? getRideLegDisplayPathCoords(selectedRoute.transitLegs, index)
+                    : normalizeDisplayPathCoords(
+                        Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2 ? leg.pathCoords : undefined,
+                        leg.kind
+                    );
+                return buildDirectionalChevronOverlaysForPath(
+                    `${selectedRoute.id}-${leg.kind.toLowerCase()}-${index}`,
+                    displayPath,
+                    leg.kind === "SUBWAY" ? 42 : 34,
+                    10,
+                    leg.kind === "SUBWAY" ? 24 : 28,
+                    leg.kind === "SUBWAY" ? 7.2 : 6.2,
+                    leg.kind === "SUBWAY" ? 2.4 : 2.1,
+                    2.4,
+                    isDark ? "rgba(15,20,35,0.24)" : "rgba(15,23,42,0.18)",
+                    1.1
+                );
+            })
             : [];
         const selectedMainOverlay = selectedRoute
             ? (() => {
@@ -2583,33 +2696,43 @@ export default function RoutePlannerScreen() {
                     id: `${selectedRoute.id}-selected`,
                     coords: selectedCoords,
                     color: selectedTransitSegmentOverlays.length > 0
-                        ? "rgba(180, 193, 211, 0.82)"
+                        ? (shouldShowWalkBaseLine ? "rgba(180, 193, 211, 0.82)" : "rgba(180, 193, 211, 0.34)")
                         : SELECTED_ROUTE_COLOR,
                     width: selectedTransitSegmentOverlays.length > 0
-                        // 대중교통 결합 경로에서는 도보 보조선을 더 얇게 유지.
-                        ? Math.max(ROUTE_STYLE.transitWalkWidth + 0.8, 3.8)
+                        // 상세 줌에서는 메인 fallback 라인을 약하게 낮춰
+                        // 도보 점선/대중교통 색상 세그먼트가 더 먼저 읽히게 한다.
+                        ? (shouldShowWalkBaseLine
+                            ? Math.max(ROUTE_STYLE.transitWalkWidth + 0.8, 3.8)
+                            : 3.2)
                         : ROUTE_STYLE.selectedWidth,
                     outlineColor: selectedTransitSegmentOverlays.length > 0
-                        ? (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.62)")
+                        ? (shouldShowWalkBaseLine
+                            ? (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.62)")
+                            : (isDark ? "rgba(15,20,35,0.28)" : "rgba(255,255,255,0.26)"))
                         : (isDark ? "rgba(15,20,35,0.55)" : "rgba(255,255,255,0.9)"),
                     outlineWidth: selectedTransitSegmentOverlays.length > 0
-                        ? Math.max(ROUTE_STYLE.transitWalkOutlineWidth + 0.1, 1.2)
+                        ? (shouldShowWalkBaseLine
+                            ? Math.max(ROUTE_STYLE.transitWalkOutlineWidth + 0.1, 1.2)
+                            : 0.8)
                         : ROUTE_STYLE.selectedOutlineWidth,
                 } as TmapPathOverlay;
             })()
             : null;
 
         if (selectedTransitSegmentOverlays.length > 0 || selectedTransitWalkOverlays.length > 0) {
-            const overlays = [...inactiveOverlays, ...selectedTransitWalkOverlays];
-            if (selectedTransitSegmentOverlays.length > 0) {
-                overlays.push(...selectedTransitSegmentOverlays);
-            } else if (selectedMainOverlay) {
+            const overlays: TmapPathOverlay[] = [];
+            if (selectedMainOverlay) {
                 overlays.push(selectedMainOverlay);
             }
+            overlays.push(...selectedTransitWalkOverlays);
+            if (selectedTransitSegmentOverlays.length > 0) {
+                overlays.push(...selectedTransitSegmentOverlays);
+            }
+            overlays.push(...selectedDirectionOverlays);
             return overlays;
         }
 
-        if (!inactiveOverlays.length && !selectedMainOverlay) {
+        if (!selectedMainOverlay) {
             if (pathOverlayCoords && pathOverlayCoords.length >= 2) {
                 return [{
                     id: "route-selected-fallback",
@@ -2623,11 +2746,7 @@ export default function RoutePlannerScreen() {
             return [];
         }
 
-        if (selectedMainOverlay) {
-            return [...inactiveOverlays, selectedMainOverlay];
-        }
-
-        return inactiveOverlays;
+        return [selectedMainOverlay];
     }, [
         hasRouteReady,
         routeAlternatives,
@@ -3207,17 +3326,19 @@ export default function RoutePlannerScreen() {
                 fallbackTextColor={colors.textSecondary}
             />
 
-            <View style={styles.zoomOverlay}>
-                <View style={[styles.zoomControlCard, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
-                    <Pressable onPress={onPressZoomIn} style={styles.zoomControlBtn}>
-                        <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>+</Text>
-                    </Pressable>
-                    <View style={[styles.zoomDivider, { backgroundColor: colors.border }]} />
-                    <Pressable onPress={onPressZoomOut} style={styles.zoomControlBtn}>
-                        <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>-</Text>
-                    </Pressable>
+            {shouldShowZoomControls && (
+                <View style={styles.zoomOverlay}>
+                    <View style={[styles.zoomControlCard, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
+                        <Pressable onPress={onPressZoomIn} style={styles.zoomControlBtn}>
+                            <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>+</Text>
+                        </Pressable>
+                        <View style={[styles.zoomDivider, { backgroundColor: colors.border }]} />
+                        <Pressable onPress={onPressZoomOut} style={styles.zoomControlBtn}>
+                            <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>-</Text>
+                        </Pressable>
+                    </View>
                 </View>
-            </View>
+            )}
 
             <View style={[styles.topOverlay, { paddingTop: insets.top + 4 }]}> 
                 <View style={styles.searchOverlayRow}>
@@ -3406,6 +3527,40 @@ export default function RoutePlannerScreen() {
                         </View>
 
                         <View style={[styles.routeSelectionStageListWrap, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
+                            {travelMode === "TRANSIT" && !etaLoading && !alternativesError && !!routeAlternatives.length && visibleTransitFilterItems.length > 1 && (
+                                <ScrollView
+                                    horizontal
+                                    showsHorizontalScrollIndicator={false}
+                                    style={[styles.transitFilterRow, { borderBottomColor: colors.border }]}
+                                    contentContainerStyle={styles.transitFilterRowContent}
+                                >
+                                    {visibleTransitFilterItems.map((item) => {
+                                        const selected = transitRouteFilter === item.key;
+                                        const count = transitFilterCounts[item.key];
+                                        const label = item.key === "ALL" ? item.label : `${item.label} ${count}`;
+                                        return (
+                                            <Pressable
+                                                key={`stage-filter-${item.key}`}
+                                                onPress={() => setTransitRouteFilter(item.key)}
+                                                style={[
+                                                    styles.transitFilterTab,
+                                                    { borderBottomColor: selected ? colors.textPrimary : "transparent" },
+                                                ]}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.transitFilterTabText,
+                                                        { color: selected ? colors.textPrimary : colors.textSecondary },
+                                                    ]}
+                                                >
+                                                    {label}
+                                                </Text>
+                                            </Pressable>
+                                        );
+                                    })}
+                                </ScrollView>
+                            )}
+
                             {etaLoading ? (
                                 <View style={styles.alternativeLoadingRow}>
                                     <ActivityIndicator size="small" color={colors.selectedDayBg} />
@@ -3573,39 +3728,39 @@ export default function RoutePlannerScreen() {
                                 <View style={[styles.alternativeSection, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
                                     {travelMode === "TRANSIT" && !etaLoading && !alternativesError && !!routeAlternatives.length && (
                                         <>
-                                            <View style={[styles.transitFilterRow, { borderBottomColor: colors.border }]}>
-                                                {([
-                                                    { key: "ALL", label: "전체" },
-                                                    { key: "BUS", label: "버스" },
-                                                    { key: "SUBWAY", label: "지하철" },
-                                                    { key: "MIXED", label: "버스+지하철" },
-                                                ] as Array<{ key: TransitRouteFilter; label: string }>).map((item) => {
-                                                    const selected = transitRouteFilter === item.key;
-                                                    const count = transitFilterCounts[item.key];
-                                                    return (
-                                                        <Pressable
-                                                            key={item.key}
-                                                            onPress={() => setTransitRouteFilter(item.key)}
-                                                            style={[
-                                                                styles.transitFilterChip,
-                                                                {
-                                                                    borderColor: selected ? colors.selectedDayBg : colors.border,
-                                                                    backgroundColor: selected ? colors.selectedDayBg : "transparent",
-                                                                },
-                                                            ]}
-                                                        >
-                                                            <Text
+                                            {visibleTransitFilterItems.length > 1 && (
+                                                <ScrollView
+                                                    horizontal
+                                                    showsHorizontalScrollIndicator={false}
+                                                    style={[styles.transitFilterRow, { borderBottomColor: colors.border }]}
+                                                    contentContainerStyle={styles.transitFilterRowContent}
+                                                >
+                                                    {visibleTransitFilterItems.map((item) => {
+                                                        const selected = transitRouteFilter === item.key;
+                                                        const count = transitFilterCounts[item.key];
+                                                        const label = item.key === "ALL" ? item.label : `${item.label} ${count}`;
+                                                        return (
+                                                            <Pressable
+                                                                key={item.key}
+                                                                onPress={() => setTransitRouteFilter(item.key)}
                                                                 style={[
-                                                                    styles.transitFilterChipText,
-                                                                    { color: selected ? colors.selectedDayText : colors.textSecondary },
+                                                                    styles.transitFilterTab,
+                                                                    { borderBottomColor: selected ? colors.textPrimary : "transparent" },
                                                                 ]}
                                                             >
-                                                                {`${item.label} ${count}`}
-                                                            </Text>
-                                                        </Pressable>
-                                                    );
-                                                })}
-                                            </View>
+                                                                <Text
+                                                                    style={[
+                                                                        styles.transitFilterTabText,
+                                                                        { color: selected ? colors.textPrimary : colors.textSecondary },
+                                                                    ]}
+                                                                >
+                                                                    {label}
+                                                                </Text>
+                                                            </Pressable>
+                                                        );
+                                                    })}
+                                                </ScrollView>
+                                            )}
                                             <View style={[styles.transitDepartureRow, { borderBottomColor: colors.border }]}>
                                                 <Text style={[styles.transitDepartureText, { color: colors.selectedDayBg }]}>
                                                     {formatTransitDepartureNow()}
@@ -3637,219 +3792,182 @@ export default function RoutePlannerScreen() {
                                     ) : null}
 
                                     {!etaLoading && !alternativesError && !!visibleAlternatives.length && (
-                                        isTransitMode ? (
-                                            <View style={styles.transitAlternativeList}>
-                                                {visibleAlternatives.map((option, index) => {
-                                                    const selected = option.id === selectedAlternativeId;
-                                                    const routeLabel = index === 0 ? "추천 경로" : `대안 경로 ${index}`;
-                                                    const transitModeLabels = getTransitModeLabels(option.transitLegs);
-                                                    const metricTags = getAlternativeMetricTags(option);
-                                                    const transitLegPreview = buildTransitLegPreview(option.transitLegs) ?? option.stepSummary;
-
-                                                    return (
-                                                        <Pressable
-                                                            key={option.id}
-                                                            onPress={() => selectAlternativeByIndex(index, false)}
-                                                            style={[
-                                                                styles.transitAlternativeCard,
-                                                                {
-                                                                    borderColor: selected ? colors.selectedDayBg : colors.border,
-                                                                    backgroundColor: selected
-                                                                        ? (isDark ? "rgba(29,114,255,0.18)" : "#EAF2FF")
-                                                                        : overlayCardBg,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            <View style={styles.transitAlternativeHeader}>
-                                                                <View style={styles.transitAlternativeTitleWrap}>
-                                                                    <Text style={[styles.alternativeRouteLabel, { color: colors.textPrimary }]}>
-                                                                        {routeLabel}
-                                                                    </Text>
-                                                                    <View style={styles.alternativeBadgeRow}>
-                                                                        <View style={[styles.altBadge, { backgroundColor: index === 0 ? "#1B9B50" : "#334155" }]}>
-                                                                            <Text style={styles.altBadgeText}>
-                                                                                {`${index + 1}/${visibleAlternatives.length}`}
-                                                                            </Text>
-                                                                        </View>
-                                                                        <View style={[styles.altBadge, { backgroundColor: option.source === "api" ? "#334155" : "#6B7280" }]}>
-                                                                            <Text style={styles.altBadgeText}>{option.source === "api" ? "API" : "보정"}</Text>
-                                                                        </View>
-                                                                    </View>
-                                                                </View>
-                                                                <Text style={[styles.transitDurationLarge, { color: colors.textPrimary }]}>
-                                                                    {formatDuration(option.minutes)}
-                                                                </Text>
-                                                            </View>
-
-                                                            {transitModeLabels.length > 0 && (
-                                                                <View style={styles.transitModeChipRow}>
-                                                                    {transitModeLabels.map((modeLabel) => (
-                                                                        <View
-                                                                            key={`${option.id}-${modeLabel}`}
-                                                                            style={[
-                                                                                styles.transitModeChip,
-                                                                                { borderColor: colors.border, backgroundColor: overlayPanelBg },
-                                                                            ]}
-                                                                        >
-                                                                            <Text style={[styles.transitModeChipText, { color: colors.textPrimary }]}>
-                                                                                {modeLabel}
-                                                                            </Text>
-                                                                        </View>
-                                                                    ))}
-                                                                </View>
-                                                            )}
-
-                                                            {metricTags.length > 0 && (
-                                                                <View style={styles.transitMetricTagRow}>
-                                                                    {metricTags.map((metric) => (
-                                                                        <View
-                                                                            key={`${option.id}-${metric}`}
-                                                                            style={[
-                                                                                styles.transitMetricTag,
-                                                                                { borderColor: colors.border, backgroundColor: overlayPanelBg },
-                                                                            ]}
-                                                                        >
-                                                                            <Text style={[styles.transitMetricTagText, { color: colors.textPrimary }]}>
-                                                                                {metric}
-                                                                            </Text>
-                                                                        </View>
-                                                                    ))}
-                                                                </View>
-                                                            )}
-
-                                                            {Array.isArray(option.transitLegs) && option.transitLegs.length > 0 && (
-                                                                <View style={styles.transitLegList}>
-                                                                    {option.transitLegs.map((leg, legIndex) => {
-                                                                        const kindMeta = getTransitLegKindMeta(leg.kind);
-                                                                        const legMetaText = buildTransitLegMeta(leg);
-                                                                        const fromTo = leg.startName && leg.endName
-                                                                            ? `${leg.startName} → ${leg.endName}`
-                                                                            : "";
-                                                                        const assistText = buildTransitLegAssistText(option.transitLegs, legIndex);
-                                                                        return (
-                                                                            <View
-                                                                                key={`${option.id}-leg-${legIndex}`}
-                                                                                style={[
-                                                                                    styles.transitLegItemCard,
-                                                                                    { borderColor: colors.border, backgroundColor: overlayPanelBg },
-                                                                                ]}
-                                                                            >
-                                                                                <View style={styles.transitLegRow}>
-                                                                                    <View style={[styles.transitLegKindDot, { backgroundColor: kindMeta.color }]}>
-                                                                                        <Text style={styles.transitLegKindDotText}>{kindMeta.short}</Text>
-                                                                                    </View>
-                                                                                    <View style={styles.transitLegTextWrap}>
-                                                                                        <View style={styles.transitLegPrimaryRow}>
-                                                                                            <Text numberOfLines={1} style={[styles.transitLegLabel, { color: colors.textPrimary }]}>
-                                                                                                {leg.label}
-                                                                                            </Text>
-                                                                                            {!!legMetaText && (
-                                                                                                <Text numberOfLines={1} style={[styles.transitLegMeta, { color: colors.textSecondary }]}>
-                                                                                                    {legMetaText}
-                                                                                                </Text>
-                                                                                            )}
-                                                                                        </View>
-                                                                                        {!assistText && !!fromTo && (
-                                                                                            <Text numberOfLines={1} style={[styles.transitLegFromTo, { color: colors.textDisabled }]}>
-                                                                                                {fromTo}
-                                                                                            </Text>
-                                                                                        )}
-                                                                                        {!!assistText && (
-                                                                                            <Text numberOfLines={2} style={[styles.transitLegAssist, { color: colors.textSecondary }]}>
-                                                                                                {assistText}
-                                                                                            </Text>
-                                                                                        )}
-                                                                                    </View>
-                                                                                </View>
-                                                                            </View>
-                                                                        );
-                                                                    })}
-                                                                </View>
-                                                            )}
-
-                                                            {!!transitLegPreview && (!Array.isArray(option.transitLegs) || option.transitLegs.length === 0) && (
-                                                                <Text numberOfLines={2} style={[styles.alternativeStep, { color: colors.textSecondary }]}>
-                                                                    {transitLegPreview}
-                                                                </Text>
-                                                            )}
-                                                        </Pressable>
-                                                    );
-                                                })}
-                                            </View>
-                                        ) : (
-                                            <ScrollView
-                                                ref={alternativeScrollRef}
-                                                horizontal
-                                                bounces={false}
-                                                scrollEnabled={isAlternativeScrollable}
-                                                showsHorizontalScrollIndicator={false}
-                                                decelerationRate="fast"
-                                                snapToInterval={isAlternativeScrollable ? alternativeSnapSize : undefined}
-                                                snapToAlignment="start"
-                                                disableIntervalMomentum={isAlternativeScrollable}
-                                                onLayout={(event) => {
-                                                    setAlternativeViewportWidth(Math.round(event.nativeEvent.layout.width));
-                                                }}
-                                                onContentSizeChange={(width) => {
-                                                    setAlternativeContentWidth(Math.round(width));
-                                                }}
-                                                onMomentumScrollEnd={onAlternativeSwipeEnd}
-                                                contentContainerStyle={styles.alternativeScrollContent}
-                                            >
-                                                {visibleAlternatives.map((option, index) => {
-                                                    const selected = option.id === selectedAlternativeId;
-                                                    const routeLabel = index === 0 ? "추천 경로" : `대안 경로 ${index}`;
-                                                    const transitLegPreview = option.stepSummary;
-
-                                                    return (
-                                                        <View key={option.id} style={styles.alternativePage}>
+                                        <View style={styles.selectedRouteSection}>
+                                            {visibleAlternatives.length > 1 && (
+                                                <ScrollView
+                                                    horizontal
+                                                    bounces={false}
+                                                    showsHorizontalScrollIndicator={false}
+                                                    contentContainerStyle={styles.routeChipSelectorContent}
+                                                    style={styles.routeChipSelectorScroll}
+                                                >
+                                                    {visibleAlternatives.map((option, index) => {
+                                                        const selected = option.id === selectedAlternativeId;
+                                                        const isRecommended = routeAlternatives[0]?.id === option.id;
+                                                        const chipSummary = isTransitMode
+                                                            ? (option.transitModeSummary ?? formatAlternativeInfo(option))
+                                                            : formatAlternativeInfo(option);
+                                                        return (
                                                             <Pressable
+                                                                key={option.id}
                                                                 onPress={() => selectAlternativeByIndex(index, false)}
                                                                 style={[
-                                                                    styles.alternativeCard,
+                                                                    styles.routeChipSelector,
                                                                     {
-                                                                        width: alternativeCardWidth,
-                                                                        height: alternativeCardHeight,
-                                                                        marginRight: index === visibleAlternatives.length - 1 ? 0 : ALTERNATIVE_CARD_GAP,
                                                                         borderColor: selected ? colors.selectedDayBg : colors.border,
                                                                         backgroundColor: selected
-                                                                            ? (isDark ? "#1D72FF22" : "#EAF2FF")
+                                                                            ? (isDark ? "rgba(29,114,255,0.18)" : "#EAF2FF")
                                                                             : overlayCardBg,
                                                                     },
                                                                 ]}
                                                             >
-                                                                <View style={styles.alternativeTopRow}>
-                                                                    <Text style={[styles.alternativeRouteLabel, { color: colors.textPrimary }]}>
-                                                                        {routeLabel}
+                                                                <View style={styles.routeChipSelectorTopRow}>
+                                                                    <Text style={[styles.routeChipSelectorLabel, { color: selected ? colors.selectedDayBg : colors.textPrimary }]}>
+                                                                        {isRecommended ? "추천" : `경로 ${index + 1}`}
                                                                     </Text>
-                                                                    <View style={styles.alternativeBadgeRow}>
-                                                                        <View style={[styles.altBadge, { backgroundColor: index === 0 ? "#1B9B50" : "#334155" }]}>
-                                                                            <Text style={styles.altBadgeText}>
-                                                                                {`${index + 1}/${visibleAlternatives.length}`}
-                                                                            </Text>
+                                                                    <Text style={[styles.routeChipSelectorDuration, { color: colors.textPrimary }]}>
+                                                                        {formatDuration(option.minutes)}
+                                                                    </Text>
+                                                                </View>
+                                                                <Text numberOfLines={1} style={[styles.routeChipSelectorSummary, { color: colors.textSecondary }]}>
+                                                                    {chipSummary}
+                                                                </Text>
+                                                            </Pressable>
+                                                        );
+                                                    })}
+                                                </ScrollView>
+                                            )}
+
+                                            {!!selectedAlternative && (
+                                                <View
+                                                    style={[
+                                                        styles.transitAlternativeCard,
+                                                        styles.selectedRouteDetailCard,
+                                                        { borderColor: colors.selectedDayBg, backgroundColor: overlayCardBg },
+                                                    ]}
+                                                >
+                                                    <View style={styles.transitAlternativeHeader}>
+                                                        <View style={styles.transitAlternativeTitleWrap}>
+                                                            <View style={styles.alternativeBadgeRow}>
+                                                                <View style={[styles.altBadge, { backgroundColor: colors.selectedDayBg }]}>
+                                                                    <Text style={styles.altBadgeText}>선택 경로</Text>
+                                                                </View>
+                                                                <View style={[styles.altBadge, { backgroundColor: selectedAlternative.source === "api" ? "#334155" : "#6B7280" }]}>
+                                                                    <Text style={styles.altBadgeText}>{selectedAlternative.source === "api" ? "API" : "보정"}</Text>
+                                                                </View>
+                                                            </View>
+                                                        </View>
+                                                        <Text style={[styles.transitDurationLarge, { color: colors.textPrimary }]}>
+                                                            {formatDuration(selectedAlternative.minutes)}
+                                                        </Text>
+                                                    </View>
+
+                                                    <Text style={[styles.selectedRouteSummaryText, { color: colors.textPrimary }]}>
+                                                        {isTransitMode
+                                                            ? (selectedAlternative.transitModeSummary ?? "선택한 대중교통 경로")
+                                                            : formatAlternativeInfo(selectedAlternative)}
+                                                    </Text>
+
+                                                    {selectedAlternativeTransitModeLabels.length > 0 && (
+                                                        <View style={styles.transitModeChipRow}>
+                                                            {selectedAlternativeTransitModeLabels.map((modeLabel) => (
+                                                                <View
+                                                                    key={`selected-${modeLabel}`}
+                                                                    style={[
+                                                                        styles.transitModeChip,
+                                                                        { borderColor: colors.border, backgroundColor: overlayPanelBg },
+                                                                    ]}
+                                                                >
+                                                                    <Text style={[styles.transitModeChipText, { color: colors.textPrimary }]}>
+                                                                        {modeLabel}
+                                                                    </Text>
+                                                                </View>
+                                                            ))}
+                                                        </View>
+                                                    )}
+
+                                                    {selectedAlternativeMetricTags.length > 0 && (
+                                                        <View style={styles.transitMetricTagRow}>
+                                                            {selectedAlternativeMetricTags.map((metric) => (
+                                                                <View
+                                                                    key={`selected-${metric}`}
+                                                                    style={[
+                                                                        styles.transitMetricTag,
+                                                                        { borderColor: colors.border, backgroundColor: overlayPanelBg },
+                                                                    ]}
+                                                                >
+                                                                    <Text style={[styles.transitMetricTagText, { color: colors.textPrimary }]}>
+                                                                        {metric}
+                                                                    </Text>
+                                                                </View>
+                                                            ))}
+                                                        </View>
+                                                    )}
+
+                                                    {!!selectedAlternativeStepPreview && (!Array.isArray(selectedAlternative.transitLegs) || selectedAlternative.transitLegs.length === 0) && (
+                                                        <Text style={[styles.selectedRouteBodyText, { color: colors.textSecondary }]}>
+                                                            {selectedAlternativeStepPreview}
+                                                        </Text>
+                                                    )}
+                                                </View>
+                                            )}
+
+                                            {Array.isArray(selectedAlternative?.transitLegs) && selectedAlternative.transitLegs.length > 0 && (
+                                                <View style={[styles.selectedRouteLegSection, { borderColor: colors.border, backgroundColor: overlayCardBg }]}>
+                                                    <Text style={[styles.selectedRouteSectionTitle, { color: colors.textPrimary }]}>
+                                                        선택한 경로 상세
+                                                    </Text>
+                                                    <View style={styles.transitLegList}>
+                                                        {selectedAlternative.transitLegs.map((leg, legIndex) => {
+                                                            const kindMeta = getTransitLegKindMeta(leg.kind);
+                                                            const legMetaText = buildTransitLegMeta(leg);
+                                                            const fromTo = leg.startName && leg.endName
+                                                                ? `${leg.startName} → ${leg.endName}`
+                                                                : "";
+                                                            const assistText = buildTransitLegAssistText(selectedAlternative.transitLegs, legIndex);
+                                                            return (
+                                                                <View
+                                                                    key={`${selectedAlternative.id}-leg-${legIndex}`}
+                                                                    style={[
+                                                                        styles.transitLegItemCard,
+                                                                        styles.selectedRouteLegItemCard,
+                                                                        { borderColor: colors.border, backgroundColor: overlayPanelBg },
+                                                                    ]}
+                                                                >
+                                                                    <View style={styles.transitLegRow}>
+                                                                        <View style={[styles.transitLegKindDot, { backgroundColor: kindMeta.color }]}>
+                                                                            <Text style={styles.transitLegKindDotText}>{kindMeta.short}</Text>
                                                                         </View>
-                                                                        <View style={[styles.altBadge, { backgroundColor: option.source === "api" ? "#334155" : "#6B7280" }]}>
-                                                                            <Text style={styles.altBadgeText}>{option.source === "api" ? "API" : "보정"}</Text>
+                                                                        <View style={styles.transitLegTextWrap}>
+                                                                            <View style={styles.transitLegPrimaryRow}>
+                                                                                <Text numberOfLines={1} style={[styles.transitLegLabel, { color: colors.textPrimary }]}>
+                                                                                    {leg.label}
+                                                                                </Text>
+                                                                                {!!legMetaText && (
+                                                                                    <Text numberOfLines={1} style={[styles.transitLegMeta, { color: colors.textSecondary }]}>
+                                                                                        {legMetaText}
+                                                                                    </Text>
+                                                                                )}
+                                                                            </View>
+                                                                            {!assistText && !!fromTo && (
+                                                                                <Text numberOfLines={1} style={[styles.transitLegFromTo, { color: colors.textDisabled }]}>
+                                                                                    {fromTo}
+                                                                                </Text>
+                                                                            )}
+                                                                            {!!assistText && (
+                                                                                <Text numberOfLines={2} style={[styles.transitLegAssist, { color: colors.textSecondary }]}>
+                                                                                    {assistText}
+                                                                                </Text>
+                                                                            )}
                                                                         </View>
                                                                     </View>
                                                                 </View>
-                                                                <Text style={[styles.alternativeDuration, { color: colors.textPrimary }]}>
-                                                                    {formatDuration(option.minutes)}
-                                                                </Text>
-                                                                <Text numberOfLines={2} style={[styles.alternativeMeta, { color: colors.textSecondary }]}>
-                                                                    {formatAlternativeInfo(option)}
-                                                                </Text>
-                                                                {!!transitLegPreview && (
-                                                                    <Text numberOfLines={2} style={[styles.alternativeStep, { color: colors.textSecondary }]}>
-                                                                        {transitLegPreview}
-                                                                    </Text>
-                                                                )}
-                                                            </Pressable>
-                                                        </View>
-                                                    );
-                                                })}
-                                            </ScrollView>
-                                        )
+                                                            );
+                                                        })}
+                                                    </View>
+                                                </View>
+                                            )}
+                                        </View>
                                     )}
                                 </View>
 
@@ -4191,23 +4309,20 @@ const styles = StyleSheet.create({
         overflow: "hidden",
     },
     transitFilterRow: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        gap: 6,
-        paddingHorizontal: 10,
-        paddingTop: 10,
-        paddingBottom: 8,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    transitFilterChip: {
-        borderWidth: 1,
-        borderRadius: 999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
+    transitFilterRowContent: {
+        paddingHorizontal: 12,
+        paddingTop: 10,
+        gap: 18,
     },
-    transitFilterChipText: {
-        fontSize: 12,
-        fontWeight: "700",
+    transitFilterTab: {
+        paddingBottom: 10,
+        borderBottomWidth: 3,
+    },
+    transitFilterTabText: {
+        fontSize: 14,
+        fontWeight: "800",
     },
     transitDepartureRow: {
         paddingHorizontal: 10,
@@ -4245,6 +4360,45 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 12,
     },
+    selectedRouteSection: {
+        paddingHorizontal: 10,
+        paddingVertical: 10,
+        gap: 10,
+    },
+    routeChipSelectorScroll: {
+        marginHorizontal: -10,
+    },
+    routeChipSelectorContent: {
+        paddingHorizontal: 10,
+        gap: 8,
+    },
+    routeChipSelector: {
+        minWidth: 132,
+        maxWidth: 194,
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 11,
+        paddingVertical: 10,
+        gap: 4,
+    },
+    routeChipSelectorTopRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    routeChipSelectorLabel: {
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    routeChipSelectorDuration: {
+        fontSize: 13,
+        fontWeight: "900",
+    },
+    routeChipSelectorSummary: {
+        fontSize: 11,
+        fontWeight: "600",
+    },
     alternativeScrollContent: {
         paddingHorizontal: 10,
         paddingVertical: 10,
@@ -4260,6 +4414,35 @@ const styles = StyleSheet.create({
         paddingHorizontal: 13,
         paddingVertical: 12,
         gap: 9,
+    },
+    selectedRouteDetailCard: {
+        gap: 10,
+    },
+    selectedRouteSummaryText: {
+        fontSize: 16,
+        fontWeight: "800",
+        lineHeight: 22,
+    },
+    selectedRouteBodyText: {
+        fontSize: 12,
+        fontWeight: "600",
+        lineHeight: 18,
+    },
+    selectedRouteLegSection: {
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        gap: 10,
+    },
+    selectedRouteSectionTitle: {
+        fontSize: 15,
+        fontWeight: "900",
+        lineHeight: 20,
+    },
+    selectedRouteLegItemCard: {
+        paddingHorizontal: 10,
+        paddingVertical: 9,
     },
     transitAlternativeHeader: {
         flexDirection: "row",
