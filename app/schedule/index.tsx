@@ -3,10 +3,10 @@ import { View, Pressable, Text, StatusBar, Animated, Alert } from "react-native"
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import CalendarWrapper from "./components/calendar/CalendarWrapper";
-import ScheduleList from "./components/list/ScheduleList";
-import FloatingButton from "./components/shared/FloatingButton";
-import ScheduleNewModal from "./components/form/ScheduleAddModal";
+import CalendarWrapper from "../../src/modules/schedule/components/calendar/CalendarWrapper";
+import ScheduleList from "../../src/modules/schedule/components/list/ScheduleList";
+import FloatingButton from "../../src/modules/schedule/components/shared/FloatingButton";
+import ScheduleNewModal from "../../src/modules/schedule/components/form/ScheduleAddModal";
 
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -31,17 +31,20 @@ export default function ScheduleIndex() {
         [state.itemsById]
     );
 
+    // 선택한 날짜에 걸친 일정을 시간순으로 정렬한다.
     const list = useMemo(() => {
         return itemsArray
             .filter((it) => isOverlappingDay(it.startAt, it.endAt, selectedDay))
             .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
     }, [itemsArray, selectedDay]);
 
+    // 새 일정 payload에 id를 붙여 일정 저장소에 추가한다.
     const addItem = (payload: Omit<ScheduleItem, "id">) => {
         const id = String(Date.now());
         dispatch({ type: "ADD_ITEM", item: { id, ...payload } });
     };
 
+    // 테마 전환 버튼의 축소/페이드 애니메이션을 실행한다.
     const handleToggle = () => {
         Animated.sequence([
             Animated.timing(btnScale, { toValue: 0.8, duration: 80, useNativeDriver: true }),
@@ -64,6 +67,7 @@ export default function ScheduleIndex() {
         });
     };
 
+    // 저장된 인증 토큰을 지우고 로그인 화면으로 이동한다.
     const onLogout = () => {
         Alert.alert("로그아웃", "로그아웃 하시겠어요?", [
             { text: "취소", style: "cancel" },
@@ -83,7 +87,6 @@ export default function ScheduleIndex() {
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
 
             <View style={{ paddingTop: insets.top }}>
-                {/* 상단 액션 버튼 */}
                 <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 16, paddingVertical: 6 }}>
                     <Pressable
                         onPress={onLogout}
@@ -122,7 +125,6 @@ export default function ScheduleIndex() {
                     selectedDay={selectedDay}
                     items={itemsArray}
                     onSelectDay={(day) => dispatch({ type: "SET_SELECTED_DAY", day })}
-                    onPressEvent={(id) => router.push(`/schedule/${id}`)}
                 />
             </View>
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Animated, Pressable, Text, View } from "react-native";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
+import { useTheme } from "../../../theme/ThemeContext";
 
 export type ScheduleCategory = {
     id: string;
@@ -15,8 +15,9 @@ type Props = {
     onChange: (id: string) => void;
 };
 
-const ITEM_HEIGHT = 49; // 아이템 1개 높이 (paddingVertical 12*2 + 텍스트 ~25)
+const ITEM_HEIGHT = 49;
 
+// 일정 카테고리를 드롭다운으로 선택하게 한다.
 export default function CategorySelectBox({
     label = "카테고리",
     categories,
@@ -34,7 +35,7 @@ export default function CategorySelectBox({
         prevOpenRef.current = open;
 
         if (open && !wasOpen) {
-            // 열기 — 스프링
+            // 카테고리 목록을 스프링 애니메이션으로 연다.
             Animated.spring(expandAnim, {
                 toValue: 1,
                 useNativeDriver: false,
@@ -43,7 +44,7 @@ export default function CategorySelectBox({
                 mass: 0.8,
             }).start();
         } else if (!open && wasOpen) {
-            // 닫기 — timing
+            // 카테고리 목록을 타이밍 애니메이션으로 닫는다.
             Animated.timing(expandAnim, {
                 toValue: 0,
                 duration: 200,
@@ -52,13 +53,13 @@ export default function CategorySelectBox({
         }
     }, [open, expandAnim]);
 
-    // 드롭다운 높이
+    // 드롭다운 높이를 애니메이션 값에 맞춰 계산한다.
     const listMaxHeight = expandAnim.interpolate({
         inputRange:  [0, 1],
         outputRange: [0, ITEM_HEIGHT * categories.length],
     });
 
-    // 화살표 회전 (▼ → ▲)
+    // 드롭다운 화살표 회전 각도를 계산한다.
     const arrowRotate = expandAnim.interpolate({
         inputRange:  [0, 1],
         outputRange: ["0deg", "180deg"],
@@ -75,7 +76,6 @@ export default function CategorySelectBox({
                 {label}
             </Text>
 
-            {/* 선택 버튼 */}
             <Pressable
                 onPress={() => setOpen((v) => !v)}
                 style={{
@@ -97,7 +97,6 @@ export default function CategorySelectBox({
                     </Text>
                 </View>
 
-                {/* 회전하는 화살표 */}
                 <Animated.Text style={{
                     color: colors.textSecondary,
                     fontSize: 11,
@@ -107,7 +106,6 @@ export default function CategorySelectBox({
                 </Animated.Text>
             </Pressable>
 
-            {/* 드롭다운 목록 — 애니메이션 */}
             <Animated.View style={{
                 maxHeight: listMaxHeight,
                 opacity:   expandAnim,

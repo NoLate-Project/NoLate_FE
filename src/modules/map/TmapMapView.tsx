@@ -320,6 +320,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       var isDarkTheme = ${darkFlag};
       var nativeMapTypeCandidates = null;
       var fallbackTileFilter = "invert(0.89) hue-rotate(182deg) saturate(0.72) brightness(0.84) contrast(1.14)";
+      var lightTileFilter = "saturate(0.72) contrast(0.92) brightness(1.03)";
       var fallbackTileFilterObserver = null;
       var fallbackTileFilterEnabled = false;
       var busBadgeGlyphUri = ${JSON.stringify(BUS_BADGE_GLYPH_URI)};
@@ -768,7 +769,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           // fallback dark mode는 "지도 타일을 어둡게 보정"하는 용도다.
           // 팬/줌 때 타일 img가 자주 갈아끼워지므로 observer와 함께 매번 다시 적용해,
           // 새 타일만 밝게 남는 현상 없이 기본 지도 톤만 안정적으로 유지한다.
-          imgEl.style.filter = fallbackTileFilterEnabled ? fallbackTileFilter : "none";
+          imgEl.style.filter = fallbackTileFilterEnabled
+            ? fallbackTileFilter
+            : (isDarkTheme ? "none" : lightTileFilter);
           imgEl.style.transition = "filter 180ms ease";
         }
       }
@@ -822,11 +825,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         if (toneEl) {
           toneEl.style.background = isDarkTheme
             ? "radial-gradient(circle at 20% 12%, rgba(96,165,250,0.08), rgba(15,23,42,0.18) 58%, rgba(2,6,23,0.36) 100%)"
-            : "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.03))";
-          toneEl.style.opacity = (isDarkTheme && !nativeThemeApplied) ? "0.72" : "0";
+            : "linear-gradient(180deg, rgba(242,242,247,0.10), rgba(242,242,247,0.16))";
+          toneEl.style.opacity = isDarkTheme
+            ? (nativeThemeApplied ? "0" : "0.72")
+            : "1";
         }
 
-        document.body.style.backgroundColor = isDarkTheme ? "#0B1220" : "#F3F4F6";
+        document.body.style.backgroundColor = isDarkTheme ? "#0B1220" : "#F2F2F7";
 
         if (locationBtn) {
           locationBtn.style.backgroundColor = isDarkTheme
@@ -1008,8 +1013,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var latDelta = Number(payload.latitudeDelta);
         var lngDelta = Number(payload.longitudeDelta);
         if (!isFinite(lat) || !isFinite(lng)) return;
-        var centerLat = isFinite(latDelta) ? lat + (latDelta / 2) : lat;
-        var centerLng = isFinite(lngDelta) ? lng + (lngDelta / 2) : lng;
+        var regionCenterLat = isFinite(latDelta) ? lat + (latDelta / 2) : lat;
+        var regionCenterLng = isFinite(lngDelta) ? lng + (lngDelta / 2) : lng;
+        var pivot = payload.pivot || {};
+        var pivotX = isFinite(Number(pivot.x)) ? Math.max(0, Math.min(1, Number(pivot.x))) : 0.5;
+        var pivotY = isFinite(Number(pivot.y)) ? Math.max(0, Math.min(1, Number(pivot.y))) : 0.5;
+        var centerLat = isFinite(latDelta) ? regionCenterLat - ((0.5 - pivotY) * latDelta) : regionCenterLat;
+        var centerLng = isFinite(lngDelta) ? regionCenterLng - ((pivotX - 0.5) * lngDelta) : regionCenterLng;
         setCamera({
           latitude: centerLat,
           longitude: centerLng,

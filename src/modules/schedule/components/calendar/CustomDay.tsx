@@ -1,10 +1,10 @@
 import React from "react";
 import { View, Text, TouchableOpacity } from "react-native";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
+import { useTheme } from "../../../theme/ThemeContext";
 
 type Period = {
-    startingDay: boolean;
-    endingDay: boolean;
+    startingDay?: boolean;
+    endingDay?: boolean;
     color: string;
 };
 
@@ -19,20 +19,23 @@ type Marking = {
     marked?: boolean;
 };
 
-type Props = {
-    date?: {
-        day: number;
-        month: number;
-        year: number;
-        dateString: string;
-        timestamp: number;
-    };
-    state?: "disabled" | "today" | "";
-    marking?: Marking;
-    isSelectedDay?: boolean;
-    onPress?: (date: any) => void;
+type CalendarDate = {
+    day: number;
+    month: number;
+    year: number;
+    dateString: string;
+    timestamp: number;
 };
 
+type Props = {
+    date?: CalendarDate;
+    state?: string;
+    marking?: Marking;
+    isSelectedDay?: boolean;
+    onPress?: (date: CalendarDate) => void;
+};
+
+// 캘린더의 하루 셀을 선택 상태와 일정 마커에 맞춰 렌더링한다.
 export default function CustomDay({ date, state, marking, isSelectedDay, onPress }: Props) {
     const { colors } = useTheme();
 
@@ -59,7 +62,6 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
             }}
             activeOpacity={0.7}
         >
-            {/* 날짜 숫자 */}
             <View
                 style={{
                     width: 30,
@@ -87,7 +89,6 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
                 </Text>
             </View>
 
-            {/* 연속 일정 바 - 날짜 아래 */}
             {hasPeriods && (
                 <View style={{ alignSelf: "stretch", marginTop: 3 }}>
                     {marking!.periods!.slice(0, 2).map((period, index) => (
@@ -109,7 +110,6 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
                 </View>
             )}
 
-            {/* 하루 일정 점 - 하단 고정 */}
             {hasDots && (
                 <View
                     style={{

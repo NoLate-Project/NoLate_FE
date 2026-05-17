@@ -12,7 +12,7 @@ import {
     useWindowDimensions,
     View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getCurrentLocation } from "../../src/modules/map/currentLocation";
@@ -35,7 +35,7 @@ import TmapMapView, {
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
-import { getRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
+import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
 
 const FALLBACK_LAT = 37.5665;
 const FALLBACK_LNG = 126.978;
@@ -53,6 +53,8 @@ const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
 // UI tuning: 바텀시트는 최소 20%를 남기고(=최대 80%까지만) 내려간다.
 const BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO = 0.2;
+// 대중교통 상세 화면에서는 하단 안내 바 위로 핸들만 보이도록 접힌 높이를 보정한다.
+const TRANSIT_DETAIL_COLLAPSED_VISIBLE_BASE_HEIGHT = 112;
 // 전체 경로 화면에서도 지하철/버스 노선색이 바로 읽혀야 해서
 // 세그먼트 렌더링은 저배율부터 허용하고, 배지/범례만 별도 줌에서 제어한다.
 const TRANSIT_SEGMENT_RENDER_MIN_ZOOM = 8.8;
@@ -96,7 +98,7 @@ type RoutePointTarget = "origin" | "destination";
 type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
 type RoutePlannerFocusTarget = "origin" | "destination" | "startRide" | "firstSubway";
 type DebugSheetState = "collapsed" | "hidden" | "expanded";
-type BottomSheetSnap = "expanded" | "middle" | "collapsed";
+type BottomSheetSnap = "expanded" | "middle" | "collapsed" | "hidden";
 const DEBUG_FOCUS_MIN_ZOOM = 5;
 const DEBUG_FOCUS_MAX_ZOOM = 18;
 const TRANSIT_FILTER_ITEMS: Array<{ key: TransitRouteFilter; label: string }> = [
@@ -1844,6 +1846,7 @@ function buildTransitStopMoveSummary(leg: TransitLegDetail): string | undefined 
 
 export default function RoutePlannerScreen() {
     const router = useRouter();
+    const pathname = usePathname();
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
     const { colors, mode } = useTheme();
@@ -1867,6 +1870,7 @@ export default function RoutePlannerScreen() {
         destinationLat?: string;
         destinationLng?: string;
     }>();
+    const isRouteSelectionScreen = pathname === "/schedule/route-select";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const sessionInitial = sessionId ? getRoutePlannerInitial(sessionId) : undefined;
     const paramOrigin = useMemo(() => parseRouteParamPlace(params, "origin"), [params]);
@@ -1954,7 +1958,7 @@ export default function RoutePlannerScreen() {
     const hasOriginCoords = typeof originLat === "number" && typeof originLng === "number";
     const hasDestinationCoords = typeof destinationLat === "number" && typeof destinationLng === "number";
     const hasRouteReady = hasOriginCoords && hasDestinationCoords;
-    const isTransitDetailMode = isTransitMode && hasRouteReady;
+    const isTransitDetailMode = isTransitMode && hasRouteReady && !isRouteSelectionScreen;
     const detailPanelBg = isTransitDetailMode ? (isDark ? "#1F1F1F" : "#F8FAFC") : overlayPanelBg;
     const detailCardBg = isTransitDetailMode ? (isDark ? "#1F1F1F" : "#F8FAFC") : overlayCardBg;
     const detailPrimaryText = isTransitDetailMode ? (isDark ? "#F3F4F6" : "#111827") : colors.textPrimary;
@@ -1965,17 +1969,25 @@ export default function RoutePlannerScreen() {
     const transitMapOverlayColor = isDark ? "rgba(0,0,0,0.34)" : "rgba(248,250,252,0.02)";
     const transitActionBarBg = isDark ? "#171717" : "#F8FAFC";
     const transitFocusedLegBg = isDark ? "rgba(47,128,255,0.16)" : "#DBEAFE";
+    const transitDetailPrimaryActionBg = isDark ? "#F3F4F6" : "#111827";
+    const transitDetailPrimaryActionText = isDark ? "#111827" : "#FFFFFF";
+    const transitDetailControlText = isDark ? "#F3F4F6" : "#111827";
     const isRoutePointLocked = hasRouteReady && !isRoutePointEditMode;
-    // 경로 선택 단계는 별도 /schedule/route-select 화면으로 분리했다.
-    const isRouteSelectionStage = false;
+    const isRouteSelectionStage = isRouteSelectionScreen;
     const hasActiveTarget = activeTarget === "origin" || activeTarget === "destination";
     const originDisplay = originName.trim() || originAddress.trim() || "출발지 미선택";
     const destinationDisplay = destinationName.trim() || destinationAddress.trim() || "도착지 미선택";
     const bottomSheetPeekHeight = BOTTOM_SHEET_HANDLE_PEEK_HEIGHT;
-    const bottomSheetCollapsedVisibleHeight = useMemo(
-        () => Math.max(bottomSheetPeekHeight, Math.round(bottomPanelHeight * BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO)),
-        [bottomPanelHeight, bottomSheetPeekHeight]
-    );
+    const bottomSheetCollapsedVisibleHeight = useMemo(() => {
+        if (bottomPanelHeight <= 0) return bottomSheetPeekHeight;
+        if (isTransitDetailMode) {
+            return Math.min(
+                bottomPanelHeight,
+                Math.max(bottomSheetPeekHeight, TRANSIT_DETAIL_COLLAPSED_VISIBLE_BASE_HEIGHT + insets.bottom)
+            );
+        }
+        return Math.max(bottomSheetPeekHeight, Math.round(bottomPanelHeight * BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO));
+    }, [bottomPanelHeight, bottomSheetPeekHeight, insets.bottom, isTransitDetailMode]);
     const bottomSheetCollapsedOffset = useMemo(
         () => Math.max(0, bottomPanelHeight - bottomSheetCollapsedVisibleHeight),
         [bottomPanelHeight, bottomSheetCollapsedVisibleHeight]
@@ -1996,18 +2008,8 @@ export default function RoutePlannerScreen() {
         if (!hasBottomSheetMeasured) return 420;
         return Math.max(320, bottomPanelHeight + insets.bottom + 32);
     }, [bottomPanelHeight, hasBottomSheetMeasured, insets.bottom]);
+    const bottomSheetDragMaxOffset = bottomSheetCollapsedOffset;
 
-    const selectedAlternativeIndex = useMemo(
-        () => routeAlternatives.findIndex((item) => item.id === selectedAlternativeId),
-        [routeAlternatives, selectedAlternativeId]
-    );
-    const selectedAlternative = selectedAlternativeIndex >= 0 ? routeAlternatives[selectedAlternativeIndex] : undefined;
-    const transitLegendKinds = useMemo(() => {
-        if (!isTransitMode || !Array.isArray(selectedAlternative?.transitLegs)) return [];
-        const orderedKinds: TransitLegDetail["kind"][] = ["SUBWAY", "BUS", "WALK", "ETC"];
-        const used = new Set<TransitLegDetail["kind"]>(selectedAlternative.transitLegs.map((leg) => leg.kind));
-        return orderedKinds.filter((kind) => used.has(kind));
-    }, [isTransitMode, selectedAlternative]);
     const transitFilterCounts = useMemo(() => {
         const counts = { ALL: routeAlternatives.length, BUS: 0, SUBWAY: 0, MIXED: 0 } as Record<TransitRouteFilter, number>;
         routeAlternatives.forEach((option) => {
@@ -2020,12 +2022,6 @@ export default function RoutePlannerScreen() {
         () => TRANSIT_FILTER_ITEMS.filter((item) => item.key === "ALL" || transitFilterCounts[item.key] > 0),
         [transitFilterCounts]
     );
-    const shouldShowTransitLegend = transitLegendKinds.length > 0 && mapZoom >= TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
-    const shouldShowTransitLegendHint =
-        isTransitMode &&
-        hasRouteReady &&
-        transitLegendKinds.length > 0 &&
-        mapZoom < TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
     const shouldShowZoomControls = !hasRouteReady || isBottomSheetHidden;
     const initialSyncKey = useMemo(() => JSON.stringify({
         sessionId,
@@ -2041,6 +2037,27 @@ export default function RoutePlannerScreen() {
         if (!isTransitMode || transitRouteFilter === "ALL") return routeAlternatives;
         return routeAlternatives.filter((option) => getTransitRouteCategory(option) === transitRouteFilter);
     }, [isTransitMode, routeAlternatives, transitRouteFilter]);
+    const selectedAlternativeIndex = useMemo(
+        () => routeAlternatives.findIndex((item) => item.id === selectedAlternativeId),
+        [routeAlternatives, selectedAlternativeId]
+    );
+    const selectedVisibleAlternativeIndex = useMemo(
+        () => visibleAlternatives.findIndex((item) => item.id === selectedAlternativeId),
+        [selectedAlternativeId, visibleAlternatives]
+    );
+    const selectedAlternative = selectedAlternativeIndex >= 0 ? routeAlternatives[selectedAlternativeIndex] : undefined;
+    const transitLegendKinds = useMemo(() => {
+        if (!isTransitMode || !Array.isArray(selectedAlternative?.transitLegs)) return [];
+        const orderedKinds: TransitLegDetail["kind"][] = ["SUBWAY", "BUS", "WALK", "ETC"];
+        const used = new Set<TransitLegDetail["kind"]>(selectedAlternative.transitLegs.map((leg) => leg.kind));
+        return orderedKinds.filter((kind) => used.has(kind));
+    }, [isTransitMode, selectedAlternative]);
+    const shouldShowTransitLegend = transitLegendKinds.length > 0 && mapZoom >= TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
+    const shouldShowTransitLegendHint =
+        isTransitMode &&
+        hasRouteReady &&
+        transitLegendKinds.length > 0 &&
+        mapZoom < TRANSIT_SEGMENT_DETAIL_MIN_ZOOM;
     const selectedAlternativeMetricTags = useMemo(
         () => (selectedAlternative ? getAlternativeMetricTags(selectedAlternative) : []),
         [selectedAlternative]
@@ -2103,16 +2120,24 @@ export default function RoutePlannerScreen() {
     }, [bottomSheetTranslateY]);
 
     const getBottomSheetSnapTarget = useCallback((snap: BottomSheetSnap) => {
+        if (snap === "hidden") return bottomSheetHiddenOffset;
         if (snap === "expanded") return bottomSheetExpandedOffset;
         if (snap === "middle") return isTransitDetailMode ? bottomSheetMiddleOffset : bottomSheetCollapsedOffset;
         return bottomSheetCollapsedOffset;
-    }, [bottomSheetCollapsedOffset, bottomSheetExpandedOffset, bottomSheetMiddleOffset, isTransitDetailMode]);
+    }, [bottomSheetCollapsedOffset, bottomSheetExpandedOffset, bottomSheetHiddenOffset, bottomSheetMiddleOffset, isTransitDetailMode]);
 
     const snapBottomSheetTo = useCallback((snap: BottomSheetSnap) => {
+        const target = getBottomSheetSnapTarget(snap);
+        if (snap === "hidden") {
+            setBottomSheetSnap("hidden");
+            setIsBottomSheetCollapsed(true);
+            animateBottomSheetTo(target);
+            setIsBottomSheetHidden(true);
+            return;
+        }
         if (isBottomSheetHidden) {
             setIsBottomSheetHidden(false);
         }
-        const target = getBottomSheetSnapTarget(snap);
         setBottomSheetSnap(snap);
         setIsBottomSheetCollapsed(snap !== "expanded");
         animateBottomSheetTo(target);
@@ -2138,7 +2163,7 @@ export default function RoutePlannerScreen() {
 
         const projected = Math.min(
             Math.max(0, current + (velocityY * 26)),
-            bottomSheetCollapsedOffset
+            bottomSheetDragMaxOffset
         );
         const snapPoints: Array<{ snap: BottomSheetSnap; value: number }> = [
             { snap: "expanded", value: bottomSheetExpandedOffset },
@@ -2150,7 +2175,13 @@ export default function RoutePlannerScreen() {
                 ? candidate
                 : nearest
         )).snap;
-    }, [bottomSheetCollapsedOffset, bottomSheetExpandedOffset, bottomSheetMiddleOffset, isTransitDetailMode]);
+    }, [
+        bottomSheetCollapsedOffset,
+        bottomSheetDragMaxOffset,
+        bottomSheetExpandedOffset,
+        bottomSheetMiddleOffset,
+        isTransitDetailMode,
+    ]);
 
     const bottomHandlePanResponder = useMemo(() => PanResponder.create({
         onStartShouldSetPanResponder: () => !isBottomSheetHidden && bottomSheetCollapsedOffset > 0,
@@ -2164,7 +2195,7 @@ export default function RoutePlannerScreen() {
         onPanResponderMove: (_event, gestureState) => {
             const next = Math.min(
                 Math.max(0, bottomSheetStartYRef.current + gestureState.dy),
-                bottomSheetCollapsedOffset
+                bottomSheetDragMaxOffset
             );
             bottomSheetTranslateY.setValue(next);
         },
@@ -2178,7 +2209,14 @@ export default function RoutePlannerScreen() {
                 snapBottomSheetTo(getSnapFromGesture(current, gestureState.vy));
             });
         },
-    }), [bottomSheetCollapsedOffset, bottomSheetTranslateY, getSnapFromGesture, isBottomSheetHidden, snapBottomSheetTo]);
+    }), [
+        bottomSheetCollapsedOffset,
+        bottomSheetDragMaxOffset,
+        bottomSheetTranslateY,
+        getSnapFromGesture,
+        isBottomSheetHidden,
+        snapBottomSheetTo,
+    ]);
 
     const selectAlternativeByIndex = useCallback((index: number, _scrollToCard = false) => {
         if (!visibleAlternatives.length) return;
@@ -2235,7 +2273,7 @@ export default function RoutePlannerScreen() {
         setIsRoutePointEditMode(!(hasInitialOrigin && hasInitialDestination));
         if (forcedSheetState === "hidden") {
             setIsBottomSheetHidden(true);
-            setBottomSheetSnap("collapsed");
+            setBottomSheetSnap("hidden");
             setIsBottomSheetCollapsed(true);
         } else if (forcedSheetState === "collapsed") {
             setIsBottomSheetHidden(false);
@@ -2322,11 +2360,11 @@ export default function RoutePlannerScreen() {
         }
 
         // 경로가 처음 준비되는 순간에는 펼쳐서 안내하고,
-        // 이후에는 사용자가 접은 상태를 유지한다.
-        if (isBottomSheetHidden) {
-            setIsBottomSheetHidden(false);
-        }
+        // 이후에는 사용자가 숨긴 상태까지 유지한다.
         if (!prevHasRouteReady) {
+            if (isBottomSheetHidden) {
+                setIsBottomSheetHidden(false);
+            }
             const nextSnap: BottomSheetSnap = isTransitDetailMode ? "middle" : "expanded";
             setBottomSheetSnap(nextSnap);
             setIsBottomSheetCollapsed(nextSnap !== "expanded");
@@ -3313,16 +3351,37 @@ export default function RoutePlannerScreen() {
         }
 
         if (hasOrigin && hasDest) {
-            const routePoints = pathOverlayCoords?.length ? pathOverlayCoords : [
-                { latitude: originLat, longitude: originLng },
-                { latitude: destinationLat, longitude: destinationLng },
-            ];
+            const originPoint = { latitude: originLat, longitude: originLng };
+            const destinationPoint = { latitude: destinationLat, longitude: destinationLng };
+            const transitConnectorFitPoints = isTransitDetailMode
+                ? [...transitConnectorOverlays, ...transitWalkDetailOverlays].flatMap((overlay) => overlay.coords)
+                : [];
+            const routePoints = pathOverlayCoords?.length
+                ? [originPoint, ...pathOverlayCoords, ...transitConnectorFitPoints, destinationPoint]
+                : [originPoint, destinationPoint];
             const firstPoint = routePoints[0];
             const midPoint = routePoints[Math.floor(routePoints.length / 2)];
             const lastPoint = routePoints[routePoints.length - 1];
+            const activeSheetOffset = bottomSheetSnap === "expanded"
+                ? bottomSheetExpandedOffset
+                : bottomSheetSnap === "middle"
+                    ? bottomSheetMiddleOffset
+                    : bottomSheetCollapsedOffset;
+            const visibleSheetTopY = isTransitDetailMode && !isBottomSheetHidden && bottomPanelHeight > 0
+                ? Math.max(0, windowHeight - bottomPanelHeight + activeSheetOffset)
+                : windowHeight;
+            const routeHeaderReserveY = isTransitDetailMode ? Math.max(insets.top + 102, 132) : Math.max(insets.top + 84, 112);
+            const availableRouteMapHeight = Math.max(180, visibleSheetTopY - routeHeaderReserveY);
+            const availableRouteMapRatio = Math.max(0.18, Math.min(1, availableRouteMapHeight / Math.max(1, windowHeight)));
             const fitKey = [
                 "fit",
                 selectedAlternativeId ?? "none",
+                isTransitDetailMode ? "detail" : "edit",
+                bottomSheetSnap,
+                isBottomSheetHidden ? "hidden" : "shown",
+                Math.round(bottomPanelHeight).toString(),
+                Math.round(activeSheetOffset).toString(),
+                Math.round(visibleSheetTopY).toString(),
                 routePoints.length.toString(),
                 firstPoint.latitude.toFixed(4),
                 firstPoint.longitude.toFixed(4),
@@ -3365,20 +3424,27 @@ export default function RoutePlannerScreen() {
                             ? 1.42
                             : 1.28;
 
-            // 경로 선택 단계는 전체 뷰, 상세 단계는 조금 더 가깝게 보이도록 span을 분리한다.
-            const fitScale = isBottomSheetCollapsed ? 1.02 : 0.95;
+            // 상세 바텀시트가 올라온 상태에서도 전체 경로가 보이도록 실제 가시 영역 기준 여백을 더 준다.
+            const detailFitScale = isTransitDetailMode && !isBottomSheetHidden ? 1.34 : 1;
+            const fitScale = (isBottomSheetCollapsed ? 1.18 : 1.08) * detailFitScale;
+            const transitDetailVerticalScale = isTransitDetailMode && !isBottomSheetHidden
+                ? Math.min(6.0, Math.max(2.55, (1 / availableRouteMapRatio) * 1.38))
+                : 1;
+            const transitDetailHorizontalScale = isTransitDetailMode && !isBottomSheetHidden ? 1.78 : 1;
             const minSpanMeters = isBottomSheetCollapsed
                 ? (routeDistanceKm < 2 ? 680 : routeDistanceKm < 10 ? 920 : 1220)
                 : (routeDistanceKm < 2 ? 540 : routeDistanceKm < 10 ? 780 : 1020);
             const minLatDelta = minSpanMeters / 111_320;
             const minLngDelta = minSpanMeters / lngMetersPerDegree;
 
-            const latitudeDelta = Math.max(minLatDelta, rawLatDelta * marginScale * fitScale);
-            const longitudeDelta = Math.max(minLngDelta, rawLngDelta * marginScale * fitScale);
+            const latitudeDelta = Math.max(minLatDelta, rawLatDelta * marginScale * fitScale * transitDetailVerticalScale);
+            const longitudeDelta = Math.max(minLngDelta, rawLngDelta * marginScale * fitScale * transitDetailHorizontalScale);
 
             const paddedMinLat = minLat - (latitudeDelta - rawLatDelta) / 2;
             const paddedMinLng = minLng - (longitudeDelta - rawLngDelta) / 2;
-            const pivotY = isBottomSheetCollapsed ? 0.42 : 0.34;
+            const pivotY = isTransitDetailMode && !isBottomSheetHidden
+                ? Math.max(0.18, Math.min(0.38, (routeHeaderReserveY + (availableRouteMapHeight * 0.34)) / Math.max(1, windowHeight)))
+                : (isBottomSheetCollapsed ? 0.42 : 0.34);
 
             map.animateRegionTo({
                 latitude: paddedMinLat,
@@ -3425,6 +3491,17 @@ export default function RoutePlannerScreen() {
         selectedAlternativeId,
         travelMode,
         isBottomSheetCollapsed,
+        isBottomSheetHidden,
+        isTransitDetailMode,
+        bottomSheetSnap,
+        bottomPanelHeight,
+        bottomSheetCollapsedOffset,
+        bottomSheetMiddleOffset,
+        bottomSheetExpandedOffset,
+        transitConnectorOverlays,
+        transitWalkDetailOverlays,
+        insets.top,
+        windowHeight,
     ]);
 
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {
@@ -3606,7 +3683,56 @@ export default function RoutePlannerScreen() {
         }, 500);
     };
 
-    const goBack = useCallback(() => {
+    const persistCurrentRoutePlannerInitial = useCallback((targetSessionId = sessionId) => {
+        if (!targetSessionId) return;
+
+        const normalizedOriginName = originName.trim();
+        const normalizedDestinationName = destinationName.trim();
+        const normalizedOriginAddress = originAddress.trim();
+        const normalizedDestinationAddress = destinationAddress.trim();
+        const nextOrigin = (normalizedOriginName || normalizedOriginAddress || hasOriginCoords)
+            ? {
+                name: normalizedOriginName || normalizedOriginAddress || "출발지",
+                address: normalizedOriginAddress || undefined,
+                lat: originLat,
+                lng: originLng,
+            }
+            : undefined;
+        const nextDestination = (normalizedDestinationName || normalizedDestinationAddress || hasDestinationCoords)
+            ? {
+                name: normalizedDestinationName || normalizedDestinationAddress || "도착지",
+                address: normalizedDestinationAddress || undefined,
+                lat: destinationLat,
+                lng: destinationLng,
+            }
+            : undefined;
+
+        setRoutePlannerInitial(targetSessionId, {
+            origin: nextOrigin,
+            destination: nextDestination,
+            travelMode,
+            travelMinutes: etaMinutes,
+            locationName: nextOrigin?.name && nextDestination?.name
+                ? `${nextOrigin.name} → ${nextDestination.name}`
+                : nextDestination?.name || nextOrigin?.name,
+        });
+    }, [
+        destinationAddress,
+        destinationLat,
+        destinationLng,
+        destinationName,
+        etaMinutes,
+        hasDestinationCoords,
+        hasOriginCoords,
+        originAddress,
+        originLat,
+        originLng,
+        originName,
+        sessionId,
+        travelMode,
+    ]);
+
+    const closePlanner = useCallback(() => {
         if (router.canGoBack()) {
             router.back();
             return;
@@ -3614,6 +3740,17 @@ export default function RoutePlannerScreen() {
 
         router.replace("/schedule");
     }, [router]);
+
+    const goBack = useCallback(() => {
+        if (!isRouteSelectionStage) {
+            const targetSessionId = sessionId || `route-reset-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+            persistCurrentRoutePlannerInitial(targetSessionId);
+            router.replace({ pathname: "/schedule/route-select", params: { sessionId: targetSessionId } });
+            return;
+        }
+
+        closePlanner();
+    }, [closePlanner, isRouteSelectionStage, persistCurrentRoutePlannerInitial, router, sessionId]);
 
     const submit = () => {
         const normalizedOriginName = originName.trim();
@@ -3624,7 +3761,7 @@ export default function RoutePlannerScreen() {
         }
 
         if (!sessionId) {
-            goBack();
+            closePlanner();
             return;
         }
 
@@ -3648,7 +3785,7 @@ export default function RoutePlannerScreen() {
             travelMinutes: etaMinutes,
             locationName: `${nextOrigin.name} → ${nextDestination.name}`,
         });
-        goBack();
+        closePlanner();
     };
 
     const onPressZoomIn = useCallback(() => {
@@ -3736,10 +3873,25 @@ export default function RoutePlannerScreen() {
         });
     }, [isBottomSheetCollapsed, mapZoom, selectedAlternative, transitWalkDetailOverlays]);
 
-    const canEnterRouteDetail = false;
+    const canEnterRouteDetail = isRouteSelectionStage && hasRouteReady && !!selectedAlternative && !etaLoading;
     const onEnterRouteDetailView = useCallback(() => {
-        // no-op: route selection flow moved to /schedule/route-select
-    }, []);
+        if (!canEnterRouteDetail || !sessionId) return;
+
+        persistCurrentRoutePlannerInitial();
+        router.replace({
+            pathname: "/schedule/route-planner",
+            params: {
+                sessionId,
+                routeIndex: selectedVisibleAlternativeIndex >= 0 ? String(selectedVisibleAlternativeIndex) : "0",
+            },
+        });
+    }, [
+        canEnterRouteDetail,
+        persistCurrentRoutePlannerInitial,
+        router,
+        selectedVisibleAlternativeIndex,
+        sessionId,
+    ]);
 
     const shouldUseTransitReferenceScreen = false;
 
@@ -4037,7 +4189,12 @@ export default function RoutePlannerScreen() {
                             return (
                                 <Pressable
                                     key={`map-route-chip-${option.id}`}
-                                    onPress={() => selectAlternativeByIndex(index, false)}
+                                    onPress={() => {
+                                        if (isBottomSheetHidden) {
+                                            snapBottomSheetTo(isTransitDetailMode ? "middle" : "expanded");
+                                        }
+                                        selectAlternativeByIndex(index, false);
+                                    }}
                                     style={[
                                         styles.transitMapRouteChip,
                                         { backgroundColor: transitRouteChipBg },
@@ -4066,7 +4223,7 @@ export default function RoutePlannerScreen() {
                         onPress={goBack}
                         style={[styles.inlineCloseBtn, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}
                     >
-                        <Text style={[styles.inlineCloseBtnText, { color: colors.textPrimary }]}>{"<"}</Text>
+                        <Text style={[styles.inlineCloseBtnText, { color: colors.textPrimary }]}>‹</Text>
                     </Pressable>
 
                     <View
@@ -4370,6 +4527,7 @@ export default function RoutePlannerScreen() {
                 </View>
             )}
 
+            {!isRouteSelectionStage && (
             <View style={styles.bottomOverlay} pointerEvents={isBottomSheetHidden ? "none" : "box-none"}>
                 <Animated.View
                     pointerEvents={isBottomSheetHidden ? "none" : "auto"}
@@ -4484,16 +4642,13 @@ export default function RoutePlannerScreen() {
                                                 >
                                                     <View style={styles.selectedRouteSummaryHeader}>
                                                         <View style={styles.selectedRouteDurationBlock}>
-                                                            <Text style={[styles.selectedRouteOptimalText, { color: isTransitDetailMode ? "#4D9BFF" : colors.selectedDayBg }]}>
+                                                            <Text style={[styles.selectedRouteOptimalText, { color: isTransitDetailMode ? transitDetailControlText : colors.selectedDayBg }]}>
                                                                 최적
                                                             </Text>
                                                             <Text style={[styles.transitDurationLarge, { color: detailPrimaryText }]}>
                                                                 {formatDuration(selectedAlternative.minutes)}
                                                             </Text>
                                                         </View>
-                                                        {isTransitMode && (
-                                                            <Text style={styles.selectedRoutePinText}>⌖</Text>
-                                                        )}
                                                     </View>
 
                                                     {!!selectedTransitTimeRange && isTransitMode && (
@@ -4797,35 +4952,41 @@ export default function RoutePlannerScreen() {
                         )}
                     </ScrollView>
                 </Animated.View>
-                {isTransitDetailMode && !!selectedAlternative && (
+                {isTransitDetailMode && !!selectedAlternative && !isBottomSheetHidden && (
                     <View
                         style={[
                             styles.transitDetailActionBar,
                             {
                                 backgroundColor: transitActionBarBg,
                                 borderTopColor: detailBorderColor,
-                                paddingBottom: Math.max(insets.bottom + 8, 14),
+                                paddingBottom: Math.max(insets.bottom - 4, 8),
                             },
                         ]}
                     >
                         <View style={styles.transitDetailActionEta}>
-                            <Text style={styles.transitDetailActionDuration}>{formatDuration(selectedAlternative.minutes)}</Text>
+                            <Text style={[styles.transitDetailActionDuration, { color: transitDetailControlText }]}>
+                                {formatDuration(selectedAlternative.minutes)}
+                            </Text>
                             {!!selectedTransitTimeRange && (
-                                <Text style={styles.transitDetailActionArrival}>
+                                <Text style={[styles.transitDetailActionArrival, { color: transitDetailControlText }]}>
                                     {selectedTransitTimeRange.split(" | ")[0]?.split(" - ")[1] ?? "도착 시간 확인"}
                                     {" 도착"}
                                 </Text>
                             )}
                         </View>
                         <Pressable style={[styles.transitDetailPreviewButton, { borderColor: detailBorderColor }]}>
-                            <Text style={styles.transitDetailPreviewText}>버스 미리보기</Text>
+                            <Text style={[styles.transitDetailPreviewText, { color: transitDetailControlText }]}>버스 미리보기</Text>
                         </Pressable>
-                        <Pressable onPress={submit} style={styles.transitDetailStartButton}>
-                            <Text style={styles.transitDetailStartText}>안내시작</Text>
+                        <Pressable
+                            onPress={submit}
+                            style={[styles.transitDetailStartButton, { backgroundColor: transitDetailPrimaryActionBg }]}
+                        >
+                            <Text style={[styles.transitDetailStartText, { color: transitDetailPrimaryActionText }]}>안내시작</Text>
                         </Pressable>
                     </View>
                 )}
             </View>
+            )}
         </View>
     );
 }
@@ -5302,18 +5463,18 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     inlineCloseBtn: {
-        width: 38,
-        height: 38,
-        borderRadius: 12,
-        borderWidth: 1,
+        width: 54,
+        height: 54,
+        borderRadius: 999,
+        borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
     },
     inlineCloseBtnText: {
-        fontSize: 20,
-        fontWeight: "800",
-        lineHeight: 20,
-        marginTop: -2,
+        fontSize: 46,
+        fontWeight: "300",
+        lineHeight: 52,
+        marginTop: -4,
     },
     searchField: {
         flex: 1,
@@ -5726,13 +5887,6 @@ const styles = StyleSheet.create({
         alignItems: "flex-start",
         gap: 2,
     },
-    selectedRoutePinText: {
-        color: "#6F6F73",
-        fontSize: 25,
-        fontWeight: "700",
-        lineHeight: 28,
-        transform: [{ rotate: "-18deg" }],
-    },
     selectedRouteOptimalText: {
         fontSize: 13,
         fontWeight: "900",
@@ -6025,27 +6179,26 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        minHeight: 78,
+        minHeight: 74,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: "#303033",
         paddingTop: 10,
         paddingHorizontal: 14,
         flexDirection: "row",
-        alignItems: "center",
+        alignItems: "flex-end",
         gap: 9,
         backgroundColor: "#171717",
     },
     transitDetailActionEta: {
         flex: 1,
+        paddingBottom: 2,
     },
     transitDetailActionDuration: {
-        color: "#4D9BFF",
         fontSize: 19,
         fontWeight: "900",
         lineHeight: 24,
     },
     transitDetailActionArrival: {
-        color: "#4D9BFF",
         fontSize: 14,
         fontWeight: "800",
         lineHeight: 19,
@@ -6060,7 +6213,6 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     transitDetailPreviewText: {
-        color: "#5AA0FF",
         fontSize: 15,
         fontWeight: "900",
     },
@@ -6070,10 +6222,8 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#5AA0FF",
     },
     transitDetailStartText: {
-        color: "#0D1117",
         fontSize: 16,
         fontWeight: "900",
     },

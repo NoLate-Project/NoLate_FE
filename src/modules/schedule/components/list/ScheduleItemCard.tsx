@@ -1,15 +1,16 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
-import type { ScheduleItem } from "../../../../src/modules/schedule/types";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
-import { formatHHmm } from "../../../../lib/util/data";
-import { getTravelModeLabel } from "../../../../src/modules/schedule/travelMode";
+import type { ScheduleItem } from "../../types";
+import { useTheme } from "../../../theme/ThemeContext";
+import { formatHHmm } from "../../../../../lib/util/data";
+import { getTravelModeLabel } from "../../travelMode";
 
 type Props = {
     item: ScheduleItem;
     onPress: () => void;
 };
 
+// 단일 일정의 시간, 카테고리, 이동 경로 요약을 카드로 표시한다.
 export default function ScheduleItemCard({ item, onPress }: Props) {
     const { colors } = useTheme();
     const categoryColor = item.category?.color ?? "#555";
@@ -28,7 +29,6 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
                 flexDirection: "row",
             })}
         >
-            {/* 카테고리 컬러 바 */}
             <View
                 style={{
                     width: 4,

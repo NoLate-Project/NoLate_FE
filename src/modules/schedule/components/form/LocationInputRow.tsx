@@ -1,8 +1,8 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
-import type { TravelMode } from "../../../../src/modules/schedule/types";
-import { getTravelModeLabel } from "../../../../src/modules/schedule/travelMode";
+import { useTheme } from "../../../theme/ThemeContext";
+import type { TravelMode } from "../../types";
+import { getTravelModeLabel } from "../../travelMode";
 
 type Props = {
     originValue: string;
@@ -12,6 +12,7 @@ type Props = {
     onPress: () => void;
 };
 
+// 일정 폼에서 이동 경로 입력 상태를 한 줄 카드로 보여준다.
 export default function LocationInputRow({
     originValue,
     destinationValue,

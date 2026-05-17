@@ -1,7 +1,8 @@
 import React from "react";
 import { Pressable, Text } from "react-native";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
+import { useTheme } from "../../../theme/ThemeContext";
 
+// 새 일정 추가 액션을 실행하는 플로팅 버튼을 표시한다.
 export default function FloatingButton({ onPress }: { onPress: () => void }) {
     const { colors } = useTheme();
 

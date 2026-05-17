@@ -15,9 +15,9 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { Calendar } from "react-native-calendars";
 import { usePathname, useRouter } from "expo-router";
 
-import type { ScheduleCategory, ScheduleItem, TravelMode } from "../../../../src/modules/schedule/types";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
-import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../../../src/modules/schedule/routePlannerSession";
+import type { ScheduleCategory, ScheduleItem, TravelMode } from "../../types";
+import { useTheme } from "../../../theme/ThemeContext";
+import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
 
@@ -31,6 +31,7 @@ type Props = {
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
+// 기준 날짜 객체의 연월일을 입력 문자열로 교체한다.
 function setYmd(base: Date, ymd: string) {
     const [y, m, d] = ymd.split("-").map(Number);
     const next = new Date(base);
@@ -38,6 +39,7 @@ function setYmd(base: Date, ymd: string) {
     return next;
 }
 
+// 날짜 객체와 시간 객체를 하나의 일정 시각으로 합친다.
 function mergeDateTime(datePart: Date, timePart: Date) {
     const d = new Date(datePart);
     d.setHours(timePart.getHours(), timePart.getMinutes(), 0, 0);
@@ -53,8 +55,8 @@ function hhmmText(d: Date) {
 }
 
 const SHEET_HIDDEN_Y = 620;
-const DATE_H         = 312; // Calendar 영역 높이 (헤더 44 + 요일행 32 + 주행 6×36 = ~292, 여유 20)
-const TIME_H         = 216; // DateTimePicker spinner 영역 높이
+const DATE_H         = 312;
+const TIME_H         = 216;
 
 type PickerType = "startDate" | "endDate" | "startTime" | "endTime";
 
@@ -64,6 +66,7 @@ const isDateType = (t: PickerType | null): boolean =>
 const pickerTargetH = (t: PickerType | null): number =>
     t !== null && isDateType(t) ? DATE_H : TIME_H;
 
+// 새 일정을 입력하고 저장하는 바텀시트 화면을 렌더링한다.
 export default function ScheduleNewModal({
     visible,
     onClose,
@@ -99,8 +102,7 @@ export default function ScheduleNewModal({
         const d = new Date(now); d.setSeconds(0, 0); d.setMinutes(d.getMinutes() + 60); return d;
     });
 
-    // picker  : 실제 선택 상태 (로직)
-    // displayPicker : UI 에 렌더링할 타입 (fade 후 교체)
+    // 실제 선택값과 화면 표시값을 분리해 피커 전환 애니메이션을 안정화한다.
     const [picker,        setPicker]        = useState<PickerType | null>(null);
     const [displayPicker, setDisplayPicker] = useState<PickerType | null>(null);
 
@@ -120,6 +122,7 @@ export default function ScheduleNewModal({
         }
     }, [visible]);
 
+    // 현재 입력된 출발/도착 정보를 경로 선택 화면으로 전달한다.
     const openRoutePlanner = useCallback(() => {
         const normalizedOriginName = originText.trim();
         const normalizedDestinationName = destinationText.trim();
@@ -183,19 +186,12 @@ export default function ScheduleNewModal({
         [categories, selectedCategoryId]
     );
 
-    /** 같은 필드 탭 → 토글 닫기 */
+    // 날짜/시간 필드를 열거나 같은 필드를 다시 눌러 닫는다.
     const togglePicker = useCallback((type: PickerType) => {
         setPicker((prev) => (prev === type ? null : type));
     }, []);
 
-    /**
-     * ──────────────────────────────────────────────────────────
-     *  Picker 애니메이션
-     *  heightAnim   : 컨테이너 높이 (px)
-     *  outerOpacity : 컨테이너 투명도 (열기/닫기)
-     *  contentFade  : 내부 콘텐츠 투명도 (타입 전환 시 크로스페이드)
-     * ──────────────────────────────────────────────────────────
-     */
+    // 날짜/시간 피커의 높이와 투명도 전환을 관리한다.
     const heightAnim   = useRef(new Animated.Value(0)).current;
     const outerOpacity = useRef(new Animated.Value(0)).current;
     const contentFade  = useRef(new Animated.Value(1)).current;
@@ -206,7 +202,7 @@ export default function ScheduleNewModal({
         prevPickerRef.current = picker;
 
         if (picker !== null && prev === null) {
-            // ── 열기 ────────────────────────────────────────
+            // 피커를 처음 열 때 높이와 투명도를 함께 올린다.
             setDisplayPicker(picker);
             Animated.parallel([
                 Animated.spring(heightAnim, {
@@ -220,7 +216,7 @@ export default function ScheduleNewModal({
             ]).start();
 
         } else if (picker === null && prev !== null) {
-            // ── 닫기 ────────────────────────────────────────
+            // 피커를 닫을 때 컨테이너 높이를 접는다.
             Animated.parallel([
                 Animated.timing(heightAnim,   { toValue: 0, duration: 220, useNativeDriver: false }),
                 Animated.timing(outerOpacity, { toValue: 0, duration: 180, useNativeDriver: false }),
@@ -230,7 +226,7 @@ export default function ScheduleNewModal({
 
         } else if (picker !== null && prev !== null) {
             if (isDateType(picker) !== isDateType(prev)) {
-                // ── 날짜 ↔ 시간 전환: fade out → 교체 → height + fade in ──
+                // 날짜 피커와 시간 피커가 바뀔 때 콘텐츠를 페이드 전환한다.
                 Animated.timing(contentFade, {
                     toValue: 0, duration: 120, useNativeDriver: false,
                 }).start(({ finished }) => {
@@ -248,17 +244,13 @@ export default function ScheduleNewModal({
                     ]).start();
                 });
             } else {
-                // ── 같은 카테고리 전환 (시작↔종료): 높이 변화 없음, 즉시 교체 ──
+                // 시작/종료처럼 같은 타입끼리는 내용만 교체한다.
                 setDisplayPicker(picker);
             }
         }
     }, [picker, contentFade, heightAnim, outerOpacity]);
 
-    /**
-     * ──────────────────────────────
-     *  Bottom Sheet — 단일 posY
-     * ──────────────────────────────
-     */
+    // 새 일정 바텀시트의 열림/닫힘 위치를 관리한다.
     const posY       = useRef(new Animated.Value(SHEET_HIDDEN_Y)).current;
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
@@ -279,7 +271,7 @@ export default function ScheduleNewModal({
         if (visible) { posY.setValue(SHEET_HIDDEN_Y); openSheet(); }
     }, [visible, openSheet, posY]);
 
-    /** PanResponder — 핸들바 전용 */
+    // 핸들바 드래그로 바텀시트를 닫거나 원위치한다.
     const panResponder = useMemo(() =>
         PanResponder.create({
             onStartShouldSetPanResponder:        () => true,
@@ -305,7 +297,7 @@ export default function ScheduleNewModal({
             },
         }), [posY]);
 
-    /** Submit */
+    // 입력값을 일정 저장 payload로 변환해 상위 화면에 전달한다.
     const submit = () => {
         const t = title.trim();
         if (!t || !category) return;
@@ -334,9 +326,7 @@ export default function ScheduleNewModal({
         closeSheet(() => onCloseRef.current());
     };
 
-    /**
-     * 날짜 선택 — outFocus 시 닫힘 (Apple Calendar 동작)
-     */
+    // 캘린더에서 선택한 날짜를 시작/종료 날짜에 반영한다.
     const onDayPress = useCallback((day: { dateString: string }) => {
         const selected = new Date(`${day.dateString}T00:00:00`);
         if (picker === "startDate") {
@@ -348,7 +338,7 @@ export default function ScheduleNewModal({
         }
     }, [picker, startDay, endDay]);
 
-    /** 시간 — 완료 버튼 없이 즉시 반영 */
+    // 시간 피커에서 선택한 시간을 시작/종료 시간에 반영한다.
     const onTimeChange = (event: DateTimePickerEvent, selected?: Date) => {
         if (Platform.OS === "android" && event.type === "dismissed") { setPicker(null); return; }
         if (!selected) return;
@@ -398,7 +388,6 @@ export default function ScheduleNewModal({
                     borderTopColor:  colors.border,
                     transform: [{ translateY: posY }],
                 }]}>
-                    {/* 핸들바 — PanResponder 전용 */}
                     <View {...panResponder.panHandlers} style={styles.handleWrap}>
                         <View style={[styles.handle, { backgroundColor: colors.border }]} />
                     </View>
@@ -408,7 +397,6 @@ export default function ScheduleNewModal({
                         showsVerticalScrollIndicator={false}
                         contentContainerStyle={styles.scrollContent}
                     >
-                        {/* 헤더 */}
                         <View style={styles.headerRow}>
                             <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>새 일정</Text>
                             <Pressable
@@ -419,7 +407,6 @@ export default function ScheduleNewModal({
                             </Pressable>
                         </View>
 
-                        {/* 제목 */}
                         <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
                         <TextInput
                             value={title}
@@ -429,7 +416,6 @@ export default function ScheduleNewModal({
                             style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface2, color: colors.textPrimary }]}
                         />
 
-                        {/* 출발지 / 도착지 — 1행 */}
                         <LocationInputRow
                             originValue={originText}
                             destinationValue={destinationText}
@@ -438,7 +424,6 @@ export default function ScheduleNewModal({
                             onPress={openRoutePlanner}
                         />
 
-                        {/* 시작 날짜 / 시간 */}
                         <View style={styles.twoColRow}>
                             <View style={styles.col}>
                                 <Text style={[styles.label, { color: colors.textSecondary }]}>시작 날짜</Text>
@@ -454,7 +439,6 @@ export default function ScheduleNewModal({
                             </View>
                         </View>
 
-                        {/* 종료 날짜 / 시간 */}
                         <View style={styles.twoColRow}>
                             <View style={styles.col}>
                                 <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
@@ -470,7 +454,6 @@ export default function ScheduleNewModal({
                             </View>
                         </View>
 
-                        {/* 피커 영역 */}
                         <Animated.View style={[styles.pickerContainer, {
                             borderColor:  colors.border,
                             maxHeight:    heightAnim,
@@ -506,14 +489,12 @@ export default function ScheduleNewModal({
                             </Animated.View>
                         </Animated.View>
 
-                        {/* 카테고리 */}
                         <CategoryPickerRow
                             categories={categories}
                             value={selectedCategoryId}
                             onChange={setSelectedCategoryId}
                         />
 
-                        {/* 저장 */}
                         <Pressable
                             onPress={submit}
                             style={[styles.saveBtn, { backgroundColor: colors.selectedDayBg }]}

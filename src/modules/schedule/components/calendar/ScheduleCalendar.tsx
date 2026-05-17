@@ -1,8 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import { Calendar, DateData } from "react-native-calendars";
-import type { ScheduleItem } from "../../../../src/modules/schedule/types";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
-import { enumerateDaysBetween } from "../../../../lib/util/data";
+import type { ScheduleItem } from "../../types";
+import { useTheme } from "../../../theme/ThemeContext";
+import { enumerateDaysBetween } from "../../../../../lib/util/data";
 import CustomDay from "./CustomDay";
 
 type Props = {
@@ -11,9 +11,17 @@ type Props = {
     onSelectDay: (day: string) => void;
 };
 
+type CalendarDayComponentProps = {
+    date?: DateData;
+    state?: string;
+    marking?: React.ComponentProps<typeof CustomDay>["marking"];
+};
+
+// 일정 목록을 월간 캘린더 UI로 표시한다.
 export default function ScheduleCalendar({ selectedDay, items, onSelectDay }: Props) {
     const { colors, mode } = useTheme();
 
+    // 일정 목록을 캘린더 마킹 데이터로 변환한다.
     const markedDates = useMemo(() => {
         const dateMap: Record<string, any> = {};
         const dateSingleDay: Record<string, ScheduleItem[]> = {};
@@ -66,21 +74,24 @@ export default function ScheduleCalendar({ selectedDay, items, onSelectDay }: Pr
         return dateMap;
     }, [items, selectedDay]);
 
+    // 캘린더 라이브러리가 넘겨준 날짜 정보를 앱 전용 날짜 셀로 렌더링한다.
+    const renderDay = useCallback(({ date, state, marking }: CalendarDayComponentProps) => (
+        <CustomDay
+            date={date}
+            state={state}
+            marking={marking}
+            isSelectedDay={date?.dateString === selectedDay}
+            onPress={(d) => onSelectDay(d.dateString)}
+        />
+    ), [onSelectDay, selectedDay]);
+
     return (
         <Calendar
             key={mode}
             current={selectedDay}
             onDayPress={(day: DateData) => onSelectDay(day.dateString)}
             markedDates={markedDates}
-            dayComponent={({ date, state, marking }) => (
-                <CustomDay
-                    date={date}
-                    state={state}
-                    marking={marking}
-                    isSelectedDay={date?.dateString === selectedDay}
-                    onPress={(d) => onSelectDay(d.dateString)}
-                />
-            )}
+            dayComponent={renderDay}
             theme={{
                 backgroundColor: colors.calendarBackground,
                 calendarBackground: colors.calendarBackground,

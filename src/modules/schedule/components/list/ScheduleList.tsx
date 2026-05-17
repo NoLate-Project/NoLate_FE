@@ -1,8 +1,8 @@
 import React, { useRef, useEffect } from "react";
 import { Pressable, Text, View, Animated } from "react-native";
-import { useTheme } from "../../../../src/modules/theme/ThemeContext";
+import { useTheme } from "../../../theme/ThemeContext";
 import ScheduleItemList from "./ScheduleItemList";
-import type { ScheduleItem } from "../../../../src/modules/schedule/types";
+import type { ScheduleItem } from "../../types";
 
 type Props = {
     selectedDay: string;
@@ -10,6 +10,7 @@ type Props = {
     onPressAdd?: () => void;
 };
 
+// YYYY-MM-DD 문자열을 일정 목록 헤더용 날짜 문구로 바꾼다.
 function formatDateLabel(ymd: string): string {
     const d = new Date(ymd + "T00:00:00");
     const dayNames = ["일", "월", "화", "수", "목", "금", "토"];
@@ -18,6 +19,7 @@ function formatDateLabel(ymd: string): string {
     return `${month}월 ${day}일 ${dayNames[d.getDay()]}요일`;
 }
 
+// 선택 날짜의 일정 목록과 추가 버튼을 표시한다.
 export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) {
     const { colors } = useTheme();
 
@@ -29,7 +31,7 @@ export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) 
         if (prevDayRef.current === selectedDay) return;
         prevDayRef.current = selectedDay;
 
-        // 새 날짜로 전환 시 슬라이드업 + 페이드인
+        // 선택 날짜가 바뀌면 일정 리스트를 짧게 전환한다.
         listOpacity.setValue(0);
         listTranslate.setValue(18);
 
@@ -50,7 +52,6 @@ export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) 
 
     return (
         <View style={{ flex: 1 }}>
-            {/* 날짜 헤더 */}
             <View
                 style={{
                     flexDirection: "row",
@@ -87,7 +88,6 @@ export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) 
                 </Pressable>
             </View>
 
-            {/* 애니메이션 적용 리스트 영역 */}
             <Animated.View
                 style={{
                     flex: 1,
