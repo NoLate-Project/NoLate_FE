@@ -1,9 +1,10 @@
 import React from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
 
 // 새 일정 추가 액션을 실행하는 플로팅 버튼을 표시한다.
-export default function FloatingButton({ onPress }: { onPress: () => void }) {
+export default function FloatingButton({ onPress, bottomInset = 0 }: { onPress: () => void; bottomInset?: number }) {
     const { colors } = useTheme();
 
     return (
@@ -12,10 +13,10 @@ export default function FloatingButton({ onPress }: { onPress: () => void }) {
             style={({ pressed }) => ({
                 position: "absolute",
                 right: 20,
-                bottom: 32,
-                width: 52,
-                height: 52,
-                borderRadius: 26,
+                bottom: Math.max(24, bottomInset + 12),
+                width: 58,
+                height: 58,
+                borderRadius: 29,
                 backgroundColor: pressed ? colors.surface2 : colors.selectedDayBg,
                 alignItems: "center",
                 justifyContent: "center",
@@ -26,16 +27,7 @@ export default function FloatingButton({ onPress }: { onPress: () => void }) {
                 elevation: 8,
             })}
         >
-            <Text
-                style={{
-                    color: colors.selectedDayText,
-                    fontSize: 24,
-                    fontWeight: "300",
-                    lineHeight: 26,
-                }}
-            >
-                +
-            </Text>
+            <Ionicons name="add" size={31} color={colors.selectedDayText} />
         </Pressable>
     );
 }
