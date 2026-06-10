@@ -21,6 +21,8 @@
     "bundleIdentifier": "com.anonymous.nolatefe",
     "infoPlist": {
       "NSAppTransportSecurity": {
+        "NSAllowsArbitraryLoads": true,
+        "NSAllowsLocalNetworking": true,
         "NSAllowsArbitraryLoadsInWebContent": true
       }
     }

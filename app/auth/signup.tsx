@@ -10,8 +10,11 @@ import {
     View,
 } from "react-native";
 
-import { signUpMember } from "../../src/api/member";
+import { loginMember, signUpMember } from "../../src/api/member";
+import { clearAuthTokens, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+
+const PASSWORD_PATTERN = /^[a-zA-Z0-9!@#$%^&*]{8,16}$/;
 
 export default function SignUp() {
     const router = useRouter();
@@ -25,7 +28,10 @@ export default function SignUp() {
     const [submitting, setSubmitting] = useState(false);
 
     const onSignUp = async () => {
-        if (!name || !email || !pwd || !confirmPwd) {
+        const normalizedName = name.trim();
+        const normalizedEmail = email.trim();
+
+        if (!normalizedName || !normalizedEmail || !pwd || !confirmPwd) {
             Alert.alert("입력 확인", "모든 항목을 입력해 주세요.");
             return;
         }
@@ -35,19 +41,29 @@ export default function SignUp() {
             return;
         }
 
+        if (!PASSWORD_PATTERN.test(pwd)) {
+            Alert.alert("입력 확인", "비밀번호는 영문, 숫자, !@#$%^&* 조합으로 8~16자여야 합니다.");
+            return;
+        }
+
         try {
             setSubmitting(true);
             await signUpMember({
-                name: name.trim(),
-                email: email.trim(),
+                name: normalizedName,
+                email: normalizedEmail,
                 password: pwd,
             });
 
-            Alert.alert("회원가입 완료", "로그인 후 서비스를 이용해 주세요.", [
-                { text: "확인", onPress: () => router.replace("/auth/login") },
-            ]);
+            const member = await loginMember({
+                email: normalizedEmail,
+                password: pwd,
+            });
+
+            await saveAuthTokens(member.accessToken, member.refreshToken);
+            router.replace("/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "회원가입에 실패했습니다.";
+            await clearAuthTokens();
             Alert.alert("회원가입 실패", message);
         } finally {
             setSubmitting(false);

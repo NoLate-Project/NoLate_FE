@@ -12,7 +12,7 @@ import {
 } from "react-native";
 
 import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
-import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
@@ -34,9 +34,8 @@ export default function Login() {
         let cancelled = false;
 
         const tryTokenLogin = async () => {
-            const accessToken = await getAccessToken();
             const refreshToken = await getRefreshToken();
-            if (!accessToken || !refreshToken || cancelled) return;
+            if (!refreshToken || cancelled) return;
 
             try {
                 const member = await tokenLoginMember({ refreshToken });
@@ -58,8 +57,28 @@ export default function Login() {
     }, [router]);
 
     const onLogin = async () => {
-        // TODO: 임시 바이패스 — API 연동 전 테스트용
-        router.replace("/schedule");
+        if (submitting) return;
+
+        const email = id.trim();
+        const password = pwd;
+
+        if (!email || !password) {
+            Alert.alert("로그인", "이메일과 비밀번호를 입력해 주세요.");
+            return;
+        }
+
+        try {
+            setSubmitting(true);
+            const member = await loginMember({ email, password });
+            await saveAuthTokens(member.accessToken, member.refreshToken);
+            router.replace("/schedule");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
+            await clearAuthTokens();
+            Alert.alert("로그인 실패", message);
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     const onSocialLogin = async (provider: SocialProvider) => {
