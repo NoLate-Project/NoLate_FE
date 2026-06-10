@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from "react";
-import { Pressable, Text, View, Animated } from "react-native";
+import { Pressable, Text, View, Animated, StyleSheet } from "react-native";
 import { useTheme } from "../../../theme/ThemeContext";
 import ScheduleItemList from "./ScheduleItemList";
 import type { ScheduleItem } from "../../types";
@@ -7,7 +7,9 @@ import type { ScheduleItem } from "../../types";
 type Props = {
     selectedDay: string;
     items: ScheduleItem[];
-    onPressAdd?: () => void;
+    loading?: boolean;
+    error?: string | null;
+    onPressRetry?: () => void;
 };
 
 // YYYY-MM-DD 문자열을 일정 목록 헤더용 날짜 문구로 바꾼다.
@@ -19,8 +21,8 @@ function formatDateLabel(ymd: string): string {
     return `${month}월 ${day}일 ${dayNames[d.getDay()]}요일`;
 }
 
-// 선택 날짜의 일정 목록과 추가 버튼을 표시한다.
-export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) {
+// 선택 날짜의 일정 목록을 표시한다.
+export default function ScheduleList({ selectedDay, items, loading = false, error, onPressRetry }: Props) {
     const { colors } = useTheme();
 
     const listOpacity = useRef(new Animated.Value(1)).current;
@@ -51,41 +53,15 @@ export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) 
     }, [selectedDay, listOpacity, listTranslate]);
 
     return (
-        <View style={{ flex: 1 }}>
+        <View style={styles.container}>
             <View
-                style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 14,
-                }}
+                style={styles.header}
             >
                 <Text
-                    style={{
-                        fontSize: 15,
-                        fontWeight: "600",
-                        color: colors.textPrimary,
-                        letterSpacing: -0.3,
-                    }}
+                    style={[styles.dateTitle, { color: colors.textPrimary }]}
                 >
                     {formatDateLabel(selectedDay)}
                 </Text>
-
-                <Pressable
-                    onPress={onPressAdd}
-                    style={({ pressed }) => ({
-                        paddingVertical: 6,
-                        paddingHorizontal: 14,
-                        borderRadius: 20,
-                        backgroundColor: pressed ? colors.surface2 : colors.surface,
-                        borderWidth: 1,
-                        borderColor: colors.border,
-                    })}
-                >
-                    <Text style={{ color: colors.textPrimary, fontWeight: "600", fontSize: 13 }}>
-                        + 추가
-                    </Text>
-                </Pressable>
             </View>
 
             <Animated.View
@@ -95,23 +71,72 @@ export default function ScheduleList({ selectedDay, items, onPressAdd }: Props) 
                     transform: [{ translateY: listTranslate }],
                 }}
             >
-                {items.length === 0 ? (
+                {loading ? (
                     <View
-                        style={{
-                            padding: 20,
-                            borderRadius: 14,
-                            backgroundColor: colors.surface,
-                            alignItems: "center",
-                        }}
+                        style={[styles.stateCard, { backgroundColor: colors.surface }]}
                     >
                         <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-                            일정이 없어요
+                            일정을 불러오는 중이에요
                         </Text>
                     </View>
+                ) : error ? (
+                    <View
+                        style={[styles.stateCard, { backgroundColor: colors.surface }]}
+                    >
+                        <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
+                            {error}
+                        </Text>
+                        <Pressable
+                            onPress={onPressRetry}
+                            style={({ pressed }) => ({
+                                paddingVertical: 7,
+                                paddingHorizontal: 14,
+                                borderRadius: 18,
+                                backgroundColor: pressed ? colors.surface2 : colors.selectedDayBg,
+                            })}
+                        >
+                            <Text style={{ color: colors.selectedDayText, fontWeight: "700", fontSize: 13 }}>
+                                다시 조회
+                            </Text>
+                        </Pressable>
+                    </View>
                 ) : (
-                    <ScheduleItemList items={items} />
+                    items.length === 0 ? (
+                        <View style={[styles.stateCard, { backgroundColor: colors.surface }]}>
+                            <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
+                                일정이 없어요
+                            </Text>
+                        </View>
+                    ) : (
+                        <ScheduleItemList items={items} />
+                    )
                 )}
             </Animated.View>
         </View>
     );
 }
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+    },
+    header: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 14,
+    },
+    dateTitle: {
+        fontSize: 21,
+        fontWeight: "800",
+        letterSpacing: -0.6,
+    },
+    stateCard: {
+        minHeight: 108,
+        padding: 20,
+        borderRadius: 20,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+    },
+});

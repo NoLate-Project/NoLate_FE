@@ -12,6 +12,24 @@ export type Place = {
     lng?: number;
 };
 
+export type ScheduleParseResult = {
+    title?: string;
+    notes?: string;
+    date?: string;
+    time?: string;
+    startAt?: string;
+    endAt?: string;
+    origin?: Place;
+    originSource: "TEXT" | "FAVORITE_DEFAULT" | "REQUIRED";
+    originRequired: boolean;
+    destination?: Place;
+    parseSource: "RULE" | "AI_ASSISTED" | "RULE_FALLBACK";
+    aiAttempted: boolean;
+    needsReview: boolean;
+    warnings: string[];
+    missingFields: string[];
+};
+
 export type TravelMode = "CAR" | "TRANSIT" | "WALK" | "BIKE" | "ETC";
 
 export type ScheduleItem = {
@@ -21,6 +39,7 @@ export type ScheduleItem = {
     // ✅ 애플 캘린더 핵심: DateTime 기반
     startAt: string; // ISO
     endAt: string;   // ISO
+    hasEndTime?: boolean;
     allDay?: boolean;
 
     // ✅ 이동시간(Travel Time)
@@ -36,5 +55,9 @@ export type ScheduleItem = {
     category: ScheduleCategory;
 
     notes?: string;
+    route?: unknown;
+    notificationEnabled?: boolean;
+    notificationLeadMinutes?: number;
+    notificationIntervalMinutes?: number;
     updatedAt?: string;
 };

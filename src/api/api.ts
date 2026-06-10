@@ -28,7 +28,14 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
     (response: AxiosResponse) => response,
-    (error: AxiosError) => Promise.reject(error)
+    (error: AxiosError<{ errorMessage?: string | null; message?: string | null }>) => {
+        const message =
+            error.response?.data?.errorMessage ??
+            error.response?.data?.message ??
+            error.message;
+
+        return Promise.reject(new Error(message));
+    }
 );
 
 export async function apiGet<T = unknown>(url: string, config?: AxiosRequestConfig) {

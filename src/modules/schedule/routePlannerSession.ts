@@ -6,6 +6,7 @@ export type RoutePlannerPayload = {
     travelMode: TravelMode;
     travelMinutes?: number;
     locationName?: string;
+    route?: unknown;
 };
 
 type RoutePlannerSession = {

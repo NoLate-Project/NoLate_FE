@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
-    Modal,
+    ActivityIndicator,
     Pressable,
     ScrollView,
     Text,
@@ -15,18 +16,26 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { Calendar } from "react-native-calendars";
 import { usePathname, useRouter } from "expo-router";
 
-import type { ScheduleCategory, ScheduleItem, TravelMode } from "../../types";
+import type { ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
+import NotificationSettingsCard from "./NotificationSettingsCard";
+import {
+    FREE_SUBSCRIPTION_POLICY,
+    getMySubscriptionPolicy,
+    type SubscriptionPolicy,
+} from "../../../../api/subscription";
 
 type Props = {
     visible: boolean;
     onClose: () => void;
-    onSubmit: (payload: Omit<ScheduleItem, "id">) => void;
+    onSubmit: (payload: Omit<ScheduleItem, "id">) => void | Promise<void>;
     categories: ScheduleCategory[];
     defaultDay: string;
+    initialValues?: ScheduleParseResult | null;
+    onQuickParse?: (text: string) => void | Promise<void>;
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -73,13 +82,22 @@ export default function ScheduleNewModal({
     onSubmit,
     categories,
     defaultDay,
+    initialValues,
+    onQuickParse,
 }: Props) {
     const router = useRouter();
     const pathname = usePathname();
     const { colors, mode } = useTheme();
     const now = useMemo(() => new Date(), []);
+    const initialStartTime = useMemo(() => {
+        const d = new Date(now);
+        d.setSeconds(0, 0);
+        d.setMinutes(d.getMinutes() + 30);
+        return d;
+    }, [now]);
 
     const [title, setTitle]                           = useState("");
+    const [notes, setNotes]                           = useState("");
     const [selectedCategoryId, setSelectedCategoryId] = useState(categories[0]?.id ?? "1");
     const [originText, setOriginText]                 = useState("");
     const [destinationText, setDestinationText]       = useState("");
@@ -91,16 +109,23 @@ export default function ScheduleNewModal({
     const [destinationLng, setDestinationLng]         = useState<number | undefined>();
     const [travelMode, setTravelMode]                 = useState<TravelMode>("CAR");
     const [travelMinutes, setTravelMinutes]           = useState<number | undefined>();
+    const [route, setRoute]                           = useState<unknown>();
+    const [hasEndTime, setHasEndTime]                 = useState(false);
+    const [notificationEnabled, setNotificationEnabled] = useState(false);
+    const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(60);
+    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(30);
+    const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
+    const [submitting, setSubmitting]                 = useState(false);
+    const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
+    const [quickExpanded, setQuickExpanded]           = useState(false);
+    const [quickText, setQuickText]                   = useState("");
+    const [quickParsing, setQuickParsing]             = useState(false);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
     const [endDay,    setEndDay]    = useState(() => new Date(`${defaultDay}T00:00:00`));
-    const [startTime, setStartTime] = useState(() => {
-        const d = new Date(now); d.setSeconds(0, 0); d.setMinutes(d.getMinutes() + 30); return d;
-    });
-    const [endTime, setEndTime] = useState(() => {
-        const d = new Date(now); d.setSeconds(0, 0); d.setMinutes(d.getMinutes() + 60); return d;
-    });
+    const [startTime, setStartTime] = useState(() => new Date(initialStartTime));
+    const [endTime, setEndTime] = useState(() => new Date(initialStartTime));
 
     // 실제 선택값과 화면 표시값을 분리해 피커 전환 애니메이션을 안정화한다.
     const [picker,        setPicker]        = useState<PickerType | null>(null);
@@ -112,79 +137,108 @@ export default function ScheduleNewModal({
     }, [defaultDay]);
 
     useEffect(() => {
+        if (hasEndTime) return;
+        setEndDay(new Date(startDay));
+        setEndTime(new Date(startTime));
+    }, [hasEndTime, startDay, startTime]);
+
+    useEffect(() => {
         if (!visible) {
-            setTitle(""); setOriginText(""); setDestinationText(""); setPicker(null);
+            setTitle(""); setNotes("");
+            setOriginText(""); setDestinationText(""); setPicker(null);
             setOriginLat(undefined); setOriginLng(undefined);
             setDestinationLat(undefined); setDestinationLng(undefined);
             setOriginAddress(undefined); setDestinationAddress(undefined);
             setTravelMode("CAR"); setTravelMinutes(undefined);
+            setRoute(undefined);
+            setHasEndTime(false);
+            setNotificationEnabled(false);
+            setNotificationLeadMinutes(60);
+            setNotificationIntervalMinutes(30);
             setRoutePlannerSessionId(undefined);
+            setSubmitting(false);
+            setRoutePlannerHidden(false);
+            setQuickExpanded(false);
+            setQuickText("");
+            setQuickParsing(false);
         }
     }, [visible]);
 
-    // 현재 입력된 출발/도착 정보를 경로 선택 화면으로 전달한다.
-    const openRoutePlanner = useCallback(() => {
-        const normalizedOriginName = originText.trim();
-        const normalizedDestinationName = destinationText.trim();
-        const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    useEffect(() => {
+        if (!visible || !initialValues) return;
 
-        setRoutePlannerInitial(sessionId, {
-            origin: normalizedOriginName
-                ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                : undefined,
-            destination: normalizedDestinationName
-                ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                : undefined,
-            travelMode,
-            travelMinutes,
-            locationName: normalizedOriginName && normalizedDestinationName
-                ? `${normalizedOriginName} → ${normalizedDestinationName}`
-                : normalizedDestinationName || normalizedOriginName || undefined,
-        });
+        setTitle(initialValues.title ?? "");
+        setNotes(initialValues.notes ?? "");
 
-        setRoutePlannerSessionId(sessionId);
-        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
-    }, [
-        destinationAddress,
-        destinationLat,
-        destinationLng,
-        destinationText,
-        originAddress,
-        originLat,
-        originLng,
-        originText,
-        router,
-        travelMinutes,
-        travelMode,
-    ]);
+        setOriginText(initialValues.origin?.name ?? "");
+        setOriginAddress(initialValues.origin?.address);
+        setOriginLat(initialValues.origin?.lat);
+        setOriginLng(initialValues.origin?.lng);
+        setDestinationText(initialValues.destination?.name ?? "");
+        setDestinationAddress(initialValues.destination?.address);
+        setDestinationLat(initialValues.destination?.lat);
+        setDestinationLng(initialValues.destination?.lng);
+
+        const parsedStart = initialValues.startAt ? new Date(initialValues.startAt) : null;
+        if (parsedStart && !Number.isNaN(parsedStart.getTime())) {
+            setStartDay(parsedStart);
+            setStartTime(parsedStart);
+        }
+
+        const parsedEnd = initialValues.endAt ? new Date(initialValues.endAt) : null;
+        if (parsedEnd && !Number.isNaN(parsedEnd.getTime())) {
+            setEndDay(parsedEnd);
+            setEndTime(parsedEnd);
+            setHasEndTime(
+                Boolean(parsedStart) && parsedEnd.getTime() !== parsedStart?.getTime()
+            );
+        } else {
+            setHasEndTime(false);
+        }
+    }, [initialValues, visible]);
 
     useEffect(() => {
-        if (
-            !visible ||
-            !routePlannerSessionId ||
-            pathname === "/schedule/route-select" ||
-            pathname === "/schedule/route-planner"
-        ) return;
-        const result = consumeRoutePlannerResult(routePlannerSessionId);
-        if (!result) return;
-
-        setOriginText(result.origin?.name ?? "");
-        setOriginAddress(result.origin?.address);
-        setOriginLat(result.origin?.lat);
-        setOriginLng(result.origin?.lng);
-        setDestinationText(result.destination?.name ?? "");
-        setDestinationAddress(result.destination?.address);
-        setDestinationLat(result.destination?.lat);
-        setDestinationLng(result.destination?.lng);
-        setTravelMode(result.travelMode);
-        setTravelMinutes(result.travelMinutes);
-        setRoutePlannerSessionId(undefined);
-    }, [pathname, routePlannerSessionId, visible]);
+        if (!visible) return;
+        let cancelled = false;
+        getMySubscriptionPolicy()
+            .then((policy) => {
+                if (cancelled) return;
+                setSubscriptionPolicy(policy);
+                setNotificationLeadMinutes((current) =>
+                    Math.min(current, policy.maxNotificationLeadMinutes)
+                );
+                setNotificationIntervalMinutes((current) =>
+                    Math.max(current, policy.minNotificationIntervalMinutes)
+                );
+            })
+            .catch(() => {
+                if (!cancelled) setSubscriptionPolicy(FREE_SUBSCRIPTION_POLICY);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [visible]);
 
     const category = useMemo(
         () => categories.find((c) => c.id === selectedCategoryId) ?? categories[0],
         [categories, selectedCategoryId]
     );
+
+    const applyQuickSchedule = async () => {
+        const normalized = quickText.trim();
+        if (!normalized || quickParsing || !onQuickParse) return;
+
+        try {
+            setQuickParsing(true);
+            await onQuickParse(normalized);
+            setQuickExpanded(false);
+            setQuickText("");
+        } catch {
+            // 상위 화면에서 오류 안내를 표시하고 입력값은 유지한다.
+        } finally {
+            setQuickParsing(false);
+        }
+    };
 
     // 날짜/시간 필드를 열거나 같은 필드를 다시 눌러 닫는다.
     const togglePicker = useCallback((type: PickerType) => {
@@ -271,6 +325,80 @@ export default function ScheduleNewModal({
         if (visible) { posY.setValue(SHEET_HIDDEN_Y); openSheet(); }
     }, [visible, openSheet, posY]);
 
+    useEffect(() => {
+        if (
+            !visible ||
+            !routePlannerSessionId ||
+            pathname === "/schedule/route-select" ||
+            pathname === "/schedule/route-planner"
+        ) return;
+        const result = consumeRoutePlannerResult(routePlannerSessionId);
+        if (!result) {
+            setRoutePlannerHidden(false);
+            posY.setValue(SHEET_HIDDEN_Y);
+            openSheet();
+            return;
+        }
+
+        setOriginText(result.origin?.name ?? "");
+        setOriginAddress(result.origin?.address);
+        setOriginLat(result.origin?.lat);
+        setOriginLng(result.origin?.lng);
+        setDestinationText(result.destination?.name ?? "");
+        setDestinationAddress(result.destination?.address);
+        setDestinationLat(result.destination?.lat);
+        setDestinationLng(result.destination?.lng);
+        setTravelMode(result.travelMode);
+        setTravelMinutes(result.travelMinutes);
+        setRoute(result.route);
+        setRoutePlannerSessionId(undefined);
+        setRoutePlannerHidden(false);
+        posY.setValue(SHEET_HIDDEN_Y);
+        openSheet();
+    }, [openSheet, pathname, posY, routePlannerSessionId, visible]);
+
+    // 현재 입력된 출발/도착 정보를 경로 선택 화면으로 전달한다.
+    const openRoutePlanner = useCallback(() => {
+        const normalizedOriginName = originText.trim();
+        const normalizedDestinationName = destinationText.trim();
+        const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+        setRoutePlannerInitial(sessionId, {
+            origin: normalizedOriginName
+                ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
+                : undefined,
+            destination: normalizedDestinationName
+                ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
+                : undefined,
+            travelMode,
+            travelMinutes,
+            route,
+            locationName: normalizedOriginName && normalizedDestinationName
+                ? `${normalizedOriginName} → ${normalizedDestinationName}`
+                : normalizedDestinationName || normalizedOriginName || undefined,
+        });
+
+        setPicker(null);
+        setRoutePlannerSessionId(sessionId);
+        setRoutePlannerHidden(true);
+        closeSheet();
+        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
+    }, [
+        closeSheet,
+        destinationAddress,
+        destinationLat,
+        destinationLng,
+        destinationText,
+        originAddress,
+        originLat,
+        originLng,
+        originText,
+        router,
+        travelMinutes,
+        travelMode,
+        route,
+    ]);
+
     // 핸들바 드래그로 바텀시트를 닫거나 원위치한다.
     const panResponder = useMemo(() =>
         PanResponder.create({
@@ -298,32 +426,50 @@ export default function ScheduleNewModal({
         }), [posY]);
 
     // 입력값을 일정 저장 payload로 변환해 상위 화면에 전달한다.
-    const submit = () => {
+    const submit = async () => {
         const t = title.trim();
-        if (!t || !category) return;
+        if (!t || !category || submitting) return;
 
         const s = mergeDateTime(startDay, startTime);
-        let   e = mergeDateTime(endDay, endTime);
-        if (e.getTime() <= s.getTime()) { e = new Date(s); e.setMinutes(e.getMinutes() + 30); }
+        let e = hasEndTime ? mergeDateTime(endDay, endTime) : new Date(s);
+        if (hasEndTime && e.getTime() < s.getTime()) {
+            e = new Date(s);
+            e.setMinutes(e.getMinutes() + 30);
+        }
+        const hasDistinctEndTime = e.getTime() !== s.getTime();
         const normalizedOriginName = originText.trim();
         const normalizedDestinationName = destinationText.trim();
         const locationName = normalizedOriginName && normalizedDestinationName
             ? `${normalizedOriginName} → ${normalizedDestinationName}`
             : normalizedDestinationName || normalizedOriginName || undefined;
 
-        onSubmit({
-            title: t, startAt: s.toISOString(), endAt: e.toISOString(), category,
-            travelMode,
-            travelMinutes,
-            locationName,
-            origin: normalizedOriginName
-                ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                : undefined,
-            destination: normalizedDestinationName
-                ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                : undefined,
-        });
-        closeSheet(() => onCloseRef.current());
+        try {
+            setSubmitting(true);
+            await onSubmit({
+                title: t,
+                startAt: s.toISOString(),
+                endAt: e.toISOString(),
+                hasEndTime: hasDistinctEndTime,
+                category,
+                travelMode,
+                travelMinutes,
+                route,
+                notificationEnabled,
+                notificationLeadMinutes: notificationEnabled ? notificationLeadMinutes : undefined,
+                notificationIntervalMinutes: notificationEnabled ? notificationIntervalMinutes : undefined,
+                locationName,
+                origin: normalizedOriginName
+                    ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
+                    : undefined,
+                destination: normalizedDestinationName
+                    ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
+                    : undefined,
+                notes: notes.trim() || undefined,
+            });
+            closeSheet(() => onCloseRef.current());
+        } finally {
+            setSubmitting(false);
+        }
     };
 
     // 캘린더에서 선택한 날짜를 시작/종료 날짜에 반영한다.
@@ -331,19 +477,22 @@ export default function ScheduleNewModal({
         const selected = new Date(`${day.dateString}T00:00:00`);
         if (picker === "startDate") {
             setStartDay(selected);
-            if (selected.getTime() > endDay.getTime()) setEndDay(selected);
         } else if (picker === "endDate") {
+            setHasEndTime(true);
             setEndDay(selected);
             if (selected.getTime() < startDay.getTime()) setStartDay(selected);
         }
-    }, [picker, startDay, endDay]);
+    }, [picker, startDay]);
 
     // 시간 피커에서 선택한 시간을 시작/종료 시간에 반영한다.
     const onTimeChange = (event: DateTimePickerEvent, selected?: Date) => {
         if (Platform.OS === "android" && event.type === "dismissed") { setPicker(null); return; }
         if (!selected) return;
         if (picker === "startTime") setStartTime(selected);
-        else if (picker === "endTime") setEndTime(selected);
+        else if (picker === "endTime") {
+            setHasEndTime(true);
+            setEndTime(selected);
+        }
         if (Platform.OS === "android") setPicker(null);
     };
 
@@ -372,31 +521,31 @@ export default function ScheduleNewModal({
         { borderColor: picker === type ? colors.selectedDayBg : colors.border, backgroundColor: colors.surface2 },
     ];
 
+    if (!visible || routePlannerHidden) {
+        return null;
+    }
+
     return (
-        <Modal
-            visible={visible}
-            animationType="none"
-            transparent
-            presentationStyle="overFullScreen"
-            onRequestClose={() => closeSheet(() => onCloseRef.current())}
+        <View
+            style={styles.wrapper}
+            pointerEvents="box-none"
         >
-            <View style={styles.wrapper} pointerEvents="box-none">
-                <Pressable style={styles.dim} onPress={() => closeSheet(() => onCloseRef.current())} />
+            <Pressable style={styles.dim} onPress={() => closeSheet(() => onCloseRef.current())} />
 
-                <Animated.View style={[styles.sheet, {
-                    backgroundColor: colors.surface,
-                    borderTopColor:  colors.border,
-                    transform: [{ translateY: posY }],
-                }]}>
-                    <View {...panResponder.panHandlers} style={styles.handleWrap}>
-                        <View style={[styles.handle, { backgroundColor: colors.border }]} />
-                    </View>
+            <Animated.View style={[styles.sheet, {
+                backgroundColor: colors.surface,
+                borderTopColor:  colors.border,
+                transform: [{ translateY: posY }],
+            }]}>
+                <View {...panResponder.panHandlers} style={styles.handleWrap}>
+                    <View style={[styles.handle, { backgroundColor: colors.border }]} />
+                </View>
 
-                    <ScrollView
-                        keyboardShouldPersistTaps="handled"
-                        showsVerticalScrollIndicator={false}
-                        contentContainerStyle={styles.scrollContent}
-                    >
+                <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.scrollContent}
+                >
                         <View style={styles.headerRow}>
                             <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>새 일정</Text>
                             <Pressable
@@ -405,6 +554,72 @@ export default function ScheduleNewModal({
                             >
                                 <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>닫기</Text>
                             </Pressable>
+                        </View>
+
+                        <View
+                            style={[
+                                styles.quickSection,
+                                { borderColor: colors.border, backgroundColor: colors.surface2 },
+                            ]}
+                        >
+                            <Pressable
+                                onPress={() => setQuickExpanded((expanded) => !expanded)}
+                                style={styles.quickHeader}
+                            >
+                                <View style={styles.quickHeaderTitle}>
+                                    {/*<Ionicons name="flash-outline" size={18} color={colors.textPrimary} />*/}
+                                    <Text style={[styles.quickTitle, { color: colors.textPrimary }]}>
+                                        빠른 일정 생성
+                                    </Text>
+                                </View>
+                                <Ionicons
+                                    name={quickExpanded ? "chevron-up" : "chevron-down"}
+                                    size={18}
+                                    color={colors.textSecondary}
+                                />
+                            </Pressable>
+
+                            {quickExpanded && (
+                                <View style={[styles.quickBody, { borderTopColor: colors.border }]}>
+                                    <TextInput
+                                        autoFocus
+                                        editable={!quickParsing}
+                                        value={quickText}
+                                        onChangeText={setQuickText}
+                                        onSubmitEditing={applyQuickSchedule}
+                                        placeholder="예) 금요일 오후 7시 강남역에서 저녁"
+                                        placeholderTextColor={colors.textDisabled}
+                                        returnKeyType="done"
+                                        style={[
+                                            styles.quickInput,
+                                            {
+                                                borderColor: colors.border,
+                                                backgroundColor: colors.surface,
+                                                color: colors.textPrimary,
+                                            },
+                                        ]}
+                                    />
+                                    <Pressable
+                                        disabled={!quickText.trim() || quickParsing}
+                                        onPress={applyQuickSchedule}
+                                        style={({ pressed }) => [
+                                            styles.quickApplyButton,
+                                            {
+                                                backgroundColor: colors.selectedDayBg,
+                                                opacity: !quickText.trim() || quickParsing ? 0.4 : pressed ? 0.75 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        {quickParsing ? (
+                                            <ActivityIndicator size="small" color={colors.selectedDayText} />
+                                        ) : (
+                                            <Text style={[styles.quickApplyText, { color: colors.selectedDayText }]}>
+                                                적용
+                                            </Text>
+                                        )}
+                                    </Pressable>
+                                </View>
+                            )}
                         </View>
 
                         <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
@@ -495,21 +710,58 @@ export default function ScheduleNewModal({
                             onChange={setSelectedCategoryId}
                         />
 
+                        <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
+                        <TextInput
+                            value={notes}
+                            onChangeText={setNotes}
+                            multiline
+                            placeholder="추가로 기억할 내용을 입력하세요"
+                            placeholderTextColor={colors.textDisabled}
+                            style={[
+                                styles.input,
+                                styles.notesInput,
+                                { borderColor: colors.border, backgroundColor: colors.surface2, color: colors.textPrimary },
+                            ]}
+                        />
+
+                        <NotificationSettingsCard
+                            routeReady={
+                                typeof originLat === "number" &&
+                                typeof originLng === "number" &&
+                                typeof destinationLat === "number" &&
+                                typeof destinationLng === "number"
+                            }
+                            enabled={notificationEnabled}
+                            leadMinutes={notificationLeadMinutes}
+                            intervalMinutes={notificationIntervalMinutes}
+                            policy={subscriptionPolicy}
+                            onEnabledChange={setNotificationEnabled}
+                            onLeadMinutesChange={setNotificationLeadMinutes}
+                            onIntervalMinutesChange={setNotificationIntervalMinutes}
+                        />
+
                         <Pressable
+                            disabled={submitting}
                             onPress={submit}
-                            style={[styles.saveBtn, { backgroundColor: colors.selectedDayBg }]}
+                            style={[styles.saveBtn, { backgroundColor: colors.selectedDayBg, opacity: submitting ? 0.6 : 1 }]}
                         >
-                            <Text style={[styles.saveBtnText, { color: colors.selectedDayText }]}>저장</Text>
+                            <Text style={[styles.saveBtnText, { color: colors.selectedDayText }]}>
+                                {submitting ? "저장 중" : "저장"}
+                            </Text>
                         </Pressable>
-                    </ScrollView>
-                </Animated.View>
-            </View>
-        </Modal>
+                </ScrollView>
+            </Animated.View>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    wrapper:  { flex: 1, justifyContent: "flex-end" },
+    wrapper:  {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: "flex-end",
+        zIndex: 20,
+        elevation: 20,
+    },
     dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
     sheet: {
         maxHeight: "90%",
@@ -526,10 +778,59 @@ const styles = StyleSheet.create({
     headerTitle:  { fontSize: 18, fontWeight: "700" },
     closeBtn:     { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
     closeBtnText: { fontWeight: "600", fontSize: 13 },
+    quickSection: {
+        borderWidth: 1,
+        borderRadius: 14,
+        overflow: "hidden",
+        marginBottom: 18,
+    },
+    quickHeader: {
+        minHeight: 50,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    quickHeaderTitle: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    quickTitle: {
+        fontSize: 14,
+        fontWeight: "800",
+    },
+    quickBody: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        padding: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    quickInput: {
+        flex: 1,
+        height: 44,
+        borderWidth: 1,
+        borderRadius: 11,
+        paddingHorizontal: 12,
+        fontSize: 14,
+    },
+    quickApplyButton: {
+        width: 58,
+        height: 44,
+        borderRadius: 11,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    quickApplyText: {
+        fontSize: 13,
+        fontWeight: "800",
+    },
     label:        { marginBottom: 6, fontSize: 13 },
     input: {
         borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 14,
     },
+    notesInput: { minHeight: 84, textAlignVertical: "top" },
     twoColRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
     col:       { flex: 1 },
     fieldBase: {
