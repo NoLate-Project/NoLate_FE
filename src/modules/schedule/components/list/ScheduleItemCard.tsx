@@ -1,5 +1,6 @@
 import React from "react";
 import { Pressable, Text, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatHHmm } from "../../../../../lib/util/data";
@@ -24,7 +25,7 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
             onPress={onPress}
             style={({ pressed }) => ({
                 backgroundColor: pressed ? colors.surface2 : colors.surface,
-                borderRadius: 14,
+                borderRadius: 18,
                 overflow: "hidden",
                 flexDirection: "row",
             })}
@@ -33,12 +34,12 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
                 style={{
                     width: 4,
                     backgroundColor: categoryColor,
-                    borderTopLeftRadius: 14,
-                    borderBottomLeftRadius: 14,
+                    borderTopLeftRadius: 18,
+                    borderBottomLeftRadius: 18,
                 }}
             />
 
-            <View style={{ flex: 1, padding: 14 }}>
+            <View style={{ flex: 1, paddingVertical: 15, paddingHorizontal: 14 }}>
                 <View
                     style={{
                         flexDirection: "row",
@@ -49,8 +50,8 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
                     <Text
                         numberOfLines={1}
                         style={{
-                            fontSize: 15,
-                            fontWeight: "600",
+                            fontSize: 16,
+                            fontWeight: "700",
                             color: colors.textPrimary,
                             flex: 1,
                             marginRight: 8,
@@ -80,16 +81,21 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
                 </View>
 
                 <Text style={{ marginTop: 5, color: colors.textSecondary, fontSize: 13 }}>
-                    {formatHHmm(item.startAt)} – {formatHHmm(item.endAt)}
+                    {item.hasEndTime === false
+                        ? formatHHmm(item.startAt)
+                        : `${formatHHmm(item.startAt)} – ${formatHHmm(item.endAt)}`}
                 </Text>
 
                 {routeText ? (
-                    <Text
-                        style={{ marginTop: 3, color: colors.textSecondary, fontSize: 12, opacity: 0.7 }}
-                        numberOfLines={1}
-                    >
-                        📍 {routeText}
-                    </Text>
+                    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, gap: 4 }}>
+                        <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
+                        <Text
+                            style={{ flex: 1, color: colors.textSecondary, fontSize: 12, opacity: 0.8 }}
+                            numberOfLines={1}
+                        >
+                            {routeText}
+                        </Text>
+                    </View>
                 ) : null}
 
                 {!!item.travelMode && (

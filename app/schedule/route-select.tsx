@@ -687,6 +687,8 @@ export default function RouteSelectScreen() {
             </View>
 
             <ScrollView
+                directionalLockEnabled
+                nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom + 24, 36) }]}
@@ -864,13 +866,13 @@ export default function RouteSelectScreen() {
                         const stepRailBg = isDark ? "#303236" : "#E5E7EB";
                         const walkBadgeBg = isDark ? "#26282D" : "#F8FAFC";
                         const walkBadgeText = isDark ? "#D1D5DB" : "#4B5563";
+                        const openRouteDetail = () => {
+                            setSelectedRouteId(option.id);
+                            openMapForOption(option);
+                        };
                         return (
-                            <Pressable
+                            <View
                                 key={option.id}
-                                onPress={() => {
-                                    setSelectedRouteId(option.id);
-                                    openMapForOption(option);
-                                }}
                                 style={[
                                     styles.routeOptionCard,
                                     {
@@ -882,30 +884,43 @@ export default function RouteSelectScreen() {
                                         : styles.routeOptionCardInactive,
                                 ]}
                             >
-                                <View style={styles.routeOptionHeader}>
-                                    <View style={styles.routeOptionTopRow}>
-                                        <Text style={[styles.routeOptionLabel, { color: colors.textSecondary }]}>
-                                            {absoluteIndex <= 0 ? "최적" : `대안 경로 ${absoluteIndex + 1}`}
-                                        </Text>
-                                        <Text numberOfLines={1} style={[styles.routeOptionDuration, { color: colors.textPrimary }]}>
-                                            {formatDuration(option.minutes)}
-                                        </Text>
+                                <Pressable onPress={openRouteDetail}>
+                                    <View style={styles.routeOptionHeader}>
+                                        <View style={styles.routeOptionTopRow}>
+                                            <Text style={[styles.routeOptionLabel, { color: colors.textSecondary }]}>
+                                                {absoluteIndex <= 0 ? "최적" : `대안 경로 ${absoluteIndex + 1}`}
+                                            </Text>
+                                            <Text numberOfLines={1} style={[styles.routeOptionDuration, { color: colors.textPrimary }]}>
+                                                {formatDuration(option.minutes)}
+                                            </Text>
+                                        </View>
+                                        {!!routeTimeFare && (
+                                            <Text numberOfLines={1} style={[styles.routeOptionTimeFare, { color: colors.textSecondary }]}>
+                                                {routeTimeFare}
+                                            </Text>
+                                        )}
+                                        {!!routeConditionLine && (
+                                            <Text numberOfLines={1} style={[styles.routeOptionCondition, { color: colors.textSecondary }]}>
+                                                {routeConditionLine}
+                                            </Text>
+                                        )}
                                     </View>
-                                    {!!routeTimeFare && (
-                                        <Text numberOfLines={1} style={[styles.routeOptionTimeFare, { color: colors.textSecondary }]}>
-                                            {routeTimeFare}
-                                        </Text>
-                                    )}
-                                    {!!routeConditionLine && (
-                                        <Text numberOfLines={1} style={[styles.routeOptionCondition, { color: colors.textSecondary }]}>
-                                            {routeConditionLine}
-                                        </Text>
-                                    )}
-                                </View>
+                                </Pressable>
 
                                 {progressSegments.length > 0 && (
                                     <View style={styles.routeProgressBlock}>
-                                        <View style={[styles.routeProgressTrack, isDark ? styles.routeProgressTrackDark : styles.routeProgressTrackLight]}>
+                                        <ScrollView
+                                            horizontal
+                                            directionalLockEnabled
+                                            nestedScrollEnabled
+                                            scrollEnabled={progressSegments.length > 1}
+                                            showsHorizontalScrollIndicator={false}
+                                            style={styles.routeProgressScroll}
+                                            contentContainerStyle={[
+                                                styles.routeProgressTrack,
+                                                isDark ? styles.routeProgressTrackDark : styles.routeProgressTrackLight,
+                                            ]}
+                                        >
                                             {progressSegments.map((segment) => {
                                                 const segmentBg = segment.kind === "WALK" ? progressTrackBg : segment.color;
                                                 const segmentBadge = segment.kind === "WALK" ? "도" : segment.kind === "BUS" ? "버" : "지";
@@ -916,7 +931,7 @@ export default function RouteSelectScreen() {
                                                             styles.routeProgressSegment,
                                                             {
                                                                 backgroundColor: segmentBg,
-                                                                flex: Math.max(2, segment.minutes),
+                                                                width: Math.min(240, Math.max(47, segment.minutes * 7)),
                                                             },
                                                         ]}
                                                     >
@@ -935,75 +950,77 @@ export default function RouteSelectScreen() {
                                                     </View>
                                                 );
                                             })}
-                                        </View>
-	                                    </View>
-	                                )}
+                                        </ScrollView>
+                                    </View>
+                                )}
 
-                                {lineHighlights.length > 0 && (
-                                    <View style={[styles.routeHighlightList, { borderTopColor: isDark ? "#303236" : "#E5E7EB" }]}>
-                                        {lineHighlights.map((highlight, highlightIndex) => (
-                                            <View key={highlight.key} style={styles.routeHighlightRow}>
-                                                <View style={styles.routeHighlightRail}>
-                                                    <View
-                                                        style={[
-                                                            styles.routeHighlightDot,
-                                                            {
-                                                                backgroundColor: highlight.badgeTone === "walk" ? cardBackground : highlight.color,
-                                                                borderColor: highlight.color,
-                                                            },
-                                                        ]}
-                                                    />
-                                                    {highlightIndex < lineHighlights.length - 1 && (
+                                <Pressable onPress={openRouteDetail} style={styles.routeOptionDetailTapArea}>
+                                    {lineHighlights.length > 0 && (
+                                        <View style={[styles.routeHighlightList, { borderTopColor: isDark ? "#303236" : "#E5E7EB" }]}>
+                                            {lineHighlights.map((highlight, highlightIndex) => (
+                                                <View key={highlight.key} style={styles.routeHighlightRow}>
+                                                    <View style={styles.routeHighlightRail}>
                                                         <View
                                                             style={[
-                                                                styles.routeHighlightRailLine,
+                                                                styles.routeHighlightDot,
                                                                 {
-                                                                    backgroundColor: highlight.badgeTone === "walk" ? stepRailBg : highlight.color,
+                                                                    backgroundColor: highlight.badgeTone === "walk" ? cardBackground : highlight.color,
+                                                                    borderColor: highlight.color,
                                                                 },
                                                             ]}
                                                         />
-                                                    )}
-                                                </View>
-                                                <View style={styles.routeHighlightTextWrap}>
-                                                    <View style={styles.routeHighlightTitleRow}>
-                                                        <View
-                                                            style={[
-                                                                styles.routeHighlightBadge,
-                                                                {
-                                                                    backgroundColor: highlight.badgeTone === "walk" ? walkBadgeBg : highlight.color,
-                                                                    borderColor: highlight.badgeTone === "walk" ? stepRailBg : highlight.color,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            <Text
-                                                                numberOfLines={1}
+                                                        {highlightIndex < lineHighlights.length - 1 && (
+                                                            <View
                                                                 style={[
-                                                                    styles.routeHighlightBadgeText,
-                                                                    { color: highlight.badgeTone === "walk" ? walkBadgeText : "#FFFFFF" },
+                                                                    styles.routeHighlightRailLine,
+                                                                    {
+                                                                        backgroundColor: highlight.badgeTone === "walk" ? stepRailBg : highlight.color,
+                                                                    },
+                                                                ]}
+                                                            />
+                                                        )}
+                                                    </View>
+                                                    <View style={styles.routeHighlightTextWrap}>
+                                                        <View style={styles.routeHighlightTitleRow}>
+                                                            <View
+                                                                style={[
+                                                                    styles.routeHighlightBadge,
+                                                                    {
+                                                                        backgroundColor: highlight.badgeTone === "walk" ? walkBadgeBg : highlight.color,
+                                                                        borderColor: highlight.badgeTone === "walk" ? stepRailBg : highlight.color,
+                                                                    },
                                                                 ]}
                                                             >
-                                                                {compactCardBadgeLabel(highlight.label)}
+                                                                <Text
+                                                                    numberOfLines={1}
+                                                                    style={[
+                                                                        styles.routeHighlightBadgeText,
+                                                                        { color: highlight.badgeTone === "walk" ? walkBadgeText : "#FFFFFF" },
+                                                                    ]}
+                                                                >
+                                                                    {compactCardBadgeLabel(highlight.label)}
+                                                                </Text>
+                                                            </View>
+                                                            <Text numberOfLines={2} style={[styles.routeHighlightTitle, { color: colors.textPrimary }]}>
+                                                                {highlight.title}
                                                             </Text>
                                                         </View>
-                                                        <Text numberOfLines={2} style={[styles.routeHighlightTitle, { color: colors.textPrimary }]}>
-                                                            {highlight.title}
+                                                        <Text numberOfLines={1} style={[styles.routeHighlightDetail, { color: colors.textSecondary }]}>
+                                                            {highlight.detail}
                                                         </Text>
                                                     </View>
-                                                    <Text numberOfLines={1} style={[styles.routeHighlightDetail, { color: colors.textSecondary }]}>
-                                                        {highlight.detail}
-                                                    </Text>
                                                 </View>
-                                            </View>
-                                        ))}
+                                            ))}
+                                        </View>
+                                    )}
+                                    <View style={styles.routeOptionFooterRow}>
+                                        <Text style={[styles.routeOptionFooterText, { color: colors.textPrimary }]}>
+                                            탭해서 상세 경로 보기
+                                        </Text>
+                                        <Text style={[styles.routeOptionFooterIcon, { color: colors.textPrimary }]}>›</Text>
                                     </View>
-                                )}
-                                <View style={styles.routeOptionFooterRow}>
-                                    <Text style={[styles.routeOptionFooterText, { color: colors.textPrimary }]}>
-                                        탭해서 상세 경로 보기
-                                    </Text>
-                                    <Text style={[styles.routeOptionFooterIcon, { color: colors.textPrimary }]}>›</Text>
-                                </View>
-                            </Pressable>
+                                </Pressable>
+                            </View>
                         );
                     })}
                 </View>
@@ -1287,8 +1304,15 @@ const styles = StyleSheet.create({
         letterSpacing: -0.2,
     },
     routeProgressBlock: {
+        width: "100%",
+        flexShrink: 1,
         paddingTop: 6,
         paddingBottom: 3,
+        overflow: "hidden",
+    },
+    routeProgressScroll: {
+        width: "100%",
+        flexGrow: 0,
     },
     routeProgressTrack: {
         minHeight: 28,
@@ -1297,7 +1321,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 5,
         backgroundColor: "transparent",
-        overflow: "visible",
+        paddingRight: 2,
     },
     routeProgressTrackLight: {
         backgroundColor: "transparent",
@@ -1410,6 +1434,9 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "800",
         lineHeight: 18,
+    },
+    routeOptionDetailTapArea: {
+        gap: 15,
     },
     routeOptionFooterRow: {
         flexDirection: "row",

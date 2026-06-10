@@ -2009,6 +2009,9 @@ export default function RoutePlannerScreen() {
         return Math.max(320, bottomPanelHeight + insets.bottom + 32);
     }, [bottomPanelHeight, hasBottomSheetMeasured, insets.bottom]);
     const bottomSheetDragMaxOffset = bottomSheetCollapsedOffset;
+    const canScrollBottomSheetContent =
+        bottomSheetSnap === "expanded" ||
+        (isTransitDetailMode && bottomSheetSnap === "middle");
 
     const transitFilterCounts = useMemo(() => {
         const counts = { ALL: routeAlternatives.length, BUS: 0, SUBWAY: 0, MIXED: 0 } as Record<TransitRouteFilter, number>;
@@ -3683,6 +3686,34 @@ export default function RoutePlannerScreen() {
         }, 500);
     };
 
+    const buildPersistableSelectedRoute = useCallback(() => {
+        if (!selectedAlternative) return undefined;
+
+        const storedPathOverlays = mapPathOverlays.flatMap((overlay) => {
+            if (!Array.isArray(overlay.coords) || overlay.coords.length < 2) return [];
+            return [{
+                id: overlay.id,
+                coords: overlay.coords.map((coord) => ({ lat: coord.latitude, lng: coord.longitude })),
+                color: overlay.color,
+                width: overlay.width,
+                outlineColor: overlay.outlineColor,
+                outlineWidth: overlay.outlineWidth,
+            }];
+        });
+        const overlayPathCoords = storedPathOverlays.find((overlay) => overlay.coords.length >= 2)?.coords;
+        const selectedPathCoords = Array.isArray(selectedAlternative.pathCoords) && selectedAlternative.pathCoords.length >= 2
+            ? selectedAlternative.pathCoords
+            : Array.isArray(routePathCoords) && routePathCoords.length >= 2
+                ? routePathCoords
+                : overlayPathCoords;
+
+        return {
+            ...selectedAlternative,
+            pathCoords: selectedPathCoords,
+            storedPathOverlays,
+        };
+    }, [mapPathOverlays, routePathCoords, selectedAlternative]);
+
     const persistCurrentRoutePlannerInitial = useCallback((targetSessionId = sessionId) => {
         if (!targetSessionId) return;
 
@@ -3715,8 +3746,10 @@ export default function RoutePlannerScreen() {
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name || nextOrigin?.name,
+            route: buildPersistableSelectedRoute(),
         });
     }, [
+        buildPersistableSelectedRoute,
         destinationAddress,
         destinationLat,
         destinationLng,
@@ -3784,6 +3817,7 @@ export default function RoutePlannerScreen() {
             travelMode,
             travelMinutes: etaMinutes,
             locationName: `${nextOrigin.name} → ${nextDestination.name}`,
+            route: buildPersistableSelectedRoute(),
         });
         closePlanner();
     };
@@ -3811,67 +3845,63 @@ export default function RoutePlannerScreen() {
         );
         const leg = legs[legIndex];
         const legCoords = getTransitLegMapCoords(selectedAlternative.id, legs, legIndex, walkOverlayById);
-        const midCoord = getTransitLegMidCoord(leg);
-        const focusCoords = legCoords.length > 0
-            ? legCoords
-            : (midCoord ? [{ latitude: midCoord.lat, longitude: midCoord.lng }] : []);
-        if (!focusCoords.length) return;
+        const displayedStart = legCoords[0];
+        const rawStart = getTransitLegStartCoord(leg);
+        const startCoord = displayedStart
+            ? { lat: displayedStart.latitude, lng: displayedStart.longitude }
+            : rawStart;
+        if (!startCoord) return;
 
-        let minLat = Number.POSITIVE_INFINITY;
-        let maxLat = Number.NEGATIVE_INFINITY;
-        let minLng = Number.POSITIVE_INFINITY;
-        let maxLng = Number.NEGATIVE_INFINITY;
-        focusCoords.forEach((point) => {
-            minLat = Math.min(minLat, point.latitude);
-            maxLat = Math.max(maxLat, point.latitude);
-            minLng = Math.min(minLng, point.longitude);
-            maxLng = Math.max(maxLng, point.longitude);
-        });
-
-        const centerLat = (minLat + maxLat) / 2;
-        const centerLng = (minLng + maxLng) / 2;
-        const shiftedCenter = offsetCoordByMeters(
-            { lat: centerLat, lng: centerLng },
-            isBottomSheetCollapsed ? -44 : -86,
+        const focusZoom = 18;
+        const activeSheetOffset = bottomSheetSnap === "expanded"
+            ? bottomSheetExpandedOffset
+            : bottomSheetSnap === "middle"
+                ? bottomSheetMiddleOffset
+                : bottomSheetCollapsedOffset;
+        const visibleSheetTopY = !isBottomSheetHidden && bottomPanelHeight > 0
+            ? Math.max(0, windowHeight - bottomPanelHeight + activeSheetOffset)
+            : windowHeight;
+        const visibleMapTopY = Math.max(insets.top + 104, 126);
+        const visibleMapBottomY = Math.max(visibleMapTopY + 80, visibleSheetTopY);
+        const visibleMapCenterY = (visibleMapTopY + visibleMapBottomY) / 2;
+        const verticalPixelShift = Math.max(0, (windowHeight / 2) - visibleMapCenterY);
+        const metersPerPixel = (
+            156_543.03392 *
+            Math.cos((startCoord.lat * Math.PI) / 180)
+        ) / (2 ** focusZoom);
+        const cameraCenter = offsetCoordByMeters(
+            startCoord,
+            -(verticalPixelShift * metersPerPixel),
             0
         );
-        const diagonalMeters = haversineDistanceKm(
-            { latitude: minLat, longitude: minLng },
-            { latitude: maxLat, longitude: maxLng }
-        ) * 1000;
 
-        if (focusCoords.length < 2 || diagonalMeters < 150) {
-            mapRef.current?.animateCameraTo({
-                latitude: shiftedCenter.lat,
-                longitude: shiftedCenter.lng,
-                zoom: Math.min(18, Math.max(mapZoom, leg.kind === "WALK" ? 17 : 16.4)),
-                duration: 650,
-                easing: "Fly",
-            });
-            return;
-        }
-
-        const lngMetersPerDegree = Math.max(1, 111_320 * Math.cos((centerLat * Math.PI) / 180));
-        const minSpanMeters = leg.kind === "WALK" ? 260 : 420;
-        const latitudeDelta = Math.max(
-            (maxLat - minLat) * 1.55,
-            minSpanMeters / 111_320
-        );
-        const longitudeDelta = Math.max(
-            (maxLng - minLng) * 1.55,
-            minSpanMeters / lngMetersPerDegree
-        );
-
-        mapRef.current?.animateRegionTo({
-            latitude: shiftedCenter.lat - (latitudeDelta / 2),
-            longitude: shiftedCenter.lng - (longitudeDelta / 2),
-            latitudeDelta,
-            longitudeDelta,
-            duration: 720,
+        lastCameraActionKeyRef.current = [
+            "focus-leg-start",
+            selectedAlternative.id,
+            legIndex,
+            startCoord.lat.toFixed(6),
+            startCoord.lng.toFixed(6),
+            bottomSheetSnap,
+        ].join(":");
+        mapRef.current?.animateCameraTo({
+            latitude: cameraCenter.lat,
+            longitude: cameraCenter.lng,
+            zoom: focusZoom,
+            duration: 680,
             easing: "Fly",
-            pivot: { x: 0.5, y: isBottomSheetCollapsed ? 0.42 : 0.32 },
         });
-    }, [isBottomSheetCollapsed, mapZoom, selectedAlternative, transitWalkDetailOverlays]);
+    }, [
+        bottomPanelHeight,
+        bottomSheetCollapsedOffset,
+        bottomSheetExpandedOffset,
+        bottomSheetMiddleOffset,
+        bottomSheetSnap,
+        insets.top,
+        isBottomSheetHidden,
+        selectedAlternative,
+        transitWalkDetailOverlays,
+        windowHeight,
+    ]);
 
     const canEnterRouteDetail = isRouteSelectionStage && hasRouteReady && !!selectedAlternative && !etaLoading;
     const onEnterRouteDetailView = useCallback(() => {
@@ -4558,14 +4588,17 @@ export default function RoutePlannerScreen() {
                         />
                     </View>
                     <ScrollView
+                        style={styles.bottomPanelScroll}
                         contentContainerStyle={[
                             styles.bottomPanelScrollContent,
                             { paddingBottom: Math.max(insets.bottom + (isTransitDetailMode ? 104 : 8), 12) },
                         ]}
                         keyboardShouldPersistTaps="handled"
-                        scrollEnabled={!isBottomSheetCollapsed}
+                        scrollEnabled={canScrollBottomSheetContent}
+                        nestedScrollEnabled
                         bounces={false}
                         alwaysBounceVertical={false}
+                        showsVerticalScrollIndicator={false}
                     >
                         {!hasRouteReady ? (
                             <View style={[styles.routeHintCard, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
@@ -4974,14 +5007,11 @@ export default function RoutePlannerScreen() {
                                 </Text>
                             )}
                         </View>
-                        <Pressable style={[styles.transitDetailPreviewButton, { borderColor: detailBorderColor }]}>
-                            <Text style={[styles.transitDetailPreviewText, { color: transitDetailControlText }]}>버스 미리보기</Text>
-                        </Pressable>
                         <Pressable
                             onPress={submit}
                             style={[styles.transitDetailStartButton, { backgroundColor: transitDetailPrimaryActionBg }]}
                         >
-                            <Text style={[styles.transitDetailStartText, { color: transitDetailPrimaryActionText }]}>안내시작</Text>
+                            <Text style={[styles.transitDetailStartText, { color: transitDetailPrimaryActionText }]}>경로 저장</Text>
                         </Pressable>
                     </View>
                 )}
@@ -5721,6 +5751,10 @@ const styles = StyleSheet.create({
         marginTop: 0,
         marginBottom: 0,
     },
+    bottomPanelScroll: {
+        flexShrink: 1,
+        minHeight: 0,
+    },
     bottomPanelScrollContent: {
         paddingHorizontal: 12,
         gap: 10,
@@ -6203,23 +6237,10 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         lineHeight: 19,
     },
-    transitDetailPreviewButton: {
-        minHeight: 44,
-        borderWidth: 1,
-        borderColor: "#4A4A4D",
-        borderRadius: 999,
-        paddingHorizontal: 15,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    transitDetailPreviewText: {
-        fontSize: 15,
-        fontWeight: "900",
-    },
     transitDetailStartButton: {
         minHeight: 46,
         borderRadius: 999,
-        paddingHorizontal: 18,
+        paddingHorizontal: 24,
         alignItems: "center",
         justifyContent: "center",
     },

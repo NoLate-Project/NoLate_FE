@@ -335,6 +335,27 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         return new Tmapv2.LatLng(point.latitude, point.longitude);
       }
 
+      function normalizeStrokeColor(value, fallback) {
+        var raw = String(value || fallback || "#1D72FF").trim();
+        if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
+        if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+          return "#" + raw.charAt(1) + raw.charAt(1) + raw.charAt(2) + raw.charAt(2) + raw.charAt(3) + raw.charAt(3);
+        }
+
+        var rgbMatch = raw.match(/^rgba?\\(([^)]+)\\)$/);
+        if (rgbMatch) {
+          var parts = rgbMatch[1].split(",").map(function (part) { return Number(String(part).trim()); });
+          if (parts.length >= 3 && isFinite(parts[0]) && isFinite(parts[1]) && isFinite(parts[2])) {
+            return "#" + [parts[0], parts[1], parts[2]].map(function (part) {
+              var clamped = Math.max(0, Math.min(255, Math.round(part)));
+              return clamped.toString(16).padStart(2, "0");
+            }).join("");
+          }
+        }
+
+        return fallback || "#1D72FF";
+      }
+
       function escapeXml(value) {
         return String(value || "")
           .replace(/&/g, "&amp;")
@@ -950,13 +971,15 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         if (!Array.isArray(pathCoords) || pathCoords.length < 2) return;
 
         var path = pathCoords.map(function (point) { return toLatLng(point); });
+        var strokeColor = normalizeStrokeColor(color, "#1D72FF");
+        var strokeOutlineColor = normalizeStrokeColor(outlineColor, "#FFFFFF");
         var outlineLayer = null;
         var lineLayer = null;
 
         if (outlineWidth > 0) {
           outlineLayer = new Tmapv2.Polyline({
             path: path,
-            strokeColor: outlineColor,
+            strokeColor: strokeOutlineColor,
             strokeWeight: width + (outlineWidth * 2),
             lineCap: "round",
             lineJoin: "round",
@@ -966,7 +989,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 
         lineLayer = new Tmapv2.Polyline({
           path: path,
-          strokeColor: color,
+          strokeColor: strokeColor,
           strokeWeight: width,
           lineCap: "round",
           lineJoin: "round",
