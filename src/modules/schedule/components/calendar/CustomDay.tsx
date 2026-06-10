@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { useTheme } from "../../../theme/ThemeContext";
-import type { CalendarViewMode } from "./viewMode";
+import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
 
 type Period = {
     startingDay?: boolean;
@@ -52,7 +52,7 @@ function colorWithOpacity(color: string, opacity: number) {
 // 캘린더의 하루 셀을 선택 상태와 일정 마커에 맞춰 렌더링한다.
 export default function CustomDay({ date, state, marking, isSelectedDay, onPress, viewMode }: Props) {
     const { colors, mode } = useTheme();
-    const cellHeight = viewMode === "list" ? 58 : 78;
+    const cellHeight = CALENDAR_DAY_HEIGHTS[viewMode];
 
     if (!date) {
         return <View style={[styles.cell, { height: cellHeight }]} />;
@@ -66,6 +66,7 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
     const events = marking?.events ?? [];
     const showDots = viewMode === "compact" || viewMode === "list";
+    const markerTop = viewMode === "list" ? 43 : 46;
 
     return (
         <Pressable
@@ -89,14 +90,15 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
                     style={[
                         styles.dayText,
                         {
-                        fontWeight: isToday || isSelected ? "700" : "400",
+                        fontWeight: isToday || isSelected ? "800" : "700",
                         color: isSelected
                             ? colors.selectedDayText
                             : isDisabled
-                            ? colors.textDisabled
+                            ? colors.textPrimary
                             : isToday
                             ? mode === "dark" ? "#ff453a" : "#ff3b30"
                             : colors.textPrimary,
+                        opacity: isDisabled ? 0.28 : 1,
                         },
                     ]}
                 >
@@ -105,7 +107,7 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
             </View>
 
             {viewMode === "stack" && events.length > 0 && (
-                <View style={styles.stackEvents}>
+                <View style={[styles.stackEvents, { top: markerTop }]}>
                     {events.slice(0, 3).map((event) => (
                         <View
                             key={event.id}
@@ -183,7 +185,7 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
 
             {showDots && hasDots && (
                 <View
-                    style={styles.dots}
+                    style={[styles.dots, { top: markerTop + 3 }]}
                 >
                     {marking!.dots!.slice(0, 3).map((dot, index) => (
                         <View
@@ -210,42 +212,40 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     dayCircle: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         alignItems: "center",
         justifyContent: "center",
     },
     dayText: {
-        fontSize: 16,
-        letterSpacing: -0.2,
+        fontSize: 16.5,
+        letterSpacing: -0.3,
     },
     periods: {
         alignSelf: "stretch",
-        marginTop: 2,
+        marginTop: 6,
     },
     dots: {
         position: "absolute",
-        bottom: 3,
         flexDirection: "row",
         justifyContent: "center",
         gap: 3,
     },
     stackEvents: {
         position: "absolute",
-        left: 4,
-        right: 4,
-        bottom: 8,
+        left: 7,
+        right: 7,
         gap: 2,
     },
     stackBar: {
-        height: 4,
-        borderRadius: 2,
+        height: 5,
+        borderRadius: 3,
     },
     detailEvents: {
         alignSelf: "stretch",
         paddingHorizontal: 2,
-        paddingTop: 1,
+        paddingTop: 7,
         gap: 2,
     },
     detailEvent: {

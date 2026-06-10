@@ -8,8 +8,10 @@ import {
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import CalendarGlassSurface from "./CalendarGlassSurface";
 
 type Props = {
     visible: boolean;
@@ -24,79 +26,84 @@ export default function CalendarSettingsModal({
     onChangeFirstDay,
     onClose,
 }: Props) {
+    const insets = useSafeAreaInsets();
     const { colors, mode, toggleMode } = useTheme();
 
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <Pressable style={styles.backdrop} onPress={onClose}>
                 <Pressable
-                    style={[
-                        styles.panel,
-                        {
-                            backgroundColor: colors.surface,
-                            borderColor: colors.border,
-                        },
-                    ]}
+                    style={styles.panelHitArea}
                     onPress={() => undefined}
                 >
-                    <View style={styles.titleRow}>
-                        <Text style={[styles.title, { color: colors.textPrimary }]}>캘린더 설정</Text>
-                        <Pressable onPress={onClose} style={styles.closeButton}>
-                            <Ionicons name="close" size={22} color={colors.textSecondary} />
-                        </Pressable>
-                    </View>
+                    <CalendarGlassSurface
+                        style={[
+                            styles.panel,
+                            {
+                                borderColor: colors.border,
+                                paddingBottom: Math.max(insets.bottom, 14) + 20,
+                            },
+                        ]}
+                    >
+                        <View style={styles.titleRow}>
+                            <Text style={[styles.title, { color: colors.textPrimary }]}>캘린더 설정</Text>
+                            <Pressable onPress={onClose} style={styles.closeButton}>
+                                <Ionicons name="close" size={22} color={colors.textSecondary} />
+                            </Pressable>
+                        </View>
 
-                    <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                        한 주의 시작
-                    </Text>
-                    <View style={[styles.segment, { backgroundColor: colors.surface2 }]}>
-                        {([
-                            { value: 0 as const, label: "일요일" },
-                            { value: 1 as const, label: "월요일" },
-                        ]).map((option) => {
-                            const selected = option.value === firstDay;
-                            return (
-                                <Pressable
-                                    key={option.value}
-                                    onPress={() => onChangeFirstDay(option.value)}
-                                    style={[
-                                        styles.segmentButton,
-                                        selected && { backgroundColor: colors.surface },
-                                    ]}
-                                >
-                                    <Text
+                        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
+                            한 주의 시작
+                        </Text>
+                        <View style={[styles.segment, { backgroundColor: colors.surface2 }]}>
+                            {([
+                                { value: 0 as const, label: "일요일" },
+                                { value: 1 as const, label: "월요일" },
+                            ]).map((option) => {
+                                const selected = option.value === firstDay;
+                                return (
+                                    <Pressable
+                                        key={option.value}
+                                        onPress={() => onChangeFirstDay(option.value)}
                                         style={[
-                                            styles.segmentText,
-                                            {
-                                                color: selected
-                                                    ? colors.textPrimary
-                                                    : colors.textSecondary,
-                                            },
+                                            styles.segmentButton,
+                                            selected && { backgroundColor: colors.surface },
                                         ]}
                                     >
-                                        {option.label}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </View>
-
-                    <View style={[styles.settingRow, { borderTopColor: colors.border }]}>
-                        <View>
-                            <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>
-                                다크 모드
-                            </Text>
-                            <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-                                캘린더 화면 테마
-                            </Text>
+                                        <Text
+                                            style={[
+                                                styles.segmentText,
+                                                {
+                                                    color: selected
+                                                        ? colors.textPrimary
+                                                        : colors.textSecondary,
+                                                },
+                                            ]}
+                                        >
+                                            {option.label}
+                                        </Text>
+                                    </Pressable>
+                                );
+                            })}
                         </View>
-                        <Switch
-                            value={mode === "dark"}
-                            onValueChange={toggleMode}
-                            trackColor={{ false: colors.border, true: "#34c759" }}
-                            thumbColor="#ffffff"
-                        />
-                    </View>
+
+                        <View style={[styles.settingRow, { borderTopColor: colors.border }]}>
+                            <View>
+                                <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>
+                                    다크 모드
+                                </Text>
+                                <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
+                                    캘린더 화면 테마
+                                </Text>
+                            </View>
+                            <Switch
+                                value={mode === "dark"}
+                                onValueChange={toggleMode}
+                                trackColor={{ false: colors.border, true: "#34c759" }}
+                                thumbColor="#ffffff"
+                            />
+                        </View>
+                    </CalendarGlassSurface>
                 </Pressable>
             </Pressable>
         </Modal>
@@ -109,13 +116,17 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(0,0,0,0.34)",
         justifyContent: "flex-end",
     },
+    panelHitArea: {
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        overflow: "hidden",
+    },
     panel: {
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         borderWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: 20,
         paddingTop: 18,
-        paddingBottom: 38,
     },
     titleRow: {
         flexDirection: "row",

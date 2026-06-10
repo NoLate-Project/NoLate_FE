@@ -1,6 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { View, Pressable, Text, StatusBar, Alert, StyleSheet } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+    Alert,
+    Animated,
+    Easing,
+    Pressable,
+    StatusBar,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CalendarWrapper from "../../src/modules/schedule/components/calendar/CalendarWrapper";
@@ -8,6 +18,7 @@ import CalendarSearchModal from "../../src/modules/schedule/components/calendar/
 import CalendarSettingsModal from "../../src/modules/schedule/components/calendar/CalendarSettingsModal";
 import CalendarViewModeMenu from "../../src/modules/schedule/components/calendar/CalendarViewModeMenu";
 import CalendarYearOverviewModal from "../../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
+import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import {
     CALENDAR_VIEW_OPTIONS,
     type CalendarViewMode,
@@ -17,7 +28,7 @@ import ScheduleNewModal from "../../src/modules/schedule/components/form/Schedul
 
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
-import { isOverlappingDay } from "../../lib/util/data";
+import { isOverlappingDay, toYmd } from "../../lib/util/data";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { createSchedule, getSchedules, parseScheduleText } from "../../src/api/schedule";
 
@@ -25,17 +36,21 @@ const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
 
 export default function ScheduleIndex() {
+    const router = useRouter();
     const insets = useSafeAreaInsets();
     const { mode, colors } = useTheme();
     const { state, dispatch } = useScheduleStore();
     const [modalVisible, setModalVisible] = useState(false);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
-    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("list");
+    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("stack");
     const [viewMenuVisible, setViewMenuVisible] = useState(false);
     const [yearOverviewVisible, setYearOverviewVisible] = useState(false);
     const [settingsVisible, setSettingsVisible] = useState(false);
     const [searchVisible, setSearchVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
+    const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
+    const calendarTransition = useRef(new Animated.Value(1)).current;
+    const viewTransitioningRef = useRef(false);
 
     const selectedDay = state.selectedDay;
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
@@ -46,6 +61,14 @@ export default function ScheduleIndex() {
     const calendarViewIcon = CALENDAR_VIEW_OPTIONS.find(
         (option) => option.value === calendarViewMode
     )?.icon ?? "list-outline";
+    const calendarContentTranslateY = calendarTransition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [8, 0],
+    });
+    const calendarIconScale = calendarTransition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.82, 1],
+    });
 
     const loadSchedules = useCallback(async () => {
         dispatch({ type: "SET_LOADING", loading: true });
@@ -118,6 +141,60 @@ export default function ScheduleIndex() {
         setVisibleMonth(month);
     }, []);
 
+    const handleSelectDay = useCallback((day: string) => {
+        dispatch({ type: "SET_SELECTED_DAY", day });
+    }, [dispatch]);
+
+    const handleOpenDay = useCallback((day: string) => {
+        dispatch({ type: "SET_SELECTED_DAY", day });
+
+        const hasSchedule = itemsArray.some((item) =>
+            isOverlappingDay(item.startAt, item.endAt, day)
+        );
+        if (!hasSchedule) return;
+
+        router.push({
+            pathname: "/schedule/timetable",
+            params: { date: day },
+        });
+    }, [dispatch, itemsArray, router]);
+
+    const handleGoToday = useCallback(() => {
+        const today = toYmd(new Date());
+        dispatch({ type: "SET_SELECTED_DAY", day: today });
+        setVisibleMonth(today);
+        setCalendarScrollRequest((request) => request + 1);
+    }, [dispatch]);
+
+    const handleCalendarViewModeChange = useCallback((nextMode: CalendarViewMode) => {
+        if (nextMode === calendarViewMode || viewTransitioningRef.current) return;
+
+        viewTransitioningRef.current = true;
+        Animated.timing(calendarTransition, {
+            toValue: 0,
+            duration: 110,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+        }).start(({ finished }) => {
+            if (!finished) {
+                viewTransitioningRef.current = false;
+                return;
+            }
+
+            setCalendarViewMode(nextMode);
+            requestAnimationFrame(() => {
+                Animated.timing(calendarTransition, {
+                    toValue: 1,
+                    duration: 220,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }).start(() => {
+                    viewTransitioningRef.current = false;
+                });
+            });
+        });
+    }, [calendarTransition, calendarViewMode]);
+
     const openYearOverview = () => {
         setOverviewYear(visibleYear);
         setYearOverviewVisible(true);
@@ -131,37 +208,35 @@ export default function ScheduleIndex() {
     };
 
     return (
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <View style={[styles.root, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
 
-            <View
-                style={[
-                    { paddingTop: insets.top },
-                    calendarViewMode !== "list" && styles.fullCalendarArea,
-                ]}
-            >
+            <View style={{ paddingTop: insets.top }}>
                 <View style={styles.toolbar}>
-                    <Pressable
-                        onPress={openYearOverview}
-                        accessibilityLabel={`${visibleYear}년 전체 월 보기`}
-                        style={({ pressed }) => [
-                            styles.yearButton,
-                            {
-                                borderColor: colors.border,
-                                backgroundColor: pressed ? colors.surface : colors.surface2,
-                            },
-                        ]}
+                    <CalendarGlassSurface
+                        interactive
+                        style={[styles.yearGlass, { borderColor: colors.border }]}
                     >
-                        <Ionicons name="chevron-back" size={18} color={colors.textPrimary} />
-                        <Text style={[styles.yearText, { color: colors.textPrimary }]}>
-                            {visibleYear}년
-                        </Text>
-                    </Pressable>
+                        <Pressable
+                            onPress={openYearOverview}
+                            accessibilityLabel={`${visibleYear}년 전체 월 보기`}
+                            style={({ pressed }) => [
+                                styles.yearButton,
+                                { opacity: pressed ? 0.58 : 1 },
+                            ]}
+                        >
+                            <Ionicons name="chevron-back" size={19} color={colors.textPrimary} />
+                            <Text style={[styles.yearText, { color: colors.textPrimary }]}>
+                                {visibleYear}년
+                            </Text>
+                        </Pressable>
+                    </CalendarGlassSurface>
 
-                    <View
+                    <CalendarGlassSurface
+                        interactive
                         style={[
                             styles.toolbarActions,
-                            { backgroundColor: colors.surface2, borderColor: colors.border },
+                            { borderColor: colors.border },
                         ]}
                     >
                         <Pressable
@@ -172,7 +247,14 @@ export default function ScheduleIndex() {
                                 { opacity: pressed ? 0.5 : 1 },
                             ]}
                         >
-                            <Ionicons name={calendarViewIcon} size={22} color={colors.textPrimary} />
+                            <Animated.View
+                                style={{
+                                    opacity: calendarTransition,
+                                    transform: [{ scale: calendarIconScale }],
+                                }}
+                            >
+                                <Ionicons name={calendarViewIcon} size={22} color={colors.textPrimary} />
+                            </Animated.View>
                         </Pressable>
 
                         <View style={[styles.toolbarDivider, { backgroundColor: colors.border }]} />
@@ -191,19 +273,6 @@ export default function ScheduleIndex() {
                         <View style={[styles.toolbarDivider, { backgroundColor: colors.border }]} />
 
                         <Pressable
-                            onPress={() => setSettingsVisible(true)}
-                            accessibilityLabel="캘린더 설정"
-                            style={({ pressed }) => [
-                                styles.iconButton,
-                                { opacity: pressed ? 0.5 : 1 },
-                            ]}
-                        >
-                            <Ionicons name="settings-outline" size={20} color={colors.textPrimary} />
-                        </Pressable>
-
-                        <View style={[styles.toolbarDivider, { backgroundColor: colors.border }]} />
-
-                        <Pressable
                             onPress={openBlankSchedule}
                             accessibilityLabel="일정 추가"
                             style={({ pressed }) => [
@@ -213,30 +282,84 @@ export default function ScheduleIndex() {
                         >
                             <Ionicons name="add" size={23} color={colors.textPrimary} />
                         </Pressable>
-                    </View>
+                    </CalendarGlassSurface>
                 </View>
+            </View>
 
+            <Animated.View
+                style={[
+                    styles.calendarContent,
+                    {
+                        opacity: calendarTransition,
+                        transform: [{ translateY: calendarContentTranslateY }],
+                    },
+                ]}
+            >
                 <CalendarWrapper
                     selectedDay={selectedDay}
                     items={itemsArray}
-                    onSelectDay={(day) => dispatch({ type: "SET_SELECTED_DAY", day })}
+                    onSelectDay={handleSelectDay}
+                    onOpenDay={handleOpenDay}
                     viewMode={calendarViewMode}
                     firstDay={firstDay}
+                    scrollRequest={calendarScrollRequest}
                     onVisibleMonthChange={handleVisibleMonthChange}
                 />
-            </View>
 
-            {calendarViewMode === "list" && (
-                <View style={[styles.agenda, { borderTopColor: colors.border }]}>
-                    <ScheduleList
-                        selectedDay={selectedDay}
-                        items={list}
-                        loading={state.loading}
-                        error={state.error}
-                        onPressRetry={loadSchedules}
-                    />
-                </View>
-            )}
+                {calendarViewMode === "list" && (
+                    <View style={[styles.agenda, { borderTopColor: colors.border }]}>
+                        <ScheduleList
+                            selectedDay={selectedDay}
+                            items={list}
+                            loading={state.loading}
+                            error={state.error}
+                            onPressRetry={loadSchedules}
+                        />
+                    </View>
+                )}
+            </Animated.View>
+
+            <View
+                pointerEvents="box-none"
+                style={[
+                    styles.bottomControls,
+                    { bottom: Math.max(insets.bottom, 10) + 8 },
+                ]}
+            >
+                <CalendarGlassSurface
+                    interactive
+                    style={[styles.todayGlass, { borderColor: colors.border }]}
+                >
+                    <Pressable
+                        onPress={handleGoToday}
+                        accessibilityLabel="오늘 날짜로 이동"
+                        style={({ pressed }) => [
+                            styles.todayButton,
+                            { opacity: pressed ? 0.55 : 1 },
+                        ]}
+                    >
+                        <Text style={[styles.todayText, { color: colors.textPrimary }]}>
+                            오늘
+                        </Text>
+                    </Pressable>
+                </CalendarGlassSurface>
+
+                <CalendarGlassSurface
+                    interactive
+                    style={[styles.settingsGlass, { borderColor: colors.border }]}
+                >
+                    <Pressable
+                        onPress={() => setSettingsVisible(true)}
+                        accessibilityLabel="캘린더 설정"
+                        style={({ pressed }) => [
+                            styles.settingsButton,
+                            { opacity: pressed ? 0.5 : 1 },
+                        ]}
+                    >
+                        <Ionicons name="settings-outline" size={23} color={colors.textPrimary} />
+                    </Pressable>
+                </CalendarGlassSurface>
+            </View>
 
             <ScheduleNewModal
                 visible={modalVisible}
@@ -252,7 +375,7 @@ export default function ScheduleIndex() {
                 visible={viewMenuVisible}
                 value={calendarViewMode}
                 onClose={() => setViewMenuVisible(false)}
-                onChange={setCalendarViewMode}
+                onChange={handleCalendarViewModeChange}
             />
 
             <CalendarYearOverviewModal
@@ -282,6 +405,9 @@ export default function ScheduleIndex() {
 }
 
 const styles = StyleSheet.create({
+    root: {
+        flex: 1,
+    },
     toolbar: {
         minHeight: 52,
         flexDirection: "row",
@@ -293,14 +419,19 @@ const styles = StyleSheet.create({
     toolbarActions: {
         flexDirection: "row",
         alignItems: "center",
-        borderRadius: 21,
+        borderRadius: 23,
+        borderWidth: 1,
+        overflow: "hidden",
+    },
+    yearGlass: {
+        minHeight: 42,
+        borderRadius: 22,
         borderWidth: 1,
         overflow: "hidden",
     },
     yearButton: {
-        minHeight: 40,
-        borderRadius: 20,
-        borderWidth: 1,
+        minHeight: 42,
+        borderRadius: 22,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
@@ -310,11 +441,11 @@ const styles = StyleSheet.create({
     },
     yearText: {
         fontWeight: "800",
-        fontSize: 15,
+        fontSize: 16,
     },
     iconButton: {
-        width: 39,
-        height: 40,
+        width: 41,
+        height: 42,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -328,7 +459,47 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingTop: 18,
     },
-    fullCalendarArea: {
+    calendarContent: {
         flex: 1,
+        paddingBottom: 74,
+    },
+    bottomControls: {
+        position: "absolute",
+        left: 18,
+        right: 18,
+        zIndex: 20,
+        elevation: 20,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+    },
+    todayGlass: {
+        minWidth: 74,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: 1,
+        overflow: "hidden",
+    },
+    todayButton: {
+        flex: 1,
+        paddingHorizontal: 18,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    todayText: {
+        fontSize: 15,
+        fontWeight: "800",
+    },
+    settingsGlass: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        borderWidth: 1,
+        overflow: "hidden",
+    },
+    settingsButton: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
     },
 });

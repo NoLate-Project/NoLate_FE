@@ -8,8 +8,10 @@ type Props = {
     selectedDay: string;
     items: ScheduleItem[];
     onSelectDay: (day: string) => void;
+    onOpenDay: (day: string) => void;
     viewMode: CalendarViewMode;
     firstDay: 0 | 1;
+    scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
 };
 
@@ -18,8 +20,10 @@ export default function CalendarWrapper({
     selectedDay,
     items,
     onSelectDay,
+    onOpenDay,
     viewMode,
     firstDay,
+    scrollRequest,
     onVisibleMonthChange,
 }: Props) {
     return (
@@ -28,8 +32,10 @@ export default function CalendarWrapper({
                 selectedDay={selectedDay}
                 items={items}
                 onSelectDay={onSelectDay}
+                onOpenDay={onOpenDay}
                 viewMode={viewMode}
                 firstDay={firstDay}
+                scrollRequest={scrollRequest}
                 onVisibleMonthChange={onVisibleMonthChange}
             />
         </View>

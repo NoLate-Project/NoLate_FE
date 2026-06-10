@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import CalendarGlassSurface from "./CalendarGlassSurface";
 import { CALENDAR_VIEW_OPTIONS, type CalendarViewMode } from "./viewMode";
 
 type Props = {
@@ -14,16 +15,19 @@ type Props = {
 
 export default function CalendarViewModeMenu({ visible, value, onClose, onChange }: Props) {
     const { colors, mode } = useTheme();
-    const panelBackground = mode === "dark" ? "#1c1c1e" : colors.surface;
+    const glassOverlay = mode === "dark"
+        ? styles.darkGlassOverlay
+        : styles.lightGlassOverlay;
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+        <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
             <Pressable style={styles.backdrop} onPress={onClose}>
-                <View
+                <CalendarGlassSurface
+                    clear
                     style={[
                         styles.menu,
+                        glassOverlay,
                         {
-                            backgroundColor: panelBackground,
                             borderColor: colors.border,
                         },
                     ]}
@@ -58,7 +62,7 @@ export default function CalendarViewModeMenu({ visible, value, onClose, onChange
                             </React.Fragment>
                         );
                     })}
-                </View>
+                </CalendarGlassSurface>
             </Pressable>
         </Modal>
     );
@@ -67,7 +71,7 @@ export default function CalendarViewModeMenu({ visible, value, onClose, onChange
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
-        backgroundColor: "rgba(0,0,0,0.18)",
+        backgroundColor: "rgba(0,0,0,0.12)",
     },
     menu: {
         position: "absolute",
@@ -82,6 +86,12 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.28,
         shadowRadius: 24,
         elevation: 20,
+    },
+    darkGlassOverlay: {
+        backgroundColor: "rgba(28, 28, 30, 0.22)",
+    },
+    lightGlassOverlay: {
+        backgroundColor: "rgba(255, 255, 255, 0.18)",
     },
     option: {
         minHeight: 58,

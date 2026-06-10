@@ -59,7 +59,7 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
         setQuery("");
         router.push({
             pathname: "/schedule/[id]",
-            params: { id, mode: "edit" },
+            params: { id },
         });
     };
 

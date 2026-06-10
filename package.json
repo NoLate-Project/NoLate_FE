@@ -22,6 +22,7 @@
     "babel-preset-expo": "~54.0.10",
     "expo": "^54.0.33",
     "expo-doctor": "^1.17.14",
+    "expo-glass-effect": "~0.1.10",
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
     "react": "^19.1.0",

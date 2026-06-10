@@ -1,5 +1,12 @@
 export type CalendarViewMode = "compact" | "stack" | "detail" | "list";
 
+export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
+    compact: 76,
+    stack: 90,
+    detail: 100,
+    list: 58,
+};
+
 export const CALENDAR_VIEW_OPTIONS: Array<{
     value: CalendarViewMode;
     label: string;

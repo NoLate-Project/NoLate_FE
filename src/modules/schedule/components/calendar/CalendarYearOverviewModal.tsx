@@ -11,6 +11,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import CalendarGlassSurface from "./CalendarGlassSurface";
 
 type Props = {
     visible: boolean;
@@ -54,7 +55,10 @@ export default function CalendarYearOverviewModal({
         <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
             <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
                 <View style={styles.header}>
-                    <View style={[styles.yearControl, { backgroundColor: colors.surface2 }]}>
+                    <CalendarGlassSurface
+                        interactive
+                        style={[styles.yearControl, { borderColor: colors.border }]}
+                    >
                         <Pressable
                             onPress={() => onChangeYear(year - 1)}
                             accessibilityLabel="이전 연도"
@@ -70,14 +74,16 @@ export default function CalendarYearOverviewModal({
                         >
                             <Ionicons name="chevron-forward" size={20} color={colors.textPrimary} />
                         </Pressable>
-                    </View>
+                    </CalendarGlassSurface>
 
-                    <Pressable
-                        onPress={onClose}
-                        style={[styles.closeButton, { backgroundColor: colors.surface2 }]}
+                    <CalendarGlassSurface
+                        interactive
+                        style={[styles.closeGlass, { borderColor: colors.border }]}
                     >
-                        <Text style={[styles.closeText, { color: colors.textPrimary }]}>완료</Text>
-                    </Pressable>
+                        <Pressable onPress={onClose} style={styles.closeButton}>
+                            <Text style={[styles.closeText, { color: colors.textPrimary }]}>완료</Text>
+                        </Pressable>
+                    </CalendarGlassSurface>
                 </View>
 
                 <ScrollView contentContainerStyle={styles.monthGrid}>
@@ -177,8 +183,10 @@ const styles = StyleSheet.create({
     yearControl: {
         height: 40,
         borderRadius: 20,
+        borderWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
+        overflow: "hidden",
     },
     yearArrow: {
         width: 38,
@@ -192,9 +200,14 @@ const styles = StyleSheet.create({
         minWidth: 62,
         textAlign: "center",
     },
-    closeButton: {
+    closeGlass: {
         minHeight: 40,
         borderRadius: 20,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: "hidden",
+    },
+    closeButton: {
+        flex: 1,
         paddingHorizontal: 17,
         alignItems: "center",
         justifyContent: "center",

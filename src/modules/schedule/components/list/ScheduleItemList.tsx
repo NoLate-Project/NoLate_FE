@@ -16,11 +16,11 @@ function ItemSeparator() {
 export default function ScheduleItemList({ items }: Props) {
     const router = useRouter();
 
-    // 일정 카드 선택 시 수정 화면으로 이동한다.
-    const goEdit = (id: string) => {
+    // 일정 카드 선택 시 상세 화면으로 이동한다.
+    const openDetail = (id: string) => {
         router.push({
             pathname: "/schedule/[id]",
-            params: { id, mode: "edit" },
+            params: { id },
         });
     };
 
@@ -30,7 +30,7 @@ export default function ScheduleItemList({ items }: Props) {
             keyExtractor={(i) => i.id}
             ItemSeparatorComponent={ItemSeparator}
             renderItem={({ item }) => (
-                <ScheduleItemCard item={item} onPress={() => goEdit(item.id)} />
+                <ScheduleItemCard item={item} onPress={() => openDetail(item.id)} />
             )}
         />
     );

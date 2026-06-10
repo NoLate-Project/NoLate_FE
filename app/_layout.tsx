@@ -22,6 +22,7 @@ export default function RootLayout() {
                     <Stack.Screen name="auth/login" />
                     <Stack.Screen name="auth/signup" />
                     <Stack.Screen name="schedule/index" />
+                    <Stack.Screen name="schedule/timetable" />
                     <Stack.Screen name="schedule/[id]" />
                     <Stack.Screen name="schedule/route-select" />
                     <Stack.Screen name="schedule/route-planner" />

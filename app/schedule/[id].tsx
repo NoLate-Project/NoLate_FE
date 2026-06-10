@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getSchedule } from "../../src/api/schedule";
+import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import TmapMapView, {
     type TmapLatLng,
@@ -130,16 +131,6 @@ function storedRouteCoords(route: unknown): TmapLatLng[] {
     const legs = asRouteAlternative(route)?.transitLegs;
     if (!Array.isArray(legs)) return [];
     return legs.flatMap(getTransitLegStoredCoords);
-}
-
-function formatScheduleRange(startAt: string, endAt: string, hasEndTime = true) {
-    const start = fromISO(startAt);
-    if (!hasEndTime) return `${ymdText(start)} ${hhmmText(start)}`;
-    const end = fromISO(endAt);
-    const sameDay = ymdText(start) === ymdText(end);
-    return sameDay
-        ? `${ymdText(start)} ${hhmmText(start)} - ${hhmmText(end)}`
-        : `${ymdText(start)} ${hhmmText(start)} - ${ymdText(end)} ${hhmmText(end)}`;
 }
 
 function formatCompactScheduleRange(startAt: string, endAt: string, hasEndTime = true) {
@@ -456,8 +447,6 @@ function ScheduleDetail() {
     const travelText = item.travelMinutes
         ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
         : travelModeLabel(item.travelMode);
-    const overlayPanelBg = isDark ? "rgba(20,20,22,0.88)" : "rgba(255,255,255,0.92)";
-    const sheetBackground = isDark ? "#1F1F1F" : "#F8FAFC";
     const sheetBorder = isDark ? "#343434" : "#E2E8F0";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
     const secondaryText = isDark ? "#B8B8B8" : "#64748B";
@@ -485,14 +474,24 @@ function ScheduleDetail() {
 
             <View style={[styles.topOverlay, { paddingTop: insets.top + 2 }]}>
                 <View style={styles.topRow}>
-                    <Pressable
-                        onPress={() => router.replace("/schedule")}
-                        style={[styles.roundButton, { backgroundColor: overlayPanelBg, borderColor: sheetBorder }]}
+                    <CalendarGlassSurface
+                        interactive
+                        style={[styles.roundButtonGlass, { borderColor: sheetBorder }]}
                     >
-                        <Text style={[styles.backIcon, { color: primaryText }]}>‹</Text>
-                    </Pressable>
+                        <Pressable
+                            onPress={() => router.replace("/schedule")}
+                            style={({ pressed }) => [
+                                styles.roundButton,
+                                { opacity: pressed ? 0.58 : 1 },
+                            ]}
+                        >
+                            <Text style={[styles.backIcon, { color: primaryText }]}>‹</Text>
+                        </Pressable>
+                    </CalendarGlassSurface>
 
-                    <View style={[styles.infoPanel, { backgroundColor: overlayPanelBg, borderColor: sheetBorder }]}>
+                    <CalendarGlassSurface
+                        style={[styles.infoPanel, { borderColor: sheetBorder }]}
+                    >
                         <View style={styles.infoHeaderRow}>
                             <View style={styles.infoHeading}>
                                 <View style={[styles.categoryDot, { backgroundColor: item.category.color }]} />
@@ -516,7 +515,7 @@ function ScheduleDetail() {
                                 {routeMetricText(routeOption) || travelText}
                             </Text>
                         </View>
-                    </View>
+                    </CalendarGlassSurface>
                 </View>
             </View>
 
@@ -525,191 +524,198 @@ function ScheduleDetail() {
                     styles.routeSheet,
                     {
                         height: sheetMaxHeight,
-                        paddingBottom: Math.max(insets.bottom, 14),
-                        backgroundColor: sheetBackground,
-                        borderColor: sheetBorder,
                         transform: [{ translateY: sheetTranslateY }],
                     },
                 ]}
             >
-                <View style={styles.sheetHandleHitArea} {...sheetPanResponder.panHandlers}>
-                    <View style={[styles.sheetHandle, { backgroundColor: sheetBorder }]} />
-                </View>
-                <ScrollView
-                    style={styles.sheetScroll}
-                    contentContainerStyle={styles.sheetScrollContent}
-                    showsVerticalScrollIndicator={false}
-                    bounces={false}
+                <CalendarGlassSurface
+                    style={[
+                        styles.routeSheetGlass,
+                        {
+                            paddingBottom: Math.max(insets.bottom, 14),
+                            borderColor: sheetBorder,
+                        },
+                    ]}
                 >
-                    <View style={[styles.sheetHeader, { borderBottomColor: sheetBorder }]}>
-                        <View>
-                            <Text style={[styles.sheetEyebrow, { color: colors.selectedDayBg }]}>최적</Text>
-                            <Text style={[styles.sheetTitle, { color: primaryText }]}>
-                                {routeNumberText(routeOption, item.travelMinutes)}
+                    <View style={styles.sheetHandleHitArea} {...sheetPanResponder.panHandlers}>
+                        <View style={[styles.sheetHandle, { backgroundColor: sheetBorder }]} />
+                    </View>
+                    <ScrollView
+                        style={styles.sheetScroll}
+                        contentContainerStyle={styles.sheetScrollContent}
+                        showsVerticalScrollIndicator={false}
+                        bounces={false}
+                    >
+                        <View style={[styles.sheetHeader, { borderBottomColor: sheetBorder }]}>
+                            <View>
+                                <Text style={[styles.sheetEyebrow, { color: colors.selectedDayBg }]}>최적</Text>
+                                <Text style={[styles.sheetTitle, { color: primaryText }]}>
+                                    {routeNumberText(routeOption, item.travelMinutes)}
+                                </Text>
+                            </View>
+                            <Text style={[styles.sheetMeta, { color: secondaryText }]} numberOfLines={2}>
+                                {routeMetricText(routeOption) || travelText}
                             </Text>
                         </View>
-                        <Text style={[styles.sheetMeta, { color: secondaryText }]} numberOfLines={2}>
-                            {routeMetricText(routeOption) || travelText}
-                        </Text>
-                    </View>
 
-                    {routeLegs.length > 0 && (
-                        <View style={styles.progressTrack}>
-                            {routeLegs.map((leg, index) => (
-                                <View
-                                    key={`progress-${leg.kind}-${index}`}
+                        {routeLegs.length > 0 && (
+                            <View style={styles.progressTrack}>
+                                {routeLegs.map((leg, index) => (
+                                    <View
+                                        key={`progress-${leg.kind}-${index}`}
+                                        style={[
+                                            styles.progressSegment,
+                                            {
+                                                flex: Math.max(1, leg.durationMinutes || 1),
+                                                marginLeft: index === 0 ? 0 : 3,
+                                                backgroundColor: legColor(leg),
+                                            },
+                                        ]}
+                                    >
+                                        <Text style={styles.progressSegmentText} numberOfLines={1}>
+                                            {leg.kind === "WALK" ? `${leg.durationMinutes || ""}분` : legTitle(leg)}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
+                        {routeLegs.length > 0 ? (
+                            <View style={styles.timeline}>
+                                {routeLegs.map((leg, index) => (
+                                <Pressable
+                                    key={`${leg.kind}-${index}-${leg.startName ?? ""}`}
+                                    onPress={() => focusRouteLeg(index)}
                                     style={[
-                                        styles.progressSegment,
-                                        {
-                                            flex: Math.max(1, leg.durationMinutes || 1),
-                                            marginLeft: index === 0 ? 0 : 3,
-                                            backgroundColor: legColor(leg),
+                                        styles.timelineItem,
+                                        focusedLegIndex === index && {
+                                            backgroundColor: isDark ? "rgba(47,128,255,0.10)" : "#EFF6FF",
+                                            borderColor: isDark ? "rgba(96,165,250,0.28)" : "#BFDBFE",
                                         },
                                     ]}
                                 >
-                                    <Text style={styles.progressSegmentText} numberOfLines={1}>
-                                        {leg.kind === "WALK" ? `${leg.durationMinutes || ""}분` : legTitle(leg)}
-                                    </Text>
-                                </View>
-                            ))}
-                        </View>
-                    )}
-
-                    {routeLegs.length > 0 ? (
-                        <View style={styles.timeline}>
-                        {routeLegs.map((leg, index) => (
-                            <Pressable
-                                key={`${leg.kind}-${index}-${leg.startName ?? ""}`}
-                                onPress={() => focusRouteLeg(index)}
-                                style={[
-                                    styles.timelineItem,
-                                    focusedLegIndex === index && {
-                                        backgroundColor: isDark ? "rgba(47,128,255,0.10)" : "#EFF6FF",
-                                        borderColor: isDark ? "rgba(96,165,250,0.28)" : "#BFDBFE",
-                                    },
-                                ]}
-                            >
-                                <View style={styles.timelineRail}>
-                                    <View style={[styles.timelineDot, { backgroundColor: legColor(leg) }]}>
-                                        <Text style={styles.timelineDotText}>
-                                            {leg.kind === "WALK" && index === 0 ? "출" : leg.kind === "WALK" ? "도" : leg.kind === "BUS" ? "B" : "S"}
-                                        </Text>
-                                    </View>
-                                    {index < routeLegs.length - 1 && (
-                                        <View style={[styles.timelineLine, { backgroundColor: leg.kind === "WALK" ? sheetBorder : legColor(leg) }]} />
-                                    )}
-                                </View>
-                                <View style={styles.timelineContent}>
-                                    <View style={styles.timelineTopRow}>
-                                        <Text style={[styles.timelineTitle, { color: primaryText }]} numberOfLines={2}>
-                                            {legTimelineTitle(leg, index, routeLegs.length)}
-                                        </Text>
-                                        <Text style={[styles.timelineMeta, { color: secondaryText }]}>
-                                            {leg.durationMinutes ? `${leg.durationMinutes}분` : ""}
-                                        </Text>
-                                    </View>
-                                    <Text style={[styles.timelineAssist, { color: secondaryText }]} numberOfLines={2}>
-                                        {legDescription(leg) || leg.label || "구간 정보"}
-                                    </Text>
-                                    {leg.kind !== "WALK" && (
-                                        <View style={[styles.rideCard, { borderColor: sheetBorder }]}>
-                                            <View style={[styles.rideBadge, { backgroundColor: legColor(leg) }]}>
-                                                <Text style={styles.rideBadgeText} numberOfLines={1}>{legTitle(leg)}</Text>
-                                            </View>
-                                            <Text style={[styles.rideText, { color: secondaryText }]} numberOfLines={1}>
-                                                {legStopText(leg) || `${leg.distanceMeters || 0}m 이동`}
+                                    <View style={styles.timelineRail}>
+                                        <View style={[styles.timelineDot, { backgroundColor: legColor(leg) }]}>
+                                            <Text style={styles.timelineDotText}>
+                                                {leg.kind === "WALK" && index === 0 ? "출" : leg.kind === "WALK" ? "도" : leg.kind === "BUS" ? "B" : "S"}
                                             </Text>
                                         </View>
-                                    )}
-                                    {!!legStopText(leg) && (
-                                        <>
-                                            <Pressable
-                                                onPress={(event) => {
-                                                    event.stopPropagation();
-                                                    toggleLegStops(index);
-                                                }}
-                                                style={[styles.stopSummary, { borderTopColor: sheetBorder }]}
-                                            >
-                                                <Text style={[styles.stopSummaryText, { color: secondaryText }]}>
-                                                    정류장 상세보기
+                                        {index < routeLegs.length - 1 && (
+                                            <View style={[styles.timelineLine, { backgroundColor: leg.kind === "WALK" ? sheetBorder : legColor(leg) }]} />
+                                        )}
+                                    </View>
+                                    <View style={styles.timelineContent}>
+                                        <View style={styles.timelineTopRow}>
+                                            <Text style={[styles.timelineTitle, { color: primaryText }]} numberOfLines={2}>
+                                                {legTimelineTitle(leg, index, routeLegs.length)}
+                                            </Text>
+                                            <Text style={[styles.timelineMeta, { color: secondaryText }]}>
+                                                {leg.durationMinutes ? `${leg.durationMinutes}분` : ""}
+                                            </Text>
+                                        </View>
+                                        <Text style={[styles.timelineAssist, { color: secondaryText }]} numberOfLines={2}>
+                                            {legDescription(leg) || leg.label || "구간 정보"}
+                                        </Text>
+                                        {leg.kind !== "WALK" && (
+                                            <View style={[styles.rideCard, { borderColor: sheetBorder }]}>
+                                                <View style={[styles.rideBadge, { backgroundColor: legColor(leg) }]}>
+                                                    <Text style={styles.rideBadgeText} numberOfLines={1}>{legTitle(leg)}</Text>
+                                                </View>
+                                                <Text style={[styles.rideText, { color: secondaryText }]} numberOfLines={1}>
+                                                    {legStopText(leg) || `${leg.distanceMeters || 0}m 이동`}
                                                 </Text>
-                                                <View style={styles.stopSummaryAction}>
-                                                    <Text style={[styles.stopSummaryCount, { color: secondaryText }]}>
-                                                        {leg.passStops?.length ?? leg.stationCount ?? 0}개
-                                                    </Text>
-                                                    <Text style={[styles.stopSummaryChevron, { color: secondaryText }]}>
-                                                        {expandedStopLegs[index] ? "⌃" : "⌄"}
-                                                    </Text>
-                                                </View>
-                                            </Pressable>
-
-                                            {expandedStopLegs[index] && Array.isArray(leg.passStops) && (
-                                                <View
-                                                    style={[
-                                                        styles.stopList,
-                                                        {
-                                                            backgroundColor: isDark ? "#29292C" : "#FFFFFF",
-                                                            borderColor: sheetBorder,
-                                                        },
-                                                    ]}
+                                            </View>
+                                        )}
+                                        {!!legStopText(leg) && (
+                                            <>
+                                                <Pressable
+                                                    onPress={(event) => {
+                                                        event.stopPropagation();
+                                                        toggleLegStops(index);
+                                                    }}
+                                                    style={[styles.stopSummary, { borderTopColor: sheetBorder }]}
                                                 >
-                                                    {leg.passStops.map((stop, stopIndex) => (
-                                                        <Pressable
-                                                            key={`${index}-${stop.sequence ?? stopIndex}-${stop.name}`}
-                                                            onPress={(event) => {
-                                                                event.stopPropagation();
-                                                                focusTransitStop(stop);
-                                                            }}
-                                                            style={[
-                                                                styles.stopListItem,
-                                                                stopIndex < leg.passStops!.length - 1 && {
-                                                                    borderBottomColor: sheetBorder,
-                                                                    borderBottomWidth: StyleSheet.hairlineWidth,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            <View style={styles.stopListRail}>
-                                                                <View style={[styles.stopListDot, { backgroundColor: legColor(leg) }]} />
-                                                                {stopIndex < leg.passStops!.length - 1 && (
-                                                                    <View style={[styles.stopListLine, { backgroundColor: legColor(leg) }]} />
-                                                                )}
-                                                            </View>
-                                                            <View style={styles.stopListTextWrap}>
-                                                                <Text style={[styles.stopListName, { color: primaryText }]} numberOfLines={1}>
-                                                                    {stop.name}
-                                                                </Text>
-                                                                {!!stop.code && (
-                                                                    <Text style={[styles.stopListCode, { color: secondaryText }]}>
-                                                                        정류장 {stop.code}
-                                                                    </Text>
-                                                                )}
-                                                            </View>
-                                                            {!!mapCoordFromUnknown(stop.coord) && (
-                                                                <View
-                                                                    style={[
-                                                                        styles.stopMapButton,
-                                                                        { backgroundColor: isDark ? "#3A3A3D" : "#F1F5F9" },
-                                                                    ]}
-                                                                >
-                                                                    <Text style={[styles.stopMapAction, { color: primaryText }]}>지도</Text>
+                                                    <Text style={[styles.stopSummaryText, { color: secondaryText }]}>
+                                                        정류장 상세보기
+                                                    </Text>
+                                                    <View style={styles.stopSummaryAction}>
+                                                        <Text style={[styles.stopSummaryCount, { color: secondaryText }]}>
+                                                            {leg.passStops?.length ?? leg.stationCount ?? 0}개
+                                                        </Text>
+                                                        <Text style={[styles.stopSummaryChevron, { color: secondaryText }]}>
+                                                            {expandedStopLegs[index] ? "⌃" : "⌄"}
+                                                        </Text>
+                                                    </View>
+                                                </Pressable>
+
+                                                {expandedStopLegs[index] && Array.isArray(leg.passStops) && (
+                                                    <View
+                                                        style={[
+                                                            styles.stopList,
+                                                            {
+                                                                backgroundColor: isDark ? "#29292C" : "#FFFFFF",
+                                                                borderColor: sheetBorder,
+                                                            },
+                                                        ]}
+                                                    >
+                                                        {leg.passStops.map((stop, stopIndex) => (
+                                                            <Pressable
+                                                                key={`${index}-${stop.sequence ?? stopIndex}-${stop.name}`}
+                                                                onPress={(event) => {
+                                                                    event.stopPropagation();
+                                                                    focusTransitStop(stop);
+                                                                }}
+                                                                style={[
+                                                                    styles.stopListItem,
+                                                                    stopIndex < leg.passStops!.length - 1 && {
+                                                                        borderBottomColor: sheetBorder,
+                                                                        borderBottomWidth: StyleSheet.hairlineWidth,
+                                                                    },
+                                                                ]}
+                                                            >
+                                                                <View style={styles.stopListRail}>
+                                                                    <View style={[styles.stopListDot, { backgroundColor: legColor(leg) }]} />
+                                                                    {stopIndex < leg.passStops!.length - 1 && (
+                                                                        <View style={[styles.stopListLine, { backgroundColor: legColor(leg) }]} />
+                                                                    )}
                                                                 </View>
-                                                            )}
-                                                        </Pressable>
-                                                    ))}
-                                                </View>
-                                            )}
-                                        </>
-                                    )}
-                                </View>
-                            </Pressable>
-                        ))}
-                        </View>
-                    ) : (
-                        <Text style={[styles.sheetEmptyText, { color: secondaryText }]}>
-                            저장된 상세 경로가 없어요.
-                        </Text>
-                    )}
-                </ScrollView>
+                                                                <View style={styles.stopListTextWrap}>
+                                                                    <Text style={[styles.stopListName, { color: primaryText }]} numberOfLines={1}>
+                                                                        {stop.name}
+                                                                    </Text>
+                                                                    {!!stop.code && (
+                                                                        <Text style={[styles.stopListCode, { color: secondaryText }]}>
+                                                                            정류장 {stop.code}
+                                                                        </Text>
+                                                                    )}
+                                                                </View>
+                                                                {!!mapCoordFromUnknown(stop.coord) && (
+                                                                    <View
+                                                                        style={[
+                                                                            styles.stopMapButton,
+                                                                            { backgroundColor: isDark ? "#3A3A3D" : "#F1F5F9" },
+                                                                        ]}
+                                                                    >
+                                                                        <Text style={[styles.stopMapAction, { color: primaryText }]}>지도</Text>
+                                                                    </View>
+                                                                )}
+                                                            </Pressable>
+                                                        ))}
+                                                    </View>
+                                                )}
+                                            </>
+                                        )}
+                                    </View>
+                                </Pressable>
+                                ))}
+                            </View>
+                        ) : (
+                            <Text style={[styles.sheetEmptyText, { color: secondaryText }]}>
+                                저장된 상세 경로가 없어요.
+                            </Text>
+                        )}
+                    </ScrollView>
+                </CalendarGlassSurface>
             </Animated.View>
 
             {mapCoords.length === 0 && (
@@ -738,15 +744,19 @@ const styles = StyleSheet.create({
         alignItems: "flex-start",
         gap: 8,
     },
-    roundButton: {
+    roundButtonGlass: {
         width: 46,
         height: 46,
         borderRadius: 23,
         borderWidth: 1,
-        alignItems: "center",
-        justifyContent: "center",
+        overflow: "hidden",
         zIndex: 31,
         elevation: 31,
+    },
+    roundButton: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
     },
     backIcon: {
         fontSize: 40,
@@ -789,12 +799,16 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
+        zIndex: 28,
+        elevation: 28,
+    },
+    routeSheetGlass: {
+        flex: 1,
         borderTopLeftRadius: 28,
         borderTopRightRadius: 28,
         paddingHorizontal: 18,
         borderTopWidth: 1,
-        zIndex: 28,
-        elevation: 28,
+        overflow: "hidden",
     },
     sheetHandleHitArea: {
         height: 32,
