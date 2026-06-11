@@ -60,9 +60,9 @@
     <dict>
       <key>NSAllowsArbitraryLoads</key>
       <true/>
-      <key>NSAllowsArbitraryLoadsInWebContent</key>
-      <true/>
       <key>NSAllowsLocalNetworking</key>
+      <true/>
+      <key>NSAllowsArbitraryLoadsInWebContent</key>
       <true/>
     </dict>
     <key>NSFaceIDUsageDescription</key>
@@ -75,6 +75,10 @@
     </array>
     <key>RCTNewArchEnabled</key>
     <true/>
+    <key>UIBackgroundModes</key>
+    <array>
+      <string>remote-notification</string>
+    </array>
     <key>UILaunchStoryboardName</key>
     <string>SplashScreen</string>
     <key>UIRequiredDeviceCapabilities</key>

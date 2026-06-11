@@ -14,6 +14,7 @@ import {
 import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
 import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
+import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type SocialProvider = "naver" | "kakao" | "apple";
@@ -24,7 +25,6 @@ export default function Login() {
     const styles = createStyles(colors);
     const fadeAnim = useRef(new Animated.Value(1)).current;
     const btnScale = useRef(new Animated.Value(1)).current;
-
     const [id, setId] = useState("");
     const [pwd, setPwd] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -42,6 +42,9 @@ export default function Login() {
                 if (cancelled) return;
 
                 await saveAuthTokens(member.accessToken, member.refreshToken);
+                await registerPushAfterLogin(member.id).catch((error) => {
+                    console.warn("[push] token registration failed", error);
+                });
                 router.replace("/schedule");
             } catch {
                 if (cancelled) return;
@@ -71,6 +74,9 @@ export default function Login() {
             setSubmitting(true);
             const member = await loginMember({ email, password });
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await registerPushAfterLogin(member.id).catch((error) => {
+                console.warn("[push] token registration failed", error);
+            });
             router.replace("/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
@@ -102,6 +108,9 @@ export default function Login() {
             });
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await registerPushAfterLogin(member.id).catch((error) => {
+                console.warn("[push] token registration failed", error);
+            });
             router.replace("/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "SNS 로그인에 실패했습니다.";

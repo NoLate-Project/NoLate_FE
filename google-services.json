@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "227094252058",
+    "project_id": "nolate-cbdf2",
+    "storage_bucket": "nolate-cbdf2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:227094252058:android:b07a6b05c5893b665f1fa3",
+        "android_client_info": {
+          "package_name": "com.anonymous.nolate_fe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBUyuZno1j2gDZLY2e9KSI2AkSQTSI0hxY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

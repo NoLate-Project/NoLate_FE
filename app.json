@@ -5,21 +5,32 @@
   "plugins": [
     "expo-router",
     "expo-secure-store",
+    "@react-native-firebase/app",
+    "@react-native-firebase/messaging",
     "@react-native-community/datetimepicker",
     [
       "@react-native-seoul/kakao-login",
       {
-        "kakaoAppKey": "9586a8e3a28f3a6fbe3e23b9b34ec206"
+        "kakaoAppKey": "9586a8e3a28f3a6fbe3e23b9b34ec206",
+        "kotlinVersion": "2.1.20"
       }
     ]
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",
+    "googleServicesFile": "./google-services.json",
     "usesCleartextTraffic": true
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
+    "googleServicesFile": "./ios/GoogleService-Info.plist",
+    "entitlements": {
+      "aps-environment": "development"
+    },
     "infoPlist": {
+      "UIBackgroundModes": [
+        "remote-notification"
+      ],
       "NSAppTransportSecurity": {
         "NSAllowsArbitraryLoads": true,
         "NSAllowsLocalNetworking": true,

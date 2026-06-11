@@ -13,6 +13,7 @@ import {
 import { loginMember, signUpMember } from "../../src/api/member";
 import { clearAuthTokens, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 
 const PASSWORD_PATTERN = /^[a-zA-Z0-9!@#$%^&*]{8,16}$/;
 
@@ -60,6 +61,9 @@ export default function SignUp() {
             });
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await registerPushAfterLogin(member.id).catch((error) => {
+                console.warn("[push] token registration failed", error);
+            });
             router.replace("/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "회원가입에 실패했습니다.";

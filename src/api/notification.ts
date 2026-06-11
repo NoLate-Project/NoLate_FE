@@ -4,7 +4,6 @@ import { assertApiSuccess, type ApiEnvelope } from "./response";
 export type PushPlatform = "IOS" | "ANDROID" | "WEB";
 
 type RegisterPushTokenPayload = {
-    memberId: number;
     deviceId?: string;
     platform: PushPlatform;
     token: string;
