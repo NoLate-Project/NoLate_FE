@@ -96,7 +96,7 @@ export default function NotificationSettingsCard({
 
             {enabled ? (
                 <View style={styles.settings}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>알림 시작</Text>
+                    <Text style={[styles.label, { color: colors.textSecondary }]}>ETA 조회 시작</Text>
                     {renderOptions(
                         LEAD_OPTIONS,
                         leadMinutes,
@@ -104,13 +104,16 @@ export default function NotificationSettingsCard({
                         onLeadMinutesChange,
                     )}
 
-                    <Text style={[styles.label, styles.intervalLabel, { color: colors.textSecondary }]}>재알림 간격</Text>
+                    <Text style={[styles.label, styles.intervalLabel, { color: colors.textSecondary }]}>ETA 조회 간격</Text>
                     {renderOptions(
                         INTERVAL_OPTIONS,
                         intervalMinutes,
-                        (minutes) => minutes >= policy.minNotificationIntervalMinutes,
+                        (minutes) => minutes >= policy.minEtaRefreshIntervalMinutes,
                         onIntervalMinutesChange,
                     )}
+                    <Text style={[styles.description, { color: colors.textSecondary }]}>
+                        조회할 때마다 푸시하지 않고, 실시간 추천 출발 약 15분 전에 알려드려요.
+                    </Text>
                 </View>
             ) : null}
         </View>
@@ -137,6 +140,7 @@ const styles = StyleSheet.create({
     settings: { marginTop: 14 },
     label: { marginBottom: 7, fontSize: 12, fontWeight: "600" },
     intervalLabel: { marginTop: 12 },
+    description: { marginTop: 9, fontSize: 11, lineHeight: 16 },
     optionRow: { flexDirection: "row", gap: 7 },
     option: {
         flex: 1,

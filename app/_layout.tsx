@@ -1,9 +1,13 @@
-import React, { useMemo } from "react";
-import { Stack } from "expo-router";
-import { LogBox } from "react-native";
+import React, { useEffect, useMemo } from "react";
+import { Stack, useRouter } from "expo-router";
+import { InteractionManager, LogBox } from "react-native";
 
 import { ScheduleProvider } from "../src/modules/schedule/store";
 import { createScheduleInitialState } from "../src/modules/schedule/initialState";
+import {
+    configureForegroundPush,
+    configurePushNavigation,
+} from "../src/modules/notification/foregroundPush";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
 if (__DEV__) {
@@ -13,7 +17,40 @@ if (__DEV__) {
 }
 
 export default function RootLayout() {
+    const router = useRouter();
     const initialState = useMemo(() => createScheduleInitialState(), []);
+
+    useEffect(() => {
+        let unsubscribeForeground: (() => void) | undefined;
+        let unsubscribeNavigation: (() => void) | undefined;
+
+        configureForegroundPush()
+            .then((listener) => {
+                unsubscribeForeground = listener;
+            })
+            .catch((error) => {
+                console.warn("[push] foreground notification setup failed", error);
+            });
+        configurePushNavigation((scheduleId) => {
+            InteractionManager.runAfterInteractions(() => {
+                router.push({
+                    pathname: "/schedule/[id]",
+                    params: { id: scheduleId },
+                });
+            });
+        })
+            .then((listener) => {
+                unsubscribeNavigation = listener;
+            })
+            .catch((error) => {
+                console.warn("[push] notification navigation setup failed", error);
+            });
+
+        return () => {
+            unsubscribeForeground?.();
+            unsubscribeNavigation?.();
+        };
+    }, [router]);
 
     return (
         <ThemeProvider>

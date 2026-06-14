@@ -113,7 +113,7 @@ export default function ScheduleNewModal({
     const [hasEndTime, setHasEndTime]                 = useState(false);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(60);
-    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(30);
+    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [submitting, setSubmitting]                 = useState(false);
@@ -208,7 +208,7 @@ export default function ScheduleNewModal({
                     Math.min(current, policy.maxNotificationLeadMinutes)
                 );
                 setNotificationIntervalMinutes((current) =>
-                    Math.max(current, policy.minNotificationIntervalMinutes)
+                    Math.max(current, policy.minEtaRefreshIntervalMinutes)
                 );
             })
             .catch(() => {

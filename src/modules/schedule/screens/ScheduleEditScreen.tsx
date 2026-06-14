@@ -71,7 +71,7 @@ export default function ScheduleEdit() {
     const [hasEndTime, setHasEndTime]           = useState(item?.hasEndTime ?? true);
     const [notificationEnabled, setNotificationEnabled] = useState(item?.notificationEnabled ?? false);
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(item?.notificationLeadMinutes ?? 60);
-    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? 30);
+    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? 20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [detailLoading, setDetailLoading] = useState(false);
@@ -129,7 +129,7 @@ export default function ScheduleEdit() {
                         Math.min(current, policy.maxNotificationLeadMinutes)
                     );
                     setNotificationIntervalMinutes((current) =>
-                        Math.max(current, policy.minNotificationIntervalMinutes)
+                        Math.max(current, policy.minEtaRefreshIntervalMinutes)
                     );
                 }
             })
@@ -160,12 +160,12 @@ export default function ScheduleEdit() {
         setHasEndTime(item.hasEndTime ?? fromISO(item.endAt).getTime() > fromISO(item.startAt).getTime());
         setNotificationEnabled(item.notificationEnabled ?? false);
         setNotificationLeadMinutes(item.notificationLeadMinutes ?? 60);
-        setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? 30);
+        setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? 20);
         setStartDay(new Date(fromISO(item.startAt).toISOString().slice(0, 10) + "T00:00:00"));
         setEndDay(new Date(fromISO(item.endAt).toISOString().slice(0, 10) + "T00:00:00"));
         setStartTime(fromISO(item.startAt));
         setEndTime(fromISO(item.endAt));
-    }, [item?.id, item?.updatedAt, state.categories]);
+    }, [item, state.categories]);
 
     useEffect(() => {
         if (hasEndTime) return;

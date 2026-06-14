@@ -18,7 +18,7 @@ export const FREE_SUBSCRIPTION_POLICY: SubscriptionPolicy = {
     usedSmartSchedulesThisMonth: 0,
     maxNotificationLeadMinutes: 60,
     minNotificationIntervalMinutes: 30,
-    minEtaRefreshIntervalMinutes: 30,
+    minEtaRefreshIntervalMinutes: 20,
 };
 
 export async function getMySubscriptionPolicy(): Promise<SubscriptionPolicy> {
