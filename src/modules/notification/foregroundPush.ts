@@ -8,6 +8,8 @@ import {
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import { getScheduleIdFromNotificationData } from "./pushNavigation";
+
 const ANDROID_CHANNEL_ID = "schedule-push";
 
 Notifications.setNotificationHandler({
@@ -44,8 +46,8 @@ export async function configurePushNavigation(
     ) => {
         if (messageId && messageId === lastOpenedMessageId) return;
 
-        const scheduleId = data?.scheduleId;
-        if (typeof scheduleId !== "string" || !scheduleId.trim()) {
+        const scheduleId = getScheduleIdFromNotificationData(data);
+        if (!scheduleId) {
             console.warn("[push] notification has no scheduleId", data);
             return;
         }

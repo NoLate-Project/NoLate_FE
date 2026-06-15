@@ -9,7 +9,7 @@
     "start": "react-native start",
     "test": "jest"
   },
-  "main": "expo-router/entry",
+  "main": "./index.js",
   "dependencies": {
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-native-firebase/app": "^24.1.1",
@@ -29,6 +29,7 @@
     "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.23",
     "expo-secure-store": "~15.0.8",
+    "expo-splash-screen": "~31.0.13",
     "react": "^19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
