@@ -6,15 +6,21 @@ import {
     onNotificationOpenedApp,
 } from "@react-native-firebase/messaging";
 import { requireOptionalNativeModule } from "expo-modules-core";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 
-import { getScheduleIdFromNotificationData } from "./pushNavigation";
+import { getPushNavigationTargetFromNotificationData } from "./pushNavigation";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
 
 type ExpoNotificationsModule = typeof import("expo-notifications");
 
 let notificationsModule: ExpoNotificationsModule | null | undefined;
+
+type LocalPushNotification = {
+    title: string;
+    body: string;
+    data: Record<string, unknown>;
+};
 
 async function getNotifications(): Promise<ExpoNotificationsModule | null> {
     if (notificationsModule !== undefined) {
@@ -54,14 +60,7 @@ export async function configureForegroundPush(): Promise<() => void> {
         return () => undefined;
     }
 
-    if (Platform.OS === "android") {
-        await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-            name: "일정 알림",
-            importance: Notifications.AndroidImportance.HIGH,
-            sound: "default",
-            vibrationPattern: [0, 250, 250, 250],
-        });
-    }
+    await ensureNotificationChannel(Notifications);
 
     return onMessage(getMessaging(), showForegroundNotification);
 }
@@ -79,21 +78,33 @@ export async function configurePushNavigation(
     ) => {
         if (messageId && messageId === lastOpenedMessageId) return;
 
-        const scheduleId = getScheduleIdFromNotificationData(data);
-        if (!scheduleId) {
-            console.warn("[push] notification has no scheduleId", data);
+        const target = getPushNavigationTargetFromNotificationData(data);
+        if (!target) {
+            console.info("[push] notification has no navigation target", data);
             return;
         }
 
         lastOpenedMessageId = messageId;
-        console.info("[push] opening schedule from notification", scheduleId);
-        openSchedule(scheduleId);
+        console.info("[push] opening schedule from notification", target.scheduleId);
+        openSchedule(target.scheduleId);
     };
 
     const expoSubscription = Notifications?.addNotificationResponseReceivedListener((response) => {
         const request = response.notification.request;
         openFromData(request.content.data, request.identifier);
     });
+    const appStateSubscription = Notifications
+        ? AppState.addEventListener("change", (state) => {
+            if (state !== "active") return;
+
+            const response = Notifications.getLastNotificationResponse();
+            if (!response) return;
+
+            const request = response.notification.request;
+            openFromData(request.content.data, request.identifier);
+            Notifications.clearLastNotificationResponse();
+        })
+        : undefined;
     const firebaseUnsubscribe = onNotificationOpenedApp(messaging, (message) => {
         openFromData(message.data, message.messageId);
     });
@@ -112,6 +123,7 @@ export async function configurePushNavigation(
 
     return () => {
         expoSubscription?.remove();
+        appStateSubscription?.remove();
         firebaseUnsubscribe();
     };
 }
@@ -119,22 +131,43 @@ export async function configurePushNavigation(
 async function showForegroundNotification(
     message: FirebaseMessagingTypes.RemoteMessage,
 ): Promise<void> {
+    const title = message.notification?.title ?? "NoLate";
+    const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
+
+    await showLocalNotification({
+        title,
+        body,
+        data: message.data ?? {},
+    });
+}
+
+async function showLocalNotification(notification: LocalPushNotification): Promise<void> {
     const Notifications = await getNotifications();
 
     if (!Notifications) {
         return;
     }
 
-    const title = message.notification?.title ?? "NoLate";
-    const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
+    await ensureNotificationChannel(Notifications);
 
     await Notifications.scheduleNotificationAsync({
         content: {
-            title,
-            body,
-            data: message.data ?? {},
+            title: notification.title,
+            body: notification.body,
+            data: notification.data,
             sound: "default",
         },
         trigger: Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : null,
+    });
+}
+
+async function ensureNotificationChannel(Notifications: ExpoNotificationsModule): Promise<void> {
+    if (Platform.OS !== "android") return;
+
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+        name: "일정 알림",
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: "default",
+        vibrationPattern: [0, 250, 250, 250],
     });
 }

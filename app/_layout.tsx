@@ -7,6 +7,7 @@ import {
     configurePushNavigation,
 } from "../src/modules/notification/foregroundPush";
 import { useAuth } from "../src/modules/auth/AuthContext";
+import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
 
 if (__DEV__) {
     // 지도 UI를 시뮬레이터에서 반복 점검할 때 Expo Go warning banner가 화면을 가려서
@@ -30,10 +31,7 @@ export default function RootLayout() {
             });
         configurePushNavigation((scheduleId) => {
             InteractionManager.runAfterInteractions(() => {
-                router.push({
-                    pathname: "/schedule/[id]",
-                    params: { id: scheduleId },
-                });
+                router.push(createScheduleDetailRoute(scheduleId));
             });
         })
             .then((listener) => {

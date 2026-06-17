@@ -105,7 +105,12 @@ describe("AuthProvider", () => {
         expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
     });
 });
-import { getScheduleIdFromNotificationData } from "../src/modules/notification/pushNavigation";
+import {
+    createScheduleDetailRoute,
+    getScheduleDetailRouteFromNotificationData,
+    getPushNavigationTargetFromNotificationData,
+    getScheduleIdFromNotificationData,
+} from "../src/modules/notification/pushNavigation";
 
 describe("schedule push navigation payload", () => {
     test("Android와 iOS가 공유하는 문자열 scheduleId를 반환한다", () => {
@@ -121,9 +126,49 @@ describe("schedule push navigation payload", () => {
         {},
         { scheduleId: "" },
         { scheduleId: "   " },
+        { scheduleId: "0" },
+        { scheduleId: "-1" },
         { scheduleId: 42 },
         { scheduleId: null },
     ])("잘못된 payload에서는 화면 이동을 하지 않는다: %p", (data) => {
         expect(getScheduleIdFromNotificationData(data as Record<string, unknown> | undefined)).toBeUndefined();
+    });
+
+    test.each([
+        "SCHEDULE_TRAFFIC",
+        "SCHEDULE_DEPARTURE_REMINDER",
+        "SCHEDULE_DETAIL",
+        undefined,
+    ])("일정 상세 이동 payload를 해석한다: %p", (type) => {
+        expect(getPushNavigationTargetFromNotificationData({ type, scheduleId: "42" })).toEqual({
+            kind: "scheduleDetail",
+            scheduleId: "42",
+        });
+    });
+
+    test.each([
+        { type: "PUSH_SCENARIO_TOKEN_CHECK" },
+        { type: "UNKNOWN", scheduleId: "42" },
+        { type: "SCHEDULE_TRAFFIC", scheduleId: "0" },
+        { type: "SCHEDULE_DETAIL" },
+    ])("이동 대상이 아닌 payload는 무시한다: %p", (data) => {
+        expect(getPushNavigationTargetFromNotificationData(data)).toBeUndefined();
+    });
+
+    test("일정 상세 route를 생성한다", () => {
+        expect(createScheduleDetailRoute("42")).toEqual({
+            pathname: "/schedule/[id]",
+            params: { id: "42" },
+        });
+    });
+
+    test("알림 payload에서 일정 상세 route를 생성한다", () => {
+        expect(getScheduleDetailRouteFromNotificationData({
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            scheduleId: "42",
+        })).toEqual({
+            pathname: "/schedule/[id]",
+            params: { id: "42" },
+        });
     });
 });
