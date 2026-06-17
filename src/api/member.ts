@@ -1,5 +1,5 @@
-import { apiPost } from "./api";
-import { type ApiEnvelope, unwrapApiResponse } from "./response";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
+import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 
 export type LoginType = "COMMON" | "KAKAO" | "GOOGLE" | "APPLE" | "NAVER";
 
@@ -35,6 +35,29 @@ type TokenLoginPayload = {
     refreshToken: string;
 };
 
+export type MemberProfileDto = {
+    id?: number | null;
+    memberId: number;
+    nickname?: string | null;
+    imgId?: number | null;
+    intro?: string | null;
+};
+
+export type UpdateProfilePayload = {
+    nickname?: string | null;
+    imgId?: number | null;
+    intro?: string | null;
+};
+
+export type ChangePasswordPayload = {
+    currentPassword: string;
+    newPassword: string;
+};
+
+export type WithdrawPayload = {
+    password?: string | null;
+};
+
 export async function signUpMember(payload: SignUpPayload): Promise<MemberDto> {
     const response = await apiPost<ApiEnvelope<MemberDto>, SignUpPayload>("/api/member/auth/sign-up", payload);
     return unwrapApiResponse(response);
@@ -54,4 +77,34 @@ export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDt
 export async function tokenLoginMember(payload: TokenLoginPayload): Promise<MemberDto> {
     const response = await apiPost<ApiEnvelope<MemberDto>, TokenLoginPayload>("/api/member/auth/token-login", payload);
     return unwrapApiResponse(response);
+}
+
+export async function refreshMemberToken(payload: TokenLoginPayload): Promise<MemberDto> {
+    const response = await apiPost<ApiEnvelope<MemberDto>, TokenLoginPayload>("/api/member/auth/refresh", payload);
+    return unwrapApiResponse(response);
+}
+
+export async function logoutMember(payload: TokenLoginPayload): Promise<void> {
+    const response = await apiPost<ApiEnvelope<unknown>, TokenLoginPayload>("/api/member/auth/logout", payload);
+    assertApiSuccess(response);
+}
+
+export async function getMyProfile(): Promise<MemberProfileDto> {
+    const response = await apiGet<ApiEnvelope<MemberProfileDto>>("/api/member/profile");
+    return unwrapApiResponse(response);
+}
+
+export async function updateMyProfile(payload: UpdateProfilePayload): Promise<MemberProfileDto> {
+    const response = await apiPut<ApiEnvelope<MemberProfileDto>, UpdateProfilePayload>("/api/member/profile", payload);
+    return unwrapApiResponse(response);
+}
+
+export async function changePassword(payload: ChangePasswordPayload): Promise<void> {
+    const response = await apiPatch<ApiEnvelope<unknown>, ChangePasswordPayload>("/api/member/password", payload);
+    assertApiSuccess(response);
+}
+
+export async function withdrawMember(payload?: WithdrawPayload): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", { data: payload ?? {} });
+    assertApiSuccess(response);
 }

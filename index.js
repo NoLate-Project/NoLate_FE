@@ -1,4 +1,11 @@
+import "@expo/metro-runtime";
+
 import { getMessaging, setBackgroundMessageHandler } from "@react-native-firebase/messaging";
+import { ExpoRoot } from "expo-router/build/ExpoRoot";
+import { ctx } from "expo-router/_ctx";
+import { renderRootComponent } from "expo-router/build/renderRootComponent";
+
+import { AppProviders } from "./src/AppProviders";
 
 /**
  * React tree가 생성되기 전에 background handler를 등록한다.
@@ -8,4 +15,8 @@ setBackgroundMessageHandler(getMessaging(), async () => {
     // 백그라운드 data payload를 수신했다는 사실만 Firebase에 알리면 된다.
 });
 
-require("expo-router/entry");
+function App() {
+    return <ExpoRoot context={ctx} wrapper={AppProviders} />;
+}
+
+renderRootComponent(App);

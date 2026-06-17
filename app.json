@@ -1,6 +1,5 @@
 {
   "name": "NoLate_FE",
-  "displayName": "NoLate_FE",
   "scheme": "nolate",
   "plugins": [
     "expo-router",
@@ -14,12 +13,22 @@
         "kakaoAppKey": "9586a8e3a28f3a6fbe3e23b9b34ec206",
         "kotlinVersion": "2.1.20"
       }
+    ],
+    [
+      "expo-build-properties",
+      {
+        "android": {
+          "usesCleartextTraffic": true,
+          "extraMavenRepos": [
+            "https://devrepo.kakao.com/nexus/content/groups/public/"
+          ]
+        }
+      }
     ]
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",
-    "googleServicesFile": "./google-services.json",
-    "usesCleartextTraffic": true
+    "googleServicesFile": "./google-services.json"
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",

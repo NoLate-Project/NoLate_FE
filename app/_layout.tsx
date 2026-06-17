@@ -1,14 +1,12 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect } from "react";
 import { Stack, useRouter } from "expo-router";
 import { InteractionManager, LogBox } from "react-native";
 
-import { ScheduleProvider } from "../src/modules/schedule/store";
-import { createScheduleInitialState } from "../src/modules/schedule/initialState";
 import {
     configureForegroundPush,
     configurePushNavigation,
 } from "../src/modules/notification/foregroundPush";
-import { ThemeProvider } from "../src/modules/theme/ThemeContext";
+import { useAuth } from "../src/modules/auth/AuthContext";
 
 if (__DEV__) {
     // 지도 UI를 시뮬레이터에서 반복 점검할 때 Expo Go warning banner가 화면을 가려서
@@ -18,7 +16,6 @@ if (__DEV__) {
 
 export default function RootLayout() {
     const router = useRouter();
-    const initialState = useMemo(() => createScheduleInitialState(), []);
 
     useEffect(() => {
         let unsubscribeForeground: (() => void) | undefined;
@@ -52,19 +49,28 @@ export default function RootLayout() {
         };
     }, [router]);
 
+    return <RootNavigator />;
+}
+
+function RootNavigator() {
+    const { isAuthenticated, isLoading } = useAuth();
+
+    if (isLoading) {
+        return null;
+    }
+
     return (
-        <ThemeProvider>
-            <ScheduleProvider initialState={initialState}>
-                <Stack screenOptions={{ headerShown: false }}>
-                    <Stack.Screen name="auth/login" />
-                    <Stack.Screen name="auth/signup" />
-                    <Stack.Screen name="schedule/index" />
-                    <Stack.Screen name="schedule/timetable" />
-                    <Stack.Screen name="schedule/[id]" />
-                    <Stack.Screen name="schedule/route-select" />
-                    <Stack.Screen name="schedule/route-planner" />
-                </Stack>
-            </ScheduleProvider>
-        </ThemeProvider>
+        <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="auth/login" />
+            <Stack.Screen name="auth/signup" />
+            <Stack.Protected guard={isAuthenticated}>
+                <Stack.Screen name="schedule/index" />
+                <Stack.Screen name="schedule/timetable" />
+                <Stack.Screen name="schedule/[id]" />
+                <Stack.Screen name="schedule/route-select" />
+                <Stack.Screen name="schedule/route-planner" />
+            </Stack.Protected>
+        </Stack>
     );
 }

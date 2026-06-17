@@ -13,6 +13,7 @@ import {
 
 import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
 import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import { useAuth } from "../../src/modules/auth/AuthContext";
 import { loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -21,6 +22,7 @@ type SocialProvider = "naver" | "kakao" | "apple";
 
 export default function Login() {
     const router = useRouter();
+    const { syncAuthentication } = useAuth();
     const { mode, colors, toggleMode } = useTheme();
     const styles = createStyles(colors);
     const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -42,6 +44,7 @@ export default function Login() {
                 if (cancelled) return;
 
                 await saveAuthTokens(member.accessToken, member.refreshToken);
+                await syncAuthentication();
                 await registerPushAfterLogin(member.id).catch((error) => {
                     console.warn("[push] token registration failed", error);
                 });
@@ -49,6 +52,7 @@ export default function Login() {
             } catch {
                 if (cancelled) return;
                 await clearAuthTokens();
+                await syncAuthentication();
             }
         };
 
@@ -57,7 +61,7 @@ export default function Login() {
         return () => {
             cancelled = true;
         };
-    }, [router]);
+    }, [router, syncAuthentication]);
 
     const onLogin = async () => {
         if (submitting) return;
@@ -74,6 +78,7 @@ export default function Login() {
             setSubmitting(true);
             const member = await loginMember({ email, password });
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await syncAuthentication();
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
@@ -81,6 +86,7 @@ export default function Login() {
         } catch (error) {
             const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
             await clearAuthTokens();
+            await syncAuthentication();
             Alert.alert("로그인 실패", message);
         } finally {
             setSubmitting(false);
@@ -108,6 +114,7 @@ export default function Login() {
             });
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await syncAuthentication();
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });

@@ -30,7 +30,8 @@ import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { isOverlappingDay, toYmd } from "../../lib/util/data";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
-import { createSchedule, getSchedules, parseScheduleText } from "../../src/api/schedule";
+import { createSchedule, getCalendarSchedules, parseScheduleText } from "../../src/api/schedule";
+import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -75,7 +76,8 @@ export default function ScheduleIndex() {
         dispatch({ type: "SET_ERROR", error: null });
 
         try {
-            const items = await getSchedules();
+            const { startAt, endAt } = getMonthRange(visibleMonth);
+            const items = await getCalendarSchedules(startAt, endAt);
             dispatch({ type: "SET_ITEMS", items });
         } catch (error) {
             const message = getErrorMessage(error);
@@ -84,7 +86,7 @@ export default function ScheduleIndex() {
         } finally {
             dispatch({ type: "SET_LOADING", loading: false });
         }
-    }, [dispatch]);
+    }, [dispatch, visibleMonth]);
 
     useEffect(() => {
         loadSchedules();

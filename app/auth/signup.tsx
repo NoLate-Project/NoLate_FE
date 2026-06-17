@@ -12,6 +12,7 @@ import {
 
 import { loginMember, signUpMember } from "../../src/api/member";
 import { clearAuthTokens, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import { useAuth } from "../../src/modules/auth/AuthContext";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 
@@ -19,6 +20,7 @@ const PASSWORD_PATTERN = /^[a-zA-Z0-9!@#$%^&*]{8,16}$/;
 
 export default function SignUp() {
     const router = useRouter();
+    const { syncAuthentication } = useAuth();
     const { mode, colors } = useTheme();
     const styles = createStyles(colors);
 
@@ -61,6 +63,7 @@ export default function SignUp() {
             });
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await syncAuthentication();
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
@@ -68,6 +71,7 @@ export default function SignUp() {
         } catch (error) {
             const message = error instanceof Error ? error.message : "회원가입에 실패했습니다.";
             await clearAuthTokens();
+            await syncAuthentication();
             Alert.alert("회원가입 실패", message);
         } finally {
             setSubmitting(false);

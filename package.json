@@ -23,6 +23,7 @@
     "axios": "^1.13.5",
     "babel-preset-expo": "~54.0.10",
     "expo": "^54.0.33",
+    "expo-build-properties": "~1.0.10",
     "expo-dev-client": "~6.0.21",
     "expo-doctor": "^1.17.14",
     "expo-glass-effect": "~0.1.10",

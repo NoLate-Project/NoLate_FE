@@ -5,23 +5,55 @@ import {
     onMessage,
     onNotificationOpenedApp,
 } from "@react-native-firebase/messaging";
-import * as Notifications from "expo-notifications";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import { Platform } from "react-native";
 
 import { getScheduleIdFromNotificationData } from "./pushNavigation";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
 
-Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-    }),
-});
+type ExpoNotificationsModule = typeof import("expo-notifications");
+
+let notificationsModule: ExpoNotificationsModule | null | undefined;
+
+async function getNotifications(): Promise<ExpoNotificationsModule | null> {
+    if (notificationsModule !== undefined) {
+        return notificationsModule;
+    }
+
+    if (!requireOptionalNativeModule("ExpoPushTokenManager")) {
+        notificationsModule = null;
+        return notificationsModule;
+    }
+
+    try {
+        const Notifications = await import("expo-notifications");
+
+        Notifications.setNotificationHandler({
+            handleNotification: async () => ({
+                shouldShowBanner: true,
+                shouldShowList: true,
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+            }),
+        });
+
+        notificationsModule = Notifications;
+    } catch (error) {
+        console.warn("[push] expo-notifications is unavailable in this build", error);
+        notificationsModule = null;
+    }
+
+    return notificationsModule;
+}
 
 export async function configureForegroundPush(): Promise<() => void> {
+    const Notifications = await getNotifications();
+
+    if (!Notifications) {
+        return () => undefined;
+    }
+
     if (Platform.OS === "android") {
         await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
             name: "일정 알림",
@@ -37,6 +69,7 @@ export async function configureForegroundPush(): Promise<() => void> {
 export async function configurePushNavigation(
     openSchedule: (scheduleId: string) => void,
 ): Promise<() => void> {
+    const Notifications = await getNotifications();
     const messaging = getMessaging();
     let lastOpenedMessageId: string | undefined;
 
@@ -57,7 +90,7 @@ export async function configurePushNavigation(
         openSchedule(scheduleId);
     };
 
-    const expoSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const expoSubscription = Notifications?.addNotificationResponseReceivedListener((response) => {
         const request = response.notification.request;
         openFromData(request.content.data, request.identifier);
     });
@@ -68,7 +101,7 @@ export async function configurePushNavigation(
     const initialMessage = await getInitialNotification(messaging);
     if (initialMessage) {
         openFromData(initialMessage.data, initialMessage.messageId);
-    } else {
+    } else if (Notifications) {
         const initialResponse = Notifications.getLastNotificationResponse();
         if (initialResponse) {
             const request = initialResponse.notification.request;
@@ -78,7 +111,7 @@ export async function configurePushNavigation(
     }
 
     return () => {
-        expoSubscription.remove();
+        expoSubscription?.remove();
         firebaseUnsubscribe();
     };
 }
@@ -86,6 +119,12 @@ export async function configurePushNavigation(
 async function showForegroundNotification(
     message: FirebaseMessagingTypes.RemoteMessage,
 ): Promise<void> {
+    const Notifications = await getNotifications();
+
+    if (!Notifications) {
+        return;
+    }
+
     const title = message.notification?.title ?? "NoLate";
     const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
 

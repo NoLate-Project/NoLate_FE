@@ -30,6 +30,44 @@ export async function getSchedules(): Promise<ScheduleItem[]> {
     return unwrapApiResponse(response).map(normalizeSchedule);
 }
 
+export async function getCalendarSchedules(startAt: string, endAt: string): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/calendar", {
+        params: { startAt, endAt },
+    });
+    return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
+export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/daily", {
+        params: { date },
+    });
+    return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
+export async function getUpcomingSchedules(fromAt?: string, limit?: number): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/upcoming", {
+        params: { fromAt, limit },
+    });
+    return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
+export async function searchSchedules(params: {
+    keyword?: string;
+    categoryId?: string;
+    startAt?: string;
+    endAt?: string;
+}): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/search", { params });
+    return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
+export async function getDepartureReadySchedules(fromAt?: string, toAt?: string): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/departures", {
+        params: { fromAt, toAt },
+    });
+    return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
 export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
     const response = await apiGet<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}`);
     return normalizeSchedule(unwrapApiResponse(response));
