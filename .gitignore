@@ -5,6 +5,7 @@
 # Xcode
 #
 build/
+AuthKey_*.p8
 *.pbxuser
 !default.pbxuser
 *.mode1v3

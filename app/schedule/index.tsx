@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CalendarWrapper from "../../src/modules/schedule/components/calendar/CalendarWrapper";
 import CalendarSearchModal from "../../src/modules/schedule/components/calendar/CalendarSearchModal";
-import CalendarSettingsModal from "../../src/modules/schedule/components/calendar/CalendarSettingsModal";
 import CalendarViewModeMenu from "../../src/modules/schedule/components/calendar/CalendarViewModeMenu";
 import CalendarYearOverviewModal from "../../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
@@ -46,9 +45,8 @@ export default function ScheduleIndex() {
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("stack");
     const [viewMenuVisible, setViewMenuVisible] = useState(false);
     const [yearOverviewVisible, setYearOverviewVisible] = useState(false);
-    const [settingsVisible, setSettingsVisible] = useState(false);
     const [searchVisible, setSearchVisible] = useState(false);
-    const [firstDay, setFirstDay] = useState<0 | 1>(0);
+    const [firstDay] = useState<0 | 1>(0);
     const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
     const calendarTransition = useRef(new Animated.Value(1)).current;
     const viewTransitioningRef = useRef(false);
@@ -351,8 +349,8 @@ export default function ScheduleIndex() {
                     style={[styles.settingsGlass, { borderColor: colors.border }]}
                 >
                     <Pressable
-                        onPress={() => setSettingsVisible(true)}
-                        accessibilityLabel="캘린더 설정"
+                        onPress={() => router.push("/profile")}
+                        accessibilityLabel="프로필"
                         style={({ pressed }) => [
                             styles.settingsButton,
                             { opacity: pressed ? 0.5 : 1 },
@@ -388,13 +386,6 @@ export default function ScheduleIndex() {
                 onChangeYear={setOverviewYear}
                 onSelectMonth={selectOverviewMonth}
                 onClose={() => setYearOverviewVisible(false)}
-            />
-
-            <CalendarSettingsModal
-                visible={settingsVisible}
-                firstDay={firstDay}
-                onChangeFirstDay={setFirstDay}
-                onClose={() => setSettingsVisible(false)}
             />
 
             <CalendarSearchModal

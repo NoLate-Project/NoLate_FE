@@ -1,17 +1,32 @@
 {
-  "name": "NoLate_FE",
+  "name": "NoLate",
+  "icon": "./assets/icon.png",
+  "version": "1.0.0",
   "scheme": "nolate",
   "plugins": [
     "expo-router",
     "expo-secure-store",
+    "expo-apple-authentication",
     "@react-native-firebase/app",
     "@react-native-firebase/messaging",
     "@react-native-community/datetimepicker",
+    [
+      "expo-location",
+      {
+        "locationWhenInUsePermission": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다."
+      }
+    ],
     [
       "@react-native-seoul/kakao-login",
       {
         "kakaoAppKey": "9586a8e3a28f3a6fbe3e23b9b34ec206",
         "kotlinVersion": "2.1.20"
+      }
+    ],
+    [
+      "@react-native-seoul/naver-login",
+      {
+        "urlScheme": "nolate-naver"
       }
     ],
     [
@@ -28,15 +43,23 @@
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",
-    "googleServicesFile": "./google-services.json"
+    "googleServicesFile": "./google-services.json",
+    "permissions": [
+      "ACCESS_COARSE_LOCATION",
+      "ACCESS_FINE_LOCATION"
+    ]
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
+    "buildNumber": "9",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
-      "aps-environment": "development"
+      "aps-environment": "$(APS_ENVIRONMENT)"
     },
     "infoPlist": {
+      "ITSAppUsesNonExemptEncryption": false,
+      "KAKAO_APP_SCHEME": "kakao9586a8e3a28f3a6fbe3e23b9b34ec206",
+      "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",
       "UIBackgroundModes": [
         "remote-notification"
       ],

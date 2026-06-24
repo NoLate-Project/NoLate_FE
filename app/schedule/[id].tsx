@@ -23,6 +23,7 @@ const ymdText = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad
 const hhmmText = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const DEFAULT_CAMERA = { latitude: 37.5665, longitude: 126.978, zoom: 12 };
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const SHEET_SNAP_VELOCITY_PROJECTION = 140;
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -242,10 +243,38 @@ function ScheduleDetail() {
         });
     }, [sheetCollapsedOffset, sheetTranslateY]);
 
+    const getSheetSnapOffset = useCallback((current: number, velocityY: number) => {
+        const projectedOffset = clamp(
+            current + (velocityY * SHEET_SNAP_VELOCITY_PROJECTION),
+            0,
+            sheetCollapsedOffset
+        );
+        const snapPoints = [0, sheetMiddleOffset, sheetCollapsedOffset];
+
+        return snapPoints.reduce((closest, point) => (
+            Math.abs(point - projectedOffset) < Math.abs(closest - projectedOffset)
+                ? point
+                : closest
+        ), sheetMiddleOffset);
+    }, [sheetCollapsedOffset, sheetMiddleOffset]);
+
+    const snapSheetToOffset = useCallback((nextOffset: number) => {
+        Animated.spring(sheetTranslateY, {
+            toValue: nextOffset,
+            damping: 26,
+            stiffness: 210,
+            mass: 0.92,
+            restDisplacementThreshold: 0.35,
+            restSpeedThreshold: 0.35,
+            useNativeDriver: true,
+        }).start();
+    }, [sheetTranslateY]);
+
     const sheetPanResponder = useMemo(
         () => PanResponder.create({
             onStartShouldSetPanResponder: () => true,
-            onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 6,
+            onMoveShouldSetPanResponder: (_event, gesture) =>
+                Math.abs(gesture.dy) > 2 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
             onPanResponderTerminationRequest: () => false,
             onPanResponderGrant: () => {
                 sheetTranslateY.stopAnimation((current) => {
@@ -256,41 +285,15 @@ function ScheduleDetail() {
                 sheetTranslateY.setValue(clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset));
             },
             onPanResponderRelease: (_event, gesture) => {
-                const projectedOffset = clamp(sheetStartOffsetRef.current + gesture.dy + (gesture.vy * 80), 0, sheetCollapsedOffset);
-                const snapPoints = [0, sheetMiddleOffset, sheetCollapsedOffset];
-                const nextOffset = snapPoints.reduce((closest, point) => (
-                    Math.abs(point - projectedOffset) < Math.abs(closest - projectedOffset)
-                        ? point
-                        : closest
-                ), sheetMiddleOffset);
-                Animated.spring(sheetTranslateY, {
-                    toValue: nextOffset,
-                    damping: 30,
-                    stiffness: 250,
-                    mass: 1,
-                    overshootClamping: true,
-                    useNativeDriver: true,
-                }).start();
+                const currentOffset = clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset);
+                snapSheetToOffset(getSheetSnapOffset(currentOffset, gesture.vy));
             },
             onPanResponderTerminate: (_event, gesture) => {
-                const projectedOffset = clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset);
-                const snapPoints = [0, sheetMiddleOffset, sheetCollapsedOffset];
-                const nextOffset = snapPoints.reduce((closest, point) => (
-                    Math.abs(point - projectedOffset) < Math.abs(closest - projectedOffset)
-                        ? point
-                        : closest
-                ), sheetMiddleOffset);
-                Animated.spring(sheetTranslateY, {
-                    toValue: nextOffset,
-                    damping: 30,
-                    stiffness: 250,
-                    mass: 1,
-                    overshootClamping: true,
-                    useNativeDriver: true,
-                }).start();
+                const currentOffset = clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset);
+                snapSheetToOffset(getSheetSnapOffset(currentOffset, gesture.vy));
             },
         }),
-        [sheetCollapsedOffset, sheetMiddleOffset, sheetTranslateY]
+        [getSheetSnapOffset, sheetCollapsedOffset, sheetTranslateY, snapSheetToOffset]
     );
 
     useEffect(() => {

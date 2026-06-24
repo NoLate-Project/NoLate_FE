@@ -1,6 +1,7 @@
 import Expo
 import FirebaseCore
 import kakao_login
+import NaverThirdPartyLogin
 import React
 import ReactAppDependencyProvider
 
@@ -43,7 +44,12 @@ FirebaseApp.configure()
     open url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any] = [:]
   ) -> Bool {
-  if kakao_login.RNKakaoLogins.isKakaoTalkLoginUrl(url) { return kakao_login.RNKakaoLogins.handleOpen(url) }
+    if url.scheme == "kakao9586a8e3a28f3a6fbe3e23b9b34ec206" || kakao_login.RNKakaoLogins.isKakaoTalkLoginUrl(url) {
+      return kakao_login.RNKakaoLogins.handleOpen(url)
+    }
+    if url.scheme == "nolate-naver" {
+      return NaverThirdPartyLoginConnection.getSharedInstance().application(app, open: url, options: options)
+    }
     return super.application(app, open: url, options: options) || RCTLinkingManager.application(app, open: url, options: options)
   }
 

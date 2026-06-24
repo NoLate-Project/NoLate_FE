@@ -35,6 +35,7 @@ import TmapMapView, {
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
+import { saveFavoriteDeparturePlace } from "../../src/modules/schedule/favoriteDeparture";
 import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
 
 const FALLBACK_LAT = 37.5665;
@@ -99,6 +100,8 @@ type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
 type RoutePlannerFocusTarget = "origin" | "destination" | "startRide" | "firstSubway";
 type DebugSheetState = "collapsed" | "hidden" | "expanded";
 type BottomSheetSnap = "expanded" | "middle" | "collapsed" | "hidden";
+const BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION = 120;
+const BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD = 0.72;
 const DEBUG_FOCUS_MIN_ZOOM = 5;
 const DEBUG_FOCUS_MAX_ZOOM = 18;
 const TRANSIT_FILTER_ITEMS: Array<{ key: TransitRouteFilter; label: string }> = [
@@ -109,6 +112,11 @@ const TRANSIT_FILTER_ITEMS: Array<{ key: TransitRouteFilter; label: string }> = 
 ];
 // 모듈 레벨 상수 — 렌더마다 새 객체를 만들면 지도가 카메라를 계속 리셋할 수 있음
 const INITIAL_CAMERA = { latitude: FALLBACK_LAT, longitude: FALLBACK_LNG, zoom: 12 };
+
+function placeHasCoords(place: Place): place is Place & { lat: number; lng: number } {
+    return typeof place.lat === "number" && Number.isFinite(place.lat) &&
+        typeof place.lng === "number" && Number.isFinite(place.lng);
+}
 
 function getSingleParam(value: string | string[] | undefined): string | undefined {
     if (Array.isArray(value)) return value[0];
@@ -2113,12 +2121,11 @@ export default function RoutePlannerScreen() {
         Animated.spring(bottomSheetTranslateY, {
             toValue,
             useNativeDriver: true,
-            damping: 30,
-            stiffness: 250,
-            mass: 1,
-            overshootClamping: true,
-            restDisplacementThreshold: 0.6,
-            restSpeedThreshold: 0.8,
+            damping: 26,
+            stiffness: 220,
+            mass: 0.95,
+            restDisplacementThreshold: 0.35,
+            restSpeedThreshold: 0.35,
         }).start();
     }, [bottomSheetTranslateY]);
 
@@ -2150,22 +2157,22 @@ export default function RoutePlannerScreen() {
         if (bottomSheetCollapsedOffset <= 0) return "collapsed";
         if (!isTransitDetailMode) {
             const midpoint = bottomSheetCollapsedOffset * 0.52;
-            const projected = current + (velocityY * 26);
+            const projected = current + (velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION);
 
-            if (velocityY <= -0.45) return "expanded";
-            if (velocityY >= 0.65) return "collapsed";
+            if (velocityY <= -BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) return "expanded";
+            if (velocityY >= BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) return "collapsed";
             return projected >= midpoint ? "collapsed" : "expanded";
         }
 
-        if (velocityY <= -0.65) {
+        if (velocityY <= -BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) {
             return current > bottomSheetMiddleOffset ? "middle" : "expanded";
         }
-        if (velocityY >= 0.65) {
+        if (velocityY >= BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) {
             return current < bottomSheetMiddleOffset ? "middle" : "collapsed";
         }
 
         const projected = Math.min(
-            Math.max(0, current + (velocityY * 26)),
+            Math.max(0, current + (velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION)),
             bottomSheetDragMaxOffset
         );
         const snapPoints: Array<{ snap: BottomSheetSnap; value: number }> = [
@@ -2189,7 +2196,10 @@ export default function RoutePlannerScreen() {
     const bottomHandlePanResponder = useMemo(() => PanResponder.create({
         onStartShouldSetPanResponder: () => !isBottomSheetHidden && bottomSheetCollapsedOffset > 0,
         onMoveShouldSetPanResponder: (_event, gestureState) =>
-            !isBottomSheetHidden && bottomSheetCollapsedOffset > 0 && Math.abs(gestureState.dy) > 3,
+            !isBottomSheetHidden &&
+            bottomSheetCollapsedOffset > 0 &&
+            Math.abs(gestureState.dy) > 2 &&
+            Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
         onPanResponderGrant: () => {
             bottomSheetTranslateY.stopAnimation((value) => {
                 bottomSheetStartYRef.current = value;
@@ -3507,6 +3517,11 @@ export default function RoutePlannerScreen() {
         windowHeight,
     ]);
 
+    const persistFavoriteOrigin = useCallback((place: Place) => {
+        if (!placeHasCoords(place)) return;
+        saveFavoriteDeparturePlace(place).catch(() => undefined);
+    }, []);
+
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {
         if (isRoutePointLocked || !hasActiveTarget) {
             setSearchQuery("");
@@ -3520,6 +3535,12 @@ export default function RoutePlannerScreen() {
             setOriginAddress(place.address);
             setOriginName(place.name);
             setActiveTarget("destination"); // 출발지 설정 후 도착지 탭으로 자동 전환
+            persistFavoriteOrigin({
+                name: place.name,
+                address: place.address,
+                lat: place.lat,
+                lng: place.lng,
+            });
         } else {
             setDestinationLat(place.lat);
             setDestinationLng(place.lng);
@@ -3539,32 +3560,28 @@ export default function RoutePlannerScreen() {
         setSearchResults([]);
     };
 
-    const syncAddressFromCoords = useCallback(async (target: RoutePointTarget, lat: number, lng: number) => {
-        try {
-            const address = await reverseGeocodeToAddress(lat, lng);
-            if (!address) return;
-            if (target === "origin") {
-                setOriginAddress(address);
-            } else {
-                setDestinationAddress(address);
-            }
-        } catch {
-            // ignore
-        }
-    }, []);
-
     const setCurrentLocation = useCallback(async (target: RoutePointTarget) => {
         try {
             const loc = await getCurrentLocation();
+            const address = await reverseGeocodeToAddress(loc.latitude, loc.longitude).catch(() => undefined);
+            const placeName = address || "현재 위치";
             if (target === "origin") {
                 setOriginLat(loc.latitude);
                 setOriginLng(loc.longitude);
-                setOriginName("현재 위치");
+                setOriginName(placeName);
+                setOriginAddress(address || "");
                 setActiveTarget("destination");
+                persistFavoriteOrigin({
+                    name: placeName,
+                    address: address || undefined,
+                    lat: loc.latitude,
+                    lng: loc.longitude,
+                });
             } else {
                 setDestinationLat(loc.latitude);
                 setDestinationLng(loc.longitude);
-                setDestinationName("현재 위치");
+                setDestinationName(placeName);
+                setDestinationAddress(address || "");
             }
 
             const nextHasOrigin = target === "origin" ? true : hasOriginCoords;
@@ -3575,12 +3592,11 @@ export default function RoutePlannerScreen() {
                 setIsRoutePointEditMode(true);
             }
 
-            await syncAddressFromCoords(target, loc.latitude, loc.longitude);
         } catch (error) {
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
             Alert.alert("위치 가져오기 실패", message);
         }
-    }, [hasDestinationCoords, hasOriginCoords, syncAddressFromCoords]);
+    }, [hasDestinationCoords, hasOriginCoords, persistFavoriteOrigin]);
 
     useEffect(() => {
         if (initializedOriginRef.current) return;
@@ -3654,13 +3670,31 @@ export default function RoutePlannerScreen() {
                 if (tappedTarget === "origin") {
                     setOriginName(address);
                     setOriginAddress(address);
+                    persistFavoriteOrigin({
+                        name: address,
+                        address,
+                        lat: latitude,
+                        lng: longitude,
+                    });
                 } else {
                     setDestinationName(address);
                     setDestinationAddress(address);
                 }
+            } else if (tappedTarget === "origin") {
+                persistFavoriteOrigin({
+                    name: "출발지",
+                    lat: latitude,
+                    lng: longitude,
+                });
             }
         } catch {
-            // ignore
+            if (tappedTarget === "origin") {
+                persistFavoriteOrigin({
+                    name: "출발지",
+                    lat: latitude,
+                    lng: longitude,
+                });
+            }
         }
     };
 
@@ -3811,6 +3845,7 @@ export default function RoutePlannerScreen() {
             lng: destinationLng,
         };
 
+        persistFavoriteOrigin(nextOrigin);
         setRoutePlannerResult(sessionId, {
             origin: nextOrigin,
             destination: nextDestination,

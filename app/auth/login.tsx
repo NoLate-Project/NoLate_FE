@@ -14,7 +14,7 @@ import {
 import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
 import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
-import { loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
+import { loginWithAppleSdk, loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
@@ -96,15 +96,15 @@ export default function Login() {
     const onSocialLogin = async (provider: SocialProvider) => {
         if (socialSubmitting) return;
 
-        if (provider === "apple") {
-            Alert.alert("준비 중", "Apple 로그인은 아직 준비 중입니다.");
-            return;
-        }
-
         try {
             setSocialSubmitting(true);
 
-            const profile = provider === "kakao" ? await loginWithKakaoSdk() : await loginWithNaverSdk();
+            const profile =
+                provider === "kakao"
+                    ? await loginWithKakaoSdk()
+                    : provider === "naver"
+                        ? await loginWithNaverSdk()
+                        : await loginWithAppleSdk();
 
             const member = await snsLoginMember({
                 loginType: profile.loginType,

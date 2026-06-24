@@ -4,7 +4,8 @@ import { Platform } from "react-native";
 import { getEnv } from "./env";
 import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from "../modules/auth/authStorage";
 
-const defaultBaseUrl = Platform.OS === "android" ? "http://10.0.2.2:5522" : "http://localhost:5522";
+// const defaultBaseUrl = Platform.OS === "android" ? "http://10.0.2.2:5522" : "http://localhost:5522";
+const defaultBaseUrl = "https://nolate.jinuk.dev";
 export const API_BASE_URL = getEnv("EXPO_PUBLIC_API_BASE_URL") ?? defaultBaseUrl;
 
 export const apiClient: AxiosInstance = axios.create({
@@ -22,7 +23,7 @@ type RetryableRequestConfig = AxiosRequestConfig & {
 apiClient.interceptors.request.use(
     async (config) => {
         const accessToken = await getAccessToken();
-        if (accessToken) {
+        if (accessToken && !isAuthEndpoint(config.url)) {
             config.headers.Authorization = `Bearer ${accessToken}`;
         }
         return config;
@@ -40,9 +41,7 @@ apiClient.interceptors.response.use(
             error.response?.status === 401 &&
             originalRequest &&
             !originalRequest._retryAuth &&
-            !requestUrl.includes("/api/member/auth/refresh") &&
-            !requestUrl.includes("/api/member/auth/login") &&
-            !requestUrl.includes("/api/member/auth/token-login")
+            !isAuthEndpoint(requestUrl)
         ) {
             originalRequest._retryAuth = true;
             const refreshToken = await getRefreshToken();
@@ -84,6 +83,10 @@ apiClient.interceptors.response.use(
         return Promise.reject(new Error(message));
     }
 );
+
+function isAuthEndpoint(url?: string): boolean {
+    return Boolean(url?.includes("/api/member/auth/"));
+}
 
 export async function apiGet<T = unknown>(url: string, config?: AxiosRequestConfig) {
     const response = await apiClient.get<T>(url, config);

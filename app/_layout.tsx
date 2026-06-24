@@ -63,6 +63,7 @@ function RootNavigator() {
             <Stack.Screen name="auth/login" />
             <Stack.Screen name="auth/signup" />
             <Stack.Protected guard={isAuthenticated}>
+                <Stack.Screen name="profile" />
                 <Stack.Screen name="schedule/index" />
                 <Stack.Screen name="schedule/timetable" />
                 <Stack.Screen name="schedule/[id]" />

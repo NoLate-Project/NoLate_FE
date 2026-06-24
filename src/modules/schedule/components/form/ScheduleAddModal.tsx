@@ -16,8 +16,10 @@ import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/dat
 import { Calendar } from "react-native-calendars";
 import { usePathname, useRouter } from "expo-router";
 
-import type { ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
+import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
+import { searchAddressByKeyword } from "../../../map/tmapApi";
 import { useTheme } from "../../../theme/ThemeContext";
+import { getFavoriteDeparturePlace } from "../../favoriteDeparture";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
@@ -64,6 +66,9 @@ function hhmmText(d: Date) {
 }
 
 const SHEET_HIDDEN_Y = 620;
+const SHEET_CLOSE_DISTANCE = 118;
+const SHEET_CLOSE_VELOCITY = 0.85;
+const SHEET_VELOCITY_PROJECTION = 120;
 const DATE_H         = 312;
 const TIME_H         = 216;
 
@@ -74,6 +79,12 @@ const isDateType = (t: PickerType | null): boolean =>
 
 const pickerTargetH = (t: PickerType | null): number =>
     t !== null && isDateType(t) ? DATE_H : TIME_H;
+
+const clampSheetY = (value: number) => Math.min(Math.max(value, 0), SHEET_HIDDEN_Y);
+
+const hasPlaceCoords = (place: Place | null | undefined) =>
+    typeof place?.lat === "number" && Number.isFinite(place.lat) &&
+    typeof place.lng === "number" && Number.isFinite(place.lng);
 
 // 새 일정을 입력하고 저장하는 바텀시트 화면을 렌더링한다.
 export default function ScheduleNewModal({
@@ -121,6 +132,7 @@ export default function ScheduleNewModal({
     const [quickExpanded, setQuickExpanded]           = useState(false);
     const [quickText, setQuickText]                   = useState("");
     const [quickParsing, setQuickParsing]             = useState(false);
+    const [favoriteOrigin, setFavoriteOrigin]         = useState<Place | null>(null);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
     const [endDay,    setEndDay]    = useState(() => new Date(`${defaultDay}T00:00:00`));
@@ -165,15 +177,38 @@ export default function ScheduleNewModal({
     }, [visible]);
 
     useEffect(() => {
+        if (!visible) return;
+        let cancelled = false;
+
+        getFavoriteDeparturePlace()
+            .then((place) => {
+                if (cancelled) return;
+                setFavoriteOrigin(place);
+                if (!place || initialValues) return;
+
+                setOriginText(place.name ?? place.address ?? "");
+                setOriginAddress(place.address);
+                setOriginLat(place.lat);
+                setOriginLng(place.lng);
+            })
+            .catch(() => undefined);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [initialValues, visible]);
+
+    useEffect(() => {
         if (!visible || !initialValues) return;
 
         setTitle(initialValues.title ?? "");
         setNotes(initialValues.notes ?? "");
 
-        setOriginText(initialValues.origin?.name ?? "");
-        setOriginAddress(initialValues.origin?.address);
-        setOriginLat(initialValues.origin?.lat);
-        setOriginLng(initialValues.origin?.lng);
+        const parsedOrigin = initialValues.origin ?? favoriteOrigin ?? undefined;
+        setOriginText(parsedOrigin?.name ?? parsedOrigin?.address ?? "");
+        setOriginAddress(parsedOrigin?.address);
+        setOriginLat(parsedOrigin?.lat);
+        setOriginLng(parsedOrigin?.lng);
         setDestinationText(initialValues.destination?.name ?? "");
         setDestinationAddress(initialValues.destination?.address);
         setDestinationLat(initialValues.destination?.lat);
@@ -195,7 +230,40 @@ export default function ScheduleNewModal({
         } else {
             setHasEndTime(false);
         }
-    }, [initialValues, visible]);
+    }, [favoriteOrigin, initialValues, visible]);
+
+    useEffect(() => {
+        if (!visible || !initialValues?.destination || hasPlaceCoords(initialValues.destination)) return;
+
+        const query = initialValues.destination.address?.trim() || initialValues.destination.name?.trim();
+        if (!query) return;
+
+        let cancelled = false;
+        searchAddressByKeyword(query)
+            .then((items) => {
+                const match = items[0];
+                if (cancelled || !match) return;
+
+                setDestinationText((current) =>
+                    current.trim() || initialValues.destination?.name || match.name
+                );
+                setDestinationAddress(initialValues.destination?.address?.trim() || match.address);
+                setDestinationLat(match.lat);
+                setDestinationLng(match.lng);
+            })
+            .catch(() => undefined);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        initialValues?.destination,
+        initialValues?.destination?.address,
+        initialValues?.destination?.lat,
+        initialValues?.destination?.lng,
+        initialValues?.destination?.name,
+        visible,
+    ]);
 
     useEffect(() => {
         if (!visible) return;
@@ -311,13 +379,25 @@ export default function ScheduleNewModal({
 
     const openSheet = useCallback(() => {
         Animated.spring(posY, {
-            toValue: 0, useNativeDriver: true, damping: 18, stiffness: 180, mass: 1,
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 24,
+            stiffness: 230,
+            mass: 0.9,
+            restDisplacementThreshold: 0.35,
+            restSpeedThreshold: 0.35,
         }).start();
     }, [posY]);
 
     const closeSheet = useCallback((after?: () => void) => {
-        Animated.timing(posY, {
-            toValue: SHEET_HIDDEN_Y, duration: 280, useNativeDriver: true,
+        Animated.spring(posY, {
+            toValue: SHEET_HIDDEN_Y,
+            useNativeDriver: true,
+            damping: 28,
+            stiffness: 240,
+            mass: 0.95,
+            restDisplacementThreshold: 0.45,
+            restSpeedThreshold: 0.45,
         }).start(({ finished }) => { if (finished) after?.(); });
     }, [posY]);
 
@@ -404,26 +484,37 @@ export default function ScheduleNewModal({
         PanResponder.create({
             onStartShouldSetPanResponder:        () => true,
             onStartShouldSetPanResponderCapture: () => false,
-            onMoveShouldSetPanResponder: (_, g) => g.dy > 4 && Math.abs(g.dy) > Math.abs(g.dx),
+            onMoveShouldSetPanResponder: (_, g) => g.dy > 2 && Math.abs(g.dy) > Math.abs(g.dx),
             onMoveShouldSetPanResponderCapture:  () => false,
-            onPanResponderMove: (_, g) => { posY.setValue(Math.max(0, g.dy)); },
+            onPanResponderMove: (_, g) => { posY.setValue(clampSheetY(g.dy)); },
             onPanResponderRelease: (_, g) => {
-                if (g.dy > 100 || g.vy > 0.8) {
-                    Animated.timing(posY, {
-                        toValue: SHEET_HIDDEN_Y, duration: 220, useNativeDriver: true,
-                    }).start(({ finished }) => { if (finished) onCloseRef.current(); });
+                const projectedY = clampSheetY(g.dy + (g.vy * SHEET_VELOCITY_PROJECTION));
+                if (projectedY > SHEET_CLOSE_DISTANCE || g.vy > SHEET_CLOSE_VELOCITY) {
+                    closeSheet(() => onCloseRef.current());
                 } else {
                     Animated.spring(posY, {
-                        toValue: 0, useNativeDriver: true, damping: 18, stiffness: 180, mass: 1,
+                        toValue: 0,
+                        useNativeDriver: true,
+                        damping: 24,
+                        stiffness: 230,
+                        mass: 0.9,
+                        restDisplacementThreshold: 0.35,
+                        restSpeedThreshold: 0.35,
                     }).start();
                 }
             },
             onPanResponderTerminate: () => {
                 Animated.spring(posY, {
-                    toValue: 0, useNativeDriver: true, damping: 18, stiffness: 180, mass: 1,
+                    toValue: 0,
+                    useNativeDriver: true,
+                    damping: 24,
+                    stiffness: 230,
+                    mass: 0.9,
+                    restDisplacementThreshold: 0.35,
+                    restSpeedThreshold: 0.35,
                 }).start();
             },
-        }), [posY]);
+        }), [closeSheet, posY]);
 
     // 입력값을 일정 저장 payload로 변환해 상위 화면에 전달한다.
     const submit = async () => {

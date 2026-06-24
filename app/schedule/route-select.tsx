@@ -21,6 +21,10 @@ import {
     type RouteAlternativeOption,
 } from "../../src/modules/map/tmapApi";
 import { getRoutePlannerInitial, setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
+import {
+    getFavoriteDeparturePlace,
+    saveFavoriteDeparturePlace,
+} from "../../src/modules/schedule/favoriteDeparture";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -344,6 +348,15 @@ function buildPlace(name: string, address: string | undefined, lat?: number, lng
     };
 }
 
+function placeHasCoords(place: Place | null | undefined): place is Place & { lat: number; lng: number } {
+    return typeof place?.lat === "number" && Number.isFinite(place.lat) &&
+        typeof place.lng === "number" && Number.isFinite(place.lng);
+}
+
+function getPlaceDisplayText(place: Place): string {
+    return place.name?.trim() || place.address?.trim() || "출발지";
+}
+
 // 딥링크나 테스트 URL로 전달된 첫 번째 문자열 값을 꺼낸다.
 function readParam(value: string | string[] | undefined): string | undefined {
     if (Array.isArray(value)) return value[0];
@@ -430,6 +443,7 @@ export default function RouteSelectScreen() {
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
     const [travelMode, setTravelMode] = useState<TravelMode>(initial?.travelMode ?? "CAR");
     const [activeTarget, setActiveTarget] = useState<RoutePointTarget>("origin");
+    const [favoriteOrigin, setFavoriteOrigin] = useState<Place | null>(null);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
     const [searching, setSearching] = useState(false);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>([]);
@@ -438,6 +452,9 @@ export default function RouteSelectScreen() {
     const [routeLoading, setRouteLoading] = useState(false);
     const [routeError, setRouteError] = useState<string | undefined>();
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const initialHadOriginRef = useRef(Boolean(initial?.origin));
+    const favoriteOriginLoadedRef = useRef(false);
+    const originTouchedRef = useRef(Boolean(initial?.origin));
     const routeDepartureAt = useMemo(() => new Date(), []);
 
     const origin = useMemo(
@@ -511,9 +528,65 @@ export default function RouteSelectScreen() {
         setSearching(false);
     }, []);
 
+    const persistFavoriteOrigin = useCallback((place: Place) => {
+        if (!placeHasCoords(place)) return;
+
+        saveFavoriteDeparturePlace(place)
+            .then((saved) => {
+                if (saved) setFavoriteOrigin(saved);
+            })
+            .catch(() => undefined);
+    }, []);
+
+    const applyOriginPlace = useCallback((place: Place, options?: { saveFavorite?: boolean }) => {
+        originTouchedRef.current = true;
+        setOriginText(getPlaceDisplayText(place));
+        setOriginAddress(place.address);
+        setOriginLat(place.lat);
+        setOriginLng(place.lng);
+        setActiveTarget("destination");
+        clearSearch();
+
+        if (options?.saveFavorite !== false) {
+            persistFavoriteOrigin(place);
+        }
+    }, [clearSearch, persistFavoriteOrigin]);
+
+    useEffect(() => {
+        if (favoriteOriginLoadedRef.current) return;
+        favoriteOriginLoadedRef.current = true;
+        let cancelled = false;
+
+        getFavoriteDeparturePlace()
+            .then((place) => {
+                if (cancelled) return;
+                setFavoriteOrigin(place);
+
+                if (
+                    place &&
+                    !initialHadOriginRef.current &&
+                    !originTouchedRef.current
+                ) {
+                    originTouchedRef.current = true;
+                    setOriginText(getPlaceDisplayText(place));
+                    setOriginAddress(place.address);
+                    setOriginLat(place.lat);
+                    setOriginLng(place.lng);
+                    setActiveTarget("destination");
+                    clearSearch();
+                }
+            })
+            .catch(() => undefined);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [clearSearch]);
+
     const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
         setActiveTarget(target);
         if (target === "origin") {
+            originTouchedRef.current = true;
             setOriginText(text);
             setOriginAddress(undefined);
             setOriginLat(undefined);
@@ -547,38 +620,45 @@ export default function RouteSelectScreen() {
 
     const applyPlace = useCallback((target: RoutePointTarget, item: PlaceSearchItem) => {
         if (target === "origin") {
-            setOriginText(item.name);
-            setOriginAddress(item.address);
-            setOriginLat(item.lat);
-            setOriginLng(item.lng);
-            setActiveTarget("destination");
+            applyOriginPlace({
+                name: item.name,
+                address: item.address,
+                lat: item.lat,
+                lng: item.lng,
+            });
         } else {
             setDestinationText(item.name);
             setDestinationAddress(item.address);
             setDestinationLat(item.lat);
             setDestinationLng(item.lng);
+            clearSearch();
         }
-        clearSearch();
-    }, [clearSearch]);
+    }, [applyOriginPlace, clearSearch]);
 
     const useCurrentLocationAsOrigin = useCallback(async () => {
         try {
             setSearching(true);
             const location = await getCurrentLocation();
-            const address = await reverseGeocodeToAddress(location.latitude, location.longitude);
-            setOriginText(address || "현재 위치");
-            setOriginAddress(address || undefined);
-            setOriginLat(location.latitude);
-            setOriginLng(location.longitude);
-            setActiveTarget("destination");
-            clearSearch();
+            const address = await reverseGeocodeToAddress(location.latitude, location.longitude)
+                .catch(() => undefined);
+            applyOriginPlace({
+                name: address || "현재 위치",
+                address: address || undefined,
+                lat: location.latitude,
+                lng: location.longitude,
+            });
         } catch (error) {
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
             Alert.alert("현재 위치 실패", message);
         } finally {
             setSearching(false);
         }
-    }, [clearSearch]);
+    }, [applyOriginPlace]);
+
+    const useFavoriteOriginAsOrigin = useCallback(() => {
+        if (!favoriteOrigin) return;
+        applyOriginPlace(favoriteOrigin, { saveFavorite: false });
+    }, [applyOriginPlace, favoriteOrigin]);
 
     const swapPlaces = useCallback(() => {
         const prevOrigin = { text: originText, address: originAddress, lat: originLat, lng: originLng };
@@ -724,11 +804,18 @@ export default function RouteSelectScreen() {
                     </View>
 
                     <View style={styles.quickActionRow}>
+                        {!!favoriteOrigin && (
+                            <Pressable onPress={useFavoriteOriginAsOrigin} style={[styles.quickActionButton, { borderColor: colors.border }]}>
+                                <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>
+                                    저장된 출발지
+                                </Text>
+                            </Pressable>
+                        )}
                         <Pressable onPress={useCurrentLocationAsOrigin} style={[styles.quickActionButton, { borderColor: colors.border }]}>
-                            <Text style={[styles.quickActionText, { color: colors.textPrimary }]}>현재 위치 출발</Text>
+                            <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>현재 위치 출발</Text>
                         </Pressable>
                         <Pressable onPress={openMapForRouteReset} style={[styles.quickActionButton, { borderColor: colors.border }]}>
-                            <Text style={[styles.quickActionText, { color: colors.textPrimary }]}>지도에서 위치 선택</Text>
+                            <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>지도에서 위치 선택</Text>
                         </Pressable>
                     </View>
                 </View>
@@ -1123,13 +1210,16 @@ const styles = StyleSheet.create({
     },
     quickActionRow: {
         flexDirection: "row",
+        flexWrap: "wrap",
         gap: 8,
     },
     quickActionButton: {
         flex: 1,
+        minWidth: 112,
         borderWidth: 1,
         borderRadius: 999,
         paddingVertical: 10,
+        paddingHorizontal: 10,
         alignItems: "center",
     },
     quickActionText: {
