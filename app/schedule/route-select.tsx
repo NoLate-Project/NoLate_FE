@@ -22,7 +22,8 @@ import {
 } from "../../src/modules/map/tmapApi";
 import { getRoutePlannerInitial, setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import {
-    getFavoriteDeparturePlace,
+    getFavoriteDeparturePlaces,
+    removeFavoriteDeparturePlace,
     saveFavoriteDeparturePlace,
 } from "../../src/modules/schedule/favoriteDeparture";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
@@ -443,7 +444,7 @@ export default function RouteSelectScreen() {
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
     const [travelMode, setTravelMode] = useState<TravelMode>(initial?.travelMode ?? "CAR");
     const [activeTarget, setActiveTarget] = useState<RoutePointTarget>("origin");
-    const [favoriteOrigin, setFavoriteOrigin] = useState<Place | null>(null);
+    const [favoritePlaces, setFavoritePlaces] = useState<Place[]>([]);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
     const [searching, setSearching] = useState(false);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>([]);
@@ -452,7 +453,6 @@ export default function RouteSelectScreen() {
     const [routeLoading, setRouteLoading] = useState(false);
     const [routeError, setRouteError] = useState<string | undefined>();
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const initialHadOriginRef = useRef(Boolean(initial?.origin));
     const favoriteOriginLoadedRef = useRef(false);
     const originTouchedRef = useRef(Boolean(initial?.origin));
     const routeDepartureAt = useMemo(() => new Date(), []);
@@ -528,17 +528,7 @@ export default function RouteSelectScreen() {
         setSearching(false);
     }, []);
 
-    const persistFavoriteOrigin = useCallback((place: Place) => {
-        if (!placeHasCoords(place)) return;
-
-        saveFavoriteDeparturePlace(place)
-            .then((saved) => {
-                if (saved) setFavoriteOrigin(saved);
-            })
-            .catch(() => undefined);
-    }, []);
-
-    const applyOriginPlace = useCallback((place: Place, options?: { saveFavorite?: boolean }) => {
+    const applyOriginPlace = useCallback((place: Place) => {
         originTouchedRef.current = true;
         setOriginText(getPlaceDisplayText(place));
         setOriginAddress(place.address);
@@ -546,42 +536,61 @@ export default function RouteSelectScreen() {
         setOriginLng(place.lng);
         setActiveTarget("destination");
         clearSearch();
+    }, [clearSearch]);
 
-        if (options?.saveFavorite !== false) {
-            persistFavoriteOrigin(place);
+    const saveCurrentOriginAsFavorite = useCallback(async () => {
+        if (!placeHasCoords(origin)) {
+            Alert.alert("즐겨찾기 저장", "좌표가 있는 출발지를 먼저 선택해 주세요.");
+            return;
         }
-    }, [clearSearch, persistFavoriteOrigin]);
+
+        try {
+            await saveFavoriteDeparturePlace(origin);
+            const places = await getFavoriteDeparturePlaces();
+            setFavoritePlaces(places);
+            Alert.alert("즐겨찾기 저장", "출발지를 즐겨찾기에 저장했습니다.");
+        } catch {
+            Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
+        }
+    }, [origin]);
+
+    const removeFavoritePlace = useCallback((place: Place) => {
+        Alert.alert(
+            "즐겨찾기 삭제",
+            `${getPlaceDisplayText(place)}을(를) 삭제할까요?`,
+            [
+                { text: "취소", style: "cancel" },
+                {
+                    text: "삭제",
+                    style: "destructive",
+                    onPress: () => {
+                        removeFavoriteDeparturePlace(place)
+                            .then(setFavoritePlaces)
+                            .catch(() => {
+                                Alert.alert("즐겨찾기 삭제 실패", "잠시 후 다시 시도해 주세요.");
+                            });
+                    },
+                },
+            ]
+        );
+    }, []);
 
     useEffect(() => {
         if (favoriteOriginLoadedRef.current) return;
         favoriteOriginLoadedRef.current = true;
         let cancelled = false;
 
-        getFavoriteDeparturePlace()
-            .then((place) => {
+        getFavoriteDeparturePlaces()
+            .then((places) => {
                 if (cancelled) return;
-                setFavoriteOrigin(place);
-
-                if (
-                    place &&
-                    !initialHadOriginRef.current &&
-                    !originTouchedRef.current
-                ) {
-                    originTouchedRef.current = true;
-                    setOriginText(getPlaceDisplayText(place));
-                    setOriginAddress(place.address);
-                    setOriginLat(place.lat);
-                    setOriginLng(place.lng);
-                    setActiveTarget("destination");
-                    clearSearch();
-                }
+                setFavoritePlaces(places);
             })
             .catch(() => undefined);
 
         return () => {
             cancelled = true;
         };
-    }, [clearSearch]);
+    }, []);
 
     const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
         setActiveTarget(target);
@@ -655,10 +664,9 @@ export default function RouteSelectScreen() {
         }
     }, [applyOriginPlace]);
 
-    const useFavoriteOriginAsOrigin = useCallback(() => {
-        if (!favoriteOrigin) return;
-        applyOriginPlace(favoriteOrigin, { saveFavorite: false });
-    }, [applyOriginPlace, favoriteOrigin]);
+    const useFavoritePlaceAsOrigin = useCallback((place: Place) => {
+        applyOriginPlace(place);
+    }, [applyOriginPlace]);
 
     const swapPlaces = useCallback(() => {
         const prevOrigin = { text: originText, address: originAddress, lat: originLat, lng: originLng };
@@ -804,13 +812,18 @@ export default function RouteSelectScreen() {
                     </View>
 
                     <View style={styles.quickActionRow}>
-                        {!!favoriteOrigin && (
-                            <Pressable onPress={useFavoriteOriginAsOrigin} style={[styles.quickActionButton, { borderColor: colors.border }]}>
-                                <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>
-                                    저장된 출발지
-                                </Text>
-                            </Pressable>
-                        )}
+                        <Pressable
+                            onPress={saveCurrentOriginAsFavorite}
+                            style={[
+                                styles.quickActionButton,
+                                {
+                                    borderColor: colors.border,
+                                    opacity: placeHasCoords(origin) ? 1 : 0.52,
+                                },
+                            ]}
+                        >
+                            <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>즐겨찾기 저장</Text>
+                        </Pressable>
                         <Pressable onPress={useCurrentLocationAsOrigin} style={[styles.quickActionButton, { borderColor: colors.border }]}>
                             <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>현재 위치 출발</Text>
                         </Pressable>
@@ -818,6 +831,41 @@ export default function RouteSelectScreen() {
                             <Text numberOfLines={1} style={[styles.quickActionText, { color: colors.textPrimary }]}>지도에서 위치 선택</Text>
                         </Pressable>
                     </View>
+
+                    {favoritePlaces.length > 0 && (
+                        <ScrollView
+                            horizontal
+                            directionalLockEnabled
+                            nestedScrollEnabled
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.favoritePlaceList}
+                        >
+                            {favoritePlaces.map((place, index) => (
+                                <View
+                                    key={`${place.lat ?? "x"}:${place.lng ?? "x"}:${place.name ?? ""}:${index}`}
+                                    style={[
+                                        styles.favoritePlaceChip,
+                                        { backgroundColor: colors.surface2, borderColor: colors.border },
+                                    ]}
+                                >
+                                    <Pressable
+                                        onPress={() => useFavoritePlaceAsOrigin(place)}
+                                        style={styles.favoritePlaceChipMain}
+                                    >
+                                        <Text numberOfLines={1} style={[styles.favoritePlaceText, { color: colors.textPrimary }]}>
+                                            ★ {getPlaceDisplayText(place)}
+                                        </Text>
+                                    </Pressable>
+                                    <Pressable
+                                        onPress={() => removeFavoritePlace(place)}
+                                        style={styles.favoritePlaceRemove}
+                                    >
+                                        <Text style={[styles.favoritePlaceRemoveText, { color: colors.textSecondary }]}>×</Text>
+                                    </Pressable>
+                                </View>
+                            ))}
+                        </ScrollView>
+                    )}
                 </View>
 
                 {(searching || searchResults.length > 0) && (
@@ -1225,6 +1273,41 @@ const styles = StyleSheet.create({
     quickActionText: {
         fontSize: 12,
         fontWeight: "800",
+    },
+    favoritePlaceList: {
+        gap: 8,
+        paddingRight: 4,
+    },
+    favoritePlaceChip: {
+        minHeight: 38,
+        maxWidth: 210,
+        borderWidth: 1,
+        borderRadius: 999,
+        flexDirection: "row",
+        alignItems: "center",
+        overflow: "hidden",
+    },
+    favoritePlaceChipMain: {
+        flexShrink: 1,
+        minWidth: 0,
+        paddingLeft: 12,
+        paddingRight: 6,
+        paddingVertical: 9,
+    },
+    favoritePlaceText: {
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    favoritePlaceRemove: {
+        width: 34,
+        alignSelf: "stretch",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    favoritePlaceRemoveText: {
+        marginTop: -1,
+        fontSize: 18,
+        fontWeight: "700",
     },
     searchResultCard: {
         borderWidth: 1,

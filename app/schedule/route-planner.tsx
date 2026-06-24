@@ -51,7 +51,14 @@ const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
     WALK: "#5A96FF",
     ETC: "#94A3B8",
 };
-const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = 24;
+const BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT = 40;
+const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT;
+const BOTTOM_SHEET_EDGE_RESISTANCE = 0.28;
+const BOTTOM_SHEET_EDGE_OVERSHOOT = 30;
+const TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT = 74;
+const TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING = 10;
+const TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT = 46;
+const TRANSIT_DETAIL_SCROLL_BOTTOM_GAP = 24;
 // UI tuning: 바텀시트는 최소 20%를 남기고(=최대 80%까지만) 내려간다.
 const BOTTOM_SHEET_COLLAPSED_VISIBLE_RATIO = 0.2;
 // 대중교통 상세 화면에서는 하단 안내 바 위로 핸들만 보이도록 접힌 높이를 보정한다.
@@ -100,8 +107,8 @@ type TransitRouteFilter = "ALL" | "BUS" | "SUBWAY" | "MIXED";
 type RoutePlannerFocusTarget = "origin" | "destination" | "startRide" | "firstSubway";
 type DebugSheetState = "collapsed" | "hidden" | "expanded";
 type BottomSheetSnap = "expanded" | "middle" | "collapsed" | "hidden";
-const BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION = 120;
-const BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD = 0.72;
+const BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION = 180;
+const BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD = 0.45;
 const DEBUG_FOCUS_MIN_ZOOM = 5;
 const DEBUG_FOCUS_MAX_ZOOM = 18;
 const TRANSIT_FILTER_ITEMS: Array<{ key: TransitRouteFilter; label: string }> = [
@@ -1940,6 +1947,7 @@ export default function RoutePlannerScreen() {
     const [transitRouteFilter, setTransitRouteFilter] = useState<TransitRouteFilter>("ALL");
     const [selectedAlternativeId, setSelectedAlternativeId] = useState<string | undefined>();
     const [bottomPanelHeight, setBottomPanelHeight] = useState(0);
+    const [transitActionBarHeight, setTransitActionBarHeight] = useState(0);
     const [hasBottomSheetMeasured, setHasBottomSheetMeasured] = useState(false);
     const [bottomSheetSnap, setBottomSheetSnap] = useState<BottomSheetSnap>("collapsed");
     const [isBottomSheetCollapsed, setIsBottomSheetCollapsed] = useState(true);
@@ -1985,6 +1993,14 @@ export default function RoutePlannerScreen() {
     const hasActiveTarget = activeTarget === "origin" || activeTarget === "destination";
     const originDisplay = originName.trim() || originAddress.trim() || "출발지 미선택";
     const destinationDisplay = destinationName.trim() || destinationAddress.trim() || "도착지 미선택";
+    const bottomPanelMaxHeight = useMemo(() => {
+        if (isTransitDetailMode) {
+            const routeHeaderReserve = Math.max(insets.top + 92, 118);
+            return Math.max(360, windowHeight - routeHeaderReserve);
+        }
+        const editModeReserve = Math.max(insets.top + 104, 140);
+        return Math.min(560, Math.max(300, windowHeight - editModeReserve));
+    }, [insets.top, isTransitDetailMode, windowHeight]);
     const bottomSheetPeekHeight = BOTTOM_SHEET_HANDLE_PEEK_HEIGHT;
     const bottomSheetCollapsedVisibleHeight = useMemo(() => {
         if (bottomPanelHeight <= 0) return bottomSheetPeekHeight;
@@ -2009,17 +2025,45 @@ export default function RoutePlannerScreen() {
         if (!isTransitDetailMode) return 0;
         const routeHeaderBottom = Math.max(insets.top + 92, 118);
         const naturalPanelTop = windowHeight - bottomPanelHeight;
-        const safeExpandedOffset = Math.max(54, Math.ceil(routeHeaderBottom - naturalPanelTop));
+        const safeExpandedOffset = Math.max(0, Math.ceil(routeHeaderBottom - naturalPanelTop));
         return Math.min(bottomSheetCollapsedOffset, Math.max(0, safeExpandedOffset));
     }, [bottomPanelHeight, bottomSheetCollapsedOffset, insets.top, isTransitDetailMode, windowHeight]);
     const bottomSheetHiddenOffset = useMemo(() => {
         if (!hasBottomSheetMeasured) return 420;
         return Math.max(320, bottomPanelHeight + insets.bottom + 32);
     }, [bottomPanelHeight, hasBottomSheetMeasured, insets.bottom]);
+    const bottomSheetDragMinOffset = bottomSheetExpandedOffset;
     const bottomSheetDragMaxOffset = bottomSheetCollapsedOffset;
     const canScrollBottomSheetContent =
         bottomSheetSnap === "expanded" ||
         (isTransitDetailMode && bottomSheetSnap === "middle");
+    const transitDetailActionBarPaddingBottom = Math.max(insets.bottom - 4, 8);
+    const transitDetailActionBarEstimatedHeight = Math.max(
+        TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT,
+        TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING + TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT + transitDetailActionBarPaddingBottom
+    );
+    const transitDetailActionBarReserveHeight = isTransitDetailMode
+        ? Math.max(transitActionBarHeight, transitDetailActionBarEstimatedHeight)
+        : 0;
+    const activeBottomSheetOffset = isBottomSheetHidden
+        ? bottomSheetHiddenOffset
+        : bottomSheetSnap === "expanded"
+            ? bottomSheetExpandedOffset
+            : bottomSheetSnap === "middle"
+                ? bottomSheetMiddleOffset
+                : bottomSheetCollapsedOffset;
+    const visibleBottomSheetHeight = bottomPanelHeight > 0
+        ? Math.max(0, bottomPanelHeight - activeBottomSheetOffset)
+        : bottomPanelMaxHeight;
+    const bottomPanelScrollViewportHeight = isTransitDetailMode
+        ? Math.max(
+            0,
+            visibleBottomSheetHeight - BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT - transitDetailActionBarReserveHeight
+        )
+        : undefined;
+    const bottomPanelScrollBottomPadding = isTransitDetailMode
+        ? TRANSIT_DETAIL_SCROLL_BOTTOM_GAP
+        : Math.max(insets.bottom + 8, 12);
 
     const transitFilterCounts = useMemo(() => {
         const counts = { ALL: routeAlternatives.length, BUS: 0, SUBWAY: 0, MIXED: 0 } as Record<TransitRouteFilter, number>;
@@ -2121,9 +2165,9 @@ export default function RoutePlannerScreen() {
         Animated.spring(bottomSheetTranslateY, {
             toValue,
             useNativeDriver: true,
-            damping: 26,
-            stiffness: 220,
-            mass: 0.95,
+            damping: 30,
+            stiffness: 170,
+            mass: 1,
             restDisplacementThreshold: 0.35,
             restSpeedThreshold: 0.35,
         }).start();
@@ -2156,7 +2200,7 @@ export default function RoutePlannerScreen() {
     const getSnapFromGesture = useCallback((current: number, velocityY: number): BottomSheetSnap => {
         if (bottomSheetCollapsedOffset <= 0) return "collapsed";
         if (!isTransitDetailMode) {
-            const midpoint = bottomSheetCollapsedOffset * 0.52;
+            const midpoint = bottomSheetExpandedOffset + ((bottomSheetCollapsedOffset - bottomSheetExpandedOffset) * 0.52);
             const projected = current + (velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION);
 
             if (velocityY <= -BOTTOM_SHEET_SNAP_VELOCITY_THRESHOLD) return "expanded";
@@ -2172,7 +2216,7 @@ export default function RoutePlannerScreen() {
         }
 
         const projected = Math.min(
-            Math.max(0, current + (velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION)),
+            Math.max(bottomSheetExpandedOffset, current + (velocityY * BOTTOM_SHEET_SNAP_VELOCITY_PROJECTION)),
             bottomSheetDragMaxOffset
         );
         const snapPoints: Array<{ snap: BottomSheetSnap; value: number }> = [
@@ -2198,17 +2242,23 @@ export default function RoutePlannerScreen() {
         onMoveShouldSetPanResponder: (_event, gestureState) =>
             !isBottomSheetHidden &&
             bottomSheetCollapsedOffset > 0 &&
-            Math.abs(gestureState.dy) > 2 &&
-            Math.abs(gestureState.dy) > Math.abs(gestureState.dx),
+            Math.abs(gestureState.dy) > 1 &&
+            Math.abs(gestureState.dy) > Math.abs(gestureState.dx) * 0.6,
         onPanResponderGrant: () => {
             bottomSheetTranslateY.stopAnimation((value) => {
                 bottomSheetStartYRef.current = value;
             });
         },
         onPanResponderMove: (_event, gestureState) => {
-            const next = Math.min(
-                Math.max(0, bottomSheetStartYRef.current + gestureState.dy),
-                bottomSheetDragMaxOffset
+            let next = bottomSheetStartYRef.current + gestureState.dy;
+            if (next < bottomSheetDragMinOffset) {
+                next = bottomSheetDragMinOffset + ((next - bottomSheetDragMinOffset) * BOTTOM_SHEET_EDGE_RESISTANCE);
+            } else if (next > bottomSheetDragMaxOffset) {
+                next = bottomSheetDragMaxOffset + ((next - bottomSheetDragMaxOffset) * BOTTOM_SHEET_EDGE_RESISTANCE);
+            }
+            next = Math.min(
+                bottomSheetDragMaxOffset + BOTTOM_SHEET_EDGE_OVERSHOOT,
+                Math.max(bottomSheetDragMinOffset - BOTTOM_SHEET_EDGE_OVERSHOOT, next)
             );
             bottomSheetTranslateY.setValue(next);
         },
@@ -2224,6 +2274,7 @@ export default function RoutePlannerScreen() {
         },
     }), [
         bottomSheetCollapsedOffset,
+        bottomSheetDragMinOffset,
         bottomSheetDragMaxOffset,
         bottomSheetTranslateY,
         getSnapFromGesture,
@@ -3517,10 +3568,28 @@ export default function RoutePlannerScreen() {
         windowHeight,
     ]);
 
-    const persistFavoriteOrigin = useCallback((place: Place) => {
-        if (!placeHasCoords(place)) return;
-        saveFavoriteDeparturePlace(place).catch(() => undefined);
-    }, []);
+    const saveCurrentOriginAsFavorite = useCallback(async () => {
+        const normalizedOriginName = originName.trim();
+        const normalizedOriginAddress = originAddress.trim();
+        const originPlace: Place = {
+            name: normalizedOriginName || normalizedOriginAddress || "출발지",
+            address: normalizedOriginAddress || undefined,
+            lat: originLat,
+            lng: originLng,
+        };
+
+        if (!placeHasCoords(originPlace)) {
+            Alert.alert("즐겨찾기 저장", "좌표가 있는 출발지를 먼저 선택해 주세요.");
+            return;
+        }
+
+        try {
+            await saveFavoriteDeparturePlace(originPlace);
+            Alert.alert("즐겨찾기 저장", "출발지를 즐겨찾기에 저장했습니다.");
+        } catch {
+            Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
+        }
+    }, [originAddress, originLat, originLng, originName]);
 
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {
         if (isRoutePointLocked || !hasActiveTarget) {
@@ -3535,12 +3604,6 @@ export default function RoutePlannerScreen() {
             setOriginAddress(place.address);
             setOriginName(place.name);
             setActiveTarget("destination"); // 출발지 설정 후 도착지 탭으로 자동 전환
-            persistFavoriteOrigin({
-                name: place.name,
-                address: place.address,
-                lat: place.lat,
-                lng: place.lng,
-            });
         } else {
             setDestinationLat(place.lat);
             setDestinationLng(place.lng);
@@ -3571,12 +3634,6 @@ export default function RoutePlannerScreen() {
                 setOriginName(placeName);
                 setOriginAddress(address || "");
                 setActiveTarget("destination");
-                persistFavoriteOrigin({
-                    name: placeName,
-                    address: address || undefined,
-                    lat: loc.latitude,
-                    lng: loc.longitude,
-                });
             } else {
                 setDestinationLat(loc.latitude);
                 setDestinationLng(loc.longitude);
@@ -3596,7 +3653,7 @@ export default function RoutePlannerScreen() {
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
             Alert.alert("위치 가져오기 실패", message);
         }
-    }, [hasDestinationCoords, hasOriginCoords, persistFavoriteOrigin]);
+    }, [hasDestinationCoords, hasOriginCoords]);
 
     useEffect(() => {
         if (initializedOriginRef.current) return;
@@ -3670,31 +3727,13 @@ export default function RoutePlannerScreen() {
                 if (tappedTarget === "origin") {
                     setOriginName(address);
                     setOriginAddress(address);
-                    persistFavoriteOrigin({
-                        name: address,
-                        address,
-                        lat: latitude,
-                        lng: longitude,
-                    });
                 } else {
                     setDestinationName(address);
                     setDestinationAddress(address);
                 }
-            } else if (tappedTarget === "origin") {
-                persistFavoriteOrigin({
-                    name: "출발지",
-                    lat: latitude,
-                    lng: longitude,
-                });
             }
         } catch {
-            if (tappedTarget === "origin") {
-                persistFavoriteOrigin({
-                    name: "출발지",
-                    lat: latitude,
-                    lng: longitude,
-                });
-            }
+            // 주소 역지오코딩 실패 시 좌표만 유지한다.
         }
     };
 
@@ -3845,7 +3884,6 @@ export default function RoutePlannerScreen() {
             lng: destinationLng,
         };
 
-        persistFavoriteOrigin(nextOrigin);
         setRoutePlannerResult(sessionId, {
             origin: nextOrigin,
             destination: nextDestination,
@@ -4400,6 +4438,18 @@ export default function RoutePlannerScreen() {
                             출/도 탭을 선택한 뒤 지도 탭으로 위치를 지정하세요.
                         </Text>
                     )}
+                    {hasOriginCoords && (
+                        <View style={styles.routePreviewActionRow}>
+                            <Pressable
+                                onPress={saveCurrentOriginAsFavorite}
+                                style={[styles.routePreviewActionBtn, { backgroundColor: overlayPanelBg }]}
+                            >
+                                <Text style={[styles.routePreviewActionText, { color: colors.textPrimary }]}>
+                                    출발지 즐겨찾기
+                                </Text>
+                            </Pressable>
+                        </View>
+                    )}
 
                     {(shouldShowTransitLegend || shouldShowTransitLegendHint) && (
                         <View style={styles.transitLegendInlineRow}>
@@ -4593,48 +4643,54 @@ export default function RoutePlannerScreen() {
             )}
 
             {!isRouteSelectionStage && (
-            <View style={styles.bottomOverlay} pointerEvents={isBottomSheetHidden ? "none" : "box-none"}>
-                <Animated.View
-                    pointerEvents={isBottomSheetHidden ? "none" : "auto"}
-                    onLayout={(event) => {
-                        const measured = Math.round(event.nativeEvent.layout.height);
-                        setHasBottomSheetMeasured(true);
-                        setBottomPanelHeight((prev) => (prev === measured ? prev : measured));
-                    }}
-                    style={[
-                        styles.bottomPanel,
-                        {
-                            borderColor: isTransitDetailMode ? "transparent" : colors.border,
-                            backgroundColor: detailPanelBg,
-                            maxHeight: isTransitDetailMode ? 760 : 560,
-                            transform: [{ translateY: bottomSheetTranslateY }],
-                        },
-                    ]}
-                >
-                    <View style={styles.bottomHandleTouchArea} {...bottomHandlePanResponder.panHandlers}>
-                        <View
-                            style={[
-                                styles.bottomHandle,
-                                {
-                                    backgroundColor: colors.border,
-                                    opacity: 0.75,
-                                },
-                            ]}
-                        />
-                    </View>
-                    <ScrollView
-                        style={styles.bottomPanelScroll}
-                        contentContainerStyle={[
-                            styles.bottomPanelScrollContent,
-                            { paddingBottom: Math.max(insets.bottom + (isTransitDetailMode ? 104 : 8), 12) },
+                <View style={styles.bottomOverlay} pointerEvents={isBottomSheetHidden ? "none" : "box-none"}>
+                    <Animated.View
+                        pointerEvents={isBottomSheetHidden ? "none" : "auto"}
+                        onLayout={(event) => {
+                            const measured = Math.round(event.nativeEvent.layout.height);
+                            setHasBottomSheetMeasured(true);
+                            setBottomPanelHeight((prev) => (prev === measured ? prev : measured));
+                        }}
+                        style={[
+                            styles.bottomPanel,
+                            {
+                                borderColor: isTransitDetailMode ? "transparent" : colors.border,
+                                backgroundColor: detailPanelBg,
+                                height: isTransitDetailMode ? bottomPanelMaxHeight : undefined,
+                                maxHeight: bottomPanelMaxHeight,
+                                transform: [{ translateY: bottomSheetTranslateY }],
+                            },
                         ]}
-                        keyboardShouldPersistTaps="handled"
-                        scrollEnabled={canScrollBottomSheetContent}
-                        nestedScrollEnabled
-                        bounces={false}
-                        alwaysBounceVertical={false}
-                        showsVerticalScrollIndicator={false}
                     >
+                        <View style={styles.bottomHandleTouchArea} {...bottomHandlePanResponder.panHandlers}>
+                            <View
+                                style={[
+                                    styles.bottomHandle,
+                                    {
+                                        backgroundColor: colors.border,
+                                        opacity: 0.75,
+                                    },
+                                ]}
+                            />
+                        </View>
+                        <ScrollView
+                            style={[
+                                styles.bottomPanelScroll,
+                                typeof bottomPanelScrollViewportHeight === "number"
+                                    ? { maxHeight: bottomPanelScrollViewportHeight }
+                                    : null,
+                            ]}
+                            contentContainerStyle={[
+                                styles.bottomPanelScrollContent,
+                                { paddingBottom: bottomPanelScrollBottomPadding },
+                            ]}
+                            keyboardShouldPersistTaps="handled"
+                            scrollEnabled={canScrollBottomSheetContent}
+                            nestedScrollEnabled
+                            bounces={false}
+                            alwaysBounceVertical={false}
+                            showsVerticalScrollIndicator={false}
+                        >
                         {!hasRouteReady ? (
                             <View style={[styles.routeHintCard, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
                                 <Text style={[styles.routeHintText, { color: colors.textSecondary }]}>
@@ -5022,12 +5078,16 @@ export default function RoutePlannerScreen() {
                 </Animated.View>
                 {isTransitDetailMode && !!selectedAlternative && !isBottomSheetHidden && (
                     <View
+                        onLayout={(event) => {
+                            const measured = Math.round(event.nativeEvent.layout.height);
+                            setTransitActionBarHeight((prev) => (prev === measured ? prev : measured));
+                        }}
                         style={[
                             styles.transitDetailActionBar,
                             {
                                 backgroundColor: transitActionBarBg,
                                 borderTopColor: detailBorderColor,
-                                paddingBottom: Math.max(insets.bottom - 4, 8),
+                                paddingBottom: transitDetailActionBarPaddingBottom,
                             },
                         ]}
                     >
@@ -5773,10 +5833,11 @@ const styles = StyleSheet.create({
         overflow: "hidden",
     },
     bottomHandleTouchArea: {
+        height: BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT,
         alignItems: "center",
         justifyContent: "center",
-        paddingTop: 6,
-        paddingBottom: 4,
+        paddingTop: 10,
+        paddingBottom: 8,
     },
     bottomHandle: {
         width: 46,
@@ -6248,10 +6309,10 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        minHeight: 74,
+        minHeight: TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: "#303033",
-        paddingTop: 10,
+        paddingTop: TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING,
         paddingHorizontal: 14,
         flexDirection: "row",
         alignItems: "flex-end",
@@ -6273,7 +6334,7 @@ const styles = StyleSheet.create({
         lineHeight: 19,
     },
     transitDetailStartButton: {
-        minHeight: 46,
+        minHeight: TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT,
         borderRadius: 999,
         paddingHorizontal: 24,
         alignItems: "center",
