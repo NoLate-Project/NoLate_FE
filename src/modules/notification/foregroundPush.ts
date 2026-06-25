@@ -5,12 +5,19 @@ import {
     onMessage,
     onNotificationOpenedApp,
 } from "@react-native-firebase/messaging";
+import type { NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
-import { getPushNavigationTargetFromNotificationData } from "./pushNavigation";
+import { markScheduleDeparted } from "../../api/schedule";
+import {
+    getPushNavigationTargetFromNotificationData,
+    getScheduleIdFromNotificationData,
+} from "./pushNavigation";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
+const SCHEDULE_DEPART_NOW_CATEGORY = "schedule_depart_now";
+const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
 
 type ExpoNotificationsModule = typeof import("expo-notifications");
 
@@ -60,7 +67,7 @@ export async function configureForegroundPush(): Promise<() => void> {
         return () => undefined;
     }
 
-    await ensureNotificationChannel(Notifications);
+    await ensureNotificationPresentation(Notifications);
 
     return onMessage(getMessaging(), showForegroundNotification);
 }
@@ -71,6 +78,11 @@ export async function configurePushNavigation(
     const Notifications = await getNotifications();
     const messaging = getMessaging();
     let lastOpenedMessageId: string | undefined;
+    let lastDepartNowActionKey: string | undefined;
+
+    if (Notifications) {
+        await ensureNotificationPresentation(Notifications);
+    }
 
     const openFromData = (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
@@ -89,10 +101,41 @@ export async function configurePushNavigation(
         openSchedule(target.scheduleId);
     };
 
-    const expoSubscription = Notifications?.addNotificationResponseReceivedListener((response) => {
+    const markDepartedFromData = async (
+        data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
+        responseId?: string,
+    ) => {
+        const scheduleId = getScheduleIdFromNotificationData(data);
+
+        if (!scheduleId) {
+            console.warn("[push] depart-now action has no schedule target", data);
+            return;
+        }
+
+        const actionKey = `${scheduleId}:${responseId ?? ""}`;
+        if (actionKey === lastDepartNowActionKey) return;
+        lastDepartNowActionKey = actionKey;
+
+        try {
+            await markScheduleDeparted(scheduleId);
+            console.info("[push] schedule marked as departed from notification action", scheduleId);
+        } catch (error) {
+            console.warn("[push] depart-now action failed", error);
+        }
+    };
+
+    const handleNotificationResponse = (response: NotificationResponse) => {
         const request = response.notification.request;
+
+        if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
+            void markDepartedFromData(request.content.data, request.identifier);
+            return;
+        }
+
         openFromData(request.content.data, request.identifier);
-    });
+    };
+
+    const expoSubscription = Notifications?.addNotificationResponseReceivedListener(handleNotificationResponse);
     const appStateSubscription = Notifications
         ? AppState.addEventListener("change", (state) => {
             if (state !== "active") return;
@@ -100,8 +143,7 @@ export async function configurePushNavigation(
             const response = Notifications.getLastNotificationResponse();
             if (!response) return;
 
-            const request = response.notification.request;
-            openFromData(request.content.data, request.identifier);
+            handleNotificationResponse(response);
             Notifications.clearLastNotificationResponse();
         })
         : undefined;
@@ -115,8 +157,7 @@ export async function configurePushNavigation(
     } else if (Notifications) {
         const initialResponse = Notifications.getLastNotificationResponse();
         if (initialResponse) {
-            const request = initialResponse.notification.request;
-            openFromData(request.content.data, request.identifier);
+            handleNotificationResponse(initialResponse);
             Notifications.clearLastNotificationResponse();
         }
     }
@@ -148,7 +189,7 @@ async function showLocalNotification(notification: LocalPushNotification): Promi
         return;
     }
 
-    await ensureNotificationChannel(Notifications);
+    await ensureNotificationPresentation(Notifications);
 
     await Notifications.scheduleNotificationAsync({
         content: {
@@ -156,12 +197,15 @@ async function showLocalNotification(notification: LocalPushNotification): Promi
             body: notification.body,
             data: notification.data,
             sound: "default",
+            categoryIdentifier: getDepartNowCategoryIdentifier(notification.data),
         },
         trigger: Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : null,
     });
 }
 
-async function ensureNotificationChannel(Notifications: ExpoNotificationsModule): Promise<void> {
+async function ensureNotificationPresentation(Notifications: ExpoNotificationsModule): Promise<void> {
+    await ensureDepartNowCategory(Notifications);
+
     if (Platform.OS !== "android") return;
 
     await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
@@ -170,4 +214,33 @@ async function ensureNotificationChannel(Notifications: ExpoNotificationsModule)
         sound: "default",
         vibrationPattern: [0, 250, 250, 250],
     });
+}
+
+async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): Promise<void> {
+    try {
+        await Notifications.setNotificationCategoryAsync(
+            SCHEDULE_DEPART_NOW_CATEGORY,
+            [
+                {
+                    identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
+                    buttonTitle: "지금 출발",
+                    options: {
+                        opensAppToForeground: true,
+                    },
+                },
+            ],
+            {
+                showTitle: true,
+                showSubtitle: true,
+            },
+        );
+    } catch (error) {
+        console.warn("[push] notification action category setup failed", error);
+    }
+}
+
+function getDepartNowCategoryIdentifier(data: Record<string, unknown>): string | undefined {
+    return data.type === "SCHEDULE_DEPARTURE_REMINDER" && data.departNow === "true"
+        ? SCHEDULE_DEPART_NOW_CATEGORY
+        : undefined;
 }

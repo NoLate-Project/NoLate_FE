@@ -97,3 +97,8 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}`);
     assertApiSuccess(response);
 }
+
+export async function markScheduleDeparted(scheduleId: string): Promise<ScheduleItem> {
+    const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
+    return normalizeSchedule(unwrapApiResponse(response));
+}

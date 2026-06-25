@@ -12,6 +12,7 @@ import {
     getDailySchedules,
     getDepartureReadySchedules,
     getUpcomingSchedules,
+    markScheduleDeparted,
     searchSchedules,
 } from "../src/api/schedule";
 
@@ -120,5 +121,13 @@ describe("schedule query api wrappers", () => {
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/departures", {
             params: { fromAt: undefined, toAt: undefined },
         });
+    });
+
+    test("markScheduleDeparted posts depart-now action and normalizes response id", async () => {
+        mockedApiPost.mockResolvedValue({ success: true, data: scheduleDto });
+
+        await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
     });
 });
