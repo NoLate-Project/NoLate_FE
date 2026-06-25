@@ -51,7 +51,7 @@
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "9",
+    "buildNumber": "21",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)"
