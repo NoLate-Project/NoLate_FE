@@ -884,8 +884,8 @@ const styles = StyleSheet.create({
     wrapper:  {
         ...StyleSheet.absoluteFillObject,
         justifyContent: "flex-end",
-        zIndex: 20,
-        elevation: 20,
+        zIndex: 80,
+        elevation: 80,
     },
     dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
     sheetMotion: {

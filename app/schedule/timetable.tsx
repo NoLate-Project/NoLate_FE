@@ -14,6 +14,7 @@ import {
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -171,6 +172,7 @@ function buildPositionedEvents(items: ScheduleItem[], day: string): PositionedEv
 
 export default function ScheduleTimetable() {
     const router = useRouter();
+    const isFocused = useIsFocused();
     const insets = useSafeAreaInsets();
     const params = useLocalSearchParams<{ date?: string | string[] }>();
     const { width: screenWidth } = useWindowDimensions();
@@ -743,7 +745,7 @@ export default function ScheduleTimetable() {
                 }}
             />
 
-            {!modalVisible && !searchVisible && !keyboardVisible && (
+            {isFocused && !modalVisible && !searchVisible && !keyboardVisible && (
                 <GlobalFloatingActionBar
                     leftActions={bottomLeftActions}
                     rightActions={bottomRightActions}

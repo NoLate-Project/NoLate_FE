@@ -98,6 +98,7 @@ function createContinuousMonth(
         dayHeight,
         height:
             CONTINUOUS_MONTH_HEADER_HEIGHT
+            + WEEKDAY_HEADER_HEIGHT
             + weekCount * dayHeight
             + CONTINUOUS_MONTH_DIVIDER_HEIGHT,
     };
@@ -161,7 +162,6 @@ export default function ScheduleCalendar({
     scrollRequest,
     onVisibleMonthChange,
     headerOffset = 0,
-    topSafeInset = 0,
 }: Props) {
     const { colors, mode } = useTheme();
     const calendarListRef = useRef<FlatList<ContinuousMonth>>(null);
@@ -170,8 +170,7 @@ export default function ScheduleCalendar({
     const todayDateString = useMemo(getTodayDateString, []);
     const [activeMonth, setActiveMonth] = useState(selectedDay.slice(0, 7));
     const activeMonthRef = useRef(activeMonth);
-    const continuousHeaderOffset = Math.max(headerOffset, WEEKDAY_HEADER_HEIGHT);
-    const topSafeMaskHeight = Math.max(topSafeInset + 2, 0);
+    const continuousListTopPadding = Math.max(headerOffset, 0);
 
     // 일정 목록을 캘린더 마킹 데이터로 변환한다.
     const markedDates = useMemo(() => {
@@ -282,10 +281,12 @@ export default function ScheduleCalendar({
         },
     } as React.ComponentProps<typeof Calendar>["theme"] & Record<string, unknown>;
 
-    const weekdayLabels = Array.from({ length: 7 }, (_, index) => (
-        WEEKDAYS[(firstDay + index) % 7]
-    ));
-    const weekdayHeader = (
+    const weekdayLabels = useMemo(() => (
+        Array.from({ length: 7 }, (_, index) => (
+            WEEKDAYS[(firstDay + index) % 7]
+        ))
+    ), [firstDay]);
+    const weekdayHeader = useMemo(() => (
         <View
             style={[
                 styles.weekdayHeader,
@@ -304,7 +305,7 @@ export default function ScheduleCalendar({
                 </Text>
             ))}
         </View>
-    );
+    ), [colors.border, colors.dayHeaderColor, weekdayLabels]);
     const selectedWeekDays = useMemo(
         () => createWeekDays(selectedDay, firstDay),
         [firstDay, selectedDay]
@@ -366,10 +367,7 @@ export default function ScheduleCalendar({
 
             const scrollTimer = setTimeout(() => {
                 calendarListRef.current?.scrollToOffset({
-                    offset: Math.max(
-                        0,
-                        monthLayouts[selectedMonthIndex].offset - continuousHeaderOffset
-                    ),
+                    offset: Math.max(0, monthLayouts[selectedMonthIndex].offset),
                     animated: shouldAnimate,
                 });
             }, 120);
@@ -378,7 +376,6 @@ export default function ScheduleCalendar({
         }, [
             continuousMonths,
             monthLayouts,
-            continuousHeaderOffset,
             scrollRequest,
             selectedMonthIndex,
             updateActiveMonth,
@@ -389,8 +386,7 @@ export default function ScheduleCalendar({
     const handleContinuousScroll = useCallback((
         event: NativeSyntheticEvent<NativeScrollEvent>
     ) => {
-        const monthSwitchLine =
-            event.nativeEvent.contentOffset.y + continuousHeaderOffset + 2;
+        const monthSwitchLine = event.nativeEvent.contentOffset.y + 2;
         let activeIndex = 0;
 
         for (let index = 1; index < monthLayouts.length; index += 1) {
@@ -402,7 +398,7 @@ export default function ScheduleCalendar({
 
         const nextActiveMonth = continuousMonths[activeIndex];
         if (nextActiveMonth) updateActiveMonth(nextActiveMonth);
-    }, [continuousHeaderOffset, continuousMonths, monthLayouts, updateActiveMonth]);
+    }, [continuousMonths, monthLayouts, updateActiveMonth]);
 
     const renderContinuousMonth = useCallback(({ item }: { item: ContinuousMonth }) => (
         <View
@@ -415,17 +411,12 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <View
-                style={[
-                    styles.continuousMonthHeader,
-                    (item.key === activeMonth || selectedDay.startsWith(item.key)) &&
-                        styles.continuousMonthHeaderHidden,
-                ]}
-            >
+            <View style={styles.continuousMonthHeader}>
                 <Text style={[styles.monthTitle, { color: colors.monthTextColor }]}>
                     {item.month}월
                 </Text>
             </View>
+            {weekdayHeader}
             <View style={styles.monthGrid}>
                 {item.days.map((date, index) => (
                     <View
@@ -448,11 +439,11 @@ export default function ScheduleCalendar({
         colors.border,
         colors.calendarBackground,
         colors.monthTextColor,
-        activeMonth,
         markedDates,
         onOpenDay,
         selectedDay,
         todayDateString,
+        weekdayHeader,
         viewMode,
     ]);
 
@@ -513,7 +504,15 @@ export default function ScheduleCalendar({
 
     if (viewMode !== "list") {
         return (
-            <View style={styles.calendarList}>
+            <View
+                style={[
+                    styles.calendarList,
+                    {
+                        paddingTop: continuousListTopPadding,
+                        backgroundColor: colors.calendarBackground,
+                    },
+                ]}
+            >
                 <FlatList
                     ref={calendarListRef}
                     key={`${mode}-${viewMode}-${firstDay}`}
@@ -537,47 +536,6 @@ export default function ScheduleCalendar({
                     initialNumToRender={3}
                     maxToRenderPerBatch={4}
                     windowSize={7}
-                />
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.calendarHeaderOverlay,
-                        { top: continuousHeaderOffset },
-                    ]}
-                >
-                    {weekdayHeader}
-                </View>
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.calendarTopBlur,
-                        mode === "dark"
-                            ? styles.calendarTopBlurDark
-                            : styles.calendarTopBlurLight,
-                        {
-                            top: continuousHeaderOffset + WEEKDAY_HEADER_HEIGHT - 1,
-                            borderBottomColor: colors.border,
-                        },
-                    ]}
-                >
-                    <View
-                        style={[
-                            styles.calendarTopBlurSoft,
-                            mode === "dark"
-                                ? styles.calendarTopBlurSoftDark
-                                : styles.calendarTopBlurSoftLight,
-                        ]}
-                    />
-                </View>
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.calendarTopSafeMask,
-                        {
-                            height: topSafeMaskHeight,
-                            backgroundColor: colors.calendarBackground,
-                        },
-                    ]}
                 />
             </View>
         );
@@ -636,21 +594,6 @@ const styles = StyleSheet.create({
     calendarList: {
         flex: 1,
     },
-    calendarHeaderOverlay: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        zIndex: 2,
-        elevation: 2,
-    },
-    calendarTopSafeMask: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        zIndex: 4,
-        elevation: 4,
-    },
     continuousListContent: {
         paddingBottom: 156,
     },
@@ -661,9 +604,6 @@ const styles = StyleSheet.create({
         height: CONTINUOUS_MONTH_HEADER_HEIGHT,
         paddingHorizontal: 28,
         justifyContent: "center",
-    },
-    continuousMonthHeaderHidden: {
-        opacity: 0,
     },
     monthGrid: {
         flexDirection: "row",
@@ -718,33 +658,5 @@ const styles = StyleSheet.create({
     },
     weekDayCell: {
         width: "14.2857%",
-    },
-    calendarTopBlur: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        height: 16,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        opacity: 0.36,
-    },
-    calendarTopBlurDark: {
-        backgroundColor: "rgba(0,0,0,0.18)",
-    },
-    calendarTopBlurLight: {
-        backgroundColor: "rgba(242,242,247,0.36)",
-    },
-    calendarTopBlurSoft: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        bottom: -8,
-        height: 8,
-        opacity: 0.22,
-    },
-    calendarTopBlurSoftDark: {
-        backgroundColor: "rgba(0,0,0,0.12)",
-    },
-    calendarTopBlurSoftLight: {
-        backgroundColor: "rgba(255,255,255,0.36)",
     },
 });

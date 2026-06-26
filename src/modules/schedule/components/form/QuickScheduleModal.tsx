@@ -92,8 +92,8 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
                             {
                                 borderColor: colors.border,
                                 backgroundColor: mode === "dark"
-                                    ? "rgba(20,21,26,0.96)"
-                                    : "rgba(255,255,255,0.96)",
+                                    ? "rgba(20,21,26,0.99)"
+                                    : "rgba(255,255,255,0.99)",
                             },
                         ]}
                     >
@@ -103,8 +103,8 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
                             styles.cardContrastLayer,
                             {
                                 backgroundColor: mode === "dark"
-                                    ? "rgba(20,21,26,0.78)"
-                                    : "rgba(255,255,255,0.78)",
+                                    ? "rgba(20,21,26,0.88)"
+                                    : "rgba(255,255,255,0.90)",
                             },
                         ]}
                     />
@@ -161,8 +161,8 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
                             styles.input,
                             {
                                 backgroundColor: mode === "dark"
-                                    ? "rgba(8,9,12,0.72)"
-                                    : "rgba(255,255,255,0.98)",
+                                    ? "rgba(8,9,12,0.92)"
+                                    : "rgba(255,255,255,1)",
                                 borderColor: mode === "dark"
                                     ? "rgba(255,255,255,0.18)"
                                     : "rgba(60,60,67,0.22)",
@@ -210,10 +210,12 @@ const styles = StyleSheet.create({
         alignItems: "center",
         paddingTop: Platform.OS === "ios" ? 96 : 72,
         paddingHorizontal: 18,
+        zIndex: 80,
+        elevation: 80,
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: "rgba(0,0,0,0.58)",
+        backgroundColor: "rgba(0,0,0,0.64)",
     },
     cardMotion: {
         width: "100%",

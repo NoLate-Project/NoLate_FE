@@ -17,6 +17,7 @@ import {
     type ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SearchBar, type SearchBarCommands } from "react-native-screens";
@@ -46,7 +47,6 @@ const getErrorMessage = (error: unknown) =>
 type ToolbarMenu = "view" | "search" | "add";
 
 const CALENDAR_TOOLBAR_HEIGHT = 60;
-const CALENDAR_MONTH_TITLE_HEIGHT = 57;
 
 const NativeSearchBar = SearchBar as React.ForwardRefExoticComponent<
     Omit<React.ComponentProps<typeof SearchBar>, "ref"> &
@@ -76,6 +76,7 @@ function formatScheduleTime(value: string) {
 
 export default function ScheduleIndex() {
     const router = useRouter();
+    const isFocused = useIsFocused();
     const { qaSurface } = useLocalSearchParams<{ qaSurface?: string }>();
     const insets = useSafeAreaInsets();
     const { width: screenWidth } = useWindowDimensions();
@@ -136,19 +137,21 @@ export default function ScheduleIndex() {
     const usesNativeSearchBar = Platform.OS === "ios";
     const searchHeaderScaleY = toolbarDropdownProgress.interpolate({
         inputRange: [0, 1],
-        outputRange: [0.72, 1],
+        outputRange: [1, 1],
     });
     const searchHeaderTintStyle = useMemo(() => ({
         borderBottomColor: colors.border,
         backgroundColor: mode === "dark"
-            ? "rgba(8,9,12,0.96)"
-            : "rgba(242,242,247,0.98)",
+            ? "rgba(8,9,12,0.99)"
+            : "rgba(242,242,247,1)",
     }), [colors.border, mode]);
     const calendarHeaderOffset = useMemo(
-        () => insets.top + CALENDAR_TOOLBAR_HEIGHT + CALENDAR_MONTH_TITLE_HEIGHT,
+        () => insets.top + CALENDAR_TOOLBAR_HEIGHT,
         [insets.top]
     );
+    const showsFloatingMonthTitle = calendarViewMode === "list" || calendarViewMode === "week";
     const bottomBarHidden =
+        !isFocused ||
         modalVisible ||
         quickModalVisible ||
         keyboardVisible ||
@@ -576,10 +579,8 @@ export default function ScheduleIndex() {
                 pointerEvents="box-none"
                 style={styles.toolbarLayer}
             >
-                <View style={{ paddingTop: insets.top }}>
-                    {isSearchToolbarOpen ? (
-                        <View style={styles.toolbarSearchSpacer} />
-                    ) : (
+                {!isSearchToolbarOpen && (
+                    <View style={{ paddingTop: insets.top }}>
                         <View style={styles.toolbar}>
                             <CalendarGlassSurface
                                 interactive
@@ -673,16 +674,16 @@ export default function ScheduleIndex() {
                                 <View style={styles.toolbarActionsPlaceholder} />
                             )}
                         </View>
-                    )}
 
-                    {!isSearchToolbarOpen && (
+                    {showsFloatingMonthTitle && (
                         <View pointerEvents="none" style={styles.floatingMonthTitleLayer}>
                             <Text style={[styles.floatingMonthTitle, { color: colors.textPrimary }]}>
                                 {Number(visibleMonth.slice(5, 7))}월
                             </Text>
                         </View>
                     )}
-                </View>
+                    </View>
+                )}
 
                 {isSearchToolbarOpen && (
                     <Animated.View
@@ -707,7 +708,7 @@ export default function ScheduleIndex() {
                                 searchHeaderTintStyle,
                                 {
                                     top: -(insets.top + 16),
-                                    height: insets.top + 92,
+                                    height: insets.top + 104,
                                 },
                             ]}
                         />
@@ -1168,9 +1169,6 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         paddingHorizontal: 16,
         paddingVertical: 8,
-    },
-    toolbarSearchSpacer: {
-        minHeight: 82,
     },
     floatingMonthTitleLayer: {
         paddingHorizontal: 24,
