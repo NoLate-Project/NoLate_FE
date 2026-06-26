@@ -5,6 +5,9 @@ import type {ScheduleState} from "./initialState";
 type Action =
     | { type: "SET_SELECTED_DAY"; day: string }
     | { type: "SET_CATEGORIES"; categories: ScheduleCategory[] }
+    | { type: "ADD_CATEGORY"; category: ScheduleCategory }
+    | { type: "UPSERT_CATEGORY"; category: ScheduleCategory }
+    | { type: "REMOVE_CATEGORY"; id: string }
     | { type: "SET_ITEMS"; items: ScheduleItem[] }
     | { type: "SET_LOADING"; loading: boolean }
     | { type: "SET_ERROR"; error: string | null }
@@ -19,6 +22,30 @@ function reducer(state: ScheduleState, action: Action): ScheduleState {
 
         case "SET_CATEGORIES":
             return {...state, categories: action.categories};
+
+        case "ADD_CATEGORY":
+            if (state.categories.some((category) => category.id === action.category.id)) {
+                return state;
+            }
+            return {...state, categories: [...state.categories, action.category]};
+
+        case "UPSERT_CATEGORY": {
+            const exists = state.categories.some((category) => category.id === action.category.id);
+            return {
+                ...state,
+                categories: exists
+                    ? state.categories.map((category) =>
+                        category.id === action.category.id ? action.category : category
+                    )
+                    : [...state.categories, action.category],
+            };
+        }
+
+        case "REMOVE_CATEGORY":
+            return {
+                ...state,
+                categories: state.categories.filter((category) => category.id !== action.id),
+            };
 
         case "SET_ITEMS": {
             const itemsById = action.items.reduce<Record<string, ScheduleItem>>((acc, item) => {

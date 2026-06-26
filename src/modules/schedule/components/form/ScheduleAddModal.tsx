@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import {
-    ActivityIndicator,
     Pressable,
     ScrollView,
     Text,
@@ -19,7 +17,7 @@ import { usePathname, useRouter } from "expo-router";
 import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
 import { searchAddressByKeyword } from "../../../map/tmapApi";
 import { useTheme } from "../../../theme/ThemeContext";
-import { getFavoriteDeparturePlace } from "../../favoriteDeparture";
+import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
@@ -37,7 +35,8 @@ type Props = {
     categories: ScheduleCategory[];
     defaultDay: string;
     initialValues?: ScheduleParseResult | null;
-    onQuickParse?: (text: string) => void | Promise<void>;
+    onManageCategories?: () => void;
+    autoFocusTitle?: boolean;
 };
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -86,6 +85,25 @@ const hasPlaceCoords = (place: Place | null | undefined) =>
     typeof place?.lat === "number" && Number.isFinite(place.lat) &&
     typeof place.lng === "number" && Number.isFinite(place.lng);
 
+function cleanOptionalText(value?: string | null) {
+    const normalized = value?.trim();
+    return normalized ? normalized : undefined;
+}
+
+function getDisplayPlaceText(place?: Place | null) {
+    return cleanOptionalText(place?.name) ?? cleanOptionalText(place?.address) ?? "";
+}
+
+function uniqueNonBlank(values: Array<string | undefined | null>) {
+    return Array.from(
+        new Set(
+            values
+                .map((value) => value?.trim())
+                .filter((value): value is string => Boolean(value))
+        )
+    );
+}
+
 // 새 일정을 입력하고 저장하는 바텀시트 화면을 렌더링한다.
 export default function ScheduleNewModal({
     visible,
@@ -94,7 +112,8 @@ export default function ScheduleNewModal({
     categories,
     defaultDay,
     initialValues,
-    onQuickParse,
+    onManageCategories,
+    autoFocusTitle = false,
 }: Props) {
     const router = useRouter();
     const pathname = usePathname();
@@ -129,10 +148,7 @@ export default function ScheduleNewModal({
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [submitting, setSubmitting]                 = useState(false);
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
-    const [quickExpanded, setQuickExpanded]           = useState(false);
-    const [quickText, setQuickText]                   = useState("");
-    const [quickParsing, setQuickParsing]             = useState(false);
-    const [favoriteOrigin, setFavoriteOrigin]         = useState<Place | null>(null);
+    const titleInputRef = useRef<TextInput>(null);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
     const [endDay,    setEndDay]    = useState(() => new Date(`${defaultDay}T00:00:00`));
@@ -147,6 +163,15 @@ export default function ScheduleNewModal({
         setStartDay((prev) => setYmd(prev, defaultDay));
         setEndDay((prev)   => setYmd(prev, defaultDay));
     }, [defaultDay]);
+
+    useEffect(() => {
+        if (categories.length === 0) return;
+        setSelectedCategoryId((current) =>
+            categories.some((categoryItem) => categoryItem.id === current)
+                ? current
+                : categories[0].id
+        );
+    }, [categories]);
 
     useEffect(() => {
         if (hasEndTime) return;
@@ -170,33 +195,8 @@ export default function ScheduleNewModal({
             setRoutePlannerSessionId(undefined);
             setSubmitting(false);
             setRoutePlannerHidden(false);
-            setQuickExpanded(false);
-            setQuickText("");
-            setQuickParsing(false);
         }
     }, [visible]);
-
-    useEffect(() => {
-        if (!visible) return;
-        let cancelled = false;
-
-        getFavoriteDeparturePlace()
-            .then((place) => {
-                if (cancelled) return;
-                setFavoriteOrigin(place);
-                if (!place || initialValues) return;
-
-                setOriginText(place.name ?? place.address ?? "");
-                setOriginAddress(place.address);
-                setOriginLat(place.lat);
-                setOriginLng(place.lng);
-            })
-            .catch(() => undefined);
-
-        return () => {
-            cancelled = true;
-        };
-    }, [initialValues, visible]);
 
     useEffect(() => {
         if (!visible || !initialValues) return;
@@ -204,12 +204,12 @@ export default function ScheduleNewModal({
         setTitle(initialValues.title ?? "");
         setNotes(initialValues.notes ?? "");
 
-        const parsedOrigin = initialValues.origin ?? favoriteOrigin ?? undefined;
-        setOriginText(parsedOrigin?.name ?? parsedOrigin?.address ?? "");
+        const parsedOrigin = initialValues.origin;
+        setOriginText(getDisplayPlaceText(parsedOrigin));
         setOriginAddress(parsedOrigin?.address);
         setOriginLat(parsedOrigin?.lat);
         setOriginLng(parsedOrigin?.lng);
-        setDestinationText(initialValues.destination?.name ?? "");
+        setDestinationText(getDisplayPlaceText(initialValues.destination));
         setDestinationAddress(initialValues.destination?.address);
         setDestinationLat(initialValues.destination?.lat);
         setDestinationLng(initialValues.destination?.lng);
@@ -230,28 +230,36 @@ export default function ScheduleNewModal({
         } else {
             setHasEndTime(false);
         }
-    }, [favoriteOrigin, initialValues, visible]);
+    }, [initialValues, visible]);
 
     useEffect(() => {
         if (!visible || !initialValues?.destination || hasPlaceCoords(initialValues.destination)) return;
 
-        const query = initialValues.destination.address?.trim() || initialValues.destination.name?.trim();
-        if (!query) return;
+        const parsedDestinationName = cleanOptionalText(initialValues.destination.name);
+        const parsedDestinationAddress = cleanOptionalText(initialValues.destination.address);
+        const queries = uniqueNonBlank([parsedDestinationAddress, parsedDestinationName]);
+        if (queries.length === 0) return;
 
         let cancelled = false;
-        searchAddressByKeyword(query)
-            .then((items) => {
+        const resolveDestination = async () => {
+            for (const query of queries) {
+                const items = await searchAddressByKeyword(query).catch(() => []);
+                if (cancelled) return;
+
                 const match = items[0];
-                if (cancelled || !match) return;
+                if (!match) continue;
 
                 setDestinationText((current) =>
-                    current.trim() || initialValues.destination?.name || match.name
+                    current.trim() || parsedDestinationName || match.name || parsedDestinationAddress || ""
                 );
-                setDestinationAddress(initialValues.destination?.address?.trim() || match.address);
+                setDestinationAddress(parsedDestinationAddress || match.address);
                 setDestinationLat(match.lat);
                 setDestinationLng(match.lng);
-            })
-            .catch(() => undefined);
+                return;
+            }
+        };
+
+        resolveDestination();
 
         return () => {
             cancelled = true;
@@ -291,22 +299,6 @@ export default function ScheduleNewModal({
         () => categories.find((c) => c.id === selectedCategoryId) ?? categories[0],
         [categories, selectedCategoryId]
     );
-
-    const applyQuickSchedule = async () => {
-        const normalized = quickText.trim();
-        if (!normalized || quickParsing || !onQuickParse) return;
-
-        try {
-            setQuickParsing(true);
-            await onQuickParse(normalized);
-            setQuickExpanded(false);
-            setQuickText("");
-        } catch {
-            // 상위 화면에서 오류 안내를 표시하고 입력값은 유지한다.
-        } finally {
-            setQuickParsing(false);
-        }
-    };
 
     // 날짜/시간 필드를 열거나 같은 필드를 다시 눌러 닫는다.
     const togglePicker = useCallback((type: PickerType) => {
@@ -406,6 +398,12 @@ export default function ScheduleNewModal({
     }, [visible, openSheet, posY]);
 
     useEffect(() => {
+        if (!visible || !autoFocusTitle) return;
+        const timer = setTimeout(() => titleInputRef.current?.focus(), 420);
+        return () => clearTimeout(timer);
+    }, [autoFocusTitle, visible]);
+
+    useEffect(() => {
         if (
             !visible ||
             !routePlannerSessionId ||
@@ -437,25 +435,27 @@ export default function ScheduleNewModal({
         openSheet();
     }, [openSheet, pathname, posY, routePlannerSessionId, visible]);
 
-    // 현재 입력된 출발/도착 정보를 경로 선택 화면으로 전달한다.
+    // 출발지는 경로 선택 화면에서 직접 고르게 두고, 도착지만 초기값으로 전달한다.
     const openRoutePlanner = useCallback(() => {
-        const normalizedOriginName = originText.trim();
         const normalizedDestinationName = destinationText.trim();
+        const normalizedDestinationAddress = cleanOptionalText(destinationAddress);
+        const nextDestination = normalizedDestinationName || normalizedDestinationAddress
+            ? {
+                name: normalizedDestinationName || normalizedDestinationAddress,
+                address: normalizedDestinationAddress,
+                lat: destinationLat,
+                lng: destinationLng,
+            }
+            : undefined;
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
         setRoutePlannerInitial(sessionId, {
-            origin: normalizedOriginName
-                ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                : undefined,
-            destination: normalizedDestinationName
-                ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                : undefined,
+            origin: undefined,
+            destination: nextDestination,
             travelMode,
             travelMinutes,
             route,
-            locationName: normalizedOriginName && normalizedDestinationName
-                ? `${normalizedOriginName} → ${normalizedDestinationName}`
-                : normalizedDestinationName || normalizedOriginName || undefined,
+            locationName: nextDestination?.name || undefined,
         });
 
         setPicker(null);
@@ -469,10 +469,6 @@ export default function ScheduleNewModal({
         destinationLat,
         destinationLng,
         destinationText,
-        originAddress,
-        originLat,
-        originLng,
-        originText,
         router,
         travelMinutes,
         travelMode,
@@ -530,9 +526,27 @@ export default function ScheduleNewModal({
         const hasDistinctEndTime = e.getTime() !== s.getTime();
         const normalizedOriginName = originText.trim();
         const normalizedDestinationName = destinationText.trim();
-        const locationName = normalizedOriginName && normalizedDestinationName
-            ? `${normalizedOriginName} → ${normalizedDestinationName}`
-            : normalizedDestinationName || normalizedOriginName || undefined;
+        const normalizedOriginAddress = cleanOptionalText(originAddress);
+        const normalizedDestinationAddress = cleanOptionalText(destinationAddress);
+        const nextOrigin = normalizedOriginName || normalizedOriginAddress
+            ? {
+                name: normalizedOriginName || normalizedOriginAddress,
+                address: normalizedOriginAddress,
+                lat: originLat,
+                lng: originLng,
+            }
+            : undefined;
+        const nextDestination = normalizedDestinationName || normalizedDestinationAddress
+            ? {
+                name: normalizedDestinationName || normalizedDestinationAddress,
+                address: normalizedDestinationAddress,
+                lat: destinationLat,
+                lng: destinationLng,
+            }
+            : undefined;
+        const locationName = nextOrigin?.name && nextDestination?.name
+            ? `${nextOrigin.name} → ${nextDestination.name}`
+            : nextDestination?.name || nextOrigin?.name || undefined;
 
         try {
             setSubmitting(true);
@@ -549,12 +563,8 @@ export default function ScheduleNewModal({
                 notificationLeadMinutes: notificationEnabled ? notificationLeadMinutes : undefined,
                 notificationIntervalMinutes: notificationEnabled ? notificationIntervalMinutes : undefined,
                 locationName,
-                origin: normalizedOriginName
-                    ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                    : undefined,
-                destination: normalizedDestinationName
-                    ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                    : undefined,
+                origin: nextOrigin,
+                destination: nextDestination,
                 notes: notes.trim() || undefined,
             });
             closeSheet(() => onCloseRef.current());
@@ -606,10 +616,26 @@ export default function ScheduleNewModal({
     const isDisplayTime = displayPicker === "startTime" || displayPicker === "endTime";
     const calendarSelected = isDisplayDate
         ? ymdText(displayPicker === "startDate" ? startDay : endDay) : "";
+    const previewTitle = title.trim() || "새 일정";
+    const previewTime = hasEndTime
+        ? `${ymdText(startDay)} ${hhmmText(startTime)} - ${hhmmText(endTime)}`
+        : `${ymdText(startDay)} ${hhmmText(startTime)}`;
+    const previewLocation = destinationText.trim() || originText.trim() || "장소 미정";
+    const previewEta = typeof travelMinutes === "number"
+        ? `${travelMinutes}분 이동 · ${travelMode}`
+        : "ETA 미계산";
+    const previewNotification = notificationEnabled
+        ? `${notificationLeadMinutes}분 전 알림`
+        : "알림 꺼짐";
 
     const fieldStyle = (type: PickerType) => [
         styles.fieldBase,
-        { borderColor: picker === type ? colors.selectedDayBg : colors.border, backgroundColor: colors.surface2 },
+        {
+            borderColor: picker === type ? colors.selectedDayBg : colors.border,
+            backgroundColor: mode === "dark"
+                ? "rgba(255,255,255,0.07)"
+                : "rgba(118,118,128,0.10)",
+        },
     ];
 
     if (!visible || routePlannerHidden) {
@@ -623,11 +649,14 @@ export default function ScheduleNewModal({
         >
             <Pressable style={styles.dim} onPress={() => closeSheet(() => onCloseRef.current())} />
 
-            <Animated.View style={[styles.sheet, {
-                backgroundColor: colors.surface,
-                borderTopColor:  colors.border,
+            <Animated.View style={[styles.sheetMotion, {
                 transform: [{ translateY: posY }],
             }]}>
+            <CalendarGlassSurface
+                prominent
+                variant="sheet"
+                style={[styles.sheet, { borderColor: colors.border }]}
+            >
                 <View {...panResponder.panHandlers} style={styles.handleWrap}>
                     <View style={[styles.handle, { backgroundColor: colors.border }]} />
                 </View>
@@ -641,85 +670,67 @@ export default function ScheduleNewModal({
                             <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>새 일정</Text>
                             <Pressable
                                 onPress={() => closeSheet(() => onCloseRef.current())}
-                                style={[styles.closeBtn, { backgroundColor: colors.surface2, borderColor: colors.border }]}
+                                style={[
+                                    styles.closeBtn,
+                                    {
+                                        backgroundColor: mode === "dark"
+                                            ? "rgba(255,255,255,0.08)"
+                                            : "rgba(118,118,128,0.12)",
+                                        borderColor: colors.border,
+                                    },
+                                ]}
                             >
                                 <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>닫기</Text>
                             </Pressable>
                         </View>
 
-                        <View
-                            style={[
-                                styles.quickSection,
-                                { borderColor: colors.border, backgroundColor: colors.surface2 },
-                            ]}
+                        <CalendarGlassSurface
+                            variant="card"
+                            style={[styles.previewCard, { borderColor: colors.border }]}
                         >
-                            <Pressable
-                                onPress={() => setQuickExpanded((expanded) => !expanded)}
-                                style={styles.quickHeader}
-                            >
-                                <View style={styles.quickHeaderTitle}>
-                                    {/*<Ionicons name="flash-outline" size={18} color={colors.textPrimary} />*/}
-                                    <Text style={[styles.quickTitle, { color: colors.textPrimary }]}>
-                                        빠른 일정 생성
-                                    </Text>
+                            <View style={[styles.previewColorBar, { backgroundColor: category?.color ?? "#8E8E93" }]} />
+                            <View style={styles.previewBody}>
+                                <Text numberOfLines={1} style={[styles.previewTitle, { color: colors.textPrimary }]}>
+                                    {previewTitle}
+                                </Text>
+                                <Text numberOfLines={1} style={[styles.previewMeta, { color: colors.textSecondary }]}>
+                                    {previewTime}
+                                </Text>
+                                <View style={styles.previewChipRow}>
+                                    <View style={[styles.previewChip, { borderColor: colors.border }]}>
+                                        <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
+                                            {previewLocation}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.previewChip, { borderColor: colors.border }]}>
+                                        <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
+                                            {previewEta}
+                                        </Text>
+                                    </View>
                                 </View>
-                                <Ionicons
-                                    name={quickExpanded ? "chevron-up" : "chevron-down"}
-                                    size={18}
-                                    color={colors.textSecondary}
-                                />
-                            </Pressable>
-
-                            {quickExpanded && (
-                                <View style={[styles.quickBody, { borderTopColor: colors.border }]}>
-                                    <TextInput
-                                        autoFocus
-                                        editable={!quickParsing}
-                                        value={quickText}
-                                        onChangeText={setQuickText}
-                                        onSubmitEditing={applyQuickSchedule}
-                                        placeholder="예) 금요일 오후 7시 강남역에서 저녁"
-                                        placeholderTextColor={colors.textDisabled}
-                                        returnKeyType="done"
-                                        style={[
-                                            styles.quickInput,
-                                            {
-                                                borderColor: colors.border,
-                                                backgroundColor: colors.surface,
-                                                color: colors.textPrimary,
-                                            },
-                                        ]}
-                                    />
-                                    <Pressable
-                                        disabled={!quickText.trim() || quickParsing}
-                                        onPress={applyQuickSchedule}
-                                        style={({ pressed }) => [
-                                            styles.quickApplyButton,
-                                            {
-                                                backgroundColor: colors.selectedDayBg,
-                                                opacity: !quickText.trim() || quickParsing ? 0.4 : pressed ? 0.75 : 1,
-                                            },
-                                        ]}
-                                    >
-                                        {quickParsing ? (
-                                            <ActivityIndicator size="small" color={colors.selectedDayText} />
-                                        ) : (
-                                            <Text style={[styles.quickApplyText, { color: colors.selectedDayText }]}>
-                                                적용
-                                            </Text>
-                                        )}
-                                    </Pressable>
-                                </View>
-                            )}
-                        </View>
+                                <Text numberOfLines={1} style={[styles.previewSub, { color: colors.textSecondary }]}>
+                                    {category?.title ?? "캘린더"} · {previewNotification}
+                                </Text>
+                            </View>
+                        </CalendarGlassSurface>
 
                         <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
                         <TextInput
+                            ref={titleInputRef}
                             value={title}
                             onChangeText={setTitle}
                             placeholder="예) 회의"
                             placeholderTextColor={colors.textDisabled}
-                            style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface2, color: colors.textPrimary }]}
+                            style={[
+                                styles.input,
+                                {
+                                    borderColor: colors.border,
+                                    backgroundColor: mode === "dark"
+                                        ? "rgba(255,255,255,0.07)"
+                                        : "rgba(118,118,128,0.10)",
+                                    color: colors.textPrimary,
+                                },
+                            ]}
                         />
 
                         <LocationInputRow
@@ -762,6 +773,9 @@ export default function ScheduleNewModal({
 
                         <Animated.View style={[styles.pickerContainer, {
                             borderColor:  colors.border,
+                            backgroundColor: mode === "dark"
+                                ? "rgba(255,255,255,0.045)"
+                                : "rgba(255,255,255,0.34)",
                             maxHeight:    heightAnim,
                             opacity:      outerOpacity,
                             marginBottom: outerOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 14] }),
@@ -799,6 +813,7 @@ export default function ScheduleNewModal({
                             categories={categories}
                             value={selectedCategoryId}
                             onChange={setSelectedCategoryId}
+                            onManageCategories={onManageCategories}
                         />
 
                         <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
@@ -811,7 +826,13 @@ export default function ScheduleNewModal({
                             style={[
                                 styles.input,
                                 styles.notesInput,
-                                { borderColor: colors.border, backgroundColor: colors.surface2, color: colors.textPrimary },
+                                {
+                                    borderColor: colors.border,
+                                    backgroundColor: mode === "dark"
+                                        ? "rgba(255,255,255,0.07)"
+                                        : "rgba(118,118,128,0.10)",
+                                    color: colors.textPrimary,
+                                },
                             ]}
                         />
 
@@ -834,13 +855,26 @@ export default function ScheduleNewModal({
                         <Pressable
                             disabled={submitting}
                             onPress={submit}
-                            style={[styles.saveBtn, { backgroundColor: colors.selectedDayBg, opacity: submitting ? 0.6 : 1 }]}
+                            style={[
+                                styles.saveBtn,
+                                {
+                                    backgroundColor: mode === "dark"
+                                        ? "rgba(33,184,90,0.20)"
+                                        : "rgba(33,184,90,0.14)",
+                                    borderColor: "rgba(33,184,90,0.44)",
+                                    opacity: submitting ? 0.6 : 1,
+                                },
+                            ]}
                         >
-                            <Text style={[styles.saveBtnText, { color: colors.selectedDayText }]}>
+                            <Text style={[
+                                styles.saveBtnText,
+                                { color: mode === "dark" ? "#41D879" : "#0F7A38" },
+                            ]}>
                                 {submitting ? "저장 중" : "저장"}
                             </Text>
                         </Pressable>
                 </ScrollView>
+            </CalendarGlassSurface>
             </Animated.View>
         </View>
     );
@@ -854,10 +888,13 @@ const styles = StyleSheet.create({
         elevation: 20,
     },
     dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
+    sheetMotion: {
+        maxHeight: "90%",
+    },
     sheet: {
         maxHeight: "90%",
         borderTopLeftRadius: 24, borderTopRightRadius: 24,
-        borderTopWidth: 1, overflow: "hidden",
+        borderWidth: 1, overflow: "hidden",
     },
     handleWrap:    { alignItems: "center", paddingVertical: 14 },
     handle:        { width: 44, height: 5, borderRadius: 3 },
@@ -869,53 +906,56 @@ const styles = StyleSheet.create({
     headerTitle:  { fontSize: 18, fontWeight: "700" },
     closeBtn:     { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
     closeBtnText: { fontWeight: "600", fontSize: 13 },
-    quickSection: {
+    previewCard: {
         borderWidth: 1,
-        borderRadius: 14,
-        overflow: "hidden",
+        borderRadius: 18,
+        minHeight: 116,
         marginBottom: 18,
-    },
-    quickHeader: {
-        minHeight: 50,
-        paddingHorizontal: 14,
+        padding: 14,
         flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
+        gap: 12,
     },
-    quickHeaderTitle: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
+    previewColorBar: {
+        width: 5,
+        borderRadius: 999,
+        alignSelf: "stretch",
     },
-    quickTitle: {
-        fontSize: 14,
-        fontWeight: "800",
-    },
-    quickBody: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        padding: 12,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    quickInput: {
+    previewBody: {
         flex: 1,
-        height: 44,
-        borderWidth: 1,
-        borderRadius: 11,
-        paddingHorizontal: 12,
-        fontSize: 14,
+        minWidth: 0,
     },
-    quickApplyButton: {
-        width: 58,
-        height: 44,
-        borderRadius: 11,
-        alignItems: "center",
-        justifyContent: "center",
+    previewTitle: {
+        fontSize: 20,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
-    quickApplyText: {
+    previewMeta: {
+        marginTop: 4,
         fontSize: 13,
         fontWeight: "800",
+    },
+    previewChipRow: {
+        marginTop: 10,
+        flexDirection: "row",
+        gap: 7,
+    },
+    previewChip: {
+        minWidth: 0,
+        maxWidth: "50%",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        backgroundColor: "rgba(255,255,255,0.055)",
+    },
+    previewChipText: {
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    previewSub: {
+        marginTop: 10,
+        fontSize: 12,
+        fontWeight: "700",
     },
     label:        { marginBottom: 6, fontSize: 13 },
     input: {
@@ -932,6 +972,7 @@ const styles = StyleSheet.create({
     saveBtn: {
         paddingVertical: 14, borderRadius: 14,
         alignItems: "center", marginTop: 8,
+        borderWidth: 1,
     },
     saveBtnText: { fontWeight: "700", fontSize: 15 },
 });

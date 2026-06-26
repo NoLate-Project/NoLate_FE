@@ -4,6 +4,7 @@ const SCHEDULE_DETAIL_TYPES = new Set([
     "SCHEDULE_DETAIL",
 ]);
 
+// 토큰 확인처럼 사용자에게 보이지만 특정 화면으로 이동할 필요가 없는 검증 payload다.
 const PASSIVE_TYPES = new Set([
     "PUSH_SCENARIO_TOKEN_CHECK",
 ]);
@@ -50,6 +51,7 @@ export function getPushNavigationTargetFromNotificationData(
         return undefined;
     }
 
+    // type이 없는 구형 payload도 scheduleId가 유효하면 상세 이동을 허용해 기존 알림과 호환한다.
     const scheduleId = getScheduleIdFromNotificationData(data);
     if (!scheduleId) return undefined;
 

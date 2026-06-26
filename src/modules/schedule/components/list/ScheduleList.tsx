@@ -3,6 +3,7 @@ import { Pressable, Text, View, Animated, StyleSheet } from "react-native";
 import { useTheme } from "../../../theme/ThemeContext";
 import ScheduleItemList from "./ScheduleItemList";
 import type { ScheduleItem } from "../../types";
+import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 
 type Props = {
     selectedDay: string;
@@ -72,16 +73,19 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                 }}
             >
                 {loading ? (
-                    <View
-                        style={[styles.stateCard, { backgroundColor: colors.surface }]}
+                    <CalendarGlassSurface
+                        variant="card"
+                        style={[styles.stateCard, { borderColor: colors.border }]}
                     >
                         <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
                             일정을 불러오는 중이에요
                         </Text>
-                    </View>
+                    </CalendarGlassSurface>
                 ) : error ? (
-                    <View
-                        style={[styles.stateCard, { backgroundColor: colors.surface }]}
+                    <CalendarGlassSurface
+                        prominent
+                        variant="card"
+                        style={[styles.stateCard, { borderColor: colors.border }]}
                     >
                         <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
                             {error}
@@ -99,14 +103,17 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                                 다시 조회
                             </Text>
                         </Pressable>
-                    </View>
+                    </CalendarGlassSurface>
                 ) : (
                     items.length === 0 ? (
-                        <View style={[styles.stateCard, { backgroundColor: colors.surface }]}>
+                        <CalendarGlassSurface
+                            variant="card"
+                            style={[styles.stateCard, { borderColor: colors.border }]}
+                        >
                             <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
                                 일정이 없어요
                             </Text>
-                        </View>
+                        </CalendarGlassSurface>
                     ) : (
                         <ScheduleItemList items={items} />
                     )
@@ -129,12 +136,13 @@ const styles = StyleSheet.create({
     dateTitle: {
         fontSize: 21,
         fontWeight: "800",
-        letterSpacing: -0.6,
+        letterSpacing: 0,
     },
     stateCard: {
         minHeight: 108,
         padding: 20,
         borderRadius: 20,
+        borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
         gap: 8,

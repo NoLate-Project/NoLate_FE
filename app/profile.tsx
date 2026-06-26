@@ -1,16 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
-    KeyboardAvoidingView,
-    Platform,
     Pressable,
     ScrollView,
     StatusBar,
     StyleSheet,
     Switch,
     Text,
-    TextInput,
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,12 +14,71 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CalendarGlassSurface from "../src/modules/schedule/components/calendar/CalendarGlassSurface";
-import { getMyProfile, updateMyProfile, type MemberProfileDto } from "../src/api/member";
+import { getMyProfile, tokenLoginMember, type MemberProfileDto } from "../src/api/member";
 import { useAuth } from "../src/modules/auth/AuthContext";
+import {
+    getAuthMember,
+    getRefreshToken,
+    saveAuthMember,
+    saveAuthTokens,
+    type StoredAuthMember,
+} from "../src/modules/auth/authStorage";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
+
+function formatLoginType(loginType?: string) {
+    switch (loginType) {
+        case "NAVER":
+            return "네이버";
+        case "KAKAO":
+            return "카카오";
+        case "APPLE":
+            return "Apple";
+        case "GOOGLE":
+            return "Google";
+        case "COMMON":
+            return "이메일";
+        default:
+            return "확인 중";
+    }
+}
+
+function AccountInfoRow({
+    label,
+    value,
+    colors,
+    selectable = false,
+    showDivider = true,
+}: {
+    label: string;
+    value: string;
+    colors: ReturnType<typeof useTheme>["colors"];
+    selectable?: boolean;
+    showDivider?: boolean;
+}) {
+    return (
+        <View
+            style={[
+                styles.accountRow,
+                showDivider ? styles.accountRowDivider : styles.accountRowLast,
+                {
+                    borderBottomColor: colors.border,
+                },
+            ]}
+        >
+            <Text style={[styles.accountLabel, { color: colors.textSecondary }]}>{label}</Text>
+            <Text
+                selectable={selectable}
+                numberOfLines={2}
+                style={[styles.accountValue, { color: colors.textPrimary }]}
+            >
+                {value}
+            </Text>
+        </View>
+    );
+}
 
 export default function ProfileScreen() {
     const router = useRouter();
@@ -31,55 +86,52 @@ export default function ProfileScreen() {
     const { colors, mode, toggleMode } = useTheme();
     const { signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
-    const [nickname, setNickname] = useState("");
-    const [intro, setIntro] = useState("");
-    const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
+    const [account, setAccount] = useState<StoredAuthMember | null>(null);
     const [signingOut, setSigningOut] = useState(false);
 
-    const isDirty = useMemo(() => {
-        if (!profile) return false;
-        return nickname.trim() !== (profile.nickname ?? "").trim() ||
-            intro.trim() !== (profile.intro ?? "").trim();
-    }, [intro, nickname, profile]);
+    const rawDisplayName = account?.name?.trim() ?? "";
+    const displayAccountName = rawDisplayName || "이름 정보 없음";
+    const displayEmail = account?.email || "이메일 정보 없음";
+    const displayLoginType = formatLoginType(account?.loginType);
+    const displayMemberId = profile?.memberId ?? account?.id;
+    const profileSummary = displayMemberId
+        ? `회원 #${displayMemberId} · ${displayLoginType}`
+        : displayLoginType;
+    const avatarInitial = rawDisplayName.trim().slice(0, 1) || "N";
+
+    const loadAccount = useCallback(async () => {
+        const stored = await getAuthMember();
+        if (stored?.name || stored?.email) {
+            setAccount(stored);
+            return;
+        }
+
+        const refreshToken = await getRefreshToken();
+        if (!refreshToken) return;
+
+        const member = await tokenLoginMember({ refreshToken });
+        await saveAuthTokens(member.accessToken, member.refreshToken);
+        await saveAuthMember(member);
+        setAccount(await getAuthMember());
+    }, []);
 
     const loadProfile = useCallback(async () => {
-        setLoading(true);
         try {
-            const next = await getMyProfile();
+            const [next] = await Promise.all([
+                getMyProfile(),
+                loadAccount().catch((error) => {
+                    console.warn("[profile] account info load failed", error);
+                }),
+            ]);
             setProfile(next);
-            setNickname(next.nickname ?? "");
-            setIntro(next.intro ?? "");
         } catch (error) {
             Alert.alert("프로필 조회 실패", getErrorMessage(error));
-        } finally {
-            setLoading(false);
         }
-    }, []);
+    }, [loadAccount]);
 
     useEffect(() => {
         loadProfile();
     }, [loadProfile]);
-
-    const saveProfile = useCallback(async () => {
-        if (!profile || saving) return;
-
-        setSaving(true);
-        try {
-            const next = await updateMyProfile({
-                nickname: nickname.trim() || null,
-                intro: intro.trim() || null,
-                imgId: profile.imgId ?? null,
-            });
-            setProfile(next);
-            setNickname(next.nickname ?? "");
-            setIntro(next.intro ?? "");
-        } catch (error) {
-            Alert.alert("프로필 저장 실패", getErrorMessage(error));
-        } finally {
-            setSaving(false);
-        }
-    }, [intro, nickname, profile, saving]);
 
     const handleSignOut = useCallback(() => {
         Alert.alert("로그아웃", "현재 계정에서 로그아웃할까요?", [
@@ -97,15 +149,13 @@ export default function ProfileScreen() {
     }, [router, signOut]);
 
     return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={[styles.root, { backgroundColor: colors.background }]}
-        >
+        <View style={[styles.root, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
 
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
                 <CalendarGlassSurface
                     interactive
+                    variant="toolbar"
                     style={[styles.backGlass, { borderColor: colors.border }]}
                 >
                     <Pressable
@@ -119,25 +169,7 @@ export default function ProfileScreen() {
 
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>프로필</Text>
 
-                <CalendarGlassSurface
-                    interactive
-                    style={[styles.saveGlass, { borderColor: colors.border }]}
-                >
-                    <Pressable
-                        disabled={!isDirty || saving || loading}
-                        onPress={saveProfile}
-                        style={({ pressed }) => [
-                            styles.saveButton,
-                            { opacity: !isDirty || saving || loading ? 0.38 : pressed ? 0.65 : 1 },
-                        ]}
-                    >
-                        {saving ? (
-                            <ActivityIndicator size="small" color={colors.textPrimary} />
-                        ) : (
-                            <Text style={[styles.saveText, { color: colors.textPrimary }]}>저장</Text>
-                        )}
-                    </Pressable>
-                </CalendarGlassSurface>
+                <View style={styles.headerSpacer} />
             </View>
 
             <ScrollView
@@ -148,100 +180,118 @@ export default function ProfileScreen() {
                     { paddingBottom: Math.max(insets.bottom, 18) + 20 },
                 ]}
             >
-                <CalendarGlassSurface style={[styles.profileCard, { borderColor: colors.border }]}>
-                    <View style={[styles.avatar, { backgroundColor: colors.selectedDayBg }]}>
-                        <Text style={[styles.avatarText, { color: colors.selectedDayText }]}>
-                            {(nickname.trim() || "N").slice(0, 1).toUpperCase()}
+                <CalendarGlassSurface
+                    variant="card"
+                    glow
+                    style={[
+                        styles.profileCard,
+                        { borderColor: colors.border },
+                    ]}
+                >
+                    <View
+                        style={[
+                            styles.avatar,
+                            mode === "dark" ? styles.avatarDark : styles.avatarLight,
+                        ]}
+                    >
+                        <Text
+                            numberOfLines={1}
+                            adjustsFontSizeToFit
+                            style={[
+                                styles.avatarText,
+                                mode === "dark" ? styles.avatarTextDark : styles.avatarTextLight,
+                            ]}
+                        >
+                            {avatarInitial}
                         </Text>
                     </View>
-
-                    <View style={styles.profileMeta}>
-                        <Text style={[styles.profileName, { color: colors.textPrimary }]} numberOfLines={1}>
-                            {nickname.trim() || "이름 없는 사용자"}
+                    <View style={styles.profileCardText}>
+                        <Text
+                            numberOfLines={1}
+                            style={[styles.profileName, { color: colors.textPrimary }]}
+                        >
+                            {displayAccountName}
                         </Text>
-                        <Text style={[styles.profileSub, { color: colors.textSecondary }]}>
-                            회원 #{profile?.memberId ?? "-"}
+                        <Text
+                            numberOfLines={1}
+                            style={[styles.profileMeta, { color: colors.textSecondary }]}
+                        >
+                            {profileSummary}
                         </Text>
                     </View>
                 </CalendarGlassSurface>
 
                 <View style={styles.section}>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>기본 정보</Text>
-                    <View style={[styles.formCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                        <Text style={[styles.label, { color: colors.textSecondary }]}>닉네임</Text>
-                        <TextInput
-                            editable={!loading}
-                            value={nickname}
-                            onChangeText={setNickname}
-                            placeholder="닉네임"
-                            placeholderTextColor={colors.textDisabled}
-                            style={[
-                                styles.input,
-                                {
-                                    backgroundColor: colors.surface2,
-                                    borderColor: colors.border,
-                                    color: colors.textPrimary,
-                                },
-                            ]}
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>계정 정보</Text>
+                    <CalendarGlassSurface
+                        variant="card"
+                        style={[styles.accountCard, { borderColor: colors.border }]}
+                    >
+                        <AccountInfoRow
+                            label="이름"
+                            value={displayAccountName}
+                            colors={colors}
                         />
-
-                        <Text style={[styles.label, { color: colors.textSecondary }]}>소개</Text>
-                        <TextInput
-                            editable={!loading}
-                            value={intro}
-                            onChangeText={setIntro}
-                            placeholder="간단한 소개를 입력하세요"
-                            placeholderTextColor={colors.textDisabled}
-                            multiline
-                            textAlignVertical="top"
-                            style={[
-                                styles.input,
-                                styles.introInput,
-                                {
-                                    backgroundColor: colors.surface2,
-                                    borderColor: colors.border,
-                                    color: colors.textPrimary,
-                                },
-                            ]}
+                        <AccountInfoRow
+                            label="이메일"
+                            value={displayEmail}
+                            colors={colors}
+                            selectable
                         />
-                    </View>
+                        <AccountInfoRow
+                            label="로그인"
+                            value={displayLoginType}
+                            colors={colors}
+                            showDivider={false}
+                        />
+                    </CalendarGlassSurface>
                 </View>
 
                 <View style={styles.section}>
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>앱 설정</Text>
-                    <View style={[styles.settingsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                    <CalendarGlassSurface
+                        variant="card"
+                        style={[styles.settingsCard, { borderColor: colors.border }]}
+                    >
                         <View style={styles.settingTextWrap}>
                             <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>다크 모드</Text>
                             <Text style={[styles.settingHint, { color: colors.textSecondary }]}>캘린더와 지도 화면 테마</Text>
                         </View>
-                        <Switch
-                            value={mode === "dark"}
-                            onValueChange={toggleMode}
-                            trackColor={{ false: colors.border, true: "#34c759" }}
-                            thumbColor="#ffffff"
-                        />
-                    </View>
+                        <View style={styles.settingSwitchWrap}>
+                            <Switch
+                                value={mode === "dark"}
+                                onValueChange={toggleMode}
+                                trackColor={{ false: colors.border, true: colors.selectedDayBg }}
+                                thumbColor="#ffffff"
+                                style={styles.settingSwitch}
+                            />
+                        </View>
+                    </CalendarGlassSurface>
                 </View>
 
-                <Pressable
-                    disabled={signingOut}
-                    onPress={handleSignOut}
-                    style={({ pressed }) => [
-                        styles.signOutButton,
-                        {
-                            borderColor: colors.border,
-                            backgroundColor: colors.surface,
-                            opacity: pressed || signingOut ? 0.58 : 1,
-                        },
-                    ]}
+                <CalendarGlassSurface
+                    interactive
+                    variant="card"
+                    style={[styles.signOutGlass, { borderColor: colors.border }]}
                 >
-                    <Ionicons name="log-out-outline" size={19} color="#ef4444" />
-                    <Text style={styles.signOutText}>
-                        {signingOut ? "로그아웃 중" : "로그아웃"}
-                    </Text>
-                </Pressable>
+                    <Pressable
+                        disabled={signingOut}
+                        onPress={handleSignOut}
+                        style={({ pressed }) => [
+                            styles.signOutButton,
+                            {
+                                opacity: pressed || signingOut ? 0.58 : 1,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="log-out-outline" size={19} color="#ef4444" />
+                        <Text style={styles.signOutText}>
+                            {signingOut ? "로그아웃 중" : "로그아웃"}
+                        </Text>
+                    </Pressable>
+                </CalendarGlassSurface>
             </ScrollView>
-        </KeyboardAvoidingView>
+        </View>
     );
 }
 
@@ -272,21 +322,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    saveGlass: {
-        minWidth: 62,
-        height: 42,
-        borderRadius: 21,
-        borderWidth: 1,
-    },
-    saveButton: {
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 16,
-    },
-    saveText: {
-        fontSize: 14,
-        fontWeight: "900",
+    headerSpacer: {
+        width: 44,
+        height: 44,
     },
     content: {
         paddingHorizontal: 18,
@@ -294,36 +332,49 @@ const styles = StyleSheet.create({
         gap: 22,
     },
     profileCard: {
-        minHeight: 116,
-        borderRadius: 24,
+        minHeight: 118,
         borderWidth: 1,
-        paddingHorizontal: 18,
+        borderRadius: 22,
+        paddingHorizontal: 22,
         flexDirection: "row",
         alignItems: "center",
-        gap: 14,
+        gap: 18,
     },
     avatar: {
-        width: 68,
-        height: 68,
-        borderRadius: 34,
+        width: 74,
+        height: 74,
+        borderRadius: 37,
         alignItems: "center",
         justifyContent: "center",
+    },
+    avatarDark: {
+        backgroundColor: "rgba(255,255,255,0.90)",
+    },
+    avatarLight: {
+        backgroundColor: "rgba(0,0,0,0.88)",
     },
     avatarText: {
         fontSize: 28,
         fontWeight: "900",
     },
-    profileMeta: {
+    avatarTextDark: {
+        color: "#000000",
+    },
+    avatarTextLight: {
+        color: "#ffffff",
+    },
+    profileCardText: {
         flex: 1,
+        minWidth: 0,
+        gap: 5,
     },
     profileName: {
         fontSize: 22,
         fontWeight: "900",
     },
-    profileSub: {
-        marginTop: 5,
+    profileMeta: {
         fontSize: 13,
-        fontWeight: "700",
+        fontWeight: "800",
     },
     section: {
         gap: 8,
@@ -333,30 +384,31 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "900",
     },
-    formCard: {
+    accountCard: {
         borderWidth: 1,
         borderRadius: 18,
-        padding: 16,
+        paddingHorizontal: 16,
     },
-    label: {
-        marginBottom: 7,
-        fontSize: 12,
+    accountRow: {
+        minHeight: 58,
+        paddingVertical: 11,
+        justifyContent: "center",
+    },
+    accountRowDivider: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    accountRowLast: {
+        borderBottomWidth: 0,
+    },
+    accountLabel: {
+        fontSize: 11,
         fontWeight: "800",
     },
-    input: {
-        minHeight: 48,
-        borderRadius: 14,
-        borderWidth: 1,
-        paddingHorizontal: 14,
-        fontSize: 16,
-        fontWeight: "700",
-        marginBottom: 14,
-    },
-    introInput: {
-        minHeight: 108,
-        paddingTop: 13,
-        marginBottom: 0,
-        lineHeight: 22,
+    accountValue: {
+        marginTop: 4,
+        fontSize: 15,
+        fontWeight: "900",
+        lineHeight: 20,
     },
     settingsCard: {
         borderWidth: 1,
@@ -370,6 +422,7 @@ const styles = StyleSheet.create({
     },
     settingTextWrap: {
         flex: 1,
+        minWidth: 0,
     },
     settingTitle: {
         fontSize: 16,
@@ -380,14 +433,25 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "700",
     },
+    settingSwitchWrap: {
+        width: 64,
+        height: 44,
+        alignItems: "flex-end",
+        justifyContent: "center",
+    },
+    settingSwitch: {
+        transform: [{ scale: 0.9 }],
+    },
     signOutButton: {
         minHeight: 52,
-        borderRadius: 18,
-        borderWidth: 1,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
+    },
+    signOutGlass: {
+        borderWidth: 1,
+        borderRadius: 18,
     },
     signOutText: {
         color: "#ef4444",

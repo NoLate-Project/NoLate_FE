@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 
 type Props = {
     visible: boolean;
@@ -75,21 +76,47 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
 
                 <Animated.View
                     style={[
-                        styles.card,
+                        styles.cardMotion,
                         {
-                            backgroundColor: mode === "dark" ? "#3a3a3c" : colors.surface,
-                            borderColor: mode === "dark" ? "#6b6b6e" : colors.border,
                             opacity,
                             transform: [{ scale }],
                         },
                     ]}
                 >
+                    <CalendarGlassSurface
+                        prominent
+                        glow
+                        variant="popover"
+                        style={[
+                            styles.card,
+                            {
+                                borderColor: colors.border,
+                                backgroundColor: mode === "dark"
+                                    ? "rgba(20,21,26,0.96)"
+                                    : "rgba(255,255,255,0.96)",
+                            },
+                        ]}
+                    >
                     <View
+                        pointerEvents="none"
+                        style={[
+                            styles.cardContrastLayer,
+                            {
+                                backgroundColor: mode === "dark"
+                                    ? "rgba(20,21,26,0.78)"
+                                    : "rgba(255,255,255,0.78)",
+                            },
+                        ]}
+                    />
+                    <View
+                        pointerEvents="none"
                         style={[
                             styles.pointer,
                             {
-                                backgroundColor: mode === "dark" ? "#3a3a3c" : colors.surface,
-                                borderColor: mode === "dark" ? "#6b6b6e" : colors.border,
+                                backgroundColor: mode === "dark"
+                                    ? "rgba(24,25,30,0.88)"
+                                    : "rgba(255,255,255,0.84)",
+                                borderColor: colors.border,
                             },
                         ]}
                     />
@@ -119,7 +146,7 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
 
                     <View style={[styles.divider, { backgroundColor: colors.border }]} />
 
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>빠른 이벤트 생성</Text>
+                    <Text style={[styles.label, { color: colors.textSecondary }]}>빠른 일정 생성</Text>
                     <TextInput
                         autoFocus
                         editable={!submitting}
@@ -133,8 +160,12 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
                         style={[
                             styles.input,
                             {
-                                backgroundColor: mode === "dark" ? "#202022" : colors.surface2,
-                                borderColor: colors.border,
+                                backgroundColor: mode === "dark"
+                                    ? "rgba(8,9,12,0.72)"
+                                    : "rgba(255,255,255,0.98)",
+                                borderColor: mode === "dark"
+                                    ? "rgba(255,255,255,0.18)"
+                                    : "rgba(60,60,67,0.22)",
                                 color: colors.textPrimary,
                             },
                         ]}
@@ -165,6 +196,7 @@ export default function QuickScheduleModal({ visible, onClose, onParse }: Props)
                             )}
                         </Pressable>
                     </View>
+                    </CalendarGlassSurface>
                 </Animated.View>
             </KeyboardAvoidingView>
         </Modal>
@@ -181,11 +213,14 @@ const styles = StyleSheet.create({
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: "rgba(0,0,0,0.46)",
+        backgroundColor: "rgba(0,0,0,0.58)",
+    },
+    cardMotion: {
+        width: "100%",
+        maxWidth: 430,
     },
     card: {
         width: "100%",
-        maxWidth: 430,
         borderRadius: 26,
         borderWidth: 1,
         paddingHorizontal: 20,
@@ -196,6 +231,10 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.32,
         shadowRadius: 28,
         elevation: 24,
+    },
+    cardContrastLayer: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 26,
     },
     pointer: {
         position: "absolute",

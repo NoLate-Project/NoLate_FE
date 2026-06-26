@@ -1,19 +1,19 @@
-export type CalendarViewMode = "compact" | "stack" | "detail" | "list";
+export type CalendarViewMode = "compact" | "stack" | "detail" | "week" | "list";
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
     compact: 76,
     stack: 90,
     detail: 100,
+    week: 76,
     list: 58,
 };
 
 export const CALENDAR_VIEW_OPTIONS: Array<{
     value: CalendarViewMode;
     label: string;
-    icon: "reorder-three-outline" | "layers-outline" | "reader-outline" | "list-outline";
 }> = [
-    { value: "compact", label: "축소형", icon: "reorder-three-outline" },
-    { value: "stack", label: "스택형", icon: "layers-outline" },
-    { value: "detail", label: "상세형", icon: "reader-outline" },
-    { value: "list", label: "목록형", icon: "list-outline" },
+    { value: "compact", label: "축소형" },
+    { value: "stack", label: "스택형" },
+    { value: "detail", label: "상세형" },
+    { value: "list", label: "목록형" },
 ];

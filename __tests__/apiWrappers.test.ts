@@ -15,6 +15,12 @@ import {
     markScheduleDeparted,
     searchSchedules,
 } from "../src/api/schedule";
+import {
+    createScheduleCategoryToApi,
+    deleteScheduleCategoryFromApi,
+    getScheduleCategoriesFromApi,
+    updateScheduleCategoryToApi,
+} from "../src/api/scheduleCategories";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -129,5 +135,68 @@ describe("schedule query api wrappers", () => {
         await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
+    });
+});
+
+describe("schedule category api wrappers", () => {
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test("list wrapper normalizes ids and fallback category fields", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: [
+                { id: 1, title: " 업무 ", color: " #ff3333 ", iconKey: " briefcase ", sortOrder: 0 },
+                { id: null, title: "ignored", color: "#000000" },
+                { id: 2, title: "", color: "", iconKey: "", sortOrder: null },
+            ],
+        });
+
+        await expect(getScheduleCategoriesFromApi()).resolves.toEqual([
+            { id: "1", title: "업무", color: "#ff3333", iconKey: "briefcase", sortOrder: 0, updatedAt: undefined },
+            { id: "2", title: "카테고리", color: "#5A96FF", iconKey: undefined, sortOrder: undefined, updatedAt: undefined },
+        ]);
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-categories");
+    });
+
+    test("create and update wrappers call category endpoints with trimmed payloads", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: { id: 3, title: "운동", color: "#30D158", iconKey: "sparkles", sortOrder: 3 },
+        });
+        mockedApiPatch.mockResolvedValue({
+            success: true,
+            data: { id: 3, title: "운동 수정", color: "#0A84FF", iconKey: "sparkles", sortOrder: 1 },
+        });
+
+        await expect(createScheduleCategoryToApi(" 운동 ", "#30D158", " sparkles ")).resolves.toMatchObject({
+            id: "3",
+            title: "운동",
+        });
+        await expect(updateScheduleCategoryToApi("3", { title: "운동 수정", sortOrder: 1 })).resolves.toMatchObject({
+            id: "3",
+            title: "운동 수정",
+            sortOrder: 1,
+        });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories", {
+            title: "운동",
+            color: "#30D158",
+            iconKey: "sparkles",
+        });
+        expect(mockedApiPatch).toHaveBeenCalledWith("/api/schedule-categories/3", {
+            title: "운동 수정",
+            sortOrder: 1,
+        });
+    });
+
+    test("delete wrapper accepts an empty success envelope", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(deleteScheduleCategoryFromApi("3")).resolves.toBeUndefined();
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3");
     });
 });

@@ -99,6 +99,7 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
 }
 
 export async function markScheduleDeparted(scheduleId: string): Promise<ScheduleItem> {
+    // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
     const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
     return normalizeSchedule(unwrapApiResponse(response));
 }

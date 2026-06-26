@@ -1,18 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import type { ComponentProps } from "react";
 import { useRouter } from "expo-router";
 import {
     Alert,
-    Animated,
     Pressable,
-    StatusBar,
+    StyleProp,
     StyleSheet,
     Text,
-    TextInput,
     View,
+    ViewStyle,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
-import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
+import { clearAuthTokens, getRefreshToken, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import { loginWithAppleSdk, loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
@@ -20,13 +22,21 @@ import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type SocialProvider = "naver" | "kakao" | "apple";
 
+type SocialButtonProps = {
+    label: string;
+    symbol?: string;
+    symbolColor?: string;
+    icon?: ComponentProps<typeof Ionicons>["name"];
+    markStyle?: StyleProp<ViewStyle>;
+    disabled: boolean;
+    onPress: () => void;
+};
+
 export default function Login() {
     const router = useRouter();
     const { syncAuthentication } = useAuth();
-    const { mode, colors, toggleMode } = useTheme();
-    const styles = createStyles(colors);
-    const fadeAnim = useRef(new Animated.Value(1)).current;
-    const btnScale = useRef(new Animated.Value(1)).current;
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
     const [id, setId] = useState("");
     const [pwd, setPwd] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -44,6 +54,7 @@ export default function Login() {
                 if (cancelled) return;
 
                 await saveAuthTokens(member.accessToken, member.refreshToken);
+                await saveAuthMember(member);
                 await syncAuthentication();
                 await registerPushAfterLogin(member.id).catch((error) => {
                     console.warn("[push] token registration failed", error);
@@ -78,6 +89,7 @@ export default function Login() {
             setSubmitting(true);
             const member = await loginMember({ email, password });
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await saveAuthMember(member);
             await syncAuthentication();
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
@@ -114,6 +126,7 @@ export default function Login() {
             });
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
+            await saveAuthMember(member);
             await syncAuthentication();
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
@@ -127,285 +140,201 @@ export default function Login() {
         }
     };
 
-    const handleToggleMode = () => {
-        Animated.sequence([
-            Animated.timing(btnScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
-            Animated.spring(btnScale, { toValue: 1, friction: 4, useNativeDriver: true }),
-        ]).start();
-
-        Animated.timing(fadeAnim, {
-            toValue: 0.08,
-            duration: 140,
-            useNativeDriver: true,
-        }).start(({ finished }) => {
-            if (finished) {
-                toggleMode();
-                Animated.timing(fadeAnim, {
-                    toValue: 1,
-                    duration: 280,
-                    useNativeDriver: true,
-                }).start();
-            }
-        });
-    };
-
     return (
-        <Animated.View style={[styles.screen, { opacity: fadeAnim }]}>
-            <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
+        <AuthScreen
+            subtitle="늦지 않게, 오늘의 이동을 준비하세요."
+        >
+            <AuthInput
+                label="이메일"
+                icon="mail-outline"
+                value={id}
+                onChangeText={setId}
+                placeholder="you@example.com"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+                textContentType="emailAddress"
+            />
+            <AuthInput
+                label="비밀번호"
+                icon="lock-closed-outline"
+                value={pwd}
+                onChangeText={setPwd}
+                placeholder="비밀번호"
+                secureTextEntry
+                autoComplete="password"
+                textContentType="password"
+            />
 
-            <View style={styles.card}>
-                <View style={styles.topRow}>
-                    <View>
-                        <Text style={styles.logo}>NoLate</Text>
-                        <Text style={styles.subtitle}>일정을 놓치지 않도록 로그인해 주세요</Text>
-                    </View>
-                    <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-                        <Pressable onPress={handleToggleMode} style={({ pressed }) => [styles.modeToggle, pressed && styles.pressed]}>
-                            <Text style={styles.modeIcon}>{mode === "dark" ? "☀️" : "🌙"}</Text>
-                            <Text style={styles.modeText}>{mode === "dark" ? "라이트" : "다크"}</Text>
-                        </Pressable>
-                    </Animated.View>
-                </View>
+            <AuthPrimaryButton
+                disabled={submitting}
+                onPress={onLogin}
+                label={submitting ? "로그인 중" : "로그인"}
+            />
 
-                <View style={styles.form}>
-                    <TextInput
-                        value={id}
-                        onChangeText={setId}
-                        placeholder="Email"
-                        placeholderTextColor={colors.textSecondary}
-                        style={styles.input}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                    />
-                    <TextInput
-                        value={pwd}
-                        onChangeText={setPwd}
-                        placeholder="Password"
-                        placeholderTextColor={colors.textSecondary}
-                        secureTextEntry
-                        style={styles.input}
-                    />
-                </View>
-
-                <Pressable
-                    disabled={submitting}
-                    onPress={onLogin}
-                    style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, submitting && styles.disabled]}
-                >
-                    <Text style={styles.loginButtonText}>{submitting ? "로그인 중..." : "로그인"}</Text>
-                </Pressable>
-
-                <View style={styles.dividerWrap}>
-                    <View style={styles.divider} />
-                    <Text style={styles.dividerText}>또는 SNS 로그인</Text>
-                    <View style={styles.divider} />
-                </View>
-
-                <View style={styles.socialGroup}>
-                    <Pressable
-                        disabled={socialSubmitting}
-                        onPress={() => onSocialLogin("naver")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.naverButton]}>
-                            <Text style={styles.naverSymbol}>N</Text>
-                        </View>
-                        <Text style={styles.socialLabel}>네이버</Text>
-                    </Pressable>
-                    <Pressable
-                        disabled={socialSubmitting}
-                        onPress={() => onSocialLogin("kakao")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.kakaoButton]}>
-                            <Text style={styles.kakaoSymbol}>K</Text>
-                        </View>
-                        <Text style={styles.socialLabel}>카카오</Text>
-                    </Pressable>
-                    <Pressable
-                        disabled={socialSubmitting}
-                        onPress={() => onSocialLogin("apple")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.appleButton]}>
-                            <Text style={styles.appleSymbol}></Text>
-                        </View>
-                        <Text style={styles.socialLabel}>Apple</Text>
-                    </Pressable>
-                </View>
-
-                <Pressable onPress={() => router.push("/auth/signup")} style={({ pressed }) => [styles.signUpLinkWrap, pressed && styles.pressed]}>
-                    <Text style={styles.signUpLink}>회원가입 하기</Text>
-                </Pressable>
+            <View style={styles.dividerWrap}>
+                <View style={styles.divider} />
+                <Text style={styles.dividerText}>간편 로그인</Text>
+                <View style={styles.divider} />
             </View>
-        </Animated.View>
+
+            <View style={styles.socialRow}>
+                <SocialButton
+                    label="네이버"
+                    symbol="N"
+                    symbolColor="#FFFFFF"
+                    markStyle={styles.naverMark}
+                    disabled={socialSubmitting}
+                    onPress={() => onSocialLogin("naver")}
+                />
+                <SocialButton
+                    label="카카오"
+                    symbol="K"
+                    symbolColor="#191600"
+                    markStyle={styles.kakaoMark}
+                    disabled={socialSubmitting}
+                    onPress={() => onSocialLogin("kakao")}
+                />
+                <SocialButton
+                    label="Apple"
+                    icon="logo-apple"
+                    markStyle={styles.appleMark}
+                    disabled={socialSubmitting}
+                    onPress={() => onSocialLogin("apple")}
+                />
+            </View>
+
+            <Pressable
+                onPress={() => router.push("/auth/signup")}
+                style={({ pressed }) => [
+                    styles.signUpLink,
+                    { opacity: pressed ? 0.62 : 1 },
+                ]}
+            >
+                <Text style={styles.signUpHint}>처음이신가요?</Text>
+                <Text style={styles.signUpText}>회원가입</Text>
+            </Pressable>
+        </AuthScreen>
     );
 }
 
-function createStyles(colors: ReturnType<typeof useTheme>["colors"]) {
+function SocialButton({
+    label,
+    symbol,
+    symbolColor,
+    icon,
+    markStyle,
+    disabled,
+    onPress,
+}: SocialButtonProps) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <Pressable
+            disabled={disabled}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.socialButton,
+                {
+                    backgroundColor: colors.surface2,
+                    borderColor: colors.border,
+                    opacity: disabled ? 0.55 : pressed ? 0.72 : 1,
+                    transform: [{ scale: pressed && !disabled ? 0.98 : 1 }],
+                },
+            ]}
+        >
+            <View style={[styles.socialMark, markStyle]}>
+                {icon ? (
+                    <Ionicons name={icon} size={16} color={symbolColor ?? colors.textPrimary} />
+                ) : (
+                    <Text style={[styles.socialSymbol, { color: symbolColor }]}>{symbol}</Text>
+                )}
+            </View>
+            <Text style={styles.socialLabel}>{label}</Text>
+        </Pressable>
+    );
+}
+
+function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark" | "light") {
     return StyleSheet.create({
-        screen: {
-            flex: 1,
-            backgroundColor: colors.background,
-            paddingHorizontal: 20,
-            justifyContent: "center",
-        },
-        card: {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderWidth: 1,
-            borderRadius: 18,
-            paddingHorizontal: 16,
-            paddingVertical: 20,
-            gap: 14,
-        },
-        logo: {
-            color: colors.textPrimary,
-            fontSize: 28,
-            fontWeight: "800",
-            letterSpacing: 0.3,
-        },
-        topRow: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 10,
-        },
-        subtitle: {
-            color: colors.textSecondary,
-            fontSize: 14,
-            fontWeight: "500",
-        },
-        modeToggle: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 4,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface2,
-            borderRadius: 999,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-        },
-        modeIcon: {
-            fontSize: 14,
-        },
-        modeText: {
-            color: colors.textPrimary,
-            fontSize: 12,
-            fontWeight: "700",
-        },
-        form: {
-            gap: 10,
-            marginTop: 4,
-        },
-        input: {
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface2,
-            color: colors.textPrimary,
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-            borderRadius: 10,
-            fontSize: 15,
-        },
-        loginButton: {
-            backgroundColor: colors.selectedDayBg,
-            borderRadius: 10,
-            minHeight: 48,
-            alignItems: "center",
-            justifyContent: "center",
-            marginTop: 2,
-        },
-        loginButtonText: {
-            color: colors.selectedDayText,
-            fontSize: 15,
-            fontWeight: "700",
-        },
         dividerWrap: {
+            marginTop: 10,
             flexDirection: "row",
             alignItems: "center",
-            gap: 8,
-            marginTop: 2,
+            gap: 10,
         },
         divider: {
             flex: 1,
-            height: 1,
+            height: StyleSheet.hairlineWidth,
             backgroundColor: colors.border,
         },
         dividerText: {
             color: colors.textSecondary,
             fontSize: 12,
-            fontWeight: "600",
+            fontWeight: "900",
         },
-        socialGroup: {
+        socialRow: {
             flexDirection: "row",
-            justifyContent: "space-evenly",
-            marginTop: 2,
+            gap: 9,
         },
-        socialItem: {
+        socialButton: {
+            flex: 1,
+            minHeight: 72,
+            borderRadius: 18,
+            borderWidth: 1,
             alignItems: "center",
-            gap: 8,
+            justifyContent: "center",
+            gap: 7,
         },
-        socialCircle: {
-            width: 62,
-            height: 62,
-            borderRadius: 31,
+        socialMark: {
+            width: 30,
+            height: 30,
+            borderRadius: 15,
             alignItems: "center",
             justifyContent: "center",
         },
-        naverButton: {
+        naverMark: {
             backgroundColor: "#03C75A",
         },
-        kakaoButton: {
+        kakaoMark: {
             backgroundColor: "#FEE500",
         },
-        appleButton: {
-            backgroundColor: modeAwareApple(colors.background),
+        appleMark: {
+            backgroundColor: mode === "dark" ? "#1f1f22" : "#FFFFFF",
             borderWidth: 1,
             borderColor: colors.border,
         },
-        naverSymbol: {
-            color: "#FFFFFF",
-            fontSize: 24,
+        socialSymbol: {
+            fontSize: 14,
             fontWeight: "900",
-        },
-        kakaoSymbol: {
-            color: "#191600",
-            fontSize: 24,
-            fontWeight: "900",
-        },
-        appleSymbol: {
-            color: colors.textPrimary,
-            fontSize: 26,
-            fontWeight: "700",
         },
         socialLabel: {
-            color: colors.textSecondary,
+            color: colors.textPrimary,
             fontSize: 12,
-            fontWeight: "700",
-        },
-        signUpLinkWrap: {
-            marginTop: 4,
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: 32,
+            fontWeight: "900",
         },
         signUpLink: {
+            minHeight: 54,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface2,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 7,
+            marginTop: 4,
+        },
+        signUpHint: {
+            color: colors.textSecondary,
+            fontSize: 13,
+            fontWeight: "800",
+        },
+        signUpText: {
             color: colors.textPrimary,
             fontSize: 13,
-            fontWeight: "700",
-            textDecorationLine: "underline",
-        },
-        pressed: {
-            opacity: 0.84,
-        },
-        disabled: {
-            opacity: 0.65,
+            fontWeight: "900",
         },
     });
-}
-
-function modeAwareApple(backgroundColor: string) {
-    return backgroundColor === "#000" ? "#1A1A1A" : "#FFFFFF";
 }

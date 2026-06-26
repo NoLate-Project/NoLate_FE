@@ -8,7 +8,7 @@ import {
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
 import CalendarGlassSurface from "./CalendarGlassSurface";
@@ -46,6 +46,7 @@ export default function CalendarYearOverviewModal({
     onClose,
 }: Props) {
     const { colors } = useTheme();
+    const insets = useSafeAreaInsets();
     const selectedDate = new Date(`${selectedDay}T00:00:00`);
     const weekdayLabels = Array.from({ length: 7 }, (_, index) => (
         WEEKDAYS[(firstDay + index) % 7]
@@ -53,8 +54,8 @@ export default function CalendarYearOverviewModal({
 
     return (
         <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-            <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-                <View style={styles.header}>
+            <View style={[styles.safeArea, { backgroundColor: colors.background }]}>
+                <View style={[styles.header, { paddingTop: Math.max(insets.top + 12, 58) }]}>
                     <CalendarGlassSurface
                         interactive
                         style={[styles.yearControl, { borderColor: colors.border }]}
@@ -86,7 +87,12 @@ export default function CalendarYearOverviewModal({
                     </CalendarGlassSurface>
                 </View>
 
-                <ScrollView contentContainerStyle={styles.monthGrid}>
+                <ScrollView
+                    contentContainerStyle={[
+                        styles.monthGrid,
+                        { paddingBottom: Math.max(insets.bottom + 40, 52) },
+                    ]}
+                >
                     {Array.from({ length: 12 }, (_, index) => {
                         const month = index + 1;
                         const cells = getMonthCells(year, month, firstDay);
@@ -103,6 +109,17 @@ export default function CalendarYearOverviewModal({
                                     { opacity: pressed ? 0.55 : 1 },
                                 ]}
                             >
+                                <CalendarGlassSurface
+                                    variant="card"
+                                    style={[
+                                        styles.monthCardGlass,
+                                        {
+                                            borderColor: isSelectedMonth
+                                                ? colors.selectedDayBg
+                                                : colors.border,
+                                        },
+                                    ]}
+                                >
                                 <Text
                                     style={[
                                         styles.monthTitle,
@@ -160,11 +177,12 @@ export default function CalendarYearOverviewModal({
                                         );
                                     })}
                                 </View>
+                                </CalendarGlassSurface>
                             </Pressable>
                         );
                     })}
                 </ScrollView>
-            </SafeAreaView>
+            </View>
         </Modal>
     );
 }
@@ -174,8 +192,9 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     header: {
-        minHeight: 58,
+        minHeight: 104,
         paddingHorizontal: 16,
+        paddingBottom: 10,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
@@ -218,8 +237,7 @@ const styles = StyleSheet.create({
     },
     monthGrid: {
         paddingHorizontal: 14,
-        paddingTop: 10,
-        paddingBottom: 40,
+        paddingTop: 12,
         flexDirection: "row",
         flexWrap: "wrap",
         justifyContent: "space-between",
@@ -227,6 +245,14 @@ const styles = StyleSheet.create({
     },
     monthCard: {
         width: "31.5%",
+    },
+    monthCardGlass: {
+        minHeight: 146,
+        borderRadius: 18,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 8,
+        paddingTop: 9,
+        paddingBottom: 8,
     },
     monthTitle: {
         fontSize: 17,

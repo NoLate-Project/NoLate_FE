@@ -26,6 +26,8 @@ type Props = {
     firstDay: 0 | 1;
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
+    headerOffset?: number;
+    topSafeInset?: number;
 };
 
 type CalendarDayComponentProps = {
@@ -36,7 +38,8 @@ type CalendarDayComponentProps = {
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const CONTINUOUS_MONTH_RANGE = 24;
-const CONTINUOUS_MONTH_HEADER_HEIGHT = 58;
+const WEEKDAY_HEADER_HEIGHT = 42;
+const CONTINUOUS_MONTH_HEADER_HEIGHT = 62;
 const CONTINUOUS_MONTH_DIVIDER_HEIGHT = StyleSheet.hairlineWidth;
 
 type ContinuousMonth = {
@@ -108,6 +111,45 @@ function moveMonth(day: string, amount: number) {
     return `${year}-${month}-01`;
 }
 
+function moveDay(day: string, amount: number) {
+    const next = new Date(`${day}T00:00:00`);
+    next.setDate(next.getDate() + amount);
+    return toDateString(next.getFullYear(), next.getMonth() + 1, next.getDate());
+}
+
+function createWeekDays(day: string, firstDay: 0 | 1) {
+    const selected = new Date(`${day}T00:00:00`);
+    const diff = (selected.getDay() - firstDay + 7) % 7;
+    const start = new Date(selected);
+    start.setDate(selected.getDate() - diff);
+
+    return Array.from({ length: 7 }, (_, index): DateData => {
+        const current = new Date(start);
+        current.setDate(start.getDate() + index);
+        return {
+            year: current.getFullYear(),
+            month: current.getMonth() + 1,
+            day: current.getDate(),
+            dateString: toDateString(
+                current.getFullYear(),
+                current.getMonth() + 1,
+                current.getDate()
+            ),
+            timestamp: current.getTime(),
+        };
+    });
+}
+
+function formatWeekTitle(days: DateData[]) {
+    const first = days[0];
+    const last = days[days.length - 1];
+
+    if (first.month === last.month) {
+        return `${first.month}월 ${first.day}-${last.day}일`;
+    }
+    return `${first.month}월 ${first.day}일-${last.month}월 ${last.day}일`;
+}
+
 // 일정 목록을 월간 캘린더 UI로 표시한다.
 export default function ScheduleCalendar({
     selectedDay,
@@ -118,6 +160,8 @@ export default function ScheduleCalendar({
     firstDay,
     scrollRequest,
     onVisibleMonthChange,
+    headerOffset = 0,
+    topSafeInset = 0,
 }: Props) {
     const { colors, mode } = useTheme();
     const calendarListRef = useRef<FlatList<ContinuousMonth>>(null);
@@ -126,6 +170,8 @@ export default function ScheduleCalendar({
     const todayDateString = useMemo(getTodayDateString, []);
     const [activeMonth, setActiveMonth] = useState(selectedDay.slice(0, 7));
     const activeMonthRef = useRef(activeMonth);
+    const continuousHeaderOffset = Math.max(headerOffset, WEEKDAY_HEADER_HEIGHT);
+    const topSafeMaskHeight = Math.max(topSafeInset + 2, 0);
 
     // 일정 목록을 캘린더 마킹 데이터로 변환한다.
     const markedDates = useMemo(() => {
@@ -244,7 +290,7 @@ export default function ScheduleCalendar({
             style={[
                 styles.weekdayHeader,
                 {
-                    backgroundColor: colors.calendarBackground,
+                    backgroundColor: "transparent",
                     borderBottomColor: colors.border,
                 },
             ]}
@@ -258,6 +304,14 @@ export default function ScheduleCalendar({
                 </Text>
             ))}
         </View>
+    );
+    const selectedWeekDays = useMemo(
+        () => createWeekDays(selectedDay, firstDay),
+        [firstDay, selectedDay]
+    );
+    const selectedWeekTitle = useMemo(
+        () => formatWeekTitle(selectedWeekDays),
+        [selectedWeekDays]
     );
 
     const continuousMonths = useMemo(() => {
@@ -303,7 +357,7 @@ export default function ScheduleCalendar({
 
     useFocusEffect(
         useCallback(() => {
-            if (viewMode === "list" || selectedMonthIndex < 0) return;
+            if (viewMode === "list" || viewMode === "week" || selectedMonthIndex < 0) return;
 
             const selectedMonth = continuousMonths[selectedMonthIndex];
             const shouldAnimate = handledScrollRequestRef.current !== scrollRequest;
@@ -312,7 +366,10 @@ export default function ScheduleCalendar({
 
             const scrollTimer = setTimeout(() => {
                 calendarListRef.current?.scrollToOffset({
-                    offset: monthLayouts[selectedMonthIndex].offset + CONTINUOUS_MONTH_HEADER_HEIGHT,
+                    offset: Math.max(
+                        0,
+                        monthLayouts[selectedMonthIndex].offset - continuousHeaderOffset
+                    ),
                     animated: shouldAnimate,
                 });
             }, 120);
@@ -321,6 +378,7 @@ export default function ScheduleCalendar({
         }, [
             continuousMonths,
             monthLayouts,
+            continuousHeaderOffset,
             scrollRequest,
             selectedMonthIndex,
             updateActiveMonth,
@@ -332,7 +390,7 @@ export default function ScheduleCalendar({
         event: NativeSyntheticEvent<NativeScrollEvent>
     ) => {
         const monthSwitchLine =
-            event.nativeEvent.contentOffset.y + CONTINUOUS_MONTH_HEADER_HEIGHT;
+            event.nativeEvent.contentOffset.y + continuousHeaderOffset + 2;
         let activeIndex = 0;
 
         for (let index = 1; index < monthLayouts.length; index += 1) {
@@ -344,7 +402,7 @@ export default function ScheduleCalendar({
 
         const nextActiveMonth = continuousMonths[activeIndex];
         if (nextActiveMonth) updateActiveMonth(nextActiveMonth);
-    }, [continuousMonths, monthLayouts, updateActiveMonth]);
+    }, [continuousHeaderOffset, continuousMonths, monthLayouts, updateActiveMonth]);
 
     const renderContinuousMonth = useCallback(({ item }: { item: ContinuousMonth }) => (
         <View
@@ -357,7 +415,13 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <View style={styles.continuousMonthHeader}>
+            <View
+                style={[
+                    styles.continuousMonthHeader,
+                    (item.key === activeMonth || selectedDay.startsWith(item.key)) &&
+                        styles.continuousMonthHeaderHidden,
+                ]}
+            >
                 <Text style={[styles.monthTitle, { color: colors.monthTextColor }]}>
                     {item.month}월
                 </Text>
@@ -384,6 +448,7 @@ export default function ScheduleCalendar({
         colors.border,
         colors.calendarBackground,
         colors.monthTextColor,
+        activeMonth,
         markedDates,
         onOpenDay,
         selectedDay,
@@ -391,24 +456,69 @@ export default function ScheduleCalendar({
         viewMode,
     ]);
 
+    if (viewMode === "week") {
+        return (
+            <View style={[styles.weekContainer, { backgroundColor: colors.calendarBackground }]}>
+                <View style={styles.listMonthHeader}>
+                    <Pressable
+                        onPress={() => {
+                            const nextDay = moveDay(selectedDay, -7);
+                            onSelectDay(nextDay);
+                            onVisibleMonthChange(nextDay);
+                        }}
+                        accessibilityLabel="이전 주"
+                        style={styles.monthArrow}
+                    >
+                        <Ionicons name="chevron-back" size={27} color={colors.arrowColor} />
+                    </Pressable>
+                    <Text style={[styles.listMonthTitle, { color: colors.monthTextColor }]}>
+                        {selectedWeekTitle}
+                    </Text>
+                    <Pressable
+                        onPress={() => {
+                            const nextDay = moveDay(selectedDay, 7);
+                            onSelectDay(nextDay);
+                            onVisibleMonthChange(nextDay);
+                        }}
+                        accessibilityLabel="다음 주"
+                        style={styles.monthArrow}
+                    >
+                        <Ionicons name="chevron-forward" size={27} color={colors.arrowColor} />
+                    </Pressable>
+                </View>
+                {weekdayHeader}
+                <View style={[styles.weekGrid, { borderBottomColor: colors.border }]}>
+                    {selectedWeekDays.map((date) => (
+                        <View
+                            key={date.dateString}
+                            style={[styles.weekDayCell, { height: CALENDAR_DAY_HEIGHTS.week }]}
+                        >
+                            <CustomDay
+                                date={date}
+                                state={date.dateString === todayDateString ? "today" : undefined}
+                                marking={markedDates[date.dateString]}
+                                viewMode={viewMode}
+                                isSelectedDay={date.dateString === selectedDay}
+                                onPress={(day) => {
+                                    onVisibleMonthChange(day.dateString);
+                                    onOpenDay(day.dateString);
+                                }}
+                            />
+                        </View>
+                    ))}
+                </View>
+            </View>
+        );
+    }
+
     if (viewMode !== "list") {
         return (
             <View style={styles.calendarList}>
-                <View
-                    style={[
-                        styles.activeMonthHeader,
-                        { backgroundColor: colors.calendarBackground },
-                    ]}
-                >
-                    <Text style={[styles.activeMonthTitle, { color: colors.monthTextColor }]}>
-                        {Number(activeMonth.slice(5, 7))}월
-                    </Text>
-                </View>
-                {weekdayHeader}
                 <FlatList
                     ref={calendarListRef}
                     key={`${mode}-${viewMode}-${firstDay}`}
                     data={continuousMonths}
+                    extraData={activeMonth}
                     renderItem={renderContinuousMonth}
                     keyExtractor={(item) => item.key}
                     initialScrollIndex={
@@ -421,11 +531,53 @@ export default function ScheduleCalendar({
                     onScroll={handleContinuousScroll}
                     scrollEventThrottle={16}
                     showsVerticalScrollIndicator={false}
+                    removeClippedSubviews={false}
                     style={[styles.calendarList, { backgroundColor: colors.calendarBackground }]}
                     contentContainerStyle={styles.continuousListContent}
                     initialNumToRender={3}
                     maxToRenderPerBatch={4}
                     windowSize={7}
+                />
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.calendarHeaderOverlay,
+                        { top: continuousHeaderOffset },
+                    ]}
+                >
+                    {weekdayHeader}
+                </View>
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.calendarTopBlur,
+                        mode === "dark"
+                            ? styles.calendarTopBlurDark
+                            : styles.calendarTopBlurLight,
+                        {
+                            top: continuousHeaderOffset + WEEKDAY_HEADER_HEIGHT - 1,
+                            borderBottomColor: colors.border,
+                        },
+                    ]}
+                >
+                    <View
+                        style={[
+                            styles.calendarTopBlurSoft,
+                            mode === "dark"
+                                ? styles.calendarTopBlurSoftDark
+                                : styles.calendarTopBlurSoftLight,
+                        ]}
+                    />
+                </View>
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.calendarTopSafeMask,
+                        {
+                            height: topSafeMaskHeight,
+                            backgroundColor: colors.calendarBackground,
+                        },
+                    ]}
                 />
             </View>
         );
@@ -484,19 +636,23 @@ const styles = StyleSheet.create({
     calendarList: {
         flex: 1,
     },
+    calendarHeaderOverlay: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        zIndex: 2,
+        elevation: 2,
+    },
+    calendarTopSafeMask: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 4,
+        elevation: 4,
+    },
     continuousListContent: {
-        paddingBottom: 0,
-    },
-    activeMonthHeader: {
-        height: 72,
-        paddingHorizontal: 24,
-        paddingBottom: 8,
-        justifyContent: "flex-end",
-    },
-    activeMonthTitle: {
-        fontSize: 34,
-        fontWeight: "800",
-        letterSpacing: -1,
+        paddingBottom: 156,
     },
     continuousMonth: {
         borderBottomWidth: StyleSheet.hairlineWidth,
@@ -506,6 +662,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 28,
         justifyContent: "center",
     },
+    continuousMonthHeaderHidden: {
+        opacity: 0,
+    },
     monthGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
@@ -514,12 +673,12 @@ const styles = StyleSheet.create({
         width: "14.2857%",
     },
     monthTitle: {
-        fontSize: 22,
-        fontWeight: "800",
-        letterSpacing: -0.5,
+        fontSize: 27,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
     weekdayHeader: {
-        height: 34,
+        height: WEEKDAY_HEADER_HEIGHT,
         paddingHorizontal: 12,
         borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
@@ -528,8 +687,9 @@ const styles = StyleSheet.create({
     weekdayText: {
         width: "14.2857%",
         textAlign: "center",
-        fontSize: 13,
-        fontWeight: "800",
+        fontSize: 16.5,
+        fontWeight: "900",
+        opacity: 0.96,
     },
     listMonthHeader: {
         height: 58,
@@ -541,12 +701,50 @@ const styles = StyleSheet.create({
     listMonthTitle: {
         fontSize: 24,
         fontWeight: "800",
-        letterSpacing: -0.6,
+        letterSpacing: 0,
     },
     monthArrow: {
         width: 44,
         height: 44,
         alignItems: "center",
         justifyContent: "center",
+    },
+    weekContainer: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    weekGrid: {
+        flexDirection: "row",
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    weekDayCell: {
+        width: "14.2857%",
+    },
+    calendarTopBlur: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        height: 16,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        opacity: 0.36,
+    },
+    calendarTopBlurDark: {
+        backgroundColor: "rgba(0,0,0,0.18)",
+    },
+    calendarTopBlurLight: {
+        backgroundColor: "rgba(242,242,247,0.36)",
+    },
+    calendarTopBlurSoft: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: -8,
+        height: 8,
+        opacity: 0.22,
+    },
+    calendarTopBlurSoftDark: {
+        backgroundColor: "rgba(0,0,0,0.12)",
+    },
+    calendarTopBlurSoftLight: {
+        backgroundColor: "rgba(255,255,255,0.36)",
     },
 });

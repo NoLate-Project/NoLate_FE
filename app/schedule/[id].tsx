@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, PanResponder, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { Alert, Animated, Easing, PanResponder, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import type { LayoutChangeEvent } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { getSchedule } from "../../src/api/schedule";
+import { getSchedule, markScheduleDeparted } from "../../src/api/schedule";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import TmapMapView, {
@@ -14,9 +15,10 @@ import TmapMapView, {
 } from "../../src/modules/map/TmapMapView";
 import type { RouteAlternativeOption } from "../../src/modules/map/tmapApi";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { TravelMode } from "../../src/modules/schedule/types";
+import type { ScheduleItem, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
+import { createQaScheduleItem, QA_SCHEDULE_ID } from "../../src/modules/schedule/qaSamples";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const ymdText = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -24,6 +26,14 @@ const hhmmText = (d: Date) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const DEFAULT_CAMERA = { latitude: 37.5665, longitude: 126.978, zoom: 12 };
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const SHEET_SNAP_VELOCITY_PROJECTION = 140;
+const MINUTE_MS = 60 * 1000;
+const SECOND_MS = 1000;
+const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
+const DEPARTURE_PANEL_FALLBACK_HEIGHT = 118;
+
+type DepartureDisplayState =
+    | { kind: "countdown"; hours: number; minutes: number; seconds: number }
+    | { kind: "status"; text: string; tone: "default" | "completed" | "disabled" };
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -169,6 +179,60 @@ function routeMetricText(route: RouteAlternativeOption | undefined) {
     return metrics.join(" · ") || route.transitModeSummary;
 }
 
+function getRecommendedDepartureAt(item: ScheduleItem): Date | undefined {
+    if (item.departAt) {
+        return fromISO(item.departAt);
+    }
+
+    if (typeof item.travelMinutes !== "number") {
+        return undefined;
+    }
+
+    const startAt = fromISO(item.startAt);
+    return new Date(startAt.getTime() - (item.travelMinutes * MINUTE_MS));
+}
+
+function formatDepartureAssistText(item: ScheduleItem) {
+    const chunks = [
+        typeof item.travelMinutes === "number"
+            ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
+            : travelModeLabel(item.travelMode),
+        `${hhmmText(fromISO(item.startAt))} 일정 기준`,
+    ];
+
+    if (item.notificationEnabled && typeof item.notificationLeadMinutes === "number") {
+        chunks.push(`${item.notificationLeadMinutes}분 전 알림 시작`);
+    }
+
+    return chunks.join(" · ");
+}
+
+function getDepartureDisplayState(departureAt: Date | undefined, item: ScheduleItem, nowMs: number): DepartureDisplayState {
+    if (item.departedAt) {
+        return { kind: "status", text: `${hhmmText(fromISO(item.departedAt))}에 출발 완료됨`, tone: "completed" };
+    }
+
+    if (!departureAt) {
+        return {
+            kind: "status",
+            text: item.notificationEnabled ? "출발 알림 대기 중" : "출발 알림 꺼짐",
+            tone: item.notificationEnabled ? "default" : "disabled",
+        };
+    }
+
+    const diffSeconds = Math.ceil((departureAt.getTime() - nowMs) / SECOND_MS);
+
+    if (diffSeconds > 0) {
+        const hours = Math.floor(diffSeconds / 3600);
+        const minutes = Math.floor((diffSeconds % 3600) / 60);
+        const seconds = diffSeconds % 60;
+
+        return { kind: "countdown", hours, minutes, seconds };
+    }
+
+    return { kind: "status", text: "출발해야 할 시간이 지났어요", tone: "disabled" };
+}
+
 function legTitle(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]) {
     if (leg.kind === "WALK") return "도보";
     return leg.lineName || (leg.kind === "BUS" ? "버스" : leg.kind === "SUBWAY" ? "지하철" : "이동");
@@ -208,7 +272,14 @@ function legStopText(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[num
 }
 
 export default function ScheduleRoute() {
-    const { mode } = useLocalSearchParams<{ mode?: string }>();
+    const { id, mode } = useLocalSearchParams<{ id?: string; mode?: string }>();
+    const { state, dispatch } = useScheduleStore();
+
+    useEffect(() => {
+        if (id !== QA_SCHEDULE_ID || state.itemsById[QA_SCHEDULE_ID]) return;
+        dispatch({ type: "UPDATE_ITEM", item: createQaScheduleItem() });
+    }, [dispatch, id, state.itemsById]);
+
     if (mode === "edit") {
         return <ScheduleEditScreen />;
     }
@@ -234,8 +305,114 @@ function ScheduleDetail() {
     const sheetTranslateY = useRef(new Animated.Value(sheetMiddleOffset)).current;
     const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
     const [expandedStopLegs, setExpandedStopLegs] = useState<Record<number, boolean>>({});
+    const [departureActionPending, setDepartureActionPending] = useState(false);
+    const [departurePanelExpanded, setDeparturePanelExpanded] = useState(false);
+    const [departurePanelContentHeight, setDeparturePanelContentHeight] = useState(DEPARTURE_PANEL_FALLBACK_HEIGHT);
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const countdownTickAnim = useRef(new Animated.Value(1)).current;
+    const departureExpandAnim = useRef(new Animated.Value(0)).current;
+    const previousCountdownKeyRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
+    const recommendedDepartureAt = item ? getRecommendedDepartureAt(item) : undefined;
+    const departureDisplayState: DepartureDisplayState = item
+        ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs)
+        : { kind: "status", text: "", tone: "default" };
+    const countdownAnimationKey = departureDisplayState.kind === "countdown"
+        ? `${departureDisplayState.hours}:${departureDisplayState.minutes}:${departureDisplayState.seconds}`
+        : undefined;
+
+    useEffect(() => {
+        const intervalId = setInterval(() => {
+            setNowMs(Date.now());
+        }, DEPARTURE_COUNTDOWN_REFRESH_MS);
+
+        return () => {
+            clearInterval(intervalId);
+        };
+    }, []);
+
+    useEffect(() => {
+        Animated.timing(departureExpandAnim, {
+            toValue: departurePanelExpanded ? 1 : 0,
+            duration: departurePanelExpanded ? 240 : 180,
+            easing: departurePanelExpanded ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+    }, [departureExpandAnim, departurePanelExpanded]);
+
+    useEffect(() => {
+        if (!countdownAnimationKey) {
+            previousCountdownKeyRef.current = undefined;
+            countdownTickAnim.setValue(1);
+            return;
+        }
+        if (previousCountdownKeyRef.current === undefined) {
+            previousCountdownKeyRef.current = countdownAnimationKey;
+            return;
+        }
+        if (previousCountdownKeyRef.current === countdownAnimationKey) return;
+
+        previousCountdownKeyRef.current = countdownAnimationKey;
+        countdownTickAnim.stopAnimation();
+        countdownTickAnim.setValue(0.86);
+        Animated.timing(countdownTickAnim, {
+            toValue: 1,
+            duration: 180,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+        }).start();
+    }, [countdownAnimationKey, countdownTickAnim]);
+
+    const updateDeparturePanelHeight = useCallback((event: LayoutChangeEvent) => {
+        const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+        if (nextHeight <= 0) return;
+        setDeparturePanelContentHeight((current) => (
+            Math.abs(current - nextHeight) > 1 ? nextHeight : current
+        ));
+    }, []);
+
+    const countdownAnimatedStyle = useMemo(() => ({
+        opacity: countdownTickAnim,
+    }), [countdownTickAnim]);
+
+    const departureDropdownAnimatedStyle = useMemo(() => ({
+        height: departureExpandAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, departurePanelContentHeight],
+        }),
+        marginTop: departureExpandAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 7],
+        }),
+        opacity: departureExpandAnim,
+    }), [departureExpandAnim, departurePanelContentHeight]);
+
+    const departureDropdownContentAnimatedStyle = useMemo(() => ({
+        opacity: departureExpandAnim.interpolate({
+            inputRange: [0, 0.35, 1],
+            outputRange: [0, 0.22, 1],
+        }),
+        transform: [
+            {
+                translateY: departureExpandAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-8, 0],
+                }),
+            },
+        ],
+    }), [departureExpandAnim]);
+
+    const departureChevronAnimatedStyle = useMemo(() => ({
+        transform: [
+            {
+                rotate: departureExpandAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ["0deg", "180deg"],
+                }),
+            },
+        ],
+    }), [departureExpandAnim]);
 
     useEffect(() => {
         sheetTranslateY.stopAnimation((current) => {
@@ -298,6 +475,7 @@ function ScheduleDetail() {
 
     useEffect(() => {
         if (!id) return;
+        if (id === QA_SCHEDULE_ID) return;
 
         let cancelled = false;
         setLoading(true);
@@ -385,6 +563,27 @@ function ScheduleDetail() {
         });
     }, []);
 
+    const completeDeparture = useCallback(async () => {
+        if (!id || departureActionPending) return;
+
+        setDepartureActionPending(true);
+        try {
+            const completedAt = new Date().toISOString();
+            const updated = await markScheduleDeparted(id);
+            dispatch({
+                type: "UPDATE_ITEM",
+                item: {
+                    ...updated,
+                    departedAt: updated.departedAt ?? completedAt,
+                },
+            });
+        } catch (error) {
+            Alert.alert("출발 완료 실패", getErrorMessage(error));
+        } finally {
+            setDepartureActionPending(false);
+        }
+    }, [departureActionPending, dispatch, id]);
+
     const mapCoords = useMemo(() => {
         const coords = [...pathCoords];
         if (originCoord) coords.push(originCoord);
@@ -450,10 +649,19 @@ function ScheduleDetail() {
     const travelText = item.travelMinutes
         ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
         : travelModeLabel(item.travelMode);
+    const hasDepartureInfo = Boolean(recommendedDepartureAt || item.departedAt || typeof item.travelMinutes === "number");
+    const departureCompleted = Boolean(item.departedAt);
     const sheetBorder = isDark ? "#343434" : "#E2E8F0";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
     const secondaryText = isDark ? "#B8B8B8" : "#64748B";
-
+    const departureStatusColor = departureDisplayState.kind === "status" && departureDisplayState.tone === "completed"
+        ? (isDark ? "#86EFAC" : "#15803D")
+        : departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled"
+            ? secondaryText
+            : primaryText;
+    const departureStatusOpacity = departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled"
+        ? 0.52
+        : 1;
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar hidden />
@@ -479,6 +687,7 @@ function ScheduleDetail() {
                 <View style={styles.topRow}>
                     <CalendarGlassSurface
                         interactive
+                        variant="mapCard"
                         style={[styles.roundButtonGlass, { borderColor: sheetBorder }]}
                     >
                         <Pressable
@@ -493,6 +702,7 @@ function ScheduleDetail() {
                     </CalendarGlassSurface>
 
                     <CalendarGlassSurface
+                        variant="mapCard"
                         style={[styles.infoPanel, { borderColor: sheetBorder }]}
                     >
                         <View style={styles.infoHeaderRow}>
@@ -502,22 +712,181 @@ function ScheduleDetail() {
                             </View>
                             <Pressable
                                 onPress={() => router.setParams({ mode: "edit" })}
-                                style={[styles.editInlineButton, { backgroundColor: colors.selectedDayBg }]}
+                                style={[
+                                    styles.editInlineButton,
+                                    {
+                                        backgroundColor: isDark
+                                            ? "rgba(255,255,255,0.10)"
+                                            : "rgba(255,255,255,0.54)",
+                                        borderColor: sheetBorder,
+                                    },
+                                ]}
                             >
-                                <Text style={[styles.editInlineText, { color: colors.selectedDayText }]}>수정</Text>
+                                <Text style={[styles.editInlineText, { color: primaryText }]}>수정</Text>
                             </Pressable>
                         </View>
                         <View style={[styles.infoDivider, { backgroundColor: sheetBorder }]} />
-                        <Text style={[styles.infoRoute, { color: primaryText }]} numberOfLines={1}>{routeTitle}</Text>
-                        <View style={styles.infoMetaRow}>
-                            <Text style={[styles.infoTime, { color: secondaryText }]} numberOfLines={1}>
-                                {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
-                            </Text>
-                            <View style={[styles.metaSeparator, { backgroundColor: sheetBorder }]} />
-                            <Text style={[styles.infoTravel, { color: secondaryText }]} numberOfLines={1}>
-                                {routeMetricText(routeOption) || travelText}
-                            </Text>
-                        </View>
+                        {!hasDepartureInfo && (
+                            <>
+                                <Text style={[styles.infoRoute, { color: primaryText }]} numberOfLines={1}>{routeTitle}</Text>
+                                <View style={styles.infoMetaRow}>
+                                    <Text style={[styles.infoTime, { color: secondaryText }]} numberOfLines={1}>
+                                        {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
+                                    </Text>
+                                    <View style={[styles.metaSeparator, { backgroundColor: sheetBorder }]} />
+                                    <Text style={[styles.infoTravel, { color: secondaryText }]} numberOfLines={1}>
+                                        {routeMetricText(routeOption) || travelText}
+                                    </Text>
+                                </View>
+                            </>
+                        )}
+                        {hasDepartureInfo && (
+                            <View style={styles.topDepartureContainer}>
+                                <Pressable
+                                    onPress={() => setDeparturePanelExpanded((expanded) => !expanded)}
+                                    style={({ pressed }) => [
+                                        styles.topDepartureToggle,
+                                        { opacity: pressed ? 0.72 : 1 },
+                                    ]}
+                                >
+                                    <View style={styles.topDepartureCountdownRow}>
+                                        {departureDisplayState.kind === "countdown" ? (
+                                            <>
+                                                <Text
+                                                    style={[styles.topDepartureCountdownPrefix, { color: primaryText }]}
+                                                    numberOfLines={1}
+                                                >
+                                                    출발까지
+                                                </Text>
+                                                {departureDisplayState.hours > 0 && (
+                                                    <Animated.Text
+                                                        style={[
+                                                            styles.topDepartureCountdownSegment,
+                                                            { color: primaryText },
+                                                            countdownAnimatedStyle,
+                                                        ]}
+                                                        numberOfLines={1}
+                                                    >
+                                                        {departureDisplayState.hours}시간
+                                                    </Animated.Text>
+                                                )}
+                                                <Animated.Text
+                                                    style={[
+                                                        styles.topDepartureCountdownSegment,
+                                                        { color: primaryText },
+                                                        countdownAnimatedStyle,
+                                                    ]}
+                                                    numberOfLines={1}
+                                                >
+                                                    {departureDisplayState.hours > 0
+                                                        ? pad2(departureDisplayState.minutes)
+                                                        : departureDisplayState.minutes}분
+                                                </Animated.Text>
+                                                <Animated.Text
+                                                    style={[
+                                                        styles.topDepartureCountdownSegment,
+                                                        { color: primaryText },
+                                                        countdownAnimatedStyle,
+                                                    ]}
+                                                    numberOfLines={1}
+                                                >
+                                                    {pad2(departureDisplayState.seconds)}초
+                                                </Animated.Text>
+                                            </>
+                                        ) : (
+                                            <Text
+                                                style={[
+                                                    styles.topDepartureStaticStatus,
+                                                    {
+                                                        color: departureStatusColor,
+                                                        opacity: departureStatusOpacity,
+                                                    },
+                                                ]}
+                                                numberOfLines={1}
+                                                adjustsFontSizeToFit
+                                                minimumFontScale={0.82}
+                                            >
+                                                {departureDisplayState.text}
+                                            </Text>
+                                        )}
+                                    </View>
+                                    <Animated.Text
+                                        style={[
+                                            styles.topDepartureChevron,
+                                            { color: secondaryText },
+                                            departureChevronAnimatedStyle,
+                                        ]}
+                                    >
+                                        ⌄
+                                    </Animated.Text>
+                                </Pressable>
+
+                                <Animated.View
+                                    pointerEvents={departurePanelExpanded ? "auto" : "none"}
+                                    style={[
+                                        styles.topDepartureDropdownClip,
+                                        departureDropdownAnimatedStyle,
+                                    ]}
+                                >
+                                    <Animated.View
+                                        onLayout={updateDeparturePanelHeight}
+                                        style={[
+                                            styles.topDepartureExpandedPanel,
+                                            departureDropdownContentAnimatedStyle,
+                                        ]}
+                                    >
+                                        <View style={[styles.topDepartureScheduleBlock, { borderTopColor: sheetBorder }]}>
+                                            <Text style={[styles.topDepartureRoute, { color: primaryText }]} numberOfLines={1}>
+                                                {routeTitle}
+                                            </Text>
+                                            <View style={styles.topDepartureMetaRow}>
+                                                <Text style={[styles.topDepartureMeta, { color: secondaryText }]} numberOfLines={1}>
+                                                    {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
+                                                </Text>
+                                                <View style={[styles.metaSeparator, { backgroundColor: sheetBorder }]} />
+                                                <Text style={[styles.topDepartureMeta, { color: secondaryText }]} numberOfLines={1}>
+                                                    {routeMetricText(routeOption) || travelText}
+                                                </Text>
+                                            </View>
+                                        </View>
+
+                                        <View style={styles.topDepartureExpanded}>
+                                            <View style={styles.topDepartureDetailText}>
+                                                <Text style={[styles.topDepartureAssist, { color: secondaryText, marginTop: 0 }]} numberOfLines={2}>
+                                                    {formatDepartureAssistText(item)}
+                                                </Text>
+                                            </View>
+                                            <Pressable
+                                                disabled={departureCompleted || departureActionPending}
+                                                onPress={completeDeparture}
+                                                style={({ pressed }) => [
+                                                    styles.topDepartureDoneButton,
+                                                    {
+                                                        backgroundColor: departureCompleted
+                                                            ? (isDark ? "#2D2D31" : "#E5E7EB")
+                                                            : colors.selectedDayBg,
+                                                        opacity: pressed ? 0.72 : 1,
+                                                    },
+                                                ]}
+                                            >
+                                                <Text
+                                                    style={[
+                                                        styles.topDepartureDoneText,
+                                                        {
+                                                            color: departureCompleted
+                                                                ? secondaryText
+                                                                : colors.selectedDayText,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {departureCompleted ? "완료됨" : departureActionPending ? "처리 중" : "출발 완료"}
+                                                </Text>
+                                            </Pressable>
+                                        </View>
+                                    </Animated.View>
+                                </Animated.View>
+                            </View>
+                        )}
                     </CalendarGlassSurface>
                 </View>
             </View>
@@ -532,6 +901,7 @@ function ScheduleDetail() {
                 ]}
             >
                 <CalendarGlassSurface
+                    variant="mapCard"
                     style={[
                         styles.routeSheetGlass,
                         {
@@ -726,6 +1096,7 @@ function ScheduleDetail() {
                     <Text style={styles.emptyMapText}>경로를 수정하면 지도가 표시돼요.</Text>
                 </View>
             )}
+
         </View>
     );
 }
@@ -773,6 +1144,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         paddingHorizontal: 10,
+        borderWidth: StyleSheet.hairlineWidth,
     },
     editInlineText: { fontSize: 12, fontWeight: "900" },
     infoPanel: {
@@ -797,6 +1169,103 @@ const styles = StyleSheet.create({
     infoTime: { flexShrink: 1, fontSize: 10, fontWeight: "700" },
     metaSeparator: { width: 1, height: 10 },
     infoTravel: { flex: 1, fontSize: 10, fontWeight: "800" },
+    topDepartureContainer: {
+        marginTop: 1,
+    },
+    topDepartureToggle: {
+        minHeight: 29,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    topDepartureCountdownRow: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    topDepartureCountdownPrefix: {
+        flexShrink: 0,
+        fontSize: 14,
+        lineHeight: 18,
+        fontWeight: "900",
+    },
+    topDepartureCountdownSegment: {
+        flexShrink: 0,
+        fontSize: 14,
+        lineHeight: 18,
+        fontWeight: "900",
+        fontVariant: ["tabular-nums"],
+    },
+    topDepartureStaticStatus: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 14,
+        lineHeight: 18,
+        fontWeight: "900",
+    },
+    topDepartureChevron: {
+        width: 17,
+        fontSize: 16,
+        lineHeight: 18,
+        fontWeight: "900",
+        textAlign: "center",
+    },
+    topDepartureDropdownClip: {
+        overflow: "hidden",
+    },
+    topDepartureExpandedPanel: {
+        gap: 8,
+    },
+    topDepartureScheduleBlock: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 7,
+        gap: 4,
+    },
+    topDepartureRoute: {
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "900",
+    },
+    topDepartureMetaRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    topDepartureMeta: {
+        flexShrink: 1,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+    },
+    topDepartureExpanded: {
+        minHeight: 46,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+    },
+    topDepartureDetailText: {
+        flex: 1,
+        minWidth: 0,
+    },
+    topDepartureAssist: {
+        marginTop: 2,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    topDepartureDoneButton: {
+        width: 78,
+        height: 36,
+        borderRadius: 18,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    topDepartureDoneText: {
+        fontSize: 11,
+        fontWeight: "900",
+    },
     routeSheet: {
         position: "absolute",
         left: 0,

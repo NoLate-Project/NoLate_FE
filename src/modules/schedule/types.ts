@@ -45,6 +45,7 @@ export type ScheduleItem = {
     // ✅ 이동시간(Travel Time)
     travelMinutes?: number;     // 0, 5, 10, 15, 30, 45, 60...
     departAt?: string;          // 선택: 서버 저장 or 프론트에서 계산(= startAt - travelMinutes)
+    departedAt?: string;        // 사용자가 출발 완료 처리한 시각
     travelMode?: TravelMode;
 
     // ✅ 장소(현재/추후 확장)

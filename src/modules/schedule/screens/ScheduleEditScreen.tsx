@@ -16,12 +16,15 @@ import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../routePlann
 import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
+import CalendarGlassSurface from "../components/calendar/CalendarGlassSurface";
 import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedule";
+import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
 import {
     FREE_SUBSCRIPTION_POLICY,
     getMySubscriptionPolicy,
     type SubscriptionPolicy,
 } from "../../../api/subscription";
+import { QA_SCHEDULE_ID } from "../qaSamples";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const ymdText = (d: Date)   => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -89,13 +92,21 @@ export default function ScheduleEdit() {
     const [picker,        setPicker]        = useState<PickerType | null>(null);
     const [displayPicker, setDisplayPicker] = useState<PickerType | null>(null);
 
+    const categoryOptions = useMemo(() => {
+        if (!item?.category || state.categories.some((categoryItem) => categoryItem.id === item.category.id)) {
+            return state.categories;
+        }
+        return [item.category, ...state.categories];
+    }, [item?.category, state.categories]);
+
     const category = useMemo<ScheduleCategory | undefined>(
-        () => state.categories.find((c) => c.id === categoryId) ?? state.categories[0],
-        [state.categories, categoryId]
+        () => categoryOptions.find((c) => c.id === categoryId) ?? categoryOptions[0],
+        [categoryOptions, categoryId]
     );
 
     useEffect(() => {
         if (!id) return;
+        if (id === QA_SCHEDULE_ID) return;
 
         let cancelled = false;
         setDetailLoading(true);
@@ -117,6 +128,22 @@ export default function ScheduleEdit() {
             cancelled = true;
         };
     }, [dispatch, id]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        getScheduleCategoriesFromApi()
+            .then((categories) => {
+                if (!cancelled && categories.length > 0) {
+                    dispatch({ type: "SET_CATEGORIES", categories });
+                }
+            })
+            .catch(() => undefined);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [dispatch]);
 
     useEffect(() => {
         let cancelled = false;
@@ -237,25 +264,20 @@ export default function ScheduleEdit() {
         }
     }, [picker, contentFade, heightAnim, outerOpacity]);
 
-    // 현재 입력된 출발/도착 정보를 경로 선택 화면으로 전달한다.
+    // 출발지는 경로 선택 화면에서 직접 고르게 두고, 도착지만 초기값으로 전달한다.
     const openRoutePlanner = useCallback(() => {
-        const normalizedOriginName = originText.trim();
         const normalizedDestinationName = destinationText.trim();
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
         setRoutePlannerInitial(sessionId, {
-            origin: normalizedOriginName
-                ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                : undefined,
+            origin: undefined,
             destination: normalizedDestinationName
                 ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
                 : undefined,
             travelMode,
             travelMinutes,
             route,
-            locationName: normalizedOriginName && normalizedDestinationName
-                ? `${normalizedOriginName} → ${normalizedDestinationName}`
-                : normalizedDestinationName || normalizedOriginName || undefined,
+            locationName: normalizedDestinationName || undefined,
         });
 
         setRoutePlannerSessionId(sessionId);
@@ -265,10 +287,6 @@ export default function ScheduleEdit() {
         destinationLat,
         destinationLng,
         destinationText,
-        originAddress,
-        originLat,
-        originLng,
-        originText,
         router,
         travelMinutes,
         travelMode,
@@ -427,39 +445,104 @@ export default function ScheduleEdit() {
     const isDisplayTime = displayPicker === "startTime" || displayPicker === "endTime";
     const calendarSelected = isDisplayDate
         ? ymdText(displayPicker === "startDate" ? startDay : endDay) : "";
+    const previewTitle = title.trim() || item.title || "일정";
+    const previewTime = hasEndTime
+        ? `${ymdText(startDay)} ${hhmmText(startTime)} - ${hhmmText(endTime)}`
+        : `${ymdText(startDay)} ${hhmmText(startTime)}`;
+    const previewLocation = destinationText.trim() || originText.trim() || "장소 미정";
+    const previewEta = typeof travelMinutes === "number"
+        ? `${travelMinutes}분 이동 · ${travelMode}`
+        : "ETA 미계산";
+    const previewNotification = notificationEnabled
+        ? `${notificationLeadMinutes}분 전 알림`
+        : "알림 꺼짐";
 
     const fieldStyle = (type: PickerType) => ({
         borderWidth: 1,
-        borderRadius: 12,
+        borderRadius: 16,
         paddingVertical: 12,
         paddingHorizontal: 12,
         borderColor:     picker === type ? colors.selectedDayBg : colors.border,
-        backgroundColor: colors.surface2,
+        backgroundColor: mode === "dark"
+            ? "rgba(255,255,255,0.07)"
+            : "rgba(118,118,128,0.10)",
     });
 
     return (
         <>
         <ScrollView
-            style={{ flex: 1, backgroundColor: colors.background }}
+            style={[styles.editRoot, { backgroundColor: colors.background }]}
             contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
             keyboardShouldPersistTaps="handled"
         >
+            <CalendarGlassSurface
+                prominent
+                variant="sheet"
+                style={[styles.editSheet, { borderColor: colors.border }]}
+            >
             <View style={styles.headerRow}>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 수정</Text>
                 <Pressable
                     onPress={() => router.setParams({ mode: undefined })}
-                    style={[styles.closeBtn, { backgroundColor: colors.surface2, borderColor: colors.border }]}
+                    style={[
+                        styles.closeBtn,
+                        {
+                            backgroundColor: mode === "dark"
+                                ? "rgba(255,255,255,0.08)"
+                                : "rgba(118,118,128,0.12)",
+                            borderColor: colors.border,
+                        },
+                    ]}
                 >
                     <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>뒤로</Text>
                 </Pressable>
             </View>
+
+            <CalendarGlassSurface
+                variant="card"
+                style={[styles.previewCard, { borderColor: colors.border }]}
+            >
+                <View style={[styles.previewColorBar, { backgroundColor: category?.color ?? "#8E8E93" }]} />
+                <View style={styles.previewBody}>
+                    <Text numberOfLines={1} style={[styles.previewTitle, { color: colors.textPrimary }]}>
+                        {previewTitle}
+                    </Text>
+                    <Text numberOfLines={1} style={[styles.previewMeta, { color: colors.textSecondary }]}>
+                        {previewTime}
+                    </Text>
+                    <View style={styles.previewChipRow}>
+                        <View style={[styles.previewChip, { borderColor: colors.border }]}>
+                            <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
+                                {previewLocation}
+                            </Text>
+                        </View>
+                        <View style={[styles.previewChip, { borderColor: colors.border }]}>
+                            <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
+                                {previewEta}
+                            </Text>
+                        </View>
+                    </View>
+                    <Text numberOfLines={1} style={[styles.previewSub, { color: colors.textSecondary }]}>
+                        {category?.title ?? "캘린더"} · {previewNotification}
+                    </Text>
+                </View>
+            </CalendarGlassSurface>
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
             <TextInput
                 value={title}
                 onChangeText={setTitle}
                 placeholderTextColor={colors.textDisabled}
-                style={[styles.input, { borderColor: colors.border, backgroundColor: colors.surface2, color: colors.textPrimary }]}
+                style={[
+                    styles.input,
+                    {
+                        borderColor: colors.border,
+                        backgroundColor: mode === "dark"
+                            ? "rgba(255,255,255,0.07)"
+                            : "rgba(118,118,128,0.10)",
+                        color: colors.textPrimary,
+                    },
+                ]}
             />
 
             <LocationInputRow
@@ -536,9 +619,10 @@ export default function ScheduleEdit() {
             </Animated.View>
 
             <CategoryPickerRow
-                categories={state.categories}
+                categories={categoryOptions}
                 value={categoryId}
                 onChange={setCategoryId}
+                onManageCategories={() => router.push("/schedule/categories")}
             />
 
             <NotificationSettingsCard
@@ -557,39 +641,121 @@ export default function ScheduleEdit() {
                 onIntervalMinutesChange={setNotificationIntervalMinutes}
             />
 
-            <Pressable
-                disabled={detailLoading}
-                onPress={save}
-                style={[styles.saveBtn, { backgroundColor: colors.selectedDayBg, opacity: detailLoading ? 0.6 : 1 }]}
-            >
-                <Text style={[styles.saveBtnText, { color: colors.selectedDayText }]}>
-                    {detailLoading ? "저장 중" : "저장"}
-                </Text>
-            </Pressable>
+            <View style={styles.composerActionRow}>
+                <Pressable
+                    disabled={detailLoading}
+                    onPress={save}
+                    style={[
+                        styles.saveBtn,
+                        {
+                            backgroundColor: mode === "dark"
+                                ? "rgba(33,184,90,0.20)"
+                                : "rgba(33,184,90,0.14)",
+                            borderColor: "rgba(33,184,90,0.44)",
+                            opacity: detailLoading ? 0.6 : 1,
+                        },
+                    ]}
+                >
+                    <Text style={[styles.saveBtnText, { color: mode === "dark" ? "#41D879" : "#0F7A38" }]}>
+                        {detailLoading ? "저장 중" : "저장"}
+                    </Text>
+                </Pressable>
 
-            <Pressable
-                onPress={remove}
-                style={[styles.deleteBtn, { backgroundColor: colors.surface2 }]}
-            >
-                <Text style={styles.deleteBtnText}>삭제</Text>
-            </Pressable>
+                <Pressable
+                    onPress={remove}
+                    style={[
+                        styles.deleteBtn,
+                        {
+                            backgroundColor: mode === "dark"
+                                ? "rgba(239,68,68,0.12)"
+                                : "rgba(239,68,68,0.08)",
+                            borderColor: "rgba(239,68,68,0.34)",
+                        },
+                    ]}
+                >
+                    <Text style={styles.deleteBtnText}>삭제</Text>
+                </Pressable>
+            </View>
+            </CalendarGlassSurface>
         </ScrollView>
         </>
     );
 }
 
 const styles = StyleSheet.create({
-    scrollContent: { padding: 20, paddingBottom: 32 },
+    editRoot: {
+        flex: 1,
+    },
+    scrollContent: {
+        paddingHorizontal: 18,
+        paddingBottom: 36,
+    },
+    editSheet: {
+        borderWidth: 1,
+        borderRadius: 30,
+        padding: 18,
+    },
     headerRow: {
         flexDirection: "row", alignItems: "center",
         justifyContent: "space-between", marginBottom: 20,
     },
-    headerTitle:  { fontSize: 20, fontWeight: "700" },
+    headerTitle:  { fontSize: 22, fontWeight: "900" },
     closeBtn:     { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
     closeBtnText: { fontWeight: "600", fontSize: 13 },
+    previewCard: {
+        borderWidth: 1,
+        borderRadius: 18,
+        minHeight: 116,
+        marginBottom: 18,
+        padding: 14,
+        flexDirection: "row",
+        gap: 12,
+    },
+    previewColorBar: {
+        width: 5,
+        borderRadius: 999,
+        alignSelf: "stretch",
+    },
+    previewBody: {
+        flex: 1,
+        minWidth: 0,
+    },
+    previewTitle: {
+        fontSize: 20,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    previewMeta: {
+        marginTop: 4,
+        fontSize: 13,
+        fontWeight: "800",
+    },
+    previewChipRow: {
+        marginTop: 10,
+        flexDirection: "row",
+        gap: 7,
+    },
+    previewChip: {
+        minWidth: 0,
+        maxWidth: "50%",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        backgroundColor: "rgba(255,255,255,0.055)",
+    },
+    previewChipText: {
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    previewSub: {
+        marginTop: 10,
+        fontSize: 12,
+        fontWeight: "700",
+    },
     label:        { marginBottom: 6, fontSize: 13 },
     input: {
-        borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 14,
+        borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 14,
     },
     twoColRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
     col:       { flex: 1 },
@@ -597,14 +763,25 @@ const styles = StyleSheet.create({
     pickerContainer: {
         borderRadius: 16, borderWidth: 1, overflow: "hidden",
     },
+    composerActionRow: {
+        flexDirection: "row",
+        gap: 10,
+        marginTop: 8,
+    },
     saveBtn: {
-        paddingVertical: 14, borderRadius: 14,
-        alignItems: "center", marginBottom: 12, marginTop: 8,
+        flex: 1,
+        paddingVertical: 14,
+        borderRadius: 18,
+        borderWidth: 1,
+        alignItems: "center",
     },
     saveBtnText: { fontWeight: "700", fontSize: 15 },
     deleteBtn: {
-        paddingVertical: 14, borderRadius: 14,
-        alignItems: "center", borderWidth: 1, borderColor: "#c0392b",
+        minWidth: 92,
+        paddingVertical: 14,
+        borderRadius: 18,
+        alignItems: "center",
+        borderWidth: 1,
     },
     deleteBtnText: { color: "#e74c3c", fontWeight: "700", fontSize: 15 },
 });

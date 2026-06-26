@@ -65,8 +65,8 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
     const hasPeriods = !!(marking?.periods && marking.periods.length > 0);
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
     const events = marking?.events ?? [];
-    const showDots = viewMode === "compact" || viewMode === "list";
-    const markerTop = viewMode === "list" ? 43 : 46;
+    const showDots = viewMode === "compact" || viewMode === "week" || viewMode === "list";
+    const markerTop = viewMode === "list" ? 47 : viewMode === "week" ? 54 : 53;
 
     return (
         <Pressable
@@ -90,7 +90,7 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
                     style={[
                         styles.dayText,
                         {
-                        fontWeight: isToday || isSelected ? "800" : "700",
+                        fontWeight: isToday || isSelected ? "900" : "800",
                         color: isSelected
                             ? colors.selectedDayText
                             : isDisabled
@@ -208,19 +208,19 @@ const styles = StyleSheet.create({
     cell: {
         alignSelf: "stretch",
         height: 58,
-        paddingTop: 5,
+        paddingTop: 7,
         alignItems: "center",
     },
     dayCircle: {
-        width: 34,
-        height: 34,
-        borderRadius: 17,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
     },
     dayText: {
-        fontSize: 16.5,
-        letterSpacing: -0.3,
+        fontSize: 21,
+        letterSpacing: 0,
     },
     periods: {
         alignSelf: "stretch",

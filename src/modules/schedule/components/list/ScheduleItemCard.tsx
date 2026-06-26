@@ -1,10 +1,11 @@
 import React from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatHHmm } from "../../../../../lib/util/data";
 import { getTravelModeLabel } from "../../travelMode";
+import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 
 type Props = {
     item: ScheduleItem;
@@ -24,12 +25,20 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
         <Pressable
             onPress={onPress}
             style={({ pressed }) => ({
-                backgroundColor: pressed ? colors.surface2 : colors.surface,
-                borderRadius: 18,
-                overflow: "hidden",
-                flexDirection: "row",
+                opacity: pressed ? 0.72 : 1,
+                transform: [{ scale: pressed ? 0.99 : 1 }],
             })}
         >
+            <CalendarGlassSurface
+                variant="card"
+                style={{
+                    borderRadius: 18,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: colors.border,
+                    overflow: "hidden",
+                    flexDirection: "row",
+                }}
+            >
             <View
                 style={{
                     width: 4,
@@ -105,6 +114,7 @@ export default function ScheduleItemCard({ item, onPress }: Props) {
                     </Text>
                 )}
             </View>
+            </CalendarGlassSurface>
         </Pressable>
     );
 }

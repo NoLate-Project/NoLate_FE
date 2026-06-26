@@ -1,0 +1,150 @@
+import React from "react";
+import { Ionicons } from "@expo/vector-icons";
+import { StyleSheet, View } from "react-native";
+
+import type { CalendarViewMode } from "./viewMode";
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+type Props = {
+    mode: CalendarViewMode;
+    color: string;
+    size?: number;
+};
+
+const FALLBACK_ICON_BY_MODE: Record<CalendarViewMode, IconName> = {
+    compact: "remove-outline",
+    stack: "albums-outline",
+    detail: "reader-outline",
+    week: "calendar-outline",
+    list: "list-outline",
+};
+
+export default function CalendarViewModeGlyph({ mode, color, size = 26 }: Props) {
+    const unit = size / 28;
+    const lineWidth = Math.max(2, 2.2 * unit);
+    const roundedLine = {
+        borderColor: color,
+        borderWidth: lineWidth,
+        borderRadius: 999,
+    };
+
+    if (mode === "compact") {
+        return (
+            <View
+                pointerEvents="none"
+                style={[styles.container, { width: size, height: size }]}
+            >
+                <View
+                    style={[
+                        styles.compactTrack,
+                        roundedLine,
+                        {
+                            width: 22 * unit,
+                            height: 7 * unit,
+                        },
+                    ]}
+                >
+                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
+                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
+                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
+                </View>
+            </View>
+        );
+    }
+
+    if (mode === "stack") {
+        return (
+            <View
+                pointerEvents="none"
+                style={[styles.container, { width: size, height: size }]}
+            >
+                <View style={[styles.stackBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
+                <View style={[styles.stackBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
+            </View>
+        );
+    }
+
+    if (mode === "detail") {
+        return (
+            <View
+                pointerEvents="none"
+                style={[styles.container, { width: size, height: size }]}
+            >
+                <View style={[styles.detailBar, roundedLine, { width: 22 * unit, height: 8 * unit }]} />
+                <View style={[styles.detailBar, roundedLine, { width: 22 * unit, height: 8 * unit }]}>
+                    <View style={[styles.detailInnerLine, { backgroundColor: color, width: 10 * unit }]} />
+                </View>
+            </View>
+        );
+    }
+
+    if (mode === "list") {
+        return (
+            <View
+                pointerEvents="none"
+                style={[styles.container, { width: size, height: size }]}
+            >
+                <View style={styles.listRow}>
+                    <View style={[styles.listBullet, { backgroundColor: color }]} />
+                    <View style={[styles.listLine, { backgroundColor: color, width: 19 * unit }]} />
+                </View>
+                <View style={styles.listRow}>
+                    <View style={[styles.listBullet, { backgroundColor: color }]} />
+                    <View style={[styles.listLine, { backgroundColor: color, width: 19 * unit }]} />
+                </View>
+                <View style={[styles.listBase, roundedLine, { width: 18 * unit, height: 7 * unit }]} />
+            </View>
+        );
+    }
+
+    return <Ionicons name={FALLBACK_ICON_BY_MODE[mode]} size={size} color={color} />;
+}
+
+const styles = StyleSheet.create({
+    container: {
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    compactTrack: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-evenly",
+        overflow: "hidden",
+    },
+    compactDivider: {
+        width: 2,
+        height: "100%",
+        opacity: 0.9,
+    },
+    stackBar: {
+        marginVertical: 2,
+    },
+    detailBar: {
+        alignItems: "center",
+        justifyContent: "center",
+        marginVertical: 2,
+    },
+    detailInnerLine: {
+        height: 2,
+        borderRadius: 2,
+    },
+    listRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        marginVertical: 1.4,
+    },
+    listBullet: {
+        width: 3,
+        height: 3,
+        borderRadius: 1.5,
+    },
+    listLine: {
+        height: 2.2,
+        borderRadius: 2,
+    },
+    listBase: {
+        marginTop: 3,
+    },
+});

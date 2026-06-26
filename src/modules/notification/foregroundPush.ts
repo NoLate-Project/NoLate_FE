@@ -88,6 +88,7 @@ export async function configurePushNavigation(
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         messageId?: string,
     ) => {
+        // Firebase와 expo-notifications가 같은 터치 이벤트를 각각 전달할 수 있어 messageId로 중복 이동을 막는다.
         if (messageId && messageId === lastOpenedMessageId) return;
 
         const target = getPushNavigationTargetFromNotificationData(data);
@@ -113,6 +114,7 @@ export async function configurePushNavigation(
         }
 
         const actionKey = `${scheduleId}:${responseId ?? ""}`;
+        // iOS는 앱 활성화 직후 마지막 응답을 다시 읽을 수 있어 같은 액션의 중복 API 호출을 방지한다.
         if (actionKey === lastDepartNowActionKey) return;
         lastDepartNowActionKey = actionKey;
 
@@ -140,6 +142,7 @@ export async function configurePushNavigation(
         ? AppState.addEventListener("change", (state) => {
             if (state !== "active") return;
 
+            // foreground 전환 시점에 놓친 iOS notification response를 한 번 더 확인한다.
             const response = Notifications.getLastNotificationResponse();
             if (!response) return;
 
@@ -218,12 +221,13 @@ async function ensureNotificationPresentation(Notifications: ExpoNotificationsMo
 
 async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): Promise<void> {
     try {
+        // `departNow=true` payload에만 액션 버튼을 붙여 일반 일정 알림과 상세 이동 UX를 분리한다.
         await Notifications.setNotificationCategoryAsync(
             SCHEDULE_DEPART_NOW_CATEGORY,
             [
                 {
                     identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
-                    buttonTitle: "지금 출발",
+                    buttonTitle: "출발 완료",
                     options: {
                         opensAppToForeground: true,
                     },

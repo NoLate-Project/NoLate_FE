@@ -14,8 +14,9 @@ import {
 } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
-import { getCurrentLocation } from "../../src/modules/map/currentLocation";
+import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
 import {
     getRouteAlternativeOptions,
     reverseGeocodeToAddress,
@@ -33,6 +34,7 @@ import TmapMapView, {
     type TmapPathOverlay,
 } from "../../src/modules/map/TmapMapView";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
 import { saveFavoriteDeparturePlace } from "../../src/modules/schedule/favoriteDeparture";
@@ -1866,9 +1868,9 @@ export default function RoutePlannerScreen() {
     const { height: windowHeight } = useWindowDimensions();
     const { colors, mode } = useTheme();
     const isDark = mode === "dark";
-    const overlayBoxBg = isDark ? "rgba(8, 12, 20, 0.78)" : "rgba(255, 255, 255, 0.9)";
-    const overlayPanelBg = isDark ? "rgba(7, 11, 18, 0.9)" : "rgba(248, 250, 255, 0.92)";
-    const overlayCardBg = isDark ? "rgba(18, 24, 34, 0.9)" : "rgba(255, 255, 255, 0.95)";
+    const overlayBoxBg = isDark ? "rgba(8, 12, 20, 0.58)" : "rgba(255, 255, 255, 0.72)";
+    const overlayPanelBg = isDark ? "rgba(7, 11, 18, 0.70)" : "rgba(248, 250, 255, 0.78)";
+    const overlayCardBg = isDark ? "rgba(18, 24, 34, 0.68)" : "rgba(255, 255, 255, 0.82)";
     const params = useLocalSearchParams<{
         sessionId?: string;
         routeIndex?: string;
@@ -1884,6 +1886,7 @@ export default function RoutePlannerScreen() {
         destinationAddress?: string;
         destinationLat?: string;
         destinationLng?: string;
+        qaSurface?: string;
     }>();
     const isRouteSelectionScreen = pathname === "/schedule/route-select";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
@@ -1906,6 +1909,7 @@ export default function RoutePlannerScreen() {
     const forcedFocusZoom = useMemo(() => parseFocusZoomParam(params.focusZoom), [params.focusZoom]);
     const forcedSheetState = useMemo(() => parseSheetStateParam(params.sheetState), [params.sheetState]);
     const forcedRouteIndex = useMemo(() => parseIntegerParam(params.routeIndex), [params.routeIndex]);
+    const qaSurface = typeof params.qaSurface === "string" ? params.qaSurface : "";
 
     const [originName, setOriginName] = useState(initial?.origin?.name ?? "");
     const [destinationName, setDestinationName] = useState(initial?.destination?.name ?? "");
@@ -1924,6 +1928,8 @@ export default function RoutePlannerScreen() {
         if (hasInitialOrigin && hasInitialDestination) return null;
         return hasInitialOrigin ? "destination" : "origin";
     });
+    const [locationPromptTarget, setLocationPromptTarget] = useState<RoutePointTarget | null>(null);
+    const [locationPromptLoading, setLocationPromptLoading] = useState(false);
     const [isRoutePointEditMode, setIsRoutePointEditMode] = useState<boolean>(() => !(
         typeof initial?.origin?.lat === "number" &&
         typeof initial?.origin?.lng === "number" &&
@@ -1975,15 +1981,15 @@ export default function RoutePlannerScreen() {
     const hasDestinationCoords = typeof destinationLat === "number" && typeof destinationLng === "number";
     const hasRouteReady = hasOriginCoords && hasDestinationCoords;
     const isTransitDetailMode = isTransitMode && hasRouteReady && !isRouteSelectionScreen;
-    const detailPanelBg = isTransitDetailMode ? (isDark ? "#1F1F1F" : "#F8FAFC") : overlayPanelBg;
-    const detailCardBg = isTransitDetailMode ? (isDark ? "#1F1F1F" : "#F8FAFC") : overlayCardBg;
+    const detailPanelBg = isTransitDetailMode ? (isDark ? "rgba(31,31,31,0.76)" : "rgba(248,250,252,0.82)") : overlayPanelBg;
+    const detailCardBg = isTransitDetailMode ? (isDark ? "rgba(31,31,31,0.70)" : "rgba(248,250,252,0.78)") : overlayCardBg;
     const detailPrimaryText = isTransitDetailMode ? (isDark ? "#F3F4F6" : "#111827") : colors.textPrimary;
     const detailSecondaryText = isTransitDetailMode ? (isDark ? "#B8B8B8" : "#64748B") : colors.textSecondary;
     const detailBorderColor = isTransitDetailMode ? (isDark ? "#343434" : "#E2E8F0") : colors.border;
     const transitRouteChipBg = isDark ? "rgba(18,18,18,0.94)" : "rgba(248,250,252,0.96)";
     const transitRouteChipText = isDark ? "#D7D7DA" : "#334155";
     const transitMapOverlayColor = isDark ? "rgba(0,0,0,0.34)" : "rgba(248,250,252,0.02)";
-    const transitActionBarBg = isDark ? "#171717" : "#F8FAFC";
+    const transitActionBarBg = isDark ? "rgba(17,17,17,0.80)" : "rgba(248,250,252,0.84)";
     const transitFocusedLegBg = isDark ? "rgba(47,128,255,0.16)" : "#DBEAFE";
     const transitDetailPrimaryActionBg = isDark ? "#F3F4F6" : "#111827";
     const transitDetailPrimaryActionText = isDark ? "#111827" : "#FFFFFF";
@@ -3623,7 +3629,7 @@ export default function RoutePlannerScreen() {
         setSearchResults([]);
     };
 
-    const setCurrentLocation = useCallback(async (target: RoutePointTarget) => {
+    const applyCurrentLocation = useCallback(async (target: RoutePointTarget) => {
         try {
             const loc = await getCurrentLocation();
             const address = await reverseGeocodeToAddress(loc.latitude, loc.longitude).catch(() => undefined);
@@ -3649,11 +3655,47 @@ export default function RoutePlannerScreen() {
                 setIsRoutePointEditMode(true);
             }
 
+            return true;
         } catch (error) {
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
             Alert.alert("위치 가져오기 실패", message);
+            return false;
         }
     }, [hasDestinationCoords, hasOriginCoords]);
+
+    const requestCurrentLocation = useCallback(async (target: RoutePointTarget) => {
+        try {
+            const permission = await getCurrentLocationPermissionState();
+            if (!permission.servicesEnabled) {
+                Alert.alert("위치 서비스 꺼짐", "기기 위치 서비스를 켠 뒤 다시 시도해 주세요.");
+                return;
+            }
+
+            if (!permission.granted) {
+                setLocationPromptTarget(target);
+                return;
+            }
+
+            await applyCurrentLocation(target);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "현재 위치 권한 상태를 확인하지 못했습니다.";
+            Alert.alert("위치 확인 실패", message);
+        }
+    }, [applyCurrentLocation]);
+
+    const closeLocationPrompt = useCallback(() => {
+        if (locationPromptLoading) return;
+        setLocationPromptTarget(null);
+    }, [locationPromptLoading]);
+
+    const confirmLocationPrompt = useCallback(async () => {
+        if (!locationPromptTarget || locationPromptLoading) return;
+        const target = locationPromptTarget;
+        setLocationPromptLoading(true);
+        await applyCurrentLocation(target);
+        setLocationPromptLoading(false);
+        setLocationPromptTarget(null);
+    }, [applyCurrentLocation, locationPromptLoading, locationPromptTarget]);
 
     useEffect(() => {
         if (initializedOriginRef.current) return;
@@ -3662,10 +3704,53 @@ export default function RoutePlannerScreen() {
             return;
         }
         initializedOriginRef.current = true;
-        setCurrentLocation("origin").catch(() => {
+        requestCurrentLocation("origin").catch(() => {
             // ignore
         });
-    }, [originLat, originLng, setCurrentLocation]);
+    }, [originLat, originLng, requestCurrentLocation]);
+
+    useEffect(() => {
+        if (!qaSurface) return;
+
+        if (qaSurface === "permission") {
+            initializedOriginRef.current = true;
+            setLocationPromptTarget("origin");
+            return;
+        }
+
+        if (qaSurface === "location-search") {
+            initializedOriginRef.current = true;
+            setIsRoutePointEditMode(true);
+            setActiveTarget("destination");
+            setSearchQuery("강남역");
+            setSearchResults([
+                {
+                    name: "강남역",
+                    address: "서울 강남구 강남대로 396",
+                    lat: 37.4979,
+                    lng: 127.0276,
+                },
+            ]);
+            return;
+        }
+
+        if (qaSurface === "route-eta") {
+            initializedOriginRef.current = true;
+            setOriginName("서울역");
+            setOriginAddress("서울 중구 한강대로 405");
+            setOriginLat(37.5559);
+            setOriginLng(126.9723);
+            setDestinationName("강남역");
+            setDestinationAddress("서울 강남구 강남대로 396");
+            setDestinationLat(37.4979);
+            setDestinationLng(127.0276);
+            setTravelMode("TRANSIT");
+            setEtaMinutes(32);
+            setIsRoutePointEditMode(false);
+            setIsBottomSheetHidden(false);
+            setBottomSheetSnap("expanded");
+        }
+    }, [qaSurface]);
 
     const onPressOriginTarget = () => {
         if (activeTarget === "origin") {
@@ -3680,7 +3765,7 @@ export default function RoutePlannerScreen() {
         if (typeof originLat === "number" && typeof originLng === "number") {
             return;
         }
-        setCurrentLocation("origin").catch(() => {
+        requestCurrentLocation("origin").catch(() => {
             // ignore
         });
     };
@@ -4400,7 +4485,11 @@ export default function RoutePlannerScreen() {
                 </View>
 
                 {!!searchResults.length && !isRoutePointLocked && hasActiveTarget && (
-                    <View style={[styles.searchResultWrap, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayPanelBg }]}>
+                    <CalendarGlassSurface
+                        prominent
+                        variant="mapCard"
+                        style={[styles.searchResultWrap, styles.overlaySurface, { borderColor: colors.border }]}
+                    >
                         {searchResults.slice(0, 6).map((item, index) => (
                             <Pressable
                                 key={`${item.lat}:${item.lng}:${index}`}
@@ -4426,10 +4515,13 @@ export default function RoutePlannerScreen() {
                                 </Text>
                             </Pressable>
                         ))}
-                    </View>
+                    </CalendarGlassSurface>
                 )}
 
-                <View style={[styles.routePreviewCard, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
+                <CalendarGlassSurface
+                    variant="mapCard"
+                    style={[styles.routePreviewCard, styles.overlaySurface, { borderColor: colors.border }]}
+                >
                     <Text numberOfLines={1} style={[styles.routePreviewMain, { color: colors.textPrimary }]}>
                         {originDisplay} → {destinationDisplay}
                     </Text>
@@ -4479,17 +4571,19 @@ export default function RoutePlannerScreen() {
                         </View>
                     )}
 
-                </View>
+                </CalendarGlassSurface>
             </View>
             )}
 
             {isRouteSelectionStage && (
                 <View style={styles.routeSelectionStageOverlay} pointerEvents="box-none">
-                    <View
+                    <CalendarGlassSurface
+                        prominent
+                        variant="mapCard"
                         style={[
                             styles.routeSelectionStagePanel,
                             styles.overlaySurface,
-                            { borderColor: colors.border, backgroundColor: overlayPanelBg, paddingBottom: Math.max(insets.bottom + 12, 20) },
+                            { borderColor: colors.border, paddingBottom: Math.max(insets.bottom + 12, 20) },
                         ]}
                     >
                         <Text style={[styles.routeSelectionStageTitle, { color: colors.textPrimary }]}>
@@ -4638,7 +4732,7 @@ export default function RoutePlannerScreen() {
                                 지도에서 상세 경로 보기
                             </Text>
                         </Pressable>
-                    </View>
+                    </CalendarGlassSurface>
                 </View>
             )}
 
@@ -4652,16 +4746,24 @@ export default function RoutePlannerScreen() {
                             setBottomPanelHeight((prev) => (prev === measured ? prev : measured));
                         }}
                         style={[
-                            styles.bottomPanel,
+                            styles.bottomPanelMotion,
                             {
-                                borderColor: isTransitDetailMode ? "transparent" : colors.border,
-                                backgroundColor: detailPanelBg,
                                 height: isTransitDetailMode ? bottomPanelMaxHeight : undefined,
                                 maxHeight: bottomPanelMaxHeight,
                                 transform: [{ translateY: bottomSheetTranslateY }],
                             },
                         ]}
                     >
+                        <CalendarGlassSurface
+                            prominent
+                            variant="mapCard"
+                            style={[
+                                styles.bottomPanel,
+                                {
+                                    borderColor: isTransitDetailMode ? "transparent" : colors.border,
+                                },
+                            ]}
+                        >
                         <View style={styles.bottomHandleTouchArea} {...bottomHandlePanResponder.panHandlers}>
                             <View
                                 style={[
@@ -5075,6 +5177,7 @@ export default function RoutePlannerScreen() {
                             </>
                         )}
                     </ScrollView>
+                    </CalendarGlassSurface>
                 </Animated.View>
                 {isTransitDetailMode && !!selectedAlternative && !isBottomSheetHidden && (
                     <View
@@ -5111,6 +5214,67 @@ export default function RoutePlannerScreen() {
                     </View>
                 )}
             </View>
+            )}
+
+            {locationPromptTarget && (
+                <View style={styles.permissionOverlay} pointerEvents="box-none">
+                    <Pressable
+                        accessibilityLabel="위치 권한 안내 닫기"
+                        style={styles.permissionBackdrop}
+                        onPress={closeLocationPrompt}
+                    />
+                    <CalendarGlassSurface
+                        variant="mapCard"
+                        prominent
+                        glow
+                        style={[styles.permissionPrompt, { borderColor: colors.border }]}
+                    >
+                        <View style={styles.permissionIconWrap}>
+                            <Ionicons name="navigate-outline" size={28} color={ORIGIN_COLOR} />
+                        </View>
+                        <Text style={[styles.permissionTitle, { color: colors.textPrimary }]}>
+                            현재 위치를 {locationPromptTarget === "origin" ? "출발지" : "도착지"}로 사용할까요?
+                        </Text>
+                        <Text style={[styles.permissionBody, { color: colors.textSecondary }]}>
+                            NoLate가 위치를 빠르게 채우고 ETA와 지각 위험도를 계산할 수 있도록 현재 위치 권한이 필요합니다.
+                        </Text>
+                        <View style={styles.permissionActions}>
+                            <Pressable
+                                accessibilityLabel="위치 권한 안내 닫기"
+                                onPress={closeLocationPrompt}
+                                disabled={locationPromptLoading}
+                                style={({ pressed }) => [
+                                    styles.permissionSecondaryButton,
+                                    {
+                                        borderColor: colors.border,
+                                        opacity: pressed ? 0.72 : 1,
+                                    },
+                                ]}
+                            >
+                                <Text style={[styles.permissionSecondaryText, { color: colors.textPrimary }]}>나중에</Text>
+                            </Pressable>
+                            <Pressable
+                                accessibilityLabel="위치 권한 요청 계속"
+                                onPress={confirmLocationPrompt}
+                                disabled={locationPromptLoading}
+                                style={({ pressed }) => [
+                                    styles.permissionPrimaryButton,
+                                    {
+                                        backgroundColor: "rgba(33,184,90,0.20)",
+                                        borderColor: "rgba(33,184,90,0.52)",
+                                        opacity: pressed || locationPromptLoading ? 0.78 : 1,
+                                    },
+                                ]}
+                            >
+                                {locationPromptLoading ? (
+                                    <ActivityIndicator color={ORIGIN_COLOR} />
+                                ) : (
+                                    <Text style={styles.permissionPrimaryText}>계속</Text>
+                                )}
+                            </Pressable>
+                        </View>
+                    </CalendarGlassSurface>
+                </View>
             )}
         </View>
     );
@@ -5763,6 +5927,79 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         gap: 8,
     },
+    permissionOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 80,
+        elevation: 80,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 24,
+    },
+    permissionBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: "rgba(0,0,0,0.24)",
+    },
+    permissionPrompt: {
+        width: "100%",
+        maxWidth: 390,
+        borderWidth: 1,
+        borderRadius: 30,
+        paddingHorizontal: 22,
+        paddingTop: 22,
+        paddingBottom: 18,
+    },
+    permissionIconWrap: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(33,184,90,0.14)",
+        marginBottom: 16,
+    },
+    permissionTitle: {
+        fontSize: 23,
+        lineHeight: 29,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    permissionBody: {
+        marginTop: 10,
+        fontSize: 15,
+        lineHeight: 22,
+        fontWeight: "600",
+    },
+    permissionActions: {
+        marginTop: 22,
+        flexDirection: "row",
+        gap: 10,
+    },
+    permissionSecondaryButton: {
+        flex: 1,
+        height: 52,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(255,255,255,0.08)",
+    },
+    permissionPrimaryButton: {
+        flex: 1,
+        height: 52,
+        borderRadius: 999,
+        borderWidth: 1,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    permissionSecondaryText: {
+        fontSize: 16,
+        fontWeight: "800",
+    },
+    permissionPrimaryText: {
+        color: ORIGIN_COLOR,
+        fontSize: 16,
+        fontWeight: "900",
+    },
     routeSelectionStageCard: {
         borderWidth: 1,
         borderRadius: 10,
@@ -5824,6 +6061,9 @@ const styles = StyleSheet.create({
         bottom: 0,
         paddingHorizontal: 0,
         paddingBottom: 0,
+    },
+    bottomPanelMotion: {
+        maxHeight: 560,
     },
     bottomPanel: {
         borderWidth: 1,

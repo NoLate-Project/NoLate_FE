@@ -13,6 +13,8 @@ type Props = {
     firstDay: 0 | 1;
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
+    headerOffset?: number;
+    topSafeInset?: number;
 };
 
 // 일정 캘린더에 선택 날짜와 일정 목록을 연결한다.
@@ -25,9 +27,11 @@ export default function CalendarWrapper({
     firstDay,
     scrollRequest,
     onVisibleMonthChange,
+    headerOffset,
+    topSafeInset,
 }: Props) {
     return (
-        <View style={viewMode === "list" ? undefined : styles.full}>
+        <View style={styles.full}>
             <ScheduleCalendar
                 selectedDay={selectedDay}
                 items={items}
@@ -37,6 +41,8 @@ export default function CalendarWrapper({
                 firstDay={firstDay}
                 scrollRequest={scrollRequest}
                 onVisibleMonthChange={onVisibleMonthChange}
+                headerOffset={headerOffset}
+                topSafeInset={topSafeInset}
             />
         </View>
     );
