@@ -1,9 +1,9 @@
 export type CalendarViewMode = "compact" | "stack" | "detail" | "week" | "list";
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
-    compact: 76,
-    stack: 90,
-    detail: 100,
+    compact: 80,
+    stack: 96,
+    detail: 106,
     week: 76,
     list: 58,
 };

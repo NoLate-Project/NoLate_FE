@@ -386,7 +386,8 @@ export default function ScheduleCalendar({
     const handleContinuousScroll = useCallback((
         event: NativeSyntheticEvent<NativeScrollEvent>
     ) => {
-        const monthSwitchLine = event.nativeEvent.contentOffset.y + 2;
+        const monthSwitchLine = event.nativeEvent.contentOffset.y
+            + event.nativeEvent.layoutMeasurement.height * 0.32;
         let activeIndex = 0;
 
         for (let index = 1; index < monthLayouts.length; index += 1) {

@@ -47,6 +47,9 @@ const getErrorMessage = (error: unknown) =>
 type ToolbarMenu = "view" | "search" | "add";
 
 const CALENDAR_TOOLBAR_HEIGHT = 60;
+const STICKY_MONTH_HEADER_HEIGHT = 62;
+const STICKY_WEEKDAY_HEADER_HEIGHT = 42;
+const STICKY_CALENDAR_HEADER_HEIGHT = STICKY_MONTH_HEADER_HEIGHT + STICKY_WEEKDAY_HEADER_HEIGHT;
 
 const NativeSearchBar = SearchBar as React.ForwardRefExoticComponent<
     Omit<React.ComponentProps<typeof SearchBar>, "ref"> &
@@ -130,9 +133,25 @@ export default function ScheduleIndex() {
         inputRange: [0, 1],
         outputRange: [-4, 0],
     });
+    const viewDropdownScaleX = toolbarDropdownProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.92, 1],
+    });
+    const viewDropdownScaleY = toolbarDropdownProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.86, 1],
+    });
+    const viewDropdownTranslateY = toolbarDropdownProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-8, 0],
+    });
     const dropdownOpacity = toolbarDropdownProgress.interpolate({
         inputRange: [0, 0.32, 1],
         outputRange: [0, 0.86, 1],
+    });
+    const viewDropdownOpacity = toolbarDropdownProgress.interpolate({
+        inputRange: [0, 0.18, 1],
+        outputRange: [0, 0.92, 1],
     });
     const usesNativeSearchBar = Platform.OS === "ios";
     const searchHeaderScaleY = toolbarDropdownProgress.interpolate({
@@ -145,11 +164,51 @@ export default function ScheduleIndex() {
             ? "rgba(8,9,12,0.99)"
             : "rgba(242,242,247,1)",
     }), [colors.border, mode]);
-    const calendarHeaderOffset = useMemo(
-        () => insets.top + CALENDAR_TOOLBAR_HEIGHT,
-        [insets.top]
-    );
+    const stickyWeekdayItems = useMemo(() => (
+        Array.from({ length: 7 }, (_, index) => {
+            const weekdayIndex = (firstDay + index) % 7;
+            return {
+                label: ["일", "월", "화", "수", "목", "금", "토"][weekdayIndex],
+                isWeekend: weekdayIndex === 0 || weekdayIndex === 6,
+            };
+        })
+    ), [firstDay]);
+    const stickyCalendarHeaderPosition = useMemo<ViewStyle>(() => ({
+        top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
+    }), [insets.top]);
     const showsFloatingMonthTitle = calendarViewMode === "list" || calendarViewMode === "week";
+    const isStickyCalendarMode =
+        calendarViewMode === "compact" || calendarViewMode === "stack" || calendarViewMode === "detail";
+    const showsStickyCalendarHeader =
+        isStickyCalendarMode &&
+        activeToolbarMenu === null &&
+        !toolbarMenuClosing &&
+        !isSearchToolbarOpen &&
+        !keyboardVisible &&
+        !modalVisible &&
+        !quickModalVisible &&
+        !yearOverviewVisible;
+    const calendarHeaderOffset = useMemo(
+        () => insets.top + CALENDAR_TOOLBAR_HEIGHT + (showsStickyCalendarHeader ? STICKY_CALENDAR_HEADER_HEIGHT : 0),
+        [insets.top, showsStickyCalendarHeader]
+    );
+    const stickyMonthTitle = `${Number(visibleMonth.slice(5, 7))}월`;
+    const currentMonthKey = useMemo(() => {
+        const today = new Date();
+        return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+    }, []);
+    const stickyMonthColorStyle = visibleMonth.slice(0, 7) === currentMonthKey
+        ? mode === "dark" ? styles.stickyMonthTitleCurrentDark : styles.stickyMonthTitleCurrentLight
+        : styles.stickyMonthTitleDefault;
+    const stickyWeekdayColor = mode === "dark"
+        ? "#FFFFFF"
+        : "#111113";
+    const stickyWeekendColor = mode === "dark"
+        ? "rgba(238,238,244,0.98)"
+        : "rgba(68,68,76,0.96)";
+    const stickyWeekdayBorderColor = mode === "dark"
+        ? "rgba(255,255,255,0.08)"
+        : "rgba(0,0,0,0.08)";
     const bottomBarHidden =
         !isFocused ||
         modalVisible ||
@@ -585,6 +644,7 @@ export default function ScheduleIndex() {
                             <CalendarGlassSurface
                                 interactive
                                 clear
+                                tone="softGlass"
                                 style={[
                                     styles.yearGlass,
                                     { borderColor: colors.border },
@@ -612,6 +672,7 @@ export default function ScheduleIndex() {
                                 <CalendarGlassSurface
                                     interactive
                                     clear
+                                    tone="softGlass"
                                     style={[
                                         styles.toolbarActions,
                                         { borderColor: colors.border },
@@ -682,6 +743,59 @@ export default function ScheduleIndex() {
                             </Text>
                         </View>
                     )}
+                    </View>
+                )}
+
+                {showsStickyCalendarHeader && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            styles.stickyCalendarHeader,
+                            stickyCalendarHeaderPosition,
+                        ]}
+                    >
+                        <View
+                            style={[
+                                styles.stickyHeaderBackdrop,
+                                mode === "dark"
+                                    ? styles.stickyHeaderBackdropDark
+                                    : styles.stickyHeaderBackdropLight,
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.stickyHeaderBackdropTop,
+                                mode === "dark"
+                                    ? styles.stickyHeaderBackdropTopDark
+                                    : styles.stickyHeaderBackdropTopLight,
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.stickyHeaderBackdropBottom,
+                                mode === "dark"
+                                    ? styles.stickyHeaderBackdropBottomDark
+                                    : styles.stickyHeaderBackdropBottomLight,
+                            ]}
+                        />
+                        <View style={styles.stickyMonthHeader}>
+                            <Text style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
+                                {stickyMonthTitle}
+                            </Text>
+                        </View>
+                        <View style={[styles.stickyWeekdayHeader, { borderBottomColor: stickyWeekdayBorderColor }]}>
+                            {stickyWeekdayItems.map((item, index) => (
+                                <Text
+                                    key={`${item.label}-${index}`}
+                                    style={[
+                                        styles.stickyWeekdayText,
+                                        { color: item.isWeekend ? stickyWeekendColor : stickyWeekdayColor },
+                                    ]}
+                                >
+                                    {item.label}
+                                </Text>
+                            ))}
+                        </View>
                     </View>
                 )}
 
@@ -878,7 +992,7 @@ export default function ScheduleIndex() {
                     </Animated.View>
                 )}
 
-                {activeToolbarMenu !== null && activeToolbarMenu !== "search" && (
+                {activeToolbarMenu === "view" && (
                     <Animated.View
                         pointerEvents="box-none"
                         style={[
@@ -887,28 +1001,44 @@ export default function ScheduleIndex() {
                             {
                                 top: insets.top + 7,
                                 width: dropdownWidth,
-                                opacity: dropdownOpacity,
+                                opacity: viewDropdownOpacity,
                                 transform: [
-                                    { translateY: dropdownTranslateY },
-                                    { scaleX: dropdownScaleX },
-                                    { scaleY: dropdownScaleY },
+                                    { translateY: viewDropdownTranslateY },
+                                    { scaleX: viewDropdownScaleX },
+                                    { scaleY: viewDropdownScaleY },
                                 ],
                             },
                         ]}
                     >
-                        <CalendarGlassSurface
-                            interactive
-                            prominent
+                        <View
                             style={[
-                                styles.toolbarDropdownGlass,
-                                {
-                                    borderColor: colors.border,
-                                    shadowColor: colors.textPrimary,
-                                },
+                                styles.viewDropdownShell,
+                                mode === "dark" ? styles.viewDropdownShellDark : styles.viewDropdownShellLight,
                             ]}
                         >
-                            {activeToolbarMenu === "view" && (
+                            <CalendarGlassSurface
+                                interactive
+                                prominent
+                                tone="menuLiquid"
+                                style={[
+                                    styles.toolbarDropdownGlass,
+                                    styles.viewToolbarDropdownGlass,
+                                    {
+                                        borderColor: colors.border,
+                                        shadowColor: colors.textPrimary,
+                                    },
+                                ]}
+                            >
                                 <View style={[styles.dropdownContent, styles.viewDropdownContent]}>
+                                    <View
+                                        pointerEvents="none"
+                                        style={[
+                                            styles.viewDropdownReadableScrim,
+                                            mode === "dark"
+                                                ? styles.viewDropdownReadableScrimDark
+                                                : styles.viewDropdownReadableScrimLight,
+                                        ]}
+                                    />
                                     {CALENDAR_VIEW_OPTIONS.map((option, index) => {
                                         const selected = option.value === calendarViewMode;
 
@@ -919,6 +1049,7 @@ export default function ScheduleIndex() {
                                                         style={[
                                                             styles.dropdownRowDivider,
                                                             { backgroundColor: colors.border },
+                                                            styles.viewDropdownDivider,
                                                         ]}
                                                     />
                                                 )}
@@ -929,12 +1060,23 @@ export default function ScheduleIndex() {
                                                         {
                                                             backgroundColor: pressed
                                                                 ? mode === "dark"
-                                                                    ? "rgba(255,255,255,0.07)"
-                                                                    : "rgba(0,0,0,0.05)"
+                                                                    ? "rgba(255,255,255,0.035)"
+                                                                    : "rgba(0,0,0,0.028)"
                                                                 : "transparent",
                                                         },
                                                     ]}
                                                 >
+                                                    {selected && (
+                                                        <View
+                                                            pointerEvents="none"
+                                                            style={[
+                                                                styles.viewModeSelectedPill,
+                                                                mode === "dark"
+                                                                    ? styles.viewModeSelectedPillDark
+                                                                    : styles.viewModeSelectedPillLight,
+                                                            ]}
+                                                        />
+                                                    )}
                                                     <View style={styles.dropdownCheckSlot}>
                                                         {selected && (
                                                             <Ionicons
@@ -957,9 +1099,41 @@ export default function ScheduleIndex() {
                                         );
                                     })}
                                 </View>
-                            )}
+                            </CalendarGlassSurface>
+                        </View>
+                    </Animated.View>
+                )}
 
-                        {activeToolbarMenu === "add" && (
+                {activeToolbarMenu === "add" && (
+                    <Animated.View
+                        pointerEvents="box-none"
+                        style={[
+                            styles.toolbarDropdown,
+                            styles.toolbarDropdownPosition,
+                            {
+                                top: insets.top + 7,
+                                width: dropdownWidth,
+                                opacity: dropdownOpacity,
+                                transform: [
+                                    { translateY: dropdownTranslateY },
+                                    { scaleX: dropdownScaleX },
+                                    { scaleY: dropdownScaleY },
+                                ],
+                            },
+                        ]}
+                    >
+                        <CalendarGlassSurface
+                            interactive
+                            prominent
+                            tone="flat"
+                            style={[
+                                styles.toolbarDropdownGlass,
+                                {
+                                    borderColor: colors.border,
+                                    shadowColor: colors.textPrimary,
+                                },
+                            ]}
+                        >
                             <View style={[styles.dropdownContent, styles.actionDropdownContent]}>
                                 <ToolbarDropdownAction
                                     icon="flash-outline"
@@ -982,7 +1156,6 @@ export default function ScheduleIndex() {
                                     colors={colors}
                                 />
                             </View>
-                        )}
                         </CalendarGlassSurface>
                     </Animated.View>
                 )}
@@ -1180,6 +1353,88 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         letterSpacing: 0,
     },
+    stickyCalendarHeader: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        height: STICKY_CALENDAR_HEADER_HEIGHT,
+        zIndex: 41,
+        elevation: 41,
+        overflow: "hidden",
+    },
+    stickyHeaderBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    stickyHeaderBackdropDark: {
+        backgroundColor: "rgba(7,8,11,0.70)",
+    },
+    stickyHeaderBackdropLight: {
+        backgroundColor: "rgba(242,242,247,0.74)",
+    },
+    stickyHeaderBackdropTop: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        height: 42,
+    },
+    stickyHeaderBackdropTopDark: {
+        backgroundColor: "rgba(0,0,0,0.14)",
+    },
+    stickyHeaderBackdropTopLight: {
+        backgroundColor: "rgba(255,255,255,0.20)",
+    },
+    stickyHeaderBackdropBottom: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 58,
+    },
+    stickyHeaderBackdropBottomDark: {
+        backgroundColor: "rgba(0,0,0,0.08)",
+    },
+    stickyHeaderBackdropBottomLight: {
+        backgroundColor: "rgba(255,255,255,0.12)",
+    },
+    stickyMonthHeader: {
+        height: STICKY_MONTH_HEADER_HEIGHT,
+        paddingHorizontal: 28,
+        justifyContent: "center",
+        zIndex: 2,
+        elevation: 2,
+    },
+    stickyMonthTitle: {
+        fontSize: 27,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    stickyMonthTitleDefault: {
+        color: "#FFFFFF",
+    },
+    stickyMonthTitleCurrentDark: {
+        color: "#ff453a",
+    },
+    stickyMonthTitleCurrentLight: {
+        color: "#ff3b30",
+    },
+    stickyWeekdayHeader: {
+        height: STICKY_WEEKDAY_HEADER_HEIGHT,
+        paddingHorizontal: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        zIndex: 3,
+        elevation: 3,
+    },
+    stickyWeekdayText: {
+        width: "14.2857%",
+        textAlign: "center",
+        fontSize: 18.5,
+        fontWeight: "900",
+        letterSpacing: 0,
+        opacity: 1,
+    },
     toolbarLayer: {
         position: "absolute",
         top: 0,
@@ -1338,6 +1593,21 @@ const styles = StyleSheet.create({
         shadowRadius: 28,
         elevation: 24,
     },
+    viewToolbarDropdownGlass: {
+        shadowOffset: { width: 0, height: 20 },
+        shadowOpacity: 0.36,
+        shadowRadius: 34,
+        elevation: 26,
+    },
+    viewDropdownShell: {
+        borderRadius: 26,
+    },
+    viewDropdownShellDark: {
+        backgroundColor: "rgba(3,4,8,0.84)",
+    },
+    viewDropdownShellLight: {
+        backgroundColor: "rgba(255,255,255,0.84)",
+    },
     dropdownContent: {
         paddingTop: 7,
         paddingBottom: 8,
@@ -1345,6 +1615,17 @@ const styles = StyleSheet.create({
     viewDropdownContent: {
         paddingTop: 7,
         paddingBottom: 8,
+        position: "relative",
+        overflow: "hidden",
+    },
+    viewDropdownReadableScrim: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    viewDropdownReadableScrimDark: {
+        backgroundColor: "rgba(3,4,8,0.82)",
+    },
+    viewDropdownReadableScrimLight: {
+        backgroundColor: "rgba(255,255,255,0.86)",
     },
     searchDropdownContent: {
         paddingHorizontal: 14,
@@ -1363,6 +1644,25 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 11,
+        position: "relative",
+        overflow: "hidden",
+    },
+    viewModeSelectedPill: {
+        position: "absolute",
+        left: 5,
+        right: 5,
+        top: 5,
+        bottom: 5,
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+    },
+    viewModeSelectedPillDark: {
+        backgroundColor: "rgba(255,255,255,0.095)",
+        borderColor: "rgba(255,255,255,0.13)",
+    },
+    viewModeSelectedPillLight: {
+        backgroundColor: "rgba(0,0,0,0.052)",
+        borderColor: "rgba(0,0,0,0.08)",
     },
     dropdownCheckSlot: {
         width: 24,
@@ -1378,6 +1678,9 @@ const styles = StyleSheet.create({
         marginLeft: 50,
         marginRight: 18,
         marginVertical: 5,
+    },
+    viewDropdownDivider: {
+        opacity: 0.34,
     },
     dropdownActionRow: {
         alignSelf: "stretch",

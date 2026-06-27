@@ -31,6 +31,7 @@ type Props = ViewProps & {
     clear?: boolean;
     prominent?: boolean;
     variant?: LiquidGlassVariant;
+    tone?: "default" | "flat" | "softGlass" | "menuLiquid";
     glow?: boolean;
 };
 
@@ -160,6 +161,7 @@ export default function CalendarGlassSurface({
     clear = false,
     prominent = false,
     variant = "card",
+    tone = "default",
     glow = false,
     style,
     ...viewProps
@@ -169,6 +171,13 @@ export default function CalendarGlassSurface({
     const nativeGlassAvailable = canUseNativeGlass();
     const glassEffect = nativeGlassAvailable ? loadGlassEffect() : null;
     const palette = getGlassPalette(mode, clear, prominent, variant, reduceTransparency);
+    const isFlatTone = tone === "flat";
+    const isSoftGlassTone = tone === "softGlass";
+    const isMenuLiquidTone = tone === "menuLiquid";
+    const usesTonedSurface = isFlatTone || isSoftGlassTone || isMenuLiquidTone;
+    const menuLiquidNativeTint = mode === "dark"
+        ? "rgba(8, 9, 14, 0.76)"
+        : "rgba(255, 255, 255, 0.76)";
 
     useEffect(() => {
         let mounted = true;
@@ -198,7 +207,7 @@ export default function CalendarGlassSurface({
                 colorScheme={mode}
                 glassEffectStyle="regular"
                 isInteractive={interactive}
-                tintColor={palette.nativeTint}
+                tintColor={isMenuLiquidTone ? menuLiquidNativeTint : palette.nativeTint}
                 style={[
                     styles.surface,
                     styles.clipped,
@@ -206,6 +215,9 @@ export default function CalendarGlassSurface({
                     variant === "bottomBar" && styles.bottomBarDepth,
                     variant === "mapCard" && styles.mapDepth,
                     style,
+                    isMenuLiquidTone && (
+                        mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                    ),
                 ]}
             >
                 {(prominent || reduceTransparency) && (
@@ -213,6 +225,9 @@ export default function CalendarGlassSurface({
                         pointerEvents="none"
                         style={[
                             StyleSheet.absoluteFillObject,
+                            isFlatTone && styles.prominentFillFlat,
+                            isSoftGlassTone && styles.prominentFillSoftGlass,
+                            isMenuLiquidTone && styles.prominentFillMenuLiquid,
                             { backgroundColor: palette.background },
                         ]}
                     />
@@ -222,6 +237,13 @@ export default function CalendarGlassSurface({
                     style={[
                         StyleSheet.absoluteFillObject,
                         styles.contrastLayer,
+                        usesTonedSurface && (
+                            isMenuLiquidTone
+                                ? styles.contrastLayerMenuLiquid
+                                : isSoftGlassTone
+                                    ? styles.contrastLayerSoftGlass
+                                    : styles.contrastLayerFlat
+                        ),
                         { backgroundColor: palette.contrast },
                     ]}
                 />
@@ -235,19 +257,29 @@ export default function CalendarGlassSurface({
                         ]}
                     />
                 )}
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.sheenLayer,
-                        { backgroundColor: palette.sheen },
-                    ]}
-                />
+                {!isFlatTone && !isMenuLiquidTone && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            styles.sheenLayer,
+                            isSoftGlassTone && styles.sheenLayerSoftGlass,
+                            { backgroundColor: palette.sheen },
+                        ]}
+                    />
+                )}
                 {children}
                 <View
                     pointerEvents="none"
                     style={[
                         StyleSheet.absoluteFillObject,
                         styles.topHighlight,
+                        usesTonedSurface && (
+                            isMenuLiquidTone
+                                ? styles.topHighlightMenuLiquid
+                                : isSoftGlassTone
+                                    ? styles.topHighlightSoftGlass
+                                    : styles.topHighlightFlat
+                        ),
                         { borderTopColor: palette.highlight },
                     ]}
                 />
@@ -273,6 +305,9 @@ export default function CalendarGlassSurface({
                 variant === "mapCard" && styles.mapDepth,
                 style,
                 { backgroundColor: palette.background },
+                isMenuLiquidTone && (
+                    mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                ),
                 styles.clipped,
                 Platform.OS === "android" && styles.androidDepth,
             ]}
@@ -283,6 +318,9 @@ export default function CalendarGlassSurface({
                     style={[
                         StyleSheet.absoluteFillObject,
                         styles.prominentFill,
+                        isFlatTone && styles.prominentFillFlat,
+                        isSoftGlassTone && styles.prominentFillSoftGlass,
+                        isMenuLiquidTone && styles.prominentFillMenuLiquid,
                         mode === "dark"
                             ? styles.prominentFillDark
                             : styles.prominentFillLight,
@@ -294,6 +332,13 @@ export default function CalendarGlassSurface({
                 style={[
                     StyleSheet.absoluteFillObject,
                     styles.contrastLayer,
+                    usesTonedSurface && (
+                        isMenuLiquidTone
+                            ? styles.contrastLayerMenuLiquid
+                            : isSoftGlassTone
+                                ? styles.contrastLayerSoftGlass
+                                : styles.contrastLayerFlat
+                    ),
                     { backgroundColor: palette.contrast },
                 ]}
             />
@@ -307,19 +352,29 @@ export default function CalendarGlassSurface({
                     ]}
                 />
             )}
-            <View
-                pointerEvents="none"
-                style={[
-                    styles.sheenLayer,
-                    { backgroundColor: palette.sheen },
-                ]}
-            />
+            {!isFlatTone && !isMenuLiquidTone && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.sheenLayer,
+                        isSoftGlassTone && styles.sheenLayerSoftGlass,
+                        { backgroundColor: palette.sheen },
+                    ]}
+                />
+            )}
             {children}
             <View
                 pointerEvents="none"
                 style={[
                     StyleSheet.absoluteFillObject,
                     styles.topHighlight,
+                    usesTonedSurface && (
+                        isMenuLiquidTone
+                            ? styles.topHighlightMenuLiquid
+                            : isSoftGlassTone
+                                ? styles.topHighlightSoftGlass
+                                : styles.topHighlightFlat
+                    ),
                     { borderTopColor: palette.highlight },
                 ]}
             />
@@ -368,6 +423,12 @@ const styles = StyleSheet.create({
     clipped: {
         overflow: "hidden",
     },
+    menuLiquidSurfaceDark: {
+        backgroundColor: "rgba(8, 9, 14, 0.88)",
+    },
+    menuLiquidSurfaceLight: {
+        backgroundColor: "rgba(255, 255, 255, 0.88)",
+    },
     innerStroke: {
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: "rgba(255,255,255,0.20)",
@@ -376,11 +437,29 @@ const styles = StyleSheet.create({
         borderTopWidth: StyleSheet.hairlineWidth,
         opacity: 0.82,
     },
+    topHighlightFlat: {
+        opacity: 0.18,
+    },
+    topHighlightSoftGlass: {
+        opacity: 0.38,
+    },
+    topHighlightMenuLiquid: {
+        opacity: 0.30,
+    },
     glow: {
         opacity: 0.72,
     },
     contrastLayer: {
         opacity: 0.92,
+    },
+    contrastLayerFlat: {
+        opacity: 0.28,
+    },
+    contrastLayerSoftGlass: {
+        opacity: 0.46,
+    },
+    contrastLayerMenuLiquid: {
+        opacity: 0.96,
     },
     sheenLayer: {
         position: "absolute",
@@ -390,8 +469,21 @@ const styles = StyleSheet.create({
         height: "42%",
         opacity: 0.72,
     },
+    sheenLayerSoftGlass: {
+        height: "26%",
+        opacity: 0.18,
+    },
     prominentFill: {
         opacity: 0.9,
+    },
+    prominentFillFlat: {
+        opacity: 0.48,
+    },
+    prominentFillSoftGlass: {
+        opacity: 0.62,
+    },
+    prominentFillMenuLiquid: {
+        opacity: 0.96,
     },
     prominentFillDark: {
         backgroundColor: "rgba(14,15,18,0.76)",

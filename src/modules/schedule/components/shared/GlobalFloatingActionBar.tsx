@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { Animated, Platform, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { Animated, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
@@ -67,6 +67,29 @@ export default function GlobalFloatingActionBar({
         outputRange: [0.96, 1],
     });
 
+    const renderAction = (action: FloatingBarAction) => (
+        <CalendarGlassSurface
+            key={action.key}
+            interactive
+            clear
+            glow
+            variant="bottomBar"
+            tone="softGlass"
+            style={[
+                styles.actionSurface,
+                {
+                    borderColor: colors.border,
+                },
+            ]}
+        >
+            <ActionButton
+                action={action}
+                colors={colors}
+                mode={mode}
+            />
+        </CalendarGlassSurface>
+    );
+
     return (
         <Animated.View
             pointerEvents={hidden ? "none" : "box-none"}
@@ -80,40 +103,13 @@ export default function GlobalFloatingActionBar({
                 style,
             ]}
         >
-            <CalendarGlassSurface
-                interactive
-                clear
-                glow
-                variant="bottomBar"
-                style={[
-                    styles.bar,
-                    {
-                        borderColor: colors.border,
-                    },
-                ]}
-            >
-                <View style={styles.side}>
-                    {leftActions.map((action) => (
-                        <ActionButton
-                            key={action.key}
-                            action={action}
-                            colors={colors}
-                            mode={mode}
-                        />
-                    ))}
-                </View>
+            <View style={styles.side}>
+                {leftActions.map(renderAction)}
+            </View>
 
-                <View style={[styles.side, styles.rightSide]}>
-                    {rightActions.map((action) => (
-                        <ActionButton
-                            key={action.key}
-                            action={action}
-                            colors={colors}
-                            mode={mode}
-                        />
-                    ))}
-                </View>
-            </CalendarGlassSurface>
+            <View style={[styles.side, styles.rightSide]}>
+                {rightActions.map(renderAction)}
+            </View>
         </Animated.View>
     );
 }
@@ -127,8 +123,6 @@ function ActionButton({
     colors: ReturnType<typeof useTheme>["colors"];
     mode: ReturnType<typeof useTheme>["mode"];
 }) {
-    const hasLabel = Boolean(action.label);
-
     return (
         <Pressable
             accessibilityRole="button"
@@ -137,7 +131,6 @@ function ActionButton({
             onPress={action.onPress}
             style={({ pressed }) => [
                 styles.action,
-                hasLabel ? styles.actionWithLabel : styles.iconOnlyAction,
                 action.emphasized && styles.emphasizedAction,
                 action.emphasized && {
                     backgroundColor: mode === "dark"
@@ -161,11 +154,11 @@ function ActionButton({
             {!!action.icon && (
                 <Ionicons
                     name={action.icon}
-                    size={hasLabel ? 18 : 21}
+                    size={24}
                     color={colors.textPrimary}
                 />
             )}
-            {!!action.label && (
+            {!action.icon && !!action.label && (
                 <Text
                     numberOfLines={1}
                     adjustsFontSizeToFit
@@ -191,31 +184,30 @@ const styles = StyleSheet.create({
         right: 16,
         zIndex: 60,
         elevation: 60,
-    },
-    bar: {
-        minHeight: 64,
-        borderRadius: 32,
-        borderWidth: 1,
-        paddingHorizontal: 8,
-        paddingVertical: 8,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 10,
     },
     side: {
         minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
-        gap: 7,
+        gap: 10,
     },
     rightSide: {
         flexShrink: 1,
         justifyContent: "flex-end",
     },
+    actionSurface: {
+        width: 58,
+        height: 58,
+        borderRadius: 29,
+        borderWidth: StyleSheet.hairlineWidth,
+    },
     action: {
-        height: 48,
-        borderRadius: 24,
+        width: "100%",
+        height: "100%",
+        borderRadius: 29,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
@@ -227,16 +219,8 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.20,
         shadowRadius: 14,
     },
-    actionWithLabel: {
-        minWidth: 76,
-        paddingHorizontal: 15,
-        gap: 6,
-    },
-    iconOnlyAction: {
-        width: 48,
-    },
     actionText: {
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: "800",
         letterSpacing: 0,
     },
