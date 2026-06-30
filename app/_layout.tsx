@@ -62,7 +62,7 @@ function RootNavigator() {
             <Stack.Screen name="index" />
             <Stack.Screen name="auth/login" />
             <Stack.Screen name="auth/signup" />
-            {__DEV__ && <Stack.Screen name="dev/view-mode-liquid-dropdown" />}
+            {__DEV__ && <Stack.Screen name="dev/view-mode-glass-control" />}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen name="profile" />
                 <Stack.Screen name="schedule/index" />

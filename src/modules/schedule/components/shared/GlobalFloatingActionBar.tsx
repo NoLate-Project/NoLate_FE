@@ -3,12 +3,14 @@ import { Animated, Pressable, StyleSheet, Text, View, type ViewStyle } from "rea
 import { Ionicons } from "@expo/vector-icons";
 
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
+import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
 import { useTheme } from "../../../theme/ThemeContext";
 
 export type FloatingBarAction = {
     key: string;
     label?: string;
     icon?: React.ComponentProps<typeof Ionicons>["name"];
+    nativeSymbolName?: string;
     accessibilityLabel: string;
     onPress: () => void;
     disabled?: boolean;
@@ -67,28 +69,66 @@ export default function GlobalFloatingActionBar({
         outputRange: [0.96, 1],
     });
 
-    const renderAction = (action: FloatingBarAction) => (
-        <CalendarGlassSurface
-            key={action.key}
-            interactive
-            clear
-            glow
-            variant="bottomBar"
-            tone="softGlass"
-            style={[
-                styles.actionSurface,
-                {
-                    borderColor: colors.border,
-                },
-            ]}
-        >
-            <ActionButton
-                action={action}
-                colors={colors}
-                mode={mode}
-            />
-        </CalendarGlassSurface>
-    );
+    const renderSide = (actions: FloatingBarAction[]) => {
+        if (actions.length === 0) return null;
+
+        const singleIconOnly = actions.length === 1 && Boolean(actions[0].icon);
+
+        if (isLiquidGlassIconButtonAvailable && actions.length === 1) {
+            const action = actions[0];
+            const nativeSymbolName = action.nativeSymbolName ?? getNativeSymbolName(action.icon);
+            const buttonWidth = action.icon ? 116 : 96;
+
+            return (
+                <LiquidGlassIconButton
+                    symbolName={nativeSymbolName}
+                    label={!action.icon ? action.label : undefined}
+                    buttonWidth={buttonWidth}
+                    buttonHeight={58}
+                    disabled={action.disabled}
+                    colorScheme={mode}
+                    accessibilityLabel={action.accessibilityLabel}
+                    onPress={action.onPress}
+                    style={[
+                        styles.nativeActionButton,
+                        { width: buttonWidth },
+                    ]}
+                />
+            );
+        }
+
+        return (
+            <CalendarGlassSurface
+                interactive
+                clear
+                glow
+                variant="bottomBar"
+                tone="softGlass"
+                style={[
+                    styles.actionSurface,
+                    singleIconOnly && styles.singleIconActionSurface,
+                    {
+                        borderColor: colors.border,
+                    },
+                ]}
+            >
+                <View style={[
+                    styles.actionGroup,
+                    singleIconOnly && styles.singleIconActionGroup,
+                ]}>
+                    {actions.map((action) => (
+                        <ActionButton
+                            key={action.key}
+                            action={action}
+                            colors={colors}
+                            mode={mode}
+                            wide={singleIconOnly}
+                        />
+                    ))}
+                </View>
+            </CalendarGlassSurface>
+        );
+    };
 
     return (
         <Animated.View
@@ -104,24 +144,39 @@ export default function GlobalFloatingActionBar({
             ]}
         >
             <View style={styles.side}>
-                {leftActions.map(renderAction)}
+                {renderSide(leftActions)}
             </View>
 
             <View style={[styles.side, styles.rightSide]}>
-                {rightActions.map(renderAction)}
+                {renderSide(rightActions)}
             </View>
         </Animated.View>
     );
+}
+
+function getNativeSymbolName(icon?: React.ComponentProps<typeof Ionicons>["name"]) {
+    switch (icon) {
+        case "person-circle-outline":
+            return "person.circle";
+        case "search":
+            return "magnifyingglass";
+        case "add":
+            return "plus";
+        default:
+            return "circle";
+    }
 }
 
 function ActionButton({
     action,
     colors,
     mode,
+    wide,
 }: {
     action: FloatingBarAction;
     colors: ReturnType<typeof useTheme>["colors"];
     mode: ReturnType<typeof useTheme>["mode"];
+    wide?: boolean;
 }) {
     return (
         <Pressable
@@ -131,6 +186,8 @@ function ActionButton({
             onPress={action.onPress}
             style={({ pressed }) => [
                 styles.action,
+                wide && styles.wideIconAction,
+                !action.icon && !!action.label && styles.labelAction,
                 action.emphasized && styles.emphasizedAction,
                 action.emphasized && {
                     backgroundColor: mode === "dark"
@@ -199,18 +256,40 @@ const styles = StyleSheet.create({
         justifyContent: "flex-end",
     },
     actionSurface: {
-        width: 58,
         height: 58,
         borderRadius: 29,
         borderWidth: StyleSheet.hairlineWidth,
+        overflow: "hidden",
+    },
+    singleIconActionSurface: {
+        width: 116,
+    },
+    nativeActionButton: {
+        height: 58,
+    },
+    actionGroup: {
+        height: 58,
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    singleIconActionGroup: {
+        width: "100%",
+        justifyContent: "center",
     },
     action: {
-        width: "100%",
-        height: "100%",
+        minWidth: 58,
+        height: 58,
+        paddingHorizontal: 0,
         borderRadius: 29,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
+    },
+    wideIconAction: {
+        width: "100%",
+    },
+    labelAction: {
+        paddingHorizontal: 18,
     },
     emphasizedAction: {
         borderWidth: StyleSheet.hairlineWidth,
@@ -220,7 +299,7 @@ const styles = StyleSheet.create({
         shadowRadius: 14,
     },
     actionText: {
-        fontSize: 13,
+        fontSize: 17,
         fontWeight: "800",
         letterSpacing: 0,
     },

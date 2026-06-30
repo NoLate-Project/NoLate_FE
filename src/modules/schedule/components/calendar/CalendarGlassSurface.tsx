@@ -132,7 +132,7 @@ function getGlassPalette(
     const background = reduceTransparency
         ? "rgba(255, 255, 255, 0.98)"
             : variant === "bottomBar"
-            ? "rgba(255, 255, 255, 0.48)"
+            ? "rgba(255, 255, 255, 0.66)"
         : variant === "toolbar" || variant === "popover"
             ? "rgba(255, 255, 255, 0.50)"
         : stronger
@@ -146,12 +146,14 @@ function getGlassPalette(
                     : "rgba(255, 255, 255, 0.72)";
     return {
         background,
-        nativeTint: stronger ? "rgba(255, 255, 255, 0.16)" : "rgba(255, 255, 255, 0.08)",
-        highlight: "rgba(255,255,255,0.76)",
-        stroke: "rgba(255,255,255,0.62)",
-        glow: variant === "mapCard" ? "rgba(47,128,255,0.12)" : "rgba(255,255,255,0.24)",
-        contrast: "rgba(255,255,255,0.08)",
-        sheen: "rgba(255,255,255,0.28)",
+        nativeTint: variant === "bottomBar"
+            ? "rgba(255, 255, 255, 0.18)"
+            : stronger ? "rgba(255, 255, 255, 0.16)" : "rgba(255, 255, 255, 0.08)",
+        highlight: variant === "bottomBar" ? "rgba(255,255,255,0.86)" : "rgba(255,255,255,0.76)",
+        stroke: variant === "bottomBar" ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.62)",
+        glow: variant === "mapCard" ? "rgba(47,128,255,0.12)" : "rgba(255,255,255,0.22)",
+        contrast: variant === "bottomBar" ? "rgba(255,255,255,0.11)" : "rgba(255,255,255,0.08)",
+        sheen: variant === "bottomBar" ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.28)",
     };
 }
 
@@ -506,10 +508,10 @@ const styles = StyleSheet.create({
     },
     bottomBarDepth: {
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 16 },
-        shadowOpacity: 0.26,
-        shadowRadius: 28,
-        elevation: 22,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.13,
+        shadowRadius: 18,
+        elevation: 16,
     },
     mapDepth: {
         shadowColor: "#000",

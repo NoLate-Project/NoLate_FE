@@ -9,7 +9,7 @@ import type { NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
-import { markScheduleDeparted } from "../../api/schedule";
+import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
 import {
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
@@ -18,6 +18,7 @@ import {
 const ANDROID_CHANNEL_ID = "schedule-push";
 const SCHEDULE_DEPART_NOW_CATEGORY = "schedule_depart_now";
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
+const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
 
 type ExpoNotificationsModule = typeof import("expo-notifications");
 
@@ -79,6 +80,7 @@ export async function configurePushNavigation(
     const messaging = getMessaging();
     let lastOpenedMessageId: string | undefined;
     let lastDepartNowActionKey: string | undefined;
+    let lastSnoozeActionKey: string | undefined;
 
     if (Notifications) {
         await ensureNotificationPresentation(Notifications);
@@ -126,11 +128,40 @@ export async function configurePushNavigation(
         }
     };
 
+    const snoozeFromData = async (
+        data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
+        responseId?: string,
+    ) => {
+        const scheduleId = getScheduleIdFromNotificationData(data);
+
+        if (!scheduleId) {
+            console.warn("[push] snooze action has no schedule target", data);
+            return;
+        }
+
+        const actionKey = `${scheduleId}:${responseId ?? ""}`;
+        // 동일 알림 응답이 재전달되어도 서버 재예약을 여러 번 밀지 않도록 막는다.
+        if (actionKey === lastSnoozeActionKey) return;
+        lastSnoozeActionKey = actionKey;
+
+        try {
+            await snoozeScheduleDepartureReminder(scheduleId);
+            console.info("[push] schedule departure reminder snoozed from notification action", scheduleId);
+        } catch (error) {
+            console.warn("[push] snooze action failed", error);
+        }
+    };
+
     const handleNotificationResponse = (response: NotificationResponse) => {
         const request = response.notification.request;
 
         if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
             void markDepartedFromData(request.content.data, request.identifier);
+            return;
+        }
+
+        if (response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER) {
+            void snoozeFromData(request.content.data, request.identifier);
             return;
         }
 
@@ -228,6 +259,13 @@ async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): 
                 {
                     identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
                     buttonTitle: "출발 완료",
+                    options: {
+                        opensAppToForeground: true,
+                    },
+                },
+                {
+                    identifier: SCHEDULE_SNOOZE_ACTION_IDENTIFIER,
+                    buttonTitle: "5분 뒤 다시 알림",
                     options: {
                         opensAppToForeground: true,
                     },

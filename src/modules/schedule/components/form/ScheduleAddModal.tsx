@@ -662,6 +662,7 @@ export default function ScheduleNewModal({
                 </View>
 
                 <ScrollView
+                    style={styles.scrollView}
                     keyboardShouldPersistTaps="handled"
                     showsVerticalScrollIndicator={false}
                     contentContainerStyle={styles.scrollContent}
@@ -889,16 +890,18 @@ const styles = StyleSheet.create({
     },
     dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.5)" },
     sheetMotion: {
-        maxHeight: "90%",
+        height: "82%",
+        width: "100%",
     },
     sheet: {
-        maxHeight: "90%",
+        flex: 1,
         borderTopLeftRadius: 24, borderTopRightRadius: 24,
         borderWidth: 1, overflow: "hidden",
     },
     handleWrap:    { alignItems: "center", paddingVertical: 14 },
     handle:        { width: 44, height: 5, borderRadius: 3 },
-    scrollContent: { paddingHorizontal: 20, paddingBottom: 16 },
+    scrollView: { flex: 1 },
+    scrollContent: { paddingHorizontal: 20, paddingBottom: 44 },
     headerRow: {
         flexDirection: "row", alignItems: "center",
         justifyContent: "space-between", marginBottom: 20,

@@ -4,14 +4,12 @@ import {
     Animated,
     Easing,
     Keyboard,
-    NativeSyntheticEvent,
     Platform,
     Pressable,
     StatusBar,
     StyleSheet,
     Text,
     TextInput,
-    TextInputFocusEventData,
     useWindowDimensions,
     View,
     type ViewStyle,
@@ -20,12 +18,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { SearchBar, type SearchBarCommands } from "react-native-screens";
 
 import CalendarWrapper from "../../src/modules/schedule/components/calendar/CalendarWrapper";
 import CalendarYearOverviewModal from "../../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import CalendarViewModeGlyph from "../../src/modules/schedule/components/calendar/CalendarViewModeGlyph";
+import LiquidCalendarMenuPrototype, {
+    isLiquidCalendarMenuPrototypeAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype";
+import LiquidGlassIconButton, {
+    isLiquidGlassIconButtonAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidGlassIconButton";
 import { CALENDAR_VIEW_OPTIONS, type CalendarViewMode } from "../../src/modules/schedule/components/calendar/viewMode";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
 import ScheduleList from "../../src/modules/schedule/components/list/ScheduleList";
@@ -50,13 +53,11 @@ const CALENDAR_TOOLBAR_HEIGHT = 60;
 const STICKY_MONTH_HEADER_HEIGHT = 62;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 42;
 const STICKY_CALENDAR_HEADER_HEIGHT = STICKY_MONTH_HEADER_HEIGHT + STICKY_WEEKDAY_HEADER_HEIGHT;
-
-const NativeSearchBar = SearchBar as React.ForwardRefExoticComponent<
-    Omit<React.ComponentProps<typeof SearchBar>, "ref"> &
-    React.RefAttributes<SearchBarCommands> & {
-        style?: ViewStyle;
-    }
->;
+const LIQUID_TOOLBAR_BUTTON_SIZE = 58;
+const LIQUID_VIEW_MODE_COLLAPSED_WIDTH = LIQUID_TOOLBAR_BUTTON_SIZE * 3;
+const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_VIEW_MODE_COLLAPSED_WIDTH;
+const LIQUID_VIEW_MODE_CONTROL_HEIGHT = 296;
+const LIQUID_YEAR_PILL_WIDTH = 132;
 
 function formatScheduleDateTitle(startAt: string) {
     const date = new Date(startAt);
@@ -98,9 +99,10 @@ export default function ScheduleIndex() {
     const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
     const calendarTransition = useRef(new Animated.Value(1)).current;
     const toolbarDropdownProgress = useRef(new Animated.Value(0)).current;
+    const searchToolbarProgress = useRef(new Animated.Value(0)).current;
     const searchInputRef = useRef<TextInput>(null);
-    const nativeSearchBarRef = useRef<SearchBarCommands>(null);
     const viewTransitioningRef = useRef(false);
+    const handledQaSurfaceRef = useRef<string | null>(null);
 
     const selectedDay = state.selectedDay;
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
@@ -120,7 +122,13 @@ export default function ScheduleIndex() {
     const dropdownWidth = activeToolbarMenu === "add"
         ? Math.min(dropdownMaxWidth, 196)
         : Math.min(dropdownMaxWidth, 224);
+    const usesLiquidViewModeControl = isLiquidCalendarMenuPrototypeAvailable;
+    const actionDropdownRight = 16;
     const isSearchToolbarOpen = activeToolbarMenu === "search";
+    const searchHeaderTargetWidth = Math.max(
+        LIQUID_TOOLBAR_ACTIONS_WIDTH,
+        screenWidth - 32
+    );
     const dropdownScaleX = toolbarDropdownProgress.interpolate({
         inputRange: [0, 1],
         outputRange: [0.68, 1],
@@ -145,6 +153,43 @@ export default function ScheduleIndex() {
         inputRange: [0, 1],
         outputRange: [-8, 0],
     });
+    const searchHeaderWidth = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.1, 1],
+        outputRange: [
+            LIQUID_TOOLBAR_ACTIONS_WIDTH,
+            LIQUID_TOOLBAR_ACTIONS_WIDTH,
+            searchHeaderTargetWidth,
+        ],
+    });
+    const searchTopToolbarOpacity = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.18, 0.52],
+        outputRange: [1, 0.34, 0],
+        extrapolate: "clamp",
+    });
+    const searchMorphSeedOpacity = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.48, 0.78, 1],
+        outputRange: [1, 0.94, 0.16, 0],
+        extrapolate: "clamp",
+    });
+    const searchMorphSeedScale = searchToolbarProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 1],
+    });
+    const searchFieldContentOpacity = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.72, 1],
+        outputRange: [0, 0, 1],
+        extrapolate: "clamp",
+    });
+    const searchFieldContentTranslateX = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.72, 1],
+        outputRange: [6, 6, 0],
+        extrapolate: "clamp",
+    });
+    const searchFieldContentTranslateY = searchToolbarProgress.interpolate({
+        inputRange: [0, 0.72, 1],
+        outputRange: [3, 3, 0],
+        extrapolate: "clamp",
+    });
     const dropdownOpacity = toolbarDropdownProgress.interpolate({
         inputRange: [0, 0.32, 1],
         outputRange: [0, 0.86, 1],
@@ -153,17 +198,6 @@ export default function ScheduleIndex() {
         inputRange: [0, 0.18, 1],
         outputRange: [0, 0.92, 1],
     });
-    const usesNativeSearchBar = Platform.OS === "ios";
-    const searchHeaderScaleY = toolbarDropdownProgress.interpolate({
-        inputRange: [0, 1],
-        outputRange: [1, 1],
-    });
-    const searchHeaderTintStyle = useMemo(() => ({
-        borderBottomColor: colors.border,
-        backgroundColor: mode === "dark"
-            ? "rgba(8,9,12,0.99)"
-            : "rgba(242,242,247,1)",
-    }), [colors.border, mode]);
     const stickyWeekdayItems = useMemo(() => (
         Array.from({ length: 7 }, (_, index) => {
             const weekdayIndex = (firstDay + index) % 7;
@@ -213,9 +247,7 @@ export default function ScheduleIndex() {
         !isFocused ||
         modalVisible ||
         quickModalVisible ||
-        keyboardVisible ||
-        activeToolbarMenu !== null ||
-        toolbarMenuClosing;
+        keyboardVisible;
 
     useEffect(() => {
         const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
@@ -229,27 +261,6 @@ export default function ScheduleIndex() {
             showSubscription.remove();
             hideSubscription.remove();
         };
-    }, []);
-
-    useEffect(() => {
-        if (activeToolbarMenu !== "search" || toolbarMenuClosing) return;
-
-        const timer = setTimeout(() => {
-            if (Platform.OS === "ios") {
-                nativeSearchBarRef.current?.focus();
-                return;
-            }
-
-            searchInputRef.current?.focus();
-        }, 220);
-
-        return () => clearTimeout(timer);
-    }, [activeToolbarMenu, toolbarMenuClosing]);
-
-    const handleNativeSearchChange = useCallback((
-        event: NativeSyntheticEvent<TextInputFocusEventData>
-    ) => {
-        setSearchQuery(event.nativeEvent.text ?? "");
     }, []);
 
     const loadSchedules = useCallback(async () => {
@@ -350,12 +361,15 @@ export default function ScheduleIndex() {
         }
 
         setToolbarMenuClosing(true);
-        toolbarDropdownProgress.stopAnimation();
-        Animated.timing(toolbarDropdownProgress, {
+        const closingMenu = activeToolbarMenu;
+        const closingProgress = closingMenu === "search" ? searchToolbarProgress : toolbarDropdownProgress;
+
+        closingProgress.stopAnimation();
+        Animated.timing(closingProgress, {
             toValue: 0,
-            duration: 190,
-            easing: Easing.inOut(Easing.cubic),
-            useNativeDriver: true,
+            duration: closingMenu === "search" ? 105 : 170,
+            easing: closingMenu === "search" ? Easing.out(Easing.cubic) : Easing.inOut(Easing.cubic),
+            useNativeDriver: closingMenu !== "search",
         }).start(({ finished }) => {
             if (!finished) return;
 
@@ -363,7 +377,7 @@ export default function ScheduleIndex() {
             setToolbarMenuClosing(false);
             afterClose?.();
         });
-    }, [activeToolbarMenu, toolbarDropdownProgress]);
+    }, [activeToolbarMenu, searchToolbarProgress, toolbarDropdownProgress]);
 
     const runToolbarAction = useCallback((action: () => void) => {
         Keyboard.dismiss();
@@ -390,18 +404,40 @@ export default function ScheduleIndex() {
         Keyboard.dismiss();
         setToolbarMenuClosing(false);
         toolbarDropdownProgress.stopAnimation();
+        searchToolbarProgress.stopAnimation();
         toolbarDropdownProgress.setValue(0);
+        searchToolbarProgress.setValue(0);
         setActiveToolbarMenu(menu);
 
         requestAnimationFrame(() => {
+            if (menu === "search") {
+                Animated.timing(searchToolbarProgress, {
+                    toValue: 1,
+                    duration: 175,
+                    easing: Easing.inOut(Easing.cubic),
+                    useNativeDriver: false,
+                }).start();
+                return;
+            }
+
             Animated.spring(toolbarDropdownProgress, {
                 toValue: 1,
-                speed: 18,
-                bounciness: 9,
+                speed: 22,
+                bounciness: 7,
                 useNativeDriver: true,
             }).start();
         });
-    }, [activeToolbarMenu, closeToolbarMenu, toolbarDropdownProgress]);
+    }, [activeToolbarMenu, closeToolbarMenu, searchToolbarProgress, toolbarDropdownProgress]);
+
+    const openSearchToolbar = useCallback(() => {
+        setSearchQuery("");
+        openToolbarMenu("search");
+    }, [openToolbarMenu]);
+
+    const closeSearchToolbar = useCallback(() => {
+        setSearchQuery("");
+        closeToolbarMenu();
+    }, [closeToolbarMenu]);
 
     const qaInitialValues = useMemo<ScheduleParseResult>(() => {
         const sample = createQaScheduleItem();
@@ -423,7 +459,13 @@ export default function ScheduleIndex() {
     }, []);
 
     useEffect(() => {
-        if (!qaSurface) return;
+        if (!qaSurface) {
+            handledQaSurfaceRef.current = null;
+            return;
+        }
+
+        if (handledQaSurfaceRef.current === qaSurface) return;
+        handledQaSurfaceRef.current = qaSurface;
 
         if (qaSurface === "popover") {
             if (activeToolbarMenu !== "view") openToolbarMenu("view");
@@ -575,7 +617,6 @@ export default function ScheduleIndex() {
 
     const bottomLeftActions = useMemo<FloatingBarAction[]>(() => [{
             key: "today",
-            icon: "calendar-outline",
             label: "오늘",
             accessibilityLabel: "오늘 날짜로 이동",
             onPress: handleGoToday,
@@ -590,37 +631,8 @@ export default function ScheduleIndex() {
     }], [openProfile]);
 
     return (
-        <View style={[styles.root, { backgroundColor: colors.background }]}>
+        <View style={[styles.root, { backgroundColor: colors.calendarBackground }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
-
-            <View
-                pointerEvents="none"
-                style={[
-                    styles.topMaterialLayer,
-                    {
-                        height: Math.max(insets.top + 160, 188),
-                    },
-                ]}
-            >
-                <View
-                    style={[
-                        styles.topMaterialBand,
-                        mode === "dark" ? styles.topMaterialBandDark : styles.topMaterialBandLight,
-                    ]}
-                />
-                <View
-                    style={[
-                        styles.topFadeBandStrong,
-                        mode === "dark" ? styles.topFadeBandDark : styles.topFadeBandLight,
-                    ]}
-                />
-                <View
-                    style={[
-                        styles.topFadeBandSoft,
-                        mode === "dark" ? styles.topFadeBandSoftDark : styles.topFadeBandSoftLight,
-                    ]}
-                />
-            </View>
 
             <View
                 pointerEvents="none"
@@ -630,7 +642,7 @@ export default function ScheduleIndex() {
                 ]}
             />
 
-            {(activeToolbarMenu !== null || toolbarMenuClosing) && (
+            {((activeToolbarMenu !== null || toolbarMenuClosing) && activeToolbarMenu !== "search") && (
                 <Pressable style={styles.toolbarDropdownBackdrop} onPress={() => closeToolbarMenu()} />
             )}
 
@@ -638,102 +650,58 @@ export default function ScheduleIndex() {
                 pointerEvents="box-none"
                 style={styles.toolbarLayer}
             >
-                {!isSearchToolbarOpen && (
-                    <View style={{ paddingTop: insets.top }}>
+                {(
+                    <Animated.View
+                        pointerEvents={isSearchToolbarOpen ? "none" : "box-none"}
+                        style={[
+                            { paddingTop: insets.top },
+                            isSearchToolbarOpen && { opacity: searchTopToolbarOpacity },
+                        ]}
+                    >
                         <View style={styles.toolbar}>
-                            <CalendarGlassSurface
-                                interactive
-                                clear
-                                tone="softGlass"
-                                style={[
-                                    styles.yearGlass,
-                                    { borderColor: colors.border },
-                                ]}
-                            >
-                                <Pressable
-                                    onPress={openYearOverview}
+                            {isLiquidGlassIconButtonAvailable ? (
+                                <LiquidGlassIconButton
+                                    leadingSymbolName="chevron.left"
+                                    label={`${visibleYear}년`}
+                                    buttonWidth={LIQUID_YEAR_PILL_WIDTH}
+                                    buttonHeight={58}
+                                    colorScheme={mode}
                                     accessibilityLabel={`${visibleYear}년 전체 월 보기`}
-                                    style={({ pressed }) => [
-                                        styles.yearButton,
-                                        {
-                                            opacity: pressed ? 0.7 : 1,
-                                            transform: [{ scale: pressed ? 0.96 : 1 }],
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
-                                    <Text style={[styles.yearText, { color: colors.textPrimary }]}>
-                                        {visibleYear}년
-                                    </Text>
-                                </Pressable>
-                            </CalendarGlassSurface>
-
-                            {activeToolbarMenu === null && !toolbarMenuClosing ? (
+                                    onPress={openYearOverview}
+                                    style={styles.yearNativeGlass}
+                                />
+                            ) : (
                                 <CalendarGlassSurface
                                     interactive
                                     clear
+                                    glow
+                                    variant="bottomBar"
                                     tone="softGlass"
                                     style={[
-                                        styles.toolbarActions,
+                                        styles.yearGlass,
                                         { borderColor: colors.border },
                                     ]}
                                 >
                                     <Pressable
-                                        onPress={() => openToolbarMenu("view")}
-                                        accessibilityLabel="캘린더 보기 방식 선택"
+                                        onPress={openYearOverview}
+                                        accessibilityLabel={`${visibleYear}년 전체 월 보기`}
                                         style={({ pressed }) => [
-                                            styles.iconButton,
+                                            styles.yearButton,
                                             {
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.88 : 1 }],
+                                                opacity: pressed ? 0.7 : 1,
+                                                transform: [{ scale: pressed ? 0.96 : 1 }],
                                             },
                                         ]}
                                     >
-                                        <Animated.View
-                                            style={{
-                                                opacity: calendarTransition,
-                                                transform: [{ scale: calendarIconScale }],
-                                            }}
-                                        >
-                                            <CalendarViewModeGlyph
-                                                mode={calendarViewMode}
-                                                color={colors.textPrimary}
-                                                size={27}
-                                            />
-                                        </Animated.View>
-                                    </Pressable>
-
-                                    <Pressable
-                                        onPress={() => openToolbarMenu("search")}
-                                        accessibilityLabel="일정 검색"
-                                        style={({ pressed }) => [
-                                            styles.iconButton,
-                                            {
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.88 : 1 }],
-                                            },
-                                        ]}
-                                    >
-                                        <Ionicons name="search" size={24} color={colors.textPrimary} />
-                                    </Pressable>
-
-                                    <Pressable
-                                        onPress={() => openToolbarMenu("add")}
-                                        accessibilityLabel="일정 추가"
-                                        style={({ pressed }) => [
-                                            styles.iconButton,
-                                            {
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.88 : 1 }],
-                                            },
-                                        ]}
-                                    >
-                                        <Ionicons name="add" size={27} color={colors.textPrimary} />
+                                        <Ionicons name="chevron-back" size={28} color={colors.textPrimary} />
+                                        <Text style={[styles.yearText, { color: colors.textPrimary }]}>
+                                            {visibleYear}년
+                                        </Text>
                                     </Pressable>
                                 </CalendarGlassSurface>
-                            ) : (
-                                <View style={styles.toolbarActionsPlaceholder} />
                             )}
+
+                            <View pointerEvents="none" style={styles.toolbarActionsPlaceholder} />
                         </View>
 
                     {showsFloatingMonthTitle && (
@@ -743,7 +711,252 @@ export default function ScheduleIndex() {
                             </Text>
                         </View>
                     )}
-                    </View>
+                    </Animated.View>
+                )}
+
+                {usesLiquidViewModeControl ? (
+                    <Animated.View
+                        pointerEvents="box-none"
+                        style={[
+                            styles.liquidViewModeControl,
+                            {
+                                top: insets.top + 8,
+                                right: 16,
+                                width: searchHeaderTargetWidth,
+                            },
+                        ]}
+                    >
+                        <LiquidCalendarMenuPrototype
+                            selectedMode={calendarViewMode}
+                            colorScheme={mode === "dark" ? "dark" : "light"}
+                            searchExpandedWidth={searchHeaderTargetWidth}
+                            searchQuery={searchQuery}
+                            onSelect={handleCalendarViewModeChange}
+                            onSearch={openSearchToolbar}
+                            onSearchTextChange={setSearchQuery}
+                            onSearchClose={closeSearchToolbar}
+                            onQuickAdd={openQuickSchedule}
+                            onManualAdd={openBlankSchedule}
+                            onManageCategories={openCategoryManager}
+                            style={StyleSheet.absoluteFill}
+                        />
+                    </Animated.View>
+                ) : (
+                    <Animated.View
+                        pointerEvents="box-none"
+                        style={[
+                            styles.scheduleActionPillLayer,
+                            {
+                                top: insets.top + 8,
+                                right: 16,
+                                width: searchHeaderWidth,
+                            },
+                        ]}
+                    >
+                        <CalendarGlassSurface
+                            interactive
+                            clear
+                            glow
+                            variant="bottomBar"
+                            tone="softGlass"
+                            style={[
+                                styles.toolbarActions,
+                                { borderColor: colors.border },
+                            ]}
+                        >
+                            <Animated.View
+                                pointerEvents={isSearchToolbarOpen ? "none" : "auto"}
+                                style={[
+                                    styles.searchFieldSeedRow,
+                                    {
+                                        opacity: searchMorphSeedOpacity,
+                                        transform: [{ scale: searchMorphSeedScale }],
+                                    },
+                                ]}
+                            >
+                                <Pressable
+                                    onPress={() => openToolbarMenu("view")}
+                                    accessibilityLabel="캘린더 보기 방식 선택"
+                                    style={({ pressed }) => [
+                                        styles.iconButton,
+                                        {
+                                            opacity: pressed ? 0.68 : 1,
+                                            transform: [{ scale: pressed ? 0.88 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <Animated.View
+                                        style={{
+                                            opacity: calendarTransition,
+                                            transform: [{ scale: calendarIconScale }],
+                                        }}
+                                    >
+                                        <CalendarViewModeGlyph
+                                            mode={calendarViewMode}
+                                            color={colors.textPrimary}
+                                            size={27}
+                                        />
+                                    </Animated.View>
+                                </Pressable>
+
+                                <Pressable
+                                    onPress={openSearchToolbar}
+                                    accessibilityLabel="일정 검색"
+                                    style={({ pressed }) => [
+                                        styles.iconButton,
+                                        {
+                                            opacity: pressed ? 0.68 : 1,
+                                            transform: [{ scale: pressed ? 0.88 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons name="search" size={24} color={colors.textPrimary} />
+                                </Pressable>
+
+                                <Pressable
+                                    onPress={() => openToolbarMenu("add")}
+                                    accessibilityLabel="일정 추가"
+                                    style={({ pressed }) => [
+                                        styles.iconButton,
+                                        {
+                                            opacity: pressed ? 0.68 : 1,
+                                            transform: [{ scale: pressed ? 0.88 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons name="add" size={27} color={colors.textPrimary} />
+                                </Pressable>
+                            </Animated.View>
+
+                            <Animated.View
+                                pointerEvents={isSearchToolbarOpen ? "auto" : "none"}
+                                style={[
+                                    styles.searchFieldInner,
+                                    {
+                                        opacity: searchFieldContentOpacity,
+                                        transform: [
+                                            { translateX: searchFieldContentTranslateX },
+                                            { translateY: searchFieldContentTranslateY },
+                                        ],
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="search" size={20} color={colors.textPrimary} />
+                                <TextInput
+                                    ref={searchInputRef}
+                                    value={searchQuery}
+                                    onChangeText={setSearchQuery}
+                                    placeholder="검색"
+                                    placeholderTextColor={colors.textSecondary}
+                                    returnKeyType="search"
+                                    selectionColor={colors.textPrimary}
+                                    style={[styles.searchHeaderInput, { color: colors.textPrimary }]}
+                                />
+                                {searchQuery.length > 0 ? (
+                                    <Pressable
+                                        onPress={() => setSearchQuery("")}
+                                        accessibilityLabel="검색어 지우기"
+                                        hitSlop={12}
+                                        style={({ pressed }) => [
+                                            styles.searchHeaderIconButton,
+                                            { opacity: pressed ? 0.58 : 1 },
+                                        ]}
+                                    >
+                                        <Ionicons name="close-circle" size={25} color={colors.textSecondary} />
+                                    </Pressable>
+                                ) : null}
+                                <Pressable
+                                    onPressIn={closeSearchToolbar}
+                                    onPress={closeSearchToolbar}
+                                    accessibilityLabel="검색 닫기"
+                                    hitSlop={12}
+                                    style={({ pressed }) => [
+                                        styles.searchHeaderIconButton,
+                                        { opacity: pressed ? 0.58 : 1 },
+                                    ]}
+                                >
+                                    <Ionicons name="close" size={24} color={colors.textPrimary} />
+                                </Pressable>
+                            </Animated.View>
+                        </CalendarGlassSurface>
+                    </Animated.View>
+                )}
+
+                {isSearchToolbarOpen && searchQuery.trim().length > 0 && (
+                    <Animated.View
+                        pointerEvents="box-none"
+                        style={[
+                            styles.searchResultsLayer,
+                            {
+                                top: insets.top + 74,
+                                right: 16,
+                                width: searchHeaderTargetWidth,
+                                opacity: searchFieldContentOpacity,
+                                transform: [{ translateY: searchFieldContentTranslateY }],
+                            },
+                        ]}
+                    >
+                        <CalendarGlassSurface
+                            interactive
+                            prominent
+                            style={[
+                                styles.searchResultsGlass,
+                                { borderColor: colors.border },
+                            ]}
+                        >
+                            {searchResults.length === 0 ? (
+                                <View style={styles.dropdownEmpty}>
+                                    <Text style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}>
+                                        검색 결과가 없어요
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={styles.searchResultList}>
+                                    {searchResults.map((item) => (
+                                        <Pressable
+                                            key={item.id}
+                                            onPress={() => openScheduleFromSearch(item.id)}
+                                            style={({ pressed }) => [
+                                                styles.searchResultRow,
+                                                {
+                                                    borderBottomColor: colors.border,
+                                                    backgroundColor: pressed
+                                                        ? mode === "dark"
+                                                            ? "rgba(255,255,255,0.08)"
+                                                            : "rgba(0,0,0,0.05)"
+                                                        : "transparent",
+                                                },
+                                            ]}
+                                        >
+                                            <View
+                                                style={[
+                                                    styles.searchResultBar,
+                                                    { backgroundColor: item.category?.color ?? "#8e8e93" },
+                                                ]}
+                                            />
+                                            <View style={styles.searchResultBody}>
+                                                <Text
+                                                    numberOfLines={1}
+                                                    style={[styles.searchResultTitle, { color: colors.textPrimary }]}
+                                                >
+                                                    {item.title}
+                                                </Text>
+                                                <Text
+                                                    numberOfLines={1}
+                                                    style={[styles.searchResultMeta, { color: colors.textSecondary }]}
+                                                >
+                                                    {formatScheduleDateTitle(item.startAt)}
+                                                </Text>
+                                            </View>
+                                            <Text style={[styles.searchResultTime, { color: colors.textSecondary }]}>
+                                                {item.allDay ? "종일" : formatScheduleTime(item.startAt)}
+                                            </Text>
+                                        </Pressable>
+                                    ))}
+                                </View>
+                            )}
+                        </CalendarGlassSurface>
+                    </Animated.View>
                 )}
 
                 {showsStickyCalendarHeader && (
@@ -799,200 +1012,7 @@ export default function ScheduleIndex() {
                     </View>
                 )}
 
-                {isSearchToolbarOpen && (
-                    <Animated.View
-                        pointerEvents="box-none"
-                        style={[
-                            styles.searchHeaderOverlay,
-                            {
-                                top: insets.top + 7,
-                                opacity: dropdownOpacity,
-                                transform: [
-                                    { translateY: dropdownTranslateY },
-                                    { scaleX: dropdownScaleX },
-                                    { scaleY: searchHeaderScaleY },
-                                ],
-                            },
-                        ]}
-                    >
-                        <View
-                            pointerEvents="none"
-                            style={[
-                                styles.searchHeaderBackdrop,
-                                searchHeaderTintStyle,
-                                {
-                                    top: -(insets.top + 16),
-                                    height: insets.top + 104,
-                                },
-                            ]}
-                        />
-                        <View style={[
-                            styles.searchHeaderRow,
-                            usesNativeSearchBar && styles.nativeSearchHeaderRow,
-                        ]}>
-                            {usesNativeSearchBar ? (
-                                <View
-                                    style={[
-                                        styles.nativeSearchHost,
-                                        {
-                                            backgroundColor: mode === "dark"
-                                                ? "rgba(28,29,34,0.98)"
-                                                : "rgba(255,255,255,0.98)",
-                                        },
-                                    ]}
-                                >
-                                    <NativeSearchBar
-                                        ref={nativeSearchBarRef}
-                                        placeholder="검색"
-                                        autoCapitalize="none"
-                                        hideWhenScrolling={false}
-                                        hideNavigationBar
-                                        obscureBackground={false}
-                                        placement="stacked"
-                                        allowToolbarIntegration={false}
-                                        tintColor={colors.textPrimary}
-                                        textColor={colors.textPrimary}
-                                        barTintColor="rgba(118,118,128,0.22)"
-                                        onChangeText={handleNativeSearchChange}
-                                        onSearchButtonPress={() => Keyboard.dismiss()}
-                                        onCancelButtonPress={() => {
-                                            setSearchQuery("");
-                                            closeToolbarMenu();
-                                        }}
-                                        style={styles.nativeSearchBar}
-                                    />
-                                </View>
-                            ) : (
-                                <CalendarGlassSurface
-                                    interactive
-                                    clear
-                                    style={[
-                                        styles.searchFieldGlass,
-                                        { borderColor: colors.border },
-                                    ]}
-                                >
-                                    <View style={styles.searchFieldInner}>
-                                        <Ionicons name="search" size={20} color={colors.textPrimary} />
-                                        <TextInput
-                                            ref={searchInputRef}
-                                            value={searchQuery}
-                                            onChangeText={setSearchQuery}
-                                            placeholder="검색"
-                                            placeholderTextColor={colors.textSecondary}
-                                            returnKeyType="search"
-                                            selectionColor={colors.textPrimary}
-                                            style={[styles.searchHeaderInput, { color: colors.textPrimary }]}
-                                        />
-                                        {searchQuery.length > 0 ? (
-                                            <Pressable
-                                                onPress={() => setSearchQuery("")}
-                                                accessibilityLabel="검색어 지우기"
-                                                style={({ pressed }) => [
-                                                    styles.searchHeaderIconButton,
-                                                    { opacity: pressed ? 0.58 : 1 },
-                                                ]}
-                                            >
-                                                <Ionicons name="close-circle" size={25} color={colors.textSecondary} />
-                                            </Pressable>
-                                        ) : (
-                                            <Ionicons name="mic-outline" size={21} color={colors.textPrimary} />
-                                        )}
-                                    </View>
-                                </CalendarGlassSurface>
-                            )}
-
-                            {!usesNativeSearchBar && (
-                                <CalendarGlassSurface
-                                    interactive
-                                    clear
-                                    style={[
-                                        styles.searchCloseGlass,
-                                        { borderColor: colors.border },
-                                    ]}
-                                >
-                                    <Pressable
-                                        onPress={() => closeToolbarMenu()}
-                                        accessibilityLabel="검색 닫기"
-                                        style={({ pressed }) => [
-                                            styles.searchCloseButton,
-                                            {
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.9 : 1 }],
-                                            },
-                                        ]}
-                                    >
-                                        <Ionicons name="close" size={25} color={colors.textPrimary} />
-                                    </Pressable>
-                                </CalendarGlassSurface>
-                            )}
-                        </View>
-
-                        {searchQuery.trim().length > 0 && (
-                            <CalendarGlassSurface
-                                interactive
-                                prominent
-                                style={[
-                                    styles.searchResultsGlass,
-                                    { borderColor: colors.border },
-                                ]}
-                            >
-                                {searchResults.length === 0 ? (
-                                    <View style={styles.dropdownEmpty}>
-                                        <Text style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}>
-                                            검색 결과가 없어요
-                                        </Text>
-                                    </View>
-                                ) : (
-                                    <View style={styles.searchResultList}>
-                                        {searchResults.map((item) => (
-                                            <Pressable
-                                                key={item.id}
-                                                onPress={() => openScheduleFromSearch(item.id)}
-                                                style={({ pressed }) => [
-                                                    styles.searchResultRow,
-                                                    {
-                                                        borderBottomColor: colors.border,
-                                                        backgroundColor: pressed
-                                                            ? mode === "dark"
-                                                                ? "rgba(255,255,255,0.08)"
-                                                                : "rgba(0,0,0,0.05)"
-                                                            : "transparent",
-                                                    },
-                                                ]}
-                                            >
-                                                <View
-                                                    style={[
-                                                        styles.searchResultBar,
-                                                        { backgroundColor: item.category?.color ?? "#8e8e93" },
-                                                    ]}
-                                                />
-                                                <View style={styles.searchResultBody}>
-                                                    <Text
-                                                        numberOfLines={1}
-                                                        style={[styles.searchResultTitle, { color: colors.textPrimary }]}
-                                                    >
-                                                        {item.title}
-                                                    </Text>
-                                                    <Text
-                                                        numberOfLines={1}
-                                                        style={[styles.searchResultMeta, { color: colors.textSecondary }]}
-                                                    >
-                                                        {formatScheduleDateTitle(item.startAt)}
-                                                    </Text>
-                                                </View>
-                                                <Text style={[styles.searchResultTime, { color: colors.textSecondary }]}>
-                                                    {item.allDay ? "종일" : formatScheduleTime(item.startAt)}
-                                                </Text>
-                                            </Pressable>
-                                        ))}
-                                    </View>
-                                )}
-                            </CalendarGlassSurface>
-                        )}
-                    </Animated.View>
-                )}
-
-                {activeToolbarMenu === "view" && (
+                {!usesLiquidViewModeControl && activeToolbarMenu === "view" && (
                     <Animated.View
                         pointerEvents="box-none"
                         style={[
@@ -1112,6 +1132,7 @@ export default function ScheduleIndex() {
                             styles.toolbarDropdownPosition,
                             {
                                 top: insets.top + 7,
+                                right: actionDropdownRight,
                                 width: dropdownWidth,
                                 opacity: dropdownOpacity,
                                 transform: [
@@ -1275,7 +1296,6 @@ const styles = StyleSheet.create({
     },
     topMaterialLayer: {
         position: "absolute",
-        top: 0,
         left: 0,
         right: 0,
         zIndex: 30,
@@ -1286,7 +1306,7 @@ const styles = StyleSheet.create({
         top: 0,
         left: 0,
         right: 0,
-        height: 98,
+        height: 34,
     },
     topMaterialBandDark: {
         backgroundColor: "rgba(0,0,0,0.30)",
@@ -1296,10 +1316,10 @@ const styles = StyleSheet.create({
     },
     topFadeBandStrong: {
         position: "absolute",
-        top: 78,
+        top: 18,
         left: 0,
         right: 0,
-        height: 64,
+        height: 54,
     },
     topFadeBandDark: {
         backgroundColor: "rgba(0,0,0,0.11)",
@@ -1309,7 +1329,7 @@ const styles = StyleSheet.create({
     },
     topFadeBandSoft: {
         position: "absolute",
-        top: 136,
+        top: 66,
         left: 0,
         right: 0,
         height: 60,
@@ -1366,10 +1386,10 @@ const styles = StyleSheet.create({
         ...StyleSheet.absoluteFillObject,
     },
     stickyHeaderBackdropDark: {
-        backgroundColor: "rgba(7,8,11,0.70)",
+        backgroundColor: "transparent",
     },
     stickyHeaderBackdropLight: {
-        backgroundColor: "rgba(242,242,247,0.74)",
+        backgroundColor: "transparent",
     },
     stickyHeaderBackdropTop: {
         position: "absolute",
@@ -1379,10 +1399,10 @@ const styles = StyleSheet.create({
         height: 42,
     },
     stickyHeaderBackdropTopDark: {
-        backgroundColor: "rgba(0,0,0,0.14)",
+        backgroundColor: "transparent",
     },
     stickyHeaderBackdropTopLight: {
-        backgroundColor: "rgba(255,255,255,0.20)",
+        backgroundColor: "transparent",
     },
     stickyHeaderBackdropBottom: {
         position: "absolute",
@@ -1392,10 +1412,10 @@ const styles = StyleSheet.create({
         height: 58,
     },
     stickyHeaderBackdropBottomDark: {
-        backgroundColor: "rgba(0,0,0,0.08)",
+        backgroundColor: "transparent",
     },
     stickyHeaderBackdropBottomLight: {
-        backgroundColor: "rgba(255,255,255,0.12)",
+        backgroundColor: "transparent",
     },
     stickyMonthHeader: {
         height: STICKY_MONTH_HEADER_HEIGHT,
@@ -1445,49 +1465,31 @@ const styles = StyleSheet.create({
         elevation: 40,
         overflow: "visible",
     },
-    searchHeaderOverlay: {
+    scheduleActionPillLayer: {
         position: "absolute",
-        left: 0,
-        right: 0,
-        transformOrigin: "top right",
-        zIndex: 46,
-        elevation: 46,
-        paddingHorizontal: 18,
-        paddingTop: 2,
-        paddingBottom: 7,
+        zIndex: 56,
+        elevation: 56,
     },
-    searchHeaderBackdrop: {
+    liquidViewModeControl: {
         position: "absolute",
-        left: 0,
-        right: 0,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        height: LIQUID_VIEW_MODE_CONTROL_HEIGHT,
+        zIndex: 56,
+        elevation: 56,
+        overflow: "visible",
     },
-    searchHeaderRow: {
-        minHeight: 44,
+    searchFieldSeedRow: {
+        position: "absolute",
+        top: 0,
+        right: 0,
+        width: LIQUID_TOOLBAR_ACTIONS_WIDTH,
+        height: 58,
+        borderRadius: 29,
+        zIndex: 2,
+        elevation: 2,
         flexDirection: "row",
         alignItems: "center",
-        gap: 11,
-    },
-    nativeSearchHeaderRow: {
-        gap: 0,
-    },
-    nativeSearchHost: {
-        flex: 1,
-        minWidth: 0,
-        height: 44,
-        borderRadius: 22,
-        overflow: "hidden",
-    },
-    nativeSearchBar: {
-        flex: 1,
-        height: 44,
-    },
-    searchFieldGlass: {
-        flex: 1,
-        minWidth: 0,
-        height: 44,
-        borderRadius: 22,
-        borderWidth: Platform.OS === "ios" ? StyleSheet.hairlineWidth : 1,
+        justifyContent: "space-around",
+        paddingHorizontal: 11,
     },
     searchFieldInner: {
         flex: 1,
@@ -1496,8 +1498,10 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 9,
-        paddingLeft: 14,
-        paddingRight: 14,
+        paddingLeft: 18,
+        paddingRight: 12,
+        zIndex: 3,
+        elevation: 3,
     },
     searchHeaderInput: {
         flex: 1,
@@ -1508,61 +1512,63 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     searchHeaderIconButton: {
-        width: 28,
-        height: 28,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    searchCloseGlass: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        borderWidth: Platform.OS === "ios" ? StyleSheet.hairlineWidth : 1,
-    },
-    searchCloseButton: {
-        flex: 1,
+        width: 34,
+        height: 34,
         alignItems: "center",
         justifyContent: "center",
     },
     searchResultsGlass: {
-        marginTop: 10,
-        borderRadius: 26,
+        marginTop: 8,
+        borderRadius: 22,
         borderWidth: 1,
         overflow: "hidden",
+        maxHeight: 260,
+    },
+    searchResultsLayer: {
+        position: "absolute",
+        zIndex: 55,
+        elevation: 55,
     },
     toolbarActions: {
         flexDirection: "row",
         alignItems: "center",
-        borderRadius: 26,
+        height: 58,
+        borderRadius: 29,
         borderWidth: Platform.OS === "ios" ? 0 : 1,
-        paddingHorizontal: 2,
+        paddingHorizontal: 0,
+        overflow: "hidden",
     },
     toolbarActionsPlaceholder: {
-        width: 160,
-        height: 52,
+        width: LIQUID_TOOLBAR_ACTIONS_WIDTH,
+        height: 58,
     },
     yearGlass: {
-        minHeight: 44,
-        borderRadius: 22,
+        height: 58,
+        borderRadius: 29,
         borderWidth: Platform.OS === "ios" ? 0 : 1,
+        overflow: "hidden",
+    },
+    yearNativeGlass: {
+        width: LIQUID_YEAR_PILL_WIDTH,
+        height: 58,
     },
     yearButton: {
-        minHeight: 44,
-        borderRadius: 22,
+        height: 58,
+        borderRadius: 29,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingLeft: 10,
-        paddingRight: 15,
-        gap: 3,
+        paddingLeft: 13,
+        paddingRight: 18,
+        gap: 4,
     },
     yearText: {
         fontWeight: "900",
-        fontSize: 17,
+        fontSize: 20,
     },
     iconButton: {
         width: 58,
-        height: 52,
+        height: 58,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -1725,7 +1731,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     dropdownEmpty: {
-        minHeight: 142,
+        minHeight: 74,
         alignItems: "center",
         justifyContent: "center",
         gap: 10,

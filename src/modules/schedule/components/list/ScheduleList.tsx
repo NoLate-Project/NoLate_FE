@@ -90,19 +90,32 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                         <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
                             {error}
                         </Text>
-                        <Pressable
-                            onPress={onPressRetry}
-                            style={({ pressed }) => ({
-                                paddingVertical: 7,
-                                paddingHorizontal: 14,
-                                borderRadius: 18,
-                                backgroundColor: pressed ? colors.surface2 : colors.selectedDayBg,
-                            })}
+                        <CalendarGlassSurface
+                            interactive
+                            clear
+                            glow
+                            variant="bottomBar"
+                            tone="softGlass"
+                            style={[
+                                styles.retryGlass,
+                                { borderColor: colors.border },
+                            ]}
                         >
-                            <Text style={{ color: colors.selectedDayText, fontWeight: "700", fontSize: 13 }}>
-                                다시 조회
-                            </Text>
-                        </Pressable>
+                            <Pressable
+                                onPress={onPressRetry}
+                                style={({ pressed }) => [
+                                    styles.retryButton,
+                                    {
+                                        opacity: pressed ? 0.74 : 1,
+                                        transform: [{ scale: pressed ? 0.94 : 1 }],
+                                    },
+                                ]}
+                            >
+                                <Text style={[styles.retryText, { color: colors.textPrimary }]}>
+                                    다시 조회
+                                </Text>
+                            </Pressable>
+                        </CalendarGlassSurface>
                     </CalendarGlassSurface>
                 ) : (
                     items.length === 0 ? (
@@ -146,5 +159,23 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
+    },
+    retryGlass: {
+        height: 44,
+        borderRadius: 22,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: "hidden",
+    },
+    retryButton: {
+        height: 44,
+        borderRadius: 22,
+        paddingHorizontal: 18,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    retryText: {
+        fontWeight: "800",
+        fontSize: 14,
+        letterSpacing: 0,
     },
 });

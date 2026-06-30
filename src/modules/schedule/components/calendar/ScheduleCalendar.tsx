@@ -599,7 +599,7 @@ const styles = StyleSheet.create({
         paddingBottom: 156,
     },
     continuousMonth: {
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: 0,
     },
     continuousMonthHeader: {
         height: CONTINUOUS_MONTH_HEADER_HEIGHT,

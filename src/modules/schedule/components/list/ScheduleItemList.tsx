@@ -1,5 +1,5 @@
 import React from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { FlatList, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import type { ScheduleItem } from "../../types";
 import ScheduleItemCard from "./ScheduleItemCard";
@@ -7,10 +7,6 @@ import ScheduleItemCard from "./ScheduleItemCard";
 type Props = {
     items: ScheduleItem[];
 };
-
-function ItemSeparator() {
-    return <View style={styles.separator} />;
-}
 
 // 일정 배열을 상세 이동이 가능한 카드 리스트로 표시한다.
 export default function ScheduleItemList({ items }: Props) {
@@ -28,16 +24,21 @@ export default function ScheduleItemList({ items }: Props) {
         <FlatList
             data={items}
             keyExtractor={(i) => i.id}
-            ItemSeparatorComponent={ItemSeparator}
-            renderItem={({ item }) => (
-                <ScheduleItemCard item={item} onPress={() => openDetail(item.id)} />
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.content}
+            renderItem={({ item, index }) => (
+                <ScheduleItemCard
+                    item={item}
+                    isLast={index === items.length - 1}
+                    onPress={() => openDetail(item.id)}
+                />
             )}
         />
     );
 }
 
 const styles = StyleSheet.create({
-    separator: {
-        height: 10,
+    content: {
+        paddingBottom: 112,
     },
 });

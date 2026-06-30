@@ -1,120 +1,162 @@
 import React from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatHHmm } from "../../../../../lib/util/data";
 import { getTravelModeLabel } from "../../travelMode";
-import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 
 type Props = {
     item: ScheduleItem;
     onPress: () => void;
+    isLast?: boolean;
 };
 
-// 단일 일정의 시간, 카테고리, 이동 경로 요약을 카드로 표시한다.
-export default function ScheduleItemCard({ item, onPress }: Props) {
-    const { colors } = useTheme();
+function getTimeBlock(item: ScheduleItem) {
+    if (item.allDay) {
+        return { primary: "종일", secondary: "" };
+    }
+
+    const start = formatHHmm(item.startAt);
+    if (item.hasEndTime === false) {
+        return { primary: start, secondary: "" };
+    }
+
+    return {
+        primary: start,
+        secondary: formatHHmm(item.endAt),
+    };
+}
+
+// 단일 일정을 Apple Calendar에 가까운 얇은 행 형태로 표시한다.
+export default function ScheduleItemCard({ item, onPress, isLast = false }: Props) {
+    const { colors, mode } = useTheme();
     const categoryColor = item.category?.color ?? "#555";
     const routeText =
         item.origin?.name && item.destination?.name
             ? `${item.origin.name} → ${item.destination.name}`
             : item.locationName;
+    const time = getTimeBlock(item);
+    const travelText = typeof item.travelMinutes === "number"
+        ? `${getTravelModeLabel(item.travelMode ?? "ETC")} ${item.travelMinutes}분`
+        : "";
+    const metaText = [
+        item.category?.title,
+        routeText,
+        travelText,
+    ].filter(Boolean).join(" · ");
+    const pressedBackground = mode === "dark"
+        ? "rgba(255,255,255,0.06)"
+        : "rgba(0,0,0,0.045)";
 
     return (
         <Pressable
             onPress={onPress}
-            style={({ pressed }) => ({
-                opacity: pressed ? 0.72 : 1,
-                transform: [{ scale: pressed ? 0.99 : 1 }],
-            })}
+            style={({ pressed }) => [
+                styles.row,
+                pressed && { backgroundColor: pressedBackground },
+            ]}
         >
-            <CalendarGlassSurface
-                variant="card"
-                style={{
-                    borderRadius: 18,
-                    borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: colors.border,
-                    overflow: "hidden",
-                    flexDirection: "row",
-                }}
-            >
-            <View
-                style={{
-                    width: 4,
-                    backgroundColor: categoryColor,
-                    borderTopLeftRadius: 18,
-                    borderBottomLeftRadius: 18,
-                }}
-            />
-
-            <View style={{ flex: 1, paddingVertical: 15, paddingHorizontal: 14 }}>
-                <View
-                    style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                    }}
+            <View style={styles.timeColumn}>
+                <Text
+                    numberOfLines={1}
+                    style={[styles.timePrimary, { color: colors.textPrimary }]}
                 >
+                    {time.primary}
+                </Text>
+                {time.secondary ? (
                     <Text
                         numberOfLines={1}
-                        style={{
-                            fontSize: 16,
-                            fontWeight: "700",
-                            color: colors.textPrimary,
-                            flex: 1,
-                            marginRight: 8,
-                        }}
+                        style={[styles.timeSecondary, { color: colors.textSecondary }]}
                     >
-                        {item.title}
+                        {time.secondary}
                     </Text>
+                ) : null}
+            </View>
 
-                    <View
-                        style={{
-                            paddingVertical: 3,
-                            paddingHorizontal: 9,
-                            borderRadius: 20,
-                            backgroundColor: colors.surface2,
-                        }}
-                    >
-                        <Text
-                            style={{
-                                fontSize: 11,
-                                fontWeight: "500",
-                                color: colors.textSecondary,
-                            }}
-                        >
-                            {item.category?.title ?? "기타"}
-                        </Text>
-                    </View>
-                </View>
+            <View style={[styles.categoryRail, { backgroundColor: categoryColor }]} />
 
-                <Text style={{ marginTop: 5, color: colors.textSecondary, fontSize: 13 }}>
-                    {item.hasEndTime === false
-                        ? formatHHmm(item.startAt)
-                        : `${formatHHmm(item.startAt)} – ${formatHHmm(item.endAt)}`}
+            <View
+                style={[
+                    styles.body,
+                    !isLast && [
+                        styles.bodyDivider,
+                        { borderBottomColor: colors.border },
+                    ],
+                ]}
+            >
+                <Text
+                    numberOfLines={1}
+                    style={[styles.title, { color: colors.textPrimary }]}
+                >
+                    {item.title}
                 </Text>
 
-                {routeText ? (
-                    <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, gap: 4 }}>
-                        <Ionicons name="location-outline" size={13} color={colors.textSecondary} />
-                        <Text
-                            style={{ flex: 1, color: colors.textSecondary, fontSize: 12, opacity: 0.8 }}
-                            numberOfLines={1}
-                        >
-                            {routeText}
-                        </Text>
-                    </View>
-                ) : null}
-
-                {!!item.travelMode && (
-                    <Text style={{ marginTop: 3, color: colors.textSecondary, fontSize: 12, opacity: 0.7 }}>
-                        {getTravelModeLabel(item.travelMode)}
-                        {typeof item.travelMinutes === "number" ? ` · ${item.travelMinutes}분` : ""}
+                {metaText ? (
+                    <Text
+                        numberOfLines={1}
+                        style={[styles.meta, { color: colors.textSecondary }]}
+                    >
+                        {metaText}
                     </Text>
-                )}
+                ) : null}
             </View>
-            </CalendarGlassSurface>
         </Pressable>
     );
 }
+
+const styles = StyleSheet.create({
+    row: {
+        minHeight: 72,
+        flexDirection: "row",
+        alignItems: "stretch",
+        borderRadius: 12,
+    },
+    timeColumn: {
+        width: 64,
+        paddingTop: 13,
+        paddingLeft: 2,
+        paddingRight: 10,
+        alignItems: "flex-end",
+    },
+    timePrimary: {
+        fontSize: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    timeSecondary: {
+        marginTop: 3,
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    categoryRail: {
+        width: 4,
+        marginTop: 14,
+        marginBottom: 14,
+        borderRadius: 2,
+    },
+    body: {
+        flex: 1,
+        minWidth: 0,
+        paddingTop: 12,
+        paddingBottom: 12,
+        paddingLeft: 12,
+        paddingRight: 4,
+    },
+    bodyDivider: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    title: {
+        fontSize: 17,
+        lineHeight: 22,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    meta: {
+        marginTop: 4,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "600",
+        letterSpacing: 0,
+    },
+});

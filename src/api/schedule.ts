@@ -103,3 +103,9 @@ export async function markScheduleDeparted(scheduleId: string): Promise<Schedule
     const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
     return normalizeSchedule(unwrapApiResponse(response));
 }
+
+export async function snoozeScheduleDepartureReminder(scheduleId: string): Promise<void> {
+    // 푸시 액션의 재알림 요청은 화면 상태를 바꾸지 않고 서버 job의 nextCheckAt만 갱신한다.
+    const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}/departure-reminder/snooze`);
+    assertApiSuccess(response);
+}
