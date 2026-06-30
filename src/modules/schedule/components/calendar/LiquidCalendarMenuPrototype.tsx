@@ -20,6 +20,7 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
     selectedMode?: CalendarViewMode;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
+    tapRequest?: number;
     searchExpandedWidth?: number;
     searchQuery?: string;
     onSelect?: (mode: CalendarViewMode) => void;
@@ -80,6 +81,7 @@ export default function LiquidCalendarMenuPrototype({
     selectedMode,
     disabled = false,
     colorScheme = "dark",
+    tapRequest,
     searchExpandedWidth,
     searchQuery,
     onSelect,
@@ -165,6 +167,7 @@ export default function LiquidCalendarMenuPrototype({
                 selectedMode={selectedMode}
                 disabled={disabled}
                 colorScheme={colorScheme}
+                tapRequest={tapRequest}
                 searchExpandedWidth={searchExpandedWidth}
                 searchQuery={searchQuery}
                 onSelect={handleSelect}

@@ -6,6 +6,8 @@ import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGla
 import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
 import { useTheme } from "../../../theme/ThemeContext";
 
+const FLOATING_PILL_HEIGHT = 52;
+
 export type FloatingBarAction = {
     key: string;
     label?: string;
@@ -77,14 +79,14 @@ export default function GlobalFloatingActionBar({
         if (isLiquidGlassIconButtonAvailable && actions.length === 1) {
             const action = actions[0];
             const nativeSymbolName = action.nativeSymbolName ?? getNativeSymbolName(action.icon);
-            const buttonWidth = action.icon ? 116 : 96;
+            const buttonWidth = action.icon ? 104 : 88;
 
             return (
                 <LiquidGlassIconButton
                     symbolName={nativeSymbolName}
                     label={!action.icon ? action.label : undefined}
                     buttonWidth={buttonWidth}
-                    buttonHeight={58}
+                    buttonHeight={FLOATING_PILL_HEIGHT}
                     disabled={action.disabled}
                     colorScheme={mode}
                     accessibilityLabel={action.accessibilityLabel}
@@ -256,19 +258,19 @@ const styles = StyleSheet.create({
         justifyContent: "flex-end",
     },
     actionSurface: {
-        height: 58,
-        borderRadius: 29,
+        height: FLOATING_PILL_HEIGHT,
+        borderRadius: FLOATING_PILL_HEIGHT / 2,
         borderWidth: StyleSheet.hairlineWidth,
         overflow: "hidden",
     },
     singleIconActionSurface: {
-        width: 116,
+        width: 104,
     },
     nativeActionButton: {
-        height: 58,
+        height: FLOATING_PILL_HEIGHT,
     },
     actionGroup: {
-        height: 58,
+        height: FLOATING_PILL_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
     },
@@ -277,10 +279,10 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     action: {
-        minWidth: 58,
-        height: 58,
+        minWidth: FLOATING_PILL_HEIGHT,
+        height: FLOATING_PILL_HEIGHT,
         paddingHorizontal: 0,
-        borderRadius: 29,
+        borderRadius: FLOATING_PILL_HEIGHT / 2,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",

@@ -1,6 +1,5 @@
 import React from "react";
 import {
-    Modal,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -11,13 +10,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
-import CalendarGlassSurface from "./CalendarGlassSurface";
 
 type Props = {
     visible: boolean;
     year: number;
     selectedDay: string;
     firstDay: 0 | 1;
+    topInset?: number;
     onChangeYear: (year: number) => void;
     onSelectMonth: (month: number) => void;
     onClose: () => void;
@@ -41,58 +40,64 @@ export default function CalendarYearOverviewModal({
     year,
     selectedDay,
     firstDay,
+    topInset = 0,
     onChangeYear,
     onSelectMonth,
-    onClose,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
     const selectedDate = new Date(`${selectedDay}T00:00:00`);
     const weekdayLabels = Array.from({ length: 7 }, (_, index) => (
         WEEKDAYS[(firstDay + index) % 7]
     ));
+    const currentYear = new Date().getFullYear();
+    const yearColor = year === currentYear
+        ? mode === "dark" ? "#ff453a" : "#ff3b30"
+        : colors.textPrimary;
+
+    if (!visible) return null;
 
     return (
-        <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-            <View style={[styles.safeArea, { backgroundColor: colors.background }]}>
-                <View style={[styles.header, { paddingTop: Math.max(insets.top + 12, 58) }]}>
-                    <CalendarGlassSurface
-                        interactive
-                        style={[styles.yearControl, { borderColor: colors.border }]}
+        <View style={[styles.safeArea, { backgroundColor: colors.calendarBackground }]}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[
+                    styles.content,
+                    {
+                        paddingTop: Math.max(topInset + 108, 154),
+                        paddingBottom: Math.max(insets.bottom + 112, 138),
+                    },
+                ]}
+            >
+                <View style={styles.yearHeader}>
+                    <Pressable
+                        onPress={() => onChangeYear(year - 1)}
+                        accessibilityRole="button"
+                        accessibilityLabel="이전 연도"
+                        style={({ pressed }) => [
+                            styles.yearArrow,
+                            { opacity: pressed ? 0.45 : 1 },
+                        ]}
                     >
-                        <Pressable
-                            onPress={() => onChangeYear(year - 1)}
-                            accessibilityLabel="이전 연도"
-                            style={styles.yearArrow}
-                        >
-                            <Ionicons name="chevron-back" size={20} color={colors.textPrimary} />
-                        </Pressable>
-                        <Text style={[styles.yearTitle, { color: colors.textPrimary }]}>{year}년</Text>
-                        <Pressable
-                            onPress={() => onChangeYear(year + 1)}
-                            accessibilityLabel="다음 연도"
-                            style={styles.yearArrow}
-                        >
-                            <Ionicons name="chevron-forward" size={20} color={colors.textPrimary} />
-                        </Pressable>
-                    </CalendarGlassSurface>
+                        <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+                    </Pressable>
 
-                    <CalendarGlassSurface
-                        interactive
-                        style={[styles.closeGlass, { borderColor: colors.border }]}
+                    <Text style={[styles.yearTitle, { color: yearColor }]}>{year}년</Text>
+
+                    <Pressable
+                        onPress={() => onChangeYear(year + 1)}
+                        accessibilityRole="button"
+                        accessibilityLabel="다음 연도"
+                        style={({ pressed }) => [
+                            styles.yearArrow,
+                            { opacity: pressed ? 0.45 : 1 },
+                        ]}
                     >
-                        <Pressable onPress={onClose} style={styles.closeButton}>
-                            <Text style={[styles.closeText, { color: colors.textPrimary }]}>완료</Text>
-                        </Pressable>
-                    </CalendarGlassSurface>
+                        <Ionicons name="chevron-forward" size={24} color={colors.textPrimary} />
+                    </Pressable>
                 </View>
 
-                <ScrollView
-                    contentContainerStyle={[
-                        styles.monthGrid,
-                        { paddingBottom: Math.max(insets.bottom + 40, 52) },
-                    ]}
-                >
+                <View style={styles.monthGrid}>
                     {Array.from({ length: 12 }, (_, index) => {
                         const month = index + 1;
                         const cells = getMonthCells(year, month, firstDay);
@@ -105,21 +110,10 @@ export default function CalendarYearOverviewModal({
                                 key={month}
                                 onPress={() => onSelectMonth(month)}
                                 style={({ pressed }) => [
-                                    styles.monthCard,
+                                    styles.monthPreview,
                                     { opacity: pressed ? 0.55 : 1 },
                                 ]}
                             >
-                                <CalendarGlassSurface
-                                    variant="card"
-                                    style={[
-                                        styles.monthCardGlass,
-                                        {
-                                            borderColor: isSelectedMonth
-                                                ? colors.selectedDayBg
-                                                : colors.border,
-                                        },
-                                    ]}
-                                >
                                 <Text
                                     style={[
                                         styles.monthTitle,
@@ -177,13 +171,12 @@ export default function CalendarYearOverviewModal({
                                         );
                                     })}
                                 </View>
-                                </CalendarGlassSurface>
                             </Pressable>
                         );
                     })}
-                </ScrollView>
-            </View>
-        </Modal>
+                </View>
+            </ScrollView>
+        </View>
     );
 }
 
@@ -191,73 +184,44 @@ const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
     },
-    header: {
-        minHeight: 104,
-        paddingHorizontal: 16,
-        paddingBottom: 10,
+    content: {
+        paddingHorizontal: 24,
+    },
+    yearHeader: {
+        marginBottom: 22,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
     },
-    yearControl: {
-        height: 40,
-        borderRadius: 20,
-        borderWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
-        alignItems: "center",
-        overflow: "hidden",
-    },
     yearArrow: {
-        width: 38,
-        height: 40,
+        width: 42,
+        height: 42,
         alignItems: "center",
         justifyContent: "center",
     },
     yearTitle: {
-        fontSize: 17,
-        fontWeight: "800",
-        minWidth: 62,
-        textAlign: "center",
-    },
-    closeGlass: {
-        minHeight: 40,
-        borderRadius: 20,
-        borderWidth: StyleSheet.hairlineWidth,
-        overflow: "hidden",
-    },
-    closeButton: {
         flex: 1,
-        paddingHorizontal: 17,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    closeText: {
-        fontSize: 15,
-        fontWeight: "700",
+        fontSize: 48,
+        lineHeight: 54,
+        fontWeight: "900",
+        textAlign: "center",
+        letterSpacing: 0,
     },
     monthGrid: {
-        paddingHorizontal: 14,
-        paddingTop: 12,
         flexDirection: "row",
         flexWrap: "wrap",
         justifyContent: "space-between",
-        rowGap: 26,
+        rowGap: 30,
     },
-    monthCard: {
-        width: "31.5%",
-    },
-    monthCardGlass: {
-        minHeight: 146,
-        borderRadius: 18,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 8,
-        paddingTop: 9,
-        paddingBottom: 8,
+    monthPreview: {
+        width: "30.5%",
+        minHeight: 132,
     },
     monthTitle: {
         fontSize: 17,
-        fontWeight: "800",
-        marginBottom: 8,
+        fontWeight: "900",
+        marginBottom: 7,
+        letterSpacing: 0,
     },
     weekRow: {
         flexDirection: "row",
@@ -265,8 +229,8 @@ const styles = StyleSheet.create({
     weekday: {
         width: "14.2857%",
         textAlign: "center",
-        fontSize: 8,
-        fontWeight: "600",
+        fontSize: 7.5,
+        fontWeight: "700",
         marginBottom: 3,
     },
     daysGrid: {
@@ -275,19 +239,19 @@ const styles = StyleSheet.create({
     },
     dayCell: {
         width: "14.2857%",
-        height: 16,
+        height: 14,
         alignItems: "center",
         justifyContent: "center",
     },
     dayBadge: {
-        minWidth: 15,
-        height: 15,
-        borderRadius: 8,
+        minWidth: 14,
+        height: 14,
+        borderRadius: 7,
         alignItems: "center",
         justifyContent: "center",
     },
     dayText: {
-        fontSize: 8,
-        fontWeight: "600",
+        fontSize: 7.5,
+        fontWeight: "700",
     },
 });

@@ -431,7 +431,7 @@ private struct LiquidGlassIconButtonRootView: View {
 
           if !model.label.isEmpty {
             Text(model.label)
-              .font(.system(size: 20, weight: .heavy))
+              .font(.system(size: 19, weight: .heavy))
               .lineLimit(1)
               .minimumScaleFactor(0.78)
           }
@@ -536,11 +536,11 @@ private struct LiquidGlassIconButtonRootView: View {
   private func iconSize(for symbolName: String) -> CGFloat {
     switch symbolName {
     case "plus":
-      return 27
-    case "chevron.left":
-      return 24
-    default:
       return 25
+    case "chevron.left":
+      return 22
+    default:
+      return 24
     }
   }
 }
@@ -975,13 +975,13 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   @State private var contentVisible = false
   @FocusState private var searchFocused: Bool
 
-  private let collapsedWidth: CGFloat = 174
-  private let collapsedHeight: CGFloat = 58
-  private let collapsedSlotWidth: CGFloat = 58
-  private let expandedWidth: CGFloat = 292
-  private let expandedHeight: CGFloat = 296
-  private let collapsedRadius: CGFloat = 29
-  private let expandedRadius: CGFloat = 32
+  private let collapsedWidth: CGFloat = 156
+  private let collapsedHeight: CGFloat = 52
+  private let collapsedSlotWidth: CGFloat = 52
+  private let expandedWidth: CGFloat = 282
+  private let expandedHeight: CGFloat = 282
+  private let collapsedRadius: CGFloat = 26
+  private let expandedRadius: CGFloat = 30
 
   private let options: [ViewModeGlassOption] = [
     ViewModeGlassOption(id: "compact", label: "축소형"),
@@ -1035,6 +1035,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       readabilityLayer
         .opacity(readabilityVisible ? 1 : 0)
         .animation(.easeOut(duration: 0.16), value: readabilityVisible)
+        .allowsHitTesting(false)
+
+      liquidRefractionLayer
+        .opacity(refractionOpacity)
+        .animation(.easeOut(duration: 0.18), value: readabilityVisible)
         .allowsHitTesting(false)
 
       collapsedContent
@@ -1096,6 +1101,54 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         )
       )
       .frame(width: surfaceWidth, height: surfaceHeight)
+  }
+
+  private var liquidRefractionLayer: some View {
+    ZStack {
+      liquidShape
+        .stroke(refractionStroke, lineWidth: 1.2)
+
+      RoundedRectangle(cornerRadius: max(18, surfaceRadius - 8), style: .continuous)
+        .stroke(Color.white.opacity(isDarkMode ? 0.12 : 0.32), lineWidth: 1)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 7)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(isDarkMode ? 0.24 : 0.42),
+              Color.white.opacity(isDarkMode ? 0.075 : 0.16),
+              Color.clear,
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(72, surfaceWidth * 0.62), height: max(20, surfaceHeight * 0.13))
+        .rotationEffect(.degrees(-8))
+        .offset(x: -surfaceWidth * 0.14, y: -surfaceHeight * 0.31)
+        .blur(radius: 6)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.clear,
+              Color.black.opacity(isDarkMode ? 0.10 : 0.04),
+              Color.white.opacity(isDarkMode ? 0.055 : 0.13),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(72, surfaceWidth * 0.52), height: max(20, surfaceHeight * 0.11))
+        .rotationEffect(.degrees(-12))
+        .offset(x: surfaceWidth * 0.18, y: surfaceHeight * 0.22)
+        .blur(radius: 9)
+    }
+    .frame(width: surfaceWidth, height: surfaceHeight)
+    .clipShape(liquidShape)
   }
 
   private var collapsedContent: some View {
@@ -1206,6 +1259,24 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       Color.white.opacity(0.07),
       Color.black.opacity(0.018),
     ]
+  }
+
+  private var refractionOpacity: Double {
+    let base = isDarkMode ? 0.58 : 0.86
+    let progress = activeAction == .search ? widthProgress : finalProgress
+    return base * Double(0.42 + progress * 0.58)
+  }
+
+  private var refractionStroke: LinearGradient {
+    LinearGradient(
+      colors: [
+        Color.white.opacity(isDarkMode ? 0.22 : 0.62),
+        Color.white.opacity(isDarkMode ? 0.10 : 0.28),
+        Color.black.opacity(isDarkMode ? 0.10 : 0.06),
+      ],
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
   }
 
   @ViewBuilder
