@@ -163,9 +163,9 @@ const QA_GANGNAM_SEARCH_RESULTS: PlaceSearchItem[] = [
 ];
 
 const ROUTE_SEGMENT_FALLBACK_COLORS = {
-    walk: "#5F6670",
-    bus: "#2F6FED",
-    subway: "#16A34A",
+    walk: "#9CA3AF",
+    bus: "#2979FF",
+    subway: "#00B140",
     etc: "#7C8794",
 };
 
@@ -175,32 +175,6 @@ const TRAVEL_MODE_ICONS: Partial<Record<TravelMode, React.ComponentProps<typeof 
     WALK: "walk",
     BIKE: "bicycle",
 };
-const SUBWAY_LINE_COLOR_RULES: Array<{ pattern: RegExp; color: string }> = [
-    { pattern: /1호선/, color: "#0052A4" },
-    { pattern: /2호선/, color: "#00A84D" },
-    { pattern: /3호선/, color: "#EF7C1C" },
-    { pattern: /4호선/, color: "#00A5DE" },
-    { pattern: /5호선/, color: "#996CAC" },
-    { pattern: /6호선/, color: "#CD7C2F" },
-    { pattern: /7호선/, color: "#747F00" },
-    { pattern: /8호선/, color: "#E6186C" },
-    { pattern: /9호선/, color: "#BDB092" },
-    { pattern: /공항철도|AREX/i, color: "#0090D2" },
-    { pattern: /경의중앙/, color: "#77C4A3" },
-    { pattern: /수인분당|분당선|수인선/, color: "#E7B416" },
-    { pattern: /신분당/, color: "#D31145" },
-    { pattern: /경춘/, color: "#178C72" },
-    { pattern: /경강/, color: "#0054A6" },
-    { pattern: /서해/, color: "#8FC31F" },
-    { pattern: /김포골드|김포도시철도/, color: "#A17800" },
-    { pattern: /우이신설/, color: "#B7C452" },
-    { pattern: /신림선/, color: "#6789CA" },
-    { pattern: /용인경전철|에버라인/, color: "#6FB245" },
-    { pattern: /의정부경전철/, color: "#FDA600" },
-    { pattern: /인천1호선/, color: "#7CA8D5" },
-    { pattern: /인천2호선/, color: "#ED8B00" },
-];
-
 function useSelectedSpring(selected: boolean) {
     const progress = useRef(new Animated.Value(selected ? 1 : 0)).current;
 
@@ -500,16 +474,10 @@ function getSubwayLineColor(lineName?: string): string {
     return getSharedSubwayLineColor(lineName);
 }
 
-// 버스 번호 패턴을 기준으로 간선/지선/광역 톤에 가까운 색을 찾는다.
-function getBusLineColor(lineName?: string): string {
-    return getSharedBusLineColor(lineName);
-}
-
 // 대중교통 구간의 노선색을 결정한다.
 function getTransitLegColor(leg: RouteSelectTransitLeg): string {
-    if (leg.lineColor && /^#[0-9A-F]{6}$/i.test(leg.lineColor)) return leg.lineColor;
     const lineLabel = compactLineLabel(leg) ?? leg.lineName ?? leg.label;
-    if (leg.kind === "BUS") return getBusLineColor(lineLabel);
+    if (leg.kind === "BUS") return getSharedBusLineColor(lineLabel, leg.lineColor);
     if (leg.kind === "SUBWAY") return getSubwayLineColor(lineLabel);
     if (leg.kind === "WALK") return ROUTE_SEGMENT_FALLBACK_COLORS.walk;
     return ROUTE_SEGMENT_FALLBACK_COLORS.etc;

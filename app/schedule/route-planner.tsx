@@ -54,14 +54,13 @@ import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult }
 const FALLBACK_LAT = 37.5665;
 const FALLBACK_LNG = 126.978;
 const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"];
-const ORIGIN_COLOR = "#21B85A";
-const DESTINATION_COLOR = "#FF6A3D";
-const SELECTED_ROUTE_COLOR = "#2F80FF";
+const ORIGIN_COLOR = "#22C55E";
+const DESTINATION_COLOR = "#FF4444";
+const SELECTED_ROUTE_COLOR = "#2979FF";
 const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
-    SUBWAY: "#24B348",
-    BUS: "#1D72FF",
-    // 도보는 버스보다 한 톤 밝은 파랑으로 두어 "보행 안내"라는 느낌을 유지한다.
-    WALK: "#5A96FF",
+    SUBWAY: "#00B140",
+    BUS: "#2979FF",
+    WALK: "#9CA3AF",
     ETC: "#94A3B8",
 };
 const BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT = 40;
@@ -218,31 +217,6 @@ function formatDuration(minutes?: number): string {
 }
 
 type CameraCoord = { latitude: number; longitude: number };
-const SUBWAY_LINE_COLOR_RULES: Array<{ pattern: RegExp; color: string }> = [
-    { pattern: /1호선/, color: "#0052A4" },
-    { pattern: /2호선/, color: "#00A84D" },
-    { pattern: /3호선/, color: "#EF7C1C" },
-    { pattern: /4호선/, color: "#00A5DE" },
-    { pattern: /5호선/, color: "#996CAC" },
-    { pattern: /6호선/, color: "#CD7C2F" },
-    { pattern: /7호선/, color: "#747F00" },
-    { pattern: /8호선/, color: "#E6186C" },
-    { pattern: /9호선/, color: "#BDB092" },
-    { pattern: /공항철도|AREX/i, color: "#0090D2" },
-    { pattern: /경의중앙/, color: "#77C4A3" },
-    { pattern: /수인분당|분당선|수인선/, color: "#E7B416" },
-    { pattern: /신분당/, color: "#D31145" },
-    { pattern: /경춘/, color: "#178C72" },
-    { pattern: /경강/, color: "#0054A6" },
-    { pattern: /서해/, color: "#8FC31F" },
-    { pattern: /김포골드|김포도시철도/, color: "#A17800" },
-    { pattern: /우이신설/, color: "#B7C452" },
-    { pattern: /신림선/, color: "#6789CA" },
-    { pattern: /용인경전철|에버라인/, color: "#6FB245" },
-    { pattern: /의정부경전철/, color: "#FDA600" },
-    { pattern: /인천1호선/, color: "#7CA8D5" },
-    { pattern: /인천2호선/, color: "#ED8B00" },
-];
 
 function haversineDistanceKm(from: CameraCoord, to: CameraCoord): number {
     const toRadians = (value: number) => (value * Math.PI) / 180;
@@ -419,15 +393,8 @@ function getBusLineColor(lineName?: string): string {
 }
 
 function getTransitLegVisualColor(leg: Pick<TransitLegDetail, "kind" | "lineName" | "lineColor">): string {
-    // Tmap이 실제 노선색(routeColor / lane.color)을 내려 주는 구간은
-    // 추정 규칙보다 원본 값을 우선 써야 레퍼런스 지도와 가장 가까운 색이 나온다.
-    // 특히 지선/광역 버스는 사업자별 표기 흔들림이 있어서 lineName 추정만으로는
-    // 파랑/초록/빨강이 틀어질 수 있으므로, 원본 색이 있으면 그 값을 그대로 채택한다.
-    if (typeof leg.lineColor === "string" && leg.lineColor.trim().length > 0) {
-        return leg.lineColor;
-    }
     if (leg.kind === "SUBWAY") return getSubwayLineColor(leg.lineName);
-    if (leg.kind === "BUS") return getBusLineColor(leg.lineName);
+    if (leg.kind === "BUS") return getSharedBusLineColor(leg.lineName, leg.lineColor);
     return TRANSIT_LEG_COLOR[leg.kind] ?? SELECTED_ROUTE_COLOR;
 }
 
@@ -1770,7 +1737,7 @@ function buildTransitProgressSegments(legs?: TransitLegDetail[]): TransitProgres
                     ? undefined
                     : (compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label)),
                 minutes,
-                color: leg.kind === "WALK" ? "#5F6368" : getTransitLegVisualColor(leg),
+                color: leg.kind === "WALK" ? TRANSIT_LEG_COLOR.WALK : getTransitLegVisualColor(leg),
                 flex: Math.max(0.8, minutes),
                 isRide: isRideLegKind(leg.kind),
             };
@@ -1784,10 +1751,10 @@ function getPrimaryTransitLineLabel(legs?: TransitLegDetail[]): string {
 }
 
 function formatTransitRouteChipLabel(option: RouteAlternativeOption, index: number): string {
-    if (index === 0) return `최적 | ${formatDuration(option.minutes)}`;
     const lineLabel = getPrimaryTransitLineLabel(option.transitLegs);
     const transferLabel = typeof option.transferCount === "number" ? ` + 환승 ${option.transferCount}회` : "";
-    return `${lineLabel}${transferLabel} | ${formatDuration(option.minutes)}`;
+    const routeLabel = index === 0 && lineLabel === "대중교통" ? "최적" : lineLabel;
+    return `${routeLabel}${transferLabel} | ${formatDuration(option.minutes)}`;
 }
 
 function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, isDark: boolean): TmapPathOverlay[] {
@@ -1992,15 +1959,15 @@ export default function RoutePlannerScreen() {
     const hasDestinationCoords = typeof destinationLat === "number" && typeof destinationLng === "number";
     const hasRouteReady = hasOriginCoords && hasDestinationCoords;
     const isTransitDetailMode = isTransitMode && hasRouteReady && !isRouteSelectionScreen;
-    const detailPanelBg = isTransitDetailMode ? (isDark ? "rgba(31,31,31,0.76)" : "rgba(248,250,252,0.82)") : overlayPanelBg;
-    const detailCardBg = isTransitDetailMode ? (isDark ? "rgba(31,31,31,0.70)" : "rgba(248,250,252,0.78)") : overlayCardBg;
+    const detailPanelBg = isTransitDetailMode ? (isDark ? "rgba(23,25,31,0.96)" : "rgba(248,250,252,0.92)") : overlayPanelBg;
+    const detailCardBg = isTransitDetailMode ? (isDark ? "rgba(23,25,31,0.96)" : "rgba(248,250,252,0.92)") : overlayCardBg;
     const detailPrimaryText = isTransitDetailMode ? (isDark ? "#F3F4F6" : "#111827") : colors.textPrimary;
     const detailSecondaryText = isTransitDetailMode ? (isDark ? "#B8B8B8" : "#64748B") : colors.textSecondary;
     const detailBorderColor = isTransitDetailMode ? (isDark ? "#343434" : "#E2E8F0") : colors.border;
     const transitRouteChipBg = isDark ? "rgba(18,18,18,0.94)" : "rgba(248,250,252,0.96)";
     const transitRouteChipText = isDark ? "#D7D7DA" : "#334155";
     const transitMapOverlayColor = isDark ? "rgba(0,0,0,0.34)" : "rgba(248,250,252,0.02)";
-    const transitActionBarBg = isDark ? "rgba(17,17,17,0.80)" : "rgba(248,250,252,0.84)";
+    const transitActionBarBg = isDark ? "rgba(11,12,15,0.96)" : "rgba(248,250,252,0.94)";
     const transitFocusedLegBg = isDark ? "rgba(47,128,255,0.16)" : "#DBEAFE";
     const transitDetailPrimaryActionBg = "#2979FF";
     const transitDetailPrimaryActionText = "#FFFFFF";
@@ -4196,6 +4163,7 @@ export default function RoutePlannerScreen() {
     ]);
 
     const shouldUseTransitReferenceScreen = false;
+    const shouldUseDetachedTransitDetailScreen = false;
 
     if (isTransitDetailMode && shouldUseTransitReferenceScreen) {
         const transitLegs = selectedAlternative?.transitLegs ?? [];
@@ -4431,7 +4399,7 @@ export default function RoutePlannerScreen() {
         );
     }
 
-    if (isTransitDetailMode) {
+    if (isTransitDetailMode && shouldUseDetachedTransitDetailScreen) {
         const routeDurationText = formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative?.minutes);
         const arrivalText = selectedTransitTimeRange.split(" | ")[0]?.split(" - ")[1] ?? "";
         const routeHeaderLine = selectedAlternative ? getPrimaryTransitLineLabel(selectedAlternative.transitLegs) : "대중교통";
@@ -5447,12 +5415,12 @@ const styles = StyleSheet.create({
         borderWidth: 3,
     },
     transitReferenceOriginDot: {
-        borderColor: "rgba(33,184,90,0.36)",
-        backgroundColor: "#21B85A",
+        borderColor: "rgba(34,197,94,0.36)",
+        backgroundColor: ORIGIN_COLOR,
     },
     transitReferenceDestinationDot: {
-        borderColor: "rgba(255,106,61,0.35)",
-        backgroundColor: "#FF563D",
+        borderColor: "rgba(255,68,68,0.35)",
+        backgroundColor: DESTINATION_COLOR,
     },
     transitReferenceAddressText: {
         flex: 1,
