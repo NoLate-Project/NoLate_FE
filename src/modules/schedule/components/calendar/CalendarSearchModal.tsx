@@ -122,10 +122,8 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
                             style={[
                                 styles.searchField,
                                 {
-                                    borderColor: colors.border,
-                                    backgroundColor: mode === "dark"
-                                        ? "rgba(255,255,255,0.08)"
-                                        : "rgba(118,118,128,0.12)",
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
                                 },
                             ]}
                         >
@@ -135,7 +133,7 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
                                 value={query}
                                 onChangeText={setQuery}
                                 placeholder="검색"
-                                placeholderTextColor={colors.textSecondary}
+                                placeholderTextColor={colors.inputPlaceholder}
                                 returnKeyType="search"
                                 selectionColor={colors.textPrimary}
                                 style={[styles.input, { color: colors.textPrimary }]}

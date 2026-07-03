@@ -31,7 +31,7 @@ type Props = ViewProps & {
     clear?: boolean;
     prominent?: boolean;
     variant?: LiquidGlassVariant;
-    tone?: "default" | "flat" | "softGlass" | "menuLiquid";
+    tone?: "default" | "flat" | "softGlass" | "menuLiquid" | "solidCard";
     glow?: boolean;
 };
 
@@ -106,54 +106,54 @@ function getGlassPalette(
         const background = reduceTransparency
             ? "rgba(17, 18, 22, 0.98)"
             : variant === "bottomBar"
-                ? "rgba(32, 34, 40, 0.44)"
+                ? "rgba(32, 34, 40, 0.40)"
             : variant === "toolbar" || variant === "popover"
-                ? "rgba(24, 25, 30, 0.46)"
+                ? "rgba(24, 25, 30, 0.41)"
             : stronger
-                ? "rgba(18, 19, 24, 0.82)"
+                ? "rgba(18, 19, 24, 0.74)"
                 : airy
                     ? isAndroid
                         ? "rgba(24, 25, 30, 0.94)"
-                        : "rgba(22, 23, 28, 0.56)"
+                        : "rgba(22, 23, 28, 0.50)"
                     : isAndroid
                         ? "rgba(28, 29, 35, 0.96)"
-                        : "rgba(28, 29, 35, 0.72)";
+                        : "rgba(28, 29, 35, 0.65)";
         return {
             background,
-            nativeTint: stronger ? "rgba(255, 255, 255, 0.065)" : "rgba(255, 255, 255, 0.035)",
-            highlight: variant === "bottomBar" ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.20)",
-            stroke: variant === "bottomBar" ? "rgba(255,255,255,0.30)" : "rgba(255,255,255,0.22)",
-            glow: variant === "mapCard" ? "rgba(47,128,255,0.20)" : "rgba(255,255,255,0.10)",
-            contrast: stronger ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.055)",
-            sheen: variant === "bottomBar" ? "rgba(255,255,255,0.082)" : "rgba(255,255,255,0.064)",
+            nativeTint: stronger ? "rgba(255, 255, 255, 0.059)" : "rgba(255, 255, 255, 0.032)",
+            highlight: variant === "bottomBar" ? "rgba(255,255,255,0.27)" : "rgba(255,255,255,0.18)",
+            stroke: variant === "bottomBar" ? "rgba(255,255,255,0.27)" : "rgba(255,255,255,0.20)",
+            glow: variant === "mapCard" ? "rgba(47,128,255,0.18)" : "rgba(255,255,255,0.09)",
+            contrast: stronger ? "rgba(0,0,0,0.135)" : "rgba(0,0,0,0.050)",
+            sheen: variant === "bottomBar" ? "rgba(255,255,255,0.074)" : "rgba(255,255,255,0.058)",
         };
     }
 
     const background = reduceTransparency
         ? "rgba(255, 255, 255, 0.98)"
             : variant === "bottomBar"
-            ? "rgba(255, 255, 255, 0.66)"
+            ? "rgba(255, 255, 255, 0.59)"
         : variant === "toolbar" || variant === "popover"
-            ? "rgba(255, 255, 255, 0.50)"
+            ? "rgba(255, 255, 255, 0.45)"
         : stronger
-            ? "rgba(255, 255, 255, 0.86)"
+            ? "rgba(255, 255, 255, 0.77)"
             : airy
                 ? isAndroid
                     ? "rgba(255, 255, 255, 0.94)"
-                    : "rgba(255, 255, 255, 0.58)"
+                    : "rgba(255, 255, 255, 0.52)"
                 : isAndroid
                     ? "rgba(255, 255, 255, 0.96)"
-                    : "rgba(255, 255, 255, 0.72)";
+                    : "rgba(255, 255, 255, 0.65)";
     return {
         background,
         nativeTint: variant === "bottomBar"
-            ? "rgba(255, 255, 255, 0.18)"
-            : stronger ? "rgba(255, 255, 255, 0.16)" : "rgba(255, 255, 255, 0.08)",
-        highlight: variant === "bottomBar" ? "rgba(255,255,255,0.86)" : "rgba(255,255,255,0.76)",
-        stroke: variant === "bottomBar" ? "rgba(255,255,255,0.72)" : "rgba(255,255,255,0.62)",
-        glow: variant === "mapCard" ? "rgba(47,128,255,0.12)" : "rgba(255,255,255,0.22)",
-        contrast: variant === "bottomBar" ? "rgba(255,255,255,0.11)" : "rgba(255,255,255,0.08)",
-        sheen: variant === "bottomBar" ? "rgba(255,255,255,0.24)" : "rgba(255,255,255,0.28)",
+            ? "rgba(255, 255, 255, 0.16)"
+            : stronger ? "rgba(255, 255, 255, 0.14)" : "rgba(255, 255, 255, 0.072)",
+        highlight: variant === "bottomBar" ? "rgba(255,255,255,0.77)" : "rgba(255,255,255,0.68)",
+        stroke: variant === "bottomBar" ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.56)",
+        glow: variant === "mapCard" ? "rgba(47,128,255,0.108)" : "rgba(255,255,255,0.20)",
+        contrast: variant === "bottomBar" ? "rgba(255,255,255,0.099)" : "rgba(255,255,255,0.072)",
+        sheen: variant === "bottomBar" ? "rgba(255,255,255,0.216)" : "rgba(255,255,255,0.252)",
     };
 }
 
@@ -176,7 +176,8 @@ export default function CalendarGlassSurface({
     const isFlatTone = tone === "flat";
     const isSoftGlassTone = tone === "softGlass";
     const isMenuLiquidTone = tone === "menuLiquid";
-    const usesTonedSurface = isFlatTone || isSoftGlassTone || isMenuLiquidTone;
+    const isSolidCardTone = tone === "solidCard";
+    const usesTonedSurface = isFlatTone || isSoftGlassTone || isMenuLiquidTone || isSolidCardTone;
     const menuLiquidNativeTint = mode === "dark"
         ? "rgba(8, 9, 14, 0.76)"
         : "rgba(255, 255, 255, 0.76)";
@@ -220,9 +221,12 @@ export default function CalendarGlassSurface({
                     isMenuLiquidTone && (
                         mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
                     ),
+                    isSolidCardTone && (
+                        mode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                    ),
                 ]}
             >
-                {(prominent || reduceTransparency) && (
+                {!isSolidCardTone && (prominent || reduceTransparency) && (
                     <View
                         pointerEvents="none"
                         style={[
@@ -234,22 +238,24 @@ export default function CalendarGlassSurface({
                         ]}
                     />
                 )}
-                <View
-                    pointerEvents="none"
-                    style={[
-                        StyleSheet.absoluteFillObject,
-                        styles.contrastLayer,
-                        usesTonedSurface && (
-                            isMenuLiquidTone
-                                ? styles.contrastLayerMenuLiquid
-                                : isSoftGlassTone
-                                    ? styles.contrastLayerSoftGlass
-                                    : styles.contrastLayerFlat
-                        ),
-                        { backgroundColor: palette.contrast },
-                    ]}
-                />
-                {(glow || variant === "mapCard") && (
+                {!isSolidCardTone && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            styles.contrastLayer,
+                            usesTonedSurface && (
+                                isMenuLiquidTone
+                                    ? styles.contrastLayerMenuLiquid
+                                    : isSoftGlassTone
+                                        ? styles.contrastLayerSoftGlass
+                                        : styles.contrastLayerFlat
+                            ),
+                            { backgroundColor: palette.contrast },
+                        ]}
+                    />
+                )}
+                {!isSolidCardTone && (glow || variant === "mapCard") && (
                     <View
                         pointerEvents="none"
                         style={[
@@ -259,7 +265,7 @@ export default function CalendarGlassSurface({
                         ]}
                     />
                 )}
-                {!isFlatTone && !isMenuLiquidTone && (
+                {!isSolidCardTone && !isFlatTone && !isMenuLiquidTone && (
                     <View
                         pointerEvents="none"
                         style={[
@@ -278,7 +284,9 @@ export default function CalendarGlassSurface({
                         usesTonedSurface && (
                             isMenuLiquidTone
                                 ? styles.topHighlightMenuLiquid
-                                : isSoftGlassTone
+                                : isSolidCardTone
+                                    ? styles.topHighlightSolidCard
+                                    : isSoftGlassTone
                                     ? styles.topHighlightSoftGlass
                                     : styles.topHighlightFlat
                         ),
@@ -310,11 +318,14 @@ export default function CalendarGlassSurface({
                 isMenuLiquidTone && (
                     mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
                 ),
+                isSolidCardTone && (
+                    mode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                ),
                 styles.clipped,
                 Platform.OS === "android" && styles.androidDepth,
             ]}
         >
-            {prominent && (
+            {!isSolidCardTone && prominent && (
                 <View
                     pointerEvents="none"
                     style={[
@@ -329,22 +340,24 @@ export default function CalendarGlassSurface({
                     ]}
                 />
             )}
-            <View
-                pointerEvents="none"
-                style={[
-                    StyleSheet.absoluteFillObject,
-                    styles.contrastLayer,
-                    usesTonedSurface && (
-                        isMenuLiquidTone
-                            ? styles.contrastLayerMenuLiquid
-                            : isSoftGlassTone
-                                ? styles.contrastLayerSoftGlass
-                                : styles.contrastLayerFlat
-                    ),
-                    { backgroundColor: palette.contrast },
-                ]}
-            />
-            {(glow || variant === "mapCard") && (
+            {!isSolidCardTone && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.contrastLayer,
+                        usesTonedSurface && (
+                            isMenuLiquidTone
+                                ? styles.contrastLayerMenuLiquid
+                                : isSoftGlassTone
+                                    ? styles.contrastLayerSoftGlass
+                                    : styles.contrastLayerFlat
+                        ),
+                        { backgroundColor: palette.contrast },
+                    ]}
+                />
+            )}
+            {!isSolidCardTone && (glow || variant === "mapCard") && (
                 <View
                     pointerEvents="none"
                     style={[
@@ -354,7 +367,7 @@ export default function CalendarGlassSurface({
                     ]}
                 />
             )}
-            {!isFlatTone && !isMenuLiquidTone && (
+            {!isSolidCardTone && !isFlatTone && !isMenuLiquidTone && (
                 <View
                     pointerEvents="none"
                     style={[
@@ -373,7 +386,9 @@ export default function CalendarGlassSurface({
                     usesTonedSurface && (
                         isMenuLiquidTone
                             ? styles.topHighlightMenuLiquid
-                            : isSoftGlassTone
+                            : isSolidCardTone
+                                ? styles.topHighlightSolidCard
+                                : isSoftGlassTone
                                 ? styles.topHighlightSoftGlass
                                 : styles.topHighlightFlat
                     ),
@@ -426,10 +441,16 @@ const styles = StyleSheet.create({
         overflow: "hidden",
     },
     menuLiquidSurfaceDark: {
-        backgroundColor: "rgba(8, 9, 14, 0.88)",
+        backgroundColor: "rgba(8, 9, 14, 0.79)",
     },
     menuLiquidSurfaceLight: {
-        backgroundColor: "rgba(255, 255, 255, 0.88)",
+        backgroundColor: "rgba(255, 255, 255, 0.79)",
+    },
+    solidCardSurfaceDark: {
+        backgroundColor: "rgba(28, 29, 33, 0.86)",
+    },
+    solidCardSurfaceLight: {
+        backgroundColor: "rgba(255, 255, 255, 0.84)",
     },
     innerStroke: {
         borderWidth: StyleSheet.hairlineWidth,
@@ -437,31 +458,34 @@ const styles = StyleSheet.create({
     },
     topHighlight: {
         borderTopWidth: StyleSheet.hairlineWidth,
-        opacity: 0.82,
+        opacity: 0.74,
     },
     topHighlightFlat: {
         opacity: 0.18,
     },
     topHighlightSoftGlass: {
-        opacity: 0.38,
+        opacity: 0.34,
     },
     topHighlightMenuLiquid: {
-        opacity: 0.30,
+        opacity: 0.27,
+    },
+    topHighlightSolidCard: {
+        opacity: 0.22,
     },
     glow: {
-        opacity: 0.72,
+        opacity: 0.65,
     },
     contrastLayer: {
-        opacity: 0.92,
+        opacity: 0.83,
     },
     contrastLayerFlat: {
         opacity: 0.28,
     },
     contrastLayerSoftGlass: {
-        opacity: 0.46,
+        opacity: 0.41,
     },
     contrastLayerMenuLiquid: {
-        opacity: 0.96,
+        opacity: 0.86,
     },
     sheenLayer: {
         position: "absolute",
@@ -469,23 +493,23 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         height: "42%",
-        opacity: 0.72,
+        opacity: 0.65,
     },
     sheenLayerSoftGlass: {
         height: "26%",
         opacity: 0.18,
     },
     prominentFill: {
-        opacity: 0.9,
+        opacity: 0.81,
     },
     prominentFillFlat: {
         opacity: 0.48,
     },
     prominentFillSoftGlass: {
-        opacity: 0.62,
+        opacity: 0.56,
     },
     prominentFillMenuLiquid: {
-        opacity: 0.96,
+        opacity: 0.86,
     },
     prominentFillDark: {
         backgroundColor: "rgba(14,15,18,0.76)",

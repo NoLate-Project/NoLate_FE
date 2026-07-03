@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
+    Animated,
+    Easing,
     FlatList,
     Keyboard,
     NativeScrollEvent,
     NativeSyntheticEvent,
+    Platform,
     Pressable,
     ScrollView,
     StatusBar,
@@ -20,11 +23,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import CalendarSearchModal from "../../src/modules/schedule/components/calendar/CalendarSearchModal";
+import LiquidCalendarMenuPrototype, {
+    isLiquidCalendarMenuPrototypeAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype";
+import LiquidGlassIconButton, {
+    isLiquidGlassIconButtonAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidGlassIconButton";
+import LiquidGlassSegmentedPill, {
+    isLiquidGlassSegmentedPillAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidGlassSegmentedPill";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
 import ScheduleNewModal from "../../src/modules/schedule/components/form/ScheduleAddModal";
-import { createSchedule } from "../../src/api/schedule";
+import QuickScheduleModal from "../../src/modules/schedule/components/form/QuickScheduleModal";
+import { createSchedule, parseScheduleText } from "../../src/api/schedule";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { ScheduleItem } from "../../src/modules/schedule/types";
+import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { formatHHmm, isOverlappingDay, startOfDay, toYmd } from "../../lib/util/data";
 
@@ -33,10 +46,15 @@ const TIMELINE_GUTTER = 48;
 const MIN_EVENT_HEIGHT = 34;
 const DAY_MINUTES = 24 * 60;
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-const WEEK_PAGE_OFFSETS = [-2, -1, 0, 1, 2];
-const CENTER_WEEK_INDEX = 2;
 const DAY_PAGE_OFFSETS = [-1, 0, 1];
 const CENTER_DAY_INDEX = 1;
+const TIMETABLE_PILL_HEIGHT = 44;
+const TIMETABLE_PILL_SLOT = 50;
+const TIMETABLE_BACK_PILL_WIDTH = 104;
+const TIMETABLE_LIQUID_MENU_HEIGHT = 260;
+const TIMETABLE_ADD_DROPDOWN_WIDTH = 238;
+const TIMETABLE_ADD_DROPDOWN_HEIGHT = 164;
+const TIMETABLE_TOOLBAR_TOP_OFFSET = 8;
 
 type PositionedEvent = {
     item: ScheduleItem;
@@ -52,6 +70,8 @@ type CalendarDay = {
     weekday: string;
     month: number;
 };
+
+type TimelineScope = "day" | "multi";
 
 function colorWithOpacity(color: string, opacity: number) {
     const normalized = color.replace("#", "");
@@ -104,14 +124,16 @@ function formatDateTitle(ymd: string) {
     return `${date.getMonth() + 1}월 ${date.getDate()}일 ${WEEKDAYS[date.getDay()]}요일`;
 }
 
-function formatWeekRange(days: CalendarDay[]) {
-    const first = days[0];
-    const last = days[days.length - 1];
+function formatScheduleDateTitle(startAt: string) {
+    const date = new Date(startAt);
+    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${WEEKDAYS[date.getDay()]}요일`;
+}
 
-    if (first.month === last.month) {
-        return `${first.month}월 ${first.day}일 - ${last.day}일`;
-    }
-    return `${first.month}월 ${first.day}일 - ${last.month}월 ${last.day}일`;
+function formatTimelineHour(hour: number) {
+    if (hour === 0) return "자정";
+    if (hour === 12) return "정오";
+    if (hour < 12) return `오전 ${hour}시`;
+    return `오후 ${hour - 12}시`;
 }
 
 function minuteOfDay(date: Date) {
@@ -174,22 +196,41 @@ export default function ScheduleTimetable() {
     const router = useRouter();
     const isFocused = useIsFocused();
     const insets = useSafeAreaInsets();
-    const params = useLocalSearchParams<{ date?: string | string[] }>();
+    const params = useLocalSearchParams<{ date?: string | string[]; dateRun?: string | string[] }>();
     const { width: screenWidth } = useWindowDimensions();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
     const timelineRef = useRef<ScrollView>(null);
-    const weekListRef = useRef<FlatList<number>>(null);
     const dayListRef = useRef<FlatList<number>>(null);
+    const quickHandoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const dateParam = Array.isArray(params.date) ? params.date[0] : params.date;
+    const dateRunParam = Array.isArray(params.dateRun) ? params.dateRun[0] : params.dateRun;
     const [activeDay, setActiveDay] = useState(dateParam || state.selectedDay);
     const [now, setNow] = useState(() => new Date());
     const [searchVisible, setSearchVisible] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const [liquidPrototypeOpen, setLiquidPrototypeOpen] = useState(false);
+    const [liquidPrototypeAction, setLiquidPrototypeAction] = useState<"search" | "add" | null>(null);
+    const [liquidPrototypeResetKey, setLiquidPrototypeResetKey] = useState(0);
+    const [prototypeCloseRequest, setPrototypeCloseRequest] = useState(0);
     const [modalVisible, setModalVisible] = useState(false);
+    const [quickModalVisible, setQuickModalVisible] = useState(false);
+    const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
+    const [quickModalSource, setQuickModalSource] = useState<{
+        width: number;
+        height: number;
+        content: "toolbar" | "addMenu";
+    }>({
+        width: TIMETABLE_PILL_SLOT * 3,
+        height: TIMETABLE_PILL_HEIGHT,
+        content: "toolbar",
+    });
+    const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
+    const [timelineScope, setTimelineScope] = useState<TimelineScope>("multi");
+    const entryProgress = useRef(new Animated.Value(0)).current;
     const today = useMemo(() => toYmd(now), [now]);
     const activeWeekStart = useMemo(() => startOfWeek(activeDay), [activeDay]);
-    const activeWeekDays = useMemo(() => createWeekDays(activeWeekStart), [activeWeekStart]);
     const allItems = useMemo(() => Object.values(state.itemsById), [state.itemsById]);
 
     const items = useMemo(
@@ -202,15 +243,83 @@ export default function ScheduleTimetable() {
     const currentMinute = now.getHours() * 60 + now.getMinutes();
     const weekPageWidth = Math.max(1, screenWidth);
     const dayPageWidth = Math.max(1, screenWidth);
+    const viewToggleSymbol = timelineScope === "day" ? "calendar" : "rectangle.stack";
+    const usesLiquidViewModeControl = isLiquidCalendarMenuPrototypeAvailable;
+    const actionPillWidth = TIMETABLE_PILL_SLOT * 3;
+    const searchHeaderTargetWidth = Math.max(actionPillWidth, screenWidth - 32);
+    const liquidPrototypeLayerWidth = liquidPrototypeOpen
+        ? searchHeaderTargetWidth
+        : actionPillWidth;
+    const trimmedSearchQuery = searchQuery.trim().toLowerCase();
+    const searchResults = useMemo(() => {
+        if (!trimmedSearchQuery) return [];
+
+        return allItems
+            .filter((item) => {
+                const haystack = [
+                    item.title,
+                    item.category?.title,
+                    item.locationName,
+                    item.origin?.name,
+                    item.origin?.address,
+                    item.destination?.name,
+                    item.destination?.address,
+                    item.notes,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+
+                return haystack.includes(trimmedSearchQuery);
+            })
+            .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+            .slice(0, 6);
+    }, [allItems, trimmedSearchQuery]);
+    const entryOpacity = entryProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 1],
+    });
+    const entryScale = entryProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 1],
+    });
+    const entryTranslateY = entryProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 0],
+    });
 
     useEffect(() => {
         dispatch({ type: "SET_SELECTED_DAY", day: activeDay });
     }, [activeDay, dispatch]);
 
     useEffect(() => {
+        if (!dateParam || dateParam === activeDay) return;
+        setActiveDay(dateParam);
+    }, [activeDay, dateParam, dateRunParam]);
+
+    useEffect(() => {
         const timer = setInterval(() => setNow(new Date()), 30_000);
         return () => clearInterval(timer);
     }, []);
+
+    useEffect(() => {
+        entryProgress.setValue(0);
+        Animated.timing(entryProgress, {
+            toValue: 1,
+            duration: 190,
+            easing: Easing.bezier(0.2, 0.9, 0.2, 1),
+            useNativeDriver: true,
+        }).start();
+    }, [entryProgress]);
+
+    const goBackToCalendar = useCallback(() => {
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+
+        router.replace("/schedule");
+    }, [router]);
 
     useEffect(() => {
         const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
@@ -231,7 +340,7 @@ export default function ScheduleTimetable() {
             const liveNow = new Date();
             const liveMinute = liveNow.getHours() * 60 + liveNow.getMinutes();
             const targetMinute = positionedEvents[0]?.startMinute
-                ?? (activeDay === toYmd(liveNow) ? liveMinute : 8 * 60);
+                ?? (activeDay === toYmd(liveNow) ? liveMinute : 5 * 60);
 
             timelineRef.current?.scrollTo({
                 y: Math.max(0, ((targetMinute - 90) / 60) * HOUR_HEIGHT),
@@ -248,6 +357,109 @@ export default function ScheduleTimetable() {
         });
     }, [router]);
 
+    const requestCloseLiquidPrototype = useCallback(() => {
+        setLiquidPrototypeOpen(false);
+        setPrototypeCloseRequest((value) => value + 1);
+    }, []);
+    const clearQuickHandoffTimer = useCallback(() => {
+        if (quickHandoffTimerRef.current) {
+            clearTimeout(quickHandoffTimerRef.current);
+            quickHandoffTimerRef.current = null;
+        }
+    }, []);
+    const scheduleQuickHandoffHide = useCallback(() => {
+        clearQuickHandoffTimer();
+        quickHandoffTimerRef.current = setTimeout(() => {
+            requestCloseLiquidPrototype();
+            setQuickHandoffHidden(true);
+            quickHandoffTimerRef.current = null;
+        }, 460);
+    }, [clearQuickHandoffTimer, requestCloseLiquidPrototype]);
+    const handleQuickModalCloseStart = useCallback(() => {
+        clearQuickHandoffTimer();
+        setQuickHandoffHidden(true);
+        requestCloseLiquidPrototype();
+    }, [clearQuickHandoffTimer, requestCloseLiquidPrototype]);
+    const handleQuickModalClosed = useCallback(() => {
+        clearQuickHandoffTimer();
+        setQuickModalVisible(false);
+        setLiquidPrototypeResetKey((value) => value + 1);
+        setQuickHandoffHidden(false);
+    }, [clearQuickHandoffTimer]);
+
+    useEffect(() => {
+        return () => {
+            clearQuickHandoffTimer();
+        };
+    }, [clearQuickHandoffTimer]);
+
+    const handleLiquidMenuOpenChange = useCallback((open: boolean) => {
+        setLiquidPrototypeOpen(open);
+        if (!open) {
+            setLiquidPrototypeAction(null);
+        }
+    }, []);
+
+    const handleTimelineViewModeSelect = useCallback((mode: string) => {
+        if (mode === "day" || mode === "multi") {
+            setTimelineScope(mode);
+        }
+    }, []);
+
+    const handleLiquidSearchOpen = useCallback(() => {
+        setLiquidPrototypeAction("search");
+    }, []);
+
+    const handleLiquidSearchClose = useCallback(() => {
+        setSearchQuery("");
+        setLiquidPrototypeAction(null);
+    }, []);
+
+    const openScheduleFromSearch = useCallback((id: string) => {
+        setSearchQuery("");
+        requestCloseLiquidPrototype();
+        openSchedule(id);
+    }, [openSchedule, requestCloseLiquidPrototype]);
+
+    const openQuickScheduleFromLiquidMenu = useCallback(() => {
+        clearQuickHandoffTimer();
+        setQuickHandoffHidden(false);
+        setLiquidPrototypeAction("add");
+        setQuickModalSource({
+            width: TIMETABLE_ADD_DROPDOWN_WIDTH,
+            height: TIMETABLE_ADD_DROPDOWN_HEIGHT,
+            content: "addMenu",
+        });
+        setQuickModalVisible(true);
+        scheduleQuickHandoffHide();
+    }, [clearQuickHandoffTimer, scheduleQuickHandoffHide]);
+
+    const openManualScheduleFromLiquidMenu = useCallback(() => {
+        setLiquidPrototypeAction("add");
+        requestCloseLiquidPrototype();
+        setFormInitialValues(null);
+        setModalVisible(true);
+    }, [requestCloseLiquidPrototype]);
+
+    const openCategoryManagerFromLiquidMenu = useCallback(() => {
+        setLiquidPrototypeAction("add");
+        requestCloseLiquidPrototype();
+        router.push("/schedule/categories");
+    }, [requestCloseLiquidPrototype, router]);
+
+    const handleQuickAnalyze = useCallback(async (text: string) => {
+        try {
+            return await parseScheduleText({
+                text,
+                referenceDate: activeDay,
+                defaultDurationMinutes: 60,
+            });
+        } catch (error) {
+            Alert.alert("일정 분석 실패", getErrorMessage(error));
+            throw error;
+        }
+    }, [activeDay]);
+
     const addItem = useCallback(async (payload: Omit<ScheduleItem, "id">) => {
         dispatch({ type: "SET_LOADING", loading: true });
 
@@ -262,26 +474,6 @@ export default function ScheduleTimetable() {
             dispatch({ type: "SET_LOADING", loading: false });
         }
     }, [dispatch]);
-
-    const moveWeek = useCallback((amount: number) => {
-        setActiveDay((current) => shiftDay(current, amount * 7));
-    }, []);
-
-    const handleWeekMomentumEnd = useCallback((
-        event: NativeSyntheticEvent<NativeScrollEvent>
-    ) => {
-        const index = Math.round(event.nativeEvent.contentOffset.x / weekPageWidth);
-        const offset = WEEK_PAGE_OFFSETS[index] ?? 0;
-        if (offset === 0) return;
-
-        moveWeek(offset);
-        requestAnimationFrame(() => {
-            weekListRef.current?.scrollToIndex({
-                index: CENTER_WEEK_INDEX,
-                animated: false,
-            });
-        });
-    }, [moveWeek, weekPageWidth]);
 
     const moveDayBy = useCallback((amount: number) => {
         setActiveDay((current) => shiftDay(current, amount));
@@ -304,12 +496,19 @@ export default function ScheduleTimetable() {
     }, [dayPageWidth, moveDayBy]);
 
     const goToday = useCallback(() => {
+        dispatch({ type: "SET_SELECTED_DAY", day: today });
         setActiveDay(today);
-    }, [today]);
+        router.dismissTo({
+            pathname: "/schedule",
+            params: {
+                focus: "today",
+                focusRun: String(Date.now()),
+            },
+        });
+    }, [dispatch, router, today]);
 
     const bottomLeftActions = useMemo<FloatingBarAction[]>(() => [{
         key: "today",
-        icon: "calendar-outline",
         label: "오늘",
         accessibilityLabel: "오늘 날짜로 이동",
         onPress: goToday,
@@ -487,7 +686,7 @@ export default function ScheduleTimetable() {
                             >
                                 {hour < 24 && (
                                     <Text style={[styles.hourText, { color: colors.textSecondary }]}>
-                                        {String(hour).padStart(2, "0")}:00
+                                        {formatTimelineHour(hour)}
                                     </Text>
                                 )}
                             </View>
@@ -560,18 +759,6 @@ export default function ScheduleTimetable() {
                             </View>
                         )}
 
-                        {pagePositionedEvents.length === 0 && pageAllDayItems.length === 0 && (
-                            <View style={styles.emptyState}>
-                                <Ionicons
-                                    name="calendar-clear-outline"
-                                    size={28}
-                                    color={colors.textSecondary}
-                                />
-                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                                    이 날짜에는 일정이 없어요
-                                </Text>
-                            </View>
-                        )}
                     </View>
                 </ScrollView>
             </View>
@@ -606,106 +793,159 @@ export default function ScheduleTimetable() {
                     mode === "dark" ? styles.bottomMaterialLayerDark : styles.bottomMaterialLayerLight,
                 ]}
             />
+            <Animated.View
+                style={[
+                    styles.screenContent,
+                    {
+                        opacity: entryOpacity,
+                        transform: [
+                            { translateY: entryTranslateY },
+                            { scale: entryScale },
+                        ],
+                    },
+                ]}
+            >
             <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
                 <View style={styles.topControls}>
-                    <CalendarGlassSurface
-                        interactive
-                        clear
-                        style={[styles.backGlass, { borderColor: colors.border }]}
-                    >
+                    {isLiquidGlassIconButtonAvailable ? (
                         <Pressable
-                            onPress={() => router.back()}
+                            onPress={goBackToCalendar}
                             accessibilityLabel="캘린더로 돌아가기"
+                            accessibilityRole="button"
                             style={({ pressed }) => [
-                                styles.backButton,
+                                styles.backGlass,
                                 {
-                                    opacity: pressed ? 0.55 : 1,
+                                    opacity: pressed ? 0.68 : 1,
                                     transform: [{ scale: pressed ? 0.96 : 1 }],
                                 },
                             ]}
                         >
-                            <Ionicons name="chevron-back" size={21} color={colors.textPrimary} />
-                            <Text style={[styles.backText, { color: colors.textPrimary }]}>
-                                {new Date(`${activeDay}T00:00:00`).getMonth() + 1}월
-                            </Text>
+                            <LiquidGlassIconButton
+                                pointerEvents="none"
+                                leadingSymbolName="chevron.left"
+                                label={`${new Date(`${activeDay}T00:00:00`).getMonth() + 1}월`}
+                                buttonWidth={TIMETABLE_BACK_PILL_WIDTH}
+                                buttonHeight={TIMETABLE_PILL_HEIGHT}
+                                colorScheme={mode === "dark" ? "dark" : "light"}
+                                accessibilityLabel="캘린더로 돌아가기"
+                                style={StyleSheet.absoluteFill}
+                            />
                         </Pressable>
-                    </CalendarGlassSurface>
+                    ) : (
+                        <CalendarGlassSurface
+                            interactive
+                            clear
+                            style={[styles.backGlass, { borderColor: colors.border }]}
+                        >
+                            <Pressable
+                                onPress={goBackToCalendar}
+                                accessibilityLabel="캘린더로 돌아가기"
+                                style={({ pressed }) => [
+                                    styles.backButton,
+                                    {
+                                        opacity: pressed ? 0.55 : 1,
+                                        transform: [{ scale: pressed ? 0.96 : 1 }],
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="chevron-back" size={21} color={colors.textPrimary} />
+                                <Text style={[styles.backText, { color: colors.textPrimary }]}>
+                                    {new Date(`${activeDay}T00:00:00`).getMonth() + 1}월
+                                </Text>
+                            </Pressable>
+                        </CalendarGlassSurface>
+                    )}
 
-                    <CalendarGlassSurface
-                        interactive
-                        clear
-                        style={[styles.headerActions, { borderColor: colors.border }]}
-                    >
-                        <Pressable
-                            onPress={() => router.back()}
-                            accessibilityLabel="월 캘린더 보기"
-                            style={({ pressed }) => [
-                                styles.headerIconButton,
-                                {
-                                    opacity: pressed ? 0.62 : 1,
-                                    transform: [{ scale: pressed ? 0.9 : 1 }],
-                                },
-                            ]}
+                    {usesLiquidViewModeControl ? (
+                        <View pointerEvents="none" style={styles.headerActionsNative} />
+                    ) : isLiquidGlassSegmentedPillAvailable ? (
+                        <LiquidGlassSegmentedPill
+                            symbolNames={[viewToggleSymbol, "magnifyingglass", "plus"]}
+                            selectedIndex={-1}
+                            buttonHeight={TIMETABLE_PILL_HEIGHT}
+                            slotWidth={TIMETABLE_PILL_SLOT}
+                            colorScheme={mode === "dark" ? "dark" : "light"}
+                            onSelect={(index) => {
+                                if (index === 0) {
+                                    setTimelineScope((current) => current === "day" ? "multi" : "day");
+                                    return;
+                                }
+                                if (index === 1) {
+                                    setSearchVisible(true);
+                                    return;
+                                }
+                                setModalVisible(true);
+                            }}
+                            style={styles.headerActionsNative}
+                        />
+                    ) : (
+                        <CalendarGlassSurface
+                            interactive
+                            clear
+                            style={[styles.headerActions, { borderColor: colors.border }]}
                         >
-                            <Ionicons name="calendar-outline" size={24} color={colors.textPrimary} />
-                        </Pressable>
-                        <Pressable
-                            onPress={() => setSearchVisible(true)}
-                            accessibilityLabel="일정 검색"
-                            style={({ pressed }) => [
-                                styles.headerIconButton,
-                                {
-                                    opacity: pressed ? 0.62 : 1,
-                                    transform: [{ scale: pressed ? 0.9 : 1 }],
-                                },
-                            ]}
-                        >
-                            <Ionicons name="search" size={24} color={colors.textPrimary} />
-                        </Pressable>
-                        <Pressable
-                            onPress={() => setModalVisible(true)}
-                            accessibilityLabel="일정 추가"
-                            style={({ pressed }) => [
-                                styles.headerIconButton,
-                                {
-                                    opacity: pressed ? 0.62 : 1,
-                                    transform: [{ scale: pressed ? 0.9 : 1 }],
-                                },
-                            ]}
-                        >
-                            <Ionicons name="add" size={26} color={colors.textPrimary} />
-                        </Pressable>
-                    </CalendarGlassSurface>
+                            <Pressable
+                                onPress={() => setTimelineScope((current) => current === "day" ? "multi" : "day")}
+                                accessibilityLabel={timelineScope === "day" ? "여러 날 보기로 전환" : "하루 보기로 전환"}
+                                style={({ pressed }) => [
+                                    styles.headerIconButton,
+                                    {
+                                        opacity: pressed ? 0.62 : 1,
+                                        transform: [{ scale: pressed ? 0.9 : 1 }],
+                                    },
+                                ]}
+                            >
+                                <Ionicons
+                                    name={timelineScope === "day" ? "calendar-clear-outline" : "albums-outline"}
+                                    size={timelineScope === "day" ? 21 : 22}
+                                    color={colors.textPrimary}
+                                />
+                            </Pressable>
+                            <Pressable
+                                onPress={() => setSearchVisible(true)}
+                                accessibilityLabel="일정 검색"
+                                style={({ pressed }) => [
+                                    styles.headerIconButton,
+                                    {
+                                        opacity: pressed ? 0.62 : 1,
+                                        transform: [{ scale: pressed ? 0.9 : 1 }],
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="search" size={22} color={colors.textPrimary} />
+                            </Pressable>
+                            <Pressable
+	                                onPress={() => {
+	                                    setFormInitialValues(null);
+	                                    setModalVisible(true);
+	                                }}
+                                accessibilityLabel="일정 추가"
+                                style={({ pressed }) => [
+                                    styles.headerIconButton,
+                                    {
+                                        opacity: pressed ? 0.62 : 1,
+                                        transform: [{ scale: pressed ? 0.9 : 1 }],
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="add" size={24} color={colors.textPrimary} />
+                            </Pressable>
+                        </CalendarGlassSurface>
+                    )}
                 </View>
 
-                <View style={styles.titleBlock}>
-                    <Text style={[styles.title, { color: colors.textPrimary }]}>
-                        {formatDateTitle(activeDay)}
-                    </Text>
-                    <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-                        {formatWeekRange(activeWeekDays)}
-                    </Text>
-                </View>
             </View>
 
-            <View style={[styles.weekSection, { borderBottomColor: colors.border }]}>
-                <FlatList
-                    ref={weekListRef}
-                    data={WEEK_PAGE_OFFSETS}
-                    renderItem={renderWeek}
-                    keyExtractor={(offset) => String(offset)}
-                    horizontal
-                    pagingEnabled
-                    bounces={false}
-                    initialScrollIndex={CENTER_WEEK_INDEX}
-                    getItemLayout={(_, index) => ({
-                        length: weekPageWidth,
-                        offset: weekPageWidth * index,
-                        index,
-                    })}
-                    onMomentumScrollEnd={handleWeekMomentumEnd}
-                    showsHorizontalScrollIndicator={false}
-                />
+            {timelineScope === "multi" && (
+                <View style={[styles.weekSection, { borderBottomColor: colors.border }]}>
+                    {renderWeek({ item: 0 })}
+                </View>
+            )}
+
+            <View style={[styles.dayTitleBar, { borderBottomColor: colors.border }]}>
+                <Text style={[styles.dayTitleText, { color: colors.textPrimary }]}>
+                    {formatDateTitle(activeDay)}
+                </Text>
             </View>
 
             <FlatList
@@ -725,27 +965,167 @@ export default function ScheduleTimetable() {
                 onMomentumScrollEnd={handleDayMomentumEnd}
                 showsHorizontalScrollIndicator={false}
                 style={styles.dayPager}
-            />
+	            />
+	            </Animated.View>
 
-            <CalendarSearchModal
-                visible={searchVisible}
-                items={allItems}
-                onClose={() => setSearchVisible(false)}
-            />
+	            {usesLiquidViewModeControl && (
+	                <View pointerEvents="box-none" style={styles.toolbarLayer}>
+	                    {liquidPrototypeOpen && (
+	                        <Pressable
+	                            accessible={false}
+	                            importantForAccessibility="no"
+	                            style={styles.toolbarDropdownBackdrop}
+	                            onPress={requestCloseLiquidPrototype}
+	                        />
+	                    )}
 
-            <ScheduleNewModal
-                visible={modalVisible}
-                onClose={() => setModalVisible(false)}
-                onSubmit={addItem}
-                categories={state.categories}
-                defaultDay={activeDay}
-                onManageCategories={() => {
-                    setModalVisible(false);
-                    router.push("/schedule/categories");
-                }}
-            />
+	                    <View
+	                        pointerEvents="box-none"
+	                        style={[
+	                            styles.liquidViewModeControl,
+	                            {
+		                                top: insets.top + TIMETABLE_TOOLBAR_TOP_OFFSET,
+		                                right: 16,
+		                                width: liquidPrototypeLayerWidth,
+		                                opacity: quickHandoffHidden ? 0 : 1,
+		                            },
+		                        ]}
+		                    >
+		                        <LiquidCalendarMenuPrototype
+		                            key={`timeline-liquid-${liquidPrototypeResetKey}`}
+		                            selectedMode={timelineScope}
+	                            viewModeVariant="timeline"
+	                            colorScheme={mode === "dark" ? "dark" : "light"}
+	                            closeRequest={prototypeCloseRequest}
+	                            searchExpandedWidth={searchHeaderTargetWidth}
+	                            searchQuery={searchQuery}
+	                            onSelect={handleTimelineViewModeSelect}
+	                            onOpenChange={handleLiquidMenuOpenChange}
+	                            onSearch={handleLiquidSearchOpen}
+	                            onSearchTextChange={setSearchQuery}
+	                            onSearchClose={handleLiquidSearchClose}
+	                            onQuickAdd={openQuickScheduleFromLiquidMenu}
+	                            onManualAdd={openManualScheduleFromLiquidMenu}
+	                            onManageCategories={openCategoryManagerFromLiquidMenu}
+	                            style={StyleSheet.absoluteFill}
+	                        />
+	                    </View>
 
-            {isFocused && !modalVisible && !searchVisible && !keyboardVisible && (
+	                    {liquidPrototypeAction === "search" && searchQuery.trim().length > 0 && (
+	                        <View
+	                            pointerEvents="box-none"
+	                            style={[
+	                                styles.searchResultsLayer,
+	                                {
+	                                    top: insets.top + TIMETABLE_TOOLBAR_TOP_OFFSET + TIMETABLE_PILL_HEIGHT + 8,
+	                                    right: 16,
+	                                    width: searchHeaderTargetWidth,
+	                                },
+	                            ]}
+	                        >
+	                            <CalendarGlassSurface
+	                                interactive
+	                                prominent
+	                                style={[
+	                                    styles.searchResultsGlass,
+	                                    { borderColor: colors.border },
+	                                ]}
+	                            >
+	                                {searchResults.length === 0 ? (
+	                                    <View style={styles.searchEmpty}>
+	                                        <Text style={[styles.searchEmptyText, { color: colors.textSecondary }]}>
+	                                            검색 결과가 없어요
+	                                        </Text>
+	                                    </View>
+	                                ) : (
+	                                    <View style={styles.searchResultList}>
+	                                        {searchResults.map((item) => (
+	                                            <Pressable
+	                                                key={item.id}
+	                                                onPress={() => openScheduleFromSearch(item.id)}
+	                                                style={({ pressed }) => [
+	                                                    styles.searchResultRow,
+	                                                    {
+	                                                        borderBottomColor: colors.border,
+	                                                        backgroundColor: pressed
+	                                                            ? mode === "dark"
+	                                                                ? "rgba(255,255,255,0.08)"
+	                                                                : "rgba(0,0,0,0.05)"
+	                                                            : "transparent",
+	                                                    },
+	                                                ]}
+	                                            >
+	                                                <View
+	                                                    style={[
+	                                                        styles.searchResultBar,
+	                                                        { backgroundColor: item.category?.color ?? "#8e8e93" },
+	                                                    ]}
+	                                                />
+	                                                <View style={styles.searchResultBody}>
+	                                                    <Text
+	                                                        numberOfLines={1}
+	                                                        style={[styles.searchResultTitle, { color: colors.textPrimary }]}
+	                                                    >
+	                                                        {item.title}
+	                                                    </Text>
+	                                                    <Text
+	                                                        numberOfLines={1}
+	                                                        style={[styles.searchResultMeta, { color: colors.textSecondary }]}
+	                                                    >
+	                                                        {formatScheduleDateTitle(item.startAt)}
+	                                                    </Text>
+	                                                </View>
+	                                                <Text style={[styles.searchResultTime, { color: colors.textSecondary }]}>
+	                                                    {item.allDay ? "종일" : formatHHmm(item.startAt)}
+	                                                </Text>
+	                                            </Pressable>
+	                                        ))}
+	                                    </View>
+	                                )}
+	                            </CalendarGlassSurface>
+	                        </View>
+	                    )}
+	                </View>
+	            )}
+
+	            <CalendarSearchModal
+	                visible={!usesLiquidViewModeControl && searchVisible}
+	                items={allItems}
+	                onClose={() => setSearchVisible(false)}
+	            />
+
+	            <ScheduleNewModal
+	                visible={modalVisible}
+	                onClose={() => {
+	                    setModalVisible(false);
+	                    setFormInitialValues(null);
+	                }}
+	                onSubmit={addItem}
+	                categories={state.categories}
+	                defaultDay={activeDay}
+	                initialValues={formInitialValues}
+	                onManageCategories={() => {
+	                    setModalVisible(false);
+	                    setFormInitialValues(null);
+	                    router.push("/schedule/categories");
+	                }}
+	            />
+
+	            <QuickScheduleModal
+	                visible={quickModalVisible}
+	                onClose={handleQuickModalClosed}
+	                onCloseStart={handleQuickModalCloseStart}
+	                onAnalyze={handleQuickAnalyze}
+	                onSave={addItem}
+	                defaultDay={activeDay}
+	                defaultCategory={state.categories[0]}
+	                sourceTopOffset={TIMETABLE_TOOLBAR_TOP_OFFSET}
+	                sourceWidth={quickModalSource.width}
+	                sourceHeight={quickModalSource.height}
+	                sourceContent={quickModalSource.content}
+	            />
+
+            {isFocused && !searchVisible && !keyboardVisible && !liquidPrototypeOpen && (
                 <GlobalFloatingActionBar
                     leftActions={bottomLeftActions}
                     rightActions={bottomRightActions}
@@ -760,6 +1140,91 @@ const styles = StyleSheet.create({
     root: {
         flex: 1,
     },
+    screenContent: {
+        flex: 1,
+    },
+    toolbarLayer: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 40,
+        elevation: 40,
+        overflow: "visible",
+    },
+    toolbarDropdownBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 42,
+        elevation: 42,
+        backgroundColor: "transparent",
+    },
+    liquidViewModeControl: {
+        position: "absolute",
+        height: TIMETABLE_LIQUID_MENU_HEIGHT,
+        zIndex: 56,
+        elevation: 56,
+        overflow: "visible",
+    },
+    searchResultsLayer: {
+        position: "absolute",
+        zIndex: 55,
+        elevation: 55,
+    },
+    searchResultsGlass: {
+        marginTop: 8,
+        borderRadius: 22,
+        borderWidth: 1,
+        overflow: "hidden",
+        maxHeight: 260,
+    },
+    searchEmpty: {
+        minHeight: 56,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 18,
+    },
+    searchEmptyText: {
+        fontSize: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    searchResultList: {
+        overflow: "hidden",
+    },
+    searchResultRow: {
+        minHeight: 62,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    searchResultBar: {
+        width: 4,
+        height: 34,
+        borderRadius: 2,
+    },
+    searchResultBody: {
+        flex: 1,
+        minWidth: 0,
+        gap: 3,
+    },
+    searchResultTitle: {
+        fontSize: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    searchResultMeta: {
+        fontSize: 12,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    searchResultTime: {
+        fontSize: 12,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
     topMaterialLayer: {
         position: "absolute",
         top: 0,
@@ -770,10 +1235,10 @@ const styles = StyleSheet.create({
         elevation: 1,
     },
     topMaterialLayerDark: {
-        backgroundColor: "rgba(0,0,0,0.28)",
+        backgroundColor: "rgba(0,0,0,0.10)",
     },
     topMaterialLayerLight: {
-        backgroundColor: "rgba(242,242,247,0.24)",
+        backgroundColor: "rgba(255,255,255,0.16)",
     },
     bottomMaterialLayer: {
         position: "absolute",
@@ -785,89 +1250,78 @@ const styles = StyleSheet.create({
         elevation: 1,
     },
     bottomMaterialLayerDark: {
-        backgroundColor: "rgba(0,0,0,0.14)",
+        backgroundColor: "rgba(0,0,0,0.08)",
     },
     bottomMaterialLayerLight: {
-        backgroundColor: "rgba(242,242,247,0.10)",
+        backgroundColor: "rgba(255,255,255,0.10)",
     },
     header: {
-        minHeight: 132,
+        minHeight: 94,
         paddingHorizontal: 16,
-        paddingBottom: 10,
+        paddingBottom: 8,
         justifyContent: "flex-end",
-        gap: 15,
+        gap: 8,
     },
     topControls: {
-        minHeight: 52,
+        minHeight: TIMETABLE_PILL_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
     },
     backGlass: {
-        minWidth: 92,
-        height: 46,
-        borderRadius: 23,
-        borderWidth: 1,
-        overflow: "hidden",
+        width: TIMETABLE_BACK_PILL_WIDTH,
+        height: TIMETABLE_PILL_HEIGHT,
+        borderRadius: TIMETABLE_PILL_HEIGHT / 2,
+        overflow: Platform.OS === "ios" ? "visible" : "hidden",
     },
     backButton: {
         flex: 1,
-        paddingLeft: 9,
-        paddingRight: 15,
+        paddingLeft: 7,
+        paddingRight: 11,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 2,
     },
     backText: {
-        fontSize: 18,
+        fontSize: 17,
         fontWeight: "800",
         letterSpacing: 0,
     },
     headerActions: {
         flexDirection: "row",
         alignItems: "center",
-        borderRadius: 23,
+        height: TIMETABLE_PILL_HEIGHT,
+        borderRadius: TIMETABLE_PILL_HEIGHT / 2,
         borderWidth: 1,
         overflow: "hidden",
-        paddingHorizontal: 2,
+        paddingHorizontal: 0,
+    },
+    headerActionsNative: {
+        width: TIMETABLE_PILL_SLOT * 3,
+        height: TIMETABLE_PILL_HEIGHT,
     },
     headerIconButton: {
-        width: 52,
-        height: 42,
+        width: TIMETABLE_PILL_SLOT,
+        height: TIMETABLE_PILL_HEIGHT,
         alignItems: "center",
         justifyContent: "center",
     },
-    titleBlock: {
-        justifyContent: "center",
-        paddingHorizontal: 4,
-    },
-    title: {
-        fontSize: 30,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
-    subtitle: {
-        marginTop: 3,
-        fontSize: 13,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
     weekSection: {
-        height: 92,
+        height: 82,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     weekPage: {
         flexDirection: "row",
         paddingHorizontal: 12,
-        paddingBottom: 10,
+        paddingBottom: 8,
         alignItems: "stretch",
     },
     weekDay: {
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
+        gap: 3,
     },
     weekdayLabel: {
         fontSize: 12,
@@ -875,9 +1329,9 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     weekDayCircle: {
-        width: 38,
-        height: 38,
-        borderRadius: 19,
+        width: 34,
+        height: 34,
+        borderRadius: 17,
         borderWidth: 1,
         borderColor: "transparent",
         backgroundColor: "transparent",
@@ -897,7 +1351,18 @@ const styles = StyleSheet.create({
         borderColor: "#ff3b30",
     },
     weekDayText: {
-        fontSize: 17,
+        fontSize: 16,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    dayTitleBar: {
+        height: 45,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    dayTitleText: {
+        fontSize: 16,
         fontWeight: "800",
         letterSpacing: 0,
     },
@@ -962,8 +1427,8 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     timelineContent: {
-        paddingHorizontal: 18,
-        paddingTop: 12,
+        paddingHorizontal: 16,
+        paddingTop: 0,
         paddingBottom: 146,
     },
     hourRow: {
@@ -975,10 +1440,10 @@ const styles = StyleSheet.create({
     },
     hourText: {
         position: "absolute",
-        top: -8,
-        width: TIMELINE_GUTTER - 8,
-        fontSize: 11,
-        fontWeight: "800",
+        top: -9,
+        width: TIMELINE_GUTTER + 14,
+        fontSize: 13,
+        fontWeight: "600",
         textAlign: "right",
         letterSpacing: 0,
     },
@@ -986,7 +1451,7 @@ const styles = StyleSheet.create({
         position: "absolute",
         top: 0,
         bottom: 0,
-        left: TIMELINE_GUTTER,
+        left: TIMELINE_GUTTER + 18,
         right: 0,
     },
     timelineEvent: {
@@ -1032,7 +1497,7 @@ const styles = StyleSheet.create({
     },
     nowLine: {
         position: "absolute",
-        left: TIMELINE_GUTTER - 5,
+        left: TIMELINE_GUTTER + 13,
         right: 0,
         height: 8,
         flexDirection: "row",

@@ -181,12 +181,12 @@ export default function ScheduleCategoriesScreen() {
                         onChangeText={setNewTitle}
                         onSubmitEditing={createCategory}
                         placeholder="카테고리 이름"
-                        placeholderTextColor={colors.textDisabled}
+                        placeholderTextColor={colors.inputPlaceholder}
                         style={[
                             styles.input,
                             {
-                                backgroundColor: colors.surface2,
-                                borderColor: colors.border,
+                                backgroundColor: colors.inputBackground,
+                                borderColor: colors.inputBorder,
                                 color: colors.textPrimary,
                             },
                         ]}
@@ -236,12 +236,12 @@ export default function ScheduleCategoriesScreen() {
                                         onChangeText={setEditingTitle}
                                         onSubmitEditing={saveEditing}
                                         placeholder="카테고리 이름"
-                                        placeholderTextColor={colors.textDisabled}
+                                        placeholderTextColor={colors.inputPlaceholder}
                                         style={[
                                             styles.input,
                                             {
-                                                backgroundColor: colors.surface2,
-                                                borderColor: colors.border,
+                                                backgroundColor: colors.inputBackground,
+                                                borderColor: colors.inputBorder,
                                                 color: colors.textPrimary,
                                             },
                                         ]}

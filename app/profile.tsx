@@ -148,6 +148,15 @@ export default function ProfileScreen() {
         ]);
     }, [router, signOut]);
 
+    const goBackToSchedule = useCallback(() => {
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+
+        router.replace("/schedule");
+    }, [router]);
+
     return (
         <View style={[styles.root, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
@@ -160,7 +169,7 @@ export default function ProfileScreen() {
                 >
                     <Pressable
                         accessibilityLabel="일정 목록으로 돌아가기"
-                        onPress={() => router.replace("/schedule")}
+                        onPress={goBackToSchedule}
                         style={({ pressed }) => [styles.backButton, { opacity: pressed ? 0.55 : 1 }]}
                     >
                         <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
@@ -182,7 +191,7 @@ export default function ProfileScreen() {
             >
                 <CalendarGlassSurface
                     variant="card"
-                    glow
+                    tone="solidCard"
                     style={[
                         styles.profileCard,
                         { borderColor: colors.border },
@@ -225,6 +234,7 @@ export default function ProfileScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>계정 정보</Text>
                     <CalendarGlassSurface
                         variant="card"
+                        tone="solidCard"
                         style={[styles.accountCard, { borderColor: colors.border }]}
                     >
                         <AccountInfoRow
@@ -251,6 +261,7 @@ export default function ProfileScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>앱 설정</Text>
                     <CalendarGlassSurface
                         variant="card"
+                        tone="solidCard"
                         style={[styles.settingsCard, { borderColor: colors.border }]}
                     >
                         <View style={styles.settingTextWrap}>
@@ -272,6 +283,7 @@ export default function ProfileScreen() {
                 <CalendarGlassSurface
                     interactive
                     variant="card"
+                    tone="solidCard"
                     style={[styles.signOutGlass, { borderColor: colors.border }]}
                 >
                     <Pressable

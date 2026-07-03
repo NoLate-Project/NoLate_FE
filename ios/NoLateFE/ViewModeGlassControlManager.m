@@ -9,6 +9,9 @@
 @interface LiquidGlassIconButtonManager : RCTViewManager
 @end
 
+@interface LiquidGlassSegmentedPillManager : RCTViewManager
+@end
+
 @implementation LiquidGlassIconButtonManager
 
 RCT_EXPORT_MODULE(LiquidGlassIconButton)
@@ -32,6 +35,30 @@ RCT_EXPORT_VIEW_PROPERTY(buttonHeight, NSNumber)
 RCT_EXPORT_VIEW_PROPERTY(disabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(colorScheme, NSString)
 RCT_EXPORT_VIEW_PROPERTY(onPress, RCTBubblingEventBlock)
+
+@end
+
+@implementation LiquidGlassSegmentedPillManager
+
+RCT_EXPORT_MODULE(LiquidGlassSegmentedPill)
+
++ (BOOL)requiresMainQueueSetup
+{
+  return YES;
+}
+
+- (UIView *)view
+{
+  return [LiquidGlassSegmentedPillView new];
+}
+
+RCT_EXPORT_VIEW_PROPERTY(symbolNames, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(selectedIndex, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(buttonHeight, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(slotWidth, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(disabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(colorScheme, NSString)
+RCT_EXPORT_VIEW_PROPERTY(onSelect, RCTBubblingEventBlock)
 
 @end
 
@@ -75,9 +102,14 @@ RCT_EXPORT_MODULE(LiquidCalendarMenuPrototype)
 }
 
 RCT_EXPORT_VIEW_PROPERTY(selectedMode, NSString)
+RCT_EXPORT_VIEW_PROPERTY(viewModeVariant, NSString)
 RCT_EXPORT_VIEW_PROPERTY(disabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(colorScheme, NSString)
 RCT_EXPORT_VIEW_PROPERTY(tapRequest, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(closeRequest, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(addMenuRequest, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(quickAddRequest, NSNumber)
+RCT_EXPORT_VIEW_PROPERTY(manualAddRequest, NSNumber)
 RCT_EXPORT_VIEW_PROPERTY(searchExpandedWidth, NSNumber)
 RCT_EXPORT_VIEW_PROPERTY(searchQuery, NSString)
 RCT_EXPORT_VIEW_PROPERTY(onSelect, RCTBubblingEventBlock)

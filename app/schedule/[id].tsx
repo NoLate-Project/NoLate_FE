@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, Easing, PanResponder, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getSchedule, markScheduleDeparted } from "../../src/api/schedule";
@@ -288,6 +288,7 @@ export default function ScheduleRoute() {
 
 function ScheduleDetail() {
     const { id } = useLocalSearchParams<{ id: string }>();
+    const pathname = usePathname();
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
@@ -484,7 +485,8 @@ function ScheduleDetail() {
                 if (!cancelled) dispatch({ type: "UPDATE_ITEM", item: detail });
             })
             .catch((error) => {
-                if (!cancelled) Alert.alert("일정 조회 실패", getErrorMessage(error));
+                const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
+                if (!__DEV__ && !cancelled && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -493,7 +495,7 @@ function ScheduleDetail() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id]);
+    }, [dispatch, id, pathname]);
 
     const originCoord = useMemo(() => mapCoordFromPlace(item?.origin), [item?.origin]);
     const destinationCoord = useMemo(() => mapCoordFromPlace(item?.destination), [item?.destination]);

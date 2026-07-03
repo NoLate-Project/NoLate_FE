@@ -6,7 +6,9 @@ import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGla
 import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
 import { useTheme } from "../../../theme/ThemeContext";
 
-const FLOATING_PILL_HEIGHT = 52;
+const FLOATING_PILL_HEIGHT = 44;
+const FLOATING_ICON_ONLY_WIDTH = 72;
+const FLOATING_LABEL_WIDTH = 76;
 
 export type FloatingBarAction = {
     key: string;
@@ -79,7 +81,7 @@ export default function GlobalFloatingActionBar({
         if (isLiquidGlassIconButtonAvailable && actions.length === 1) {
             const action = actions[0];
             const nativeSymbolName = action.nativeSymbolName ?? getNativeSymbolName(action.icon);
-            const buttonWidth = action.icon ? 104 : 88;
+            const buttonWidth = action.icon ? FLOATING_ICON_ONLY_WIDTH : FLOATING_LABEL_WIDTH;
 
             return (
                 <LiquidGlassIconButton
@@ -264,7 +266,7 @@ const styles = StyleSheet.create({
         overflow: "hidden",
     },
     singleIconActionSurface: {
-        width: 104,
+        width: FLOATING_ICON_ONLY_WIDTH,
     },
     nativeActionButton: {
         height: FLOATING_PILL_HEIGHT,
@@ -291,7 +293,8 @@ const styles = StyleSheet.create({
         width: "100%",
     },
     labelAction: {
-        paddingHorizontal: 18,
+        minWidth: FLOATING_LABEL_WIDTH,
+        paddingHorizontal: 16,
     },
     emphasizedAction: {
         borderWidth: StyleSheet.hairlineWidth,
@@ -301,7 +304,7 @@ const styles = StyleSheet.create({
         shadowRadius: 14,
     },
     actionText: {
-        fontSize: 17,
+        fontSize: 15,
         fontWeight: "800",
         letterSpacing: 0,
     },

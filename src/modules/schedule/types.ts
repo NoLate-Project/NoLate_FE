@@ -28,6 +28,12 @@ export type ScheduleParseResult = {
     needsReview: boolean;
     warnings: string[];
     missingFields: string[];
+    travelMinutes?: number;
+    travelMode?: TravelMode;
+    route?: unknown;
+    notificationEnabled?: boolean;
+    notificationLeadMinutes?: number;
+    notificationIntervalMinutes?: number;
 };
 
 export type TravelMode = "CAR" | "TRANSIT" | "WALK" | "BIKE" | "ETC";

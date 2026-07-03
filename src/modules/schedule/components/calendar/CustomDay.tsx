@@ -64,8 +64,8 @@ export default function CustomDay({ date, state, marking, isSelectedDay, onPress
     const weekday = new Date(`${date.dateString}T00:00:00`).getDay();
     const isWeekend = weekday === 0 || weekday === 6;
     const weekendDateColor = mode === "dark"
-        ? "rgba(205,205,212,0.76)"
-        : "rgba(98,98,106,0.78)";
+        ? "rgba(235,235,245,0.52)"
+        : "rgba(60,60,67,0.52)";
 
     const hasPeriods = !!(marking?.periods && marking.periods.length > 0);
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
@@ -215,18 +215,18 @@ const styles = StyleSheet.create({
     cell: {
         alignSelf: "stretch",
         height: 58,
-        paddingTop: 8,
+        paddingTop: 7,
         alignItems: "center",
     },
     dayCircle: {
-        width: 46,
-        height: 46,
-        borderRadius: 23,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         alignItems: "center",
         justifyContent: "center",
     },
     dayText: {
-        fontSize: 22,
+        fontSize: 20,
         letterSpacing: 0,
     },
     periods: {

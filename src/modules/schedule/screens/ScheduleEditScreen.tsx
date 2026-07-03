@@ -13,6 +13,7 @@ import { useTheme } from "../../theme/ThemeContext";
 import { fromISO } from "../../../../lib/util/data";
 import type { ScheduleCategory, TravelMode } from "../types";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../routePlannerSession";
+import { getRouteInfoFromRoute } from "../routeInfo";
 import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
@@ -60,6 +61,7 @@ export default function ScheduleEdit() {
 
     const [title,           setTitle]           = useState(item?.title ?? "");
     const [categoryId,      setCategoryId]      = useState(item?.category?.id ?? state.categories[0]?.id ?? "1");
+    const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
     const [originAddress, setOriginAddress]     = useState(item?.origin?.address);
@@ -103,6 +105,29 @@ export default function ScheduleEdit() {
         () => categoryOptions.find((c) => c.id === categoryId) ?? categoryOptions[0],
         [categoryOptions, categoryId]
     );
+    const routeInfo = useMemo(() => getRouteInfoFromRoute(route, {
+        origin: originText.trim() || originAddress || typeof originLat === "number"
+            ? { name: originText.trim() || originAddress || "출발지", address: originAddress, lat: originLat, lng: originLng }
+            : undefined,
+        destination: destinationText.trim() || destinationAddress || typeof destinationLat === "number"
+            ? { name: destinationText.trim() || destinationAddress || "도착지", address: destinationAddress, lat: destinationLat, lng: destinationLng }
+            : undefined,
+        travelMode,
+        travelMinutes,
+    }), [
+        destinationAddress,
+        destinationLat,
+        destinationLng,
+        destinationText,
+        originAddress,
+        originLat,
+        originLng,
+        originText,
+        route,
+        travelMinutes,
+        travelMode,
+    ]);
+    const routeReady = !!routeInfo;
 
     useEffect(() => {
         if (!id) return;
@@ -118,7 +143,8 @@ export default function ScheduleEdit() {
             })
             .catch((error) => {
                 if (cancelled) return;
-                Alert.alert("일정 조회 실패", getErrorMessage(error));
+                const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
+                if (!__DEV__ && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setDetailLoading(false);
@@ -127,7 +153,7 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id]);
+    }, [dispatch, id, pathname]);
 
     useEffect(() => {
         let cancelled = false;
@@ -293,6 +319,20 @@ export default function ScheduleEdit() {
         route,
     ]);
 
+    const clearRoute = useCallback(() => {
+        setOriginText("");
+        setDestinationText("");
+        setOriginAddress(undefined);
+        setDestinationAddress(undefined);
+        setOriginLat(undefined);
+        setOriginLng(undefined);
+        setDestinationLat(undefined);
+        setDestinationLng(undefined);
+        setTravelMinutes(undefined);
+        setRoute(undefined);
+        setNotificationEnabled(false);
+    }, []);
+
     useEffect(() => {
         if (
             !routePlannerSessionId ||
@@ -445,27 +485,13 @@ export default function ScheduleEdit() {
     const isDisplayTime = displayPicker === "startTime" || displayPicker === "endTime";
     const calendarSelected = isDisplayDate
         ? ymdText(displayPicker === "startDate" ? startDay : endDay) : "";
-    const previewTitle = title.trim() || item.title || "일정";
-    const previewTime = hasEndTime
-        ? `${ymdText(startDay)} ${hhmmText(startTime)} - ${hhmmText(endTime)}`
-        : `${ymdText(startDay)} ${hhmmText(startTime)}`;
-    const previewLocation = destinationText.trim() || originText.trim() || "장소 미정";
-    const previewEta = typeof travelMinutes === "number"
-        ? `${travelMinutes}분 이동 · ${travelMode}`
-        : "ETA 미계산";
-    const previewNotification = notificationEnabled
-        ? `${notificationLeadMinutes}분 전 알림`
-        : "알림 꺼짐";
-
     const fieldStyle = (type: PickerType) => ({
         borderWidth: 1,
         borderRadius: 16,
         paddingVertical: 12,
         paddingHorizontal: 12,
-        borderColor:     picker === type ? colors.selectedDayBg : colors.border,
-        backgroundColor: mode === "dark"
-            ? "rgba(255,255,255,0.07)"
-            : "rgba(118,118,128,0.10)",
+        borderColor:     picker === type ? colors.inputBorderFocused : colors.inputBorder,
+        backgroundColor: colors.inputBackground,
     });
 
     return (
@@ -498,60 +524,71 @@ export default function ScheduleEdit() {
                 </Pressable>
             </View>
 
-            <CalendarGlassSurface
-                variant="card"
-                style={[styles.previewCard, { borderColor: colors.border }]}
-            >
-                <View style={[styles.previewColorBar, { backgroundColor: category?.color ?? "#8E8E93" }]} />
-                <View style={styles.previewBody}>
-                    <Text numberOfLines={1} style={[styles.previewTitle, { color: colors.textPrimary }]}>
-                        {previewTitle}
-                    </Text>
-                    <Text numberOfLines={1} style={[styles.previewMeta, { color: colors.textSecondary }]}>
-                        {previewTime}
-                    </Text>
-                    <View style={styles.previewChipRow}>
-                        <View style={[styles.previewChip, { borderColor: colors.border }]}>
-                            <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
-                                {previewLocation}
-                            </Text>
-                        </View>
-                        <View style={[styles.previewChip, { borderColor: colors.border }]}>
-                            <Text numberOfLines={1} style={[styles.previewChipText, { color: colors.textPrimary }]}>
-                                {previewEta}
-                            </Text>
-                        </View>
-                    </View>
-                    <Text numberOfLines={1} style={[styles.previewSub, { color: colors.textSecondary }]}>
-                        {category?.title ?? "캘린더"} · {previewNotification}
-                    </Text>
-                </View>
-            </CalendarGlassSurface>
-
             <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
-            <TextInput
-                value={title}
-                onChangeText={setTitle}
-                placeholderTextColor={colors.textDisabled}
+            <View
                 style={[
-                    styles.input,
+                    styles.titleInputWrap,
                     {
-                        borderColor: colors.border,
-                        backgroundColor: mode === "dark"
-                            ? "rgba(255,255,255,0.07)"
-                            : "rgba(118,118,128,0.10)",
-                        color: colors.textPrimary,
+                        borderColor: colors.inputBorder,
+                        backgroundColor: colors.inputBackground,
                     },
                 ]}
-            />
+            >
+                <TextInput
+                    value={title}
+                    onChangeText={setTitle}
+                    placeholder="예) 회의"
+                    placeholderTextColor={colors.inputPlaceholder}
+                    style={[styles.titleInput, { color: colors.textPrimary }]}
+                />
+                <Pressable
+                    onPress={() => setCategoryPickerOpen((current) => !current)}
+                    disabled={categoryOptions.length === 0}
+                    style={[styles.categoryInlineChip, { borderColor: colors.border }]}
+                >
+                    <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
+                    <Text numberOfLines={1} style={[styles.categoryInlineText, { color: colors.textPrimary }]}>
+                        {category?.title ?? "카테고리"}
+                    </Text>
+                </Pressable>
+            </View>
+
+            {categoryPickerOpen && (
+                <CategoryPickerRow
+                    categories={categoryOptions}
+                    value={categoryId}
+                    onChange={(nextCategoryId) => {
+                        setCategoryId(nextCategoryId);
+                        setCategoryPickerOpen(false);
+                    }}
+                    onManageCategories={() => router.push("/schedule/categories")}
+                />
+            )}
 
             <LocationInputRow
                 originValue={originText}
                 destinationValue={destinationText}
                 travelMode={travelMode}
                 travelMinutes={travelMinutes}
+                routeInfo={routeInfo}
                 onPress={openRoutePlanner}
+                onClear={routeInfo ? clearRoute : undefined}
             />
+
+            {!!routeInfo && (
+                <NotificationSettingsCard
+                    routeReady={routeReady}
+                    enabled={notificationEnabled}
+                    leadMinutes={notificationLeadMinutes}
+                    intervalMinutes={notificationIntervalMinutes}
+                    routeInfo={routeInfo}
+                    startAt={mergeDateTime(startDay, startTime)}
+                    policy={subscriptionPolicy}
+                    onEnabledChange={setNotificationEnabled}
+                    onLeadMinutesChange={setNotificationLeadMinutes}
+                    onIntervalMinutesChange={setNotificationIntervalMinutes}
+                />
+            )}
 
             <View style={styles.twoColRow}>
                 <View style={styles.col}>
@@ -584,7 +621,8 @@ export default function ScheduleEdit() {
             </View>
 
             <Animated.View style={[styles.pickerContainer, {
-                borderColor:  colors.border,
+                borderColor:  colors.inputBorder,
+                backgroundColor: colors.inputBackground,
                 maxHeight:    heightAnim,
                 opacity:      outerOpacity,
                 marginBottom: outerOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 14] }),
@@ -618,45 +656,22 @@ export default function ScheduleEdit() {
                 </Animated.View>
             </Animated.View>
 
-            <CategoryPickerRow
-                categories={categoryOptions}
-                value={categoryId}
-                onChange={setCategoryId}
-                onManageCategories={() => router.push("/schedule/categories")}
-            />
-
-            <NotificationSettingsCard
-                routeReady={
-                    typeof originLat === "number" &&
-                    typeof originLng === "number" &&
-                    typeof destinationLat === "number" &&
-                    typeof destinationLng === "number"
-                }
-                enabled={notificationEnabled}
-                leadMinutes={notificationLeadMinutes}
-                intervalMinutes={notificationIntervalMinutes}
-                policy={subscriptionPolicy}
-                onEnabledChange={setNotificationEnabled}
-                onLeadMinutesChange={setNotificationLeadMinutes}
-                onIntervalMinutesChange={setNotificationIntervalMinutes}
-            />
-
             <View style={styles.composerActionRow}>
                 <Pressable
                     disabled={detailLoading}
                     onPress={save}
                     style={[
-                        styles.saveBtn,
-                        {
-                            backgroundColor: mode === "dark"
-                                ? "rgba(33,184,90,0.20)"
-                                : "rgba(33,184,90,0.14)",
-                            borderColor: "rgba(33,184,90,0.44)",
-                            opacity: detailLoading ? 0.6 : 1,
-                        },
-                    ]}
-                >
-                    <Text style={[styles.saveBtnText, { color: mode === "dark" ? "#41D879" : "#0F7A38" }]}>
+                            styles.saveBtn,
+                            {
+                                backgroundColor: mode === "dark"
+                                    ? "#1E68FF"
+                                    : "#2979FF",
+                                borderColor: mode === "dark" ? "#4B9DFF" : "#1E68FF",
+                                opacity: detailLoading ? 0.6 : 1,
+                            },
+                        ]}
+                    >
+                    <Text style={[styles.saveBtnText, { color: "#FFFFFF" }]}>
                         {detailLoading ? "저장 중" : "저장"}
                     </Text>
                 </Pressable>
@@ -756,6 +771,44 @@ const styles = StyleSheet.create({
     label:        { marginBottom: 6, fontSize: 13 },
     input: {
         borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 14,
+    },
+    titleInputWrap: {
+        minHeight: 44,
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingLeft: 12,
+        paddingRight: 8,
+        marginBottom: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    titleInput: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: 11,
+        fontSize: 14,
+        fontWeight: "700",
+    },
+    categoryInlineChip: {
+        maxWidth: 116,
+        height: 30,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    categoryInlineDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    categoryInlineText: {
+        flexShrink: 1,
+        fontSize: 12,
+        fontWeight: "800",
     },
     twoColRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
     col:       { flex: 1 },

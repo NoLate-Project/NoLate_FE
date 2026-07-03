@@ -23,12 +23,13 @@ import CalendarWrapper from "../../src/modules/schedule/components/calendar/Cale
 import CalendarYearOverviewModal from "../../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import CalendarViewModeGlyph from "../../src/modules/schedule/components/calendar/CalendarViewModeGlyph";
-import LiquidCalendarMenuPrototype, {
-    isLiquidCalendarMenuPrototypeAvailable,
-} from "../../src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype";
 import LiquidGlassIconButton, {
     isLiquidGlassIconButtonAvailable,
 } from "../../src/modules/schedule/components/calendar/LiquidGlassIconButton";
+import LiquidCalendarMenuPrototype, {
+    isCalendarViewMode,
+    isLiquidCalendarMenuPrototypeAvailable,
+} from "../../src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype";
 import { CALENDAR_VIEW_OPTIONS, type CalendarViewMode } from "../../src/modules/schedule/components/calendar/viewMode";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
 import ScheduleList from "../../src/modules/schedule/components/list/ScheduleList";
@@ -49,15 +50,18 @@ const getErrorMessage = (error: unknown) =>
 
 type ToolbarMenu = "view" | "search" | "add";
 
-const CALENDAR_TOOLBAR_HEIGHT = 60;
+const CALENDAR_TOOLBAR_HEIGHT = 56;
 const STICKY_MONTH_HEADER_HEIGHT = 62;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 42;
 const STICKY_CALENDAR_HEADER_HEIGHT = STICKY_MONTH_HEADER_HEIGHT + STICKY_WEEKDAY_HEADER_HEIGHT;
-const LIQUID_TOOLBAR_BUTTON_SIZE = 52;
-const LIQUID_VIEW_MODE_COLLAPSED_WIDTH = LIQUID_TOOLBAR_BUTTON_SIZE * 3;
-const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_VIEW_MODE_COLLAPSED_WIDTH;
-const LIQUID_VIEW_MODE_CONTROL_HEIGHT = 282;
-const LIQUID_YEAR_PILL_WIDTH = 124;
+const LIQUID_TOOLBAR_BUTTON_SIZE = 44;
+const LIQUID_TOOLBAR_SLOT_WIDTH = 50;
+const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
+const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = 238;
+const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = 164;
+const LIQUID_VIEW_MODE_CONTROL_HEIGHT = 260;
+const LIQUID_YEAR_PILL_WIDTH = 112;
+const LIQUID_TOOLBAR_TOP_OFFSET = 4;
 
 function formatScheduleDateTitle(startAt: string) {
     const date = new Date(startAt);
@@ -81,17 +85,55 @@ function formatScheduleTime(value: string) {
 export default function ScheduleIndex() {
     const router = useRouter();
     const isFocused = useIsFocused();
-    const params = useLocalSearchParams<{ qaSurface?: string | string[]; qaRun?: string | string[] }>();
+    const params = useLocalSearchParams<{
+        qaSurface?: string | string[];
+        qaRun?: string | string[];
+        focus?: string | string[];
+        focusRun?: string | string[];
+    }>();
     const insets = useSafeAreaInsets();
     const { width: screenWidth } = useWindowDimensions();
     const { mode, colors } = useTheme();
     const qaSurface = Array.isArray(params.qaSurface) ? params.qaSurface[0] : params.qaSurface;
     const qaRun = Array.isArray(params.qaRun) ? params.qaRun[0] : params.qaRun;
+    const isQuickMorphQaSurface =
+        qaSurface === "quick-add-morph" ||
+        qaSurface === "quick-add-morph-close";
+    const isManualMorphQaSurface =
+        qaSurface === "manual-add-morph" ||
+        qaSurface === "manual-add-morph-close";
+    const isMorphQaSurface = __DEV__ && (
+        isQuickMorphQaSurface ||
+        isManualMorphQaSurface
+    );
+    const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
+    const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
     const { state, dispatch } = useScheduleStore();
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
+    const [liquidPrototypeOpen, setLiquidPrototypeOpen] = useState(false);
+    const [liquidPrototypeResetKey, setLiquidPrototypeResetKey] = useState(0);
     const [quickModalVisible, setQuickModalVisible] = useState(false);
+    const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
+    const [quickModalSource, setQuickModalSource] = useState<{
+        width: number;
+        height: number;
+        content: "toolbar" | "addMenu";
+    }>({
+        width: LIQUID_TOOLBAR_ACTIONS_WIDTH,
+        height: LIQUID_TOOLBAR_BUTTON_SIZE,
+        content: "toolbar",
+    });
+    const [scheduleModalSource, setScheduleModalSource] = useState<{
+        width: number;
+        height: number;
+        content: "toolbar" | "addMenu";
+    }>({
+        width: LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH,
+        height: LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT,
+        content: "addMenu",
+    });
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("stack");
     const [yearOverviewVisible, setYearOverviewVisible] = useState(false);
@@ -101,6 +143,10 @@ export default function ScheduleIndex() {
     const [firstDay] = useState<0 | 1>(0);
     const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
     const [prototypeTapRequest, setPrototypeTapRequest] = useState(0);
+    const [prototypeCloseRequest, setPrototypeCloseRequest] = useState(0);
+    const [prototypeAddMenuRequest, setPrototypeAddMenuRequest] = useState(0);
+    const [prototypeQuickAddRequest, setPrototypeQuickAddRequest] = useState(0);
+    const [prototypeManualAddRequest, setPrototypeManualAddRequest] = useState(0);
     const [todayButtonPrimed, setTodayButtonPrimed] = useState(false);
     const calendarTransition = useRef(new Animated.Value(1)).current;
     const yearOverviewProgress = useRef(new Animated.Value(0)).current;
@@ -108,7 +154,10 @@ export default function ScheduleIndex() {
     const searchToolbarProgress = useRef(new Animated.Value(0)).current;
     const searchInputRef = useRef<TextInput>(null);
     const viewTransitioningRef = useRef(false);
+    const quickHandoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const quickHandoffReturnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const handledQaSurfaceRef = useRef<string | null>(null);
+    const handledFocusRequestRef = useRef<string | null>(null);
 
     const selectedDay = state.selectedDay;
     const todayKey = useMemo(() => toYmd(new Date()), []);
@@ -119,11 +168,11 @@ export default function ScheduleIndex() {
     const visibleYear = new Date(`${visibleMonth}T00:00:00`).getFullYear();
     const calendarContentTranslateY = calendarTransition.interpolate({
         inputRange: [0, 1],
-        outputRange: [8, 0],
+        outputRange: [-10, 0],
     });
     const calendarContentScale = calendarTransition.interpolate({
         inputRange: [0, 1],
-        outputRange: [0.985, 1],
+        outputRange: [0.992, 1],
     });
     const calendarIconScale = calendarTransition.interpolate({
         inputRange: [0, 1],
@@ -140,6 +189,8 @@ export default function ScheduleIndex() {
     const dropdownMaxWidth = Math.max(0, screenWidth - 32);
     const dropdownWidth = activeToolbarMenu === "add"
         ? Math.min(dropdownMaxWidth, 196)
+        : activeToolbarMenu === "view"
+            ? Math.min(dropdownMaxWidth, 210)
         : Math.min(dropdownMaxWidth, 224);
     const usesLiquidViewModeControl = isLiquidCalendarMenuPrototypeAvailable;
     const actionDropdownRight = 16;
@@ -148,6 +199,81 @@ export default function ScheduleIndex() {
         LIQUID_TOOLBAR_ACTIONS_WIDTH,
         screenWidth - 32
     );
+    const liquidPrototypeLayerWidth = searchHeaderTargetWidth;
+    const requestCloseLiquidPrototype = useCallback(() => {
+        if (!usesLiquidViewModeControl) return;
+        setLiquidPrototypeOpen(false);
+        setPrototypeCloseRequest((value) => value + 1);
+    }, [usesLiquidViewModeControl]);
+    const clearQuickHandoffTimer = useCallback(() => {
+        if (quickHandoffTimerRef.current) {
+            clearTimeout(quickHandoffTimerRef.current);
+            quickHandoffTimerRef.current = null;
+        }
+        if (quickHandoffReturnTimerRef.current) {
+            clearTimeout(quickHandoffReturnTimerRef.current);
+            quickHandoffReturnTimerRef.current = null;
+        }
+    }, []);
+    const restoreToolbarAfterHandoff = useCallback(() => {
+        setQuickHandoffHidden(false);
+    }, []);
+    const scheduleQuickHandoffHide = useCallback((delay = 0) => {
+        clearQuickHandoffTimer();
+        if (delay <= 0) {
+            setQuickHandoffHidden(true);
+            requestCloseLiquidPrototype();
+            return;
+        }
+        quickHandoffTimerRef.current = setTimeout(() => {
+            setQuickHandoffHidden(true);
+            requestCloseLiquidPrototype();
+            quickHandoffTimerRef.current = null;
+        }, delay);
+    }, [clearQuickHandoffTimer, requestCloseLiquidPrototype]);
+    const scheduleQuickHandoffReturn = useCallback((delay = 260) => {
+        if (quickHandoffReturnTimerRef.current) {
+            clearTimeout(quickHandoffReturnTimerRef.current);
+        }
+        quickHandoffReturnTimerRef.current = setTimeout(() => {
+            restoreToolbarAfterHandoff();
+            quickHandoffReturnTimerRef.current = null;
+        }, delay);
+    }, [restoreToolbarAfterHandoff]);
+    const handleQuickModalCloseStart = useCallback((returnDelay = 260) => {
+        clearQuickHandoffTimer();
+        setQuickHandoffHidden(true);
+        requestCloseLiquidPrototype();
+        scheduleQuickHandoffReturn(returnDelay);
+    }, [clearQuickHandoffTimer, requestCloseLiquidPrototype, scheduleQuickHandoffReturn]);
+    const handleQuickModalClosed = useCallback(() => {
+        if (quickHandoffTimerRef.current) {
+            clearTimeout(quickHandoffTimerRef.current);
+            quickHandoffTimerRef.current = null;
+        }
+        if (quickHandoffReturnTimerRef.current) {
+            clearTimeout(quickHandoffReturnTimerRef.current);
+            quickHandoffReturnTimerRef.current = null;
+            restoreToolbarAfterHandoff();
+        } else {
+            setQuickHandoffHidden(false);
+        }
+        setQuickModalVisible(false);
+    }, [restoreToolbarAfterHandoff]);
+    const handleScheduleModalClosed = useCallback(() => {
+        if (quickHandoffTimerRef.current) {
+            clearTimeout(quickHandoffTimerRef.current);
+            quickHandoffTimerRef.current = null;
+        }
+        if (quickHandoffReturnTimerRef.current) {
+            clearTimeout(quickHandoffReturnTimerRef.current);
+            quickHandoffReturnTimerRef.current = null;
+            restoreToolbarAfterHandoff();
+        } else {
+            setQuickHandoffHidden(false);
+        }
+        setModalVisible(false);
+    }, [restoreToolbarAfterHandoff]);
     const dropdownScaleX = toolbarDropdownProgress.interpolate({
         inputRange: [0, 1],
         outputRange: [0.68, 1],
@@ -179,11 +305,6 @@ export default function ScheduleIndex() {
             LIQUID_TOOLBAR_ACTIONS_WIDTH,
             searchHeaderTargetWidth,
         ],
-    });
-    const searchTopToolbarOpacity = searchToolbarProgress.interpolate({
-        inputRange: [0, 0.18, 0.52],
-        outputRange: [1, 0.34, 0],
-        extrapolate: "clamp",
     });
     const searchMorphSeedOpacity = searchToolbarProgress.interpolate({
         inputRange: [0, 0.48, 0.78, 1],
@@ -229,17 +350,16 @@ export default function ScheduleIndex() {
     const stickyCalendarHeaderPosition = useMemo<ViewStyle>(() => ({
         top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
     }), [insets.top]);
-    const showsFloatingMonthTitle = calendarViewMode === "list" || calendarViewMode === "week";
+    const showsFloatingMonthTitle = calendarViewMode === "list";
     const isStickyCalendarMode =
         calendarViewMode === "compact" || calendarViewMode === "stack" || calendarViewMode === "detail";
+    const nonSearchToolbarMenuActive =
+        activeToolbarMenu !== null && activeToolbarMenu !== "search";
+    const isFormOverlayVisible = modalVisible || quickModalVisible;
     const showsStickyCalendarHeader =
         isStickyCalendarMode &&
-        activeToolbarMenu === null &&
-        !toolbarMenuClosing &&
-        !isSearchToolbarOpen &&
-        !keyboardVisible &&
-        !modalVisible &&
-        !quickModalVisible &&
+        !nonSearchToolbarMenuActive &&
+        (!keyboardVisible || isFormOverlayVisible) &&
         !yearOverviewVisible;
     const calendarHeaderOffset = useMemo(
         () => insets.top + CALENDAR_TOOLBAR_HEIGHT + (showsStickyCalendarHeader ? STICKY_CALENDAR_HEADER_HEIGHT : 0),
@@ -252,7 +372,7 @@ export default function ScheduleIndex() {
     }, []);
     const stickyMonthColorStyle = visibleMonth.slice(0, 7) === currentMonthKey
         ? mode === "dark" ? styles.stickyMonthTitleCurrentDark : styles.stickyMonthTitleCurrentLight
-        : styles.stickyMonthTitleDefault;
+        : { color: colors.textPrimary };
     const stickyWeekdayColor = mode === "dark"
         ? "#FFFFFF"
         : "#111113";
@@ -264,9 +384,13 @@ export default function ScheduleIndex() {
         : "rgba(0,0,0,0.08)";
     const bottomBarHidden =
         !isFocused ||
-        modalVisible ||
-        quickModalVisible ||
         keyboardVisible;
+
+    useEffect(() => {
+        return () => {
+            clearQuickHandoffTimer();
+        };
+    }, [clearQuickHandoffTimer]);
 
     useEffect(() => {
         const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
@@ -305,11 +429,13 @@ export default function ScheduleIndex() {
         } catch (error) {
             const message = getErrorMessage(error);
             dispatch({ type: "SET_ERROR", error: message });
-            Alert.alert("일정 조회 실패", message);
+            if (!__DEV__ && isFocused && !isMorphQaSurface) {
+                Alert.alert("일정 조회 실패", message);
+            }
         } finally {
             dispatch({ type: "SET_LOADING", loading: false });
         }
-    }, [dispatch, visibleMonth]);
+    }, [dispatch, isFocused, isMorphQaSurface, visibleMonth]);
 
     useEffect(() => {
         loadSchedules();
@@ -385,6 +511,7 @@ export default function ScheduleIndex() {
 
     const closeToolbarMenu = useCallback((afterClose?: () => void) => {
         Keyboard.dismiss();
+        requestCloseLiquidPrototype();
 
         if (!activeToolbarMenu) {
             afterClose?.();
@@ -398,7 +525,7 @@ export default function ScheduleIndex() {
         closingProgress.stopAnimation();
         Animated.timing(closingProgress, {
             toValue: 0,
-            duration: closingMenu === "search" ? 105 : 170,
+            duration: closingMenu === "search" ? 95 : 153,
             easing: closingMenu === "search" ? Easing.out(Easing.cubic) : Easing.inOut(Easing.cubic),
             useNativeDriver: closingMenu !== "search",
         }).start(({ finished }) => {
@@ -408,7 +535,7 @@ export default function ScheduleIndex() {
             setToolbarMenuClosing(false);
             afterClose?.();
         });
-    }, [activeToolbarMenu, searchToolbarProgress, toolbarDropdownProgress]);
+    }, [activeToolbarMenu, requestCloseLiquidPrototype, searchToolbarProgress, toolbarDropdownProgress]);
 
     const runToolbarAction = useCallback((action: () => void) => {
         Keyboard.dismiss();
@@ -416,7 +543,7 @@ export default function ScheduleIndex() {
         toolbarDropdownProgress.stopAnimation();
         Animated.timing(toolbarDropdownProgress, {
             toValue: 0,
-            duration: 120,
+            duration: 108,
             easing: Easing.out(Easing.cubic),
             useNativeDriver: true,
         }).start(() => {
@@ -444,7 +571,7 @@ export default function ScheduleIndex() {
             if (menu === "search") {
                 Animated.timing(searchToolbarProgress, {
                     toValue: 1,
-                    duration: 175,
+                    duration: 158,
                     easing: Easing.inOut(Easing.cubic),
                     useNativeDriver: false,
                 }).start();
@@ -453,7 +580,7 @@ export default function ScheduleIndex() {
 
             Animated.spring(toolbarDropdownProgress, {
                 toValue: 1,
-                speed: 22,
+                speed: 24.2,
                 bounciness: 7,
                 useNativeDriver: true,
             }).start();
@@ -479,6 +606,12 @@ export default function ScheduleIndex() {
             endAt: sample.endAt,
             origin: sample.origin,
             destination: sample.destination,
+            travelMinutes: sample.travelMinutes,
+            travelMode: sample.travelMode,
+            route: sample.route,
+            notificationEnabled: sample.notificationEnabled,
+            notificationLeadMinutes: sample.notificationLeadMinutes,
+            notificationIntervalMinutes: sample.notificationIntervalMinutes,
             originSource: "TEXT",
             originRequired: false,
             parseSource: "RULE",
@@ -492,6 +625,13 @@ export default function ScheduleIndex() {
     useEffect(() => {
         if (!qaSurface) {
             handledQaSurfaceRef.current = null;
+            return;
+        }
+
+        if (
+            isQuickMorphQaSurface ||
+            isManualMorphQaSurface
+        ) {
             return;
         }
 
@@ -512,6 +652,16 @@ export default function ScheduleIndex() {
         if (qaSurface === "search") {
             setSearchQuery("없는 일정");
             if (activeToolbarMenu !== "search") openToolbarMenu("search");
+            return;
+        }
+
+        if (qaSurface === "add-dropdown") {
+            setActiveToolbarMenu(null);
+            if (usesLiquidViewModeControl) {
+                setPrototypeAddMenuRequest((value) => value + 1);
+                return;
+            }
+            openToolbarMenu("add");
             return;
         }
 
@@ -568,13 +718,40 @@ export default function ScheduleIndex() {
     ]);
 
     const openBlankSchedule = () => {
+        setFormInitialValues(null);
+        setScheduleModalSource({
+            width: LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH,
+            height: LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT,
+            content: "addMenu",
+        });
+        if (usesLiquidViewModeControl) {
+            clearQuickHandoffTimer();
+            setQuickHandoffHidden(false);
+            setModalVisible(true);
+            scheduleQuickHandoffHide(0);
+            return;
+        }
+
         runToolbarAction(() => {
-            setFormInitialValues(null);
             setModalVisible(true);
         });
     };
 
     const openQuickSchedule = () => {
+        clearQuickHandoffTimer();
+        setQuickHandoffHidden(false);
+        setQuickModalSource({
+            width: LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH,
+            height: LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT,
+            content: "addMenu",
+        });
+        if (usesLiquidViewModeControl) {
+            setQuickHandoffHidden(false);
+            setQuickModalVisible(true);
+            scheduleQuickHandoffHide(0);
+            return;
+        }
+
         runToolbarAction(() => {
             setQuickModalVisible(true);
         });
@@ -586,6 +763,49 @@ export default function ScheduleIndex() {
         });
     };
 
+    useEffect(() => {
+        if (!__DEV__) return;
+        if (
+            !isQuickMorphQaSurface &&
+            !isManualMorphQaSurface
+        ) return;
+
+        const qaKey = `${qaSurface}:${qaRun ?? ""}`;
+        if (handledQaSurfaceRef.current === qaKey) return;
+        handledQaSurfaceRef.current = qaKey;
+
+        setQuickModalVisible(false);
+        setModalVisible(false);
+        setFormInitialValues(null);
+        setQuickHandoffHidden(false);
+        setActiveToolbarMenu(null);
+        if (usesLiquidViewModeControl) {
+            setPrototypeAddMenuRequest((value) => value + 1);
+            const timer = setTimeout(() => {
+                if (isQuickMorphQaSurface) {
+                    setPrototypeQuickAddRequest((value) => value + 1);
+                    return;
+                }
+
+                setPrototypeManualAddRequest((value) => value + 1);
+            }, 180);
+            return () => clearTimeout(timer);
+        } else {
+            openToolbarMenu("add");
+        }
+
+        const timer = setTimeout(() => {
+            if (isQuickMorphQaSurface) {
+                openQuickSchedule();
+                return;
+            }
+
+            openBlankSchedule();
+        }, 180);
+
+        return () => clearTimeout(timer);
+    }, [isManualMorphQaSurface, isQuickMorphQaSurface, qaRun, qaSurface]);
+
     const openScheduleFromSearch = (id: string) => {
         setSearchQuery("");
         runToolbarAction(() => {
@@ -596,16 +816,13 @@ export default function ScheduleIndex() {
         });
     };
 
-    const handleQuickParse = async (text: string) => {
+    const handleQuickAnalyze = async (text: string) => {
         try {
-            const parsed = await parseScheduleText({
+            return await parseScheduleText({
                 text,
                 referenceDate: selectedDay,
                 defaultDurationMinutes: 60,
             });
-            setFormInitialValues(parsed);
-            setQuickModalVisible(false);
-            setModalVisible(true);
         } catch (error) {
             Alert.alert("일정 분석 실패", getErrorMessage(error));
             throw error;
@@ -628,44 +845,82 @@ export default function ScheduleIndex() {
         closeToolbarMenu();
         setTodayButtonPrimed(false);
         dispatch({ type: "SET_SELECTED_DAY", day });
+        calendarTransition.setValue(1);
 
-        Animated.timing(calendarTransition, {
-            toValue: 0,
-            duration: 130,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-        }).start(({ finished }) => {
-            if (!finished) return;
-
+        requestAnimationFrame(() => {
             router.push({
                 pathname: "/schedule/timetable",
-                params: { date: day },
-            });
-
-            requestAnimationFrame(() => {
-                calendarTransition.setValue(1);
+                params: { date: day, dateRun: String(Date.now()) },
             });
         });
     }, [calendarTransition, closeToolbarMenu, dispatch, router]);
 
-    const handleGoToday = useCallback(() => {
-        if (selectedDay === todayKey && todayButtonPrimed) {
-            handleOpenDay(todayKey);
-            return;
-        }
-
+    const focusTodayOnCalendar = useCallback((options?: { revealImmediately?: boolean }) => {
         closeToolbarMenu();
         dispatch({ type: "SET_SELECTED_DAY", day: todayKey });
         setVisibleMonth(todayKey);
         setCalendarScrollRequest((request) => request + 1);
         setTodayButtonPrimed(true);
+        if (options?.revealImmediately !== false) {
+            calendarTransition.setValue(1);
+        }
+    }, [calendarTransition, closeToolbarMenu, dispatch, todayKey]);
+
+    useEffect(() => {
+        const focusKey = `${focusRequest ?? ""}:${focusRun ?? ""}`;
+        if (focusRequest !== "today" || handledFocusRequestRef.current === focusKey) return;
+
+        handledFocusRequestRef.current = focusKey;
+        setYearOverviewVisible(false);
+        setYearOverviewClosing(false);
+        focusTodayOnCalendar();
+    }, [focusRequest, focusRun, focusTodayOnCalendar]);
+
+    const handleGoToday = useCallback(() => {
+        if (yearOverviewVisible) {
+            focusTodayOnCalendar({ revealImmediately: false });
+            setYearOverviewClosing(true);
+
+            Animated.parallel([
+                Animated.timing(yearOverviewProgress, {
+                    toValue: 0,
+                    duration: 185,
+                    easing: Easing.out(Easing.cubic),
+                    useNativeDriver: true,
+                }),
+                Animated.timing(calendarTransition, {
+                    toValue: 1,
+                    duration: 245,
+                    easing: Easing.bezier(0.2, 0.9, 0.2, 1),
+                    useNativeDriver: true,
+                }),
+            ]).start(() => {
+                setYearOverviewVisible(false);
+                setYearOverviewClosing(false);
+            });
+            return;
+        }
+
+        const isTodayAlreadyFocused =
+            selectedDay === todayKey &&
+            visibleMonth.slice(0, 7) === todayKey.slice(0, 7);
+
+        if (isTodayAlreadyFocused || todayButtonPrimed) {
+            handleOpenDay(todayKey);
+            return;
+        }
+
+        focusTodayOnCalendar();
     }, [
-        closeToolbarMenu,
-        dispatch,
+        calendarTransition,
+        focusTodayOnCalendar,
         handleOpenDay,
         selectedDay,
         todayButtonPrimed,
         todayKey,
+        visibleMonth,
+        yearOverviewProgress,
+        yearOverviewVisible,
     ]);
 
     const handleCalendarViewModeChange = useCallback((nextMode: CalendarViewMode) => {
@@ -735,15 +990,15 @@ export default function ScheduleIndex() {
 
         Animated.parallel([
             Animated.timing(calendarTransition, {
-                toValue: 0,
-                duration: 190,
-                easing: Easing.out(Easing.quad),
+                toValue: 0.18,
+                duration: 245,
+                easing: Easing.bezier(0.2, 0.9, 0.2, 1),
                 useNativeDriver: true,
             }),
             Animated.timing(yearOverviewProgress, {
                 toValue: 1,
-                duration: 260,
-                easing: Easing.out(Easing.cubic),
+                duration: 235,
+                easing: Easing.bezier(0.2, 0.9, 0.2, 1),
                 useNativeDriver: true,
             }),
         ]).start();
@@ -757,10 +1012,11 @@ export default function ScheduleIndex() {
         yearOverviewVisible,
     ]);
 
-    const selectOverviewMonth = useCallback((month: number) => {
-        const nextDay = `${overviewYear}-${String(month).padStart(2, "0")}-01`;
+    const selectOverviewMonth = useCallback((year: number, month: number) => {
+        const nextDay = `${year}-${String(month).padStart(2, "0")}-01`;
         dispatch({ type: "SET_SELECTED_DAY", day: nextDay });
         setVisibleMonth(nextDay);
+        setOverviewYear(year);
         setCalendarScrollRequest((request) => request + 1);
         setTodayButtonPrimed(nextDay === todayKey);
         setYearOverviewClosing(true);
@@ -782,7 +1038,7 @@ export default function ScheduleIndex() {
             setYearOverviewVisible(false);
             setYearOverviewClosing(false);
         });
-    }, [calendarTransition, dispatch, overviewYear, todayKey, yearOverviewProgress]);
+    }, [calendarTransition, dispatch, todayKey, yearOverviewProgress]);
 
     const openProfile = useCallback(() => {
         router.push("/profile");
@@ -815,63 +1071,79 @@ export default function ScheduleIndex() {
                 ]}
             />
 
-            {((activeToolbarMenu !== null || toolbarMenuClosing) && activeToolbarMenu !== "search") && (
-                <Pressable style={styles.toolbarDropdownBackdrop} onPress={() => closeToolbarMenu()} />
-            )}
-
             <View
                 pointerEvents="box-none"
                 style={styles.toolbarLayer}
             >
+                {(activeToolbarMenu !== null || toolbarMenuClosing || liquidPrototypeOpen) && (
+                    <Pressable style={styles.toolbarDropdownBackdrop} onPress={() => closeToolbarMenu()} />
+                )}
+
                 {(
                     <Animated.View
                         pointerEvents={isSearchToolbarOpen ? "none" : "box-none"}
                         style={[
+                            styles.toolbarChromeLayer,
                             { paddingTop: insets.top },
-                            isSearchToolbarOpen && { opacity: searchTopToolbarOpacity },
                         ]}
                     >
                         <View style={styles.toolbar}>
                             {isLiquidGlassIconButtonAvailable ? (
-                                <LiquidGlassIconButton
-                                    leadingSymbolName="chevron.left"
-                                    label={`${visibleYear}년`}
-                                    buttonWidth={LIQUID_YEAR_PILL_WIDTH}
-                                    buttonHeight={LIQUID_TOOLBAR_BUTTON_SIZE}
-                                    colorScheme={mode}
+                                <Pressable
+                                    onPressIn={openYearOverview}
                                     accessibilityLabel={`${visibleYear}년 전체 월 보기`}
-                                    onPress={openYearOverview}
-                                    style={styles.yearNativeGlass}
-                                />
-                            ) : (
-                                <CalendarGlassSurface
-                                    interactive
-                                    clear
-                                    glow
-                                    variant="bottomBar"
-                                    tone="softGlass"
-                                    style={[
+                                    accessibilityRole="button"
+                                    style={({ pressed }) => [
                                         styles.yearGlass,
-                                        { borderColor: colors.border },
+                                        {
+                                            opacity: pressed ? 0.68 : 1,
+                                            transform: [{ scale: pressed ? 0.96 : 1 }],
+                                        },
                                     ]}
                                 >
-                                    <Pressable
-                                        onPress={openYearOverview}
+                                    <LiquidGlassIconButton
+                                        pointerEvents="none"
+                                        leadingSymbolName="chevron.left"
+                                        label={`${visibleYear}년`}
+                                        buttonWidth={LIQUID_YEAR_PILL_WIDTH}
+                                        buttonHeight={LIQUID_TOOLBAR_BUTTON_SIZE}
+                                        colorScheme={mode === "dark" ? "dark" : "light"}
                                         accessibilityLabel={`${visibleYear}년 전체 월 보기`}
-                                        style={({ pressed }) => [
-                                            styles.yearButton,
-                                            {
-                                                opacity: pressed ? 0.7 : 1,
-                                                transform: [{ scale: pressed ? 0.96 : 1 }],
-                                            },
+                                        style={StyleSheet.absoluteFill}
+                                    />
+                                </Pressable>
+                            ) : (
+                                <Pressable
+                                    onPressIn={openYearOverview}
+                                    accessibilityLabel={`${visibleYear}년 전체 월 보기`}
+                                    accessibilityRole="button"
+                                    style={({ pressed }) => [
+                                        styles.yearGlass,
+                                        {
+                                            opacity: pressed ? 0.68 : 1,
+                                            transform: [{ scale: pressed ? 0.96 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <CalendarGlassSurface
+                                        pointerEvents="none"
+                                        interactive
+                                        clear
+                                        glow
+                                        variant="bottomBar"
+                                        tone="softGlass"
+                                        style={[
+                                            styles.yearGlassSurface,
+                                            { borderColor: colors.border },
                                         ]}
-                                    >
-                                        <Ionicons name="chevron-back" size={28} color={colors.textPrimary} />
+                                    />
+                                    <View pointerEvents="none" style={styles.yearButton}>
+                                        <Ionicons name="chevron-back" size={23} color={colors.textPrimary} />
                                         <Text style={[styles.yearText, { color: colors.textPrimary }]}>
                                             {visibleYear}년
                                         </Text>
-                                    </Pressable>
-                                </CalendarGlassSurface>
+                                    </View>
+                                </Pressable>
                             )}
 
                             <View pointerEvents="none" style={styles.toolbarActionsPlaceholder} />
@@ -887,25 +1159,51 @@ export default function ScheduleIndex() {
                     </Animated.View>
                 )}
 
+                {!isSearchToolbarOpen && (
+                    <Pressable
+                        onPressIn={openYearOverview}
+                        accessible={false}
+                        importantForAccessibility="no"
+                        style={[
+                            styles.yearTapOverlay,
+                            {
+                                top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
+                                left: 16,
+                            },
+                        ]}
+                    />
+                )}
+
                 {usesLiquidViewModeControl ? (
                     <Animated.View
                         pointerEvents="box-none"
                         style={[
                             styles.liquidViewModeControl,
                             {
-                                top: insets.top + 8,
+                                top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
                                 right: 16,
-                                width: searchHeaderTargetWidth,
+                                width: liquidPrototypeLayerWidth,
+                                opacity: quickHandoffHidden ? 0 : 1,
                             },
                         ]}
                     >
                         <LiquidCalendarMenuPrototype
+                            key={`calendar-liquid-${liquidPrototypeResetKey}`}
                             selectedMode={calendarViewMode}
                             colorScheme={mode === "dark" ? "dark" : "light"}
                             tapRequest={prototypeTapRequest}
+                            closeRequest={prototypeCloseRequest}
+                            addMenuRequest={prototypeAddMenuRequest}
+                            quickAddRequest={prototypeQuickAddRequest}
+                            manualAddRequest={prototypeManualAddRequest}
                             searchExpandedWidth={searchHeaderTargetWidth}
                             searchQuery={searchQuery}
-                            onSelect={handleCalendarViewModeChange}
+	                            onSelect={(mode) => {
+	                                if (isCalendarViewMode(mode)) {
+	                                    handleCalendarViewModeChange(mode);
+	                                }
+	                            }}
+                            onOpenChange={setLiquidPrototypeOpen}
                             onSearch={openSearchToolbar}
                             onSearchTextChange={setSearchQuery}
                             onSearchClose={closeSearchToolbar}
@@ -921,9 +1219,10 @@ export default function ScheduleIndex() {
                         style={[
                             styles.scheduleActionPillLayer,
                             {
-                                top: insets.top + 8,
+                                top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
                                 right: 16,
                                 width: searchHeaderWidth,
+                                opacity: quickHandoffHidden ? 0 : 1,
                             },
                         ]}
                     >
@@ -1021,7 +1320,7 @@ export default function ScheduleIndex() {
                                     value={searchQuery}
                                     onChangeText={setSearchQuery}
                                     placeholder="검색"
-                                    placeholderTextColor={colors.textSecondary}
+                                    placeholderTextColor={colors.inputPlaceholder}
                                     returnKeyType="search"
                                     selectionColor={colors.textPrimary}
                                     style={[styles.searchHeaderInput, { color: colors.textPrimary }]}
@@ -1233,65 +1532,37 @@ export default function ScheduleIndex() {
                                                 : styles.viewDropdownReadableScrimLight,
                                         ]}
                                     />
-                                    {CALENDAR_VIEW_OPTIONS.map((option, index) => {
+                                    <View style={styles.viewModeIconGrid}>
+                                    {CALENDAR_VIEW_OPTIONS.map((option) => {
                                         const selected = option.value === calendarViewMode;
 
                                         return (
-                                            <React.Fragment key={option.value}>
-                                                {index === CALENDAR_VIEW_OPTIONS.length - 1 && (
-                                                    <View
-                                                        style={[
-                                                            styles.dropdownRowDivider,
-                                                            { backgroundColor: colors.border },
-                                                            styles.viewDropdownDivider,
-                                                        ]}
-                                                    />
-                                                )}
-                                                <Pressable
-                                                    onPress={() => handleCalendarViewModeChange(option.value)}
-                                                    style={({ pressed }) => [
-                                                        styles.viewModeRow,
-                                                        {
-                                                            backgroundColor: pressed
-                                                                ? mode === "dark"
-                                                                    ? "rgba(255,255,255,0.035)"
-                                                                    : "rgba(0,0,0,0.028)"
-                                                                : "transparent",
-                                                        },
-                                                    ]}
-                                                >
-                                                    {selected && (
-                                                        <View
-                                                            pointerEvents="none"
-                                                            style={[
-                                                                styles.viewModeSelectedPill,
-                                                                mode === "dark"
-                                                                    ? styles.viewModeSelectedPillDark
-                                                                    : styles.viewModeSelectedPillLight,
-                                                            ]}
-                                                        />
-                                                    )}
-                                                    <View style={styles.dropdownCheckSlot}>
-                                                        {selected && (
-                                                            <Ionicons
-                                                                name="checkmark"
-                                                                size={22}
-                                                                color={colors.textPrimary}
-                                                            />
-                                                        )}
-                                                    </View>
-                                                    <CalendarViewModeGlyph
-                                                        mode={option.value}
-                                                        color={colors.textPrimary}
-                                                        size={24}
-                                                    />
-                                                    <Text style={[styles.dropdownTitle, { color: colors.textPrimary }]}>
-                                                        {option.label}
-                                                    </Text>
-                                                </Pressable>
-                                            </React.Fragment>
+                                            <Pressable
+                                                key={option.value}
+                                                accessibilityLabel={`${option.label} 보기`}
+                                                onPress={() => handleCalendarViewModeChange(option.value)}
+                                                style={({ pressed }) => [
+                                                    styles.viewModeIconOption,
+                                                    selected && (
+                                                        mode === "dark"
+                                                            ? styles.viewModeSelectedPillDark
+                                                            : styles.viewModeSelectedPillLight
+                                                    ),
+                                                    {
+                                                        opacity: pressed ? 0.62 : 1,
+                                                        transform: [{ scale: pressed ? 0.92 : 1 }],
+                                                    },
+                                                ]}
+                                            >
+                                                <CalendarViewModeGlyph
+                                                    mode={option.value}
+                                                    color={colors.textPrimary}
+                                                    size={25}
+                                                />
+                                            </Pressable>
                                         );
                                     })}
+                                    </View>
                                 </View>
                             </CalendarGlassSurface>
                         </View>
@@ -1394,32 +1665,31 @@ export default function ScheduleIndex() {
                 )}
             </Animated.View>
 
-            {yearOverviewVisible && (
-                <Animated.View
-                    pointerEvents={yearOverviewClosing ? "none" : "auto"}
-                    style={[
-                        styles.yearOverviewLayer,
-                        {
-                            opacity: yearOverviewProgress,
-                            transform: [
-                                { translateY: yearOverviewTranslateY },
-                                { scale: yearOverviewScale },
-                            ],
-                        },
-                    ]}
-                >
-                    <CalendarYearOverviewModal
-                        visible={yearOverviewVisible}
-                        year={overviewYear}
-                        selectedDay={selectedDay}
-                        firstDay={firstDay}
-                        topInset={insets.top}
-                        onChangeYear={setOverviewYear}
-                        onSelectMonth={selectOverviewMonth}
-                        onClose={closeYearOverview}
-                    />
-                </Animated.View>
-            )}
+            <Animated.View
+                pointerEvents={yearOverviewVisible && !yearOverviewClosing ? "auto" : "none"}
+                importantForAccessibility={yearOverviewVisible ? "auto" : "no-hide-descendants"}
+                style={[
+                    styles.yearOverviewLayer,
+                    {
+                        opacity: yearOverviewProgress,
+                        transform: [
+                            { translateY: yearOverviewTranslateY },
+                            { scale: yearOverviewScale },
+                        ],
+                    },
+                ]}
+            >
+                <CalendarYearOverviewModal
+                    visible
+                    year={overviewYear}
+                    selectedDay={selectedDay}
+                    firstDay={firstDay}
+                    topInset={insets.top}
+                    onChangeYear={setOverviewYear}
+                    onSelectMonth={selectOverviewMonth}
+                    onClose={closeYearOverview}
+                />
+            </Animated.View>
 
             {!bottomBarHidden && (
                 <GlobalFloatingActionBar
@@ -1431,19 +1701,35 @@ export default function ScheduleIndex() {
 
             <QuickScheduleModal
                 visible={quickModalVisible}
-                onClose={() => setQuickModalVisible(false)}
-                onParse={handleQuickParse}
+                onClose={handleQuickModalClosed}
+                onCloseStart={() => handleQuickModalCloseStart(260)}
+                onAnalyze={handleQuickAnalyze}
+                onSave={addItem}
+                defaultDay={selectedDay}
+                defaultCategory={state.categories[0]}
+                sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
+                sourceWidth={quickModalSource.width}
+                sourceHeight={quickModalSource.height}
+                sourceContent={quickModalSource.content}
+                qaAutoCloseAfterMs={qaSurface === "quick-add-morph-close" ? 2400 : undefined}
             />
 
             <ScheduleNewModal
                 visible={modalVisible}
-                onClose={() => setModalVisible(false)}
+                onClose={handleScheduleModalClosed}
+                onCloseStart={() => handleQuickModalCloseStart(300)}
                 onSubmit={addItem}
                 categories={state.categories}
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
                 autoFocusTitle={qaSurface === "event-create-keyboard"}
+                presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
+                sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
+                sourceWidth={scheduleModalSource.width}
+                sourceHeight={scheduleModalSource.height}
+                sourceContent={scheduleModalSource.content}
+                qaAutoCloseAfterMs={qaSurface === "manual-add-morph-close" ? 2600 : undefined}
             />
 
         </View>
@@ -1551,12 +1837,25 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(242,242,247,0.07)",
     },
     toolbar: {
-        minHeight: 56,
+        minHeight: 52,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         paddingHorizontal: 16,
-        paddingVertical: 6,
+        paddingVertical: 4,
+    },
+    toolbarChromeLayer: {
+        zIndex: 50,
+        elevation: 50,
+    },
+    yearTapOverlay: {
+        position: "absolute",
+        width: LIQUID_YEAR_PILL_WIDTH,
+        height: LIQUID_TOOLBAR_BUTTON_SIZE,
+        borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,
+        zIndex: 58,
+        elevation: 58,
+        backgroundColor: "transparent",
     },
     floatingMonthTitleLayer: {
         paddingHorizontal: 24,
@@ -1623,9 +1922,6 @@ const styles = StyleSheet.create({
         fontSize: 27,
         fontWeight: "900",
         letterSpacing: 0,
-    },
-    stickyMonthTitleDefault: {
-        color: "#FFFFFF",
     },
     stickyMonthTitleCurrentDark: {
         color: "#ff453a",
@@ -1738,14 +2034,17 @@ const styles = StyleSheet.create({
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
     },
     yearGlass: {
+        width: LIQUID_YEAR_PILL_WIDTH,
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
         borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,
         borderWidth: Platform.OS === "ios" ? 0 : 1,
-        overflow: "hidden",
+        overflow: Platform.OS === "ios" ? "visible" : "hidden",
     },
-    yearNativeGlass: {
-        width: LIQUID_YEAR_PILL_WIDTH,
-        height: LIQUID_TOOLBAR_BUTTON_SIZE,
+    yearGlassSurface: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,
+        borderWidth: Platform.OS === "ios" ? 0 : 1,
+        overflow: "hidden",
     },
     yearButton: {
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
@@ -1753,17 +2052,17 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingLeft: 13,
-        paddingRight: 18,
-        gap: 4,
+        paddingLeft: 8,
+        paddingRight: 12,
+        gap: 3,
     },
     yearText: {
-        fontWeight: "900",
-        fontSize: 20,
+        fontWeight: "800",
+        fontSize: 18,
     },
     iconButton: {
-        width: 58,
-        height: 58,
+        width: LIQUID_TOOLBAR_SLOT_WIDTH,
+        height: LIQUID_TOOLBAR_BUTTON_SIZE,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -1773,9 +2072,9 @@ const styles = StyleSheet.create({
     },
     toolbarDropdownBackdrop: {
         ...StyleSheet.absoluteFillObject,
-        zIndex: 30,
-        elevation: 30,
-        backgroundColor: "rgba(0,0,0,0.10)",
+        zIndex: 42,
+        elevation: 42,
+        backgroundColor: "transparent",
     },
     toolbarDropdown: {
         position: "absolute",
@@ -1814,8 +2113,8 @@ const styles = StyleSheet.create({
         paddingBottom: 8,
     },
     viewDropdownContent: {
-        paddingTop: 7,
-        paddingBottom: 8,
+        paddingTop: 10,
+        paddingBottom: 10,
         position: "relative",
         overflow: "hidden",
     },
@@ -1847,6 +2146,22 @@ const styles = StyleSheet.create({
         gap: 11,
         position: "relative",
         overflow: "hidden",
+    },
+    viewModeIconGrid: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        paddingHorizontal: 10,
+    },
+    viewModeIconOption: {
+        width: 40,
+        height: 42,
+        borderRadius: 17,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "transparent",
+        alignItems: "center",
+        justifyContent: "center",
     },
     viewModeSelectedPill: {
         position: "absolute",

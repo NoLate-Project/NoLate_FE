@@ -42,6 +42,7 @@ export type TmapPathOverlay = {
     width?: number;
     outlineColor?: string;
     outlineWidth?: number;
+    dashPattern?: number[];
 };
 
 export type TmapMapViewHandle = {
@@ -966,13 +967,14 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       }
 
       // 모든 안내선은 outline + main stroke 2중 레이어로 그려서 밝은 지도에서도 또렷하게 보이게 한다.
-      function renderPath(pathCoords, color, width, outlineColor, outlineWidth) {
+      function renderPath(pathCoords, color, width, outlineColor, outlineWidth, dashPattern) {
         if (!map) return;
         if (!Array.isArray(pathCoords) || pathCoords.length < 2) return;
 
         var path = pathCoords.map(function (point) { return toLatLng(point); });
         var strokeColor = normalizeStrokeColor(color, "#1D72FF");
         var strokeOutlineColor = normalizeStrokeColor(outlineColor, "#FFFFFF");
+        var useDash = Array.isArray(dashPattern) && dashPattern.length > 0;
         var outlineLayer = null;
         var lineLayer = null;
 
@@ -983,6 +985,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             strokeWeight: width + (outlineWidth * 2),
             lineCap: "round",
             lineJoin: "round",
+            strokeStyle: useDash ? "dash" : "solid",
             map: map,
           });
         }
@@ -993,6 +996,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           strokeWeight: width,
           lineCap: "round",
           lineJoin: "round",
+          strokeStyle: useDash ? "dash" : "solid",
           map: map,
         });
 
@@ -1133,7 +1137,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
               overlay.color || "#1D72FF",
               Number(overlay.width) || 10,
               overlay.outlineColor || "#FFFFFF",
-              Number(overlay.outlineWidth) || 2.5
+              Number(overlay.outlineWidth) || 2.5,
+              overlay.dashPattern
             );
           });
           return;

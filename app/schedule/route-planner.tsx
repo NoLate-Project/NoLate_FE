@@ -37,6 +37,17 @@ import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
+import {
+    buildRouteInfoFromAlternative,
+    formatRouteDuration as formatRouteInfoDuration,
+    getBusLineColor as getSharedBusLineColor,
+    getRouteStepColor,
+    getRouteStepStrokeWidth,
+    getSubwayLineColor as getSharedSubwayLineColor,
+    type RouteInfo,
+    type RouteStep,
+} from "../../src/modules/schedule/routeInfo";
+import RouteStepTimeline from "../../src/modules/schedule/components/route/RouteStepTimeline";
 import { saveFavoriteDeparturePlace } from "../../src/modules/schedule/favoriteDeparture";
 import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
 
@@ -373,6 +384,10 @@ function compactTransitLineLabel(lineName?: string): string | undefined {
     normalized = normalized
         .replace(/간선\s*[:：]?\s*/g, "")
         .replace(/지선\s*[:：]?\s*/g, "")
+        .replace(/광역\s*[:：]?\s*/g, "")
+        .replace(/순환\s*[:：]?\s*/g, "")
+        .replace(/마을\s*[:：]?\s*/g, "")
+        .replace(/공항\s*[:：]?\s*/g, "")
         .replace(/버스\s*/g, "")
         .replace(/수도권\s*/g, "")
         .trim();
@@ -396,35 +411,11 @@ function compactTransitStopLabel(stopName?: string, maxLength = 10): string | un
 }
 
 function getSubwayLineColor(lineName?: string): string {
-    const normalized = lineName?.trim();
-    if (!normalized) return TRANSIT_LEG_COLOR.SUBWAY;
-    const matched = SUBWAY_LINE_COLOR_RULES.find((item) => item.pattern.test(normalized));
-    return matched?.color ?? TRANSIT_LEG_COLOR.SUBWAY;
+    return getSharedSubwayLineColor(lineName);
 }
 
 function getBusLineColor(lineName?: string): string {
-    const compactLabel = compactTransitLineLabel(lineName);
-    const normalized = compactLabel?.trim() || lineName?.trim();
-    if (!normalized) return TRANSIT_LEG_COLOR.BUS;
-
-    // 버스 노선 문자열은 공급자/지역별로 포맷이 달라서(예: 3411, M7731, 지선 3411),
-    // 1) compact label 정리 -> 2) 숫자 토큰 기반 분류 순서로 최대한 안정적으로 색을 결정한다.
-    // 목적은 "지선 4자리 = 녹색"처럼 사용자가 익숙한 지도 색 체계에 맞추는 것이다.
-    const upper = normalized.toUpperCase();
-    if (/^M\d+/.test(upper)) return "#E84B4B";
-
-    const numberToken = upper.match(/\d+/)?.[0];
-    if (!numberToken) return TRANSIT_LEG_COLOR.BUS;
-
-    // 9번대/M버스 계열은 광역(적색)으로 처리하고, 4자리 지선은 녹색으로 우선 매핑한다.
-    // 2자리는 순환/마을 계열(황색), 3자리는 일반 간선(청색)으로 fallback 한다.
-    if (numberToken.startsWith("9")) return "#E84B4B";
-    if (/^\d{4}$/.test(numberToken)) return "#25B853";
-    if (/^\d{2}$/.test(numberToken)) return "#E5B93B";
-    if (/^\d{3}$/.test(numberToken)) return "#1D72FF";
-    if (/^\d{5,}$/.test(numberToken)) return "#25B853";
-
-    return TRANSIT_LEG_COLOR.BUS;
+    return getSharedBusLineColor(lineName);
 }
 
 function getTransitLegVisualColor(leg: Pick<TransitLegDetail, "kind" | "lineName" | "lineColor">): string {
@@ -1296,9 +1287,9 @@ function buildTransitLegAssistText(legs: TransitLegDetail[] | undefined, legInde
     if (isRideLegKind(leg.kind)) {
         const board = normalizeTransitStopName(leg.startName);
         const alight = normalizeTransitStopName(leg.endName);
-        if (board && alight) return `${board} 승차 → ${alight} 하차`;
-        if (board) return `${board} 승차`;
-        if (alight) return `${alight} 하차`;
+        if (board && alight) return `${board} · ${alight}까지`;
+        if (board) return board;
+        if (alight) return `${alight}까지`;
         return undefined;
     }
 
@@ -1324,20 +1315,20 @@ function buildTransitLegAssistText(legs: TransitLegDetail[] | undefined, legInde
     if (prevRide && nextRide) {
         const nextKindLabel = getTransitLegKindMeta(nextRide.kind).label;
         const nextBoardName = normalizeTransitStopName(nextRide.startName);
-        if (nextBoardName) return `환승 도보: ${nextBoardName}(${nextKindLabel}) 승차지점까지 이동`;
-        return `환승 도보: ${nextKindLabel} 승차지점까지 이동`;
+        if (nextBoardName) return `환승 도보: ${nextBoardName}(${nextKindLabel})까지 이동`;
+        return `환승 도보: ${nextKindLabel} 지점까지 이동`;
     }
     if (nextRide) {
         const nextKindLabel = getTransitLegKindMeta(nextRide.kind).label;
         const nextBoardName = normalizeTransitStopName(nextRide.startName);
-        if (nextBoardName) return `${nextBoardName}(${nextKindLabel}) 승차지점까지 도보 이동`;
-        return `${nextKindLabel} 승차지점까지 도보 이동`;
+        if (nextBoardName) return `${nextBoardName}(${nextKindLabel})까지 도보 이동`;
+        return `${nextKindLabel} 지점까지 도보 이동`;
     }
     if (prevRide) {
         const prevKindLabel = getTransitLegKindMeta(prevRide.kind).label;
         const prevAlightName = normalizeTransitStopName(prevRide.endName);
-        if (prevAlightName) return `${prevAlightName}(${prevKindLabel}) 하차 후 목적지까지 도보 이동`;
-        return `${prevKindLabel} 하차 후 목적지까지 도보 이동`;
+        if (prevAlightName) return `${prevAlightName}(${prevKindLabel})에서 목적지까지 도보 이동`;
+        return `${prevKindLabel} 이후 목적지까지 도보 이동`;
     }
     return "목적지까지 도보 이동";
 }
@@ -1545,15 +1536,14 @@ function buildTransitEventMarkers(
             badgeLabel = board.kind === "SUBWAY"
                 ? (compactTransitStopLabel(board.stopName, 11) ?? normalizedLine ?? kindMeta.label)
                 : (normalizedLine ?? kindMeta.label);
-            badgeGlyph = "승";
+            badgeGlyph = board.kind === "SUBWAY" ? "지" : "버";
             tintColor = getTransitLegVisualColor(board);
             if (board.kind === "BUS") {
-                badgeGlyph = "버";
                 // 버스 승차 이벤트는 버스 아이콘 스타일로 고정.
                 markerStyle = "bus";
             }
             if (board.kind === "SUBWAY") markerStyle = "subway";
-            caption = board.stopName ? `${board.stopName} 승차` : `${kindMeta.label} 승차 지점`;
+            caption = board.stopName ?? `${kindMeta.label} 지점`;
         } else if (intents.has("ALIGHT")) {
             const alight = group.find((item) => item.intent === "ALIGHT") ?? base;
             const kindMeta = getTransitLegKindMeta(alight.kind);
@@ -1563,14 +1553,14 @@ function buildTransitEventMarkers(
             badgeLabel = alight.kind === "SUBWAY"
                 ? (compactTransitStopLabel(alight.stopName, 11) ?? normalizedLine ?? kindMeta.label)
                 : (normalizedLine ?? kindMeta.label);
-            badgeGlyph = "하";
+            badgeGlyph = alight.kind === "SUBWAY" ? "지" : "버";
             tintColor = getTransitLegVisualColor(alight);
             if (alight.kind === "BUS") {
                 // 버스 하차 이벤트는 버스 아이콘 스타일로 고정.
                 markerStyle = "bus";
             }
             if (alight.kind === "SUBWAY") markerStyle = "subway";
-            caption = alight.stopName ? `${alight.stopName} 하차` : `${kindMeta.label} 하차 지점`;
+            caption = alight.stopName ?? `${kindMeta.label} 지점`;
         }
 
         return {
@@ -1800,6 +1790,25 @@ function formatTransitRouteChipLabel(option: RouteAlternativeOption, index: numb
     return `${lineLabel}${transferLabel} | ${formatDuration(option.minutes)}`;
 }
 
+function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, isDark: boolean): TmapPathOverlay[] {
+    if (!routeInfo) return [];
+    return routeInfo.steps.flatMap((step) => {
+        if (step.type === "ORIGIN" || step.type === "DESTINATION") return [];
+        if (!Array.isArray(step.coordinates) || step.coordinates.length < 2) return [];
+        const color = getRouteStepColor(step);
+        const isWalk = step.type === "WALK";
+        return [{
+            id: `${routeInfo.id}-${step.id}`,
+            coords: step.coordinates,
+            color,
+            width: getRouteStepStrokeWidth(step),
+            outlineColor: isDark ? "rgba(15,20,35,0.60)" : "rgba(255,255,255,0.96)",
+            outlineWidth: isWalk ? 1.4 : 1.8,
+            dashPattern: isWalk ? [6, 6] : undefined,
+        } as TmapPathOverlay];
+    });
+}
+
 function buildTransitDetailTimelineTitle(
     leg: TransitLegDetail,
     legIndex: number,
@@ -1814,7 +1823,7 @@ function buildTransitDetailTimelineTitle(
     }
 
     const boardName = normalizeTransitStopName(leg.startName);
-    return boardName ? `${boardName} 승차` : `${buildTransitTimelineTitle(leg)} 승차`;
+    return boardName ?? buildTransitTimelineTitle(leg);
 }
 
 function buildTransitRideDetailText(leg: TransitLegDetail): string | undefined {
@@ -1823,7 +1832,7 @@ function buildTransitRideDetailText(leg: TransitLegDetail): string | undefined {
     const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
     if (lineLabel) chunks.push(lineLabel);
     const alightName = normalizeTransitStopName(leg.endName);
-    if (alightName) chunks.push(`${alightName} 하차`);
+    if (alightName) chunks.push(`${alightName}까지`);
     return chunks.length ? chunks.join(" · ") : undefined;
 }
 
@@ -1887,6 +1896,7 @@ export default function RoutePlannerScreen() {
         destinationLat?: string;
         destinationLng?: string;
         qaSurface?: string;
+        qaExpandStepId?: string;
     }>();
     const isRouteSelectionScreen = pathname === "/schedule/route-select";
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
@@ -1910,6 +1920,7 @@ export default function RoutePlannerScreen() {
     const forcedSheetState = useMemo(() => parseSheetStateParam(params.sheetState), [params.sheetState]);
     const forcedRouteIndex = useMemo(() => parseIntegerParam(params.routeIndex), [params.routeIndex]);
     const qaSurface = typeof params.qaSurface === "string" ? params.qaSurface : "";
+    const qaExpandStepId = typeof params.qaExpandStepId === "string" ? params.qaExpandStepId : undefined;
 
     const [originName, setOriginName] = useState(initial?.origin?.name ?? "");
     const [destinationName, setDestinationName] = useState(initial?.destination?.name ?? "");
@@ -1991,8 +2002,8 @@ export default function RoutePlannerScreen() {
     const transitMapOverlayColor = isDark ? "rgba(0,0,0,0.34)" : "rgba(248,250,252,0.02)";
     const transitActionBarBg = isDark ? "rgba(17,17,17,0.80)" : "rgba(248,250,252,0.84)";
     const transitFocusedLegBg = isDark ? "rgba(47,128,255,0.16)" : "#DBEAFE";
-    const transitDetailPrimaryActionBg = isDark ? "#F3F4F6" : "#111827";
-    const transitDetailPrimaryActionText = isDark ? "#111827" : "#FFFFFF";
+    const transitDetailPrimaryActionBg = "#2979FF";
+    const transitDetailPrimaryActionText = "#FFFFFF";
     const transitDetailControlText = isDark ? "#F3F4F6" : "#111827";
     const isRoutePointLocked = hasRouteReady && !isRoutePointEditMode;
     const isRouteSelectionStage = isRouteSelectionScreen;
@@ -2025,7 +2036,7 @@ export default function RoutePlannerScreen() {
     const bottomSheetMiddleOffset = useMemo(() => {
         if (!isTransitDetailMode) return Math.round(bottomSheetCollapsedOffset * 0.52);
         if (bottomPanelHeight <= 0) return Math.round(bottomSheetCollapsedOffset * 0.45);
-        return Math.min(bottomSheetCollapsedOffset, Math.max(0, Math.round(bottomPanelHeight * 0.34)));
+        return Math.min(bottomSheetCollapsedOffset, Math.max(0, Math.round(bottomPanelHeight * 0.18)));
     }, [bottomPanelHeight, bottomSheetCollapsedOffset, isTransitDetailMode]);
     const bottomSheetExpandedOffset = useMemo(() => {
         if (!isTransitDetailMode) return 0;
@@ -2140,6 +2151,36 @@ export default function RoutePlannerScreen() {
         () => buildTransitProgressSegments(selectedAlternative?.transitLegs),
         [selectedAlternative]
     );
+    const selectedRouteInfo = useMemo<RouteInfo | undefined>(() => {
+        if (!selectedAlternative) return undefined;
+        const originPlace = hasOriginCoords
+            ? { name: originDisplay, address: originAddress.trim() || undefined, lat: originLat, lng: originLng }
+            : undefined;
+        const destinationPlace = hasDestinationCoords
+            ? { name: destinationDisplay, address: destinationAddress.trim() || undefined, lat: destinationLat, lng: destinationLng }
+            : undefined;
+        return buildRouteInfoFromAlternative(
+            selectedAlternative,
+            originPlace,
+            destinationPlace,
+            selectedRouteDepartureAt,
+            selectedAlternativeIndex
+        );
+    }, [
+        destinationAddress,
+        destinationDisplay,
+        destinationLat,
+        destinationLng,
+        hasDestinationCoords,
+        hasOriginCoords,
+        originAddress,
+        originDisplay,
+        originLat,
+        originLng,
+        selectedAlternative,
+        selectedAlternativeIndex,
+        selectedRouteDepartureAt,
+    ]);
 
     useEffect(() => {
         setSelectedRouteDepartureAt(new Date());
@@ -2992,6 +3033,9 @@ export default function RoutePlannerScreen() {
                 { latitude: destinationLat, longitude: destinationLng },
             ]
             : [];
+        const routeInfoStepOverlays = buildRouteInfoPathOverlays(selectedRouteInfo, isTransitDetailMode || isDark);
+        if (routeInfoStepOverlays.length > 0) return routeInfoStepOverlays;
+        if (travelMode === "TRANSIT" && selectedRouteInfo) return [];
 
         const selectedRoute = routeAlternatives.find((option) => option.id === selectedAlternativeId);
         const shouldShowDetailedTransitSegments =
@@ -3226,6 +3270,7 @@ export default function RoutePlannerScreen() {
         transitConnectorOverlays,
         transitWalkDetailOverlays,
         focusedTransitLegIndex,
+        selectedRouteInfo,
         isDark,
     ]);
 
@@ -3426,12 +3471,70 @@ export default function RoutePlannerScreen() {
             const transitConnectorFitPoints = isTransitDetailMode
                 ? [...transitConnectorOverlays, ...transitWalkDetailOverlays].flatMap((overlay) => overlay.coords)
                 : [];
+            const routeInfoFitPoints = selectedRouteInfo?.steps.flatMap((step) => step.coordinates ?? []) ?? [];
             const routePoints = pathOverlayCoords?.length
                 ? [originPoint, ...pathOverlayCoords, ...transitConnectorFitPoints, destinationPoint]
-                : [originPoint, destinationPoint];
+                : routeInfoFitPoints.length
+                    ? [originPoint, ...routeInfoFitPoints, ...transitConnectorFitPoints, destinationPoint]
+                    : [originPoint, destinationPoint];
             const firstPoint = routePoints[0];
             const midPoint = routePoints[Math.floor(routePoints.length / 2)];
             const lastPoint = routePoints[routePoints.length - 1];
+
+            if (isTransitDetailMode) {
+                const detailFitKey = [
+                    "fit-detail-frame",
+                    selectedAlternativeId ?? "none",
+                    routePoints.length.toString(),
+                    firstPoint.latitude.toFixed(4),
+                    firstPoint.longitude.toFixed(4),
+                    midPoint.latitude.toFixed(4),
+                    midPoint.longitude.toFixed(4),
+                    lastPoint.latitude.toFixed(4),
+                    lastPoint.longitude.toFixed(4),
+                ].join(":");
+                if (lastCameraActionKeyRef.current === detailFitKey) return;
+                lastCameraActionKeyRef.current = detailFitKey;
+
+                let minLat = Number.POSITIVE_INFINITY;
+                let maxLat = Number.NEGATIVE_INFINITY;
+                let minLng = Number.POSITIVE_INFINITY;
+                let maxLng = Number.NEGATIVE_INFINITY;
+
+                routePoints.forEach((point) => {
+                    minLat = Math.min(minLat, point.latitude);
+                    maxLat = Math.max(maxLat, point.latitude);
+                    minLng = Math.min(minLng, point.longitude);
+                    maxLng = Math.max(maxLng, point.longitude);
+                });
+
+                const rawLatDelta = Math.max(0, maxLat - minLat);
+                const rawLngDelta = Math.max(0, maxLng - minLng);
+                const centerLat = (minLat + maxLat) / 2;
+                const lngMetersPerDegree = Math.max(1, 111_320 * Math.cos((centerLat * Math.PI) / 180));
+                const routeDistanceKm = haversineDistanceKm(
+                    { latitude: originLat, longitude: originLng },
+                    { latitude: destinationLat, longitude: destinationLng }
+                );
+                const minSpanMeters = routeDistanceKm < 2 ? 1000 : routeDistanceKm < 6 ? 1800 : 3600;
+                const minLatDelta = minSpanMeters / 111_320;
+                const minLngDelta = minSpanMeters / lngMetersPerDegree;
+                const marginScale = routeDistanceKm < 2 ? 2.8 : routeDistanceKm < 6 ? 2.65 : 2.85;
+                const latitudeDelta = Math.max(minLatDelta, rawLatDelta * marginScale * 1.12);
+                const longitudeDelta = Math.max(minLngDelta, rawLngDelta * marginScale);
+
+                map.animateRegionTo({
+                    latitude: minLat - (latitudeDelta - rawLatDelta) / 2,
+                    longitude: minLng - (longitudeDelta - rawLngDelta) / 2,
+                    latitudeDelta,
+                    longitudeDelta,
+                    duration: 700,
+                    easing: "Fly",
+                    pivot: { x: 0.5, y: 0.5 },
+                });
+                return;
+            }
+
             const activeSheetOffset = bottomSheetSnap === "expanded"
                 ? bottomSheetExpandedOffset
                 : bottomSheetSnap === "middle"
@@ -3559,6 +3662,7 @@ export default function RoutePlannerScreen() {
         pathOverlayCoords,
         selectedAlternative,
         selectedAlternativeId,
+        selectedRouteInfo,
         travelMode,
         isBottomSheetCollapsed,
         isBottomSheetHidden,
@@ -3856,6 +3960,7 @@ export default function RoutePlannerScreen() {
                 width: overlay.width,
                 outlineColor: overlay.outlineColor,
                 outlineWidth: overlay.outlineWidth,
+                dashPattern: overlay.dashPattern,
             }];
         });
         const overlayPathCoords = storedPathOverlays.find((overlay) => overlay.coords.length >= 2)?.coords;
@@ -3867,10 +3972,11 @@ export default function RoutePlannerScreen() {
 
         return {
             ...selectedAlternative,
+            routeInfo: selectedRouteInfo,
             pathCoords: selectedPathCoords,
             storedPathOverlays,
         };
-    }, [mapPathOverlays, routePathCoords, selectedAlternative]);
+    }, [mapPathOverlays, routePathCoords, selectedAlternative, selectedRouteInfo]);
 
     const persistCurrentRoutePlannerInitial = useCallback((targetSessionId = sessionId) => {
         if (!targetSessionId) return;
@@ -3973,7 +4079,7 @@ export default function RoutePlannerScreen() {
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
-            travelMinutes: etaMinutes,
+            travelMinutes: selectedRouteInfo?.totalDurationMinutes ?? etaMinutes,
             locationName: `${nextOrigin.name} → ${nextDestination.name}`,
             route: buildPersistableSelectedRoute(),
         });
@@ -4060,6 +4166,14 @@ export default function RoutePlannerScreen() {
         transitWalkDetailOverlays,
         windowHeight,
     ]);
+    const selectedRouteStepId = typeof focusedTransitLegIndex === "number"
+        ? `leg-${focusedTransitLegIndex}`
+        : undefined;
+    const focusRouteInfoStep = useCallback((step: RouteStep) => {
+        const match = step.id.match(/^leg-(\d+)$/);
+        if (!match?.[1]) return;
+        focusMapOnTransitLeg(Number(match[1]));
+    }, [focusMapOnTransitLeg]);
 
     const canEnterRouteDetail = isRouteSelectionStage && hasRouteReady && !!selectedAlternative && !etaLoading;
     const onEnterRouteDetailView = useCallback(() => {
@@ -4135,7 +4249,7 @@ export default function RoutePlannerScreen() {
                         {referenceTravelModes.map((travelModeItem) => {
                             const selected = travelModeItem === "TRANSIT";
                             const label = travelModeItem === "TRANSIT"
-                                ? (selectedAlternative ? formatDuration(selectedAlternative.minutes) : "대중교통")
+                                ? (selectedAlternative ? formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative.minutes) : "대중교통")
                                 : TRAVEL_MODE_META[travelModeItem].label;
                             return (
                                 <Pressable
@@ -4220,7 +4334,7 @@ export default function RoutePlannerScreen() {
                                     <View style={styles.transitReferenceSummaryMain}>
                                         <Text style={styles.transitReferenceOptimalText}>최적</Text>
                                         <Text style={styles.transitReferenceDurationText}>
-                                            {formatDuration(selectedAlternative.minutes)}
+                                            {formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative.minutes)}
                                         </Text>
                                         {!!selectedTransitTimeRange && (
                                             <Text style={styles.transitReferenceRouteMetaText}>
@@ -4317,6 +4431,142 @@ export default function RoutePlannerScreen() {
         );
     }
 
+    if (isTransitDetailMode) {
+        const routeDurationText = formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative?.minutes);
+        const arrivalText = selectedTransitTimeRange.split(" | ")[0]?.split(" - ")[1] ?? "";
+        const routeHeaderLine = selectedAlternative ? getPrimaryTransitLineLabel(selectedAlternative.transitLegs) : "대중교통";
+        const routeHeaderTransferText = typeof selectedAlternative?.transferCount === "number" && selectedAlternative.transferCount > 0
+            ? ` + 환승 ${selectedAlternative.transferCount}회`
+            : "";
+        const routeHeaderTitle = `${routeHeaderLine}${routeHeaderTransferText} | ${routeDurationText}`;
+        const routeHeaderIcon = selectedAlternative?.transitLegs?.find((leg) => isRideLegKind(leg.kind))?.kind === "BUS"
+            ? "bus"
+            : "train";
+
+        return (
+            <View style={styles.routeDetailScreen}>
+                <View style={[styles.routeDetailMapFrame, { height: Math.max(258, Math.round(windowHeight * 0.30)) }]}>
+                    <TmapMapView
+                        ref={mapRef}
+                        style={styles.routeDetailMapView}
+                        camera={INITIAL_CAMERA}
+                        nightModeEnabled
+                        showLocationButton={false}
+                        showZoomControls={false}
+                        onTapMap={onTapMap}
+                        onZoomChanged={onMapZoomChanged}
+                        onInitialized={() => setIsMapInitialized(true)}
+                        markers={mapMarkers}
+                        pathOverlays={mapPathOverlays}
+                        pathCoords={pathOverlayCoords}
+                        pathColor={SELECTED_ROUTE_COLOR}
+                        pathWidth={10}
+                        pathOutlineColor={isDark ? "rgba(15,20,35,0.55)" : "#FFFFFF"}
+                        pathOutlineWidth={3}
+                        fallbackBackgroundColor={colors.surface2}
+                        fallbackTextColor={colors.textSecondary}
+                    />
+                    <View pointerEvents="box-none" style={[styles.routeDetailMapHeader, { paddingTop: insets.top + 10 }]}>
+                        <Pressable onPress={goBack} style={styles.routeDetailFloatingButton}>
+                            <Ionicons name="chevron-back" size={28} color="#F5F7FA" />
+                        </Pressable>
+                        <View style={styles.routeDetailTitlePill}>
+                            <Ionicons name={routeHeaderIcon} size={18} color="#8FA20B" />
+                            <Text numberOfLines={1} style={styles.routeDetailHeaderTitle}>
+                                {routeHeaderTitle}
+                            </Text>
+                        </View>
+                        <Pressable onPress={submit} style={styles.routeDetailFloatingButton}>
+                            <Ionicons name="bookmark-outline" size={24} color="#F5F7FA" />
+                        </Pressable>
+                    </View>
+                </View>
+
+                <View style={styles.routeDetailPanel}>
+                    <View style={styles.routeDetailSheetHandle} />
+                    <ScrollView
+                        style={styles.routeDetailPanelScroll}
+                        contentContainerStyle={[
+                            styles.routeDetailPanelContent,
+                            { paddingBottom: TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT + transitDetailActionBarPaddingBottom + 34 },
+                        ]}
+                        bounces={false}
+                        alwaysBounceVertical={false}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        <View style={styles.routeDetailSummaryCard}>
+                            <View style={styles.routeDetailCompactSummary}>
+                                <View style={styles.routeDetailCompactSummaryTop}>
+                                    <Text style={styles.routeDetailOptimalText}>최적</Text>
+                                    <Text style={styles.routeDetailCompactDuration}>{routeDurationText}</Text>
+                                </View>
+                                {!!selectedTransitTimeRange && (
+                                    <Text numberOfLines={1} style={styles.routeDetailMetaText}>{selectedTransitTimeRange}</Text>
+                                )}
+
+                                {selectedTransitProgressSegments.length > 0 && (
+                                    <View style={styles.routeDetailProgressTrack}>
+                                        {selectedTransitProgressSegments.map((segment, index) => (
+                                                <View
+                                                    key={`detail-segment-${segment.key}`}
+                                                    style={[
+                                                        styles.routeDetailProgressSegment,
+                                                        {
+                                                            flex: segment.flex,
+                                                            backgroundColor: segment.color,
+                                                            marginLeft: index === 0 ? 0 : 3,
+                                                        },
+                                                    ]}
+                                                >
+                                                    <Text numberOfLines={1} style={styles.routeDetailProgressText}>
+                                                        {segment.label}
+                                                    </Text>
+                                                </View>
+                                            ))}
+                                    </View>
+                                )}
+                            </View>
+
+                            <View style={styles.routeDetailDivider} />
+
+                            <Text style={styles.routeDetailBaseTimeText}>
+                                {formatTransitClock(selectedRouteDepartureAt)} 기준
+                            </Text>
+
+                            {selectedRouteInfo ? (
+                                <RouteStepTimeline
+                                    routeInfo={selectedRouteInfo}
+                                    selectedStepId={selectedRouteStepId}
+                                    onStepPress={focusRouteInfoStep}
+                                    forceDark
+                                    primaryTextColor="#F5F7FA"
+                                    secondaryTextColor="#9CA3AF"
+                                    initialExpandedStepId={qaExpandStepId}
+                                />
+                            ) : (
+                                <Text style={styles.routeDetailEmptyText}>상세 경로를 불러오는 중입니다.</Text>
+                            )}
+                        </View>
+                    </ScrollView>
+                </View>
+
+                {!!selectedAlternative && (
+                    <View style={[styles.routeDetailActionBar, { paddingBottom: transitDetailActionBarPaddingBottom }]}>
+                        <View style={styles.routeDetailActionEta}>
+                            <Text style={styles.routeDetailActionDuration}>{routeDurationText}</Text>
+                            <Text style={styles.routeDetailActionArrival}>
+                                {arrivalText ? `${arrivalText} 도착` : "도착 시간 확인"}
+                            </Text>
+                        </View>
+                        <Pressable onPress={submit} style={styles.routeDetailSaveButton}>
+                            <Text style={styles.routeDetailSaveButtonText}>경로 저장</Text>
+                        </Pressable>
+                    </View>
+                )}
+            </View>
+        );
+    }
+
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <TmapMapView
@@ -4362,47 +4612,26 @@ export default function RoutePlannerScreen() {
             )}
 
             {isTransitDetailMode ? (
-                <View style={[styles.transitMapRouteHeader, { paddingTop: Math.max(insets.top - 6, 4) }]}>
+                <View style={[styles.transitMapRouteHeader, { paddingTop: Math.max(insets.top - 2, 8) }]}>
                     <Pressable onPress={goBack} style={[styles.transitMapBackButton, { backgroundColor: transitRouteChipBg }]}>
-                        <Text style={[styles.transitMapBackText, { color: isDark ? "#FFFFFF" : "#111827" }]}>‹</Text>
+                        <Ionicons name="chevron-back" size={28} color={isDark ? "#FFFFFF" : "#111827"} />
                     </Pressable>
-                    <ScrollView
-                        horizontal
-                        bounces={false}
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.transitMapRouteChipContent}
+                    <View style={[styles.transitMapTitlePill, { backgroundColor: transitRouteChipBg }]}>
+                        <Text numberOfLines={1} style={[styles.transitMapTitleText, { color: isDark ? "#FFFFFF" : "#111827" }]}>
+                            경로 상세
+                        </Text>
+                        {!!selectedAlternative && (
+                            <Text numberOfLines={1} style={[styles.transitMapSubtitleText, { color: transitRouteChipText }]}>
+                                {formatTransitRouteChipLabel(selectedAlternative, selectedVisibleAlternativeIndex >= 0 ? selectedVisibleAlternativeIndex : 0)}
+                            </Text>
+                        )}
+                    </View>
+                    <Pressable
+                        onPress={submit}
+                        style={[styles.transitMapBookmarkButton, { backgroundColor: transitRouteChipBg }]}
                     >
-                        {visibleAlternatives.map((option, index) => {
-                            const selected = option.id === selectedAlternativeId;
-                            return (
-                                <Pressable
-                                    key={`map-route-chip-${option.id}`}
-                                    onPress={() => {
-                                        if (isBottomSheetHidden) {
-                                            snapBottomSheetTo(isTransitDetailMode ? "middle" : "expanded");
-                                        }
-                                        selectAlternativeByIndex(index, false);
-                                    }}
-                                    style={[
-                                        styles.transitMapRouteChip,
-                                        { backgroundColor: transitRouteChipBg },
-                                        selected ? styles.transitMapRouteChipSelected : null,
-                                    ]}
-                                >
-                                    <Text
-                                        numberOfLines={1}
-                                        style={[
-                                            styles.transitMapRouteChipText,
-                                            { color: transitRouteChipText },
-                                            selected ? styles.transitMapRouteChipTextSelected : null,
-                                        ]}
-                                    >
-                                        {formatTransitRouteChipLabel(option, index)}
-                                    </Text>
-                                </Pressable>
-                            );
-                        })}
-                    </ScrollView>
+                        <Ionicons name="bookmark-outline" size={22} color={isDark ? "#FFFFFF" : "#111827"} />
+                    </Pressable>
                 </View>
             ) : (
             <View style={[styles.topOverlay, { paddingTop: insets.top + 4 }]}>
@@ -4419,7 +4648,7 @@ export default function RoutePlannerScreen() {
                             styles.searchInputWrap,
                             styles.searchField,
                             styles.overlaySurface,
-                            { borderColor: searching ? colors.selectedDayBg : colors.border, backgroundColor: overlayBoxBg },
+                            { borderColor: searching ? colors.inputBorderFocused : colors.inputBorder, backgroundColor: overlayBoxBg },
                         ]}
                     >
                         <TextInput
@@ -4432,7 +4661,7 @@ export default function RoutePlannerScreen() {
                                         ? "출/도 탭을 선택해 주세요"
                                         : (activeTarget === "origin" ? "출발지 검색" : "도착지 검색")
                             }
-                            placeholderTextColor={colors.textDisabled}
+                            placeholderTextColor={colors.inputPlaceholder}
                             returnKeyType="search"
                             editable={!isRoutePointLocked && hasActiveTarget}
                             style={[styles.searchInput, { color: colors.textPrimary }]}
@@ -4872,7 +5101,7 @@ export default function RoutePlannerScreen() {
                                                                 최적
                                                             </Text>
                                                             <Text style={[styles.transitDurationLarge, { color: detailPrimaryText }]}>
-                                                                {formatDuration(selectedAlternative.minutes)}
+                                                                {formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative.minutes)}
                                                             </Text>
                                                         </View>
                                                     </View>
@@ -4984,125 +5213,15 @@ export default function RoutePlannerScreen() {
                                                 </View>
                                             )}
 
-                                            {Array.isArray(selectedAlternative?.transitLegs) && selectedAlternative.transitLegs.length > 0 && (
-                                                isTransitMode ? (
-                                                    <View style={styles.transitReferenceTimeline}>
-                                                        {selectedAlternative.transitLegs.map((leg, legIndex) => {
-                                                            const kindMeta = getTransitLegKindMeta(leg.kind);
-                                                            const legMetaText = buildTransitLegMeta(leg);
-                                                            const timelineTitle = buildTransitDetailTimelineTitle(
-                                                                leg,
-                                                                legIndex,
-                                                                selectedAlternative.transitLegs ?? [],
-                                                                originDisplay,
-                                                                destinationDisplay
-                                                            );
-                                                            const assistText = buildTransitLegAssistText(selectedAlternative.transitLegs, legIndex);
-                                                            const rideLineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
-                                                            const rideDetailText = buildTransitRideDetailText(leg);
-                                                            const rideStopSummaryText = buildTransitStopMoveSummary(leg);
-                                                            const rideDisplayStops = getTransitLegDisplayStops(leg);
-                                                            const stopListKey = `${selectedAlternative.id}-stop-list-${legIndex}`;
-                                                            const canToggleStops = isRideLegKind(leg.kind) && rideDisplayStops.length > 0;
-                                                            const isStopListExpanded = !!expandedTransitStopKeys[stopListKey];
-                                                            const isFocusedLeg = focusedTransitLegIndex === legIndex;
-                                                            const isLastLeg = legIndex === selectedAlternative.transitLegs!.length - 1;
-                                                            const dotText = leg.kind === "WALK" && legIndex === 0 ? "출" : kindMeta.short;
-                                                            const dotColor = leg.kind === "WALK" && legIndex === 0 ? ORIGIN_COLOR : kindMeta.color;
-                                                            const lineColor = leg.kind === "WALK" ? detailBorderColor : getTransitLegVisualColor(leg);
-                                                            return (
-                                                                <Pressable
-                                                                    key={`${selectedAlternative.id}-timeline-${legIndex}`}
-                                                                    onPress={() => focusMapOnTransitLeg(legIndex)}
-                                                                    style={[
-                                                                        styles.transitTimelineItem,
-                                                                        isFocusedLeg ? { backgroundColor: transitFocusedLegBg } : null,
-                                                                    ]}
-                                                                >
-                                                                    <View style={styles.transitTimelineRail}>
-                                                                        <View style={[styles.transitTimelineDot, { backgroundColor: dotColor }]}>
-                                                                            <Text style={styles.transitTimelineDotText}>{dotText}</Text>
-                                                                        </View>
-                                                                        {!isLastLeg && (
-                                                                            <View style={[styles.transitTimelineLine, { backgroundColor: lineColor }]} />
-                                                                        )}
-                                                                    </View>
-                                                                    <View style={styles.transitTimelineContent}>
-                                                                        <View style={styles.transitTimelineTopRow}>
-                                                                            <Text numberOfLines={2} style={[styles.transitTimelineTitle, { color: detailPrimaryText }]}>
-                                                                                {timelineTitle}
-                                                                            </Text>
-                                                                            {!!legMetaText && (
-                                                                                <Text numberOfLines={1} style={[styles.transitTimelineMeta, { color: detailSecondaryText }]}>
-                                                                                    {legMetaText}
-                                                                                </Text>
-                                                                            )}
-                                                                        </View>
-                                                                        {!!assistText && (
-                                                                            <Text numberOfLines={2} style={[styles.transitTimelineAssist, { color: detailSecondaryText }]}>
-                                                                                {assistText}
-                                                                            </Text>
-                                                                        )}
-                                                                        {isRideLegKind(leg.kind) && !!rideLineLabel && (
-                                                                            <View style={[styles.transitTimelineRideCard, { borderColor: detailBorderColor }]}>
-                                                                                <View style={[styles.transitTimelineRideBadge, { backgroundColor: getTransitLegVisualColor(leg) }]}>
-                                                                                    <Text numberOfLines={1} style={styles.transitTimelineRideBadgeText}>
-                                                                                        {rideLineLabel}
-                                                                                    </Text>
-                                                                                </View>
-                                                                                {!!rideDetailText && (
-                                                                                    <Text numberOfLines={1} style={[styles.transitTimelineRideText, { color: detailSecondaryText }]}>
-                                                                                        {rideDetailText}
-                                                                                    </Text>
-                                                                                )}
-                                                                            </View>
-                                                                        )}
-                                                                        {isRideLegKind(leg.kind) && !!rideStopSummaryText && (
-                                                                            <Pressable
-                                                                                disabled={!canToggleStops}
-                                                                                onPress={(event) => {
-                                                                                    event.stopPropagation();
-                                                                                    if (canToggleStops) toggleTransitStopList(stopListKey);
-                                                                                }}
-                                                                                style={[styles.transitStopToggleRow, { borderTopColor: detailBorderColor }]}
-                                                                            >
-                                                                                <Text
-                                                                                    numberOfLines={1}
-                                                                                    style={[
-                                                                                        styles.transitStopToggleText,
-                                                                                        { color: canToggleStops ? detailSecondaryText : colors.textDisabled },
-                                                                                    ]}
-                                                                                >
-                                                                                    {rideStopSummaryText}
-                                                                                </Text>
-                                                                                {canToggleStops && (
-                                                                                    <Text style={[styles.transitStopToggleChevron, { color: detailSecondaryText }]}>
-                                                                                        {isStopListExpanded ? "⌃" : "⌄"}
-                                                                                    </Text>
-                                                                                )}
-                                                                            </Pressable>
-                                                                        )}
-                                                                        {isStopListExpanded && (
-                                                                            <View style={styles.transitStopList}>
-                                                                                {rideDisplayStops.map((stop, stopIndex) => (
-                                                                                    <View
-                                                                                        key={`${stopListKey}-${stop.sequence ?? stopIndex}-${stop.name}`}
-                                                                                        style={styles.transitStopListItem}
-                                                                                    >
-                                                                                        <View style={[styles.transitStopListDot, { backgroundColor: lineColor }]} />
-                                                                                        <Text numberOfLines={2} style={[styles.transitStopListText, { color: detailPrimaryText }]}>
-                                                                                            {stop.name}
-                                                                                        </Text>
-                                                                                    </View>
-                                                                                ))}
-                                                                            </View>
-                                                                        )}
-                                                                    </View>
-                                                                </Pressable>
-                                                            );
-                                                        })}
-                                                    </View>
-                                                ) : (
+                                            {isTransitMode && selectedRouteInfo ? (
+                                                <View style={styles.transitReferenceTimeline}>
+                                                    <RouteStepTimeline
+                                                        routeInfo={selectedRouteInfo}
+                                                        selectedStepId={selectedRouteStepId}
+                                                        onStepPress={focusRouteInfoStep}
+                                                    />
+                                                </View>
+                                            ) : Array.isArray(selectedAlternative?.transitLegs) && selectedAlternative.transitLegs.length > 0 ? (
                                                     <View style={[styles.selectedRouteLegSection, { borderColor: colors.border, backgroundColor: overlayCardBg }]}>
                                                         <Text style={[styles.selectedRouteSectionTitle, { color: colors.textPrimary }]}>
                                                             선택한 경로 상세
@@ -5163,8 +5282,7 @@ export default function RoutePlannerScreen() {
                                                             })}
                                                         </View>
                                                     </View>
-                                                )
-                                            )}
+                                                ) : null}
                                         </View>
                                     )}
                                 </View>
@@ -5196,7 +5314,7 @@ export default function RoutePlannerScreen() {
                     >
                         <View style={styles.transitDetailActionEta}>
                             <Text style={[styles.transitDetailActionDuration, { color: transitDetailControlText }]}>
-                                {formatDuration(selectedAlternative.minutes)}
+                                {formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative.minutes)}
                             </Text>
                             {!!selectedTransitTimeRange && (
                                 <Text style={[styles.transitDetailActionArrival, { color: transitDetailControlText }]}>
@@ -5673,6 +5791,305 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
     },
+    routeDetailScreen: {
+        flex: 1,
+        backgroundColor: "#0B0C0F",
+    },
+    routeDetailHeader: {
+        minHeight: 54,
+        paddingHorizontal: 12,
+        paddingBottom: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+        backgroundColor: "#0B0C0F",
+        zIndex: 4,
+    },
+    routeDetailMapHeader: {
+        position: "absolute",
+        top: 0,
+        left: 0,
+        right: 0,
+        paddingHorizontal: 14,
+        paddingBottom: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        zIndex: 6,
+    },
+    routeDetailFloatingButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(7,9,13,0.86)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.10)",
+    },
+    routeDetailHeaderButton: {
+        width: 34,
+        height: 34,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "transparent",
+    },
+    routeDetailHeaderTextWrap: {
+        flex: 1,
+        minWidth: 0,
+        alignItems: "flex-start",
+    },
+    routeDetailTitlePill: {
+        flex: 1,
+        minHeight: 48,
+        minWidth: 0,
+        borderRadius: 24,
+        paddingHorizontal: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        gap: 8,
+        backgroundColor: "rgba(7,9,13,0.86)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.10)",
+    },
+    routeDetailHeaderTitle: {
+        flex: 1,
+        minWidth: 0,
+        color: "#F5F7FA",
+        fontSize: 16,
+        fontWeight: "900",
+        lineHeight: 22,
+    },
+    routeDetailHeaderSubtitle: {
+        color: "#C8CDD6",
+        fontSize: 13,
+        fontWeight: "800",
+        lineHeight: 17,
+        marginTop: 1,
+    },
+    routeDetailMapFrame: {
+        position: "relative",
+        overflow: "hidden",
+        backgroundColor: "#111827",
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.08)",
+    },
+    routeDetailMapView: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    routeDetailPanel: {
+        flex: 1,
+        marginTop: -22,
+        borderTopLeftRadius: 22,
+        borderTopRightRadius: 22,
+        backgroundColor: "#1C1D22",
+        overflow: "hidden",
+        zIndex: 5,
+    },
+    routeDetailSheetHandle: {
+        alignSelf: "center",
+        width: 54,
+        height: 5,
+        borderRadius: 999,
+        marginTop: 10,
+        marginBottom: 6,
+        backgroundColor: "rgba(156,163,175,0.54)",
+    },
+    routeDetailPanelScroll: {
+        flex: 1,
+    },
+    routeDetailPanelContent: {
+        paddingHorizontal: 0,
+        paddingTop: 8,
+    },
+    routeDetailSummaryCard: {
+        borderWidth: 0,
+        borderRadius: 0,
+        backgroundColor: "transparent",
+        paddingHorizontal: 24,
+        paddingTop: 10,
+        paddingBottom: 12,
+        gap: 9,
+    },
+    routeDetailCompactSummary: {
+        gap: 7,
+    },
+    routeDetailCompactSummaryTop: {
+        flexDirection: "row",
+        alignItems: "baseline",
+        gap: 8,
+    },
+    routeDetailSummaryTop: {
+        flexDirection: "column",
+        alignItems: "flex-start",
+        justifyContent: "flex-start",
+        gap: 0,
+    },
+    routeDetailSummaryMain: {
+        width: "100%",
+        minWidth: 0,
+        gap: 3,
+    },
+    routeDetailOptimalText: {
+        alignSelf: "flex-start",
+        color: "#4B9DFF",
+        fontSize: 14,
+        fontWeight: "900",
+        lineHeight: 18,
+    },
+    routeDetailCompactDuration: {
+        color: "#FFFFFF",
+        fontSize: 27,
+        fontWeight: "900",
+        lineHeight: 32,
+    },
+    routeDetailDurationText: {
+        color: "#FFFFFF",
+        fontSize: 42,
+        fontWeight: "900",
+        lineHeight: 48,
+    },
+    routeDetailMetaText: {
+        color: "#C8CDD6",
+        fontSize: 14,
+        fontWeight: "800",
+        lineHeight: 19,
+    },
+    routeDetailConditionText: {
+        color: "#9CA3AF",
+        fontSize: 12,
+        fontWeight: "800",
+        lineHeight: 17,
+    },
+    routeDetailSegmentRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        minHeight: 24,
+        flexWrap: "wrap",
+    },
+    routeDetailSegmentPill: {
+        height: 24,
+        minWidth: 38,
+        borderRadius: 7,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 8,
+        marginBottom: 5,
+    },
+    routeDetailSegmentText: {
+        color: "#FFFFFF",
+        fontSize: 11,
+        fontWeight: "900",
+        lineHeight: 14,
+    },
+    routeDetailProgressTrack: {
+        width: "100%",
+        height: 22,
+        borderRadius: 999,
+        flexDirection: "row",
+        alignItems: "center",
+        padding: 2,
+        overflow: "hidden",
+        backgroundColor: "rgba(107,114,128,0.40)",
+    },
+    routeDetailProgressSegment: {
+        height: 18,
+        minWidth: 28,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 4,
+    },
+    routeDetailProgressText: {
+        color: "#FFFFFF",
+        fontSize: 10,
+        fontWeight: "900",
+        lineHeight: 13,
+        letterSpacing: 0,
+    },
+    routeDetailProgressLabelRow: {
+        width: "100%",
+        minHeight: 18,
+        flexDirection: "row",
+        alignItems: "flex-start",
+    },
+    routeDetailProgressLabelCell: {
+        minWidth: 28,
+        alignItems: "center",
+        paddingHorizontal: 2,
+    },
+    routeDetailProgressLabelText: {
+        fontSize: 12,
+        fontWeight: "900",
+        lineHeight: 16,
+        letterSpacing: 0,
+    },
+    routeDetailDivider: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: "rgba(255,255,255,0.10)",
+    },
+    routeDetailBaseTimeText: {
+        color: "#C8CDD6",
+        fontSize: 16,
+        fontWeight: "900",
+        lineHeight: 22,
+        paddingTop: 0,
+    },
+    routeDetailEmptyText: {
+        color: "#9CA3AF",
+        fontSize: 13,
+        fontWeight: "700",
+        lineHeight: 18,
+    },
+    routeDetailActionBar: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9,
+        elevation: 9,
+        minHeight: TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "rgba(255,255,255,0.10)",
+        paddingTop: TRANSIT_DETAIL_ACTION_BAR_TOP_PADDING,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "flex-end",
+        gap: 10,
+        backgroundColor: "rgba(11,12,15,0.94)",
+    },
+    routeDetailActionEta: {
+        flex: 1,
+        paddingBottom: 2,
+    },
+    routeDetailActionDuration: {
+        color: "#FFFFFF",
+        fontSize: 20,
+        fontWeight: "900",
+        lineHeight: 25,
+    },
+    routeDetailActionArrival: {
+        color: "#F5F7FA",
+        fontSize: 14,
+        fontWeight: "800",
+        lineHeight: 19,
+    },
+    routeDetailSaveButton: {
+        minHeight: TRANSIT_DETAIL_ACTION_BUTTON_HEIGHT,
+        borderRadius: 999,
+        paddingHorizontal: 30,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#2979FF",
+    },
+    routeDetailSaveButtonText: {
+        color: "#FFFFFF",
+        fontSize: 16,
+        fontWeight: "900",
+        lineHeight: 21,
+    },
     fullMap: {
         ...StyleSheet.absoluteFillObject,
     },
@@ -5694,17 +6111,43 @@ const styles = StyleSheet.create({
         zIndex: 30,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        paddingHorizontal: 12,
+        gap: 10,
+        paddingHorizontal: 14,
         paddingBottom: 8,
     },
     transitMapBackButton: {
-        width: 54,
-        height: 54,
+        width: 48,
+        height: 48,
         borderRadius: 999,
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: "rgba(18,18,18,0.94)",
+    },
+    transitMapTitlePill: {
+        flex: 1,
+        minWidth: 0,
+        height: 48,
+        borderRadius: 999,
+        justifyContent: "center",
+        paddingHorizontal: 18,
+    },
+    transitMapTitleText: {
+        fontSize: 17,
+        fontWeight: "900",
+        lineHeight: 21,
+    },
+    transitMapSubtitleText: {
+        marginTop: 1,
+        fontSize: 11,
+        fontWeight: "800",
+        lineHeight: 14,
+    },
+    transitMapBookmarkButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
     },
     transitMapBackText: {
         color: "#FFFFFF",

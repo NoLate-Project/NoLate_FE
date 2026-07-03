@@ -152,7 +152,7 @@ export function AuthInput({
                 <TextInput
                     {...inputProps}
                     placeholderTextColor={
-                        placeholderTextColor ?? (mode === "dark" ? "rgba(255,255,255,0.24)" : colors.textDisabled)
+                        placeholderTextColor ?? colors.inputPlaceholder
                     }
                     style={[styles.fieldInput, { color: colors.textPrimary }, inputStyle]}
                 />
@@ -315,8 +315,8 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             minHeight: isCompact ? 60 : 68,
             borderRadius: isCompact ? 16 : 18,
             borderWidth: 1,
-            backgroundColor: isDark ? "#1B1D22" : "rgba(255,255,255,0.96)",
-            borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)",
+            backgroundColor: colors.inputBackground,
+            borderColor: colors.inputBorder,
             flexDirection: "row",
             alignItems: "center",
             paddingHorizontal: isCompact ? 12 : 14,

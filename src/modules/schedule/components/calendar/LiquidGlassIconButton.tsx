@@ -64,6 +64,7 @@ export default function LiquidGlassIconButton({
     accessibilityLabel,
     onPress,
     style,
+    pointerEvents,
 }: LiquidGlassIconButtonProps) {
     const handlePress = useCallback(() => {
         if (!disabled) {
@@ -76,9 +77,10 @@ export default function LiquidGlassIconButton({
     }
 
     const NativeButton = NativeLiquidGlassIconButton;
+    const interactive = !disabled && Boolean(onPress) && pointerEvents !== "none";
 
     return (
-        <View pointerEvents="box-none" style={style}>
+        <View pointerEvents={pointerEvents ?? "box-none"} style={style}>
             <NativeButton
                 symbolName={symbolName}
                 label={label}
@@ -93,7 +95,7 @@ export default function LiquidGlassIconButton({
                 style={StyleSheet.absoluteFill}
             />
 
-            {!disabled && (
+            {interactive && (
                 <Pressable
                     accessibilityLabel={
                         accessibilityLabel ??

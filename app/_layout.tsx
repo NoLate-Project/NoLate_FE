@@ -64,12 +64,24 @@ function RootNavigator() {
             <Stack.Screen name="auth/signup" />
             {__DEV__ && <Stack.Screen name="dev/view-mode-glass-control" />}
             <Stack.Protected guard={isAuthenticated}>
-                <Stack.Screen name="profile" />
+                <Stack.Screen
+                    name="profile"
+                    options={{
+                        animation: "fade",
+                        animationDuration: 180,
+                    }}
+                />
                 <Stack.Screen name="schedule/index" />
-                <Stack.Screen name="schedule/timetable" />
-                <Stack.Screen name="schedule/[id]" />
+                <Stack.Screen
+                    name="schedule/timetable"
+                    options={{
+                        animation: "fade",
+                        animationDuration: 180,
+                    }}
+                />
                 <Stack.Screen name="schedule/route-select" />
                 <Stack.Screen name="schedule/route-planner" />
+                <Stack.Screen name="schedule/[id]" />
             </Stack.Protected>
         </Stack>
     );

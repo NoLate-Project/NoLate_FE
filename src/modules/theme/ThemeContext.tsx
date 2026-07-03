@@ -21,13 +21,17 @@ export type AppColors = {
     dayHeaderColor: string;
     arrowColor: string;
     monthTextColor: string;
+    inputBackground: string;
+    inputBorder: string;
+    inputBorderFocused: string;
+    inputPlaceholder: string;
 };
 
 const dark: AppColors = {
     background: "#000",
     surface: "#1c1c1e",
     surface2: "#2c2c2e",
-    border: "#3a3a3c",
+    border: "#2c2c2e",
     textPrimary: "#fff",
     textSecondary: "#8e8e93",
     textDisabled: "#3a3a3c",
@@ -38,23 +42,31 @@ const dark: AppColors = {
     dayHeaderColor: "#555",
     arrowColor: "#fff",
     monthTextColor: "#fff",
+    inputBackground: "rgba(10,11,14,0.72)",
+    inputBorder: "rgba(255,255,255,0.11)",
+    inputBorderFocused: "rgba(255,255,255,0.32)",
+    inputPlaceholder: "rgba(235,235,245,0.34)",
 };
 
 const light: AppColors = {
-    background: "#f2f2f7",
+    background: "#fff",
     surface: "#fff",
-    surface2: "#f2f2f7",
-    border: "#e5e5ea",
+    surface2: "#f7f7f8",
+    border: "#e6e6ea",
     textPrimary: "#000",
     textSecondary: "#6e6e73",
     textDisabled: "#c7c7cc",
     selectedDayBg: "#000",
     selectedDayText: "#fff",
     todayBorderColor: "#000",
-    calendarBackground: "#f2f2f7",
+    calendarBackground: "#fff",
     dayHeaderColor: "#8e8e93",
     arrowColor: "#000",
     monthTextColor: "#000",
+    inputBackground: "rgba(118,118,128,0.10)",
+    inputBorder: "rgba(60,60,67,0.14)",
+    inputBorderFocused: "rgba(0,0,0,0.36)",
+    inputPlaceholder: "rgba(60,60,67,0.34)",
 };
 
 type ThemeContextValue = {

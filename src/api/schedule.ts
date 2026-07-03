@@ -4,8 +4,16 @@ import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/type
 
 export type SchedulePayload = Omit<ScheduleItem, "id" | "updatedAt">;
 
+export type ParseScheduleInputType =
+    | "TEXT"
+    | "CONVERSATION"
+    | "IMAGE_OCR"
+    | "VOICE_TRANSCRIPT"
+    | "SHARE_TEXT";
+
 export type ParseScheduleTextPayload = {
     text: string;
+    inputType?: ParseScheduleInputType;
     referenceDate?: string;
     defaultDurationMinutes?: number;
 };

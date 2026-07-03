@@ -96,6 +96,7 @@ async function refreshFcmTokenIfNativeContextChanged(
 
 export async function registerPushAfterLogin(memberId?: number): Promise<void> {
     if (!memberId) return;
+    if (Platform.OS === "ios" && !Constants.isDevice) return;
 
     const messaging = getMessaging();
     let allowed = true;

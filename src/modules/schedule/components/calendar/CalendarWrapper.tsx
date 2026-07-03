@@ -30,8 +30,10 @@ export default function CalendarWrapper({
     headerOffset,
     topSafeInset,
 }: Props) {
+    const shouldUseCompactHeight = viewMode === "list" || viewMode === "week";
+
     return (
-        <View style={styles.full}>
+        <View style={shouldUseCompactHeight ? styles.compact : styles.full}>
             <ScheduleCalendar
                 selectedDay={selectedDay}
                 items={items}
@@ -51,5 +53,8 @@ export default function CalendarWrapper({
 const styles = StyleSheet.create({
     full: {
         flex: 1,
+    },
+    compact: {
+        flexShrink: 0,
     },
 });

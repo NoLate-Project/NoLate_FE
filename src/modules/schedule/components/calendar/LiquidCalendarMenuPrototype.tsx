@@ -16,14 +16,22 @@ import type {
     ViewModeGlassControlSelectEvent,
 } from "./ViewModeGlassControl/types";
 
+export type LiquidCalendarMenuSelectionMode = CalendarViewMode | "day" | "multi";
+export type LiquidCalendarMenuVariant = "calendar" | "timeline";
+
 export type LiquidCalendarMenuPrototypeProps = ViewProps & {
-    selectedMode?: CalendarViewMode;
+    selectedMode?: LiquidCalendarMenuSelectionMode;
+    viewModeVariant?: LiquidCalendarMenuVariant;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
+    closeRequest?: number;
+    addMenuRequest?: number;
+    quickAddRequest?: number;
+    manualAddRequest?: number;
     searchExpandedWidth?: number;
     searchQuery?: string;
-    onSelect?: (mode: CalendarViewMode) => void;
+    onSelect?: (mode: LiquidCalendarMenuSelectionMode) => void;
     onOpenChange?: (open: boolean) => void;
     onSearch?: () => void;
     onSearchTextChange?: (text: string) => void;
@@ -35,10 +43,15 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
 };
 
 type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
-    selectedMode?: CalendarViewMode;
+    selectedMode?: string;
+    viewModeVariant?: LiquidCalendarMenuVariant;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
+    closeRequest?: number;
+    addMenuRequest?: number;
+    quickAddRequest?: number;
+    manualAddRequest?: number;
     searchExpandedWidth?: number;
     searchQuery?: string;
     onSelect?: (
@@ -59,6 +72,11 @@ type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
 const KNOWN_VIEW_MODES = new Set<CalendarViewMode>(
     CALENDAR_VIEW_OPTIONS.map((option) => option.value),
 );
+const KNOWN_SELECTION_MODES = new Set<LiquidCalendarMenuSelectionMode>([
+    ...CALENDAR_VIEW_OPTIONS.map((option) => option.value),
+    "day",
+    "multi",
+]);
 
 const NativeLiquidCalendarMenuPrototype = (() => {
     try {
@@ -73,15 +91,24 @@ const NativeLiquidCalendarMenuPrototype = (() => {
 export const isLiquidCalendarMenuPrototypeAvailable =
     Platform.OS === "ios" && Boolean(NativeLiquidCalendarMenuPrototype);
 
-function isCalendarViewMode(mode: string): mode is CalendarViewMode {
+export function isCalendarViewMode(mode: string): mode is CalendarViewMode {
     return KNOWN_VIEW_MODES.has(mode as CalendarViewMode);
+}
+
+function isKnownSelectionMode(mode: string): mode is LiquidCalendarMenuSelectionMode {
+    return KNOWN_SELECTION_MODES.has(mode as LiquidCalendarMenuSelectionMode);
 }
 
 export default function LiquidCalendarMenuPrototype({
     selectedMode,
+    viewModeVariant = "calendar",
     disabled = false,
     colorScheme = "dark",
     tapRequest,
+    closeRequest,
+    addMenuRequest,
+    quickAddRequest,
+    manualAddRequest,
     searchExpandedWidth,
     searchQuery,
     onSelect,
@@ -98,7 +125,7 @@ export default function LiquidCalendarMenuPrototype({
     const handleSelect = useCallback(
         (event: NativeSyntheticEvent<ViewModeGlassControlSelectEvent>) => {
             const { mode } = event.nativeEvent;
-            if (isCalendarViewMode(mode)) {
+            if (isKnownSelectionMode(mode)) {
                 onSelect?.(mode);
             }
         },
@@ -165,9 +192,14 @@ export default function LiquidCalendarMenuPrototype({
         <View pointerEvents="box-none" style={style}>
             <NativePrototype
                 selectedMode={selectedMode}
+                viewModeVariant={viewModeVariant}
                 disabled={disabled}
                 colorScheme={colorScheme}
                 tapRequest={tapRequest}
+                closeRequest={closeRequest}
+                addMenuRequest={addMenuRequest}
+                quickAddRequest={quickAddRequest}
+                manualAddRequest={manualAddRequest}
                 searchExpandedWidth={searchExpandedWidth}
                 searchQuery={searchQuery}
                 onSelect={handleSelect}

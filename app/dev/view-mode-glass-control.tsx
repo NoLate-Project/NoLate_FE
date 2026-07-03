@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import ViewModeGlassControl from "../../src/modules/schedule/components/calendar/ViewModeGlassControl";
 import LiquidCalendarMenuPrototype, {
+    isCalendarViewMode,
     isLiquidCalendarMenuPrototypeAvailable,
 } from "../../src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype";
 import NativeViewModeGlassControl from "../../src/modules/schedule/components/calendar/ViewModeGlassControl/NativeViewModeGlassControl";
@@ -143,7 +144,11 @@ export default function ViewModeGlassControlDevRoute() {
                             selectedMode={selectedMode}
                             disabled={disabled}
                             colorScheme="dark"
-                            onSelect={handleSelect}
+                            onSelect={(mode) => {
+                                if (isCalendarViewMode(mode)) {
+                                    handleSelect(mode);
+                                }
+                            }}
                             onOpenChange={handleOpenChange}
                             style={styles.prototypeControl}
                         />

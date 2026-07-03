@@ -3,88 +3,59 @@ import { Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import type { SubscriptionPolicy } from "../../../../api/subscription";
 import { useTheme } from "../../../theme/ThemeContext";
+import { formatRouteClock, formatRouteDuration, type RouteInfo } from "../../routeInfo";
 
 type Props = {
     routeReady: boolean;
     enabled: boolean;
     leadMinutes: number;
     intervalMinutes: number;
+    routeInfo?: RouteInfo;
+    startAt?: Date;
     policy: SubscriptionPolicy;
     onEnabledChange: (enabled: boolean) => void;
     onLeadMinutesChange: (minutes: number) => void;
     onIntervalMinutesChange: (minutes: number) => void;
 };
 
-const LEAD_OPTIONS = [30, 60, 90, 120];
-const INTERVAL_OPTIONS = [10, 15, 20, 30];
-
 export default function NotificationSettingsCard({
     routeReady,
     enabled,
     leadMinutes,
     intervalMinutes,
+    routeInfo,
+    startAt,
     policy,
     onEnabledChange,
     onLeadMinutesChange,
     onIntervalMinutesChange,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const quotaReached = policy.usedSmartSchedulesThisMonth >= policy.maxSmartSchedulesPerMonth;
     const canEnable = routeReady && !quotaReached;
-
-    const renderOptions = (
-        options: number[],
-        selected: number,
-        isAllowed: (minutes: number) => boolean,
-        onChange: (minutes: number) => void,
-    ) => (
-        <View style={styles.optionRow}>
-            {options.map((minutes) => {
-                const allowed = isAllowed(minutes);
-                const active = selected === minutes;
-                return (
-                    <Pressable
-                        key={minutes}
-                        disabled={!allowed}
-                        onPress={() => onChange(minutes)}
-                        style={[
-                            styles.option,
-                            {
-                                borderColor: active ? colors.selectedDayBg : colors.border,
-                                backgroundColor: active ? colors.selectedDayBg : colors.surface,
-                                opacity: allowed ? 1 : 0.38,
-                            },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                styles.optionText,
-                                { color: active ? colors.selectedDayText : colors.textSecondary },
-                            ]}
-                        >
-                            {minutes}분
-                        </Text>
-                    </Pressable>
-                );
-            })}
-        </View>
-    );
+    const accentBlue = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const routeMinutes = routeInfo?.totalDurationMinutes;
+    const eventStartAt = startAt && !Number.isNaN(startAt.getTime()) ? startAt : undefined;
+    const recommendedDepartureAt = eventStartAt && typeof routeMinutes === "number"
+        ? new Date(eventStartAt.getTime() - routeMinutes * 60 * 1000)
+        : undefined;
+    const arrivalAt = eventStartAt;
 
     return (
-        <View style={[styles.container, { borderColor: colors.border, backgroundColor: colors.surface2 }]}>
+        <View style={[styles.container, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
             <View style={styles.header}>
                 <View style={styles.headerText}>
-                    <Text style={[styles.title, { color: colors.textPrimary }]}>실시간 출발 알림</Text>
+                    <Text style={[styles.title, { color: colors.textPrimary }]}>출발 알림</Text>
                     <Text style={[styles.usage, { color: colors.textSecondary }]}>
-                        {policy.plan === "PREMIUM" ? "프리미엄" : "무료"} · 이번 달{" "}
-                        {policy.usedSmartSchedulesThisMonth}/{policy.maxSmartSchedulesPerMonth}
+                        교통 상황을 반영해 최적의 출발 시간을 알려드려요.
                     </Text>
                 </View>
                 <Switch
                     value={enabled}
                     disabled={!canEnable && !enabled}
                     onValueChange={onEnabledChange}
-                    trackColor={{ false: colors.border, true: colors.selectedDayBg }}
+                    trackColor={{ false: colors.border, true: accentBlue }}
+                    thumbColor="#FFFFFF"
                 />
             </View>
 
@@ -96,24 +67,34 @@ export default function NotificationSettingsCard({
 
             {enabled ? (
                 <View style={styles.settings}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>ETA 조회 시작</Text>
-                    {renderOptions(
-                        LEAD_OPTIONS,
-                        leadMinutes,
-                        (minutes) => minutes <= policy.maxNotificationLeadMinutes,
-                        onLeadMinutesChange,
-                    )}
-
-                    <Text style={[styles.label, styles.intervalLabel, { color: colors.textSecondary }]}>ETA 조회 간격</Text>
-                    {renderOptions(
-                        INTERVAL_OPTIONS,
-                        intervalMinutes,
-                        (minutes) => minutes >= policy.minEtaRefreshIntervalMinutes,
-                        onIntervalMinutesChange,
-                    )}
-                    <Text style={[styles.description, { color: colors.textSecondary }]}>
-                        조회할 때마다 푸시하지 않고, 실시간 추천 출발 약 15분 전에 알려드려요.
-                    </Text>
+                    <View style={[styles.recommendationCard, { borderColor: colors.border }]}>
+                        <View style={styles.recommendationCol}>
+                            <Text style={[styles.label, { color: colors.textSecondary }]}>추천 출발 시간</Text>
+                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
+                            </Text>
+                        </View>
+                        <View style={styles.recommendationCol}>
+                            <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정 시간</Text>
+                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
+                            </Text>
+                        </View>
+                    </View>
+                    <View style={styles.reminderMetaRow}>
+                        <Text style={[styles.description, { color: colors.textSecondary }]}>
+                            예상 이동시간 {formatRouteDuration(routeMinutes)} · {leadMinutes}분 전부터 확인
+                        </Text>
+                        <Pressable
+                            onPress={() => {
+                                onLeadMinutesChange(Math.min(60, policy.maxNotificationLeadMinutes));
+                                onIntervalMinutesChange(Math.max(intervalMinutes, policy.minEtaRefreshIntervalMinutes));
+                            }}
+                            style={[styles.useButton, { borderColor: accentBlue }]}
+                        >
+                            <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 시간 사용</Text>
+                        </Pressable>
+                    </View>
                 </View>
             ) : null}
         </View>
@@ -139,16 +120,36 @@ const styles = StyleSheet.create({
     notice: { marginTop: 10, fontSize: 12 },
     settings: { marginTop: 14 },
     label: { marginBottom: 7, fontSize: 12, fontWeight: "600" },
-    intervalLabel: { marginTop: 12 },
-    description: { marginTop: 9, fontSize: 11, lineHeight: 16 },
-    optionRow: { flexDirection: "row", gap: 7 },
-    option: {
-        flex: 1,
-        minHeight: 36,
+    description: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
+    recommendationCard: {
         borderWidth: 1,
-        borderRadius: 8,
-        alignItems: "center",
-        justifyContent: "center",
+        borderRadius: 10,
+        padding: 12,
+        flexDirection: "row",
+        gap: 14,
     },
-    optionText: { fontSize: 12, fontWeight: "700" },
+    recommendationCol: {
+        flex: 1,
+    },
+    recommendationValue: {
+        fontSize: 14,
+        fontWeight: "900",
+    },
+    reminderMetaRow: {
+        marginTop: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    useButton: {
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingVertical: 5,
+        paddingHorizontal: 10,
+    },
+    useButtonText: {
+        fontSize: 11,
+        fontWeight: "800",
+    },
 });

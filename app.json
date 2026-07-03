@@ -40,6 +40,14 @@
           ]
         }
       }
+    ],
+    [
+      "expo-image-picker",
+      {
+        "photosPermission": "NoLate에서 사진 속 일정 정보를 불러오기 위해 사진 보관함 권한이 필요합니다.",
+        "cameraPermission": "NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.",
+        "microphonePermission": false
+      }
     ]
   ],
   "android": {
@@ -47,12 +55,13 @@
     "googleServicesFile": "./google-services.json",
     "permissions": [
       "ACCESS_COARSE_LOCATION",
-      "ACCESS_FINE_LOCATION"
+      "ACCESS_FINE_LOCATION",
+      "RECORD_AUDIO"
     ]
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "31",
+    "buildNumber": "32",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)"
@@ -61,6 +70,9 @@
       "ITSAppUsesNonExemptEncryption": false,
       "KAKAO_APP_SCHEME": "kakao9586a8e3a28f3a6fbe3e23b9b34ec206",
       "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",
+      "NSCameraUsageDescription": "NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.",
+      "NSPhotoLibraryUsageDescription": "NoLate에서 사진 속 일정 정보를 불러오기 위해 사진 보관함 권한이 필요합니다.",
+      "NSMicrophoneUsageDescription": "NoLate에서 음성으로 빠른 일정을 만들기 위해 마이크 권한이 필요합니다.",
       "UIBackgroundModes": [
         "remote-notification"
       ],

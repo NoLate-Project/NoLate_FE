@@ -39,7 +39,7 @@ type CalendarDayComponentProps = {
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const CONTINUOUS_MONTH_RANGE = 24;
 const WEEKDAY_HEADER_HEIGHT = 42;
-const CONTINUOUS_MONTH_HEADER_HEIGHT = 62;
+const CONTINUOUS_MONTH_HEADER_HEIGHT = 52;
 const CONTINUOUS_MONTH_DIVIDER_HEIGHT = StyleSheet.hairlineWidth;
 
 type ContinuousMonth = {
@@ -50,6 +50,7 @@ type ContinuousMonth = {
     days: Array<DateData | null>;
     weekCount: number;
     dayHeight: number;
+    headerHeight: number;
     height: number;
 };
 
@@ -65,7 +66,8 @@ function getTodayDateString() {
 function createContinuousMonth(
     date: Date,
     firstDay: 0 | 1,
-    dayHeight: number
+    dayHeight: number,
+    headerHeight: number
 ): ContinuousMonth {
     const year = date.getFullYear();
     const monthIndex = date.getMonth();
@@ -96,9 +98,9 @@ function createContinuousMonth(
         days,
         weekCount,
         dayHeight,
+        headerHeight,
         height:
-            CONTINUOUS_MONTH_HEADER_HEIGHT
-            + WEEKDAY_HEADER_HEIGHT
+            headerHeight
             + weekCount * dayHeight
             + CONTINUOUS_MONTH_DIVIDER_HEIGHT,
     };
@@ -171,6 +173,7 @@ export default function ScheduleCalendar({
     const [activeMonth, setActiveMonth] = useState(selectedDay.slice(0, 7));
     const activeMonthRef = useRef(activeMonth);
     const continuousListTopPadding = Math.max(headerOffset, 0);
+    const listModeTopPadding = Math.max(headerOffset + 68, 0);
 
     // 일정 목록을 캘린더 마킹 데이터로 변환한다.
     const markedDates = useMemo(() => {
@@ -317,17 +320,25 @@ export default function ScheduleCalendar({
 
     const continuousMonths = useMemo(() => {
         const initialMonth = initialMonthRef.current;
+        const initialMonthKey = `${initialMonth.getFullYear()}-${String(initialMonth.getMonth() + 1).padStart(2, "0")}`;
         return Array.from(
             { length: CONTINUOUS_MONTH_RANGE * 2 + 1 },
-            (_, index) => createContinuousMonth(
-                new Date(
+            (_, index) => {
+                const monthDate = new Date(
                     initialMonth.getFullYear(),
                     initialMonth.getMonth() + index - CONTINUOUS_MONTH_RANGE,
                     1
-                ),
-                firstDay,
-                CALENDAR_DAY_HEIGHTS[viewMode]
-            )
+                );
+                const key = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`;
+                const isInitialMonth = key === initialMonthKey;
+
+                return createContinuousMonth(
+                    monthDate,
+                    firstDay,
+                    CALENDAR_DAY_HEIGHTS[viewMode],
+                    isInitialMonth ? 0 : CONTINUOUS_MONTH_HEADER_HEIGHT
+                );
+            }
         );
     }, [firstDay, viewMode]);
 
@@ -412,17 +423,24 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <View style={styles.continuousMonthHeader}>
-                <Text style={[styles.monthTitle, { color: colors.monthTextColor }]}>
-                    {item.month}월
-                </Text>
-            </View>
-            {weekdayHeader}
+            {item.headerHeight > 0 && (
+                <View style={[styles.continuousMonthHeader, { height: item.headerHeight }]}>
+                    <Text style={[styles.monthTitle, { color: colors.monthTextColor }]}>
+                        {item.month}월
+                    </Text>
+                </View>
+            )}
             <View style={styles.monthGrid}>
                 {item.days.map((date, index) => (
                     <View
                         key={date?.dateString ?? `${item.key}-blank-${index}`}
-                        style={[styles.dayCell, { height: item.dayHeight }]}
+                        style={[
+                            styles.dayCell,
+                            {
+                                height: item.dayHeight,
+                                borderTopColor: colors.border,
+                            },
+                        ]}
                     >
                         <CustomDay
                             date={date ?? undefined}
@@ -439,6 +457,7 @@ export default function ScheduleCalendar({
     ), [
         colors.border,
         colors.calendarBackground,
+        colors.border,
         colors.monthTextColor,
         markedDates,
         onOpenDay,
@@ -543,26 +562,15 @@ export default function ScheduleCalendar({
     }
 
     return (
-        <View>
-            <View style={styles.listMonthHeader}>
-                <Pressable
-                    onPress={() => onSelectDay(moveMonth(selectedDay, -1))}
-                    accessibilityLabel="이전 달"
-                    style={styles.monthArrow}
-                >
-                    <Ionicons name="chevron-back" size={27} color={colors.arrowColor} />
-                </Pressable>
-                <Text style={[styles.listMonthTitle, { color: colors.monthTextColor }]}>
-                    {new Date(`${selectedDay}T00:00:00`).getMonth() + 1}월
-                </Text>
-                <Pressable
-                    onPress={() => onSelectDay(moveMonth(selectedDay, 1))}
-                    accessibilityLabel="다음 달"
-                    style={styles.monthArrow}
-                >
-                    <Ionicons name="chevron-forward" size={27} color={colors.arrowColor} />
-                </Pressable>
-            </View>
+        <View
+            style={[
+                styles.listCalendarContainer,
+                {
+                    backgroundColor: colors.calendarBackground,
+                    paddingTop: listModeTopPadding,
+                },
+            ]}
+        >
             {weekdayHeader}
             <Calendar
                 key={`${mode}-${viewMode}-${firstDay}-${selectedDay.slice(0, 7)}-${scrollRequest}`}
@@ -595,6 +603,9 @@ const styles = StyleSheet.create({
     calendarList: {
         flex: 1,
     },
+    listCalendarContainer: {
+        flexShrink: 0,
+    },
     continuousListContent: {
         paddingBottom: 156,
     },
@@ -602,7 +613,6 @@ const styles = StyleSheet.create({
         borderBottomWidth: 0,
     },
     continuousMonthHeader: {
-        height: CONTINUOUS_MONTH_HEADER_HEIGHT,
         paddingHorizontal: 28,
         justifyContent: "center",
     },
@@ -612,9 +622,10 @@ const styles = StyleSheet.create({
     },
     dayCell: {
         width: "14.2857%",
+        borderTopWidth: StyleSheet.hairlineWidth,
     },
     monthTitle: {
-        fontSize: 27,
+        fontSize: 25,
         fontWeight: "900",
         letterSpacing: 0,
     },
@@ -628,9 +639,9 @@ const styles = StyleSheet.create({
     weekdayText: {
         width: "14.2857%",
         textAlign: "center",
-        fontSize: 16.5,
+        fontSize: 15,
         fontWeight: "900",
-        opacity: 0.96,
+        opacity: 0.92,
     },
     listMonthHeader: {
         height: 58,

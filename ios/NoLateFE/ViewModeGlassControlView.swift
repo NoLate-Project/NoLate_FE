@@ -5,7 +5,12 @@ private final class ViewModeGlassControlModel: ObservableObject {
   @Published var selectedMode: String
   @Published var disabled: Bool
   @Published var colorScheme: String
+  @Published var viewModeVariant: String
   @Published var prototypeTapRequest = 0
+  @Published var prototypeCloseRequest = 0
+  @Published var prototypeAddMenuRequest = 0
+  @Published var prototypeQuickAddRequest = 0
+  @Published var prototypeManualAddRequest = 0
   @Published var searchExpandedWidth: CGFloat
   @Published var searchQuery: String
 
@@ -23,6 +28,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
     selectedMode: String,
     disabled: Bool,
     colorScheme: String,
+    viewModeVariant: String = "calendar",
     searchExpandedWidth: CGFloat = 361,
     searchQuery: String = "",
     handleSelect: @escaping (String) -> Void,
@@ -38,6 +44,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
     self.selectedMode = selectedMode
     self.disabled = disabled
     self.colorScheme = colorScheme
+    self.viewModeVariant = viewModeVariant
     self.searchExpandedWidth = searchExpandedWidth
     self.searchQuery = searchQuery
     self.handleSelect = handleSelect
@@ -84,6 +91,35 @@ private final class LiquidGlassIconButtonModel: ObservableObject {
     self.disabled = disabled
     self.colorScheme = colorScheme
     self.handlePress = handlePress
+  }
+}
+
+private final class LiquidGlassSegmentedPillModel: ObservableObject {
+  @Published var symbolNames: [String]
+  @Published var selectedIndex: Int
+  @Published var buttonHeight: CGFloat
+  @Published var slotWidth: CGFloat
+  @Published var disabled: Bool
+  @Published var colorScheme: String
+
+  let handleSelect: (Int) -> Void
+
+  init(
+    symbolNames: [String],
+    selectedIndex: Int,
+    buttonHeight: CGFloat,
+    slotWidth: CGFloat,
+    disabled: Bool,
+    colorScheme: String,
+    handleSelect: @escaping (Int) -> Void
+  ) {
+    self.symbolNames = symbolNames
+    self.selectedIndex = selectedIndex
+    self.buttonHeight = buttonHeight
+    self.slotWidth = slotWidth
+    self.disabled = disabled
+    self.colorScheme = colorScheme
+    self.handleSelect = handleSelect
   }
 }
 
@@ -176,10 +212,44 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     }
   }
 
+  @objc var viewModeVariant: NSString = "calendar" {
+    didSet {
+      model.viewModeVariant = viewModeVariant as String
+    }
+  }
+
   @objc var tapRequest: NSNumber = 0 {
     didSet {
       guard tapRequest.intValue != oldValue.intValue else { return }
       model.prototypeTapRequest += 1
+    }
+  }
+
+  @objc var closeRequest: NSNumber = 0 {
+    didSet {
+      guard closeRequest.intValue != oldValue.intValue else { return }
+      model.prototypeCloseRequest += 1
+    }
+  }
+
+  @objc var addMenuRequest: NSNumber = 0 {
+    didSet {
+      guard addMenuRequest.intValue != oldValue.intValue else { return }
+      model.prototypeAddMenuRequest += 1
+    }
+  }
+
+  @objc var quickAddRequest: NSNumber = 0 {
+    didSet {
+      guard quickAddRequest.intValue != oldValue.intValue else { return }
+      model.prototypeQuickAddRequest += 1
+    }
+  }
+
+  @objc var manualAddRequest: NSNumber = 0 {
+    didSet {
+      guard manualAddRequest.intValue != oldValue.intValue else { return }
+      model.prototypeManualAddRequest += 1
     }
   }
 
@@ -209,6 +279,7 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     selectedMode: selectedMode as String,
     disabled: disabled,
     colorScheme: colorScheme as String,
+    viewModeVariant: viewModeVariant as String,
     searchExpandedWidth: CGFloat(truncating: searchExpandedWidth),
     searchQuery: searchQuery as String,
     handleSelect: { [weak self] mode in
@@ -289,6 +360,10 @@ final class LiquidCalendarMenuPrototypeView: UIView {
 
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     guard !model.disabled else { return nil }
+
+    if !prototypeMenuOpen, !collapsedHitRect.contains(point) {
+      return nil
+    }
 
     if !prototypeMenuOpen, collapsedHitRect.contains(point) {
       return super.hitTest(point, with: event) ?? self
@@ -412,6 +487,97 @@ final class LiquidGlassIconButtonView: UIView {
   }
 }
 
+@objc(LiquidGlassSegmentedPillView)
+final class LiquidGlassSegmentedPillView: UIView {
+  @objc var symbolNames: NSArray = [] {
+    didSet {
+      model.symbolNames = symbolNames.compactMap { $0 as? String }
+    }
+  }
+
+  @objc var selectedIndex: NSNumber = -1 {
+    didSet {
+      model.selectedIndex = selectedIndex.intValue
+    }
+  }
+
+  @objc var buttonHeight: NSNumber = 44 {
+    didSet {
+      model.buttonHeight = CGFloat(truncating: buttonHeight)
+    }
+  }
+
+  @objc var slotWidth: NSNumber = 44 {
+    didSet {
+      model.slotWidth = CGFloat(truncating: slotWidth)
+    }
+  }
+
+  @objc var disabled: Bool = false {
+    didSet {
+      model.disabled = disabled
+    }
+  }
+
+  @objc var colorScheme: NSString = "dark" {
+    didSet {
+      model.colorScheme = colorScheme as String
+    }
+  }
+
+  @objc var onSelect: ((NSDictionary) -> Void)?
+
+  private lazy var model = LiquidGlassSegmentedPillModel(
+    symbolNames: symbolNames.compactMap { $0 as? String },
+    selectedIndex: selectedIndex.intValue,
+    buttonHeight: CGFloat(truncating: buttonHeight),
+    slotWidth: CGFloat(truncating: slotWidth),
+    disabled: disabled,
+    colorScheme: colorScheme as String,
+    handleSelect: { [weak self] index in
+      self?.onSelect?(["index": index] as NSDictionary)
+    }
+  )
+
+  private var hostingController: UIHostingController<LiquidGlassSegmentedPillRootView>?
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    setupHostingView()
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    setupHostingView()
+  }
+
+  private func setupHostingView() {
+    backgroundColor = .clear
+    isOpaque = false
+    clipsToBounds = false
+
+    let controller = UIHostingController(rootView: LiquidGlassSegmentedPillRootView(model: model))
+    controller.view.backgroundColor = .clear
+    controller.view.isOpaque = false
+    controller.view.translatesAutoresizingMaskIntoConstraints = false
+
+    addSubview(controller.view)
+    NSLayoutConstraint.activate([
+      controller.view.leadingAnchor.constraint(equalTo: leadingAnchor),
+      controller.view.trailingAnchor.constraint(equalTo: trailingAnchor),
+      controller.view.topAnchor.constraint(equalTo: topAnchor),
+      controller.view.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+
+    hostingController = controller
+  }
+
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    guard !model.disabled else { return false }
+    return bounds.contains(point)
+  }
+}
+
 private struct LiquidGlassIconButtonRootView: View {
   @ObservedObject var model: LiquidGlassIconButtonModel
 
@@ -426,19 +592,19 @@ private struct LiquidGlassIconButtonRootView: View {
         HStack(spacing: contentSpacing) {
           if let leadingSymbol {
             Image(systemName: leadingSymbol)
-              .font(.system(size: iconSize(for: leadingSymbol), weight: .semibold))
+              .font(.system(size: iconSize(for: leadingSymbol), weight: .regular))
           }
 
           if !model.label.isEmpty {
             Text(model.label)
-              .font(.system(size: 19, weight: .heavy))
+              .font(.system(size: 16, weight: .bold))
               .lineLimit(1)
               .minimumScaleFactor(0.78)
           }
 
           if !model.trailingSymbolName.isEmpty {
             Image(systemName: model.trailingSymbolName)
-              .font(.system(size: iconSize(for: model.trailingSymbolName), weight: .semibold))
+              .font(.system(size: iconSize(for: model.trailingSymbolName), weight: .regular))
           }
         }
         .foregroundStyle(glyphColor)
@@ -446,6 +612,8 @@ private struct LiquidGlassIconButtonRootView: View {
       }
       .frame(width: model.buttonWidth, height: model.buttonHeight)
     }
+    .clipShape(RoundedRectangle(cornerRadius: model.buttonHeight / 2, style: .continuous))
+    .shadow(color: Color.black.opacity(0.11), radius: 8, x: 0, y: 4)
     .buttonStyle(.plain)
     .disabled(model.disabled)
     .accessibilityLabel(accessibilityLabel)
@@ -453,52 +621,45 @@ private struct LiquidGlassIconButtonRootView: View {
 
   @ViewBuilder
   private var surface: some View {
-    let shape = RoundedRectangle(cornerRadius: model.buttonHeight / 2, style: .continuous)
-
-    if #available(iOS 26.0, *) {
-      shape
-        .fill(Color.white.opacity(0.08))
-        .glassEffect(
-          .regular
-            .tint(Color.black.opacity(0.04))
-            .interactive(!model.disabled),
-          in: shape
-        )
-        .overlay(liquidHighlight.clipShape(shape))
-        .overlay(
-          shape.stroke(Color.white.opacity(0.24), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.16), radius: 12, x: 0, y: 7)
-    } else {
-      shape
-        .fill(
-          LinearGradient(
-            colors: [
-              Color.white.opacity(0.2),
-              Color.black.opacity(0.48),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-        )
-        .overlay(liquidHighlight.clipShape(shape))
-        .overlay(
-          shape.stroke(Color.white.opacity(0.24), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.16), radius: 12, x: 0, y: 7)
-    }
+    SharedLiquidGlassPillSurface(
+      width: model.buttonWidth,
+      height: model.buttonHeight,
+      colorScheme: model.colorScheme,
+      disabled: model.disabled
+    )
   }
 
   private var liquidHighlight: LinearGradient {
     LinearGradient(
       colors: [
-        Color.white.opacity(0.22),
-        Color.white.opacity(0.08),
-        Color.black.opacity(0.05),
+        Color.white.opacity(model.colorScheme == "dark" ? 0.22 : 0.54),
+        Color.white.opacity(model.colorScheme == "dark" ? 0.08 : 0.20),
+        Color.black.opacity(model.colorScheme == "dark" ? 0.05 : 0.015),
       ],
       startPoint: .topLeading,
       endPoint: .bottomTrailing
     )
+  }
+
+  private var buttonGlassFold: some View {
+    ZStack {
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(model.colorScheme == "dark" ? 0.22 : 0.52),
+              Color.white.opacity(model.colorScheme == "dark" ? 0.06 : 0.16),
+              Color.clear,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+        )
+        .frame(width: max(66, model.buttonWidth * 0.72), height: max(12, model.buttonHeight * 0.28))
+        .rotationEffect(.degrees(-10))
+        .offset(x: -model.buttonWidth * 0.06, y: -model.buttonHeight * 0.18)
+        .blur(radius: 4)
+    }
   }
 
   private var leadingSymbol: String? {
@@ -536,12 +697,313 @@ private struct LiquidGlassIconButtonRootView: View {
   private func iconSize(for symbolName: String) -> CGFloat {
     switch symbolName {
     case "plus":
-      return 25
+      return 22
     case "chevron.left":
+      return 20
+    default:
+      return 22
+    }
+  }
+}
+
+private struct LiquidGlassSegmentedPillRootView: View {
+  @ObservedObject var model: LiquidGlassSegmentedPillModel
+
+  private var width: CGFloat {
+    max(model.slotWidth, model.slotWidth * CGFloat(max(model.symbolNames.count, 1)))
+  }
+
+  var body: some View {
+    ZStack {
+      surface
+
+      HStack(spacing: 0) {
+        ForEach(Array(model.symbolNames.enumerated()), id: \.offset) { index, symbol in
+          Button {
+            guard !model.disabled else { return }
+            model.handleSelect(index)
+          } label: {
+            Image(systemName: symbol)
+              .font(.system(size: iconSize(for: symbol), weight: .regular))
+              .foregroundStyle(glyphColor)
+              .frame(width: model.slotWidth, height: model.buttonHeight)
+              .background(selectedBackground(for: index))
+          }
+          .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
+        }
+      }
+    }
+    .frame(width: width, height: model.buttonHeight)
+    .clipShape(RoundedRectangle(cornerRadius: model.buttonHeight / 2, style: .continuous))
+    .shadow(color: Color.black.opacity(0.11), radius: 8, x: 0, y: 4)
+    .accessibilityElement(children: .contain)
+  }
+
+  @ViewBuilder
+  private var surface: some View {
+    SharedLiquidGlassPillSurface(
+      width: width,
+      height: model.buttonHeight,
+      colorScheme: model.colorScheme,
+      disabled: model.disabled
+    )
+  }
+
+  private var liquidHighlight: LinearGradient {
+    LinearGradient(
+      colors: [
+        Color.white.opacity(model.colorScheme == "dark" ? 0.24 : 0.50),
+        Color.white.opacity(model.colorScheme == "dark" ? 0.08 : 0.16),
+        Color.black.opacity(model.colorScheme == "dark" ? 0.05 : 0.025),
+      ],
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
+  }
+
+  private var buttonGlassFold: some View {
+    ZStack {
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(model.colorScheme == "dark" ? 0.22 : 0.52),
+              Color.white.opacity(model.colorScheme == "dark" ? 0.06 : 0.14),
+              Color.clear,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+        )
+        .frame(width: max(74, width * 0.72), height: max(12, model.buttonHeight * 0.28))
+        .rotationEffect(.degrees(-10))
+        .offset(x: -width * 0.06, y: -model.buttonHeight * 0.18)
+        .blur(radius: 4)
+    }
+  }
+
+  @ViewBuilder
+  private func selectedBackground(for index: Int) -> some View {
+    if index == model.selectedIndex {
+      RoundedRectangle(cornerRadius: 18, style: .continuous)
+        .fill(model.colorScheme == "dark" ? Color.white.opacity(0.13) : Color.black.opacity(0.055))
+        .padding(.vertical, 3)
+        .padding(.horizontal, 2)
+    }
+  }
+
+  private var glyphColor: Color {
+    if model.colorScheme == "dark" {
+      return Color.white.opacity(model.disabled ? 0.44 : 0.96)
+    }
+
+    return Color.black.opacity(model.disabled ? 0.34 : 0.88)
+  }
+
+  private func iconSize(for symbolName: String) -> CGFloat {
+    switch symbolName {
+    case "plus":
+      return 22
+    case "calendar":
       return 22
     default:
-      return 24
+      return 21
     }
+  }
+}
+
+private struct SharedLiquidGlassPillSurface: View {
+  let width: CGFloat
+  let height: CGFloat
+  let colorScheme: String
+  let disabled: Bool
+
+  private var isDarkMode: Bool {
+    colorScheme == "dark"
+  }
+
+  var body: some View {
+    let shape = RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+
+    ZStack {
+      if #available(iOS 26.0, *) {
+        shape
+          .fill(surfaceBaseFill)
+          .frame(width: width, height: height)
+          .glassEffect(
+            .regular
+              .tint(surfaceNativeTint)
+              .interactive(!disabled),
+            in: shape
+          )
+      } else {
+        shape
+          .fill(fallbackLiquidFill)
+          .frame(width: width, height: height)
+      }
+
+      liquidHighlight
+        .clipShape(shape)
+
+      liquidCausticLayer
+        .clipShape(shape)
+
+      liquidRefractionLayer
+        .opacity(isDarkMode ? 0.34 : 0.52)
+        .clipShape(shape)
+
+      shape
+        .stroke(strokeColor, lineWidth: 1)
+        .frame(width: width, height: height)
+    }
+    .frame(width: width, height: height)
+    .clipShape(RoundedRectangle(cornerRadius: height / 2, style: .continuous))
+  }
+
+  private var surfaceBaseFill: Color {
+    isDarkMode ? Color.white.opacity(0.022) : Color.white.opacity(0.063)
+  }
+
+  private var surfaceNativeTint: Color {
+    isDarkMode ? Color.black.opacity(0.27) : Color.white.opacity(0.032)
+  }
+
+  private var strokeColor: Color {
+    isDarkMode ? Color.white.opacity(0.108) : Color.white.opacity(0.56)
+  }
+
+  private var liquidHighlight: LinearGradient {
+    LinearGradient(
+      colors: [
+        Color.white.opacity(isDarkMode ? 0.065 : 0.49),
+        Color.white.opacity(isDarkMode ? 0.022 : 0.18),
+        Color.black.opacity(isDarkMode ? 0.108 : 0.014),
+      ],
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
+  }
+
+  private var liquidCausticLayer: some View {
+    ZStack {
+      LinearGradient(
+        colors: [
+          Color.white.opacity(isDarkMode ? 0.034 : 0.56),
+          Color.white.opacity(isDarkMode ? 0.011 : 0.216),
+          Color.clear,
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(isDarkMode ? 0.077 : 0.68),
+              Color.white.opacity(isDarkMode ? 0.022 : 0.27),
+              Color.clear,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+        )
+        .frame(width: max(90, width * 0.72), height: max(18, height * 0.12))
+        .rotationEffect(.degrees(-10))
+        .offset(x: -width * 0.08, y: -height * 0.27)
+        .blur(radius: 5)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.clear,
+              Color.black.opacity(isDarkMode ? 0.216 : 0.063),
+              Color.white.opacity(isDarkMode ? 0.022 : 0.27),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(84, width * 0.58), height: max(16, height * 0.10))
+        .rotationEffect(.degrees(-14))
+        .offset(x: width * 0.18, y: height * 0.23)
+        .blur(radius: 7)
+    }
+    .frame(width: width, height: height)
+  }
+
+  private var liquidRefractionLayer: some View {
+    ZStack {
+      RoundedRectangle(cornerRadius: height / 2, style: .continuous)
+        .stroke(refractionStroke, lineWidth: 1.35)
+
+      RoundedRectangle(cornerRadius: max(18, height / 2 - 8), style: .continuous)
+        .stroke(Color.white.opacity(isDarkMode ? 0.05 : 0.38), lineWidth: 1.1)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 7)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(isDarkMode ? 0.065 : 0.52),
+              Color.white.opacity(isDarkMode ? 0.022 : 0.20),
+              Color.clear,
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(72, width * 0.62), height: max(20, height * 0.13))
+        .rotationEffect(.degrees(-8))
+        .offset(x: -width * 0.14, y: -height * 0.31)
+        .blur(radius: 6)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.clear,
+              Color.black.opacity(isDarkMode ? 0.20 : 0.054),
+              Color.white.opacity(isDarkMode ? 0.018 : 0.18),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(72, width * 0.52), height: max(20, height * 0.11))
+        .rotationEffect(.degrees(-12))
+        .offset(x: width * 0.18, y: height * 0.22)
+        .blur(radius: 9)
+    }
+    .frame(width: width, height: height)
+  }
+
+  private var refractionStroke: LinearGradient {
+    LinearGradient(
+      colors: [
+        Color.white.opacity(isDarkMode ? 0.108 : 0.77),
+        Color.white.opacity(isDarkMode ? 0.036 : 0.31),
+        Color.black.opacity(isDarkMode ? 0.216 : 0.068),
+      ],
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
+  }
+
+  private var fallbackLiquidFill: LinearGradient {
+    LinearGradient(
+      colors: isDarkMode ? [
+        Color.white.opacity(0.072),
+        Color.black.opacity(0.72),
+      ] : [
+        Color.white.opacity(0.78),
+        Color.white.opacity(0.52),
+      ],
+      startPoint: .topLeading,
+      endPoint: .bottomTrailing
+    )
   }
 }
 
@@ -973,21 +1435,28 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   @State private var morphProgress: CGFloat = 0
   @State private var readabilityVisible = false
   @State private var contentVisible = false
+  @State private var collapsedContentVisible = true
+  @State private var addHandoffContentSuppressed = false
   @FocusState private var searchFocused: Bool
 
-  private let collapsedWidth: CGFloat = 156
-  private let collapsedHeight: CGFloat = 52
-  private let collapsedSlotWidth: CGFloat = 52
-  private let expandedWidth: CGFloat = 282
-  private let expandedHeight: CGFloat = 282
-  private let collapsedRadius: CGFloat = 26
-  private let expandedRadius: CGFloat = 30
+  private let collapsedWidth: CGFloat = 150
+  private let collapsedHeight: CGFloat = 44
+  private let collapsedSlotWidth: CGFloat = 50
+  private let viewExpandedWidth: CGFloat = 238
+  private let addExpandedWidth: CGFloat = 238
+  private let addExpandedHeight: CGFloat = 164
+  private let collapsedRadius: CGFloat = 22
+  private let expandedRadius: CGFloat = 26
 
-  private let options: [ViewModeGlassOption] = [
+  private let calendarOptions: [ViewModeGlassOption] = [
     ViewModeGlassOption(id: "compact", label: "축소형"),
     ViewModeGlassOption(id: "stack", label: "스택형"),
     ViewModeGlassOption(id: "detail", label: "상세형"),
     ViewModeGlassOption(id: "list", label: "목록형"),
+  ]
+  private let timelineOptions: [ViewModeGlassOption] = [
+    ViewModeGlassOption(id: "multi", label: "여러 날"),
+    ViewModeGlassOption(id: "day", label: "하루"),
   ]
 
   var body: some View {
@@ -997,12 +1466,28 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       } else {
         fallbackLiquidMenu
       }
+
+      fixedCollapsedContentOverlay
     }
-    .frame(width: rootWidth, height: expandedHeight, alignment: .topTrailing)
+    .frame(width: rootWidth, height: rootHeight, alignment: .topTrailing)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     .accessibilityElement(children: .contain)
     .onChange(of: model.prototypeTapRequest) { _ in
       guard phase == .collapsed else { return }
       openMenu(.view)
+    }
+    .onChange(of: model.prototypeCloseRequest) { _ in
+      closeOrResetMenu()
+    }
+    .onChange(of: model.prototypeAddMenuRequest) { _ in
+      guard phase == .collapsed else { return }
+      openMenu(.add)
+    }
+    .onChange(of: model.prototypeQuickAddRequest) { _ in
+      triggerRequestedAddAction(.quick)
+    }
+    .onChange(of: model.prototypeManualAddRequest) { _ in
+      triggerRequestedAddAction(.manual)
     }
   }
 
@@ -1011,12 +1496,12 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     ZStack(alignment: .topTrailing) {
       liquidMenuObject(nativeSurface: true)
     }
-    .frame(width: rootWidth, height: expandedHeight, alignment: .topTrailing)
+    .frame(width: rootWidth, height: rootHeight, alignment: .topTrailing)
   }
 
   private var fallbackLiquidMenu: some View {
     liquidMenuObject(nativeSurface: false)
-      .frame(width: rootWidth, height: expandedHeight, alignment: .topTrailing)
+      .frame(width: rootWidth, height: rootHeight, alignment: .topTrailing)
   }
 
   @ViewBuilder
@@ -1042,21 +1527,14 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         .animation(.easeOut(duration: 0.18), value: readabilityVisible)
         .allowsHitTesting(false)
 
-      collapsedContent
-        .frame(width: collapsedWidth, height: collapsedHeight)
-        .opacity(collapsedContentOpacity)
-        .scaleEffect(collapsedContentScale, anchor: .topTrailing)
-        .blur(radius: collapsedContentBlur)
-        .animation(.easeOut(duration: 0.12), value: morphProgress)
-        .allowsHitTesting(phase == .collapsed)
-
       expandedContent
         .frame(width: surfaceWidth, height: surfaceHeight)
-        .opacity(contentVisible ? 1 : 0)
-        .offset(y: contentVisible ? 0 : -10)
-        .scaleEffect(contentVisible ? 1 : 0.985, anchor: .topTrailing)
+        .opacity(expandedContentOpacity)
+        .offset(y: expandedContentOffsetY)
+        .scaleEffect(expandedContentScale, anchor: .topTrailing)
         .animation(.easeOut(duration: 0.22), value: contentVisible)
-        .allowsHitTesting(contentVisible)
+        .animation(.easeOut(duration: 0.18), value: morphProgress)
+        .allowsHitTesting(phase == .expanded)
     }
     .frame(width: surfaceWidth, height: surfaceHeight, alignment: .topTrailing)
     .clipShape(liquidShape)
@@ -1065,6 +1543,17 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     .animation(.interactiveSpring(response: 0.5, dampingFraction: 0.94, blendDuration: 0.06), value: morphProgress)
     .accessibilityLabel(phase == .collapsed ? "View mode" : "View mode menu")
     .accessibilityHint(phase == .collapsed ? "Opens the view mode menu" : "Choose a view mode")
+  }
+
+  private var fixedCollapsedContentOverlay: some View {
+      collapsedContent
+        .frame(width: collapsedWidth, height: collapsedHeight)
+        .opacity(collapsedContentOpacity)
+        .blur(radius: collapsedContentBlur)
+      .animation(.easeOut(duration: collapsedContentFadeDuration), value: collapsedContentVisible)
+      .allowsHitTesting(phase == .collapsed)
+      .frame(width: rootWidth, height: rootHeight, alignment: .topTrailing)
+      .zIndex(10)
   }
 
   @available(iOS 26.0, *)
@@ -1079,6 +1568,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         in: liquidShape
       )
       .overlay(liquidHighlight)
+      .overlay(liquidCausticLayer)
       .overlay(liquidStroke)
   }
 
@@ -1087,6 +1577,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       .fill(fallbackLiquidFill)
       .frame(width: surfaceWidth, height: surfaceHeight)
       .overlay(liquidHighlight)
+      .overlay(liquidCausticLayer)
       .overlay(liquidStroke)
   }
 
@@ -1106,10 +1597,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private var liquidRefractionLayer: some View {
     ZStack {
       liquidShape
-        .stroke(refractionStroke, lineWidth: 1.2)
+        .stroke(refractionStroke, lineWidth: 1.35)
 
       RoundedRectangle(cornerRadius: max(18, surfaceRadius - 8), style: .continuous)
-        .stroke(Color.white.opacity(isDarkMode ? 0.12 : 0.32), lineWidth: 1)
+        .stroke(Color.white.opacity(isDarkMode ? 0.05 : 0.38), lineWidth: 1.1)
         .padding(.horizontal, 7)
         .padding(.vertical, 7)
 
@@ -1117,8 +1608,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         .fill(
           LinearGradient(
             colors: [
-              Color.white.opacity(isDarkMode ? 0.24 : 0.42),
-              Color.white.opacity(isDarkMode ? 0.075 : 0.16),
+              Color.white.opacity(isDarkMode ? 0.09 : 0.52),
+              Color.white.opacity(isDarkMode ? 0.029 : 0.20),
               Color.clear,
             ],
             startPoint: .topLeading,
@@ -1135,8 +1626,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           LinearGradient(
             colors: [
               Color.clear,
-              Color.black.opacity(isDarkMode ? 0.10 : 0.04),
-              Color.white.opacity(isDarkMode ? 0.055 : 0.13),
+              Color.black.opacity(isDarkMode ? 0.144 : 0.054),
+              Color.white.opacity(isDarkMode ? 0.025 : 0.18),
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -1151,13 +1642,65 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     .clipShape(liquidShape)
   }
 
+  private var liquidCausticLayer: some View {
+    ZStack {
+      LinearGradient(
+        colors: [
+          Color.white.opacity(isDarkMode ? 0.034 : 0.56),
+          Color.white.opacity(isDarkMode ? 0.011 : 0.216),
+          Color.clear,
+        ],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+      )
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.white.opacity(isDarkMode ? 0.077 : 0.68),
+              Color.white.opacity(isDarkMode ? 0.022 : 0.27),
+              Color.clear,
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+          )
+        )
+        .frame(width: max(90, surfaceWidth * 0.72), height: max(18, surfaceHeight * 0.12))
+        .rotationEffect(.degrees(-10))
+        .offset(x: -surfaceWidth * 0.08, y: -surfaceHeight * 0.27)
+        .blur(radius: 5)
+
+      Capsule()
+        .fill(
+          LinearGradient(
+            colors: [
+              Color.clear,
+              Color.black.opacity(isDarkMode ? 0.216 : 0.063),
+              Color.white.opacity(isDarkMode ? 0.022 : 0.27),
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
+        .frame(width: max(84, surfaceWidth * 0.58), height: max(16, surfaceHeight * 0.10))
+        .rotationEffect(.degrees(-14))
+        .offset(x: surfaceWidth * 0.18, y: surfaceHeight * 0.23)
+        .blur(radius: 7)
+    }
+    .opacity(activeAction == .search ? 0.74 : 1)
+    .frame(width: surfaceWidth, height: surfaceHeight)
+    .clipShape(liquidShape)
+    .allowsHitTesting(false)
+  }
+
   private var collapsedContent: some View {
     HStack(spacing: 0) {
       Button {
         openMenu(.view)
       } label: {
         prototypeModeGlyph(for: model.selectedMode, color: collapsedGlyphColor)
-          .frame(width: 30, height: 30)
+          .frame(width: 25, height: 25)
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1169,7 +1712,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         openMenu(.search)
       } label: {
         Image(systemName: "magnifyingglass")
-          .font(.system(size: 28, weight: .bold))
+          .font(.system(size: 23, weight: .regular))
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1179,7 +1722,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         openMenu(.add)
       } label: {
         Image(systemName: "plus")
-          .font(.system(size: 30, weight: .bold))
+          .font(.system(size: 25, weight: .regular))
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1199,6 +1742,18 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var isDarkMode: Bool {
     model.colorScheme == "dark"
+  }
+
+  private var isTimelineVariant: Bool {
+    model.viewModeVariant == "timeline"
+  }
+
+  private var options: [ViewModeGlassOption] {
+    isTimelineVariant ? timelineOptions : calendarOptions
+  }
+
+  private var viewExpandedHeight: CGFloat {
+    isTimelineVariant ? 116 : 212
   }
 
   private var expandedPrimaryColor: Color {
@@ -1227,52 +1782,52 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var surfaceBaseFill: Color {
     if isDarkMode {
-      return Color.white.opacity(Double(interpolate(from: 0.08, to: 0.035, amount: surfaceToneProgress)))
+      return Color.white.opacity(Double(interpolate(from: 0.022, to: 0.016, amount: surfaceToneProgress)))
     }
 
-    return Color.white.opacity(Double(interpolate(from: 0.12, to: 0.18, amount: surfaceToneProgress)))
+    return Color.white.opacity(Double(interpolate(from: 0.063, to: 0.099, amount: surfaceToneProgress)))
   }
 
   private var surfaceNativeTint: Color {
     if isDarkMode {
-      return Color.black.opacity(Double(interpolate(from: 0.04, to: 0.08, amount: surfaceToneProgress)))
+      return Color.black.opacity(Double(interpolate(from: 0.27, to: 0.324, amount: surfaceToneProgress)))
     }
 
-    return Color.white.opacity(Double(interpolate(from: 0.12, to: 0.18, amount: surfaceToneProgress)))
+    return Color.white.opacity(Double(interpolate(from: 0.032, to: 0.072, amount: surfaceToneProgress)))
   }
 
   private var readabilityFill: Color {
-    isDarkMode ? Color.black.opacity(0.18) : Color.white.opacity(0.13)
+    isDarkMode ? Color.black.opacity(0.144) : Color.white.opacity(0.041)
   }
 
   private var readabilityGradientColors: [Color] {
     if isDarkMode {
       return [
-        Color.white.opacity(0.032),
-        Color.black.opacity(0.035),
-        Color.black.opacity(0.11),
+        Color.white.opacity(0.029),
+        Color.black.opacity(0.032),
+        Color.black.opacity(0.099),
       ]
     }
 
     return [
-      Color.white.opacity(0.16),
-      Color.white.opacity(0.07),
-      Color.black.opacity(0.018),
+      Color.white.opacity(0.09),
+      Color.white.opacity(0.032),
+      Color.black.opacity(0.011),
     ]
   }
 
   private var refractionOpacity: Double {
-    let base = isDarkMode ? 0.58 : 0.86
+    let base = isDarkMode ? 0.34 : 0.9
     let progress = activeAction == .search ? widthProgress : finalProgress
-    return base * Double(0.42 + progress * 0.58)
+    return base * Double(0.58 + progress * 0.42)
   }
 
   private var refractionStroke: LinearGradient {
     LinearGradient(
       colors: [
-        Color.white.opacity(isDarkMode ? 0.22 : 0.62),
-        Color.white.opacity(isDarkMode ? 0.10 : 0.28),
-        Color.black.opacity(isDarkMode ? 0.10 : 0.06),
+        Color.white.opacity(isDarkMode ? 0.108 : 0.77),
+        Color.white.opacity(isDarkMode ? 0.036 : 0.31),
+        Color.black.opacity(isDarkMode ? 0.216 : 0.068),
       ],
       startPoint: .topLeading,
       endPoint: .bottomTrailing
@@ -1292,30 +1847,40 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var viewModeExpandedContent: some View {
-    VStack(spacing: 6) {
-      HStack {
-        Spacer()
+    VStack(spacing: 4) {
+      ForEach(options) { option in
+        let selected = option.id == model.selectedMode
 
         Button {
-          closeMenu()
+          selectMode(option.id)
         } label: {
-          Image(systemName: "xmark")
-            .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(expandedPrimaryColor)
-            .frame(width: 34, height: 34)
-            .background(Circle().fill(expandedControlFill))
+          ViewModeGlassRow(
+            mode: option.id,
+            label: option.label,
+            selected: selected,
+            foregroundColor: expandedPrimaryColor,
+            selectedFill: expandedRowFill,
+            selectedTint: expandedRowTint,
+            selectedStroke: expandedRowStroke,
+            showsSelectionIndicator: false
+          )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("보기 방식 메뉴 닫기")
+        .accessibilityLabel(option.label)
       }
-      .padding(.horizontal, 10)
-      .padding(.bottom, 2)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 12)
+  }
 
+  private var legacyViewModeExpandedContent: some View {
+    VStack(spacing: 6) {
       ForEach(options) { option in
         Button {
           selectMode(option.id)
         } label: {
           ViewModeGlassRow(
+            mode: option.id,
             label: option.label,
             selected: option.id == model.selectedMode,
             foregroundColor: expandedPrimaryColor,
@@ -1331,6 +1896,51 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 12)
+  }
+
+  private var iconOnlyViewModeExpandedContent: some View {
+    VStack(spacing: 8) {
+      HStack(spacing: 0) {
+        Spacer()
+
+        Button {
+          closeMenu()
+        } label: {
+          Image(systemName: "xmark")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(expandedPrimaryColor)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(expandedControlFill))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("보기 방식 메뉴 닫기")
+      }
+      .padding(.horizontal, 8)
+      .padding(.top, 4)
+
+      HStack(spacing: 8) {
+        ForEach(options) { option in
+          let selected = option.id == model.selectedMode
+
+          Button {
+            selectMode(option.id)
+          } label: {
+            ViewModeIconChoice(
+              mode: option.id,
+              selected: selected,
+              foregroundColor: expandedPrimaryColor,
+              selectedFill: expandedRowFill,
+              selectedTint: expandedRowTint,
+              selectedStroke: expandedRowStroke
+            )
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel(option.label)
+        }
+      }
+      .padding(.horizontal, 12)
+      .padding(.bottom, 12)
+    }
   }
 
   private var searchExpandedContent: some View {
@@ -1390,92 +2000,60 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var addExpandedContent: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      actionHeader(title: "일정 등록")
-
+    VStack(spacing: 4) {
       addActionRow(
-        icon: "bolt.fill",
+        icon: "bolt",
         title: "빠른 생성",
-        subtitle: "문장으로 일정 만들기",
-        action: model.handleQuickAdd
+        action: triggerQuickAddAction,
+        closesAfterAction: false
       )
 
       addActionRow(
         icon: "square.and.pencil",
         title: "직접 입력",
-        subtitle: "날짜와 시간을 직접 설정",
-        action: model.handleManualAdd
+        action: triggerManualAddAction,
+        closesAfterAction: false
       )
 
       addActionRow(
-        icon: "tag.fill",
+        icon: "tag",
         title: "카테고리 관리",
-        subtitle: "분류와 색상 정리",
         action: model.handleManageCategories
       )
-
-      Spacer()
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 14)
-  }
-
-  private func actionHeader(title: String) -> some View {
-    HStack(spacing: 10) {
-      Text(title)
-        .font(.system(size: 18, weight: .bold))
-        .foregroundStyle(expandedPrimaryColor)
-
-      Spacer()
-
-      Button {
-        closeMenu()
-      } label: {
-        Image(systemName: "xmark")
-          .font(.system(size: 14, weight: .bold))
-          .foregroundStyle(expandedPrimaryColor)
-          .frame(width: 34, height: 34)
-          .background(Circle().fill(expandedControlFill))
-      }
-      .buttonStyle(.plain)
-      .accessibilityLabel("닫기")
-    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 12)
   }
 
   private func addActionRow(
     icon: String,
     title: String,
-    subtitle: String,
-    action: @escaping () -> Void
+    action: @escaping () -> Void,
+    closesAfterAction: Bool = true
   ) -> some View {
     Button {
-      triggerAddAction(action)
+      if closesAfterAction {
+        triggerAddAction(action)
+      } else {
+        action()
+      }
     } label: {
       HStack(spacing: 12) {
         Image(systemName: icon)
-          .font(.system(size: 18, weight: .bold))
-          .foregroundStyle(expandedPrimaryColor.opacity(0.9))
-          .frame(width: 34, height: 34)
-          .background(Circle().fill(expandedControlFill))
+          .font(.system(size: 17, weight: .semibold))
+          .frame(width: 26, height: 26)
+          .frame(width: 32)
 
-        VStack(alignment: .leading, spacing: 2) {
-          Text(title)
-            .font(.system(size: 16, weight: .bold))
-            .foregroundStyle(expandedPrimaryColor)
-
-          Text(subtitle)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(expandedSecondaryColor)
-        }
+        Text(title)
+          .font(.system(size: 16, weight: .semibold))
+          .frame(maxWidth: .infinity, alignment: .leading)
 
         Spacer()
       }
       .padding(.horizontal, 12)
-      .padding(.vertical, 10)
-      .background(
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-          .fill(expandedRowFill)
-      )
+      .foregroundStyle(expandedPrimaryColor)
+      .frame(height: 43)
+      .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     .buttonStyle(.plain)
     .accessibilityLabel(title)
@@ -1499,21 +2077,43 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var collapsedContentOpacity: Double {
-    guard phase == .collapsed || phase == .expanding else { return 0 }
-    return Double(1 - collapsedContentAbsorption) * (model.disabled ? 0.42 : 1)
-  }
-
-  private var collapsedContentScale: CGFloat {
-    1 - collapsedContentAbsorption * 0.1
+    guard phase == .collapsed || phase == .expanding || phase == .closing else { return 0 }
+    return (collapsedContentVisible ? 1 : 0) * (model.disabled ? 0.42 : 1)
   }
 
   private var collapsedContentBlur: CGFloat {
-    collapsedContentAbsorption * 4
+    0
   }
 
-  private var collapsedContentAbsorption: CGFloat {
-    guard phase == .collapsed || phase == .expanding else { return 1 }
-    return smoothstep(edge0: 0.01, edge1: 0.12, x: morphProgress)
+  private var collapsedContentFadeDuration: Double {
+    activeAction == .search && phase == .expanding ? 0.1 : 0.16
+  }
+
+  private var expandedContentReveal: CGFloat {
+    if activeAction == .add, addHandoffContentSuppressed {
+      return 0
+    }
+
+    switch phase {
+    case .collapsed:
+      return 0
+    case .closing:
+      return contentVisible ? 1 : 0
+    case .expanding, .expanded:
+      return contentVisible ? 1 : 0
+    }
+  }
+
+  private var expandedContentOpacity: Double {
+    Double(expandedContentReveal)
+  }
+
+  private var expandedContentOffsetY: CGFloat {
+    activeAction == .search ? 0 : -8 * (1 - expandedContentReveal)
+  }
+
+  private var expandedContentScale: CGFloat {
+    0.985 + 0.015 * expandedContentReveal
   }
 
   private var shadowColor: Color {
@@ -1534,12 +2134,12 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var widthProgress: CGFloat {
     if activeAction == .search {
-      return smoothstep(edge0: 0.02, edge1: 0.86, x: morphProgress)
+      return smoothstep(edge0: 0.0, edge1: 0.72, x: morphProgress)
     }
 
-    let initialGrowth = smoothstep(edge0: 0.04, edge1: 0.34, x: morphProgress)
-    let menuGrowth = smoothstep(edge0: 0.18, edge1: 0.92, x: morphProgress)
-    return min(1, initialGrowth * 0.12 + menuGrowth * 0.88)
+    let earlyStretch = smoothstep(edge0: 0.0, edge1: 0.52, x: morphProgress)
+    let finalSettle = smoothstep(edge0: 0.52, edge1: 0.92, x: morphProgress)
+    return min(1, earlyStretch * 0.82 + finalSettle * 0.18)
   }
 
   private var heightProgress: CGFloat {
@@ -1547,21 +2147,39 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       return 0
     }
 
-    let initialGrowth = smoothstep(edge0: 0.08, edge1: 0.38, x: morphProgress)
-    let menuGrowth = smoothstep(edge0: 0.24, edge1: 0.94, x: morphProgress)
-    return min(1, initialGrowth * 0.1 + menuGrowth * 0.9)
+    let earlyLift = smoothstep(edge0: 0.1, edge1: 0.36, x: morphProgress)
+    let bodyGrowth = smoothstep(edge0: 0.24, edge1: 0.88, x: morphProgress)
+    return min(1, earlyLift * 0.2 + bodyGrowth * 0.8)
   }
 
   private var rootWidth: CGFloat {
-    max(expandedWidth, model.searchExpandedWidth)
+    max(collapsedWidth, surfaceWidth)
+  }
+
+  private var rootHeight: CGFloat {
+    max(addExpandedHeight, viewExpandedHeight)
   }
 
   private var targetExpandedWidth: CGFloat {
-    activeAction == .search ? max(collapsedWidth, model.searchExpandedWidth) : expandedWidth
+    switch activeAction {
+    case .search:
+      return max(collapsedWidth, model.searchExpandedWidth)
+    case .view:
+      return viewExpandedWidth
+    case .add:
+      return addExpandedWidth
+    }
   }
 
   private var targetExpandedHeight: CGFloat {
-    activeAction == .search ? collapsedHeight : expandedHeight
+    switch activeAction {
+    case .search:
+      return collapsedHeight
+    case .view:
+      return viewExpandedHeight
+    case .add:
+      return addExpandedHeight
+    }
   }
 
   private var finalProgress: CGFloat {
@@ -1570,13 +2188,13 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var liquidHighlight: LinearGradient {
     let colors = isDarkMode ? [
-      Color.white.opacity(Double(interpolate(from: 0.22, to: 0.11, amount: surfaceToneProgress))),
-      Color.white.opacity(Double(interpolate(from: 0.08, to: 0.035, amount: surfaceToneProgress))),
-      Color.black.opacity(Double(interpolate(from: 0.05, to: 0.07, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.065, to: 0.041, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.022, to: 0.016, amount: surfaceToneProgress))),
+      Color.black.opacity(Double(interpolate(from: 0.108, to: 0.144, amount: surfaceToneProgress))),
     ] : [
-      Color.white.opacity(Double(interpolate(from: 0.34, to: 0.28, amount: surfaceToneProgress))),
-      Color.white.opacity(Double(interpolate(from: 0.16, to: 0.12, amount: surfaceToneProgress))),
-      Color.black.opacity(Double(interpolate(from: 0.018, to: 0.026, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.49, to: 0.40, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.18, to: 0.144, amount: surfaceToneProgress))),
+      Color.black.opacity(Double(interpolate(from: 0.014, to: 0.022, amount: surfaceToneProgress))),
     ]
 
     return LinearGradient(
@@ -1590,8 +2208,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     liquidShape
       .stroke(
         isDarkMode
-          ? Color.white.opacity(Double(interpolate(from: 0.24, to: 0.16, amount: surfaceToneProgress)))
-          : Color.white.opacity(Double(interpolate(from: 0.62, to: 0.54, amount: surfaceToneProgress))),
+          ? Color.white.opacity(Double(interpolate(from: 0.108, to: 0.072, amount: surfaceToneProgress)))
+          : Color.white.opacity(Double(interpolate(from: 0.56, to: 0.49, amount: surfaceToneProgress))),
         lineWidth: 1
       )
   }
@@ -1604,11 +2222,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var fallbackLiquidFill: LinearGradient {
     let colors = isDarkMode ? [
-      Color.white.opacity(Double(interpolate(from: 0.2, to: 0.15, amount: surfaceToneProgress))),
-      Color.black.opacity(Double(interpolate(from: 0.48, to: 0.74, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.065, to: 0.045, amount: surfaceToneProgress))),
+      Color.black.opacity(Double(interpolate(from: 0.65, to: 0.77, amount: surfaceToneProgress))),
     ] : [
-      Color.white.opacity(Double(interpolate(from: 0.78, to: 0.9, amount: surfaceToneProgress))),
-      Color.white.opacity(Double(interpolate(from: 0.52, to: 0.68, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.70, to: 0.81, amount: surfaceToneProgress))),
+      Color.white.opacity(Double(interpolate(from: 0.47, to: 0.61, amount: surfaceToneProgress))),
     ]
 
     return LinearGradient(
@@ -1622,6 +2240,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     guard !model.disabled, phase == .collapsed else { return }
 
     activeAction = action
+    addHandoffContentSuppressed = false
     if action == .search {
       model.searchQuery = ""
       model.handleSearchTextChange("")
@@ -1630,25 +2249,44 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     readabilityVisible = false
     contentVisible = false
     searchFocused = false
+    morphProgress = 0
+    phase = .expanding
 
-    withAnimation(.easeOut(duration: 0.1)) {
-      phase = .expanding
-    }
-
-    withAnimation(.interactiveSpring(response: 0.56, dampingFraction: 0.94, blendDuration: 0.06)) {
-      morphProgress = 1
-    }
     model.handleOpenChange(true)
 
-    let readabilityDelay = action == .view ? 0.48 : 0.38
-    let contentDelay = action == .search ? 0.2 : (action == .view ? 0.6 : 0.48)
+    withAnimation(.easeOut(duration: action == .search ? 0.08 : 0.16)) {
+      collapsedContentVisible = false
+    }
+
+    if action == .search {
+      withAnimation(.easeOut(duration: 0.24)) {
+        morphProgress = 1
+      }
+    } else {
+      DispatchQueue.main.asyncAfter(deadline: .now()) {
+        guard activeAction == action, phase == .expanding, morphProgress == 0 else { return }
+        withAnimation(.easeOut(duration: 0.14)) {
+          morphProgress = 0.46
+        }
+      }
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.11) {
+        guard activeAction == action, phase == .expanding, morphProgress < 1 else { return }
+        withAnimation(.interactiveSpring(response: 0.39, dampingFraction: 0.96, blendDuration: 0.04)) {
+          morphProgress = 1
+        }
+      }
+    }
+
+    let readabilityDelay = action == .view ? 0.43 : 0.34
+    let contentDelay = action == .search ? 0.46 : (action == .view ? 0.38 : 0.34)
     let readabilityThreshold: CGFloat = action == .view ? 0.82 : 0.72
-    let contentThreshold: CGFloat = action == .search ? 0.48 : (action == .view ? 0.88 : 0.78)
+    let contentThreshold: CGFloat = action == .search ? 0.96 : (action == .view ? 0.92 : 0.90)
 
     if action != .search {
       DispatchQueue.main.asyncAfter(deadline: .now() + readabilityDelay) {
         guard activeAction == action, morphProgress > readabilityThreshold, phase == .expanding else { return }
-        withAnimation(.easeOut(duration: 0.16)) {
+        withAnimation(.easeOut(duration: 0.14)) {
           readabilityVisible = true
         }
       }
@@ -1657,11 +2295,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     DispatchQueue.main.asyncAfter(deadline: .now() + contentDelay) {
       guard activeAction == action, morphProgress > contentThreshold, phase == .expanding else { return }
       phase = .expanded
-      withAnimation(.easeOut(duration: 0.22)) {
+      withAnimation(.easeOut(duration: 0.2)) {
         contentVisible = true
       }
       if action == .search {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) {
           guard activeAction == .search, phase == .expanded else { return }
           searchFocused = true
         }
@@ -1686,32 +2324,67 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private func closeMenu() {
     guard phase == .expanded || phase == .expanding else { return }
+    addHandoffContentSuppressed = false
 
-    withAnimation(.easeInOut(duration: 0.14)) {
+    withAnimation(.easeInOut(duration: 0.1)) {
       contentVisible = false
       phase = .closing
       searchFocused = false
     }
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
       guard phase == .closing else { return }
-      withAnimation(.easeInOut(duration: 0.14)) {
+      withAnimation(.easeInOut(duration: 0.1)) {
         readabilityVisible = false
       }
     }
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
       guard phase == .closing else { return }
-      withAnimation(.interactiveSpring(response: 0.46, dampingFraction: 0.96, blendDuration: 0.05)) {
+      withAnimation(.easeInOut(duration: 0.13)) {
+        morphProgress = 0.42
+      }
+    }
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.21) {
+      guard phase == .closing else { return }
+      withAnimation(.easeOut(duration: 0.16)) {
+        collapsedContentVisible = true
+      }
+      withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.97, blendDuration: 0.04)) {
         morphProgress = 0
       }
     }
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.76) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.34) {
       guard phase == .closing else { return }
       phase = .collapsed
       model.handleOpenChange(false)
     }
+  }
+
+  private func closeOrResetMenu() {
+    if phase == .closing {
+      collapseMenuImmediately()
+      return
+    }
+
+    closeMenu()
+  }
+
+  private func collapseMenuImmediately() {
+    addHandoffContentSuppressed = false
+    contentVisible = false
+    readabilityVisible = false
+    searchFocused = false
+    phase = .collapsed
+    morphProgress = 0
+
+    withAnimation(.easeOut(duration: 0.08)) {
+      collapsedContentVisible = true
+    }
+
+    model.handleOpenChange(false)
   }
 
   private func selectMode(_ mode: String) {
@@ -1725,6 +2398,77 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     closeMenu()
   }
 
+  private func triggerQuickAddAction() {
+    triggerAddHandoffAction(model.handleQuickAdd)
+  }
+
+  private func triggerManualAddAction() {
+    triggerAddHandoffAction(model.handleManualAdd)
+  }
+
+  private func triggerAddHandoffAction(_ action: @escaping () -> Void) {
+    guard phase == .expanded || phase == .expanding else {
+      action()
+      return
+    }
+
+    addHandoffContentSuppressed = true
+    withAnimation(.easeOut(duration: 0.06)) {
+      contentVisible = false
+    }
+
+    action()
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.024) {
+      prepareAddHandoff()
+    }
+  }
+
+  private enum RequestedAddAction {
+    case quick
+    case manual
+  }
+
+  private func triggerRequestedAddAction(_ requestedAction: RequestedAddAction) {
+    if activeAction == .add, phase == .expanded || phase == .expanding {
+      switch requestedAction {
+      case .quick:
+        triggerQuickAddAction()
+      case .manual:
+        triggerManualAddAction()
+      }
+      return
+    }
+
+    guard phase == .collapsed else { return }
+    openMenu(.add)
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+      guard activeAction == .add, phase == .expanded || phase == .expanding else { return }
+      switch requestedAction {
+      case .quick:
+        triggerQuickAddAction()
+      case .manual:
+        triggerManualAddAction()
+      }
+    }
+  }
+
+  private func prepareAddHandoff() {
+    guard phase == .expanded || phase == .expanding else { return }
+
+    addHandoffContentSuppressed = true
+    phase = .closing
+    searchFocused = false
+    model.handleOpenChange(false)
+
+    withAnimation(.easeOut(duration: 0.08)) {
+      contentVisible = false
+      readabilityVisible = false
+      collapsedContentVisible = false
+    }
+  }
+
   private func smoothstep(edge0: CGFloat, edge1: CGFloat, x: CGFloat) -> CGFloat {
     guard edge0 != edge1 else { return x >= edge1 ? 1 : 0 }
     let t = max(0, min(1, (x - edge0) / (edge1 - edge0)))
@@ -1736,54 +2480,62 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   @ViewBuilder
-  private func prototypeModeGlyph(
-    for mode: String,
-    color: Color = Color.white.opacity(0.94)
-  ) -> some View {
-    switch mode {
-    case "compact":
-      VStack(spacing: 4) {
-        Capsule().fill(color).frame(width: 24, height: 4)
-        HStack(spacing: 4) {
-          Capsule().fill(color).frame(width: 4, height: 12)
-          Capsule().fill(color).frame(width: 4, height: 12)
-          Capsule().fill(color).frame(width: 4, height: 12)
+	  private func prototypeModeGlyph(
+	    for mode: String,
+	    color: Color = Color.white.opacity(0.94)
+	  ) -> some View {
+	    switch mode {
+	    case "day":
+	      Image(systemName: "calendar")
+	        .font(.system(size: 22, weight: .regular))
+	        .foregroundStyle(color)
+	    case "multi":
+	      Image(systemName: "rectangle.stack")
+	        .font(.system(size: 22, weight: .regular))
+	        .foregroundStyle(color)
+	    case "compact":
+	      VStack(spacing: 3.5) {
+        Capsule().fill(color).frame(width: 22, height: 2.9)
+        HStack(spacing: 3.5) {
+          Capsule().fill(color).frame(width: 2.9, height: 11)
+          Capsule().fill(color).frame(width: 2.9, height: 11)
+          Capsule().fill(color).frame(width: 2.9, height: 11)
         }
       }
     case "detail":
-      VStack(spacing: 5) {
+      VStack(spacing: 4.5) {
         RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .stroke(color, lineWidth: 3)
-          .frame(width: 25, height: 8)
+          .stroke(color, lineWidth: 2.15)
+          .frame(width: 23, height: 7)
         RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .stroke(color, lineWidth: 3)
-          .frame(width: 25, height: 8)
+          .stroke(color, lineWidth: 2.15)
+          .frame(width: 23, height: 7)
           .overlay(alignment: .center) {
-            Capsule().fill(color).frame(width: 12, height: 2)
+            Capsule().fill(color).frame(width: 11, height: 1.5)
           }
       }
     case "list":
-      VStack(alignment: .leading, spacing: 5) {
-        prototypeGlyphListRow(width: 24, color: color)
-        prototypeGlyphListRow(width: 24, color: color)
-        prototypeGlyphListRow(width: 18, color: color)
+      VStack(alignment: .leading, spacing: 4.5) {
+        prototypeGlyphListRow(width: 22, color: color)
+        prototypeGlyphListRow(width: 22, color: color)
+        prototypeGlyphListRow(width: 16, color: color)
       }
     default:
-      VStack(spacing: 5) {
+      VStack(spacing: 4.5) {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
-          .stroke(color, lineWidth: 3)
-          .frame(width: 26, height: 9)
+          .stroke(color, lineWidth: 2.15)
+          .frame(width: 24, height: 8)
         RoundedRectangle(cornerRadius: 5, style: .continuous)
-          .stroke(color, lineWidth: 3)
-          .frame(width: 26, height: 9)
+          .stroke(color, lineWidth: 2.15)
+          .frame(width: 24, height: 8)
       }
     }
   }
 
   private func prototypeGlyphListRow(width: CGFloat, color: Color = Color.white.opacity(0.94)) -> some View {
     HStack(spacing: 4) {
-      Circle().fill(color).frame(width: 4, height: 4)
-      Capsule().fill(color).frame(width: width, height: 3)
+      Circle().fill(color).frame(width: 3.15, height: 3.15)
+      Capsule().fill(color).frame(width: width, height: 2.15)
     }
   }
 }
@@ -1807,13 +2559,178 @@ private struct LiquidToolbarIconButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .opacity(disabled ? 0.44 : (configuration.isPressed ? 0.68 : 1))
-      .scaleEffect(configuration.isPressed ? 0.88 : 1)
-      .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+      .opacity(disabled ? 0.44 : 1)
+  }
+}
+
+private struct ViewModeIconChoice: View {
+  let mode: String
+  let selected: Bool
+  let foregroundColor: Color
+  let selectedFill: Color
+  let selectedTint: Color
+  let selectedStroke: Color
+
+  var body: some View {
+    ZStack {
+      selectedBackground
+
+      glyph
+        .frame(width: 28, height: 28)
+    }
+    .foregroundStyle(foregroundColor)
+    .frame(width: 40, height: 42)
+    .contentShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+  }
+
+	  @ViewBuilder
+	  private var glyph: some View {
+	    switch mode {
+	    case "day":
+	      Image(systemName: "calendar")
+	        .font(.system(size: 23, weight: .regular))
+	    case "multi":
+	      Image(systemName: "rectangle.stack")
+	        .font(.system(size: 23, weight: .regular))
+	    case "compact":
+	      VStack(spacing: 3.5) {
+        Capsule().fill(foregroundColor).frame(width: 23, height: 3.2)
+        HStack(spacing: 3.5) {
+          Capsule().fill(foregroundColor).frame(width: 3.2, height: 12)
+          Capsule().fill(foregroundColor).frame(width: 3.2, height: 12)
+          Capsule().fill(foregroundColor).frame(width: 3.2, height: 12)
+        }
+      }
+    case "detail":
+      VStack(spacing: 4.5) {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+          .stroke(foregroundColor, lineWidth: 2.4)
+          .frame(width: 24, height: 7.5)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+          .stroke(foregroundColor, lineWidth: 2.4)
+          .frame(width: 24, height: 7.5)
+          .overlay {
+            Capsule().fill(foregroundColor).frame(width: 11, height: 1.7)
+          }
+      }
+    case "list":
+      VStack(alignment: .leading, spacing: 4.5) {
+        listRow(width: 23)
+        listRow(width: 23)
+        listRow(width: 17)
+      }
+    default:
+      VStack(spacing: 4.5) {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+          .stroke(foregroundColor, lineWidth: 2.4)
+          .frame(width: 25, height: 8)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+          .stroke(foregroundColor, lineWidth: 2.4)
+          .frame(width: 25, height: 8)
+      }
+    }
+  }
+
+  private func listRow(width: CGFloat) -> some View {
+    HStack(spacing: 4) {
+      Circle().fill(foregroundColor).frame(width: 3.5, height: 3.5)
+      Capsule().fill(foregroundColor).frame(width: width, height: 2.4)
+    }
+  }
+
+  @ViewBuilder
+  private var selectedBackground: some View {
+    if selected {
+      if #available(iOS 26.0, *) {
+        RoundedRectangle(cornerRadius: 17, style: .continuous)
+          .fill(selectedFill)
+          .glassEffect(
+            .clear
+              .tint(selectedTint)
+              .interactive(false),
+            in: RoundedRectangle(cornerRadius: 17, style: .continuous)
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: 17, style: .continuous)
+              .stroke(selectedStroke, lineWidth: 1)
+          )
+      } else {
+        RoundedRectangle(cornerRadius: 17, style: .continuous)
+          .fill(selectedFill)
+      }
+    } else {
+      Color.clear
+    }
+  }
+}
+
+private struct ViewModeGlyphMark: View {
+  let mode: String
+  let color: Color
+
+  var body: some View {
+    glyph
+      .foregroundStyle(color)
+  }
+
+	  @ViewBuilder
+	  private var glyph: some View {
+	    switch mode {
+	    case "day":
+	      Image(systemName: "calendar")
+	        .font(.system(size: 22, weight: .regular))
+	    case "multi":
+	      Image(systemName: "rectangle.stack")
+	        .font(.system(size: 22, weight: .regular))
+	    case "compact":
+	      VStack(spacing: 3.5) {
+        Capsule().fill(color).frame(width: 22, height: 3.1)
+        HStack(spacing: 3.5) {
+          Capsule().fill(color).frame(width: 3.1, height: 11)
+          Capsule().fill(color).frame(width: 3.1, height: 11)
+          Capsule().fill(color).frame(width: 3.1, height: 11)
+        }
+      }
+    case "detail":
+      VStack(spacing: 4.4) {
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+          .stroke(color, lineWidth: 2.3)
+          .frame(width: 23, height: 7)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
+          .stroke(color, lineWidth: 2.3)
+          .frame(width: 23, height: 7)
+          .overlay {
+            Capsule().fill(color).frame(width: 10, height: 1.6)
+          }
+      }
+    case "list":
+      VStack(alignment: .leading, spacing: 4.5) {
+        listRow(width: 22)
+        listRow(width: 22)
+        listRow(width: 16)
+      }
+    default:
+      VStack(spacing: 4.5) {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+          .stroke(color, lineWidth: 2.3)
+          .frame(width: 24, height: 8)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+          .stroke(color, lineWidth: 2.3)
+          .frame(width: 24, height: 8)
+      }
+    }
+  }
+
+  private func listRow(width: CGFloat) -> some View {
+    HStack(spacing: 4) {
+      Circle().fill(color).frame(width: 3.4, height: 3.4)
+      Capsule().fill(color).frame(width: width, height: 2.3)
+    }
   }
 }
 
 private struct ViewModeGlassRow: View {
+  let mode: String?
   let label: String
   let selected: Bool
   let foregroundColor: Color
@@ -1823,6 +2740,7 @@ private struct ViewModeGlassRow: View {
   let showsSelectionIndicator: Bool
 
   init(
+    mode: String? = nil,
     label: String,
     selected: Bool,
     foregroundColor: Color = Color.white,
@@ -1831,6 +2749,7 @@ private struct ViewModeGlassRow: View {
     selectedStroke: Color = Color.white.opacity(0.16),
     showsSelectionIndicator: Bool = true
   ) {
+    self.mode = mode
     self.label = label
     self.selected = selected
     self.foregroundColor = foregroundColor
@@ -1845,6 +2764,12 @@ private struct ViewModeGlassRow: View {
       selectedBackground
 
       HStack(spacing: 12) {
+        if let mode {
+          ViewModeGlyphMark(mode: mode, color: foregroundColor)
+            .frame(width: 26, height: 26)
+            .frame(width: 32)
+        }
+
         if showsSelectionIndicator {
           Group {
             if selected {
@@ -1858,18 +2783,18 @@ private struct ViewModeGlassRow: View {
         }
 
         Text(label)
-          .font(.system(size: 17, weight: selected ? .bold : .semibold))
+          .font(.system(size: 16, weight: selected ? .bold : .semibold))
           .frame(maxWidth: .infinity, alignment: .leading)
       }
       .foregroundStyle(foregroundColor)
-      .padding(.horizontal, 14)
+      .padding(.horizontal, 12)
     }
-    .frame(height: 48)
+    .frame(height: 43)
   }
 
   @ViewBuilder
   private var selectedBackground: some View {
-    if selected && showsSelectionIndicator {
+    if selected {
       if #available(iOS 26.0, *) {
         RoundedRectangle(cornerRadius: 18, style: .continuous)
           .fill(selectedFill)
