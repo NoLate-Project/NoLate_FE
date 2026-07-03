@@ -44,6 +44,7 @@ import {
     stopNoLateAudioSpectrum,
 } from "../../../audio/NoLateAudioSpectrum";
 import { useTheme } from "../../../theme/ThemeContext";
+import type { QuickScheduleMediaInput } from "../../quickInputExtraction";
 import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
 import { consumeRoutePlannerResult, setRoutePlannerInitial, type RoutePlannerPayload } from "../../routePlannerSession";
 import { getRouteInfoFromRoute } from "../../routeInfo";
@@ -54,12 +55,7 @@ type Props = {
     visible: boolean;
     onClose: () => void;
     onCloseStart?: () => void;
-    onAnalyze: (text: string, media?: {
-        inputMode: InputMode;
-        photoUri?: string;
-        voiceUri?: string;
-        voiceDurationMillis?: number;
-    }) => Promise<ScheduleParseResult>;
+    onAnalyze: (text: string, media?: QuickScheduleMediaInput) => Promise<ScheduleParseResult>;
     onSave: (payload: Omit<ScheduleItem, "id">) => void | Promise<void>;
     defaultDay: string;
     defaultCategory?: ScheduleCategory;

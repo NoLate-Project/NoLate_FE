@@ -2270,14 +2270,11 @@ export default function RouteSelectScreen() {
                         );
                         const progressSegments = buildRouteProgressSegments(option, destinationText);
                         const routeFlowPathSummary = buildRouteFlowPathSummary(option, originText, destinationText);
-                        const routeFlowSegmentSizeStyle = progressSegments.length <= 3
-                            ? styles.routeFlowSegmentSparse
+                        const routeFlowMinWidth = progressSegments.length <= 3
+                            ? 78
                             : progressSegments.length >= 6
-                                ? styles.routeFlowSegmentDense
-                                : styles.routeFlowSegmentRegular;
-                        const routeFlowStripSpacingStyle = progressSegments.length <= 3
-                            ? styles.routeFlowStripSparseSpacing
-                            : styles.routeFlowStripRegularSpacing;
+                                ? 42
+                                : 46;
                         const routeMetricChips = buildRouteMetricChips(option, displayIndex);
                         const accent = selected ? "rgba(64,148,255,0.78)" : routeUi.border;
                         const cardBackground = selected ? "rgba(18,27,43,0.34)" : routeUi.surface;
@@ -2355,11 +2352,18 @@ export default function RouteSelectScreen() {
                                                 })}
                                             </View>
                                             {progressSegments.length > 0 && (
-                                                <View style={[styles.routeFlowStrip, routeFlowStripSpacingStyle, { borderTopColor: routeUi.border }]}>
+                                                <View style={[styles.routeFlowStrip, { borderTopColor: routeUi.border }]}>
                                                     {progressSegments.map((segment, segmentIndex) => (
                                                         <View
                                                             key={`${option.id}-${segment.key}`}
-                                                            style={[styles.routeFlowSegment, routeFlowSegmentSizeStyle]}
+                                                            style={[
+                                                                styles.routeFlowSegment,
+                                                                {
+                                                                    flexGrow: Math.max(1, Math.min(14, segment.minutes)),
+                                                                    flexBasis: 0,
+                                                                    minWidth: routeFlowMinWidth,
+                                                                },
+                                                            ]}
                                                         >
                                                             <View style={styles.routeFlowTopLine}>
                                                                 <View style={styles.routeFlowMarker}>
@@ -2435,10 +2439,10 @@ export default function RouteSelectScreen() {
                                                     <View key={summaryItem.key} style={styles.routeDropdownSummaryRow}>
                                                         <View style={styles.routeDropdownMarkerColumn}>
                                                             <View style={[styles.routeDropdownIcon, { borderColor: itemColor }]}>
-	                                                                <Ionicons name={iconName} size={8} color={itemColor} />
+	                                                                <Ionicons name={iconName} size={13} color={itemColor} />
                                                             </View>
                                                             {!isLastSummaryItem && (
-                                                                <View style={[styles.routeDropdownConnector, { backgroundColor: routeUi.border }]} />
+                                                                <View style={[styles.routeDropdownConnector, { backgroundColor: itemColor }]} />
                                                             )}
                                                         </View>
                                                         <View style={styles.routeDropdownStepTextWrap}>
@@ -2447,12 +2451,12 @@ export default function RouteSelectScreen() {
                                                                 style={[styles.routeDropdownStepLine, { color: titleColor }]}
                                                             >
                                                                 {summaryItem.title}
+                                                            </Text>
                                                                 {!!summaryItem.subtitle && (
-                                                                    <Text style={[styles.routeDropdownStepMeta, { color: routeUi.textSecondary }]}>
-                                                                        {` · ${summaryItem.subtitle}`}
+                                                                    <Text numberOfLines={1} style={[styles.routeDropdownStepMeta, { color: routeUi.textSecondary }]}>
+                                                                        {summaryItem.subtitle}
                                                                     </Text>
                                                                 )}
-                                                            </Text>
                                                         </View>
                                                     </View>
                                                 );
@@ -3187,93 +3191,94 @@ const styles = StyleSheet.create({
         marginTop: 0,
         marginHorizontal: 14,
         paddingHorizontal: 0,
-        paddingTop: 6,
-        paddingBottom: 7,
-        gap: 5,
+        paddingTop: 10,
+        paddingBottom: 10,
+        gap: 9,
         overflow: "hidden",
     },
     routeDropdownSummaryList: {
-        gap: 0,
+        gap: 4,
     },
     routeDropdownSummaryRow: {
-        minHeight: 20,
+        minHeight: 39,
         flexDirection: "row",
-        alignItems: "center",
-        gap: 7,
-        paddingVertical: 1,
+        alignItems: "flex-start",
+        gap: 10,
+        paddingVertical: 3,
     },
     routeDropdownMarkerColumn: {
-        width: 17,
+        width: 26,
         alignItems: "center",
         alignSelf: "stretch",
-        paddingTop: 2,
+        paddingTop: 1,
     },
     routeDropdownIcon: {
-        width: 16,
-        height: 16,
+        width: 24,
+        height: 24,
         borderRadius: 999,
-        borderWidth: 1,
+        borderWidth: 1.4,
         alignItems: "center",
         justifyContent: "center",
     },
     routeDropdownConnector: {
-        width: 1,
+        width: 2,
         flex: 1,
-        minHeight: 6,
-        marginTop: 1,
-        opacity: 0.24,
+        minHeight: 11,
+        marginTop: 3,
+        opacity: 0.28,
         borderRadius: 1,
     },
     routeDropdownStepTextWrap: {
         flex: 1,
         minWidth: 0,
-        gap: 0,
+        gap: 1,
+        paddingTop: 1,
     },
     routeDropdownStepLine: {
-        fontSize: 11,
-        fontWeight: "700",
-        lineHeight: 14,
+        fontSize: 15,
+        fontWeight: "800",
+        lineHeight: 20,
         letterSpacing: 0,
     },
     routeDropdownStepMeta: {
-        fontSize: 10,
-        fontWeight: "600",
-        lineHeight: 14,
+        fontSize: 12.5,
+        fontWeight: "700",
+        lineHeight: 17,
         letterSpacing: 0,
     },
     routeDropdownButtons: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 5,
+        gap: 8,
         borderTopWidth: StyleSheet.hairlineWidth,
-        paddingTop: 3,
-        marginTop: 0,
+        paddingTop: 8,
+        marginTop: 2,
     },
     routeDropdownSecondaryButton: {
         flex: 1,
-        minHeight: 24,
+        minHeight: 40,
         borderWidth: 1,
-        borderRadius: 7,
+        borderRadius: 13,
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 8,
+        paddingHorizontal: 10,
     },
     routeDropdownSecondaryButtonText: {
-        fontSize: 9,
+        fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
     },
     routeDropdownPrimaryButton: {
         flex: 1.15,
-        minHeight: 24,
-        borderRadius: 7,
+        minHeight: 40,
+        borderRadius: 13,
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 8,
+        paddingHorizontal: 10,
     },
     routeDropdownPrimaryButtonText: {
         color: "#FFFFFF",
-        fontSize: 9,
+        fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
     },

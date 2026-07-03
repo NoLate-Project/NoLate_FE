@@ -40,6 +40,10 @@ import { useScheduleStore } from "../../src/modules/schedule/store";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { formatHHmm, isOverlappingDay, startOfDay, toYmd } from "../../lib/util/data";
+import {
+    resolveQuickScheduleParseInput,
+    type QuickScheduleMediaInput,
+} from "../../src/modules/schedule/quickInputExtraction";
 
 const HOUR_HEIGHT = 48;
 const TIMELINE_GUTTER = 48;
@@ -447,10 +451,15 @@ export default function ScheduleTimetable() {
         router.push("/schedule/categories");
     }, [requestCloseLiquidPrototype, router]);
 
-    const handleQuickAnalyze = useCallback(async (text: string) => {
+    const handleQuickAnalyze = useCallback(async (text: string, media?: QuickScheduleMediaInput) => {
         try {
+            // 빠른일정의 미디어 입력은 앱 안에서 텍스트로 변환한다.
+            // 백엔드는 원본 파일을 알 필요 없이 추출된 문장과 입력 출처만 받아 일정 파싱을 수행한다.
+            const parseInput = await resolveQuickScheduleParseInput(text, media);
+
             return await parseScheduleText({
-                text,
+                text: parseInput.text,
+                inputType: parseInput.inputType,
                 referenceDate: activeDay,
                 defaultDurationMinutes: 60,
             });

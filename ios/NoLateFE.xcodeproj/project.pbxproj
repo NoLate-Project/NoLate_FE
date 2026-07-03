@@ -14,6 +14,7 @@
 		A20200000000000000000003 /* ViewModeGlassControlView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20200000000000000000001 /* ViewModeGlassControlView.swift */; };
 		A20200000000000000000004 /* ViewModeGlassControlManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A20200000000000000000002 /* ViewModeGlassControlManager.m */; };
 		A20300000000000000000004 /* NoLateAudioSpectrumModule.m in Sources */ = {isa = PBXBuildFile; fileRef = A20300000000000000000002 /* NoLateAudioSpectrumModule.m */; };
+		A20400000000000000000004 /* NoLateQuickInputModule.m in Sources */ = {isa = PBXBuildFile; fileRef = A20400000000000000000002 /* NoLateQuickInputModule.m */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C1C9A34DAB9C40E8AF100ECA /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 12D010E22FBD4B7983DFA3A1 /* GoogleService-Info.plist */; };
 		CD4F79508BE61808975295BD /* libPods-NoLateFE.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A702A90482D4DCA6FEFBD3E /* libPods-NoLateFE.a */; };
@@ -32,6 +33,7 @@
 		A20200000000000000000001 /* ViewModeGlassControlView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ViewModeGlassControlView.swift; path = NoLateFE/ViewModeGlassControlView.swift; sourceTree = "<group>"; };
 		A20200000000000000000002 /* ViewModeGlassControlManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = ViewModeGlassControlManager.m; path = NoLateFE/ViewModeGlassControlManager.m; sourceTree = "<group>"; };
 		A20300000000000000000002 /* NoLateAudioSpectrumModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = NoLateAudioSpectrumModule.m; path = NoLateFE/NoLateAudioSpectrumModule.m; sourceTree = "<group>"; };
+		A20400000000000000000002 /* NoLateQuickInputModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = NoLateQuickInputModule.m; path = NoLateFE/NoLateQuickInputModule.m; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = NoLateFE/SplashScreen.storyboard; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
 		BDEDAD67D8708E22E0E90289 /* Pods-NoLateFE.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-NoLateFE.release.xcconfig"; path = "Target Support Files/Pods-NoLateFE/Pods-NoLateFE.release.xcconfig"; sourceTree = "<group>"; };
@@ -67,6 +69,7 @@
 				A20200000000000000000001 /* ViewModeGlassControlView.swift */,
 				A20200000000000000000002 /* ViewModeGlassControlManager.m */,
 				A20300000000000000000002 /* NoLateAudioSpectrumModule.m */,
+				A20400000000000000000002 /* NoLateQuickInputModule.m */,
 				F11748442D0722820044C1D9 /* NoLateFE-Bridging-Header.h */,
 				BB2F792B24A3F905000567C9 /* Supporting */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
@@ -396,6 +399,7 @@
 				A20200000000000000000003 /* ViewModeGlassControlView.swift in Sources */,
 				A20200000000000000000004 /* ViewModeGlassControlManager.m in Sources */,
 				A20300000000000000000004 /* NoLateAudioSpectrumModule.m in Sources */,
+				A20400000000000000000004 /* NoLateQuickInputModule.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

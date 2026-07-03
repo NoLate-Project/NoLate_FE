@@ -44,6 +44,10 @@ import { createSchedule, getCalendarSchedules, parseScheduleText } from "../../s
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 import { createQaScheduleItem } from "../../src/modules/schedule/qaSamples";
+import {
+    resolveQuickScheduleParseInput,
+    type QuickScheduleMediaInput,
+} from "../../src/modules/schedule/quickInputExtraction";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -816,10 +820,15 @@ export default function ScheduleIndex() {
         });
     };
 
-    const handleQuickAnalyze = async (text: string) => {
+    const handleQuickAnalyze = async (text: string, media?: QuickScheduleMediaInput) => {
         try {
+            // 사진/음성은 서버로 파일을 보내지 않는다. iOS 네이티브에서 텍스트를 먼저 추출하고,
+            // 기존 빠른일정 파서가 이해하는 text + inputType 계약으로만 백엔드에 전달한다.
+            const parseInput = await resolveQuickScheduleParseInput(text, media);
+
             return await parseScheduleText({
-                text,
+                text: parseInput.text,
+                inputType: parseInput.inputType,
                 referenceDate: selectedDay,
                 defaultDurationMinutes: 60,
             });
