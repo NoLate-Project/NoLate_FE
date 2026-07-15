@@ -45,6 +45,7 @@ const SHEET_SNAP_VELOCITY_PROJECTION = 140;
 const MINUTE_MS = 60 * 1000;
 const SECOND_MS = 1000;
 const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
+const APP_ACCENT_BLUE = "#2979FF";
 
 type DepartureDisplayState =
     | { kind: "countdown"; hours: number; minutes: number; seconds: number }
@@ -206,7 +207,7 @@ function ScheduleDetail() {
     const departureParticipants = item?.departureParticipants ?? [];
     const recommendedDepartureAt = useMemo(
         () => item ? getRecommendedDepartureAt(item) : undefined,
-        [item?.departAt, item?.startAt, item?.travelMinutes]
+        [item]
     );
     const departureDisplayState: DepartureDisplayState = item
         ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
@@ -567,6 +568,10 @@ function ScheduleDetail() {
     const sheetBorder = isDark ? "#343434" : "#E2E8F0";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
     const secondaryText = isDark ? "#B8B8B8" : "#64748B";
+    const topCardBorder = isDark ? "rgba(255,255,255,0.14)" : "rgba(15,23,42,0.12)";
+    const topCardControlBg = isDark ? "rgba(255,255,255,0.07)" : "rgba(15,23,42,0.05)";
+    const topCardAccentText = isDark ? "#78B4FF" : APP_ACCENT_BLUE;
+    const topCardAccentBg = isDark ? "rgba(41,121,255,0.18)" : "rgba(41,121,255,0.10)";
     const departureStatusMuted = departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled";
     const departureStatusAccent = departureCompleted
         ? (isDark ? "#86EFAC" : "#16A34A")
@@ -705,7 +710,8 @@ function ScheduleDetail() {
                 <CalendarGlassSurface
                     interactive
                     variant="mapCard"
-                    style={[styles.topHeaderGlass, { borderColor: sheetBorder }]}
+                    tone="solidCard"
+                    style={[styles.topHeaderGlass, { borderColor: topCardBorder }]}
                 >
                     <View style={styles.topHeaderRow}>
                         <Pressable
@@ -714,8 +720,8 @@ function ScheduleDetail() {
                             style={({ pressed }) => [
                                 styles.topHeaderIconButton,
                                 {
-                                    backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
-                                    borderColor: sheetBorder,
+                                    backgroundColor: topCardControlBg,
+                                    borderColor: topCardBorder,
                                     opacity: pressed ? 0.58 : 1,
                                 },
                             ]}
@@ -724,12 +730,21 @@ function ScheduleDetail() {
                         </Pressable>
 
                         <View style={styles.topHeaderContent}>
-                            <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
-                                {item.title}
-                            </Text>
-                            <Text style={[styles.topHeaderRoute, { color: primaryText }]} numberOfLines={1}>
-                                {routeTitle}
-                            </Text>
+                            <View style={styles.topHeaderTitleRow}>
+                                <View style={[styles.topHeaderKindBadge, { backgroundColor: topCardAccentBg }]}>
+                                    <Ionicons name="calendar-clear-outline" size={11} color={topCardAccentText} />
+                                    <Text style={[styles.topHeaderKindText, { color: topCardAccentText }]}>일정</Text>
+                                </View>
+                                <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
+                                    {item.title}
+                                </Text>
+                            </View>
+                            <View style={styles.topHeaderRouteRow}>
+                                <Ionicons name="navigate-outline" size={11} color={topCardAccentText} />
+                                <Text style={[styles.topHeaderRoute, { color: primaryText }]} numberOfLines={1}>
+                                    {routeTitle}
+                                </Text>
+                            </View>
                             <View style={styles.topHeaderMetaRow}>
                                 <View style={styles.topHeaderScope}>
                                     <View style={[styles.topHeaderCategoryDot, { backgroundColor: item.category.color }]} />
@@ -756,8 +771,8 @@ function ScheduleDetail() {
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
                                         {
-                                            backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
-                                            borderColor: sheetBorder,
+                                            backgroundColor: topCardControlBg,
+                                            borderColor: topCardBorder,
                                             opacity: pressed ? 0.58 : 1,
                                         },
                                     ]}
@@ -770,8 +785,8 @@ function ScheduleDetail() {
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
                                         {
-                                            backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
-                                            borderColor: sheetBorder,
+                                            backgroundColor: topCardControlBg,
+                                            borderColor: topCardBorder,
                                             opacity: pressed ? 0.58 : 1,
                                         },
                                     ]}
@@ -922,8 +937,8 @@ function ScheduleDetail() {
                                                 styles.sheetDepartureActionButton,
                                                 {
                                                     backgroundColor: departureCompleted
-                                                        ? (isDark ? "rgba(34,197,94,0.16)" : "rgba(34,197,94,0.10)")
-                                                        : "#22C55E",
+                                                        ? (isDark ? "rgba(41,121,255,0.20)" : "rgba(41,121,255,0.12)")
+                                                        : APP_ACCENT_BLUE,
                                                     opacity: pressed || departureActionPending ? 0.64 : 1,
                                                 },
                                             ]}
@@ -931,7 +946,7 @@ function ScheduleDetail() {
                                             <Text
                                                 style={[
                                                     styles.sheetDepartureActionButtonText,
-                                                    { color: departureCompleted ? departureStatusAccent : "#052E16" },
+                                                    { color: departureCompleted ? topCardAccentText : "#FFFFFF" },
                                                 ]}
                                             >
                                                 {departureCompleted ? "알림 완료" : departureActionPending ? "처리 중" : "출발 알리기"}
@@ -1051,22 +1066,22 @@ const styles = StyleSheet.create({
         elevation: 30,
     },
     topHeaderGlass: {
-        minHeight: 88,
-        borderRadius: 16,
+        minHeight: 96,
+        borderRadius: 12,
         borderWidth: 1,
-        paddingHorizontal: 6,
-        paddingVertical: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 8,
         overflow: "hidden",
     },
     topHeaderRow: {
         flexDirection: "row",
-        alignItems: "flex-start",
-        gap: 7,
+        alignItems: "center",
+        gap: 8,
     },
     topHeaderIconButton: {
         width: 36,
         height: 36,
-        borderRadius: 18,
+        borderRadius: 8,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
@@ -1074,16 +1089,47 @@ const styles = StyleSheet.create({
     topHeaderContent: {
         flex: 1,
         minWidth: 0,
-        paddingTop: 1,
     },
-    topHeaderTitle: {
-        fontSize: 16,
-        lineHeight: 20,
+    topHeaderTitleRow: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    topHeaderKindBadge: {
+        height: 20,
+        borderRadius: 6,
+        paddingHorizontal: 6,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 3,
+        flexShrink: 0,
+    },
+    topHeaderKindText: {
+        fontSize: 9,
+        lineHeight: 12,
         fontWeight: "900",
         letterSpacing: 0,
     },
+    topHeaderTitle: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 15,
+        lineHeight: 19,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    topHeaderRouteRow: {
+        minWidth: 0,
+        marginTop: 3,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
     topHeaderRoute: {
-        marginTop: 1,
+        flex: 1,
+        minWidth: 0,
         fontSize: 13,
         lineHeight: 17,
         fontWeight: "800",
@@ -1091,7 +1137,7 @@ const styles = StyleSheet.create({
     },
     topHeaderMetaRow: {
         minWidth: 0,
-        marginTop: 3,
+        marginTop: 4,
         flexDirection: "row",
         alignItems: "center",
         gap: 4,
@@ -1112,7 +1158,7 @@ const styles = StyleSheet.create({
     },
     topHeaderMetaText: {
         flexShrink: 1,
-        fontSize: 9,
+        fontSize: 9.5,
         lineHeight: 13,
         fontWeight: "700",
         letterSpacing: 0,
