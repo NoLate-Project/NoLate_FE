@@ -5,7 +5,6 @@ import {
     ScrollView,
     StatusBar,
     StyleSheet,
-    Switch,
     Text,
     View,
 } from "react-native";
@@ -28,6 +27,7 @@ import {
     type CalendarConnectionSnapshot,
 } from "../src/modules/onboarding/calendarConnectionStorage";
 import { useTheme } from "../src/modules/theme/ThemeContext";
+import ThemeModeSwitch from "../src/modules/theme/ThemeModeSwitch";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -111,7 +111,7 @@ function CalendarConnectionStat({ label, value }: { label: string; value: string
 export default function ProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const { colors, mode, toggleMode } = useTheme();
+    const { colors, mode } = useTheme();
     const { signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
     const [account, setAccount] = useState<StoredAuthMember | null>(null);
@@ -314,7 +314,7 @@ export default function ProfileScreen() {
                                             {calendarConnection.providerLabel}
                                         </Text>
                                         <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
-                                            이 기기에서 연동됨
+                                            선택한 캘린더에서 연동됨
                                         </Text>
                                     </View>
                                     <View style={styles.connectedBadge}>
@@ -373,7 +373,7 @@ export default function ProfileScreen() {
                                         연동된 캘린더 없음
                                     </Text>
                                     <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
-                                        Apple 또는 휴대폰 캘린더에서 일정을 가져올 수 있어요
+                                        기기 캘린더 또는 Google에서 일정을 가져올 수 있어요
                                     </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -391,16 +391,10 @@ export default function ProfileScreen() {
                     >
                         <View style={styles.settingTextWrap}>
                             <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>다크 모드</Text>
-                            <Text style={[styles.settingHint, { color: colors.textSecondary }]}>캘린더와 지도 화면 테마</Text>
+                            <Text style={[styles.settingHint, { color: colors.textSecondary }]}>기기 설정을 기본으로 사용</Text>
                         </View>
                         <View style={styles.settingSwitchWrap}>
-                            <Switch
-                                value={mode === "dark"}
-                                onValueChange={toggleMode}
-                                trackColor={{ false: colors.border, true: colors.selectedDayBg }}
-                                thumbColor="#ffffff"
-                                style={styles.settingSwitch}
-                            />
+                            <ThemeModeSwitch style={styles.settingSwitch} />
                         </View>
                     </CalendarGlassSurface>
                 </View>

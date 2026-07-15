@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState } from "react";
-import { useColorScheme } from "react-native";
+import React, { createContext, useCallback, useContext, useState } from "react";
+import { useColorScheme, type ColorSchemeName } from "react-native";
 
 export type ColorMode = "dark" | "light";
 
@@ -25,7 +25,10 @@ export type AppColors = {
     inputBorder: string;
     inputBorderFocused: string;
     inputPlaceholder: string;
+    switchActive: string;
 };
+
+export const SYSTEM_SWITCH_ACTIVE_COLOR = "#34C759";
 
 const dark: AppColors = {
     background: "#000",
@@ -46,6 +49,7 @@ const dark: AppColors = {
     inputBorder: "rgba(255,255,255,0.11)",
     inputBorderFocused: "rgba(255,255,255,0.32)",
     inputPlaceholder: "rgba(235,235,245,0.34)",
+    switchActive: SYSTEM_SWITCH_ACTIVE_COLOR,
 };
 
 const light: AppColors = {
@@ -67,7 +71,12 @@ const light: AppColors = {
     inputBorder: "rgba(60,60,67,0.14)",
     inputBorderFocused: "rgba(0,0,0,0.36)",
     inputPlaceholder: "rgba(60,60,67,0.34)",
+    switchActive: SYSTEM_SWITCH_ACTIVE_COLOR,
 };
+
+export function resolveSystemColorMode(systemScheme: ColorSchemeName): ColorMode {
+    return systemScheme === "dark" ? "dark" : "light";
+}
 
 type ThemeContextValue = {
     mode: ColorMode;
@@ -79,11 +88,16 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const systemScheme = useColorScheme();
-    const [mode, setMode] = useState<ColorMode>(
-        systemScheme === "light" ? "light" : "dark"
-    );
+    const systemMode = resolveSystemColorMode(systemScheme);
+    const [overrideMode, setOverrideMode] = useState<ColorMode | null>(null);
+    const mode = overrideMode ?? systemMode;
 
-    const toggleMode = () => setMode((m) => (m === "dark" ? "light" : "dark"));
+    const toggleMode = useCallback(() => {
+        setOverrideMode((currentOverride) => {
+            const currentMode = currentOverride ?? systemMode;
+            return currentMode === "dark" ? "light" : "dark";
+        });
+    }, [systemMode]);
     const colors = mode === "dark" ? dark : light;
 
     return (
