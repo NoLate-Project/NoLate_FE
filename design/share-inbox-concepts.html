@@ -1,0 +1,838 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NoLate 공유함 디자인 시안</title>
+  <style>
+    :root {
+      --ink: #111113;
+      --muted: #6f737c;
+      --subtle: #9ba0a8;
+      --line: #e5e7ec;
+      --soft: #f6f7f9;
+      --blue: #2f80ff;
+      --green: #34c759;
+      --red: #ff3b30;
+      --amber: #ff9500;
+      --purple: #5856d6;
+      --shadow: 0 24px 70px rgba(15, 23, 42, 0.14);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #f2f4f7;
+    }
+
+    main {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 42px 28px 64px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 24px;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 720px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+      font-weight: 650;
+    }
+
+    .principles {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .principles span {
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 17px;
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(300px, 1fr));
+      gap: 22px;
+      align-items: start;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .panel h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      font-weight: 650;
+    }
+
+    .phone {
+      position: relative;
+      width: min(100%, 390px);
+      aspect-ratio: 390 / 844;
+      margin: 0 auto;
+      overflow: hidden;
+      border-radius: 42px;
+      background: #fff;
+      border: 10px solid #111;
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .island {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      width: 126px;
+      height: 38px;
+      transform: translateX(-50%);
+      border-radius: 20px;
+      background: #050505;
+      z-index: 4;
+    }
+
+    .status {
+      position: absolute;
+      top: 18px;
+      left: 30px;
+      right: 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 17px;
+      font-weight: 900;
+      z-index: 3;
+    }
+
+    .bars {
+      color: #111;
+      font-size: 13px;
+    }
+
+    .page {
+      position: absolute;
+      inset: 64px 0 0;
+      padding: 0 22px 28px;
+    }
+
+    .topbar {
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .circle-button {
+      width: 44px;
+      height: 44px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 28px;
+      font-weight: 400;
+    }
+
+    .title {
+      font-size: 23px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .icon-button {
+      width: 44px;
+      height: 44px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .segmented {
+      height: 42px;
+      border-radius: 21px;
+      background: #f0f2f5;
+      padding: 4px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+
+    .segment {
+      display: grid;
+      place-items: center;
+      border-radius: 17px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .segment.active {
+      color: var(--ink);
+      background: #fff;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+    }
+
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .summary {
+      min-height: 70px;
+      border-radius: 16px;
+      background: #f8fafc;
+      border: 1px solid #edf0f4;
+      padding: 11px;
+    }
+
+    .summary strong {
+      display: block;
+      font-size: 19px;
+      font-weight: 950;
+      line-height: 1;
+      margin-bottom: 7px;
+    }
+
+    .summary span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+
+    .section-title {
+      margin: 18px 0 9px;
+      font-size: 15px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .invite-card {
+      border-radius: 20px;
+      border: 1px solid #dce8ff;
+      background: #eef5ff;
+      padding: 15px;
+      margin-bottom: 12px;
+    }
+
+    .invite-top,
+    .row-top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 21px;
+      background: #dfeaff;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      font-weight: 950;
+      flex: 0 0 auto;
+    }
+
+    .avatar.green {
+      color: var(--green);
+      background: #e3f7e9;
+    }
+
+    .avatar.amber {
+      color: var(--amber);
+      background: #fff3dc;
+    }
+
+    .row-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .row-title {
+      font-size: 16px;
+      font-weight: 950;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: 0;
+    }
+
+    .row-meta {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      height: 26px;
+      border-radius: 13px;
+      padding: 0 9px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+
+    .badge.blue {
+      color: var(--blue);
+      border-color: #bfdbff;
+      background: #fff;
+    }
+
+    .invite-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 13px;
+    }
+
+    .button {
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      font-size: 14px;
+      font-weight: 950;
+    }
+
+    .button.primary {
+      background: var(--blue);
+      color: #fff;
+    }
+
+    .button.secondary {
+      background: #fff;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .share-row {
+      min-height: 70px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 12px;
+    }
+
+    .resource-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 5px;
+      background: var(--blue);
+      flex: 0 0 auto;
+    }
+
+    .resource-dot.green { background: var(--green); }
+    .resource-dot.amber { background: var(--amber); }
+    .resource-dot.purple { background: var(--purple); }
+
+    .chevron {
+      color: var(--subtle);
+      font-size: 24px;
+      font-weight: 400;
+    }
+
+    .owner-line {
+      height: 86px;
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .people {
+      display: flex;
+      align-items: center;
+      margin-top: 8px;
+    }
+
+    .mini-avatar {
+      width: 25px;
+      height: 25px;
+      border-radius: 13px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--blue);
+      border: 2px solid #fff;
+      font-size: 10px;
+      font-weight: 950;
+      margin-left: -7px;
+    }
+
+    .mini-avatar:first-child {
+      margin-left: 0;
+    }
+
+    .mini-avatar.green { background: var(--green); }
+    .mini-avatar.amber { background: var(--amber); }
+    .mini-avatar.purple { background: var(--purple); }
+
+    .link-panel {
+      border-radius: 20px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 15px;
+      margin-top: 12px;
+    }
+
+    .link-value {
+      margin-top: 10px;
+      height: 46px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .detail-card {
+      border-radius: 24px;
+      background: linear-gradient(180deg, #eef5ff, #fff);
+      border: 1px solid #dbe8ff;
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+
+    .detail-icon {
+      width: 54px;
+      height: 54px;
+      border-radius: 27px;
+      background: #dceaff;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      font-size: 27px;
+      margin-bottom: 14px;
+    }
+
+    .detail-name {
+      font-size: 25px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .detail-sub {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+      font-weight: 750;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .stat {
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid #e7edf8;
+      padding: 12px;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      margin-bottom: 7px;
+    }
+
+    .stat strong {
+      font-size: 17px;
+      font-weight: 950;
+    }
+
+    .member-row {
+      height: 62px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 9px;
+    }
+
+    .danger {
+      margin-top: 14px;
+      height: 50px;
+      border-radius: 16px;
+      border: 1px solid #ffd0cc;
+      background: #fff7f6;
+      color: #d70015;
+      display: grid;
+      place-items: center;
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .note {
+      margin-top: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      padding: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      font-weight: 700;
+    }
+
+    .note strong {
+      color: var(--ink);
+    }
+
+    @media (max-width: 1060px) {
+      .grid { grid-template-columns: 1fr; }
+      header { align-items: flex-start; flex-direction: column; }
+      .principles { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>NoLate 공유함 디자인 시안</h1>
+        <p class="lead">
+          공유함은 받은 초대, 공유받은 캘린더/카테고리, 내가 만든 공유 링크를 정리하는 공간으로 잡았습니다.
+          캘린더 메인에서는 우측 하단 버튼으로 들어오고, 안에서는 빠른 수락과 관리가 먼저 보이게 합니다.
+        </p>
+      </div>
+      <div class="principles">
+        <span>처리할 초대 우선</span>
+        <span>받은 것 / 보낸 것 분리</span>
+        <span>리스트 중심</span>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>1. 공유함 홈</h2>
+        <p>기본 진입 화면입니다. 보류 중인 초대가 있으면 최상단에 크게 보여줍니다.</p>
+        <div class="phone">
+          <div class="screen">
+            <div class="status"><span>1:43</span><span class="bars">••• Wi-Fi ▰</span></div>
+            <div class="island"></div>
+            <div class="page">
+              <div class="topbar">
+                <div class="circle-button">‹</div>
+                <div class="title">공유함</div>
+                <div class="icon-button">⌕</div>
+              </div>
+
+              <div class="segmented">
+                <div class="segment active">받은 공유</div>
+                <div class="segment">내가 공유</div>
+                <div class="segment">링크</div>
+              </div>
+
+              <div class="summary-strip">
+                <div class="summary"><strong>2</strong><span>대기 중<br />초대</span></div>
+                <div class="summary"><strong>5</strong><span>공유받은<br />항목</span></div>
+                <div class="summary"><strong>3</strong><span>활성<br />링크</span></div>
+              </div>
+
+              <div class="section-title">대기 중인 초대</div>
+              <div class="invite-card">
+                <div class="invite-top">
+                  <div class="avatar">민</div>
+                  <div class="row-body">
+                    <div class="row-title">프로젝트 마감 캘린더</div>
+                    <div class="row-meta">민지님이 카테고리 공유 · 보기 권한</div>
+                  </div>
+                  <div class="badge blue">D-2</div>
+                </div>
+                <div class="invite-actions">
+                  <div class="button secondary">거절</div>
+                  <div class="button primary">수락</div>
+                </div>
+              </div>
+
+              <div class="section-title">공유받은 항목</div>
+              <div class="list">
+                <div class="share-row">
+                  <div class="row-top">
+                    <div class="resource-dot green"></div>
+                    <div class="row-body">
+                      <div class="row-title">업무</div>
+                      <div class="row-meta">카테고리 · 지훈 외 3명</div>
+                    </div>
+                    <div class="badge">보기</div>
+                  </div>
+                </div>
+                <div class="share-row">
+                  <div class="row-top">
+                    <div class="resource-dot blue"></div>
+                    <div class="row-body">
+                      <div class="row-title">오전 팀 싱크</div>
+                      <div class="row-meta">일정 · 오늘 10:00</div>
+                    </div>
+                    <div class="badge">댓글</div>
+                  </div>
+                </div>
+                <div class="share-row">
+                  <div class="row-top">
+                    <div class="resource-dot amber"></div>
+                    <div class="row-body">
+                      <div class="row-title">가족 일정</div>
+                      <div class="row-meta">카테고리 · 편집 가능</div>
+                    </div>
+                    <div class="chevron">›</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="note">
+          <strong>핵심:</strong> 공유함 홈은 “받은 공유”를 기본 탭으로 둡니다.
+          사용자가 들어오는 가장 흔한 이유가 초대 수락/확인이기 때문입니다.
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>2. 내가 공유</h2>
+        <p>내가 열어둔 공유와 링크 상태를 보는 탭입니다. 회수/재공유가 빠르게 보여야 합니다.</p>
+        <div class="phone">
+          <div class="screen">
+            <div class="status"><span>1:43</span><span class="bars">••• Wi-Fi ▰</span></div>
+            <div class="island"></div>
+            <div class="page">
+              <div class="topbar">
+                <div class="circle-button">‹</div>
+                <div class="title">공유함</div>
+                <div class="icon-button">＋</div>
+              </div>
+
+              <div class="segmented">
+                <div class="segment">받은 공유</div>
+                <div class="segment active">내가 공유</div>
+                <div class="segment">링크</div>
+              </div>
+
+              <div class="section-title">공유 중인 항목</div>
+              <div class="owner-line">
+                <div class="avatar green">업</div>
+                <div class="row-body">
+                  <div class="row-title">업무</div>
+                  <div class="row-meta">카테고리 · 4명 참여</div>
+                  <div class="people">
+                    <div class="mini-avatar">나</div>
+                    <div class="mini-avatar green">민</div>
+                    <div class="mini-avatar amber">훈</div>
+                    <div class="mini-avatar purple">+2</div>
+                  </div>
+                </div>
+                <div class="chevron">›</div>
+              </div>
+              <div class="owner-line">
+                <div class="avatar">팀</div>
+                <div class="row-body">
+                  <div class="row-title">오전 팀 싱크</div>
+                  <div class="row-meta">일정 · 댓글 권한 2명</div>
+                  <div class="people">
+                    <div class="mini-avatar">나</div>
+                    <div class="mini-avatar green">서</div>
+                    <div class="mini-avatar amber">윤</div>
+                  </div>
+                </div>
+                <div class="chevron">›</div>
+              </div>
+
+              <div class="section-title">활성 링크</div>
+              <div class="link-panel">
+                <div class="row-top">
+                  <div class="resource-dot green"></div>
+                  <div class="row-body">
+                    <div class="row-title">업무 카테고리 초대</div>
+                    <div class="row-meta">3일 뒤 만료 · 1/5명 수락</div>
+                  </div>
+                  <div class="badge blue">활성</div>
+                </div>
+                <div class="link-value">nolate://share/8f2b...a19</div>
+              </div>
+              <div class="link-panel">
+                <div class="row-top">
+                  <div class="resource-dot blue"></div>
+                  <div class="row-body">
+                    <div class="row-title">팀 싱크 초대</div>
+                    <div class="row-meta">오늘 23:59 만료 · 0/1명 수락</div>
+                  </div>
+                  <div class="badge">복사</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="note">
+          <strong>핵심:</strong> 내가 만든 공유는 멤버 수와 링크 상태가 먼저 보여야 합니다.
+          새 공유 생성은 여기서도 가능하지만, 기본 생성 위치는 일정 상세/카테고리 row가 더 자연스럽습니다.
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>3. 공유 상세</h2>
+        <p>공유 항목을 눌렀을 때 멤버, 권한, 링크 회수를 관리하는 화면입니다.</p>
+        <div class="phone">
+          <div class="screen">
+            <div class="status"><span>1:43</span><span class="bars">••• Wi-Fi ▰</span></div>
+            <div class="island"></div>
+            <div class="page">
+              <div class="topbar">
+                <div class="circle-button">‹</div>
+                <div class="title">공유 상세</div>
+                <div class="icon-button">⋯</div>
+              </div>
+
+              <div class="detail-card">
+                <div class="detail-icon">▦</div>
+                <div class="detail-name">업무</div>
+                <div class="detail-sub">카테고리 공유 · 이 카테고리에 포함된 일정 12개가 함께 표시됩니다.</div>
+                <div class="stat-grid">
+                  <div class="stat"><span>권한</span><strong>보기</strong></div>
+                  <div class="stat"><span>참여자</span><strong>4명</strong></div>
+                  <div class="stat"><span>활성 링크</span><strong>1개</strong></div>
+                  <div class="stat"><span>만료</span><strong>3일 뒤</strong></div>
+                </div>
+              </div>
+
+              <div class="section-title">멤버</div>
+              <div class="member-row">
+                <div class="avatar">나</div>
+                <div class="row-body">
+                  <div class="row-title">나</div>
+                  <div class="row-meta">소유자</div>
+                </div>
+                <div class="badge">Owner</div>
+              </div>
+              <div class="member-row">
+                <div class="avatar green">민</div>
+                <div class="row-body">
+                  <div class="row-title">민지</div>
+                  <div class="row-meta">어제 수락</div>
+                </div>
+                <div class="badge">보기</div>
+              </div>
+              <div class="member-row">
+                <div class="avatar amber">훈</div>
+                <div class="row-body">
+                  <div class="row-title">지훈</div>
+                  <div class="row-meta">초대 링크로 참여</div>
+                </div>
+                <div class="badge">편집</div>
+              </div>
+
+              <div class="section-title">초대 링크</div>
+              <div class="link-panel">
+                <div class="row-top">
+                  <div class="resource-dot green"></div>
+                  <div class="row-body">
+                    <div class="row-title">활성 링크</div>
+                    <div class="row-meta">1/5명 수락 · 3일 뒤 만료</div>
+                  </div>
+                  <div class="badge blue">복사</div>
+                </div>
+              </div>
+
+              <div class="danger">공유 링크 회수</div>
+            </div>
+          </div>
+        </div>
+        <div class="note">
+          <strong>핵심:</strong> 상세 화면은 공유 회수/권한 변경 같은 위험 작업이 모이는 곳입니다.
+          리스트에서는 가볍게 보고, 상세에서만 강한 관리 액션을 보여주는 구조가 안전합니다.
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
