@@ -5,12 +5,11 @@ import {
     Alert,
     AppState,
     ActionSheetIOS,
-    type EmitterSubscription,
+    BackHandler,
     Image,
     Keyboard,
     KeyboardAvoidingView,
     LayoutChangeEvent,
-    Modal,
     Platform,
     Pressable,
     ScrollView,
@@ -38,21 +37,24 @@ import Reanimated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import {
-    addNoLateAudioSpectrumListener,
-    startNoLateAudioSpectrum,
-    stopNoLateAudioSpectrum,
-} from "../../../audio/NoLateAudioSpectrum";
 import { useTheme } from "../../../theme/ThemeContext";
+import {
+    ADD_HANDOFF_MOTION,
+    ADD_MENU_SOURCE,
+    lerpAddHandoffValue,
+    resolveAddHandoffCloseDuration,
+} from "../../addHandoffMotion";
 import type { QuickScheduleMediaInput } from "../../quickInputExtraction";
+import { finalizeQuickScheduleRecording } from "../../quickInputRecording";
 import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
 import { consumeRoutePlannerResult, setRoutePlannerInitial, type RoutePlannerPayload } from "../../routePlannerSession";
 import { getRouteInfoFromRoute } from "../../routeInfo";
-import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 import LocationInputRow from "./LocationInputRow";
+import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
 
 type Props = {
     visible: boolean;
+    prewarm?: boolean;
     onClose: () => void;
     onCloseStart?: () => void;
     onAnalyze: (text: string, media?: QuickScheduleMediaInput) => Promise<ScheduleParseResult>;
@@ -62,17 +64,14 @@ type Props = {
     sourceTopOffset?: number;
     sourceWidth?: number;
     sourceHeight?: number;
-    sourceContent?: "toolbar" | "addMenu";
-    qaInitialFlowStep?: FlowStep;
-    qaInitialPreviewDraft?: PreviewDraft | null;
-    qaInitialEditingField?: PreviewField | null;
-    qaInitialInputMode?: InputMode;
-    qaInitialAnalysisProgress?: number;
-    qaInitialVoiceRecording?: boolean;
-    qaInitialVoiceDurationMillis?: number;
-    qaInitialVoiceMeterLevel?: number;
+    sourceRightOffset?: number;
+    closeTargetWidth?: number;
+    onMorphReady?: () => void;
     qaAutoCloseAfterMs?: number;
+    morphPresenterRef?: React.MutableRefObject<QuickScheduleMorphPresenter | null>;
 };
+
+export type QuickScheduleMorphPresenter = () => boolean;
 
 type InputMode = "text" | "photo" | "voice";
 type FlowStep = "input" | "analyzing" | "analysisError" | "preview" | "edit" | "saving" | "saved";
@@ -101,18 +100,14 @@ type PreviewDraft = {
 const QUICK_TEXT_LIMIT = 300;
 const BLUE = "#246BFE";
 const OPEN_START_PROGRESS = 0;
-const OPEN_DURATION_MS = 420;
-const CLOSE_DURATION_MS = 300;
+const PREWARM_PRESENTATION_OPACITY = 0.001;
+const OPEN_DURATION_MS = ADD_HANDOFF_MOTION.quickOpenMs;
 const CLOSE_SURFACE_DELAY_MS = 0;
-const COLLAPSED_TOOLBAR_WIDTH = 150;
-const COLLAPSED_TOOLBAR_HEIGHT = 44;
+const CLOSE_TARGET_WIDTH = 150;
+const CLOSE_TARGET_HEIGHT = 44;
 const EXPANDED_CARD_RADIUS = 38;
-const OPEN_EASING = ReanimatedEasing.bezier(0.18, 0.82, 0.2, 1);
-const CLOSE_EASING = ReanimatedEasing.bezier(0.3, 0, 0.16, 1);
-const CONTENT_EASING = ReanimatedEasing.bezier(0.2, 0, 0.16, 1);
-const CONTENT_MOUNT_DELAY_MS = 220;
-const CONTENT_OPEN_DELAY_MS = 260;
-const CONTENT_OPEN_DURATION_MS = 120;
+const OPEN_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.openBezier);
+const CLOSE_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.closeBezier);
 const MODE_PILL_SPRING = {
     damping: 18,
     stiffness: 150,
@@ -130,9 +125,19 @@ const CARD_HEIGHT_BY_MODE: Record<InputMode, number> = {
     photo: 410,
     voice: 430,
 };
-const VOICE_SPECTRUM_BAR_COUNT = 36;
+// 실제 음량 샘플은 반원만큼만 보관하고 화면에서는 반대편에 미러링한다.
+// 원형 파형의 무게 중심이 한쪽으로 쏠리지 않아 작은 화면에서도 안정적으로 보인다.
+const VOICE_SPECTRUM_SAMPLE_COUNT = 24;
+const VOICE_SPECTRUM_BAR_COUNT = VOICE_SPECTRUM_SAMPLE_COUNT * 2;
 const VOICE_SPECTRUM_BARS = Array.from({ length: VOICE_SPECTRUM_BAR_COUNT }, (_, index) => index);
-const VOICE_SPECTRUM_SIZE = 132;
+const VOICE_SPECTRUM_SIZE = 142;
+const VOICE_SPECTRUM_INNER_RADIUS = 41;
+const VOICE_SPECTRUM_ATTACK_MS = 82;
+const VOICE_SPECTRUM_RELEASE_MS = 250;
+const VOICE_SPECTRUM_HALO_ATTACK_MS = 110;
+const VOICE_SPECTRUM_HALO_RELEASE_MS = 320;
+const VOICE_SPECTRUM_MOTION_EASING = ReanimatedEasing.bezier(0.2, 0.72, 0.24, 1);
+const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"];
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
@@ -165,7 +170,7 @@ function normalizeVoiceMetering(metering?: number | null) {
 }
 
 function createVoiceMeterHistory(level = 0) {
-    return Array.from({ length: VOICE_SPECTRUM_BAR_COUNT }, (_, index) => {
+    return Array.from({ length: VOICE_SPECTRUM_SAMPLE_COUNT }, (_, index) => {
         if (level <= 0) return 0;
 
         const speechEnvelope = 0.52
@@ -176,30 +181,112 @@ function createVoiceMeterHistory(level = 0) {
 }
 
 function appendVoiceMeterHistory(history: number[], level: number) {
-    const source = history.length === VOICE_SPECTRUM_BAR_COUNT
+    const source = history.length === VOICE_SPECTRUM_SAMPLE_COUNT
         ? history
         : createVoiceMeterHistory();
     const normalized = Math.max(0, Math.min(1, level));
+    const previous = source[source.length - 1] ?? 0;
 
-    return [...source.slice(1), normalized];
+    // 미터링 값은 프레임마다 편차가 크다. 상승은 빠르게 따라가고 하강은 천천히
+    // 놓아주는 필터로 말소리의 박자는 살리면서 막대가 덜컥거리는 느낌을 줄인다.
+    const smoothed = normalized >= previous
+        ? previous * 0.18 + normalized * 0.82
+        : previous * 0.72 + normalized * 0.28;
+
+    return [...source.slice(1), smoothed];
 }
 
-function sanitizeVoiceSpectrumLevels(levels?: number[] | null) {
-    const source = Array.isArray(levels) && levels.length > 0
-        ? levels
-        : createVoiceMeterHistory();
+function VoiceSpectrumBar({
+    angle,
+    color,
+    level,
+}: {
+    angle: string;
+    color: string;
+    level: number;
+}) {
+    const normalizedLevel = Math.max(0, Math.min(1, level));
+    const animatedLevel = useSharedValue(normalizedLevel);
+    const previousLevelRef = useRef(normalizedLevel);
 
-    return Array.from({ length: VOICE_SPECTRUM_BAR_COUNT }, (_, index) => {
-        const sourceIndex = Math.min(source.length - 1, Math.floor(index * source.length / VOICE_SPECTRUM_BAR_COUNT));
-        const value = Number(source[sourceIndex]);
-        if (!Number.isFinite(value)) return 0;
-        return Math.max(0, Math.min(1, value));
+    useEffect(() => {
+        const rising = normalizedLevel >= previousLevelRef.current;
+        previousLevelRef.current = normalizedLevel;
+        animatedLevel.value = withTiming(normalizedLevel, {
+            duration: rising ? VOICE_SPECTRUM_ATTACK_MS : VOICE_SPECTRUM_RELEASE_MS,
+            easing: VOICE_SPECTRUM_MOTION_EASING,
+        });
+    }, [animatedLevel, normalizedLevel]);
+
+    const animatedStyle = useAnimatedStyle(() => {
+        const height = Math.max(3, Math.min(20, 3 + animatedLevel.value * 17));
+        return {
+            height,
+            opacity: 0.3 + animatedLevel.value * 0.7,
+        };
     });
+
+    return (
+        <View
+            style={[
+                styles.voiceSpectrumBarSlot,
+                { transform: [{ rotate: angle }] },
+            ]}
+        >
+            <Reanimated.View
+                style={[
+                    styles.voiceSpectrumBar,
+                    { backgroundColor: color, shadowColor: color },
+                    animatedStyle,
+                ]}
+            />
+        </View>
+    );
 }
 
-function getVoiceWaveformBarHeight(level: number) {
-    return Math.max(4, Math.min(30, 4 + level * 26));
+function VoiceSpectrumHalo({ energy }: { energy: number }) {
+    const normalizedEnergy = Math.max(0, Math.min(1, energy));
+    const animatedEnergy = useSharedValue(normalizedEnergy);
+    const previousEnergyRef = useRef(normalizedEnergy);
+
+    useEffect(() => {
+        const rising = normalizedEnergy >= previousEnergyRef.current;
+        previousEnergyRef.current = normalizedEnergy;
+        animatedEnergy.value = withTiming(normalizedEnergy, {
+            duration: rising ? VOICE_SPECTRUM_HALO_ATTACK_MS : VOICE_SPECTRUM_HALO_RELEASE_MS,
+            easing: VOICE_SPECTRUM_MOTION_EASING,
+        });
+    }, [animatedEnergy, normalizedEnergy]);
+
+    const outerAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: 0.1 + animatedEnergy.value * 0.2,
+        transform: [{ scale: 1 + animatedEnergy.value * 0.1 }],
+    }));
+    const innerAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: 0.12 + animatedEnergy.value * 0.24,
+        transform: [{ scale: 1 + animatedEnergy.value * 0.055 }],
+    }));
+
+    return (
+        <>
+            <Reanimated.View
+                pointerEvents="none"
+                style={[
+                    styles.voiceSpectrumHaloOuter,
+                    outerAnimatedStyle,
+                ]}
+            />
+            <Reanimated.View
+                pointerEvents="none"
+                style={[
+                    styles.voiceSpectrumHaloInner,
+                    innerAnimatedStyle,
+                ]}
+            />
+        </>
+    );
 }
+
 const PREVIEW_FIELDS: Array<{
     key: PreviewField;
     label: string;
@@ -348,6 +435,12 @@ function buildPreviewDraft(
     const parsedTime = parsed.time?.trim();
     const missingFields = parsed.missingFields ?? [];
     const warnings = parsed.warnings ?? [];
+    const hasDateReviewWarning = includesAny(warnings, [
+        "서로 다른 요일",
+        "서로 다른 날짜",
+        "날짜와 요일이 일치하지 않아",
+    ]);
+    const hasTimeReviewWarning = includesAny(warnings, ["서로 다른 시간"]);
     const destinationText = displayPlaceName(parsed.destination);
     const routeInfo = getRouteInfoFromRoute(parsed.route, {
         origin: parsed.origin,
@@ -368,7 +461,14 @@ function buildPreviewDraft(
             ? parsedTime.padStart(5, "0")
             : "19:00";
 
-    if ((!parsedTime && !parsed.startAt) || includesAny([...missingFields, ...warnings], ["time", "시간"])) {
+    if (hasDateReviewWarning) {
+        // OCR이 취소선과 수정된 요일을 동시에 읽은 경우 값이 채워져 있어도 자동 확정하면 안 된다.
+        // 사용자가 날짜 편집 화면을 열어 확인하면 updatePreviewField가 이 배지를 제거한다.
+        badges.date = "날짜 확인 필요";
+    }
+    if (hasTimeReviewWarning) {
+        badges.time = "시간 확인 필요";
+    } else if ((!parsedTime && !parsed.startAt) || includesAny([...missingFields, ...warnings], ["time", "시간"])) {
         badges.time = "시간 미확정";
     }
     if (!destinationText || includesAny([...missingFields, ...warnings], ["place", "location", "destination", "장소", "위치"])) {
@@ -482,6 +582,7 @@ function waitForAudioForegroundReady() {
 
 export default function QuickScheduleModal({
     visible,
+    prewarm = false,
     onClose,
     onCloseStart,
     onAnalyze,
@@ -489,46 +590,39 @@ export default function QuickScheduleModal({
     defaultDay,
     defaultCategory = FALLBACK_CATEGORY,
     sourceTopOffset = 4,
-    sourceWidth = 150,
-    sourceHeight = 44,
-    sourceContent = "toolbar",
-    qaInitialFlowStep,
-    qaInitialPreviewDraft = null,
-    qaInitialEditingField = null,
-    qaInitialInputMode = "text",
-    qaInitialAnalysisProgress = 0,
-    qaInitialVoiceRecording = false,
-    qaInitialVoiceDurationMillis = 0,
-    qaInitialVoiceMeterLevel = 0,
+    sourceWidth = ADD_MENU_SOURCE.fallbackWidth,
+    sourceHeight = ADD_MENU_SOURCE.nativeHeight,
+    sourceRightOffset = ADD_MENU_SOURCE.fallbackRightInset,
+    closeTargetWidth = CLOSE_TARGET_WIDTH,
+    onMorphReady,
     qaAutoCloseAfterMs,
+    morphPresenterRef,
 }: Props) {
     const router = useRouter();
     const pathname = usePathname();
     const { colors, mode } = useTheme();
     const { width, height } = useWindowDimensions();
     const insets = useSafeAreaInsets();
-    const [rendered, setRendered] = useState(visible);
+    const [rendered, setRendered] = useState(visible || prewarm);
     const [text, setText] = useState("");
-    const [inputMode, setInputMode] = useState<InputMode>(qaInitialInputMode);
+    const [inputMode, setInputMode] = useState<InputMode>("text");
     const [selectedPhoto, setSelectedPhoto] = useState<ImagePickerAsset | null>(null);
     const [voiceUri, setVoiceUri] = useState<string | null>(null);
-    const [voiceDurationMillis, setVoiceDurationMillis] = useState(qaInitialVoiceDurationMillis);
-    const [isVoiceRecording, setIsVoiceRecording] = useState(qaInitialVoiceRecording);
+    const [voiceDurationMillis, setVoiceDurationMillis] = useState(0);
+    const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+    const [isVoiceFinalizing, setIsVoiceFinalizing] = useState(false);
     const [voiceMeterHistory, setVoiceMeterHistory] = useState(() => (
-        createVoiceMeterHistory(qaInitialVoiceRecording ? qaInitialVoiceMeterLevel : 0)
+        createVoiceMeterHistory(0)
     ));
-    const [voiceSpectrumEnergy, setVoiceSpectrumEnergy] = useState(
-        qaInitialVoiceRecording ? qaInitialVoiceMeterLevel : 0
-    );
-    const [submitting, setSubmitting] = useState(qaInitialFlowStep === "analyzing" || qaInitialFlowStep === "saving");
-    const [isClosingVisual, setIsClosingVisual] = useState(false);
-    const [contentMounted, setContentMounted] = useState(false);
+    const [voiceSpectrumEnergy, setVoiceSpectrumEnergy] = useState(0);
+    const [submitting, setSubmitting] = useState(false);
+    const [cardRasterized, setCardRasterized] = useState(false);
+    const [contentMounted, setContentMounted] = useState(visible || prewarm);
     const [modeLayouts, setModeLayouts] = useState<Partial<Record<InputMode, TabLayout>>>({});
-    const [flowStep, setFlowStep] = useState<FlowStep>(qaInitialFlowStep ?? "input");
-    const [analysisProgress, setAnalysisProgress] = useState(qaInitialAnalysisProgress);
+    const [flowStep, setFlowStep] = useState<FlowStep>("input");
     const [analysisError, setAnalysisError] = useState("");
-    const [previewDraft, setPreviewDraft] = useState<PreviewDraft | null>(qaInitialPreviewDraft);
-    const [editingField, setEditingField] = useState<PreviewField | null>(qaInitialEditingField);
+    const [previewDraft, setPreviewDraft] = useState<PreviewDraft | null>(null);
+    const [editingField, setEditingField] = useState<PreviewField | null>(null);
     const [editingValue, setEditingValue] = useState("");
     const [timeEditMode, setTimeEditMode] = useState<TimeEditMode>("picker");
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
@@ -538,31 +632,42 @@ export default function QuickScheduleModal({
         durationMillis: voiceDurationMillis,
     };
     const progress = useSharedValue(0);
-    const contentProgress = useSharedValue(0);
+    const closingPhase = useSharedValue(0);
+    const presentationOpacity = useSharedValue(
+        visible && !prewarm ? 1 : PREWARM_PRESENTATION_OPACITY
+    );
+    const presentationStyle = useAnimatedStyle(() => ({
+        opacity: presentationOpacity.value,
+    }));
     const modeIndicatorX = useSharedValue(0);
     const modeIndicatorWidth = useSharedValue(0);
     const inputRef = useRef<TextInput>(null);
     const audioRecordingRef = useRef<Audio.Recording | null>(null);
     const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const audioSpectrumSubscriptionRef = useRef<EmitterSubscription | null>(null);
-    const nativeSpectrumFrameSeenRef = useRef(false);
     const closingRef = useRef(false);
-    const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const analysisTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const openHandoffFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
+    const seedHasLayoutRef = useRef(false);
+    const openStartedRef = useRef(false);
+    const openCycleRef = useRef(0);
+    const visibleRef = useRef(visible);
+    const closeFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const closeFinishedRef = useRef(false);
     const routePlannerAwayRef = useRef(false);
     const routePlannerFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    if (
+        visible ||
+        (!openStartedRef.current && openHandoffFrameRef.current === null)
+    ) {
+        visibleRef.current = visible;
+    }
     const cardWidth = Math.min(width - 60, 348);
-    const sourceRight = width - 16;
-    const isClosingSeedVisual = isClosingVisual || closingRef.current;
-    const isClosingToToolbar = isClosingSeedVisual && sourceContent === "addMenu";
-    const morphSourceWidth = isClosingToToolbar ? COLLAPSED_TOOLBAR_WIDTH : sourceWidth;
-    const morphSourceHeight = isClosingToToolbar ? COLLAPSED_TOOLBAR_HEIGHT : sourceHeight;
-    const morphSourceContent = isClosingToToolbar ? "toolbar" : sourceContent;
-    const visibleSeedContent: "toolbar" | "addMenu" | "none" =
-        isClosingToToolbar
-            ? "none"
-            : (isClosingSeedVisual ? "none" : (sourceContent === "addMenu" ? "none" : sourceContent));
-    const sourceLeft = sourceRight - morphSourceWidth;
+    const sourceRight = width - sourceRightOffset;
+    const openSourceWidth = sourceWidth;
+    const openSourceHeight = sourceHeight;
+    const openSourceLeft = sourceRight - openSourceWidth;
+    const closeSourceWidth = closeTargetWidth;
+    const closeSourceHeight = CLOSE_TARGET_HEIGHT;
+    const closeSourceLeft = sourceRight - closeSourceWidth;
     const sourceTop = insets.top + sourceTopOffset;
     const cardTop = sourceTop;
     const targetCardHeight = flowStep === "input"
@@ -574,21 +679,8 @@ export default function QuickScheduleModal({
     );
     const expandedCardHeight = useSharedValue(cardHeight);
     const cardLeft = (width - cardWidth) / 2;
-    const sourceRadius = Math.min(morphSourceHeight / 2, 26);
-    const openingFromAddMenu = morphSourceContent === "addMenu";
-    const firstStretchWidth = Math.min(cardWidth, morphSourceWidth + (openingFromAddMenu ? 24 : 18));
-    const secondStretchWidth = Math.min(cardWidth, morphSourceWidth + (openingFromAddMenu ? 58 : 42));
-    const bridgeWidth = Math.min(cardWidth, morphSourceWidth + (openingFromAddMenu ? 92 : 72));
-    const bodyWidth = Math.min(cardWidth, Math.max(bridgeWidth, cardWidth - (openingFromAddMenu ? 84 : 112)));
-    const nearFinalWidth = Math.min(cardWidth, Math.max(bodyWidth, cardWidth - (openingFromAddMenu ? 30 : 38)));
-    const firstStretchHeight = Math.min(cardHeight, morphSourceHeight + (openingFromAddMenu ? 18 : 16));
-    const secondStretchHeight = Math.min(cardHeight, morphSourceHeight + (openingFromAddMenu ? 56 : 42));
-    const bridgeHeight = Math.min(cardHeight, morphSourceHeight + (openingFromAddMenu ? 116 : 96));
-    const bodyHeight = Math.min(cardHeight, Math.max(bridgeHeight, cardHeight * (openingFromAddMenu ? 0.46 : 0.34)));
-    const nearFinalHeight = Math.min(cardHeight, Math.max(bodyHeight, cardHeight - (openingFromAddMenu ? 48 : 62)));
-    const morphFrameRange = openingFromAddMenu
-        ? [0, 0.08, 0.22, 0.44, 0.66, 0.86, 1]
-        : [0, 0.16, 0.34, 0.54, 0.72, 0.9, 1];
+    const openSourceRadius = Math.min(openSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
+    const closeSourceRadius = Math.min(closeSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
 
     const previewRouteInfo = useMemo(() => getPreviewDraftRouteInfo(previewDraft), [previewDraft]);
     const notificationRouteReady = !!previewRouteInfo;
@@ -623,51 +715,10 @@ export default function QuickScheduleModal({
         }
     }, []);
 
-    const detachAudioSpectrumListener = useCallback(() => {
-        audioSpectrumSubscriptionRef.current?.remove();
-        audioSpectrumSubscriptionRef.current = null;
-        nativeSpectrumFrameSeenRef.current = false;
-    }, []);
-
-    const stopNativeAudioSpectrumSession = useCallback(() => {
-        detachAudioSpectrumListener();
-        stopNoLateAudioSpectrum();
-    }, [detachAudioSpectrumListener]);
-
-    const startNativeAudioSpectrumSession = useCallback(() => {
-        detachAudioSpectrumListener();
-        nativeSpectrumFrameSeenRef.current = false;
-
-        const subscription = addNoLateAudioSpectrumListener((frame) => {
-            nativeSpectrumFrameSeenRef.current = true;
-            const preferredLevels = frame.bands && frame.bands.length > 0
-                ? frame.bands
-                : frame.waveform;
-            setVoiceMeterHistory(sanitizeVoiceSpectrumLevels(preferredLevels));
-            const rms = typeof frame.rms === "number" ? frame.rms : 0;
-            const peak = typeof frame.peak === "number" ? frame.peak : 0;
-            setVoiceSpectrumEnergy(Math.max(0, Math.min(1, Math.max(rms, peak * 0.72))));
-        });
-
-        if (!subscription) return;
-
-        audioSpectrumSubscriptionRef.current = subscription;
-        void startNoLateAudioSpectrum(VOICE_SPECTRUM_BAR_COUNT)
-            .then((result) => {
-                if (!result.running) {
-                    detachAudioSpectrumListener();
-                }
-            })
-            .catch(() => {
-                detachAudioSpectrumListener();
-            });
-    }, [detachAudioSpectrumListener]);
-
-    const stopActiveRecording = useCallback((preserveRecording = false) => {
+    const stopActiveRecording = useCallback(async (preserveRecording = false): Promise<string | null> => {
         const recorder = audioRecordingRef.current;
         audioRecordingRef.current = null;
         clearVoiceTimer();
-        stopNativeAudioSpectrumSession();
         setIsVoiceRecording(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
         setVoiceSpectrumEnergy(0);
@@ -678,48 +729,58 @@ export default function QuickScheduleModal({
         }
 
         if (!recorder) {
-            void Audio.setAudioModeAsync({
+            await Audio.setAudioModeAsync({
                 allowsRecordingIOS: false,
                 playsInSilentModeIOS: true,
             }).catch(() => undefined);
-            return;
+            return null;
         }
 
-        void recorder.stopAndUnloadAsync()
-            .then(() => {
-                const recordedUri = recorder.getURI();
-                if (preserveRecording && recordedUri) {
-                    setVoiceUri(recordedUri);
-                }
-            })
-            .catch(() => undefined)
-            .finally(() => {
-                void Audio.setAudioModeAsync({
-                    allowsRecordingIOS: false,
-                    playsInSilentModeIOS: true,
-                }).catch(() => undefined);
-            });
-    }, [clearVoiceTimer, stopNativeAudioSpectrumSession]);
+        try {
+            // stopAndUnloadAsync가 끝나기 전에 getURI를 읽거나 분석 버튼을 활성화하면,
+            // Speech가 아직 닫히지 않은 m4a를 읽어 decode 실패가 날 수 있다.
+            if (!preserveRecording) {
+                await recorder.stopAndUnloadAsync();
+                return null;
+            }
+
+            const recordedUri = await finalizeQuickScheduleRecording(recorder);
+            setVoiceUri(recordedUri);
+            return recordedUri;
+        } catch (error) {
+            // 화면 닫기나 입력 모드 변경처럼 녹음을 버리는 경로에서는 저장 실패를 사용자에게
+            // 노출하지 않는다. 사용자가 중지 버튼으로 보존을 요청한 경우에만 호출자가 처리한다.
+            if (preserveRecording) throw error;
+            return null;
+        } finally {
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: false,
+                playsInSilentModeIOS: true,
+            }).catch(() => undefined);
+        }
+    }, [clearVoiceTimer]);
 
     const finishClose = useCallback((shouldNotifyClose: boolean) => {
-        if (analysisTimerRef.current) {
-            clearInterval(analysisTimerRef.current);
-            analysisTimerRef.current = null;
+        if (closeFinishedRef.current) return;
+        closeFinishedRef.current = true;
+        if (closeFinishTimerRef.current) {
+            clearTimeout(closeFinishTimerRef.current);
+            closeFinishTimerRef.current = null;
         }
-        setRendered(false);
+        setRendered(prewarm);
         setText("");
         setInputMode("text");
         setSelectedPhoto(null);
         setVoiceUri(null);
         setVoiceDurationMillis(0);
         setIsVoiceRecording(false);
+        setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
         setVoiceSpectrumEnergy(0);
         setSubmitting(false);
-        setIsClosingVisual(false);
-        setContentMounted(false);
+        setCardRasterized(false);
+        setContentMounted(prewarm);
         setFlowStep("input");
-        setAnalysisProgress(0);
         setAnalysisError("");
         setPreviewDraft(null);
         setEditingField(null);
@@ -728,6 +789,8 @@ export default function QuickScheduleModal({
         setRoutePlannerSessionId(undefined);
         setRoutePlannerHidden(false);
         routePlannerAwayRef.current = false;
+        openStartedRef.current = false;
+        presentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
         if (routePlannerFallbackTimerRef.current) {
             clearTimeout(routePlannerFallbackTimerRef.current);
             routePlannerFallbackTimerRef.current = null;
@@ -736,29 +799,36 @@ export default function QuickScheduleModal({
         if (shouldNotifyClose) {
             onClose();
         }
-    }, [onClose]);
+    }, [onClose, presentationOpacity, prewarm]);
 
     const runCloseAnimation = useCallback((shouldNotifyClose = false) => {
         Keyboard.dismiss();
-        stopActiveRecording();
-        if (openTimerRef.current) {
-            clearTimeout(openTimerRef.current);
-            openTimerRef.current = null;
+        if (
+            audioRecordingRef.current ||
+            isVoiceRecording ||
+            isVoiceFinalizing ||
+            voiceUri
+        ) {
+            void stopActiveRecording();
         }
-        setIsClosingVisual(true);
+        if (openHandoffFrameRef.current !== null) {
+            cancelAnimationFrame(openHandoffFrameRef.current);
+            openHandoffFrameRef.current = null;
+        }
+        if (closeFinishTimerRef.current) {
+            clearTimeout(closeFinishTimerRef.current);
+            closeFinishTimerRef.current = null;
+        }
+        closeFinishedRef.current = false;
+        closingPhase.value = 1;
+        const closeDuration = resolveAddHandoffCloseDuration(progress.value);
         cancelAnimation(progress);
-        cancelAnimation(contentProgress);
-        progress.value = progress.value > 0.08 ? progress.value : 1;
-        contentProgress.value = withTiming(0, {
-            duration: 120,
-            easing: CONTENT_EASING,
-        });
         progress.value = withDelay(
             CLOSE_SURFACE_DELAY_MS,
             withTiming(
                 0,
                 {
-                    duration: CLOSE_DURATION_MS,
+                    duration: closeDuration,
                     easing: CLOSE_EASING,
                 },
                 (finished) => {
@@ -768,16 +838,38 @@ export default function QuickScheduleModal({
                 }
             )
         );
-    }, [contentProgress, finishClose, progress, stopActiveRecording]);
+        closeFinishTimerRef.current = setTimeout(() => {
+            finishClose(shouldNotifyClose);
+        }, CLOSE_SURFACE_DELAY_MS + closeDuration + 48);
+    }, [
+        closingPhase,
+        finishClose,
+        isVoiceFinalizing,
+        isVoiceRecording,
+        progress,
+        stopActiveRecording,
+        voiceUri,
+    ]);
 
     const requestClose = useCallback(() => {
         if (submitting || closingRef.current) return;
 
         closingRef.current = true;
-        setIsClosingVisual(true);
         onCloseStart?.();
         runCloseAnimation(true);
     }, [onCloseStart, runCloseAnimation, submitting]);
+
+    useEffect(() => {
+        if (Platform.OS !== "android" || routePlannerHidden || (!visible && !rendered)) {
+            return undefined;
+        }
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            requestClose();
+            return true;
+        });
+        return () => subscription.remove();
+    }, [rendered, requestClose, routePlannerHidden, visible]);
 
     useEffect(() => {
         if (!visible || !qaAutoCloseAfterMs) return undefined;
@@ -786,20 +878,22 @@ export default function QuickScheduleModal({
         return () => clearTimeout(timer);
     }, [qaAutoCloseAfterMs, requestClose, visible]);
 
-    useLayoutEffect(() => {
-        if (!visible) return undefined;
+    const startOpenAnimation = useCallback((openCycle: number) => {
+        if (
+            !visibleRef.current ||
+            openCycle !== openCycleRef.current ||
+            openStartedRef.current ||
+            closingRef.current
+        ) return;
 
-        closingRef.current = false;
-        setIsClosingVisual(false);
-        setRendered(true);
-        cancelAnimation(progress);
-        cancelAnimation(contentProgress);
-        progress.value = OPEN_START_PROGRESS;
-        contentProgress.value = 0;
-        if (openTimerRef.current) {
-            clearTimeout(openTimerRef.current);
-            openTimerRef.current = null;
-        }
+        openStartedRef.current = true;
+        // Let the card leave the menu on the same compositor clock as the
+        // ownership crossfade. Holding geometry until the native renderer was
+        // gone produced two visibly blank white frames after row selection.
+        presentationOpacity.value = withTiming(1, {
+            duration: ADD_HANDOFF_MOTION.ownershipCrossfadeMs,
+            easing: ReanimatedEasing.linear,
+        });
         progress.value = withTiming(
             1,
             {
@@ -807,33 +901,170 @@ export default function QuickScheduleModal({
                 easing: OPEN_EASING,
             }
         );
-        openTimerRef.current = setTimeout(() => {
-            setContentMounted(true);
-            openTimerRef.current = null;
-        }, CONTENT_MOUNT_DELAY_MS);
-        contentProgress.value = withDelay(
-            CONTENT_OPEN_DELAY_MS,
-            withTiming(1, {
-                duration: CONTENT_OPEN_DURATION_MS,
-                easing: CONTENT_EASING,
-            })
-        );
+        // Queue both UI-thread animations before asking the native host to
+        // retire, so the source can never disappear one compositor tick early.
+        onMorphReady?.();
+    }, [onMorphReady, presentationOpacity, progress]);
+
+    const presentPrewarmedMorph = useCallback(() => {
+        if (
+            !prewarm ||
+            !rendered ||
+            !contentMounted ||
+            routePlannerHidden ||
+            !seedHasLayoutRef.current ||
+            closingRef.current
+        ) {
+            return false;
+        }
+
+        closeFinishedRef.current = false;
+        visibleRef.current = true;
+        closingRef.current = false;
+        closingPhase.value = 0;
+        cancelAnimation(progress);
+        progress.value = OPEN_START_PROGRESS;
+        openStartedRef.current = false;
+        openCycleRef.current += 1;
+        // The layer is kept compositor-resident at a tiny opacity while idle,
+        // so no extra paint frame is required before starting the handoff.
+        presentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
+        const openCycle = openCycleRef.current;
+        startOpenAnimation(openCycle);
+        return true;
+    }, [
+        closingPhase,
+        contentMounted,
+        presentationOpacity,
+        prewarm,
+        progress,
+        rendered,
+        routePlannerHidden,
+        startOpenAnimation,
+    ]);
+
+    useLayoutEffect(() => {
+        if (!morphPresenterRef) return undefined;
+
+        morphPresenterRef.current = presentPrewarmedMorph;
         return () => {
-            if (openTimerRef.current) {
-                clearTimeout(openTimerRef.current);
-                openTimerRef.current = null;
+            if (morphPresenterRef.current === presentPrewarmedMorph) {
+                morphPresenterRef.current = null;
             }
         };
-    }, [contentProgress, progress, visible]);
+    }, [morphPresenterRef, presentPrewarmedMorph]);
+
+    const scheduleOpenAfterPaint = useCallback((openCycle: number) => {
+        if (
+            !visibleRef.current ||
+            openStartedRef.current ||
+            closingRef.current ||
+            openHandoffFrameRef.current !== null
+        ) return;
+
+        const paintFrame = requestAnimationFrame(() => {
+            if (openHandoffFrameRef.current !== paintFrame) return;
+            openHandoffFrameRef.current = null;
+            startOpenAnimation(openCycle);
+        });
+        openHandoffFrameRef.current = paintFrame;
+    }, [startOpenAnimation]);
+
+    const handleSeedLayout = useCallback((event: LayoutChangeEvent) => {
+        const { width: layoutWidth, height: layoutHeight } = event.nativeEvent.layout;
+        if (layoutWidth <= 0 || layoutHeight <= 0) return;
+
+        seedHasLayoutRef.current = true;
+        if (
+            !visibleRef.current ||
+            openStartedRef.current ||
+            closingRef.current ||
+            openHandoffFrameRef.current !== null
+        ) return;
+
+        const openCycle = openCycleRef.current;
+
+        scheduleOpenAfterPaint(openCycle);
+    }, [scheduleOpenAfterPaint]);
+
+    useLayoutEffect(() => {
+        if (!prewarm || visible) return;
+
+        // Build and lay out the expensive form while the calendar is idle.
+        // A later tap only flips visibility and starts the UI-thread morph.
+        setRendered(true);
+        setContentMounted(true);
+        setCardRasterized(true);
+        if (!openStartedRef.current && !closingRef.current) {
+            presentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
+        }
+    }, [presentationOpacity, prewarm, visible]);
+
+    useLayoutEffect(() => {
+        if (!visible) return undefined;
+
+        // The hidden, pre-composed seed can begin directly from the native
+        // callback. Do not reset that UI-thread animation when the matching
+        // React visibility commit arrives a frame or two later.
+        if (openStartedRef.current) return undefined;
+
+        closingRef.current = false;
+        closeFinishedRef.current = false;
+        openStartedRef.current = false;
+        // Cache the dense form before the first visible morph frame. Toggling
+        // rasterization at animation completion invalidated the layer exactly
+        // when the handoff was meant to settle.
+        setCardRasterized(true);
+        openCycleRef.current += 1;
+        if (closeFinishTimerRef.current) {
+            clearTimeout(closeFinishTimerRef.current);
+            closeFinishTimerRef.current = null;
+        }
+        setRendered(true);
+        // Commit the expensive form before the seed layout starts motion.
+        // This prevents a React mount from consuming the first animation
+        // frames and making the card jump straight to its expanded state.
+        setContentMounted(true);
+        cancelAnimation(progress);
+        closingPhase.value = 0;
+        progress.value = OPEN_START_PROGRESS;
+        presentationOpacity.value = prewarm
+            ? PREWARM_PRESENTATION_OPACITY
+            : 1;
+        if (openHandoffFrameRef.current !== null) {
+            cancelAnimationFrame(openHandoffFrameRef.current);
+            openHandoffFrameRef.current = null;
+        }
+        if (seedHasLayoutRef.current) {
+            scheduleOpenAfterPaint(openCycleRef.current);
+        }
+        return () => {
+            if (openHandoffFrameRef.current !== null) {
+                cancelAnimationFrame(openHandoffFrameRef.current);
+                openHandoffFrameRef.current = null;
+            }
+            if (closeFinishTimerRef.current) {
+                clearTimeout(closeFinishTimerRef.current);
+                closeFinishTimerRef.current = null;
+            }
+        };
+    }, [closingPhase, presentationOpacity, prewarm, progress, scheduleOpenAfterPaint, visible]);
 
     useEffect(() => {
         if (visible || !rendered || closingRef.current) return;
 
+        if (!openStartedRef.current) {
+            if (!prewarm) {
+                setRendered(false);
+                setContentMounted(false);
+            }
+            return;
+        }
+
         closingRef.current = true;
-        setIsClosingVisual(true);
         onCloseStart?.();
         runCloseAnimation(true);
-    }, [onCloseStart, rendered, runCloseAnimation, visible]);
+    }, [onCloseStart, prewarm, rendered, runCloseAnimation, visible]);
 
     const startAnalysis = async () => {
         const normalized = text.trim();
@@ -855,13 +1086,6 @@ export default function QuickScheduleModal({
             setSubmitting(true);
             setAnalysisError("");
             setFlowStep("analyzing");
-            setAnalysisProgress(8);
-            if (analysisTimerRef.current) {
-                clearInterval(analysisTimerRef.current);
-            }
-            analysisTimerRef.current = setInterval(() => {
-                setAnalysisProgress((current) => Math.min(88, current + (current < 55 ? 9 : 4)));
-            }, 180);
 
             const parsed = await onAnalyze(sourceText, {
                 inputMode,
@@ -869,22 +1093,12 @@ export default function QuickScheduleModal({
                 voiceUri: inputMode === "voice" ? voiceUri ?? undefined : undefined,
                 voiceDurationMillis: inputMode === "voice" && voiceUri ? voiceDurationMillis : undefined,
             });
-            if (analysisTimerRef.current) {
-                clearInterval(analysisTimerRef.current);
-                analysisTimerRef.current = null;
-            }
-            setAnalysisProgress(100);
             setTimeout(() => {
                 setPreviewDraft(buildPreviewDraft(parsed, sourceText, defaultDay));
                 setFlowStep("preview");
                 setSubmitting(false);
             }, 220);
         } catch (error) {
-            if (analysisTimerRef.current) {
-                clearInterval(analysisTimerRef.current);
-                analysisTimerRef.current = null;
-            }
-            setAnalysisProgress(0);
             setAnalysisError(error instanceof Error ? error.message : "일정 정보를 분석하지 못했어요");
             setFlowStep("analysisError");
             setSubmitting(false);
@@ -988,11 +1202,10 @@ export default function QuickScheduleModal({
             setRendered(true);
             setContentMounted(true);
             progress.value = 1;
-            contentProgress.value = 1;
             setEditingField("location");
             setFlowStep("edit");
         }, 1400);
-    }, [contentProgress, previewDraft, progress, router, submitting]);
+    }, [previewDraft, progress, router, submitting]);
 
     useEffect(() => {
         if (
@@ -1018,11 +1231,8 @@ export default function QuickScheduleModal({
         setRendered(true);
         setContentMounted(true);
         closingRef.current = false;
-        setIsClosingVisual(false);
         cancelAnimation(progress);
-        cancelAnimation(contentProgress);
         progress.value = 1;
-        contentProgress.value = 1;
         setEditingField(null);
         setEditingValue("");
         setTimeEditMode("picker");
@@ -1031,7 +1241,7 @@ export default function QuickScheduleModal({
         if (result) {
             setPreviewDraft((current) => current ? applyRouteResultToPreviewDraft(current, result) : current);
         }
-    }, [contentProgress, pathname, progress, routePlannerSessionId, visible]);
+    }, [pathname, progress, routePlannerSessionId, visible]);
 
     const savePreview = async () => {
         if (!previewDraft || submitting) return;
@@ -1081,7 +1291,7 @@ export default function QuickScheduleModal({
         if (submitting) return;
 
         Keyboard.dismiss();
-        stopActiveRecording();
+        void stopActiveRecording();
         setInputMode("photo");
 
         try {
@@ -1095,7 +1305,10 @@ export default function QuickScheduleModal({
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ["images"],
                 allowsMultipleSelection: false,
-                quality: 0.85,
+                // 얇은 연필선과 작은 손글씨가 JPEG 재압축에서 뭉개지지 않도록 OCR 입력은
+                // 원본 품질과 현재 에셋 표현(HEIC/JPEG 등)을 우선 사용한다.
+                quality: 1,
+                preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
             });
 
             if (!result.canceled) {
@@ -1110,7 +1323,7 @@ export default function QuickScheduleModal({
         if (submitting) return;
 
         Keyboard.dismiss();
-        stopActiveRecording();
+        void stopActiveRecording();
         setInputMode("photo");
 
         try {
@@ -1124,7 +1337,9 @@ export default function QuickScheduleModal({
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ["images"],
                 allowsEditing: false,
-                quality: 0.85,
+                // 촬영 직후 압축으로 획이 사라지는 것을 피한다. 네이티브 OCR에서 해상도 상한을
+                // 적용하므로 여기서는 인식에 필요한 원본 픽셀을 보존한다.
+                quality: 1,
             });
 
             if (!result.canceled) {
@@ -1139,7 +1354,7 @@ export default function QuickScheduleModal({
         if (submitting) return;
 
         Keyboard.dismiss();
-        stopActiveRecording();
+        void stopActiveRecording();
         setInputMode("photo");
     }, [stopActiveRecording, submitting]);
 
@@ -1147,7 +1362,7 @@ export default function QuickScheduleModal({
         if (submitting) return;
 
         Keyboard.dismiss();
-        stopActiveRecording();
+        void stopActiveRecording();
         setInputMode("photo");
 
         if (Platform.OS === "ios") {
@@ -1174,7 +1389,7 @@ export default function QuickScheduleModal({
     }, [capturePhoto, mode, pickPhotoFromLibrary, stopActiveRecording, submitting]);
 
     const startVoiceRecording = useCallback(async () => {
-        if (submitting || isVoiceRecording || audioRecordingRef.current) return;
+        if (submitting || isVoiceRecording || isVoiceFinalizing || audioRecordingRef.current) return;
 
         Keyboard.dismiss();
         setInputMode("voice");
@@ -1223,7 +1438,6 @@ export default function QuickScheduleModal({
 
             audioRecordingRef.current = recorder;
             setIsVoiceRecording(true);
-            startNativeAudioSpectrumSession();
             voiceTimerRef.current = setInterval(() => {
                 const activeRecorder = audioRecordingRef.current;
                 if (!activeRecorder) return;
@@ -1234,7 +1448,7 @@ export default function QuickScheduleModal({
                             setVoiceDurationMillis(status.durationMillis ?? 0);
                         }
                         const normalizedMetering = normalizeVoiceMetering(status.metering);
-                        if (normalizedMetering !== null && !nativeSpectrumFrameSeenRef.current) {
+                        if (normalizedMetering !== null) {
                             setVoiceMeterHistory((current) => (
                                 appendVoiceMeterHistory(current, normalizedMetering)
                             ));
@@ -1249,18 +1463,31 @@ export default function QuickScheduleModal({
             setIsVoiceRecording(false);
             setVoiceMeterHistory(createVoiceMeterHistory());
             setVoiceSpectrumEnergy(0);
-            stopNativeAudioSpectrumSession();
             void Audio.setAudioModeAsync({
                 allowsRecordingIOS: false,
                 playsInSilentModeIOS: true,
             }).catch(() => undefined);
+            console.warn("[QuickSchedule] Voice recording failed to start.", error);
             Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.");
         }
-    }, [clearVoiceTimer, isVoiceRecording, startNativeAudioSpectrumSession, stopNativeAudioSpectrumSession, submitting]);
+    }, [clearVoiceTimer, isVoiceFinalizing, isVoiceRecording, submitting]);
 
     const stopVoiceRecording = useCallback(async () => {
-        stopActiveRecording(true);
-    }, [stopActiveRecording]);
+        if (isVoiceFinalizing || !audioRecordingRef.current) return;
+
+        setIsVoiceFinalizing(true);
+        try {
+            await stopActiveRecording(true);
+        } catch (error) {
+            setVoiceUri(null);
+            Alert.alert(
+                "녹음 저장 실패",
+                error instanceof Error ? error.message : "녹음 파일을 저장하지 못했습니다. 다시 녹음해주세요."
+            );
+        } finally {
+            setIsVoiceFinalizing(false);
+        }
+    }, [isVoiceFinalizing, stopActiveRecording]);
 
     const handleModePress = useCallback((nextMode: InputMode) => {
         if (nextMode === "photo") {
@@ -1270,13 +1497,13 @@ export default function QuickScheduleModal({
 
         if (nextMode === "voice") {
             if (inputMode !== "voice") {
-                stopActiveRecording();
+                void stopActiveRecording();
             }
             setInputMode("voice");
             return;
         }
 
-        stopActiveRecording();
+        void stopActiveRecording();
         setInputMode(nextMode);
     }, [
         activatePhotoMode,
@@ -1286,14 +1513,14 @@ export default function QuickScheduleModal({
 
     useEffect(() => {
         return () => {
-            stopActiveRecording();
-            if (analysisTimerRef.current) {
-                clearInterval(analysisTimerRef.current);
-                analysisTimerRef.current = null;
-            }
+            void stopActiveRecording();
             if (routePlannerFallbackTimerRef.current) {
                 clearTimeout(routePlannerFallbackTimerRef.current);
                 routePlannerFallbackTimerRef.current = null;
+            }
+            if (closeFinishTimerRef.current) {
+                clearTimeout(closeFinishTimerRef.current);
+                closeFinishTimerRef.current = null;
             }
         };
     }, [stopActiveRecording]);
@@ -1310,127 +1537,166 @@ export default function QuickScheduleModal({
         expandedCardHeight.value = withSpring(cardHeight, CARD_SIZE_SPRING);
     }, [cardHeight, expandedCardHeight]);
 
-    const cardMotionRadiusStyle = useAnimatedStyle(() => ({
-        borderRadius: interpolate(
-            progress.value,
-            [0, 0.34, 0.68, 1],
-            [sourceRadius, Math.max(34, sourceRadius + 10), 46, EXPANDED_CARD_RADIUS]
-        ),
-    }), [sourceRadius]);
+    const cardMotionRadiusStyle = useAnimatedStyle(() => {
+        const motionProgress = progress.value;
+        const finalHeight = expandedCardHeight.value;
+        const closing = closingPhase.value >= 0.5;
+        const activeSourceRadius = closingPhase.value >= 0.5
+            ? closeSourceRadius
+            : openSourceRadius;
+        const activeSourceHeight = closing ? closeSourceHeight : openSourceHeight;
+        const scaleY = lerpAddHandoffValue(
+            activeSourceHeight / finalHeight,
+            1,
+            motionProgress
+        );
+        const visualRadius = lerpAddHandoffValue(
+            activeSourceRadius,
+            EXPANDED_CARD_RADIUS,
+            motionProgress
+        );
+        return {
+            borderRadius: visualRadius / Math.max(scaleY, 0.01),
+        };
+    }, [
+        closeSourceHeight,
+        closeSourceRadius,
+        expandedCardHeight,
+        openSourceHeight,
+        openSourceRadius,
+    ]);
 
-    const cardClipRadiusStyle = useAnimatedStyle(() => ({
-        borderRadius: interpolate(
-            progress.value,
-            [0, 0.34, 0.68, 1],
-            [sourceRadius, Math.max(34, sourceRadius + 10), 46, EXPANDED_CARD_RADIUS]
-        ),
-    }), [sourceRadius]);
+    const cardClipRadiusStyle = useAnimatedStyle(() => {
+        const motionProgress = progress.value;
+        const finalHeight = expandedCardHeight.value;
+        const closing = closingPhase.value >= 0.5;
+        const activeSourceRadius = closingPhase.value >= 0.5
+            ? closeSourceRadius
+            : openSourceRadius;
+        const activeSourceHeight = closing ? closeSourceHeight : openSourceHeight;
+        const scaleY = lerpAddHandoffValue(
+            activeSourceHeight / finalHeight,
+            1,
+            motionProgress
+        );
+        const visualRadius = lerpAddHandoffValue(
+            activeSourceRadius,
+            EXPANDED_CARD_RADIUS,
+            motionProgress
+        );
+        return {
+            borderRadius: visualRadius / Math.max(scaleY, 0.01),
+        };
+    }, [
+        closeSourceHeight,
+        closeSourceRadius,
+        expandedCardHeight,
+        openSourceHeight,
+        openSourceRadius,
+    ]);
 
     const cardMotionStyle = useAnimatedStyle(() => {
         const finalHeight = expandedCardHeight.value;
+        const motionProgress = progress.value;
+        const closing = closingPhase.value >= 0.5;
+        const activeSourceLeft = closing ? closeSourceLeft : openSourceLeft;
+        const activeSourceWidth = closing ? closeSourceWidth : openSourceWidth;
+        const activeSourceHeight = closing ? closeSourceHeight : openSourceHeight;
+        const scaleX = lerpAddHandoffValue(
+            activeSourceWidth / cardWidth,
+            1,
+            motionProgress
+        );
+        const scaleY = lerpAddHandoffValue(
+            activeSourceHeight / finalHeight,
+            1,
+            motionProgress
+        );
 
         return {
-            left: interpolate(
-                progress.value,
-                morphFrameRange,
-                [
-                    sourceLeft,
-                    sourceRight - firstStretchWidth,
-                    sourceRight - secondStretchWidth,
-                    sourceRight - bridgeWidth,
-                    sourceRight - bodyWidth,
-                    sourceRight - nearFinalWidth,
-                    cardLeft,
-                ]
-            ),
-            top: interpolate(progress.value, [0, 1], [sourceTop, cardTop]),
-            width: interpolate(
-                progress.value,
-                morphFrameRange,
-                [
-                    morphSourceWidth,
-                    firstStretchWidth,
-                    secondStretchWidth,
-                    bridgeWidth,
-                    bodyWidth,
-                    nearFinalWidth,
-                    cardWidth,
-                ]
-            ),
-            height: interpolate(
-                progress.value,
-                morphFrameRange,
-                [
-                    morphSourceHeight,
-                    firstStretchHeight,
-                    secondStretchHeight,
-                    bridgeHeight,
-                    bodyHeight,
-                    nearFinalHeight,
-                    finalHeight,
-                ]
-            ),
+            left: cardLeft,
+            top: cardTop,
+            width: cardWidth,
+            height: finalHeight,
+            transform: [
+                {
+                    translateX: lerpAddHandoffValue(
+                        activeSourceLeft - cardLeft,
+                        0,
+                        motionProgress
+                    ),
+                },
+                {
+                    translateY: lerpAddHandoffValue(
+                        sourceTop - cardTop,
+                        0,
+                        motionProgress
+                    ),
+                },
+                { scaleX },
+                { scaleY },
+            ],
         };
     }, [
-        bridgeHeight,
-        bridgeWidth,
-        bodyHeight,
-        bodyWidth,
-        cardHeight,
         cardLeft,
         cardTop,
         cardWidth,
-        firstStretchHeight,
-        firstStretchWidth,
-        morphFrameRange,
-        nearFinalHeight,
-        nearFinalWidth,
-        secondStretchHeight,
-        secondStretchWidth,
-        sourceLeft,
-        sourceRight,
+        closeSourceHeight,
+        closeSourceLeft,
+        closeSourceWidth,
+        openSourceHeight,
+        openSourceLeft,
+        openSourceWidth,
         sourceTop,
-        morphSourceHeight,
-        morphSourceWidth,
         expandedCardHeight,
     ]);
     const backdropAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: interpolate(progress.value, [0, 0.62, 1], [0, 0.05, 1]),
-    }));
-    const seedAnimatedStyle = useAnimatedStyle(() => ({
         opacity: interpolate(
             progress.value,
-            isClosingSeedVisual ? [0, 0.08, 0.22, 0.36, 1] : [0, 0.70, 0.88, 1],
-            isClosingSeedVisual ? [1, 1, 0.36, 0, 0] : [1, 1, 0.44, 0],
+            ADD_HANDOFF_MOTION.backdropInputRange,
+            ADD_HANDOFF_MOTION.backdropOutputRange,
             Extrapolation.CLAMP
         ),
-    }), [isClosingSeedVisual]);
-    const cardExitOpacityStyle = useAnimatedStyle(() => ({
-        opacity: isClosingToToolbar
-            ? interpolate(progress.value, [0, 0.08, 0.24], [0, 0.12, 1], Extrapolation.CLAMP)
-            : 1,
-    }), [isClosingToToolbar]);
-    const contentAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: contentProgress.value,
-        transform: [
-            {
-                translateY: interpolate(
-                    contentProgress.value,
-                    [0, 1],
-                    [14, 0],
-                    Extrapolation.CLAMP
-                ),
-            },
-            {
-                scale: interpolate(
-                    contentProgress.value,
-                    [0, 1],
-                    [0.99, 1],
-                    Extrapolation.CLAMP
-                ),
-            },
-        ],
     }));
+    const cardDenseCloseStyle = useAnimatedStyle(() => {
+        if (closingPhase.value < 0.5) return { opacity: 1 };
+
+        return {
+            opacity: interpolate(
+                progress.value,
+                [
+                    0,
+                    ADD_HANDOFF_MOTION.closeContentFadeStartProgress,
+                    ADD_HANDOFF_MOTION.closeContentFadeEndProgress,
+                    1,
+                ],
+                [
+                    ADD_HANDOFF_MOTION.closeContentParkedOpacity,
+                    ADD_HANDOFF_MOTION.closeContentParkedOpacity,
+                    1,
+                    1,
+                ],
+                Extrapolation.CLAMP
+            ),
+        };
+    });
+    const contentRevealCurtainAnimatedStyle = useAnimatedStyle(() => {
+        if (closingPhase.value >= 0.5) return { opacity: 0 };
+
+        return {
+            opacity: interpolate(
+                progress.value,
+                [
+                    0,
+                    ADD_HANDOFF_MOTION.contentRevealStartProgress,
+                    ADD_HANDOFF_MOTION.contentRevealEndProgress,
+                    1,
+                ],
+                [1, 1, 0, 0],
+                Extrapolation.CLAMP
+            ),
+        };
+    });
     const modeIndicatorAnimatedStyle = useAnimatedStyle(() => ({
         opacity: modeIndicatorWidth.value > 0 ? 1 : 0,
         width: modeIndicatorWidth.value,
@@ -1441,11 +1707,11 @@ export default function QuickScheduleModal({
         ],
     }));
     const cardBorderColor = mode === "dark"
-        ? "rgba(255,255,255,0.22)"
+        ? "rgba(255,255,255,0.17)"
         : "rgba(255,255,255,0.86)";
-    const cardSurfaceBackground = mode === "dark"
-        ? "rgba(18,19,24,0.74)"
-        : "rgba(255,255,255,0.82)";
+    // Keep the scaled layer lightweight. A live native blur is re-rasterized
+    // while the card grows and was producing visible 26-35ms frame gaps.
+    const cardSurfaceBackground = mode === "dark" ? "#0E0F12" : "#FFFFFF";
     const segmentedBackground = mode === "dark"
         ? "rgba(255,255,255,0.10)"
         : "rgba(255,255,255,0.56)";
@@ -1471,9 +1737,9 @@ export default function QuickScheduleModal({
             : inputMode === "photo"
                 ? Boolean(selectedPhoto?.uri)
                 : Boolean(voiceUri)
-    ) && !submitting && !recorderState.isRecording;
+    ) && !submitting && !recorderState.isRecording && !isVoiceFinalizing;
     const flowTitle = flowStep === "input"
-        ? "빠른 일정 만들기"
+        ? "빠른 일정 생성"
         : flowStep === "analyzing"
             ? "일정 미리보기"
             : flowStep === "saving"
@@ -1541,7 +1807,7 @@ export default function QuickScheduleModal({
                         key={item.key}
                         onLayout={handleModeLayout(item.key)}
                         onPress={() => handleModePress(item.key)}
-                        disabled={submitting || flowStep !== "input"}
+                        disabled={submitting || isVoiceFinalizing || flowStep !== "input"}
                         style={({ pressed }) => [
                             styles.modeButton,
                             item.label.length > 2
@@ -1615,7 +1881,7 @@ export default function QuickScheduleModal({
 
             {inputMode === "photo" && (
                 <Pressable
-                    disabled={submitting}
+                    disabled={submitting || isVoiceFinalizing}
                     onPress={openPhotoActionSheet}
                     style={[
                         styles.mediaPanel,
@@ -1678,7 +1944,7 @@ export default function QuickScheduleModal({
 
                         void startVoiceRecording();
                     }}
-                    disabled={submitting}
+                    disabled={submitting || isVoiceFinalizing}
                     style={({ pressed }) => [
                         styles.voicePanel,
                         {
@@ -1691,40 +1957,34 @@ export default function QuickScheduleModal({
                     <View style={styles.voiceOrbWrap}>
                         {recorderState.isRecording && (
                             <>
-                                <View
-                                    pointerEvents="none"
-                                    style={[
-                                        styles.voiceSpectrumHalo,
-                                        {
-                                            opacity: 0.14 + voiceSpectrumEnergy * 0.22,
-                                            transform: [{ scale: 1 + voiceSpectrumEnergy * 0.08 }],
-                                        },
-                                    ]}
-                                />
+                                <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
                                 <View pointerEvents="none" style={styles.voiceSpectrum}>
                                     {VOICE_SPECTRUM_BARS.map((barIndex) => {
                                         const angle = `${(360 / VOICE_SPECTRUM_BAR_COUNT) * barIndex}deg`;
-                                        const level = voiceMeterHistory[barIndex] ?? 0;
-                                        const height = getVoiceWaveformBarHeight(level);
+                                        // 두 번째 반원의 인덱스를 뒤집어 첫 번째 반원과 마주 보게 한다.
+                                        // 막대마다 미세한 높이 차이를 주어 기계적인 완전 대칭 대신
+                                        // 실제 음성이 퍼지는 듯한 부드러운 외곽선을 만든다.
+                                        const historyIndex = barIndex < VOICE_SPECTRUM_SAMPLE_COUNT
+                                            ? barIndex
+                                            : VOICE_SPECTRUM_BAR_COUNT - 1 - barIndex;
+                                        const texture = 0.78 + ((Math.sin(barIndex * 1.73) + 1) / 2) * 0.22;
+                                        const level = (voiceMeterHistory[historyIndex] ?? 0) * texture;
+                                        const colorIndex = Math.min(
+                                            VOICE_SPECTRUM_COLORS.length - 1,
+                                            Math.floor(
+                                                historyIndex
+                                                / VOICE_SPECTRUM_SAMPLE_COUNT
+                                                * VOICE_SPECTRUM_COLORS.length
+                                            )
+                                        );
 
                                         return (
-                                            <View
+                                            <VoiceSpectrumBar
                                                 key={barIndex}
-                                                style={[
-                                                    styles.voiceSpectrumBarSlot,
-                                                    { transform: [{ rotate: angle }] },
-                                                ]}
-                                            >
-                                                <View
-                                                    style={[
-                                                        styles.voiceSpectrumBar,
-                                                        {
-                                                            height,
-                                                            opacity: 0.22 + level * 0.72,
-                                                        },
-                                                    ]}
-                                                />
-                                            </View>
+                                                angle={angle}
+                                                color={VOICE_SPECTRUM_COLORS[colorIndex]}
+                                                level={level}
+                                            />
                                         );
                                     })}
                                 </View>
@@ -1757,12 +2017,14 @@ export default function QuickScheduleModal({
                     <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
                         {recorderState.isRecording
                             ? "듣고 있어요"
-                            : voiceUri
-                                ? "녹음 완료"
-                                : "탭해서 녹음 시작"}
+                            : isVoiceFinalizing
+                                ? "녹음 저장 중"
+                                : voiceUri
+                                    ? "녹음 완료"
+                                    : "탭해서 녹음 시작"}
                     </Text>
                     <Text style={[styles.voiceMeta, { color: colors.textSecondary }]}>
-                        {recorderState.isRecording || voiceUri
+                        {recorderState.isRecording || isVoiceFinalizing || voiceUri
                             ? voiceDurationText
                             : "말로 일정 내용을 알려주세요."}
                     </Text>
@@ -1793,35 +2055,26 @@ export default function QuickScheduleModal({
 
     const renderLoadingStep = () => {
         const isSaving = flowStep === "saving";
+        const loadingHeadline = isSaving
+            ? "일정을 저장하고 있어요"
+            : "일정 초안을 만들고 있어요";
+        const loadingCaption = isSaving
+            ? "일정과 이동 정보를 정리하고 있어요"
+            : inputMode === "photo"
+                ? "사진 속 날짜와 장소를 확인하고 있어요"
+                : inputMode === "voice"
+                    ? "말한 내용에서 일정 정보를 찾고 있어요"
+                    : "입력한 내용에서 일정 정보를 찾고 있어요";
 
         return (
             <View style={styles.centerFlow}>
-                <View style={[
-                    styles.loadingIconWrap,
-                    { backgroundColor: isSaving ? "rgba(36,107,254,0.10)" : "transparent" },
-                ]}>
-                    {isSaving ? (
-                        <ActivityIndicator size="large" color={BLUE} />
-                    ) : (
-                        <Ionicons name="sparkles" size={42} color={BLUE} />
-                    )}
-                </View>
+                <QuickScheduleLogoLoader accessibilityLabel={`${loadingHeadline}. ${loadingCaption}`} />
                 <Text style={[styles.flowHeadline, { color: colors.textPrimary }]}>
-                    {isSaving ? "일정을 저장하고 있어요" : "일정 정보를 분석하고 있어요"}
+                    {loadingHeadline}
                 </Text>
                 <Text style={[styles.flowCaption, { color: colors.textSecondary }]}>
-                    잠시만 기다려 주세요
+                    {loadingCaption}
                 </Text>
-                {!isSaving && (
-                    <>
-                        <View style={[styles.progressTrack, { backgroundColor: mode === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)" }]}>
-                            <View style={[styles.progressFill, { width: `${analysisProgress}%` }]} />
-                        </View>
-                        <Text style={[styles.loadingPercent, { color: colors.textPrimary }]}>
-                            {analysisProgress}%
-                        </Text>
-                    </>
-                )}
             </View>
         );
     };
@@ -2190,15 +2443,31 @@ export default function QuickScheduleModal({
         }
     };
 
-    if (routePlannerHidden) {
+    // `finishClose` clears the local closing state before the parent's
+    // `visible=false` prop is guaranteed to commit. Key visibility off the
+    // local render lifecycle so the reset add-menu seed cannot flash for an
+    // intermediate frame after the surface has finished closing.
+    if (!rendered || routePlannerHidden) {
         return null;
     }
 
+    const isPrewarmOnly = prewarm
+        && !visible
+        && !openStartedRef.current
+        && !closingRef.current;
+
     return (
-        <Modal visible={visible || rendered} transparent animationType="none" onRequestClose={requestClose}>
+        <Reanimated.View
+            pointerEvents={isPrewarmOnly ? "none" : "box-none"}
+            style={[styles.screen, presentationStyle]}
+        >
             <KeyboardAvoidingView
+                accessibilityViewIsModal
+                accessibilityElementsHidden={isPrewarmOnly}
                 behavior={Platform.OS === "ios" ? "padding" : undefined}
-                style={styles.screen}
+                importantForAccessibility={isPrewarmOnly ? "no-hide-descendants" : "auto"}
+                pointerEvents={isPrewarmOnly ? "none" : "box-none"}
+                style={styles.screenContent}
             >
                 <Reanimated.View
                     pointerEvents="none"
@@ -2215,11 +2484,12 @@ export default function QuickScheduleModal({
                 <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} />
 
                 <Reanimated.View
+                    collapsable={false}
+                    onLayout={handleSeedLayout}
                     style={[
                         styles.cardMotion,
                         cardMotionStyle,
                         cardMotionRadiusStyle,
-                        cardExitOpacityStyle,
                     ]}
                 >
                     <Reanimated.View
@@ -2227,28 +2497,29 @@ export default function QuickScheduleModal({
                             styles.cardClip,
                             cardClipRadiusStyle,
                             {
-                                backgroundColor: cardSurfaceBackground,
-                                borderColor: cardBorderColor,
+                                backgroundColor: "transparent",
                             },
                         ]}
                     >
-                        <View style={styles.card}>
-                            <CalendarGlassSurface
-                                pointerEvents="none"
-                                variant="bottomBar"
-                                tone="softGlass"
-                                clear
-                                prominent
-                                glow
-                                style={styles.nativeGlassFill}
-                            />
+                        <Reanimated.View
+                            collapsable={false}
+                            shouldRasterizeIOS={Platform.OS === "ios" && cardRasterized}
+                            style={[
+                                styles.card,
+                                cardDenseCloseStyle,
+                                {
+                                    backgroundColor: cardSurfaceBackground,
+                                    borderColor: cardBorderColor,
+                                },
+                            ]}
+                        >
                             <View
                                 pointerEvents="none"
                                 style={[
                                     styles.glassMilkyFill,
                                     {
                                         backgroundColor: mode === "dark"
-                                            ? "rgba(20,21,26,0.20)"
+                                            ? "rgba(14,15,18,0.72)"
                                             : "rgba(255,255,255,0.28)",
                                     },
                                 ]}
@@ -2259,8 +2530,9 @@ export default function QuickScheduleModal({
                                     styles.glassTopGlow,
                                     {
                                         backgroundColor: mode === "dark"
-                                            ? "rgba(255,255,255,0.20)"
+                                            ? "rgba(255,255,255,0.055)"
                                             : "rgba(255,255,255,0.82)",
+                                        opacity: mode === "dark" ? 0.22 : 0.66,
                                     },
                                 ]}
                             />
@@ -2270,8 +2542,9 @@ export default function QuickScheduleModal({
                                     styles.glassRefractionBand,
                                     {
                                         backgroundColor: mode === "dark"
-                                            ? "rgba(255,255,255,0.12)"
+                                            ? "transparent"
                                             : "rgba(255,255,255,0.54)",
+                                        opacity: mode === "dark" ? 0 : 0.24,
                                     },
                                 ]}
                             />
@@ -2281,47 +2554,36 @@ export default function QuickScheduleModal({
                                     styles.glassLowerShade,
                                     {
                                         backgroundColor: mode === "dark"
-                                            ? "rgba(0,0,0,0.14)"
+                                            ? "transparent"
                                             : "rgba(255,255,255,0.18)",
+                                        opacity: mode === "dark" ? 0 : 0.46,
                                     },
                                 ]}
                             />
-                            <View pointerEvents="none" style={styles.cardSheen} />
-                            <Reanimated.View
+                            <View
                                 pointerEvents="none"
                                 style={[
-                                    styles.seedContent,
-                                    seedAnimatedStyle,
+                                    styles.cardSheen,
+                                    mode === "dark" && styles.cardSheenDark,
                                 ]}
-                            >
-                                {visibleSeedContent === "toolbar" ? (
-                                    <>
-                                        <Ionicons name="reorder-two-outline" size={26} color={colors.textPrimary} />
-                                        <Ionicons name="search" size={23} color={colors.textPrimary} />
-                                        <Ionicons name="add" size={27} color={colors.textPrimary} />
-                                    </>
-                                ) : null}
-                            </Reanimated.View>
-                            <Reanimated.View
-                                style={[
-                                    styles.content,
-                                    contentAnimatedStyle,
-                                ]}
-                            >
+                            />
+                            <View style={styles.content}>
                                 {contentMounted && (
                                     <>
-                                        <Pressable
-                                            accessibilityLabel="빠른 일정 등록 닫기"
-                                            disabled={submitting}
-                                            onPress={requestClose}
-                                            hitSlop={10}
-                                            style={({ pressed }) => [
-                                                styles.closeButton,
-                                                { opacity: pressed ? 0.58 : 1 },
-                                            ]}
-                                        >
-                                            <Ionicons name="close" size={22} color={colors.textSecondary} />
-                                        </Pressable>
+                                        <View style={styles.closeButton}>
+                                            <Pressable
+                                                accessibilityLabel="빠른 일정 등록 닫기"
+                                                disabled={submitting}
+                                                onPress={requestClose}
+                                                hitSlop={10}
+                                                style={({ pressed }) => [
+                                                    styles.closeButtonPressable,
+                                                    { opacity: pressed ? 0.58 : 1 },
+                                                ]}
+                                            >
+                                                <Ionicons name="close" size={22} color={colors.textSecondary} />
+                                            </Pressable>
+                                        </View>
 
                                         <View style={styles.header}>
                                             {flowStep === "edit" && (
@@ -2340,29 +2602,43 @@ export default function QuickScheduleModal({
                                             <Text style={[styles.title, { color: colors.textPrimary }]}>{flowTitle}</Text>
                                         </View>
 
-                                        {renderCurrentStep()}
+                                        <View style={styles.handoffBody}>
+                                            {renderCurrentStep()}
+                                        </View>
                                     </>
                                 )}
-	                        </Reanimated.View>
-	                    </View>
+                            </View>
+                        </Reanimated.View>
+                        <Reanimated.View
+                            pointerEvents="none"
+                            style={[
+                                styles.contentRevealCurtain,
+                                contentRevealCurtainAnimatedStyle,
+                                { backgroundColor: cardSurfaceBackground },
+                            ]}
+                        />
 	                </Reanimated.View>
                 </Reanimated.View>
-	            </KeyboardAvoidingView>
-	        </Modal>
-	    );
+	        </KeyboardAvoidingView>
+	    </Reanimated.View>
+	);
 }
 
 const styles = StyleSheet.create({
     screen: {
-        flex: 1,
+        ...StyleSheet.absoluteFillObject,
         zIndex: 80,
         elevation: 80,
+    },
+    screenContent: {
+        flex: 1,
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
     },
     cardMotion: {
         position: "absolute",
+        transformOrigin: [0, 0, 0],
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 18 },
         shadowOpacity: 0.22,
@@ -2373,15 +2649,13 @@ const styles = StyleSheet.create({
         width: "100%",
         height: "100%",
         borderRadius: EXPANDED_CARD_RADIUS,
-        borderWidth: 1,
         overflow: "hidden",
     },
     card: {
         width: "100%",
         height: "100%",
-    },
-    nativeGlassFill: {
-        ...StyleSheet.absoluteFillObject,
+        borderWidth: 1,
+        zIndex: 1,
     },
     glassMilkyFill: {
         ...StyleSheet.absoluteFillObject,
@@ -2423,40 +2697,14 @@ const styles = StyleSheet.create({
         borderLeftWidth: StyleSheet.hairlineWidth,
         borderLeftColor: "rgba(255,255,255,0.36)",
     },
-    seedContent: {
-        ...StyleSheet.absoluteFillObject,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-around",
-        paddingHorizontal: 13,
-    },
-    addMenuSeed: {
-        ...StyleSheet.absoluteFillObject,
-        alignItems: "flex-end",
-        justifyContent: "flex-start",
-        paddingHorizontal: 10,
-        paddingVertical: 12,
-        gap: 4,
-    },
-    addMenuSeedRow: {
-        width: 218,
-        maxWidth: "100%",
-        height: 43,
-        borderRadius: 18,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        paddingHorizontal: 12,
-    },
-    addMenuSeedText: {
-        fontSize: 16,
-        fontWeight: "700",
-    },
-    hiddenContent: {
-        opacity: 0,
+    cardSheenDark: {
+        backgroundColor: "rgba(255,255,255,0.010)",
+        borderTopColor: "rgba(255,255,255,0.26)",
+        borderLeftColor: "rgba(255,255,255,0.14)",
     },
     content: {
         flex: 1,
+        transformOrigin: [0, 0, 0],
         paddingHorizontal: 18,
         paddingTop: 28,
         paddingBottom: 15,
@@ -2470,6 +2718,18 @@ const styles = StyleSheet.create({
         borderRadius: 17,
         alignItems: "center",
         justifyContent: "center",
+        zIndex: 2,
+    },
+    closeButtonPressable: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    handoffBody: {
+        flex: 1,
+    },
+    contentRevealCurtain: {
+        ...StyleSheet.absoluteFillObject,
         zIndex: 2,
     },
     backButton: {
@@ -2713,11 +2973,11 @@ const styles = StyleSheet.create({
         shadowRadius: 18,
     },
     voiceOrbWrap: {
-        width: 138,
-        height: 138,
+        width: 150,
+        height: 146,
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 2,
+        marginBottom: 0,
     },
     voiceSpectrum: {
         position: "absolute",
@@ -2725,34 +2985,44 @@ const styles = StyleSheet.create({
         height: VOICE_SPECTRUM_SIZE,
         borderRadius: VOICE_SPECTRUM_SIZE / 2,
     },
-    voiceSpectrumHalo: {
+    voiceSpectrumHaloOuter: {
         position: "absolute",
-        width: 106,
-        height: 106,
-        borderRadius: 53,
-        backgroundColor: "rgba(36,107,254,0.26)",
+        width: 112,
+        height: 112,
+        borderRadius: 56,
+        borderWidth: 1,
+        borderColor: "rgba(88,215,247,0.48)",
+    },
+    voiceSpectrumHaloInner: {
+        position: "absolute",
+        width: 88,
+        height: 88,
+        borderRadius: 44,
+        borderWidth: 1,
+        borderColor: "rgba(36,107,254,0.38)",
+        backgroundColor: "rgba(36,107,254,0.13)",
         shadowColor: BLUE,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.34,
-        shadowRadius: 24,
+        shadowOpacity: 0.24,
+        shadowRadius: 20,
     },
     voiceSpectrumBarSlot: {
         position: "absolute",
-        left: VOICE_SPECTRUM_SIZE / 2 - 1.5,
+        left: VOICE_SPECTRUM_SIZE / 2 - 1,
         top: 0,
-        width: 3,
+        width: 2,
         height: VOICE_SPECTRUM_SIZE,
         alignItems: "center",
     },
     voiceSpectrumBar: {
-        width: 3,
-        minHeight: 5,
-        borderRadius: 2,
-        backgroundColor: BLUE,
-        shadowColor: BLUE,
+        position: "absolute",
+        bottom: VOICE_SPECTRUM_SIZE / 2 + VOICE_SPECTRUM_INNER_RADIUS,
+        width: 2,
+        minHeight: 3,
+        borderRadius: 1,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.22,
-        shadowRadius: 5,
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
     },
     voiceOrb: {
         width: 62,
@@ -2786,18 +3056,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 8,
         gap: 10,
     },
-    loadingIconWrap: {
-        width: 82,
-        height: 82,
-        borderRadius: 41,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    loadingPercent: {
-        marginTop: 2,
-        fontSize: 12,
-        fontWeight: "900",
-    },
     statusIconWrap: {
         width: 72,
         height: 72,
@@ -2817,18 +3075,6 @@ const styles = StyleSheet.create({
         lineHeight: 19,
         fontWeight: "600",
         textAlign: "center",
-    },
-    progressTrack: {
-        width: "82%",
-        height: 6,
-        borderRadius: 3,
-        overflow: "hidden",
-        marginTop: 16,
-    },
-    progressFill: {
-        height: "100%",
-        borderRadius: 3,
-        backgroundColor: BLUE,
     },
     previewStep: {
         flex: 1,

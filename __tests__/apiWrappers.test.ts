@@ -21,6 +21,17 @@ import {
     getScheduleCategoriesFromApi,
     updateScheduleCategoryToApi,
 } from "../src/api/scheduleCategories";
+import {
+    acceptShareInvitation,
+    createCategoryShareInvitation,
+    createCategoryShare,
+    createScheduleShareInvitation,
+    createScheduleShare,
+    getShareInbox,
+    getShareOutbox,
+    getCategoryShareInvitations,
+    getScheduleShareInvitations,
+} from "../src/api/scheduleSharing";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -198,5 +209,128 @@ describe("schedule category api wrappers", () => {
         await expect(deleteScheduleCategoryFromApi("3")).resolves.toBeUndefined();
 
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3");
+    });
+});
+
+describe("schedule sharing api wrappers", () => {
+    const invitationDto = {
+        id: "50",
+        resourceType: "SCHEDULE",
+        resourceId: "10",
+        ownerMemberId: 1,
+        permission: "VIEWER",
+        status: "PENDING",
+        expiresAt: "2026-07-11T12:00:00Z",
+        maxAcceptCount: 1,
+        acceptedCount: 0,
+        token: "plain-token",
+        acceptPath: "/api/share-invitations/plain-token/accept",
+    };
+
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test("invitation list wrappers call schedule and category endpoints", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: [invitationDto] });
+
+        await expect(getScheduleShareInvitations("10")).resolves.toEqual([invitationDto]);
+        await expect(getCategoryShareInvitations("3")).resolves.toEqual([invitationDto]);
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/10/shares/invitations");
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations");
+    });
+
+    test("share inbox and outbox wrappers call aggregate endpoints", async () => {
+        mockedApiGet
+            .mockResolvedValueOnce({
+                success: true,
+                data: { pendingInvitations: [], receivedShares: [] },
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                data: { sharedResources: [], activeInvitations: [] },
+            });
+
+        await expect(getShareInbox()).resolves.toEqual({ pendingInvitations: [], receivedShares: [] });
+        await expect(getShareOutbox()).resolves.toEqual({ sharedResources: [], activeInvitations: [] });
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/shares/inbox");
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/shares/outbox");
+    });
+
+    test("create invitation wrappers post link options", async () => {
+        mockedApiPost.mockResolvedValue({ success: true, data: invitationDto });
+
+        await expect(createScheduleShareInvitation("10", {
+            permission: "VIEWER",
+            ttlHours: 72,
+            maxAcceptCount: 1,
+        })).resolves.toMatchObject({ id: "50", token: "plain-token" });
+        await expect(createCategoryShareInvitation("3", {
+            permission: "EDITOR",
+            ttlHours: 168,
+            maxAcceptCount: 5,
+        })).resolves.toMatchObject({ id: "50" });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/shares/invitations", {
+            permission: "VIEWER",
+            ttlHours: 72,
+            maxAcceptCount: 1,
+        });
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations", {
+            permission: "EDITOR",
+            ttlHours: 168,
+            maxAcceptCount: 5,
+        });
+    });
+
+    test("direct share wrappers post either app id or email target", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: {
+                id: "80",
+                resourceId: "10",
+                ownerMemberId: 1,
+                targetMemberId: 2,
+                permission: "VIEWER",
+                status: "ACTIVE",
+            },
+        });
+
+        await createScheduleShare("10", { targetAppId: 2, permission: "VIEWER" });
+        await createCategoryShare("3", { targetEmail: "friend@example.com", permission: "EDITOR" });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/shares", {
+            targetAppId: 2,
+            permission: "VIEWER",
+        });
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories/3/shares", {
+            targetEmail: "friend@example.com",
+            permission: "EDITOR",
+        });
+    });
+
+    test("accept invitation posts encoded token", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: {
+                invitation: { ...invitationDto, status: "ACCEPTED", token: undefined },
+                share: {
+                    id: "80",
+                    resourceId: "10",
+                    ownerMemberId: 1,
+                    targetMemberId: 2,
+                    permission: "VIEWER",
+                    status: "ACTIVE",
+                },
+            },
+        });
+
+        await expect(acceptShareInvitation("token/with space")).resolves.toMatchObject({
+            share: { id: "80" },
+        });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/share-invitations/token%2Fwith%20space/accept");
     });
 });

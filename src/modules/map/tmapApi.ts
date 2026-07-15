@@ -1,8 +1,18 @@
 import axios from "axios";
 
 import { getEnv } from "../../api/env";
-import { estimateTravelMinutesByStraightDistance, TRAVEL_MODE_META } from "../schedule/travelMode";
+import type { TransitRouteProxyRequest } from "../../api/transitRouting";
 import type { Place, TravelMode } from "../schedule/types";
+import {
+    buildRecoveredLoopTransitOption,
+    createTransitLoopRecoveryPlan,
+    selectTransitLoopSubroute,
+} from "./transitLoopRecovery";
+import {
+    getOdsayTransitRouteOptions,
+    hasOdsayApiKey,
+    odsayApiErrorMessage,
+} from "./odsayApi";
 
 // 지도 검색/역지오코딩/대중교통/길찾기 결과를 앱 공용 형태로 맞추는 핵심 API 래퍼.
 export type PlaceSearchItem = {
@@ -11,6 +21,10 @@ export type PlaceSearchItem = {
     lat: number;
     lng: number;
     category?: string;
+    provider?: "tmap" | "kakao" | "naver" | "nominatim";
+    providerPlaceId?: string;
+    /** 검색 기준점에서의 직선거리. 화면의 동명 장소 판별에만 사용한다. */
+    distanceMeters?: number;
 };
 
 export type RoutePathCoord = {
@@ -18,7 +32,37 @@ export type RoutePathCoord = {
     lng: number;
 };
 
-export type RouteApiProvider = "tmap" | "kakao" | "naver";
+export type PlaceSearchContext = {
+    center?: RoutePathCoord;
+    radiusKm?: number;
+};
+
+export type RouteGuideStep = {
+    instruction: string;
+    roadName?: string;
+    durationMinutes?: number;
+    distanceMeters?: number;
+    turnType?: string;
+    coordinate?: RoutePathCoord;
+    pathCoords?: RoutePathCoord[];
+};
+
+export type RouteTrafficLevel = "smooth" | "slow" | "congested" | "unknown";
+
+export type RouteTrafficSection = {
+    pathCoords: RoutePathCoord[];
+    level: RouteTrafficLevel;
+    speedKph?: number;
+};
+
+export type RouteApiProvider = "tmap" | "odsay" | "kakao" | "naver" | "openstreetmap";
+export type RouteReliability = "live_provider" | "provider_estimate" | "fallback_estimate";
+export type TransitServiceState = "operating" | "not_operating";
+export type TransitDepartureTimeSource = "requested" | "next_service_search";
+
+export type RouteProviderSearchOptions = {
+    departureAt?: Date;
+};
 
 export type TransitLegKind = "SUBWAY" | "BUS" | "WALK" | "ETC";
 
@@ -28,6 +72,14 @@ export type TransitPassStop = {
     sequence?: number;
     code?: string;
 };
+
+export type TransitGeometrySource =
+    | "WALK_STEPS_LINESTRING"
+    | "WALK_PASS_SHAPE_LINESTRING"
+    | "TRANSIT_PASS_SHAPE_LINESTRING"
+    | "PASS_STOP_LIST"
+    | "ITINERARY_PATH_SNAP"
+    | "UNKNOWN";
 
 export type TransitLegDetail = {
     kind: TransitLegKind;
@@ -42,6 +94,18 @@ export type TransitLegDetail = {
      * 화면 쪽에서 추정 규칙보다 정확한 색을 쓸 수 있게 한다.
      */
     lineColor?: string;
+    /** 공급자가 직접 제공한 행선지/상하행/내외선 정보. 없으면 정류장 순서로 화면 방면을 계산한다. */
+    directionName?: string;
+    /** 공급자의 상·하행 코드. 실시간 도착정보에서 반대 방향 열차를 제외할 때 사용한다. */
+    directionCode?: "UP" | "DOWN";
+    /** 정류장명 또는 공급자 확장 필드에서 확인된 실제 승강장 정보. */
+    boardingPlatform?: string;
+    /** 공급자가 명시한 승차 접근 출구. 값이 없으면 추정하지 않는다. */
+    boardingExit?: string;
+    /** 빠른 환승 등을 위한 공급자 추천 탑승 위치. */
+    recommendedBoardingPosition?: string;
+    /** 현재 열차에서 다음 교통수단으로 빠르게 환승하기 위한 객차-문 위치. */
+    recommendedTransferPosition?: string;
     startName?: string;
     endName?: string;
     startCoord?: RoutePathCoord;
@@ -50,6 +114,10 @@ export type TransitLegDetail = {
     pathCoords?: RoutePathCoord[];
     /** steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우 true. itinerary snap fallback이면 false. */
     pathCoordsIsExact?: boolean;
+    pathGeometrySource?: TransitGeometrySource;
+    rawPathPointCount?: number;
+    /** TMAP service=0인 레그는 현재 검색 시각에 운행하지 않는 구간이다. */
+    serviceAvailable?: boolean;
 };
 
 export type TransitRouteOption = {
@@ -66,6 +134,10 @@ export type TransitRouteOption = {
     source: "api" | "fallback";
     provider?: RouteApiProvider;
     fallbackKind?: "road" | "straight";
+    providerDepartureAt?: string;
+    providerArrivalAt?: string;
+    attributionText?: string;
+    attributionUrl?: string;
 };
 
 export type RouteAlternativeOption = {
@@ -79,10 +151,34 @@ export type RouteAlternativeOption = {
     transferCount?: number;
     walkMeters?: number;
     fareWon?: number;
+    tollFareWon?: number;
+    taxiFareWon?: number;
     stepSummary?: string;
+    guideSteps?: RouteGuideStep[];
+    trafficSections?: RouteTrafficSection[];
+    providerRouteOption?: string;
     transitModeSummary?: string;
     transitLegs?: TransitLegDetail[];
     provider?: RouteApiProvider;
+    /**
+     * routingService에서 붙이는 품질 메타데이터.
+     * provider가 실제 경로를 줬는지, 도로 보정/직선 추정 fallback인지 화면과 저장 계층이
+     * 같은 기준으로 판단하게 해 준다.
+     */
+    routeReliability?: RouteReliability;
+    routeQualityLabel?: string;
+    routeQualityNotice?: string;
+    routePlausibility?: "normal" | "geometry_suspected";
+    routeDetourRatio?: number;
+    /** 공급자 조회 시각 기준의 실제 운행 여부와 출발 기준 시각. */
+    transitServiceState?: TransitServiceState;
+    transitDepartureAt?: string;
+    transitDepartureTimeSource?: TransitDepartureTimeSource;
+    /** 공급자 시간표가 명시한 실제 후보 출발·도착 시각. */
+    providerDepartureAt?: string;
+    providerArrivalAt?: string;
+    attributionText?: string;
+    attributionUrl?: string;
 };
 
 type RouteEtaResult = {
@@ -93,14 +189,23 @@ type RouteEtaResult = {
     pathCoords?: RoutePathCoord[];
 };
 
+export type ParsedRoadRoute = {
+    minutes?: number;
+    distanceMeters?: number;
+    tollFareWon?: number;
+    taxiFareWon?: number;
+    pathCoords?: RoutePathCoord[];
+    guideSteps?: RouteGuideStep[];
+    trafficSections?: RouteTrafficSection[];
+};
+
 const TMAP_API_BASE_URL = "https://apis.openapi.sk.com";
-const KAKAO_MOBILITY_API_BASE_URL = "https://apis-navi.kakaomobility.com";
-const KAKAO_LOCAL_API_BASE_URL = "https://dapi.kakao.com";
-const NAVER_MAP_API_BASE_URL = "https://naveropenapi.apigw.ntruss.com";
+const OPENSTREETMAP_BIKE_ROUTING_BASE_URL = "https://routing.openstreetmap.de/routed-bike";
 const TMAP_REQUEST_TIMEOUT_MS = 12000;
-const DOMESTIC_REQUEST_TIMEOUT_MS = 12000;
-const STRAIGHT_LINE_ALTERNATIVE_LIMIT = 3;
-const TMAP_TRANSIT_REQUEST_COUNT = 12;
+const OPENSTREETMAP_REQUEST_TIMEOUT_MS = 15000;
+const OPENSTREETMAP_MIN_REQUEST_INTERVAL_MS = 1000;
+// TMAP 공식 스펙의 최대값은 10이다. 범위를 넘기면 공급자별로 요청이 거절되거나 잘릴 수 있다.
+const TMAP_TRANSIT_REQUEST_COUNT = 10;
 const SEARCH_RESULT_LIMIT = 12;
 // 경로 렌더링 시 메모리/성능 보호를 위한 최대 path point 수.
 const MAX_PATH_POINTS = 1200;
@@ -122,6 +227,26 @@ const nominatimClient = axios.create({
     },
 });
 
+let openStreetMapRequestQueue: Promise<void> = Promise.resolve();
+let lastOpenStreetMapRequestAt = 0;
+
+// FOSSGIS 공개 라우팅 서버의 초당 1회 제한을 앱 안에서도 직렬화해 지킨다.
+function scheduleOpenStreetMapRequest<T>(request: () => Promise<T>): Promise<T> {
+    const scheduled = openStreetMapRequestQueue.then(async () => {
+        const waitMs = Math.max(
+            0,
+            OPENSTREETMAP_MIN_REQUEST_INTERVAL_MS - (Date.now() - lastOpenStreetMapRequestAt)
+        );
+        if (waitMs > 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, waitMs));
+        }
+        lastOpenStreetMapRequestAt = Date.now();
+        return request();
+    });
+    openStreetMapRequestQueue = scheduled.then(() => undefined, () => undefined);
+    return scheduled;
+}
+
 // 아래 유틸리티 블록은 외부 응답값을 숫자/좌표/path로 안전하게 정규화하는 역할을 한다.
 function safeNumber(value: unknown): number | undefined {
     const n = typeof value === "string" ? Number(value) : (value as number);
@@ -136,6 +261,20 @@ function isWgs84Coordinate(lat: number, lng: number): boolean {
         lat <= 90 &&
         lng >= -180 &&
         lng <= 180;
+}
+
+function distanceBetweenCoordsMeters(a: RoutePathCoord, b: RoutePathCoord): number {
+    const earthRadiusMeters = 6_371_000;
+    const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+    const latDelta = toRadians(b.lat - a.lat);
+    const lngDelta = toRadians(b.lng - a.lng);
+    const aLat = toRadians(a.lat);
+    const bLat = toRadians(b.lat);
+    const haversine = (
+        Math.sin(latDelta / 2) ** 2 +
+        Math.cos(aLat) * Math.cos(bLat) * Math.sin(lngDelta / 2) ** 2
+    );
+    return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 // 여러 후보 좌표쌍 중 첫 번째 유효 좌표를 선택한다.
@@ -167,6 +306,20 @@ function hasTmapAppKey(): boolean {
     return !!resolveTmapAppKey();
 }
 
+function hasTmapTransitRouteProvider(): boolean {
+    return getEnv("EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED") === "true" || hasTmapAppKey();
+}
+
+function hasTransitRouteProvider(): boolean {
+    return hasOdsayApiKey() || hasTmapTransitRouteProvider();
+}
+
+async function requestTransitRouteProxy<T>(payload: TransitRouteProxyRequest): Promise<T> {
+    // 인증 저장소를 사용하는 API 모듈은 실제 프록시 요청 시점에만 로드한다.
+    const proxy = require("../../api/transitRouting") as typeof import("../../api/transitRouting");
+    return proxy.getTransitRouteViaProxy<T>(payload);
+}
+
 // Tmap API 요청 공통 헤더를 구성한다.
 function getTmapHeaders() {
     const appKey = resolveTmapAppKey();
@@ -185,82 +338,6 @@ function tmapClient() {
         baseURL: TMAP_API_BASE_URL,
         timeout: TMAP_REQUEST_TIMEOUT_MS,
         headers: getTmapHeaders(),
-    });
-}
-
-function resolveKakaoRestApiKey(): string | undefined {
-    return getEnv("EXPO_PUBLIC_KAKAO_MOBILITY_REST_API_KEY") ??
-        getEnv("EXPO_PUBLIC_KAKAO_LOCAL_REST_API_KEY") ??
-        getEnv("EXPO_PUBLIC_KAKAO_REST_API_KEY") ??
-        getEnv("EXPO_PUBLIC_KAKAO_MAP_APP_KEY");
-}
-
-function hasKakaoRestApiKey(): boolean {
-    return !!resolveKakaoRestApiKey();
-}
-
-function getKakaoHeaders(includeServiceHeader = false) {
-    const restApiKey = resolveKakaoRestApiKey();
-    if (!restApiKey) {
-        throw new Error("Kakao REST API key is missing. Set EXPO_PUBLIC_KAKAO_REST_API_KEY.");
-    }
-
-    return {
-        Authorization: `KakaoAK ${restApiKey}`,
-        ...(includeServiceHeader ? { service: "nol ate" } : {}),
-    };
-}
-
-function kakaoMobilityClient(includeServiceHeader = false) {
-    return axios.create({
-        baseURL: KAKAO_MOBILITY_API_BASE_URL,
-        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
-        headers: getKakaoHeaders(includeServiceHeader),
-    });
-}
-
-function kakaoLocalClient() {
-    return axios.create({
-        baseURL: KAKAO_LOCAL_API_BASE_URL,
-        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
-        headers: getKakaoHeaders(),
-    });
-}
-
-function resolveNaverClientId(): string | undefined {
-    return getEnv("EXPO_PUBLIC_NAVER_MAP_CLIENT_ID") ??
-        getEnv("EXPO_PUBLIC_NAVER_CLIENT_ID") ??
-        getEnv("EXPO_PUBLIC_NAVER_CONSUMER_KEY");
-}
-
-function resolveNaverClientSecret(): string | undefined {
-    return getEnv("EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET") ??
-        getEnv("EXPO_PUBLIC_NAVER_CLIENT_SECRET") ??
-        getEnv("EXPO_PUBLIC_NAVER_CONSUMER_SECRET");
-}
-
-function hasNaverMapKeys(): boolean {
-    return !!resolveNaverClientId() && !!resolveNaverClientSecret();
-}
-
-function getNaverHeaders() {
-    const clientId = resolveNaverClientId();
-    const clientSecret = resolveNaverClientSecret();
-    if (!clientId || !clientSecret) {
-        throw new Error("Naver Maps API key is missing. Set EXPO_PUBLIC_NAVER_MAP_CLIENT_ID and EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET.");
-    }
-
-    return {
-        "X-NCP-APIGW-API-KEY-ID": clientId,
-        "X-NCP-APIGW-API-KEY": clientSecret,
-    };
-}
-
-function naverMapClient() {
-    return axios.create({
-        baseURL: NAVER_MAP_API_BASE_URL,
-        timeout: DOMESTIC_REQUEST_TIMEOUT_MS,
-        headers: getNaverHeaders(),
     });
 }
 
@@ -305,15 +382,6 @@ function dedupePathCoords(coords: RoutePathCoord[]): RoutePathCoord[] {
     return result;
 }
 
-// 거리 기반으로 예상 소요시간(분)을 계산한다.
-function estimateMinutesByDistanceMeters(distanceMeters: number, mode: TravelMode): number | undefined {
-    if (!Number.isFinite(distanceMeters) || distanceMeters <= 0) return undefined;
-    const speedKmh = TRAVEL_MODE_META[mode]?.speedKmh;
-    if (!Number.isFinite(speedKmh) || speedKmh <= 0) return undefined;
-    const minutes = (distanceMeters / 1000) / speedKmh * 60;
-    return Math.max(1, Math.ceil(minutes));
-}
-
 function normalizeRoadTimeToMinutes(secondsRaw: unknown): number | undefined {
     const seconds = safeNumber(secondsRaw);
     if (typeof seconds !== "number") return undefined;
@@ -321,72 +389,17 @@ function normalizeRoadTimeToMinutes(secondsRaw: unknown): number | undefined {
 }
 
 function normalizeTransitTimeToMinutes(rawValue: unknown): number | undefined {
-    const raw = safeNumber(rawValue);
-    if (typeof raw !== "number") return undefined;
+    const seconds = safeNumber(rawValue);
+    if (typeof seconds !== "number") return undefined;
 
-    // 공급자마다 분/초 단위가 다를 수 있어 휴리스틱으로 정규화
-    if (raw > 1000) return Math.max(1, Math.ceil(raw / 60));
-    return Math.max(1, Math.ceil(raw));
+    // TMAP 대중교통 totalTime은 짧은 경로도 예외 없이 초 단위다.
+    return Math.max(1, Math.ceil(seconds / 60));
 }
 
-function normalizeTransitLegDurationToMinutes(
-    rawValue: unknown,
-    kind: TransitLegKind,
-    distanceMeters?: number
-): number | undefined {
-    const raw = safeNumber(rawValue);
-    if (typeof raw !== "number") return undefined;
-
-    const asMinutes = Math.max(1, Math.ceil(raw));
-    const asSeconds = Math.max(1, Math.ceil(raw / 60));
-    const distance = typeof distanceMeters === "number" && Number.isFinite(distanceMeters) ? distanceMeters : undefined;
-    const normalizeWalkByDistance = (minutes: number): number => {
-        if (kind !== "WALK" || typeof distance !== "number" || distance <= 0) return minutes;
-        const expected = Math.max(1, Math.round(distance / 68));
-        const minPlausible = Math.max(1, Math.floor(distance / 170));
-        const maxPlausible = Math.max(2, Math.ceil(distance / 22));
-        if (minutes < minPlausible || minutes > maxPlausible) {
-            return Math.max(minPlausible, Math.min(maxPlausible, expected));
-        }
-        return minutes;
-    };
-
-    // 명확히 큰 값은 초로 본다.
-    if (raw >= 1000) return normalizeWalkByDistance(asSeconds);
-
-    if (!distance || distance <= 0) {
-        if (kind === "WALK" && raw >= 120) return normalizeWalkByDistance(asSeconds);
-        return asMinutes;
-    }
-
-    const speedIfMinutes = distance / (asMinutes / 60); // m/h
-    const speedIfSeconds = distance / (asSeconds / 60); // m/h
-
-    if (kind === "WALK") {
-        const walkMin = 1500;
-        const walkMax = 7500;
-        const minutesPlausible = speedIfMinutes >= walkMin && speedIfMinutes <= walkMax;
-        const secondsPlausible = speedIfSeconds >= walkMin && speedIfSeconds <= walkMax;
-
-        if (secondsPlausible && !minutesPlausible) return normalizeWalkByDistance(asSeconds);
-        if (minutesPlausible && !secondsPlausible) return normalizeWalkByDistance(asMinutes);
-
-        const walkTarget = 4200;
-        const normalized = Math.abs(speedIfSeconds - walkTarget) < Math.abs(speedIfMinutes - walkTarget)
-            ? asSeconds
-            : asMinutes;
-        return normalizeWalkByDistance(normalized);
-    }
-
-    const transitMin = 2500;
-    const transitMax = 120000;
-    const minutesPlausible = speedIfMinutes >= transitMin && speedIfMinutes <= transitMax;
-    const secondsPlausible = speedIfSeconds >= transitMin && speedIfSeconds <= transitMax;
-
-    if (secondsPlausible && !minutesPlausible && raw >= 180) return asSeconds;
-    if (minutesPlausible) return asMinutes;
-    if (secondsPlausible) return asSeconds;
-    return asMinutes;
+function normalizeTransitLegDurationToMinutes(rawValue: unknown): number | undefined {
+    const seconds = safeNumber(rawValue);
+    if (typeof seconds !== "number") return undefined;
+    return Math.max(1, Math.ceil(seconds / 60));
 }
 
 // 대중교통 itinerary 파싱 블록.
@@ -411,8 +424,12 @@ function normalizeTransitLegKind(leg: any): TransitLegKind {
 }
 
 function parseTransitLegLineName(leg: any): string | undefined {
-    const firstLane = Array.isArray(leg?.lane) ? leg.lane[0] : undefined;
-    const raw = firstLane?.name ?? firstLane?.busNo ?? firstLane?.no ?? leg?.route ?? leg?.routeNm ?? leg?.lineName;
+    const firstLane = Array.isArray(leg?.lane)
+        ? leg.lane[0]
+        : Array.isArray(leg?.Lane)
+            ? leg.Lane[0]
+            : undefined;
+    const raw = firstLane?.name ?? firstLane?.route ?? firstLane?.busNo ?? firstLane?.no ?? leg?.route ?? leg?.routeNm ?? leg?.lineName;
     if (typeof raw !== "string") return undefined;
     const normalized = raw.trim();
     return normalized.length > 0 ? normalized : undefined;
@@ -431,7 +448,11 @@ function normalizeTransitColorCandidate(value: unknown): string | undefined {
 }
 
 function parseTransitLegLineColor(leg: any): string | undefined {
-    const firstLane = Array.isArray(leg?.lane) ? leg.lane[0] : undefined;
+    const firstLane = Array.isArray(leg?.lane)
+        ? leg.lane[0]
+        : Array.isArray(leg?.Lane)
+            ? leg.Lane[0]
+            : undefined;
     return normalizeTransitColorCandidate(
         leg?.routeColor ??
         leg?.lineColor ??
@@ -440,6 +461,21 @@ function parseTransitLegLineColor(leg: any): string | undefined {
         firstLane?.lineColor ??
         firstLane?.hexColor
     );
+}
+
+function parseTransitLegServiceAvailable(leg: any): boolean | undefined {
+    const direct = safeNumber(leg?.service);
+    if (direct === 0) return false;
+    if (direct === 1) return true;
+
+    const lanes = ensureArray(leg?.lane ?? leg?.Lane);
+    const laneServices = lanes
+        .map((lane) => safeNumber(lane?.service))
+        .filter((value): value is number => typeof value === "number");
+    if (!laneServices.length) return undefined;
+    if (laneServices.some((value) => value === 1)) return true;
+    if (laneServices.every((value) => value === 0)) return false;
+    return undefined;
 }
 
 function parseTransitLegStationCount(leg: any): number | undefined {
@@ -475,14 +511,111 @@ function parseTransitLegEndName(leg: any): string | undefined {
     return normalized.length > 0 ? normalized : undefined;
 }
 
+function parseTransitLegDirectionName(leg: any): string | undefined {
+    const lane = ensureArray(leg?.Lane ?? leg?.lane)[0];
+    const candidates = [
+        leg?.directionName,
+        leg?.direction,
+        leg?.routeDirection,
+        leg?.headsign,
+        leg?.destinationName,
+        lane?.directionName,
+        lane?.direction,
+        lane?.headsign,
+    ];
+    const raw = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
+    return typeof raw === "string" ? raw.trim() : undefined;
+}
+
+function firstTransitGuideText(...candidates: unknown[]): string | undefined {
+    const raw = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
+    return typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : undefined;
+}
+
+function parsePlatformFromStationName(name?: string): string | undefined {
+    const rawPlatform = name?.match(/\(([^()]*(?:승강장|플랫폼|홈)[^()]*)\)/u)?.[1];
+    return rawPlatform
+        ?.replace(/(\d+)\s*번\s*(승강장|플랫폼|홈)/u, "$1번 $2")
+        .replace(/\s+/g, " ")
+        .trim() || undefined;
+}
+
+function parseTransitLegBoardingPlatform(leg: any, startName?: string): string | undefined {
+    return firstTransitGuideText(
+        leg?.boardingPlatform,
+        leg?.platformName,
+        leg?.platform,
+        leg?.start?.boardingPlatform,
+        leg?.start?.platformName,
+        leg?.start?.platform
+    ) ?? parsePlatformFromStationName(startName);
+}
+
+function normalizeTransitExitName(value: unknown): string | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) return `${Math.round(value)}번 출구`;
+    const raw = firstTransitGuideText(value);
+    if (!raw) return undefined;
+    return /^\d+$/u.test(raw) ? `${raw}번 출구` : raw;
+}
+
+function parseTransitLegBoardingExit(leg: any): string | undefined {
+    return normalizeTransitExitName(
+        leg?.boardingExit ??
+        leg?.entranceName ??
+        leg?.exitName ??
+        leg?.start?.boardingExit ??
+        leg?.start?.entranceName ??
+        leg?.start?.exitName ??
+        leg?.start?.exitNo
+    );
+}
+
+function parseTransitLegRecommendedBoardingPosition(leg: any): string | undefined {
+    return firstTransitGuideText(
+        leg?.recommendedBoardingPosition,
+        leg?.recommendedCar,
+        leg?.fastTransferCar,
+        leg?.boardingPosition,
+        leg?.start?.recommendedBoardingPosition,
+        leg?.start?.recommendedCar
+    );
+}
+
+function parseTransitStationSequence(station: any): number | undefined {
+    const sequence = safeNumber(
+        station?.index ??
+        station?.sequence ??
+        station?.seq ??
+        station?.stationSeq ??
+        station?.stopSequence
+    );
+    return typeof sequence === "number" && Number.isFinite(sequence)
+        ? sequence
+        : undefined;
+}
+
 function parseTransitLegStations(leg: any): any[] {
-    return ensureArray(
+    const stations = ensureArray(
         leg?.passStopList?.stationList ??
         leg?.passStopList?.stations ??
         leg?.stations ??
         leg?.stopList ??
         leg?.stopPoints
     );
+
+    // TMAP의 index가 모두 제공되면 응답 배열 순서보다 공식 통과 순서를 우선한다.
+    const indexed = stations.map((station, originalIndex) => ({
+        station,
+        originalIndex,
+        sequence: parseTransitStationSequence(station),
+    }));
+    if (indexed.length < 2 || indexed.some(({ sequence }) => sequence === undefined)) {
+        return stations;
+    }
+
+    return indexed
+        .sort((a, b) => (a.sequence! - b.sequence!) || (a.originalIndex - b.originalIndex))
+        .map(({ station }) => station);
 }
 
 function parseStationName(station: any): string | undefined {
@@ -495,11 +628,28 @@ function parseStationName(station: any): string | undefined {
 
 function parseStationCode(station: any): string | undefined {
     if (!station || typeof station !== "object") return undefined;
-    const raw = station?.stationID ?? station?.stationId ?? station?.stationCode ?? station?.arsId ?? station?.id;
-    if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
-    if (typeof raw !== "string") return undefined;
-    const normalized = raw.trim();
-    return normalized.length > 0 ? normalized : undefined;
+    const arsIdRaw = station?.arsId ?? station?.arsID;
+    const arsId = typeof arsIdRaw === "number" && Number.isFinite(arsIdRaw)
+        ? String(arsIdRaw).padStart(5, "0")
+        : typeof arsIdRaw === "string"
+            ? arsIdRaw.replace(/\D/g, "")
+            : undefined;
+    if (arsId && /^\d{5}$/.test(arsId)) return `ARS:${arsId}`;
+
+    const raw = station?.stationID ?? station?.stationId ?? station?.stationCode ?? station?.id;
+    const cityCodeRaw = station?.cityCode ?? station?.citycode;
+    const cityCode = typeof cityCodeRaw === "number" && Number.isFinite(cityCodeRaw)
+        ? String(cityCodeRaw)
+        : typeof cityCodeRaw === "string"
+            ? cityCodeRaw.trim()
+            : undefined;
+    const normalized = typeof raw === "number" && Number.isFinite(raw)
+        ? String(raw)
+        : typeof raw === "string"
+            ? raw.trim()
+            : undefined;
+    if (!normalized) return undefined;
+    return cityCode ? `${cityCode}:${normalized}` : normalized;
 }
 
 function parseTransitLegPassStops(leg: any): TransitPassStop[] {
@@ -700,23 +850,74 @@ function parseTransitStepsLinestring(leg: any): RoutePathCoord[] | undefined {
     return clampPathCoords(dedupePathCoords(coords));
 }
 
-function parseTransitLegPathCoords(leg: any): RoutePathCoord[] | undefined {
-    const direct = parseTransitPathCoords(
+function parseTransitDirectPathCoords(leg: any): RoutePathCoord[] | undefined {
+    return parseTransitPathCoords(
         leg?.passShape?.linestring ??
         leg?.passShape?.coordinates ??
         leg?.shape ??
         leg?.path ??
         leg?.geometry
     );
-    if (direct) return direct;
-    // WALK 레그는 passShape.linestring 대신 steps[].linestring에 보행자 경로가 담겨 있음
-    const stepsPath = parseTransitStepsLinestring(leg);
-    if (stepsPath) return stepsPath;
+}
+
+function parseTransitLegPathGeometry(
+    leg: any,
+    kind = normalizeTransitLegKind(leg)
+): { pathCoords?: RoutePathCoord[]; source: TransitGeometrySource; rawPointCount?: number } {
+    if (kind === "WALK") {
+        const stepsPath = parseTransitStepsLinestring(leg);
+        if (stepsPath) {
+            return {
+                pathCoords: stepsPath,
+                source: "WALK_STEPS_LINESTRING",
+                rawPointCount: stepsPath.length,
+            };
+        }
+
+        // TMAP은 역사 내부 환승처럼 steps가 없는 WALK 레그를 passShape로 내려준다.
+        // 이 형상을 버리면 실제 환승 동선 대신 정류장 두 점을 잇는 임의 경로가 표시된다.
+        const passShapePath = parseTransitDirectPathCoords(leg);
+        if (passShapePath) {
+            return {
+                pathCoords: passShapePath,
+                source: "WALK_PASS_SHAPE_LINESTRING",
+                rawPointCount: passShapePath.length,
+            };
+        }
+    }
+
+    if (kind === "BUS" || kind === "SUBWAY") {
+        const direct = parseTransitDirectPathCoords(leg);
+        if (direct) {
+            return {
+                pathCoords: direct,
+                source: "TRANSIT_PASS_SHAPE_LINESTRING",
+                rawPointCount: direct.length,
+            };
+        }
+    }
+
+    if (kind !== "WALK") {
+        const stepsPath = parseTransitStepsLinestring(leg);
+        if (stepsPath) {
+            return {
+                pathCoords: stepsPath,
+                source: "WALK_STEPS_LINESTRING",
+                rawPointCount: stepsPath.length,
+            };
+        }
+    }
+
     const stationPath = parseTransitLegStationPath(leg);
-    if (stationPath) return stationPath;
-    // 구간 세부 path가 없는 경우 직선 보간을 그리면 화면에 부정확한 장거리 직선이 생긴다.
-    // 정밀도를 위해 "실제 path가 존재하는 구간"만 색상 구간선으로 노출한다.
-    return undefined;
+    if (stationPath) {
+        return {
+            pathCoords: stationPath,
+            source: "PASS_STOP_LIST",
+            rawPointCount: stationPath.length,
+        };
+    }
+
+    return { source: "UNKNOWN" };
 }
 
 function buildTransitLegLabel(detail: Omit<TransitLegDetail, "label">): string {
@@ -761,15 +962,18 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
             const kind = normalizeTransitLegKind(leg);
             const distanceMeters = safeNumber(leg?.distance ?? leg?.walkDistance ?? leg?.length);
             const durationMinutes = normalizeTransitLegDurationToMinutes(
-                leg?.sectionTime ?? leg?.time ?? leg?.duration ?? leg?.moveTime,
-                kind,
-                distanceMeters
+                leg?.sectionTime ?? leg?.time ?? leg?.duration ?? leg?.moveTime
             );
             const stationCount = parseTransitLegStationCount(leg);
             const lineName = parseTransitLegLineName(leg);
             const lineColor = parseTransitLegLineColor(leg);
+            const serviceAvailable = parseTransitLegServiceAvailable(leg);
+            const directionName = parseTransitLegDirectionName(leg);
             const startName = parseTransitLegStartName(leg);
             const endName = parseTransitLegEndName(leg);
+            const boardingPlatform = parseTransitLegBoardingPlatform(leg, startName);
+            const boardingExit = parseTransitLegBoardingExit(leg);
+            const recommendedBoardingPosition = parseTransitLegRecommendedBoardingPosition(leg);
             const passStops = parseTransitLegPassStops(leg);
             const startCoord = parseTransitLegStartCoord(leg);
             const endCoord = parseTransitLegEndCoord(leg);
@@ -777,9 +981,18 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 ? parseTransitLegStartCoord(legArray[legIndex + 1])
                 : undefined;
             const forceEndToTail = kind === "WALK" && legIndex === legArray.length - 1;
-            let pathCoords = parseTransitLegPathCoords(leg);
+            const pathGeometry = parseTransitLegPathGeometry(leg, kind);
+            let pathCoords = pathGeometry.pathCoords;
             // steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우만 exact로 표시
-            let pathCoordsIsExact = Array.isArray(pathCoords) && pathCoords.length >= 2;
+            let pathCoordsIsExact = (
+                pathGeometry.source === "WALK_STEPS_LINESTRING" ||
+                pathGeometry.source === "WALK_PASS_SHAPE_LINESTRING" ||
+                pathGeometry.source === "TRANSIT_PASS_SHAPE_LINESTRING"
+            ) && Array.isArray(pathCoords) && pathCoords.length >= 2;
+            let pathGeometrySource: TransitGeometrySource | undefined = Array.isArray(pathCoords) && pathCoords.length >= 2
+                ? pathGeometry.source
+                : undefined;
+            let rawPathPointCount = pathGeometry.rawPointCount;
 
             if (!pathCoordsIsExact && Array.isArray(itineraryPath) && itineraryPath.length >= 2) {
                 const snapped = snapTransitLegPathFromItinerary(
@@ -792,6 +1005,8 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 );
                 if (Array.isArray(snapped.pathCoords) && snapped.pathCoords.length >= 2) {
                     pathCoords = snapped.pathCoords;
+                    pathGeometrySource = "ITINERARY_PATH_SNAP";
+                    rawPathPointCount = snapped.pathCoords.length;
                     // itinerary snap은 도로 중앙 경로 — exact 아님
                 }
                 itineraryPathCursor = snapped.nextStartIndex;
@@ -821,6 +1036,10 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 stationCount,
                 lineName,
                 lineColor,
+                directionName,
+                boardingPlatform,
+                boardingExit,
+                recommendedBoardingPosition,
                 startName,
                 endName,
                 passStops,
@@ -828,6 +1047,9 @@ function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathCoord[])
                 endCoord: normalizedEndCoord,
                 pathCoords,
                 pathCoordsIsExact,
+                pathGeometrySource,
+                rawPathPointCount,
+                serviceAvailable,
             };
 
             const label = buildTransitLegLabel(base);
@@ -865,15 +1087,29 @@ function buildAlternativeId(prefix: string, index: number): string {
     return `${prefix}-${index}`;
 }
 
+function buildRoutePathSignature(pathCoords?: RoutePathCoord[]): string | undefined {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return undefined;
+    const sampleCount = Math.min(12, pathCoords.length);
+    const samples: string[] = [];
+    for (let index = 0; index < sampleCount; index += 1) {
+        const pathIndex = Math.round((index * (pathCoords.length - 1)) / Math.max(1, sampleCount - 1));
+        const point = pathCoords[pathIndex];
+        samples.push(`${point.lat.toFixed(5)},${point.lng.toFixed(5)}`);
+    }
+    return samples.join(";");
+}
+
 function dedupeRouteAlternatives(items: RouteAlternativeOption[]): RouteAlternativeOption[] {
     const used = new Set<string>();
     const result: RouteAlternativeOption[] = [];
 
     for (const item of items) {
+        const pathSignature = buildRoutePathSignature(item.pathCoords);
         const minuteBucket = typeof item.minutes === "number" ? Math.round(item.minutes) : -1;
-        const distanceBucket = typeof item.distanceMeters === "number" ? Math.round(item.distanceMeters / 100) : -1;
-        const pathBucket = Array.isArray(item.pathCoords) ? item.pathCoords.length : 0;
-        const key = `${item.mode}|${minuteBucket}|${distanceBucket}|${pathBucket}`;
+        const distanceBucket = typeof item.distanceMeters === "number" ? Math.round(item.distanceMeters / 50) : -1;
+        const key = pathSignature
+            ? `${item.mode}|path:${pathSignature}`
+            : `${item.mode}|summary:${minuteBucket}|${distanceBucket}`;
         if (used.has(key)) continue;
         used.add(key);
         result.push(item);
@@ -920,10 +1156,118 @@ function parsePathFromTmapFeatureCollection(data: any): RoutePathCoord[] | undef
     return clampPathCoords(dedupePathCoords(coords));
 }
 
-function parseRouteSummaryFromFeatureCollection(data: any): { minutes?: number; distanceMeters?: number; pathCoords?: RoutePathCoord[] } {
+function normalizeRoadSegmentTimeToMinutes(secondsRaw: unknown): number | undefined {
+    const seconds = safeNumber(secondsRaw);
+    if (typeof seconds !== "number" || seconds < 0) return undefined;
+    return seconds / 60;
+}
+
+function normalizeTrafficLevel(rawStatus: unknown): RouteTrafficLevel {
+    const status = safeNumber(rawStatus);
+    if (status === 1) return "smooth";
+    if (status === 2) return "slow";
+    if (status === 3) return "congested";
+    return "unknown";
+}
+
+function parseFeaturePathCoords(feature: any): RoutePathCoord[] | undefined {
+    const coords: RoutePathCoord[] = [];
+    collectPathCoords(feature?.geometry?.coordinates, coords);
+    if (coords.length < 2) return undefined;
+    return clampPathCoords(dedupePathCoords(coords));
+}
+
+function parseTrafficSectionsFromFeature(feature: any, pathCoords?: RoutePathCoord[]): RouteTrafficSection[] {
+    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return [];
+    const rawTraffic = feature?.geometry?.traffic ?? feature?.properties?.traffic;
+    if (!Array.isArray(rawTraffic)) return [];
+
+    return rawTraffic.flatMap((rawSection: unknown) => {
+        if (!Array.isArray(rawSection) || rawSection.length < 3) return [];
+        const rawStart = safeNumber(rawSection[0]);
+        const rawEnd = safeNumber(rawSection[1]);
+        if (typeof rawStart !== "number" || typeof rawEnd !== "number") return [];
+        const start = Math.max(0, Math.min(pathCoords.length - 1, Math.round(rawStart)));
+        const end = Math.max(start + 1, Math.min(pathCoords.length - 1, Math.round(rawEnd)));
+        const sectionPath = pathCoords.slice(start, end + 1);
+        if (sectionPath.length < 2) return [];
+        const speedKph = safeNumber(rawSection[3]);
+        return [{
+            pathCoords: sectionPath,
+            level: normalizeTrafficLevel(rawSection[2]),
+            speedKph,
+        } as RouteTrafficSection];
+    });
+}
+
+function normalizeInstruction(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized || undefined;
+}
+
+function parseRoadRouteDetails(data: any): Pick<ParsedRoadRoute, "guideSteps" | "trafficSections"> {
+    const features = Array.isArray(data?.features) ? data.features : [];
+    const guideSteps: RouteGuideStep[] = [];
+    const trafficSections: RouteTrafficSection[] = [];
+
+    features.forEach((feature: any) => {
+        const geometryType = feature?.geometry?.type;
+        const properties = feature?.properties ?? {};
+
+        if (geometryType === "Point") {
+            const coordinate = parseLatLngPair(feature?.geometry?.coordinates) ?? undefined;
+            const instruction = normalizeInstruction(properties?.description);
+            if (!instruction || /^(출발지|도착지)$/u.test(instruction)) return;
+            guideSteps.push({
+                instruction,
+                roadName: normalizeInstruction(properties?.nextRoadName ?? properties?.name),
+                turnType: properties?.turnType === undefined ? undefined : String(properties.turnType),
+                coordinate,
+            });
+            return;
+        }
+
+        if (geometryType !== "LineString" && geometryType !== "MultiLineString") return;
+        const pathCoords = parseFeaturePathCoords(feature);
+        if (!pathCoords) return;
+        trafficSections.push(...parseTrafficSectionsFromFeature(feature, pathCoords));
+
+        const roadName = normalizeInstruction(properties?.name ?? properties?.roadName);
+        const instruction = normalizeInstruction(properties?.description) ?? roadName;
+        const segmentData = {
+            roadName,
+            durationMinutes: normalizeRoadSegmentTimeToMinutes(properties?.time),
+            distanceMeters: safeNumber(properties?.distance),
+            pathCoords,
+            coordinate: pathCoords[0],
+        };
+        const previousGuide = guideSteps[guideSteps.length - 1];
+        if (previousGuide && !previousGuide.pathCoords) {
+            Object.assign(previousGuide, {
+                roadName: previousGuide.roadName ?? segmentData.roadName,
+                durationMinutes: segmentData.durationMinutes,
+                distanceMeters: segmentData.distanceMeters,
+                pathCoords: segmentData.pathCoords,
+                coordinate: previousGuide.coordinate ?? segmentData.coordinate,
+            });
+        } else if (instruction) {
+            guideSteps.push({ instruction, ...segmentData });
+        }
+    });
+
+    return {
+        guideSteps: guideSteps.length > 0 ? guideSteps : undefined,
+        trafficSections: trafficSections.length > 0 ? trafficSections : undefined,
+    };
+}
+
+export function parseTmapRoadRouteResponse(data: any): ParsedRoadRoute {
     const features = Array.isArray(data?.features) ? data.features : [];
     let distanceMeters: number | undefined;
     let minutes: number | undefined;
+    let tollFareWon: number | undefined;
+    let taxiFareWon: number | undefined;
 
     for (const feature of features) {
         const properties = feature?.properties;
@@ -932,6 +1276,8 @@ function parseRouteSummaryFromFeatureCollection(data: any): { minutes?: number; 
         if (typeof totalDistance === "number" || typeof totalTimeSeconds === "number") {
             distanceMeters = totalDistance;
             minutes = normalizeRoadTimeToMinutes(totalTimeSeconds);
+            tollFareWon = safeNumber(properties?.totalFare ?? properties?.tollFare);
+            taxiFareWon = safeNumber(properties?.taxiFare);
             break;
         }
     }
@@ -944,7 +1290,39 @@ function parseRouteSummaryFromFeatureCollection(data: any): { minutes?: number; 
     }
 
     const pathCoords = parsePathFromTmapFeatureCollection(data);
-    return { minutes, distanceMeters, pathCoords };
+    const details = parseRoadRouteDetails(data);
+    return { minutes, distanceMeters, tollFareWon, taxiFareWon, pathCoords, ...details };
+}
+
+export function parseLineString(lineString?: string): RoutePathCoord[] {
+    if (typeof lineString !== "string") return [];
+
+    const tokens = lineString
+        .replace(/^\s*LINESTRING\s*\(/i, "")
+        .replace(/\)\s*$/i, "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+
+    const coords: RoutePathCoord[] = [];
+    tokens.forEach((token) => {
+        const [lonRaw, latRaw] = token.split(",");
+        const longitude = safeNumber(lonRaw);
+        const latitude = safeNumber(latRaw);
+
+        if (
+            typeof latitude !== "number" ||
+            typeof longitude !== "number" ||
+            !isWgs84Coordinate(latitude, longitude)
+        ) {
+            console.warn("[geometry] invalid linestring token", token);
+            return;
+        }
+
+        coords.push({ lat: latitude, lng: longitude });
+    });
+
+    return coords;
 }
 
 function parseTransitPathCoords(raw: unknown): RoutePathCoord[] | undefined {
@@ -956,12 +1334,24 @@ function parseTransitPathCoords(raw: unknown): RoutePathCoord[] | undefined {
                 if (Array.isArray(point) && point.length >= 2) {
                     const lng = safeNumber(point[0]);
                     const lat = safeNumber(point[1]);
-                    if (typeof lat === "number" && typeof lng === "number") return { lat, lng } as RoutePathCoord;
+                    if (
+                        typeof lat === "number" &&
+                        typeof lng === "number" &&
+                        isWgs84Coordinate(lat, lng)
+                    ) {
+                        return { lat, lng } as RoutePathCoord;
+                    }
                 }
                 if (typeof point === "object" && point !== null) {
                     const lat = safeNumber((point as any).lat ?? (point as any).latitude ?? (point as any).y);
                     const lng = safeNumber((point as any).lng ?? (point as any).longitude ?? (point as any).x);
-                    if (typeof lat === "number" && typeof lng === "number") return { lat, lng } as RoutePathCoord;
+                    if (
+                        typeof lat === "number" &&
+                        typeof lng === "number" &&
+                        isWgs84Coordinate(lat, lng)
+                    ) {
+                        return { lat, lng } as RoutePathCoord;
+                    }
                 }
                 return null;
             })
@@ -970,33 +1360,25 @@ function parseTransitPathCoords(raw: unknown): RoutePathCoord[] | undefined {
     }
 
     if (typeof raw === "string") {
+        const lineStringPairs = parseLineString(raw);
+        if (lineStringPairs.length >= 2) return clampPathCoords(dedupePathCoords(lineStringPairs));
+
         const matchPairs: RoutePathCoord[] = [];
         const pairRegex = /(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/g;
         let match = pairRegex.exec(raw);
         while (match) {
             const lng = safeNumber(match[1]);
             const lat = safeNumber(match[2]);
-            if (typeof lat === "number" && typeof lng === "number") {
+            if (
+                typeof lat === "number" &&
+                typeof lng === "number" &&
+                isWgs84Coordinate(lat, lng)
+            ) {
                 matchPairs.push({ lat, lng });
             }
             match = pairRegex.exec(raw);
         }
         if (matchPairs.length >= 2) return clampPathCoords(dedupePathCoords(matchPairs));
-
-        const parsed = raw
-            .split(/\s+/)
-            .map((token) => token.trim())
-            .filter(Boolean)
-            .map((token) => token.split(","))
-            .map((coords) => {
-                if (coords.length < 2) return null;
-                const lng = safeNumber(coords[0]);
-                const lat = safeNumber(coords[1]);
-                if (typeof lat !== "number" || typeof lng !== "number") return null;
-                return { lat, lng } as RoutePathCoord;
-            })
-            .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null);
-        if (parsed.length >= 2) return clampPathCoords(dedupePathCoords(parsed));
     }
 
     return undefined;
@@ -1012,17 +1394,22 @@ function parseTransitStepSummary(transitLegs: TransitLegDetail[]): string | unde
 }
 
 function parseTransitItineraryPath(itinerary: any): RoutePathCoord[] | undefined {
-    const directPath = parseTransitPathCoords(itinerary?.path);
-    if (directPath) return directPath;
+    // 구간별 정류장 목록을 전체 상세 path로 승격하면 직선 정류장 선형이 도로 형상으로 오인된다.
+    // itinerary.path가 공급자에게서 직접 내려온 경우에만 구간 스냅 복구에 사용한다.
+    return parseTransitPathCoords(itinerary?.path);
+}
 
-    const legs = Array.isArray(itinerary?.legs) ? itinerary.legs : [];
-    const legCoords = legs
-        .map((leg: any) => parseTransitLegPathCoords(leg))
-        .filter((value: RoutePathCoord[] | undefined): value is RoutePathCoord[] => Array.isArray(value) && value.length >= 2)
-        .flat();
-
-    if (legCoords.length < 2) return undefined;
-    return clampPathCoords(dedupePathCoords(legCoords));
+function buildTransitOptionPath(transitLegs: TransitLegDetail[]): RoutePathCoord[] | undefined {
+    const coords = transitLegs
+        .flatMap((leg) => Array.isArray(leg.pathCoords) ? leg.pathCoords : [])
+        .filter((coord) => (
+            typeof coord?.lat === "number" &&
+            Number.isFinite(coord.lat) &&
+            typeof coord?.lng === "number" &&
+            Number.isFinite(coord.lng)
+        ));
+    if (coords.length < 2) return undefined;
+    return clampPathCoords(dedupePathCoords(coords));
 }
 
 function composeTmapAddress(poi: any): string {
@@ -1045,17 +1432,28 @@ function composeTmapAddress(poi: any): string {
 }
 
 function pickPoiSearchCoord(poi: any): RoutePathCoord | undefined {
-    // Prefer the parcel/building center so named POIs stay aligned with the building footprint.
-    // Entrance(front) coordinates tend to bias the marker toward the road and looked off for places like 아울타워.
+    // 길찾기 입력에는 건물 중심점보다 실제로 접근 가능한 보행자/정문 좌표를 우선한다.
     return pickFirstValidCoordinatePair([
+        [poi?.pnsLat, poi?.pnsLon],
+        [poi?.frontLat, poi?.frontLon],
         [poi?.noorLat, poi?.noorLon],
         [poi?.newLat, poi?.newLon],
         [poi?.lat, poi?.lon],
-        [poi?.frontLat, poi?.frontLon],
     ]);
 }
 
-function parsePoiResults(data: any): PlaceSearchItem[] {
+function applySearchDistance(
+    item: PlaceSearchItem,
+    context?: PlaceSearchContext
+): PlaceSearchItem {
+    if (!context?.center) return item;
+    return {
+        ...item,
+        distanceMeters: Math.round(distanceBetweenCoordsMeters(context.center, { lat: item.lat, lng: item.lng })),
+    };
+}
+
+function parsePoiResults(data: any, context?: PlaceSearchContext): PlaceSearchItem[] {
     const rawPoi = data?.searchPoiInfo?.pois?.poi;
     const poiList = ensureArray(rawPoi);
 
@@ -1081,18 +1479,20 @@ function parsePoiResults(data: any): PlaceSearchItem[] {
                 .join(" > ")
                 || undefined;
 
-            return {
+            return applySearchDistance({
                 name,
                 address: address || name,
                 lat: coord.lat,
                 lng: coord.lng,
                 category,
-            } as PlaceSearchItem;
+                provider: "tmap",
+                providerPlaceId: poi?.id === undefined || poi?.id === null ? undefined : String(poi.id),
+            } as PlaceSearchItem, context);
         })
         .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
 }
 
-function parseFullAddressGeoResults(data: any, query: string): PlaceSearchItem[] {
+function parseFullAddressGeoResults(data: any, query: string, context?: PlaceSearchContext): PlaceSearchItem[] {
     const coordinates = ensureArray(data?.coordinateInfo?.coordinate);
 
     return coordinates
@@ -1112,13 +1512,14 @@ function parseFullAddressGeoResults(data: any, query: string): PlaceSearchItem[]
                 ? address.trim().split(" ").slice(0, 3).join(" ")
                 : `${query} ${index + 1}`;
 
-            return {
+            return applySearchDistance({
                 name,
                 address: address?.trim() || query,
                 lat,
                 lng,
                 category: "주소",
-            } as PlaceSearchItem;
+                provider: "tmap",
+            } as PlaceSearchItem, context);
         })
         .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
 }
@@ -1136,75 +1537,15 @@ function dedupeSearchResults(items: PlaceSearchItem[]): PlaceSearchItem[] {
     return result;
 }
 
-function parseKakaoLocalDocuments(data: any, query: string): PlaceSearchItem[] {
-    const documents = ensureArray(data?.documents);
-
-    return documents
-        .map((document: any, index: number) => {
-            const lat = safeNumber(document?.y);
-            const lng = safeNumber(document?.x);
-            if (typeof lat !== "number" || typeof lng !== "number") return null;
-
-            const roadAddress = typeof document?.road_address_name === "string"
-                ? document.road_address_name.trim()
-                : "";
-            const address = typeof document?.address_name === "string"
-                ? document.address_name.trim()
-                : "";
-            const nestedRoadAddress = typeof document?.road_address?.address_name === "string"
-                ? document.road_address.address_name.trim()
-                : "";
-            const nestedAddress = typeof document?.address?.address_name === "string"
-                ? document.address.address_name.trim()
-                : "";
-            const placeName = typeof document?.place_name === "string"
-                ? document.place_name.trim()
-                : "";
-
-            const normalizedAddress = roadAddress || nestedRoadAddress || address || nestedAddress || query;
-            const name = placeName || normalizedAddress.split(" ").slice(0, 3).join(" ") || `${query} ${index + 1}`;
-            const category = typeof document?.category_name === "string" && document.category_name.trim()
-                ? document.category_name.trim()
-                : undefined;
-
-            return {
-                name,
-                address: normalizedAddress,
-                lat,
-                lng,
-                category,
-            } as PlaceSearchItem;
-        })
-        .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
-}
-
-function parseNaverGeocodeResults(data: any, query: string): PlaceSearchItem[] {
-    const addresses = ensureArray(data?.addresses);
-
-    return addresses
-        .map((item: any, index: number) => {
-            const lat = safeNumber(item?.y);
-            const lng = safeNumber(item?.x);
-            if (typeof lat !== "number" || typeof lng !== "number") return null;
-
-            const roadAddress = typeof item?.roadAddress === "string" ? item.roadAddress.trim() : "";
-            const jibunAddress = typeof item?.jibunAddress === "string" ? item.jibunAddress.trim() : "";
-            const address = roadAddress || jibunAddress || query;
-            const name = address.split(" ").slice(0, 3).join(" ") || `${query} ${index + 1}`;
-
-            return {
-                name,
-                address,
-                lat,
-                lng,
-                category: "주소",
-            } as PlaceSearchItem;
-        })
-        .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
-}
-
-async function searchViaTmapPoi(query: string): Promise<PlaceSearchItem[]> {
+async function searchViaTmapPoi(query: string, context?: PlaceSearchContext): Promise<PlaceSearchItem[]> {
     const client = tmapClient();
+    const centerParams = context?.center
+        ? {
+            centerLat: String(context.center.lat),
+            centerLon: String(context.center.lng),
+            radius: String(Math.max(1, Math.min(33, context.radiusKm ?? 20))),
+        }
+        : {};
     const response = await client.get("/tmap/pois", {
         params: {
             version: 1,
@@ -1213,12 +1554,13 @@ async function searchViaTmapPoi(query: string): Promise<PlaceSearchItem[]> {
             searchKeyword: query,
             reqCoordType: "WGS84GEO",
             resCoordType: "WGS84GEO",
+            ...centerParams,
         },
     });
-    return parsePoiResults(response.data);
+    return parsePoiResults(response.data, context);
 }
 
-async function geocodeViaTmap(query: string): Promise<PlaceSearchItem[]> {
+async function geocodeViaTmap(query: string, context?: PlaceSearchContext): Promise<PlaceSearchItem[]> {
     const client = tmapClient();
     const response = await client.get("/tmap/geo/fullAddrGeo", {
         params: {
@@ -1228,7 +1570,7 @@ async function geocodeViaTmap(query: string): Promise<PlaceSearchItem[]> {
             fullAddr: query,
         },
     });
-    return parseFullAddressGeoResults(response.data, query);
+    return parseFullAddressGeoResults(response.data, query, context);
 }
 
 async function reverseViaTmap(lat: number, lng: number): Promise<string | undefined> {
@@ -1282,101 +1624,12 @@ async function reverseViaTmap(lat: number, lng: number): Promise<string | undefi
     return undefined;
 }
 
-async function searchViaKakaoLocal(query: string): Promise<PlaceSearchItem[]> {
-    const client = kakaoLocalClient();
-    const [keywordResponse, addressResponse] = await Promise.all([
-        client.get("/v2/local/search/keyword.json", {
-            params: {
-                query,
-                size: 10,
-                sort: "accuracy",
-            },
-        }),
-        client.get("/v2/local/search/address.json", {
-            params: {
-                query,
-                size: 10,
-            },
-        }),
-    ]);
-
-    return dedupeSearchResults([
-        ...parseKakaoLocalDocuments(keywordResponse.data, query),
-        ...parseKakaoLocalDocuments(addressResponse.data, query),
-    ]);
-}
-
-async function reverseViaKakaoLocal(lat: number, lng: number): Promise<string | undefined> {
-    const client = kakaoLocalClient();
-    const response = await client.get("/v2/local/geo/coord2address.json", {
-        params: {
-            x: String(lng),
-            y: String(lat),
-        },
-    });
-
-    const first = ensureArray(response.data?.documents)[0] as any;
-    const roadAddress = first?.road_address?.address_name;
-    if (typeof roadAddress === "string" && roadAddress.trim()) return roadAddress.trim();
-
-    const address = first?.address?.address_name;
-    if (typeof address === "string" && address.trim()) return address.trim();
-    return undefined;
-}
-
-async function geocodeViaNaver(query: string): Promise<PlaceSearchItem[]> {
-    const client = naverMapClient();
-    const response = await client.get("/map-geocode/v2/geocode", {
-        params: {
-            query,
-        },
-    });
-
-    return parseNaverGeocodeResults(response.data, query);
-}
-
-function composeNaverReverseAddress(item: any): string | undefined {
-    const region = item?.region;
-    const land = item?.land;
-    const regionParts = [
-        region?.area1?.name,
-        region?.area2?.name,
-        region?.area3?.name,
-        region?.area4?.name,
-    ]
-        .filter((value) => typeof value === "string" && value.trim().length > 0)
-        .map((value) => (value as string).trim());
-
-    const roadParts = [
-        land?.name,
-        [land?.number1, land?.number2].filter(Boolean).join("-"),
-    ]
-        .filter((value) => typeof value === "string" && value.trim().length > 0)
-        .map((value) => (value as string).trim());
-
-    const address = [...regionParts, ...roadParts].join(" ").trim();
-    return address || undefined;
-}
-
-async function reverseViaNaver(lat: number, lng: number): Promise<string | undefined> {
-    const client = naverMapClient();
-    const response = await client.get("/map-reversegeocode/v2/gc", {
-        params: {
-            coords: `${lng},${lat}`,
-            orders: "roadaddr,addr",
-            output: "json",
-        },
-    });
-
-    const results = ensureArray(response.data?.results);
-    for (const item of results) {
-        const address = composeNaverReverseAddress(item);
-        if (address) return address;
-    }
-    return undefined;
-}
-
-async function searchViaNominatim(query: string): Promise<PlaceSearchItem[]> {
+async function searchViaNominatim(query: string, context?: PlaceSearchContext): Promise<PlaceSearchItem[]> {
+    const center = context?.center;
+    const latitudeSpan = center ? Math.max(0.05, Math.min(0.4, (context?.radiusKm ?? 20) / 111)) : undefined;
+    const longitudeSpan = center
+        ? latitudeSpan! / Math.max(0.2, Math.cos((center.lat * Math.PI) / 180))
+        : undefined;
     const response = await nominatimClient.get("/search", {
         params: {
             q: query,
@@ -1384,6 +1637,12 @@ async function searchViaNominatim(query: string): Promise<PlaceSearchItem[]> {
             countrycodes: "kr",
             limit: 10,
             addressdetails: 1,
+            ...(center && latitudeSpan && longitudeSpan
+                ? {
+                    viewbox: `${center.lng - longitudeSpan},${center.lat + latitudeSpan},${center.lng + longitudeSpan},${center.lat - latitudeSpan}`,
+                    bounded: 0,
+                }
+                : {}),
         },
     });
 
@@ -1411,7 +1670,16 @@ async function searchViaNominatim(query: string): Promise<PlaceSearchItem[]> {
             const address = [roadPart, suburb, district, city].filter(Boolean).join(", ")
                 || ((item.display_name as string) ?? "");
 
-            return { name, address, lat, lng } as PlaceSearchItem;
+            return applySearchDistance({
+                name,
+                address,
+                lat,
+                lng,
+                provider: "nominatim",
+                providerPlaceId: item?.place_id === undefined || item?.place_id === null
+                    ? undefined
+                    : String(item.place_id),
+            } as PlaceSearchItem, context);
         })
         .filter((value: PlaceSearchItem | null): value is PlaceSearchItem => value !== null);
 }
@@ -1434,211 +1702,126 @@ async function reverseViaNominatim(lat: number, lng: number): Promise<string | u
         || (response.data?.display_name as string);
 }
 
-async function getRouteViaOSRM(
-    origin: Place,
-    destination: Place,
-    profile: "driving" | "walking" | "cycling"
-): Promise<{ minutes?: number; distanceMeters?: number; pathCoords?: RoutePathCoord[] }> {
-    const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
-    const response = await axios.get(
-        `https://router.project-osrm.org/route/v1/${profile}/${coords}`,
-        {
-            params: {
-                alternatives: true,
-                overview: "full",
-                geometries: "geojson",
-            },
-            timeout: 10000,
-            headers: { "User-Agent": "NoLateFE/1.0" },
-        }
-    );
+function buildOsrmGuideInstruction(step: any): string | undefined {
+    const type = String(step?.maneuver?.type ?? "").toLowerCase();
+    const modifier = String(step?.maneuver?.modifier ?? "").toLowerCase();
+    const roadName = normalizeInstruction(step?.name);
+    const direction = modifier.includes("left")
+        ? "좌회전"
+        : modifier.includes("right")
+            ? "우회전"
+            : modifier === "uturn"
+                ? "유턴"
+                : "직진";
 
-    if (response.data?.code !== "Ok") return {};
-    const route = response.data?.routes?.[0];
-    if (!route) return {};
-
-    const distanceMeters = safeNumber(route.distance);
-    const durationSec = safeNumber(route.duration);
-    const minutes = typeof durationSec === "number" ? Math.max(1, Math.ceil(durationSec / 60)) : undefined;
-
-    const pathCoords = Array.isArray(route.geometry?.coordinates)
-        ? clampPathCoords(
-              dedupePathCoords(
-                  route.geometry.coordinates
-                      .map((point: unknown) => parseLatLngPair(point))
-                      .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null)
-              )
-          )
-        : undefined;
-
-    return { minutes, distanceMeters, pathCoords };
+    if (type === "depart" || type === "arrive") return undefined;
+    if (type === "roundabout" || type === "rotary") {
+        return roadName ? `회전교차로에서 ${roadName} 방면` : "회전교차로 진입";
+    }
+    if (type === "merge") return roadName ? `${roadName} 방면으로 합류` : "도로에 합류";
+    if (type === "fork") return roadName ? `${roadName} 방면으로 ${direction}` : `갈림길에서 ${direction}`;
+    if (type === "new name" || type === "continue") return roadName ? `${roadName} 따라 계속 이동` : "계속 이동";
+    return roadName ? `${roadName} 방면으로 ${direction}` : direction;
 }
 
-async function getRouteAlternativesViaOSRM(
-    origin: Place,
-    destination: Place,
-    profile: "driving" | "walking" | "cycling",
-    mode: TravelMode,
-    source: "api" | "fallback",
-    fallbackKind?: "road" | "straight"
-): Promise<RouteAlternativeOption[]> {
-    const coords = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
-    const response = await axios.get(
-        `https://router.project-osrm.org/route/v1/${profile}/${coords}`,
-        {
-            params: {
-                alternatives: true,
-                overview: "full",
-                geometries: "geojson",
-            },
-            timeout: 10000,
-            headers: { "User-Agent": "NoLateFE/1.0" },
-        }
-    );
-    if (response.data?.code !== "Ok") return [];
-
-    const routes = Array.isArray(response.data?.routes) ? response.data.routes : [];
-    const parsed = routes
-        .map((route: any, index: number) => {
-            const distanceMeters = safeNumber(route?.distance);
-            const durationSec = safeNumber(route?.duration);
-            const minutes = typeof durationSec === "number" ? Math.max(1, Math.ceil(durationSec / 60)) : undefined;
-
-            const pathCoords = Array.isArray(route?.geometry?.coordinates)
-                ? clampPathCoords(
-                      dedupePathCoords(
-                          route.geometry.coordinates
-                              .map((point: unknown) => parseLatLngPair(point))
-                              .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null)
-                      )
-                  )
-                : undefined;
-
-            if (
-                typeof minutes !== "number" &&
-                typeof distanceMeters !== "number" &&
-                (!Array.isArray(pathCoords) || pathCoords.length < 2)
-            ) {
-                return null;
-            }
-
-            return {
-                id: buildAlternativeId(`osrm-${profile}`, index),
-                mode,
-                minutes,
-                distanceMeters,
-                source,
-                fallbackKind,
-                pathCoords,
-            } as RouteAlternativeOption;
-        })
-        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
-
-    return parsed;
-}
-
-function routeSummaryLooksUsable(route: Pick<RouteAlternativeOption, "minutes" | "distanceMeters" | "pathCoords">): boolean {
-    return typeof route.minutes === "number" ||
-        typeof route.distanceMeters === "number" ||
-        (Array.isArray(route.pathCoords) && route.pathCoords.length >= 2);
-}
-
-function parseKakaoRoutePath(route: any): RoutePathCoord[] | undefined {
-    const coords: RoutePathCoord[] = [];
-    const sections = ensureArray(route?.sections);
-
-    sections.forEach((section: any) => {
-        ensureArray(section?.roads).forEach((road: any) => {
-            const vertexes = Array.isArray(road?.vertexes) ? road.vertexes : [];
-            for (let index = 0; index + 1 < vertexes.length; index += 2) {
-                const lng = safeNumber(vertexes[index]);
-                const lat = safeNumber(vertexes[index + 1]);
-                if (typeof lat === "number" && typeof lng === "number" && isWgs84Coordinate(lat, lng)) {
-                    coords.push({ lat, lng });
-                }
-            }
-        });
+function parseOsrmBikeGuideSteps(route: any): RouteGuideStep[] | undefined {
+    const legs = Array.isArray(route?.legs) ? route.legs : [];
+    const steps = legs.flatMap((leg: any) => Array.isArray(leg?.steps) ? leg.steps : []);
+    const guides = steps.flatMap((step: any) => {
+        const instruction = buildOsrmGuideInstruction(step);
+        if (!instruction) return [];
+        const pathCoords = Array.isArray(step?.geometry?.coordinates)
+            ? dedupePathCoords(
+                step.geometry.coordinates
+                    .map((point: unknown) => parseLatLngPair(point))
+                    .filter((coord: RoutePathCoord | null): coord is RoutePathCoord => coord !== null)
+            )
+            : undefined;
+        const coordinate = pickFirstValidCoordinatePair([
+            [step?.maneuver?.location?.[1], step?.maneuver?.location?.[0]],
+            [pathCoords?.[0]?.lat, pathCoords?.[0]?.lng],
+        ]);
+        return [{
+            instruction,
+            roadName: normalizeInstruction(step?.name),
+            durationMinutes: normalizeRoadSegmentTimeToMinutes(step?.duration),
+            distanceMeters: safeNumber(step?.distance),
+            turnType: normalizeInstruction(step?.maneuver?.type),
+            coordinate,
+            pathCoords: pathCoords && pathCoords.length >= 2 ? pathCoords : undefined,
+        } as RouteGuideStep];
     });
-
-    if (coords.length < 2) return undefined;
-    return clampPathCoords(dedupePathCoords(coords));
+    return guides.length > 0 ? guides : undefined;
 }
 
-function parseKakaoRouteAlternatives(data: any, mode: TravelMode, idPrefix: string): RouteAlternativeOption[] {
-    const routes = ensureArray(data?.routes);
+async function getBicycleAlternativesViaOpenStreetMap(
+    origin: Place,
+    destination: Place
+): Promise<RouteAlternativeOption[]> {
+    return scheduleOpenStreetMapRequest(async () => {
+        const coordinates = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+        // routed-bike 서버는 자전거 그래프를 미리 적재하므로 OSRM URL의 profile 자리는 driving을 사용한다.
+        const response = await axios.get(
+            `${OPENSTREETMAP_BIKE_ROUTING_BASE_URL}/route/v1/driving/${coordinates}`,
+            {
+                params: {
+                    alternatives: true,
+                    overview: "full",
+                    geometries: "geojson",
+                    steps: true,
+                },
+                timeout: OPENSTREETMAP_REQUEST_TIMEOUT_MS,
+                headers: { "User-Agent": "NoLateFE/1.0" },
+            }
+        );
 
-    return routes
-        .map((route: any, index: number) => {
-            const resultCode = safeNumber(route?.result_code);
-            if (typeof resultCode === "number" && resultCode !== 0) return null;
+        if (response.data?.code !== "Ok") return [];
+        const routes = Array.isArray(response.data?.routes) ? response.data.routes : [];
+        return routes
+            .map((route: any, index: number) => {
+                const durationSeconds = safeNumber(route?.duration);
+                const distanceMeters = safeNumber(route?.distance);
+                const pathCoords = Array.isArray(route?.geometry?.coordinates)
+                    ? clampPathCoords(
+                        dedupePathCoords(
+                            route.geometry.coordinates
+                                .map((point: unknown) => parseLatLngPair(point))
+                                .filter((coord: RoutePathCoord | null): coord is RoutePathCoord => coord !== null)
+                        )
+                    )
+                    : undefined;
 
-            const durationSeconds = safeNumber(route?.summary?.duration);
-            const distanceMeters = safeNumber(route?.summary?.distance);
-            const minutes = typeof durationSeconds === "number"
-                ? Math.max(1, Math.ceil(durationSeconds / 60))
-                : undefined;
-            const pathCoords = parseKakaoRoutePath(route);
-            const fareWon = safeNumber(route?.summary?.fare?.toll);
+                if (
+                    typeof durationSeconds !== "number" ||
+                    durationSeconds <= 0 ||
+                    !Array.isArray(pathCoords) ||
+                    pathCoords.length < 2
+                ) {
+                    return null;
+                }
 
-            const parsed: RouteAlternativeOption = {
-                id: buildAlternativeId(idPrefix, index),
-                mode,
-                minutes,
-                distanceMeters,
-                fareWon,
-                pathCoords,
-                source: "api",
-                provider: "kakao",
-            };
-
-            return routeSummaryLooksUsable(parsed) ? parsed : null;
-        })
-        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
-}
-
-function parseNaverRoutePath(route: any): RoutePathCoord[] | undefined {
-    const path = Array.isArray(route?.path) ? route.path : [];
-    const coords = path
-        .map((point: unknown) => parseLatLngPair(point))
-        .filter((value: RoutePathCoord | null): value is RoutePathCoord => value !== null)
-        .filter((coord: RoutePathCoord) => isWgs84Coordinate(coord.lat, coord.lng));
-
-    if (coords.length < 2) return undefined;
-    return clampPathCoords(dedupePathCoords(coords));
-}
-
-function parseNaverRouteAlternatives(data: any, option: string, mode: "CAR" | "ETC", idPrefix: string): RouteAlternativeOption[] {
-    const routes = ensureArray(data?.route?.[option]);
-
-    return routes
-        .map((route: any, index: number) => {
-            const durationMs = safeNumber(route?.summary?.duration);
-            const distanceMeters = safeNumber(route?.summary?.distance);
-            const minutes = typeof durationMs === "number" ? Math.max(1, Math.ceil(durationMs / 60000)) : undefined;
-            const pathCoords = parseNaverRoutePath(route);
-            const fareWon = safeNumber(route?.summary?.tollFare);
-
-            const parsed: RouteAlternativeOption = {
-                id: buildAlternativeId(`${idPrefix}-${option}`, index),
-                mode,
-                minutes,
-                distanceMeters,
-                fareWon,
-                pathCoords,
-                source: "api",
-                provider: "naver",
-            };
-
-            return routeSummaryLooksUsable(parsed) ? parsed : null;
-        })
-        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
+                return {
+                    id: buildAlternativeId("openstreetmap-bike", index),
+                    mode: "BIKE",
+                    minutes: Math.max(1, Math.ceil(durationSeconds / 60)),
+                    distanceMeters,
+                    pathCoords,
+                    guideSteps: parseOsrmBikeGuideSteps(route),
+                    source: "api",
+                    provider: "openstreetmap",
+                    attributionText: "© OpenStreetMap contributors",
+                    attributionUrl: "https://www.openstreetmap.org/fixthemap",
+                } as RouteAlternativeOption;
+            })
+            .filter((route: RouteAlternativeOption | null): route is RouteAlternativeOption => route !== null);
+    });
 }
 
 async function getDrivingRouteViaTmap(
     origin: Place,
     destination: Place,
     searchOption: string
-): Promise<{ minutes?: number; distanceMeters?: number; pathCoords?: RoutePathCoord[] }> {
+): Promise<ParsedRoadRoute> {
     const client = tmapClient();
     const payload = new URLSearchParams({
         startX: String(origin.lng),
@@ -1659,14 +1842,14 @@ async function getDrivingRouteViaTmap(
         }
     );
 
-    return parseRouteSummaryFromFeatureCollection(response.data);
+    return parseTmapRoadRouteResponse(response.data);
 }
 
 async function getWalkingRouteViaTmap(
     origin: Place,
     destination: Place,
     searchOption = "0"
-): Promise<{ minutes?: number; distanceMeters?: number; pathCoords?: RoutePathCoord[] }> {
+): Promise<ParsedRoadRoute> {
     const client = tmapClient();
     const payload = new URLSearchParams({
         startX: String(origin.lng),
@@ -1688,114 +1871,10 @@ async function getWalkingRouteViaTmap(
         }
     );
 
-    return parseRouteSummaryFromFeatureCollection(response.data);
+    return parseTmapRoadRouteResponse(response.data);
 }
 
-async function getDrivingAlternativesViaKakao(origin: Place, destination: Place, mode: "CAR" | "ETC"): Promise<RouteAlternativeOption[]> {
-    const priorities = ["RECOMMEND", "TIME", "DISTANCE"];
-    const options: RouteAlternativeOption[] = [];
-
-    for (let index = 0; index < priorities.length; index += 1) {
-        const priority = priorities[index];
-        try {
-            const client = kakaoMobilityClient();
-            const response = await client.get("/v1/directions", {
-                params: {
-                    origin: `${origin.lng},${origin.lat}`,
-                    destination: `${destination.lng},${destination.lat}`,
-                    priority,
-                    alternatives: true,
-                    road_details: false,
-                    summary: false,
-                },
-            });
-            options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
-        } catch (error) {
-            console.info(`[대안경로] Kakao driving(${priority}) 실패 →`, tmapApiErrorMessage(error));
-        }
-    }
-
-    return dedupeRouteAlternatives(options);
-}
-
-async function getAffiliateRouteAlternativesViaKakao(
-    origin: Place,
-    destination: Place,
-    mode: "WALK" | "BIKE",
-    endpoint: string,
-    priorities: string[]
-): Promise<RouteAlternativeOption[]> {
-    const options: RouteAlternativeOption[] = [];
-
-    for (let index = 0; index < priorities.length; index += 1) {
-        const priority = priorities[index];
-        try {
-            const client = kakaoMobilityClient(true);
-            const response = await client.get(endpoint, {
-                params: {
-                    origin: `${origin.lng},${origin.lat}`,
-                    destination: `${destination.lng},${destination.lat}`,
-                    waypoints: "",
-                    priority,
-                    summary: false,
-                },
-            });
-            options.push(...parseKakaoRouteAlternatives(response.data, mode, `kakao-${mode.toLowerCase()}-${priority.toLowerCase()}`));
-        } catch (error) {
-            console.info(`[대안경로] Kakao ${mode.toLowerCase()}(${priority}) 실패 →`, tmapApiErrorMessage(error));
-        }
-    }
-
-    return dedupeRouteAlternatives(options);
-}
-
-async function getWalkingAlternativesViaKakao(origin: Place, destination: Place): Promise<RouteAlternativeOption[]> {
-    return getAffiliateRouteAlternativesViaKakao(
-        origin,
-        destination,
-        "WALK",
-        "/affiliate/walking/v1/directions",
-        ["DISTANCE", "MAIN_STREET"]
-    );
-}
-
-async function getBicycleAlternativesViaKakao(origin: Place, destination: Place): Promise<RouteAlternativeOption[]> {
-    return getAffiliateRouteAlternativesViaKakao(
-        origin,
-        destination,
-        "BIKE",
-        "/affiliate/bicycle/v1/directions",
-        ["RECOMMEND", "TIME", "DISTANCE"]
-    );
-}
-
-async function getDrivingAlternativesViaNaver(origin: Place, destination: Place, mode: "CAR" | "ETC"): Promise<RouteAlternativeOption[]> {
-    const naverOptions = mode === "CAR"
-        ? ["trafast", "tracomfort", "traoptimal", "traavoidtoll", "traavoidcaronly"]
-        : ["trafast", "traoptimal"];
-    const alternatives: RouteAlternativeOption[] = [];
-
-    for (let index = 0; index < naverOptions.length; index += 1) {
-        const option = naverOptions[index];
-        try {
-            const client = naverMapClient();
-            const response = await client.get("/map-direction/v1/driving", {
-                params: {
-                    start: `${origin.lng},${origin.lat}`,
-                    goal: `${destination.lng},${destination.lat}`,
-                    option,
-                },
-            });
-            alternatives.push(...parseNaverRouteAlternatives(response.data, option, mode, `naver-${mode.toLowerCase()}`));
-        } catch (error) {
-            console.info(`[대안경로] Naver driving(${option}) 실패 →`, tmapApiErrorMessage(error));
-        }
-    }
-
-    return dedupeRouteAlternatives(alternatives);
-}
-
-function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
+export function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
     const itineraries = Array.isArray(data?.metaData?.plan?.itineraries) ? data.metaData.plan.itineraries : [];
     const parsed: TransitRouteOption[] = itineraries
         .map((itinerary: any, index: number) => {
@@ -1808,8 +1887,10 @@ function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
             const fareWon = safeNumber(
                 itinerary?.fare?.regular?.totalFare ?? itinerary?.fare?.totalFare ?? itinerary?.totalFare
             );
-            const pathCoords = parseTransitItineraryPath(itinerary);
-            const transitLegs = parseTransitLegDetails(itinerary?.legs ?? itinerary?.path, pathCoords);
+            const itineraryPath = parseTransitItineraryPath(itinerary);
+            const transitLegs = parseTransitLegDetails(itinerary?.legs ?? itinerary?.path, itineraryPath);
+            // option path는 화면 맞춤과 응답 유효성 검사용이다. 각 leg의 geometry 출처는 그대로 유지한다.
+            const pathCoords = itineraryPath ?? buildTransitOptionPath(transitLegs);
             const transitModeSummary = buildTransitModeSummary(transitLegs);
             const stepSummary = parseTransitStepSummary(transitLegs);
 
@@ -1825,6 +1906,7 @@ function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
                 transitLegs,
                 pathCoords,
                 source: "api",
+                provider: "tmap",
             } as TransitRouteOption;
         })
         .filter((value: TransitRouteOption | null): value is TransitRouteOption => value !== null);
@@ -1832,85 +1914,144 @@ function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
     return parsed.sort((a: TransitRouteOption, b: TransitRouteOption) => a.minutes - b.minutes);
 }
 
+function formatTransitSearchDateTime(date = new Date()): string {
+    const year = String(date.getFullYear()).padStart(4, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    return `${year}${month}${day}${hour}${minute}`;
+}
+
 // Tmap 원본 API 호출 블록.
 // 실제 네트워크 요청은 여기서만 하고, 화면 쪽은 아래 exported helper만 사용한다.
-async function getTransitRouteViaTmap(origin: Place, destination: Place): Promise<TransitRouteOption[]> {
-    const client = tmapClient();
-    const response = await client.post(
-        "/transit/routes",
-        {
-            startX: String(origin.lng),
-            startY: String(origin.lat),
-            endX: String(destination.lng),
-            endY: String(destination.lat),
-            count: TMAP_TRANSIT_REQUEST_COUNT,
-            lang: 0,
-            format: "json",
-        },
-        {
-            headers: {
-                "Content-Type": "application/json",
-            },
+async function requestTransitRouteViaTmap(
+    origin: Place,
+    destination: Place,
+    departureAt = new Date()
+): Promise<TransitRouteOption[]> {
+    const payload: TransitRouteProxyRequest = {
+        startX: String(origin.lng),
+        startY: String(origin.lat),
+        endX: String(destination.lng),
+        endY: String(destination.lat),
+        count: TMAP_TRANSIT_REQUEST_COUNT,
+        lang: 0,
+        format: "json",
+        searchDttm: formatTransitSearchDateTime(departureAt),
+    };
+
+    if (getEnv("EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED") === "true") {
+        try {
+            const data = await requestTransitRouteProxy<any>(payload);
+            return parseTransitOptionsFromTmap(data);
+        } catch (error) {
+            if (!hasTmapAppKey()) throw error;
+            console.info("[대중교통옵션] 서버 프록시 실패, direct fallback →", tmapApiErrorMessage(error));
         }
-    );
+    }
+
+    const client = tmapClient();
+    const response = await client.post("/transit/routes", payload, {
+        headers: { "Content-Type": "application/json" },
+    });
     return parseTransitOptionsFromTmap(response.data);
 }
 
-function convertRoadAlternativesToMode(
-    roadAlternatives: RouteAlternativeOption[],
-    mode: TravelMode,
-    idPrefix: string
-): RouteAlternativeOption[] {
-    return roadAlternatives
-        .map((item, index) => {
-            const byDistance = typeof item.distanceMeters === "number"
-                ? estimateMinutesByDistanceMeters(item.distanceMeters, mode)
-                : undefined;
-            const normalized = byDistance ?? item.minutes;
-            if (typeof normalized !== "number" && typeof item.distanceMeters !== "number") return null;
-
-            return {
-                ...item,
-                id: buildAlternativeId(idPrefix, index),
-                mode,
-                minutes: normalized,
-                source: "fallback",
-                fallbackKind: "road",
-            } as RouteAlternativeOption;
-        })
-        .filter((value: RouteAlternativeOption | null): value is RouteAlternativeOption => value !== null);
-}
-
-function makeStraightLineAlternatives(
+async function getTransitRouteViaTmap(
     origin: Place,
     destination: Place,
-    mode: TravelMode,
-    baseLabel: string
-): RouteAlternativeOption[] {
-    const baseMinutes = estimateTravelMinutesByStraightDistance(origin, destination, mode);
-    const base = typeof baseMinutes === "number" ? Math.max(1, Math.ceil(baseMinutes)) : 1;
-    const straightPath: RoutePathCoord[] = [
-        { lat: origin.lat!, lng: origin.lng! },
-        { lat: destination.lat!, lng: destination.lng! },
-    ];
-    const factors = [1, 1.15, 1.3];
+    departureAt = new Date()
+): Promise<TransitRouteOption[]> {
+    const directOptions = await requestTransitRouteViaTmap(origin, destination, departureAt);
+    if (
+        typeof origin.lat !== "number" ||
+        typeof origin.lng !== "number" ||
+        typeof destination.lat !== "number" ||
+        typeof destination.lng !== "number"
+    ) {
+        return directOptions;
+    }
+    const recoveryPlan = createTransitLoopRecoveryPlan(
+        directOptions,
+        { name: origin.name, lat: origin.lat, lng: origin.lng },
+        { name: destination.name, lat: destination.lat, lng: destination.lng }
+    );
+    if (!recoveryPlan) return directOptions;
 
-    return factors.slice(0, STRAIGHT_LINE_ALTERNATIVE_LIMIT).map((factor, index) => ({
-        id: buildAlternativeId(`${baseLabel}-straight`, index),
-        mode,
-        minutes: Math.max(1, Math.ceil(base * factor)),
-        source: "fallback",
-        fallbackKind: "straight",
-        pathCoords: straightPath,
-    }));
+    try {
+        const anchorPlace: Place = {
+            name: recoveryPlan.anchor.name ?? "순환선 중간역",
+            address: recoveryPlan.anchor.name ?? "순환선 중간역",
+            lat: recoveryPlan.anchor.lat,
+            lng: recoveryPlan.anchor.lng,
+        };
+        const leftOptions = await requestTransitRouteViaTmap(origin, anchorPlace, departureAt);
+        const leftOption = selectTransitLoopSubroute(
+            leftOptions,
+            recoveryPlan.lineToken,
+            recoveryPlan.anchor,
+            "TO_ANCHOR"
+        );
+        if (!leftOption) return directOptions;
+
+        const rightDepartureAt = new Date(departureAt.getTime() + leftOption.minutes * 60_000);
+        const rightOptions = await requestTransitRouteViaTmap(anchorPlace, destination, rightDepartureAt);
+        const rightOption = selectTransitLoopSubroute(
+            rightOptions,
+            recoveryPlan.lineToken,
+            recoveryPlan.anchor,
+            "FROM_ANCHOR"
+        );
+        if (!rightOption) return directOptions;
+
+        const recovered = buildRecoveredLoopTransitOption(recoveryPlan, leftOption, rightOption);
+        if (!recovered) return directOptions;
+
+        console.info("[대중교통옵션] 순환선 반대 방향 후보 복구", {
+            line: recoveryPlan.lineToken,
+            anchor: recoveryPlan.anchor.name,
+            directMinutes: recoveryPlan.directOption.minutes,
+            recoveredMinutes: recovered.minutes,
+        });
+        return [recovered, ...directOptions];
+    } catch (error) {
+        console.info("[대중교통옵션] 순환선 후보 복구 실패, 원본 유지 →", tmapApiErrorMessage(error));
+        return directOptions;
+    }
+}
+
+/**
+ * 대중교통은 정밀 보행 링크와 빠른 환승 위치를 함께 주는 ODsay를 우선한다.
+ * 모바일 키가 없거나 ODsay가 일시 실패하면 기존 TMAP 경로를 그대로 예비 공급자로 사용한다.
+ */
+async function getTransitRouteViaPreferredProvider(
+    origin: Place,
+    destination: Place,
+    departureAt = new Date()
+): Promise<TransitRouteOption[]> {
+    let odsayFailure: unknown;
+    if (hasOdsayApiKey()) {
+        try {
+            const odsayOptions = await getOdsayTransitRouteOptions(origin, destination, departureAt);
+            if (odsayOptions.length > 0) return odsayOptions;
+        } catch (error) {
+            odsayFailure = error;
+            console.info("[대중교통옵션] ODsay 실패, TMAP 예비 경로 확인 →", odsayApiErrorMessage(error));
+        }
+    }
+
+    if (hasTmapTransitRouteProvider()) {
+        return getTransitRouteViaTmap(origin, destination, departureAt);
+    }
+    if (odsayFailure) throw odsayFailure;
+    return [];
 }
 
 async function getDrivingAlternatives(origin: Place, destination: Place, mode: "CAR" | "ETC"): Promise<RouteAlternativeOption[]> {
     const searchOptions = mode === "CAR" ? ["0", "1", "2"] : ["0", "1"];
-    const options: RouteAlternativeOption[] = [];
-
-    for (let index = 0; index < searchOptions.length; index += 1) {
-        const searchOption = searchOptions[index];
+    let failedRequestCount = 0;
+    const results = await Promise.all(searchOptions.map(async (searchOption, index) => {
         try {
             const parsed = await getDrivingRouteViaTmap(origin, destination, searchOption);
             if (
@@ -1918,20 +2059,32 @@ async function getDrivingAlternatives(origin: Place, destination: Place, mode: "
                 typeof parsed.distanceMeters !== "number" &&
                 (!Array.isArray(parsed.pathCoords) || parsed.pathCoords.length < 2)
             ) {
-                continue;
+                return null;
             }
 
-            options.push({
+            return {
                 id: buildAlternativeId(`${mode.toLowerCase()}-api`, index),
                 mode,
                 minutes: parsed.minutes,
                 distanceMeters: parsed.distanceMeters,
+                tollFareWon: parsed.tollFareWon,
+                taxiFareWon: parsed.taxiFareWon,
                 pathCoords: parsed.pathCoords,
+                guideSteps: parsed.guideSteps,
+                trafficSections: parsed.trafficSections,
+                providerRouteOption: searchOption,
                 source: "api",
-            });
+                provider: "tmap",
+            } as RouteAlternativeOption;
         } catch (error) {
+            failedRequestCount += 1;
             console.info(`[대안경로] Tmap driving(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            return null;
         }
+    }));
+    const options = results.filter((item): item is RouteAlternativeOption => item !== null);
+    if (options.length === 0 && failedRequestCount === searchOptions.length) {
+        throw new Error("TMAP 자동차 경로 서버에 연결하지 못했습니다.");
     }
 
     return dedupeRouteAlternatives(options);
@@ -1939,10 +2092,8 @@ async function getDrivingAlternatives(origin: Place, destination: Place, mode: "
 
 async function getWalkingAlternatives(origin: Place, destination: Place): Promise<RouteAlternativeOption[]> {
     const searchOptions = ["0", "4"];
-    const options: RouteAlternativeOption[] = [];
-
-    for (let index = 0; index < searchOptions.length; index += 1) {
-        const searchOption = searchOptions[index];
+    let failedRequestCount = 0;
+    const results = await Promise.all(searchOptions.map(async (searchOption, index) => {
         try {
             const parsed = await getWalkingRouteViaTmap(origin, destination, searchOption);
             if (
@@ -1950,20 +2101,29 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
                 typeof parsed.distanceMeters !== "number" &&
                 (!Array.isArray(parsed.pathCoords) || parsed.pathCoords.length < 2)
             ) {
-                continue;
+                return null;
             }
 
-            options.push({
+            return {
                 id: buildAlternativeId("walk-api", index),
                 mode: "WALK",
                 minutes: parsed.minutes,
                 distanceMeters: parsed.distanceMeters,
                 pathCoords: parsed.pathCoords,
+                guideSteps: parsed.guideSteps,
+                providerRouteOption: searchOption,
                 source: "api",
-            });
+                provider: "tmap",
+            } as RouteAlternativeOption;
         } catch (error) {
+            failedRequestCount += 1;
             console.info(`[대안경로] Tmap pedestrian(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            return null;
         }
+    }));
+    const options = results.filter((item): item is RouteAlternativeOption => item !== null);
+    if (options.length === 0 && failedRequestCount === searchOptions.length) {
+        throw new Error("TMAP 도보 경로 서버에 연결하지 못했습니다.");
     }
 
     return dedupeRouteAlternatives(options);
@@ -1971,7 +2131,10 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
 
 // 주소 검색은 Tmap POI + 주소 지오코딩을 우선 합치고,
 // 키가 없거나 실패한 경우에만 Nominatim으로 fallback 한다.
-export async function searchAddressByKeyword(query: string): Promise<PlaceSearchItem[]> {
+export async function searchAddressByKeyword(
+    query: string,
+    context?: PlaceSearchContext
+): Promise<PlaceSearchItem[]> {
     const normalized = query.trim();
     if (!normalized) return [];
 
@@ -1979,14 +2142,14 @@ export async function searchAddressByKeyword(query: string): Promise<PlaceSearch
 
     if (hasTmapAppKey()) {
         try {
-            const poiResults = await searchViaTmapPoi(normalized);
+            const poiResults = await searchViaTmapPoi(normalized, context);
             merged.push(...poiResults);
         } catch (error) {
             console.info("[주소검색] Tmap POI 실패 →", tmapApiErrorMessage(error));
         }
 
         try {
-            const geocoded = await geocodeViaTmap(normalized);
+            const geocoded = await geocodeViaTmap(normalized, context);
             merged.push(...geocoded);
         } catch (error) {
             console.info("[주소검색] Tmap FullAddrGeo 실패 →", tmapApiErrorMessage(error));
@@ -1997,7 +2160,7 @@ export async function searchAddressByKeyword(query: string): Promise<PlaceSearch
     }
 
     try {
-        return await searchViaNominatim(normalized);
+        return await searchViaNominatim(normalized, context);
     } catch (error) {
         if (!hasTmapAppKey()) {
             throw new Error("Tmap API 키가 없습니다. EXPO_PUBLIC_TMAP_APP_KEY를 설정해 주세요.");
@@ -2028,7 +2191,8 @@ export async function reverseGeocodeToAddress(lat: number, lng: number): Promise
 // UI에서는 상세 leg/path가 필요하므로 단순 ETA가 아니라 TransitRouteOption 전체를 내려준다.
 export async function getTransitRouteOptions(
     origin: Place | undefined,
-    destination: Place | undefined
+    destination: Place | undefined,
+    options: RouteProviderSearchOptions = {}
 ): Promise<TransitRouteOption[]> {
     if (
         !origin ||
@@ -2041,47 +2205,26 @@ export async function getTransitRouteOptions(
         return [];
     }
 
-    if (hasTmapAppKey()) {
+    if (hasTransitRouteProvider()) {
         try {
-            const tmapOptions = await getTransitRouteViaTmap(origin, destination);
-            if (tmapOptions.length > 0) return tmapOptions;
+            const providerOptions = await getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
+            if (providerOptions.length > 0) return providerOptions;
         } catch (error) {
-            console.info("[대중교통옵션] Tmap transit 실패 →", tmapApiErrorMessage(error));
+            console.info("[대중교통옵션] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
         }
     }
 
-    try {
-        const driving = await getRouteViaOSRM(origin, destination, "driving");
-        if (typeof driving.minutes === "number") {
-            return [{
-                id: "fallback-road",
-                minutes: Math.max(1, Math.ceil(driving.minutes * 1.4)),
-                distanceMeters: driving.distanceMeters,
-                stepSummary: "대중교통 API 미연결: 도로 경로 기반 보정",
-                source: "fallback",
-                fallbackKind: "road",
-            }];
-        }
-    } catch {
-        // ignore
-    }
-
-    const straightMinutes = estimateTravelMinutesByStraightDistance(origin, destination, "TRANSIT") ?? 1;
-    return [{
-        id: "fallback-straight",
-        minutes: Math.max(1, Math.ceil(straightMinutes)),
-        stepSummary: "대중교통 API 미연결: 직선거리 기반 추정",
-        source: "fallback",
-        fallbackKind: "straight",
-    }];
+    // 자동차 도로 또는 직선거리 값은 대중교통 경로가 아니므로 대체 결과로 노출하지 않는다.
+    return [];
 }
 
 // 화면에서 쓰는 "대안 경로"의 메인 진입점.
-// 모드별로 Tmap/OSRM/직선 fallback을 조합해 항상 최소한의 선택지를 돌려주도록 구성한다.
+// 실제 공급자 경로가 없으면 빈 배열을 반환해 화면이 명확한 실패 상태를 표시하게 한다.
 export async function getRouteAlternativeOptions(
     origin: Place | undefined,
     destination: Place | undefined,
-    mode: TravelMode
+    mode: TravelMode,
+    options: RouteProviderSearchOptions = {}
 ): Promise<RouteAlternativeOption[]> {
     if (
         !origin ||
@@ -2095,10 +2238,10 @@ export async function getRouteAlternativeOptions(
     }
 
     if (mode === "TRANSIT") {
-        if (hasTmapAppKey()) {
+        if (hasTransitRouteProvider()) {
             try {
-                const options = await getTransitRouteViaTmap(origin, destination);
-                const transitAlternatives = options.map((item, index) => ({
+                const providerOptions = await getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
+                const transitAlternatives = providerOptions.map((item, index) => ({
                     ...item,
                     id: item.id || buildAlternativeId("transit", index),
                     mode: "TRANSIT" as const,
@@ -2107,36 +2250,12 @@ export async function getRouteAlternativeOptions(
                     return limitAlternativesByMode("TRANSIT", dedupeRouteAlternatives(transitAlternatives));
                 }
             } catch (error) {
-                console.info("[대안경로] Tmap transit 실패 →", tmapApiErrorMessage(error));
+                console.info("[대안경로] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
+                throw error;
             }
         }
 
-        try {
-            const roadAlternatives = await getRouteAlternativesViaOSRM(
-                origin,
-                destination,
-                "driving",
-                "TRANSIT",
-                "fallback",
-                "road"
-            );
-            const converted = dedupeRouteAlternatives(
-                roadAlternatives.map((item, index) => ({
-                    ...item,
-                    id: buildAlternativeId("transit-road", index),
-                    mode: "TRANSIT" as const,
-                    minutes: typeof item.minutes === "number" ? Math.max(1, Math.ceil(item.minutes * 1.4)) : item.minutes,
-                    source: "fallback" as const,
-                    fallbackKind: "road" as const,
-                    stepSummary: "대중교통 API 미연결: 도로 경로 기반 보정",
-                }))
-            );
-            if (converted.length > 0) return limitAlternativesByMode("TRANSIT", converted);
-        } catch {
-            // ignore
-        }
-
-        return makeStraightLineAlternatives(origin, destination, "TRANSIT", "transit");
+        return [];
     }
 
     if (mode === "CAR" || mode === "ETC") {
@@ -2146,85 +2265,35 @@ export async function getRouteAlternativeOptions(
                 if (alternatives.length > 0) return limitAlternativesByMode(mode, alternatives);
             } catch (error) {
                 console.info("[대안경로] Tmap driving 실패 →", tmapApiErrorMessage(error));
+                throw error;
             }
         }
 
-        try {
-            const roadAlternatives = await getRouteAlternativesViaOSRM(
-                origin,
-                destination,
-                "driving",
-                mode,
-                "fallback",
-                "road"
-            );
-            const converted = dedupeRouteAlternatives(roadAlternatives.map((item, index) => ({
-                ...item,
-                id: buildAlternativeId(`${mode.toLowerCase()}-road`, index),
-                mode,
-                source: "fallback" as const,
-                fallbackKind: "road" as const,
-            })));
-            if (converted.length > 0) return limitAlternativesByMode(mode, converted);
-        } catch {
-            // ignore
-        }
-
-        return makeStraightLineAlternatives(origin, destination, mode, mode.toLowerCase());
+        return [];
     }
 
     if (mode === "WALK") {
         if (hasTmapAppKey()) {
             try {
                 const walkAlternatives = await getWalkingAlternatives(origin, destination);
-                if (walkAlternatives.length > 1) return limitAlternativesByMode("WALK", walkAlternatives);
-                if (walkAlternatives.length === 1) {
-                    const roadFallback = await getRouteAlternativesViaOSRM(
-                        origin,
-                        destination,
-                        "driving",
-                        "WALK",
-                        "fallback",
-                        "road"
-                    );
-                    const converted = convertRoadAlternativesToMode(roadFallback, "WALK", "walk-road");
-                    const merged = dedupeRouteAlternatives([...walkAlternatives, ...converted]);
-                    if (merged.length > 0) return limitAlternativesByMode("WALK", merged);
-                }
+                if (walkAlternatives.length > 0) return limitAlternativesByMode("WALK", walkAlternatives);
             } catch (error) {
                 console.info("[대안경로] Tmap pedestrian 실패 →", tmapApiErrorMessage(error));
+                throw error;
             }
         }
 
-        try {
-            const osrmWalk = await getRouteAlternativesViaOSRM(origin, destination, "walking", "WALK", "fallback", "road");
-            if (osrmWalk.length > 0) return limitAlternativesByMode("WALK", dedupeRouteAlternatives(osrmWalk));
-        } catch {
-            // ignore
-        }
-
-        return makeStraightLineAlternatives(origin, destination, "WALK", "walk");
+        return [];
     }
 
     if (mode === "BIKE") {
-        if (hasTmapAppKey()) {
-            try {
-                const drivingAlternatives = await getDrivingAlternatives(origin, destination, "CAR");
-                const converted = convertRoadAlternativesToMode(drivingAlternatives, "BIKE", "bike-road");
-                if (converted.length > 0) return limitAlternativesByMode("BIKE", dedupeRouteAlternatives(converted));
-            } catch (error) {
-                console.info("[대안경로] Tmap bike-convert 실패 →", tmapApiErrorMessage(error));
-            }
-        }
-
         try {
-            const osrmBike = await getRouteAlternativesViaOSRM(origin, destination, "cycling", "BIKE", "fallback", "road");
-            if (osrmBike.length > 0) return limitAlternativesByMode("BIKE", dedupeRouteAlternatives(osrmBike));
-        } catch {
-            // ignore
+            const bicycleAlternatives = await getBicycleAlternativesViaOpenStreetMap(origin, destination);
+            return limitAlternativesByMode("BIKE", dedupeRouteAlternatives(bicycleAlternatives));
+        } catch (error) {
+            console.info("[대안경로] OpenStreetMap bicycle 실패 →", tmapApiErrorMessage(error));
+            throw error;
         }
-
-        return makeStraightLineAlternatives(origin, destination, "BIKE", "bike");
     }
 
     return [];
@@ -2252,25 +2321,6 @@ export async function getRouteEta(
         };
     }
 
-    if (
-        !origin ||
-        !destination ||
-        typeof origin.lat !== "number" ||
-        typeof origin.lng !== "number" ||
-        typeof destination.lat !== "number" ||
-        typeof destination.lng !== "number"
-    ) {
-        return { source: "fallback" };
-    }
-
-    const fallbackMinutes = estimateTravelMinutesByStraightDistance(origin, destination, mode);
-    return {
-        minutes: typeof fallbackMinutes === "number" ? Math.max(1, Math.ceil(fallbackMinutes)) : undefined,
-        source: "fallback",
-        fallbackKind: "straight",
-        pathCoords: [
-            { lat: origin.lat, lng: origin.lng },
-            { lat: destination.lat, lng: destination.lng },
-        ],
-    };
+    // ETA 호출자도 실제 경로가 없을 때 추정 선을 경로로 오해하지 않도록 빈 결과만 받는다.
+    return { source: "fallback" };
 }

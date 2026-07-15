@@ -94,7 +94,7 @@ export default function Login() {
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
-            router.replace("/schedule");
+            router.replace(member.isNewMember ? "/onboarding/calendar-import" : "/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
             await clearAuthTokens();
@@ -131,7 +131,7 @@ export default function Login() {
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
-            router.replace("/schedule");
+            router.replace(member.isNewMember ? "/onboarding/calendar-import" : "/schedule");
         } catch (error) {
             const message = error instanceof Error ? error.message : "SNS 로그인에 실패했습니다.";
             Alert.alert("SNS 로그인 실패", message);

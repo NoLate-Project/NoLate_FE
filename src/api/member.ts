@@ -11,6 +11,7 @@ export type MemberDto = {
     snsId?: string;
     accessToken?: string;
     refreshToken?: string;
+    isNewMember?: boolean;
 };
 
 type SignUpPayload = {

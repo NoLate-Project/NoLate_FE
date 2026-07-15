@@ -70,7 +70,7 @@ export default function SignUp() {
             await registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
-            router.replace("/schedule");
+            router.replace("/onboarding/calendar-import");
         } catch (error) {
             const message = error instanceof Error ? error.message : "회원가입에 실패했습니다.";
             await clearAuthTokens();

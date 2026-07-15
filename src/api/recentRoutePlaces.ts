@@ -66,6 +66,8 @@ export async function saveRecentRoutePlaceToApi(place: Place): Promise<RecentRou
         address: place.address?.trim() || undefined,
         lat: place.lat,
         lng: place.lng,
+        provider: place.provider?.trim() || undefined,
+        providerPlaceId: place.providerPlaceId?.trim() || undefined,
     };
     const response = await apiPost<ApiEnvelope<RecentRoutePlaceDto>, SaveRecentRoutePlacePayload>(
         "/api/recent-route-places",

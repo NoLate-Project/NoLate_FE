@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import {
     Pressable,
     ScrollView,
@@ -9,7 +8,6 @@ import {
     Platform,
     StyleSheet,
     Animated,
-    Easing,
     PanResponder,
     useWindowDimensions,
 } from "react-native";
@@ -23,6 +21,7 @@ import Reanimated, {
     withTiming,
 } from "react-native-reanimated";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { Ionicons } from "@expo/vector-icons";
 import { Calendar } from "react-native-calendars";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,6 +36,12 @@ import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
 import NotificationSettingsCard from "./NotificationSettingsCard";
 import {
+    ADD_HANDOFF_MOTION,
+    ADD_MENU_SOURCE,
+    lerpAddHandoffValue,
+    resolveAddHandoffCloseDuration,
+} from "../../addHandoffMotion";
+import {
     FREE_SUBSCRIPTION_POLICY,
     getMySubscriptionPolicy,
     type SubscriptionPolicy,
@@ -44,6 +49,7 @@ import {
 
 type Props = {
     visible: boolean;
+    prewarm?: boolean;
     onClose: () => void;
     onSubmit: (payload: Omit<ScheduleItem, "id">) => void | Promise<void>;
     categories: ScheduleCategory[];
@@ -56,9 +62,20 @@ type Props = {
     sourceTopOffset?: number;
     sourceWidth?: number;
     sourceHeight?: number;
-    sourceContent?: "toolbar" | "addMenu";
+    sourceRightOffset?: number;
+    closeTargetWidth?: number;
+    onMorphReady?: () => void;
     qaAutoCloseAfterMs?: number;
+    morphPresenterRef?: React.MutableRefObject<ScheduleAddMorphPresenter | null>;
 };
+
+export type ScheduleAddMorphPresenter = () => boolean;
+
+type CloseSheetOptions = {
+    notifyCloseStart?: boolean;
+};
+
+const PREWARM_PRESENTATION_OPACITY = 0.001;
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -90,18 +107,16 @@ const SHEET_CLOSE_DISTANCE = 118;
 const SHEET_CLOSE_VELOCITY = 0.85;
 const SHEET_VELOCITY_PROJECTION = 120;
 const MORPH_OPEN_START_PROGRESS = 0;
-const MORPH_OPEN_DURATION_MS = 420;
-const MORPH_CLOSE_DURATION_MS = 340;
+const MORPH_OPEN_DURATION_MS = ADD_HANDOFF_MOTION.manualOpenMs;
 const MORPH_SOURCE_WIDTH = 238;
 const MORPH_SOURCE_HEIGHT = 164;
-const MORPH_TOOLBAR_WIDTH = 150;
-const MORPH_TOOLBAR_HEIGHT = 44;
-const MORPH_CONTENT_MOUNT_DELAY_MS = 240;
-const MORPH_TARGET_HEIGHT_RATIO = 0.64;
-const MORPH_TARGET_MIN_HEIGHT = 540;
-const MORPH_TARGET_MAX_HEIGHT = 620;
-const SHEET_TARGET_HEIGHT_RATIO = 0.78;
-const SHEET_TARGET_MAX_HEIGHT = 680;
+const MORPH_CLOSE_TARGET_WIDTH = 150;
+const MORPH_CLOSE_TARGET_HEIGHT = 44;
+const MORPH_TARGET_HEIGHT_RATIO = 0.58;
+const MORPH_TARGET_MIN_HEIGHT = 520;
+const MORPH_TARGET_MAX_HEIGHT = 580;
+const SHEET_TARGET_HEIGHT_RATIO = 0.7;
+const SHEET_TARGET_MAX_HEIGHT = 600;
 const DATE_H         = 312;
 const TIME_H         = 216;
 
@@ -141,6 +156,7 @@ function uniqueNonBlank(values: Array<string | undefined | null>) {
 // 새 일정을 입력하고 저장하는 바텀시트 화면을 렌더링한다.
 export default function ScheduleNewModal({
     visible,
+    prewarm = false,
     onClose,
     onSubmit,
     categories,
@@ -153,8 +169,11 @@ export default function ScheduleNewModal({
     sourceTopOffset = 4,
     sourceWidth = MORPH_SOURCE_WIDTH,
     sourceHeight = MORPH_SOURCE_HEIGHT,
-    sourceContent = "addMenu",
+    sourceRightOffset = 16,
+    closeTargetWidth = MORPH_CLOSE_TARGET_WIDTH,
+    onMorphReady,
     qaAutoCloseAfterMs,
+    morphPresenterRef,
 }: Props) {
     const router = useRouter();
     const pathname = usePathname();
@@ -193,9 +212,13 @@ export default function ScheduleNewModal({
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [submitting, setSubmitting]                 = useState(false);
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
-    const [rendered, setRendered] = useState(visible);
-    const [morphContentMounted, setMorphContentMounted] = useState(!isMorphPresentation);
-    const [morphClosing, setMorphClosing] = useState(false);
+    const [rendered, setRendered] = useState(visible || prewarm);
+    const [morphContentMounted, setMorphContentMounted] = useState(
+        !isMorphPresentation || visible || prewarm
+    );
+    const [morphSheetRasterized, setMorphSheetRasterized] = useState(
+        isMorphPresentation && (visible || prewarm)
+    );
     const titleInputRef = useRef<TextInput>(null);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
@@ -269,7 +292,6 @@ export default function ScheduleNewModal({
         if (!visible) return;
 
         if (!initialValues) {
-            resetFormForNewSchedule();
             return;
         }
 
@@ -356,7 +378,6 @@ export default function ScheduleNewModal({
     ]);
 
     useEffect(() => {
-        if (!visible) return;
         let cancelled = false;
         getMySubscriptionPolicy()
             .then((policy) => {
@@ -375,7 +396,7 @@ export default function ScheduleNewModal({
         return () => {
             cancelled = true;
         };
-    }, [visible]);
+    }, []);
 
     const category = useMemo(
         () => categories.find((c) => c.id === selectedCategoryId) ?? categories[0],
@@ -472,33 +493,185 @@ export default function ScheduleNewModal({
     // 새 일정 바텀시트의 열림/닫힘 위치를 관리한다.
     const posY       = useRef(new Animated.Value(SHEET_HIDDEN_Y)).current;
     const morphProgress = useSharedValue(0);
-    const morphContentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const morphClosingPhase = useSharedValue(0);
+    const morphPresentationOpacity = useSharedValue(
+        isMorphPresentation && visible && !prewarm
+            ? 1
+            : PREWARM_PRESENTATION_OPACITY
+    );
+    const morphPresentationStyle = useAnimatedStyle(() => ({
+        opacity: morphPresentationOpacity.value,
+    }));
+    const morphSeedPaintFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
     const morphCloseFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const morphClosingRef = useRef(false);
+    const morphWasPresentedRef = useRef(false);
+    const closingRef = useRef(false);
+    const closeCycleRef = useRef(0);
+    const morphOpenCycleRef = useRef(0);
+    const morphSeedHasLayoutRef = useRef(false);
+    const morphOpenStartedRef = useRef(false);
+    const visibleRef = useRef(visible);
+    const onMorphReadyRef = useRef(onMorphReady);
+    if (
+        visible ||
+        (!morphOpenStartedRef.current && morphSeedPaintFrameRef.current === null)
+    ) {
+        visibleRef.current = visible;
+    }
+    onMorphReadyRef.current = onMorphReady;
+
+    const resetCloseLifecycle = useCallback(() => {
+        closeCycleRef.current += 1;
+        closingRef.current = false;
+        morphClosingRef.current = false;
+        morphClosingPhase.value = 0;
+        if (morphCloseFinishTimerRef.current) {
+            clearTimeout(morphCloseFinishTimerRef.current);
+            morphCloseFinishTimerRef.current = null;
+        }
+        if (morphSeedPaintFrameRef.current !== null) {
+            cancelAnimationFrame(morphSeedPaintFrameRef.current);
+            morphSeedPaintFrameRef.current = null;
+        }
+    }, [morphClosingPhase]);
+
+    const startMorphOpenAnimation = useCallback((openCycle: number) => {
+        if (
+            !isMorphPresentation ||
+            !visibleRef.current ||
+            openCycle !== morphOpenCycleRef.current ||
+            morphOpenStartedRef.current ||
+            closingRef.current
+        ) return;
+
+        morphOpenStartedRef.current = true;
+        // Start geometry and ownership on the same UI-thread clock, matching
+        // quick create and avoiding a stationary blank surface after selection.
+        morphPresentationOpacity.value = withTiming(1, {
+            duration: ADD_HANDOFF_MOTION.ownershipCrossfadeMs,
+            easing: ReanimatedEasing.linear,
+        });
+        morphProgress.value = withTiming(1, {
+            duration: Math.round(MORPH_OPEN_DURATION_MS * (1 - MORPH_OPEN_START_PROGRESS)),
+            easing: ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.openBezier),
+        });
+        onMorphReadyRef.current?.();
+    }, [
+        isMorphPresentation,
+        morphPresentationOpacity,
+        morphProgress,
+    ]);
+
+    const presentPrewarmedMorph = useCallback(() => {
+        if (
+            !isMorphPresentation ||
+            !prewarm ||
+            !rendered ||
+            !morphContentMounted ||
+            routePlannerHidden ||
+            !morphSeedHasLayoutRef.current ||
+            closingRef.current
+        ) {
+            return false;
+        }
+
+        visibleRef.current = true;
+        closeCycleRef.current += 1;
+        morphWasPresentedRef.current = true;
+        morphClosingRef.current = false;
+        morphClosingPhase.value = 0;
+        morphOpenStartedRef.current = false;
+        if (morphSeedPaintFrameRef.current !== null) {
+            cancelAnimationFrame(morphSeedPaintFrameRef.current);
+            morphSeedPaintFrameRef.current = null;
+        }
+        if (morphCloseFinishTimerRef.current) {
+            clearTimeout(morphCloseFinishTimerRef.current);
+            morphCloseFinishTimerRef.current = null;
+        }
+        cancelAnimation(morphProgress);
+        morphProgress.value = MORPH_OPEN_START_PROGRESS;
+        morphOpenCycleRef.current += 1;
+        // Prewarm keeps the seed layer resident, so start on the native action
+        // event instead of inserting another requestAnimationFrame boundary.
+        morphPresentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
+        const openCycle = morphOpenCycleRef.current;
+        startMorphOpenAnimation(openCycle);
+        return true;
+    }, [
+        isMorphPresentation,
+        morphClosingPhase,
+        morphContentMounted,
+        morphPresentationOpacity,
+        morphProgress,
+        prewarm,
+        rendered,
+        routePlannerHidden,
+        startMorphOpenAnimation,
+    ]);
+
+    useLayoutEffect(() => {
+        if (!morphPresenterRef) return undefined;
+
+        morphPresenterRef.current = presentPrewarmedMorph;
+        return () => {
+            if (morphPresenterRef.current === presentPrewarmedMorph) {
+                morphPresenterRef.current = null;
+            }
+        };
+    }, [morphPresenterRef, presentPrewarmedMorph]);
+
+    const scheduleMorphOpenAfterPaint = useCallback((openCycle: number) => {
+        if (
+            !visibleRef.current ||
+            morphOpenStartedRef.current ||
+            closingRef.current ||
+            morphSeedPaintFrameRef.current !== null
+        ) return;
+
+        const paintFrame = requestAnimationFrame(() => {
+            if (morphSeedPaintFrameRef.current !== paintFrame) return;
+            morphSeedPaintFrameRef.current = null;
+            startMorphOpenAnimation(openCycle);
+        });
+        morphSeedPaintFrameRef.current = paintFrame;
+    }, [startMorphOpenAnimation]);
+
+    const handleMorphSeedLayout = useCallback((width: number, height: number) => {
+        if (!isMorphPresentation || width <= 0 || height <= 0) return;
+
+        morphSeedHasLayoutRef.current = true;
+        if (
+            !visibleRef.current ||
+            morphOpenStartedRef.current ||
+            closingRef.current ||
+            morphSeedPaintFrameRef.current !== null
+        ) return;
+
+        scheduleMorphOpenAfterPaint(morphOpenCycleRef.current);
+    }, [isMorphPresentation, scheduleMorphOpenAfterPaint]);
 
     const openSheet = useCallback(() => {
+        resetCloseLifecycle();
+        morphWasPresentedRef.current = true;
+        setMorphSheetRasterized(isMorphPresentation);
+
         if (isMorphPresentation) {
-            if (morphContentTimerRef.current) {
-                clearTimeout(morphContentTimerRef.current);
-                morphContentTimerRef.current = null;
-            }
-            setMorphContentMounted(false);
-            morphClosingRef.current = false;
-            setMorphClosing(false);
-            if (morphCloseFinishTimerRef.current) {
-                clearTimeout(morphCloseFinishTimerRef.current);
-                morphCloseFinishTimerRef.current = null;
-            }
+            // Render the complete form before the seed reports layout. Motion
+            // starts only after this expensive tree is committed, so mounting
+            // cannot consume the first animation frames.
+            setMorphContentMounted(true);
             cancelAnimation(morphProgress);
             morphProgress.value = MORPH_OPEN_START_PROGRESS;
-            morphProgress.value = withTiming(1, {
-                duration: Math.round(MORPH_OPEN_DURATION_MS * (1 - MORPH_OPEN_START_PROGRESS)),
-                easing: ReanimatedEasing.bezier(0.18, 0.82, 0.2, 1),
-            });
-            morphContentTimerRef.current = setTimeout(() => {
-                setMorphContentMounted(true);
-                morphContentTimerRef.current = null;
-            }, MORPH_CONTENT_MOUNT_DELAY_MS);
+            morphOpenStartedRef.current = false;
+            morphOpenCycleRef.current += 1;
+            morphPresentationOpacity.value = prewarm
+                ? PREWARM_PRESENTATION_OPACITY
+                : 1;
+            if (morphSeedHasLayoutRef.current) {
+                scheduleMorphOpenAfterPaint(morphOpenCycleRef.current);
+            }
             return;
         }
 
@@ -512,34 +685,58 @@ export default function ScheduleNewModal({
             restDisplacementThreshold: 0.35,
             restSpeedThreshold: 0.35,
         }).start();
-    }, [isMorphPresentation, morphProgress, posY]);
+    }, [
+        isMorphPresentation,
+        morphPresentationOpacity,
+        morphProgress,
+        posY,
+        prewarm,
+        resetCloseLifecycle,
+        scheduleMorphOpenAfterPaint,
+    ]);
 
-    const closeSheet = useCallback((after?: () => void) => {
+    const closeSheet = useCallback((
+        after?: () => void,
+        { notifyCloseStart = true }: CloseSheetOptions = {}
+    ) => {
+        if (closingRef.current) return;
+
+        closingRef.current = true;
+        const closeCycle = ++closeCycleRef.current;
+
         if (isMorphPresentation) {
+            morphOpenCycleRef.current += 1;
             morphClosingRef.current = true;
-            setMorphClosing(true);
-            onCloseStart?.();
-            if (morphContentTimerRef.current) {
-                clearTimeout(morphContentTimerRef.current);
-                morphContentTimerRef.current = null;
+            morphClosingPhase.value = 1;
+            if (notifyCloseStart) onCloseStart?.();
+            if (morphSeedPaintFrameRef.current !== null) {
+                cancelAnimationFrame(morphSeedPaintFrameRef.current);
+                morphSeedPaintFrameRef.current = null;
             }
             if (morphCloseFinishTimerRef.current) {
                 clearTimeout(morphCloseFinishTimerRef.current);
                 morphCloseFinishTimerRef.current = null;
             }
+            const closeDuration = resolveAddHandoffCloseDuration(morphProgress.value);
             cancelAnimation(morphProgress);
             morphProgress.value = withTiming(0, {
-                duration: MORPH_CLOSE_DURATION_MS,
-                easing: ReanimatedEasing.bezier(0.3, 0, 0.16, 1),
+                duration: closeDuration,
+                easing: ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.closeBezier),
             });
             morphCloseFinishTimerRef.current = setTimeout(() => {
-                setMorphContentMounted(false);
-                morphClosingRef.current = false;
-                setMorphClosing(false);
-                setRendered(false);
                 morphCloseFinishTimerRef.current = null;
+                if (closeCycle !== closeCycleRef.current || !closingRef.current) return;
+
+                closingRef.current = false;
+                morphWasPresentedRef.current = false;
+                setMorphContentMounted(prewarm);
+                morphClosingRef.current = false;
+                morphOpenStartedRef.current = false;
+                morphPresentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
+                setMorphSheetRasterized(isMorphPresentation && prewarm);
+                setRendered(prewarm);
                 after?.();
-            }, MORPH_CLOSE_DURATION_MS);
+            }, closeDuration + 32);
             return;
         }
 
@@ -552,11 +749,22 @@ export default function ScheduleNewModal({
             restDisplacementThreshold: 0.45,
             restSpeedThreshold: 0.45,
         }).start(({ finished }) => {
-            if (!finished) return;
-            setRendered(false);
+            if (!finished || closeCycle !== closeCycleRef.current || !closingRef.current) return;
+
+            closingRef.current = false;
+            morphWasPresentedRef.current = false;
+            setRendered(prewarm);
             after?.();
         });
-    }, [isMorphPresentation, morphProgress, onCloseStart, posY]);
+    }, [
+        isMorphPresentation,
+        morphClosingPhase,
+        morphPresentationOpacity,
+        morphProgress,
+        onCloseStart,
+        posY,
+        prewarm,
+    ]);
 
     useEffect(() => {
         if (!visible || !qaAutoCloseAfterMs) return undefined;
@@ -568,22 +776,55 @@ export default function ScheduleNewModal({
     }, [closeSheet, onClose, qaAutoCloseAfterMs, visible]);
 
     useLayoutEffect(() => {
-        if (visible) {
-            setRendered(true);
-            if (isMorphPresentation) {
-                posY.setValue(0);
-            } else {
-                posY.setValue(SHEET_HIDDEN_Y);
+        if (!prewarm || visible) return;
+
+        setRendered(true);
+        setMorphContentMounted(true);
+        if (isMorphPresentation) {
+            setMorphSheetRasterized(true);
+            if (!morphWasPresentedRef.current && !morphClosingRef.current) {
+                morphPresentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
             }
-            openSheet();
         }
+    }, [isMorphPresentation, morphPresentationOpacity, prewarm, visible]);
+
+    useLayoutEffect(() => {
+        if (!visible) return undefined;
+
+        // A pre-composed morph can already be running from the native action
+        // callback. Let the later React visibility commit update semantics
+        // without rewinding the UI-thread geometry animation.
+        if (isMorphPresentation && morphOpenStartedRef.current) return undefined;
+
+        setRendered(true);
+        if (isMorphPresentation) {
+            posY.setValue(0);
+        } else {
+            posY.setValue(SHEET_HIDDEN_Y);
+        }
+        openSheet();
+
+        return () => {
+            if (morphSeedPaintFrameRef.current !== null) {
+                cancelAnimationFrame(morphSeedPaintFrameRef.current);
+                morphSeedPaintFrameRef.current = null;
+            }
+        };
     }, [isMorphPresentation, visible, openSheet, posY]);
 
     useEffect(() => {
-        if (visible || !rendered || morphClosing) return;
+        if (visible || !rendered || morphClosingRef.current) return;
+
+        if (!morphWasPresentedRef.current) {
+            if (!prewarm) {
+                setRendered(false);
+                setMorphContentMounted(!isMorphPresentation);
+            }
+            return;
+        }
 
         closeSheet();
-    }, [closeSheet, morphClosing, rendered, visible]);
+    }, [closeSheet, isMorphPresentation, prewarm, rendered, visible]);
 
     useEffect(() => {
         if (!visible || !autoFocusTitle) return;
@@ -592,15 +833,22 @@ export default function ScheduleNewModal({
     }, [autoFocusTitle, visible]);
 
     useEffect(() => () => {
-        if (morphContentTimerRef.current) {
-            clearTimeout(morphContentTimerRef.current);
-            morphContentTimerRef.current = null;
+        closeCycleRef.current += 1;
+        morphOpenCycleRef.current += 1;
+        morphOpenStartedRef.current = false;
+        closingRef.current = false;
+        morphClosingRef.current = false;
+        if (morphSeedPaintFrameRef.current !== null) {
+            cancelAnimationFrame(morphSeedPaintFrameRef.current);
+            morphSeedPaintFrameRef.current = null;
         }
         if (morphCloseFinishTimerRef.current) {
             clearTimeout(morphCloseFinishTimerRef.current);
             morphCloseFinishTimerRef.current = null;
         }
-    }, []);
+        posY.stopAnimation();
+        cancelAnimation(morphProgress);
+    }, [morphProgress, posY]);
 
     useEffect(() => {
         if (
@@ -612,10 +860,13 @@ export default function ScheduleNewModal({
         const result = consumeRoutePlannerResult(routePlannerSessionId);
         if (!result) {
             setRoutePlannerHidden(false);
+            setRendered(true);
             if (isMorphPresentation) {
+                resetCloseLifecycle();
                 cancelAnimation(morphProgress);
                 morphProgress.value = 1;
                 setMorphContentMounted(true);
+                setMorphSheetRasterized(true);
             } else {
                 posY.setValue(SHEET_HIDDEN_Y);
                 openSheet();
@@ -636,15 +887,27 @@ export default function ScheduleNewModal({
         setRoute(result.route);
         setRoutePlannerSessionId(undefined);
         setRoutePlannerHidden(false);
+        setRendered(true);
         if (isMorphPresentation) {
+            resetCloseLifecycle();
             cancelAnimation(morphProgress);
             morphProgress.value = 1;
             setMorphContentMounted(true);
+            setMorphSheetRasterized(true);
         } else {
             posY.setValue(SHEET_HIDDEN_Y);
             openSheet();
         }
-    }, [isMorphPresentation, morphProgress, openSheet, pathname, posY, routePlannerSessionId, visible]);
+    }, [
+        isMorphPresentation,
+        morphProgress,
+        openSheet,
+        pathname,
+        posY,
+        resetCloseLifecycle,
+        routePlannerSessionId,
+        visible,
+    ]);
 
     // 출발지는 경로 선택 화면에서 직접 고르게 두고, 도착지만 초기값으로 전달한다.
     const openRoutePlanner = useCallback(() => {
@@ -672,7 +935,7 @@ export default function ScheduleNewModal({
         setPicker(null);
         setRoutePlannerSessionId(sessionId);
         setRoutePlannerHidden(true);
-        closeSheet();
+        closeSheet(undefined, { notifyCloseStart: false });
         router.push({ pathname: "/schedule/route-select", params: { sessionId } });
     }, [
         closeSheet,
@@ -735,7 +998,7 @@ export default function ScheduleNewModal({
                     restSpeedThreshold: 0.35,
                 }).start();
             },
-        }), [closeSheet, posY]);
+        }), [closeSheet, onClose, posY]);
 
     // 입력값을 일정 저장 payload로 변환해 상위 화면에 전달한다.
     const submit = async () => {
@@ -848,22 +1111,21 @@ export default function ScheduleNewModal({
             backgroundColor: colors.inputBackground,
         },
     ];
-    const isMorphClosingVisual = morphClosing || morphClosingRef.current;
-    const morphSourceContent = isMorphClosingVisual && sourceContent === "addMenu" ? "toolbar" : sourceContent;
-    const morphVisibleSeedContent: "toolbar" | "addMenu" | "none" =
-        isMorphClosingVisual && sourceContent === "addMenu"
-            ? "none"
-            : (isMorphClosingVisual ? "none" : (morphSourceContent === "addMenu" ? "none" : morphSourceContent));
-    const morphSourceWidth = Math.max(
-        44,
-        morphSourceContent === "toolbar" ? MORPH_TOOLBAR_WIDTH : sourceWidth
+    const morphOpenSourceWidth = Math.max(44, sourceWidth);
+    const morphOpenSourceHeight = Math.max(44, sourceHeight);
+    const morphCloseSourceWidth = Math.max(44, closeTargetWidth);
+    const morphCloseSourceHeight = MORPH_CLOSE_TARGET_HEIGHT;
+    const morphOpenSourceRadius = Math.min(
+        morphOpenSourceHeight / 2,
+        ADD_MENU_SOURCE.nativeRadius
     );
-    const morphSourceHeight = Math.max(
-        44,
-        morphSourceContent === "toolbar" ? MORPH_TOOLBAR_HEIGHT : sourceHeight
+    const morphCloseSourceRadius = Math.min(
+        morphCloseSourceHeight / 2,
+        ADD_MENU_SOURCE.nativeRadius
     );
-    const morphSourceRight = screenWidth - 16;
-    const morphSourceLeft = screenWidth - 16 - morphSourceWidth;
+    const morphSourceRight = screenWidth - sourceRightOffset;
+    const morphOpenSourceLeft = morphSourceRight - morphOpenSourceWidth;
+    const morphCloseSourceLeft = morphSourceRight - morphCloseSourceWidth;
     const morphSourceTop = insets.top + sourceTopOffset;
     const morphTargetWidth = Math.min(screenWidth - 28, 390);
     const morphTargetLeft = (screenWidth - morphTargetWidth) / 2;
@@ -878,179 +1140,150 @@ export default function ScheduleNewModal({
         SHEET_TARGET_MAX_HEIGHT,
         screenHeight * SHEET_TARGET_HEIGHT_RATIO
     );
-    const morphInputRange = isMorphClosingVisual
-        ? [0, 0.14, 0.3, 0.5, 0.68, 0.88, 1]
-        : (morphSourceContent === "addMenu"
-            ? [0, 0.08, 0.22, 0.44, 0.66, 0.86, 1]
-            : [0, 0.16, 0.34, 0.54, 0.72, 0.9, 1]);
-    const morphStageWidth1 = Math.min(morphTargetWidth, morphSourceWidth + (morphSourceContent === "addMenu" ? 24 : 18));
-    const morphStageWidth2 = Math.min(morphTargetWidth, morphSourceWidth + (morphSourceContent === "addMenu" ? 58 : 42));
-    const morphStageWidth3 = Math.min(morphTargetWidth, morphSourceWidth + (morphSourceContent === "addMenu" ? 92 : 72));
-    const morphStageWidth4 = Math.min(
-        morphTargetWidth,
-        Math.max(
-            morphStageWidth3,
-            morphTargetWidth - (isMorphClosingVisual ? 190 : (morphSourceContent === "addMenu" ? 96 : 138))
-        )
-    );
-    const morphStageWidth5 = Math.min(
-        morphTargetWidth,
-        Math.max(
-            morphStageWidth4,
-            morphTargetWidth - (isMorphClosingVisual ? 112 : (morphSourceContent === "addMenu" ? 32 : 44))
-        )
-    );
-    const morphStageHeight1 = Math.min(morphTargetHeight, morphSourceHeight + (morphSourceContent === "addMenu" ? 18 : 16));
-    const morphStageHeight2 = Math.min(morphTargetHeight, morphSourceHeight + (morphSourceContent === "addMenu" ? 56 : 44));
-    const morphStageHeight3 = Math.min(morphTargetHeight, morphSourceHeight + (morphSourceContent === "addMenu" ? 116 : 98));
-    const morphStageHeight4 = Math.min(
-        morphTargetHeight,
-        Math.max(
-            morphStageHeight3,
-            morphTargetHeight * (isMorphClosingVisual ? 0.36 : (morphSourceContent === "addMenu" ? 0.44 : 0.30))
-        )
-    );
-    const morphStageHeight5 = Math.min(
-        morphTargetHeight,
-        Math.max(
-            morphStageHeight4,
-            isMorphClosingVisual ? morphTargetHeight * 0.72 : morphTargetHeight - (morphSourceContent === "addMenu" ? 62 : 86)
-        )
-    );
-    const morphSourceRadius = Math.min(morphSourceHeight / 2, 32);
-    const morphSheetStyle = useAnimatedStyle(() => ({
-        left: interpolate(
-            morphProgress.value,
-            morphInputRange,
-            [
-                morphSourceLeft,
-                morphSourceRight - morphStageWidth1,
-                morphSourceRight - morphStageWidth2,
-                morphSourceRight - morphStageWidth3,
-                morphSourceRight - morphStageWidth4,
-                morphSourceRight - morphStageWidth5,
-                morphTargetLeft,
+    const morphSheetStyle = useAnimatedStyle(() => {
+        const motionProgress = morphProgress.value;
+        const closing = morphClosingPhase.value >= 0.5;
+        const activeSourceLeft = closing ? morphCloseSourceLeft : morphOpenSourceLeft;
+        const activeSourceWidth = closing ? morphCloseSourceWidth : morphOpenSourceWidth;
+        const activeSourceHeight = closing ? morphCloseSourceHeight : morphOpenSourceHeight;
+        const scaleX = lerpAddHandoffValue(
+            activeSourceWidth / morphTargetWidth,
+            1,
+            motionProgress
+        );
+        const scaleY = lerpAddHandoffValue(
+            activeSourceHeight / morphTargetHeight,
+            1,
+            motionProgress
+        );
+        return {
+            left: morphTargetLeft,
+            top: morphTargetTop,
+            width: morphTargetWidth,
+            height: morphTargetHeight,
+            transform: [
+                {
+                    translateX: lerpAddHandoffValue(
+                        activeSourceLeft - morphTargetLeft,
+                        0,
+                        motionProgress
+                    ),
+                },
+                {
+                    translateY: lerpAddHandoffValue(
+                        morphSourceTop - morphTargetTop,
+                        0,
+                        motionProgress
+                    ),
+                },
+                { scaleX },
+                { scaleY },
             ],
-            Extrapolation.CLAMP
-        ),
-        top: interpolate(
-            morphProgress.value,
-            [0, 1],
-            [morphSourceTop, morphTargetTop],
-            Extrapolation.CLAMP
-        ),
-        width: interpolate(
-            morphProgress.value,
-            morphInputRange,
-            [
-                morphSourceWidth,
-                morphStageWidth1,
-                morphStageWidth2,
-                morphStageWidth3,
-                morphStageWidth4,
-                morphStageWidth5,
-                morphTargetWidth,
-            ],
-            Extrapolation.CLAMP
-        ),
-        height: interpolate(
-            morphProgress.value,
-            morphInputRange,
-            [
-                morphSourceHeight,
-                morphStageHeight1,
-                morphStageHeight2,
-                morphStageHeight3,
-                morphStageHeight4,
-                morphStageHeight5,
-                morphTargetHeight,
-            ],
-            Extrapolation.CLAMP
-        ),
-        borderRadius: interpolate(
-            morphProgress.value,
-            morphInputRange,
-            [morphSourceRadius, morphSourceRadius + 4, 32, 38, 36, 31, 28],
-            Extrapolation.CLAMP
-        ),
-    }), [
-        morphInputRange,
-        morphSourceLeft,
-        morphSourceRight,
-        morphStageWidth1,
-        morphStageWidth2,
-        morphStageWidth3,
-        morphStageWidth4,
-        morphStageWidth5,
+        };
+    }, [
+        morphCloseSourceHeight,
+        morphCloseSourceLeft,
+        morphCloseSourceWidth,
+        morphOpenSourceHeight,
+        morphOpenSourceLeft,
+        morphOpenSourceWidth,
         morphTargetLeft,
         morphSourceTop,
         morphTargetTop,
-        morphSourceWidth,
         morphTargetWidth,
-        morphSourceHeight,
-        morphStageHeight1,
-        morphStageHeight2,
-        morphStageHeight3,
-        morphStageHeight4,
-        morphStageHeight5,
         morphTargetHeight,
-        morphSourceRadius,
+    ]);
+    const morphSurfaceRadiusStyle = useAnimatedStyle(() => {
+        const motionProgress = morphProgress.value;
+        const closing = morphClosingPhase.value >= 0.5;
+        const activeSourceHeight = closing
+            ? morphCloseSourceHeight
+            : morphOpenSourceHeight;
+        const activeSourceRadius = closing
+            ? morphCloseSourceRadius
+            : morphOpenSourceRadius;
+        const scaleY = lerpAddHandoffValue(
+            activeSourceHeight / morphTargetHeight,
+            1,
+            motionProgress
+        );
+        const visualRadius = lerpAddHandoffValue(
+            activeSourceRadius,
+            ADD_MENU_SOURCE.nativeRadius,
+            motionProgress
+        );
+
+        return {
+            borderRadius: visualRadius / Math.max(scaleY, 0.01),
+        };
+    }, [
+        morphCloseSourceHeight,
+        morphCloseSourceRadius,
+        morphOpenSourceHeight,
+        morphOpenSourceRadius,
+        morphTargetHeight,
     ]);
     const morphDimStyle = useAnimatedStyle(() => ({
         opacity: interpolate(
             morphProgress.value,
-            [0, 0.48, 1],
-            [0, 0.04, 1],
+            ADD_HANDOFF_MOTION.backdropInputRange,
+            ADD_HANDOFF_MOTION.backdropOutputRange,
             Extrapolation.CLAMP
         ),
     }));
-    const morphSeedStyle = useAnimatedStyle(() => ({
-        opacity: interpolate(
-            morphProgress.value,
-            isMorphClosingVisual ? [0, 0.08, 0.22, 0.36, 1] : [0, 0.70, 0.88, 1],
-            isMorphClosingVisual ? [1, 1, 0.36, 0, 0] : [1, 1, 0.42, 0],
-            Extrapolation.CLAMP
-        ),
-        transform: [
-            {
-                translateY: isMorphClosingVisual
-                    ? 0
-                    : interpolate(
-                        morphProgress.value,
-                        [0, 0.72],
-                        [0, -3],
-                        Extrapolation.CLAMP
-                    ),
-            },
-        ],
-    }), [isMorphClosingVisual]);
-    const morphExitOpacityStyle = useAnimatedStyle(() => ({
-        opacity: isMorphClosingVisual && sourceContent === "addMenu"
-            ? interpolate(morphProgress.value, [0, 0.08, 0.24], [0, 0.12, 1], Extrapolation.CLAMP)
-            : 1,
-    }), [isMorphClosingVisual, sourceContent]);
-    const morphContentStyle = useAnimatedStyle(() => ({
-        opacity: interpolate(
-            morphProgress.value,
-            [0, 0.72, 1],
-            [0, 0, 1],
-            Extrapolation.CLAMP
-        ),
-        transform: [
-            {
-                translateY: interpolate(
-                    morphProgress.value,
-                    [0, 0.72, 1],
-                    [10, 10, 0],
-                    Extrapolation.CLAMP
-                ),
-            },
-        ],
-    }));
+    const morphDenseCloseStyle = useAnimatedStyle(() => {
+        if (morphClosingPhase.value < 0.5) return { opacity: 1 };
 
-    if ((!visible && !rendered) || routePlannerHidden) {
+        return {
+            opacity: interpolate(
+                morphProgress.value,
+                [
+                    0,
+                    ADD_HANDOFF_MOTION.closeContentFadeStartProgress,
+                    ADD_HANDOFF_MOTION.closeContentFadeEndProgress,
+                    1,
+                ],
+                [
+                    ADD_HANDOFF_MOTION.closeContentParkedOpacity,
+                    ADD_HANDOFF_MOTION.closeContentParkedOpacity,
+                    1,
+                    1,
+                ],
+                Extrapolation.CLAMP
+            ),
+        };
+    });
+    const morphContentRevealCurtainStyle = useAnimatedStyle(() => {
+        if (!isMorphPresentation || morphClosingPhase.value >= 0.5) {
+            return { opacity: 0 };
+        }
+
+        return {
+            opacity: interpolate(
+                morphProgress.value,
+                [
+                    0,
+                    ADD_HANDOFF_MOTION.contentRevealStartProgress,
+                    ADD_HANDOFF_MOTION.contentRevealEndProgress,
+                    1,
+                ],
+                [1, 1, 0, 0],
+                Extrapolation.CLAMP
+            ),
+        };
+    }, [isMorphPresentation]);
+
+    // Keep teardown symmetric with QuickScheduleModal: once the local close
+    // lifecycle finishes, do not render a reset source seed while the parent
+    // visibility update is still crossing the React commit boundary.
+    if (!rendered || routePlannerHidden) {
         return null;
     }
+
+    const isPrewarmOnly = prewarm
+        && !visible
+        && !morphWasPresentedRef.current
+        && !morphClosingRef.current;
 
     const SheetMotionView = (isMorphPresentation
         ? Reanimated.View
@@ -1058,14 +1291,34 @@ export default function ScheduleNewModal({
     const SheetContentView = (isMorphPresentation
         ? Reanimated.View
         : Animated.View) as React.ComponentType<any>;
+    // Avoid re-rasterizing a native GlassView while its parent is scaled. The
+    // regular bottom sheet still uses native glass; only the morph uses this
+    // lightweight, visually matching surface.
+    const SheetSurfaceView = (isMorphPresentation
+        ? View
+        : CalendarGlassSurface) as React.ComponentType<any>;
+    const sheetSurfaceProps = isMorphPresentation
+        ? {}
+        : {
+            prominent: true,
+            variant: "sheet",
+            tone: "solidCard",
+        };
     const sheetMotionStyle = isMorphPresentation
-        ? [styles.morphSheetMotion, morphSheetStyle, morphExitOpacityStyle]
+        ? [styles.morphSheetMotion, morphSheetStyle]
         : [styles.sheetMotion, { maxHeight: sheetTargetHeight, transform: [{ translateY: posY }] }];
 
     return (
-        <View
-            style={[styles.wrapper, isMorphPresentation && styles.morphWrapper]}
-            pointerEvents="box-none"
+        <Reanimated.View
+            accessibilityElementsHidden={isPrewarmOnly}
+            importantForAccessibility={isPrewarmOnly ? "no-hide-descendants" : "auto"}
+            style={[
+                styles.wrapper,
+                isMorphPresentation && styles.morphWrapper,
+                isPrewarmOnly && !isMorphPresentation && styles.prewarmHidden,
+                isMorphPresentation && morphPresentationStyle,
+            ]}
+            pointerEvents={isPrewarmOnly ? "none" : "box-none"}
         >
             <Reanimated.View
                 pointerEvents="auto"
@@ -1077,37 +1330,46 @@ export default function ScheduleNewModal({
                 />
             </Reanimated.View>
 
-            <SheetMotionView style={sheetMotionStyle}>
-            <CalendarGlassSurface
-                prominent
-                variant="sheet"
-                tone={isMorphPresentation ? "softGlass" : "solidCard"}
-                clear={isMorphPresentation}
+            <SheetMotionView
+                collapsable={false}
+                onLayout={({ nativeEvent: { layout } }: {
+                    nativeEvent: { layout: { width: number; height: number } };
+                }) => {
+                    handleMorphSeedLayout(layout.width, layout.height);
+                }}
+                style={sheetMotionStyle}
+            >
+            <SheetSurfaceView
+                {...sheetSurfaceProps}
+                collapsable={false}
                 style={[
                     styles.sheet,
                     isMorphPresentation && styles.morphSheet,
-                    { borderColor: colors.border },
+                    {
+                        borderColor: colors.border,
+                        backgroundColor: isMorphPresentation
+                            ? "transparent"
+                            : undefined,
+                        borderWidth: isMorphPresentation ? 0 : 1,
+                    },
                 ]}
             >
-                {isMorphPresentation && (
-                    <Reanimated.View
-                        pointerEvents="none"
-                        style={[styles.morphSeedContent, morphSeedStyle]}
-                    >
-                        {morphVisibleSeedContent === "toolbar" ? (
-                            <View style={styles.morphToolbarSeedRow}>
-                                <Ionicons name="reorder-two-outline" size={26} color={colors.textPrimary} />
-                                <Ionicons name="search" size={23} color={colors.textPrimary} />
-                                <Ionicons name="add" size={27} color={colors.textPrimary} />
-                            </View>
-                        ) : null}
-                    </Reanimated.View>
-                )}
-
+                <Reanimated.View
+                    collapsable={false}
+                    shouldRasterizeIOS={Platform.OS === "ios" && isMorphPresentation && morphSheetRasterized}
+                    style={[
+                        isMorphPresentation && styles.morphDenseSurface,
+                        isMorphPresentation && morphDenseCloseStyle,
+                        isMorphPresentation && morphSurfaceRadiusStyle,
+                        isMorphPresentation && {
+                            backgroundColor: mode === "dark" ? "#0E0F12" : "#FFFFFF",
+                            borderColor: colors.border,
+                        },
+                    ]}
+                >
                 {(!isMorphPresentation || morphContentMounted) && (
                     <SheetContentView style={[
                         isMorphPresentation ? styles.morphInnerContent : styles.sheetInnerContent,
-                        isMorphPresentation && morphContentStyle,
                     ]}>
                     <View
                         {...(!isMorphPresentation ? panResponder.panHandlers : {})}
@@ -1123,23 +1385,29 @@ export default function ScheduleNewModal({
                         contentContainerStyle={styles.scrollContent}
                     >
                         <View style={styles.headerRow}>
-                            <View style={styles.headerTitleSpacer} />
-                            <Pressable
-                                onPress={() => closeSheet(onClose)}
-                                style={[
-                                    styles.closeBtn,
-                                    {
-                                        backgroundColor: mode === "dark"
-                                            ? "rgba(255,255,255,0.08)"
-                                            : "rgba(118,118,128,0.12)",
-                                        borderColor: colors.border,
-                                    },
-                                ]}
-                            >
-                                <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>닫기</Text>
-                            </Pressable>
+                            <View style={styles.headerTitleGroup}>
+                                <Ionicons name="create-outline" size={17} color={colors.textPrimary} />
+                                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 생성</Text>
+                            </View>
+                            <View>
+                                <Pressable
+                                    onPress={() => closeSheet(onClose)}
+                                    style={[
+                                        styles.closeBtn,
+                                        {
+                                            backgroundColor: mode === "dark"
+                                                ? "rgba(255,255,255,0.08)"
+                                                : "rgba(118,118,128,0.12)",
+                                            borderColor: colors.border,
+                                        },
+                                    ]}
+                                >
+                                    <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>닫기</Text>
+                                </Pressable>
+                            </View>
                         </View>
 
+                        <View style={isMorphPresentation ? styles.morphBodyContent : undefined}>
                         <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
                         <View
                             style={[
@@ -1312,12 +1580,25 @@ export default function ScheduleNewModal({
                                 {submitting ? "저장 중" : "저장"}
                             </Text>
                         </Pressable>
+                        </View>
                     </ScrollView>
                     </SheetContentView>
                 )}
-            </CalendarGlassSurface>
+                </Reanimated.View>
+                {isMorphPresentation && (
+                    <Reanimated.View
+                        pointerEvents="none"
+                        style={[
+                            styles.morphContentRevealCurtain,
+                            morphContentRevealCurtainStyle,
+                            morphSurfaceRadiusStyle,
+                            { backgroundColor: mode === "dark" ? "#0E0F12" : "#FFFFFF" },
+                        ]}
+                    />
+                )}
+            </SheetSurfaceView>
             </SheetMotionView>
-        </View>
+        </Reanimated.View>
     );
 }
 
@@ -1331,6 +1612,11 @@ const styles = StyleSheet.create({
     morphWrapper: {
         justifyContent: "flex-start",
     },
+    prewarmHidden: {
+        opacity: 0,
+        zIndex: -1,
+        elevation: 0,
+    },
     dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.58)" },
     sheetMotion: {
         width: "100%",
@@ -1341,60 +1627,58 @@ const styles = StyleSheet.create({
     morphSheetMotion: {
         position: "absolute",
         overflow: "visible",
+        transformOrigin: [0, 0, 0],
     },
     sheet: {
         maxHeight: "100%",
         borderRadius: 26,
         borderWidth: 1,
         overflow: "hidden",
+        zIndex: 1,
     },
     morphSheet: {
+        position: "relative",
         width: "100%",
         height: "100%",
         maxHeight: undefined,
+        overflow: "visible",
     },
-    morphSeedContent: {
+    morphDenseSurface: {
         ...StyleSheet.absoluteFillObject,
-        alignItems: "flex-end",
-        justifyContent: "flex-start",
-        paddingHorizontal: 10,
-        paddingVertical: 12,
-        gap: 4,
-    },
-    morphSeedRow: {
-        width: 218,
-        maxWidth: "100%",
-        height: 43,
-        borderRadius: 18,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        paddingHorizontal: 12,
-    },
-    morphSeedText: {
-        fontSize: 16,
-        fontWeight: "700",
-    },
-    morphToolbarSeedRow: {
-        width: "100%",
-        height: "100%",
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-around",
-        paddingHorizontal: 13,
+        borderRadius: 26,
+        borderWidth: 1,
+        overflow: "hidden",
+        zIndex: 1,
     },
     sheetInnerContent: { maxHeight: "100%" },
-    morphInnerContent: { flex: 1 },
-    handleWrap:    { alignItems: "center", paddingTop: 12, paddingBottom: 8 },
+    morphInnerContent: {
+        flex: 1,
+        transformOrigin: [0, 0, 0],
+    },
+    morphContentRevealCurtain: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 26,
+        zIndex: 2,
+    },
+    morphBodyContent: {
+        position: "relative",
+    },
+    handleWrap:    { alignItems: "center", paddingTop: 9, paddingBottom: 6 },
     handle:        { width: 44, height: 5, borderRadius: 3, opacity: 0.45 },
     scrollView: { maxHeight: "100%" },
-    scrollContent: { paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24 },
+    scrollContent: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 18 },
     headerRow: {
         flexDirection: "row", alignItems: "center",
-        justifyContent: "flex-end", marginBottom: 10,
+        justifyContent: "flex-end", marginBottom: 6,
     },
-    headerTitle:  { fontSize: 18, fontWeight: "700" },
-    headerTitleSpacer: { flex: 1 },
+    headerTitleGroup: {
+        flex: 1,
+        marginLeft: 20,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    headerTitle:  { fontSize: 16, fontWeight: "600" },
     closeBtn:     { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 18, borderWidth: 1 },
     closeBtnText: { fontWeight: "600", fontSize: 13 },
     previewCard: {
@@ -1450,15 +1734,15 @@ const styles = StyleSheet.create({
     },
     label:        { marginBottom: 7, fontSize: 12, fontWeight: "700" },
     input: {
-        borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 14,
+        borderWidth: 1, borderRadius: 12, padding: 11, marginBottom: 10,
     },
     titleInputWrap: {
-        minHeight: 44,
+        minHeight: 42,
         borderWidth: 1,
         borderRadius: 12,
         paddingLeft: 12,
         paddingRight: 8,
-        marginBottom: 16,
+        marginBottom: 12,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -1466,7 +1750,7 @@ const styles = StyleSheet.create({
     titleInput: {
         flex: 1,
         minWidth: 0,
-        paddingVertical: 11,
+        paddingVertical: 10,
         fontSize: 14,
         fontWeight: "700",
     },
@@ -1490,16 +1774,16 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "800",
     },
-    notesInput: { minHeight: 84, textAlignVertical: "top" },
-    twoColRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+    notesInput: { minHeight: 62, textAlignVertical: "top" },
+    twoColRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
     col:       { flex: 1 },
     fieldBase: {
-        borderWidth: 1, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12,
+        borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12,
     },
     fieldText:       { fontWeight: "700", fontSize: 13 },
     pickerContainer: { borderRadius: 16, borderWidth: 1, overflow: "hidden" },
     saveBtn: {
-        paddingVertical: 15, borderRadius: 12,
+        paddingVertical: 13, borderRadius: 12,
         alignItems: "center", marginTop: 4,
         borderWidth: 1,
     },

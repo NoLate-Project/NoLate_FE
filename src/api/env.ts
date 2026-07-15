@@ -12,6 +12,8 @@ const runtime = globalThis as RuntimeWithOptionalProcess;
 
 const expoPublicEnv: Record<string, string | undefined> = {
     EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,
+    // Expo는 EXPO_PUBLIC_* 접근을 번들 시 정적으로 치환하므로 신규 키도 점 표기법으로 선언한다.
+    EXPO_PUBLIC_LOCAL_API_BASE_URL: process.env.EXPO_PUBLIC_LOCAL_API_BASE_URL,
     EXPO_PUBLIC_MAP_PROVIDER: process.env.EXPO_PUBLIC_MAP_PROVIDER,
     EXPO_PUBLIC_NAVER_MAP_CLIENT_ID: process.env.EXPO_PUBLIC_NAVER_MAP_CLIENT_ID,
     EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET: process.env.EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET,
@@ -26,6 +28,9 @@ const expoPublicEnv: Record<string, string | undefined> = {
     EXPO_PUBLIC_NAVER_SERVICE_URL_SCHEME_IOS: process.env.EXPO_PUBLIC_NAVER_SERVICE_URL_SCHEME_IOS,
     EXPO_PUBLIC_TMAP_APP_KEY: process.env.EXPO_PUBLIC_TMAP_APP_KEY,
     EXPO_PUBLIC_TMAP_API_KEY: process.env.EXPO_PUBLIC_TMAP_API_KEY,
+    EXPO_PUBLIC_ODSAY_ANDROID_API_KEY: process.env.EXPO_PUBLIC_ODSAY_ANDROID_API_KEY,
+    EXPO_PUBLIC_ODSAY_IOS_API_KEY: process.env.EXPO_PUBLIC_ODSAY_IOS_API_KEY,
+    EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED: process.env.EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED,
 };
 
 export function getEnv(key: string): string | undefined {

@@ -107,9 +107,11 @@ describe("AuthProvider", () => {
 });
 import {
     createScheduleDetailRoute,
+    getNotificationActionCategoryFromData,
     getScheduleDetailRouteFromNotificationData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
+    SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "../src/modules/notification/pushNavigation";
 
 describe("schedule push navigation payload", () => {
@@ -138,11 +140,21 @@ describe("schedule push navigation payload", () => {
         "SCHEDULE_TRAFFIC",
         "SCHEDULE_DEPARTURE_REMINDER",
         "SCHEDULE_DETAIL",
+        "SCHEDULE_SHARE_RECEIVED",
         undefined,
     ])("일정 상세 이동 payload를 해석한다: %p", (type) => {
         expect(getPushNavigationTargetFromNotificationData({ type, scheduleId: "42" })).toEqual({
             kind: "scheduleDetail",
             scheduleId: "42",
+        });
+    });
+
+    test("카테고리 공유 알림은 공유함으로 이동한다", () => {
+        expect(getPushNavigationTargetFromNotificationData({
+            type: "CATEGORY_SHARE_RECEIVED",
+            categoryId: "7",
+        })).toEqual({
+            kind: "shareInbox",
         });
     });
 
@@ -170,5 +182,20 @@ describe("schedule push navigation payload", () => {
             pathname: "/schedule/[id]",
             params: { id: "42" },
         });
+    });
+
+    test.each([
+        { type: "SCHEDULE_DEPARTURE_REMINDER", scheduleId: "42", departNow: "false" },
+        { type: "SCHEDULE_DEPARTURE_REMINDER", scheduleId: "42", departNow: "true" },
+    ])("출발 리마인더에는 알림 액션 카테고리를 붙인다: %p", (data) => {
+        expect(getNotificationActionCategoryFromData(data)).toBe(SCHEDULE_DEPARTURE_ACTION_CATEGORY);
+    });
+
+    test.each([
+        { type: "SCHEDULE_TRAFFIC", scheduleId: "42" },
+        { type: "SCHEDULE_DEPARTURE_REMINDER", scheduleId: "0" },
+        { type: "SCHEDULE_DEPARTURE_REMINDER" },
+    ])("출발 리마인더가 아니면 알림 액션 카테고리를 붙이지 않는다: %p", (data) => {
+        expect(getNotificationActionCategoryFromData(data)).toBeUndefined();
     });
 });

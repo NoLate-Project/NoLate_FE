@@ -5,18 +5,20 @@ import {
     onMessage,
     onNotificationOpenedApp,
 } from "@react-native-firebase/messaging";
+import Constants from "expo-constants";
 import type { NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
 import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
 import {
+    getNotificationActionCategoryFromData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
+    SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "./pushNavigation";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
-const SCHEDULE_DEPART_NOW_CATEGORY = "schedule_depart_now";
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
 const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
 
@@ -32,6 +34,14 @@ type LocalPushNotification = {
 
 async function getNotifications(): Promise<ExpoNotificationsModule | null> {
     if (notificationsModule !== undefined) {
+        return notificationsModule;
+    }
+
+    // iOS Simulator는 APNs 원격 푸시를 지원하지 않는다. expo-notifications를 import하면
+    // 패키지 초기화 과정에서 서버 등록 정보를 Keychain에서 즉시 읽기 때문에, 서명되지
+    // 않은 시뮬레이터 런타임에서는 errSecMissingEntitlement 오류가 발생할 수 있다.
+    if (Platform.OS === "ios" && !Constants.isDevice) {
+        notificationsModule = null;
         return notificationsModule;
     }
 
@@ -75,6 +85,7 @@ export async function configureForegroundPush(): Promise<() => void> {
 
 export async function configurePushNavigation(
     openSchedule: (scheduleId: string) => void,
+    openShareInbox: () => void,
 ): Promise<() => void> {
     const Notifications = await getNotifications();
     const messaging = getMessaging();
@@ -100,8 +111,14 @@ export async function configurePushNavigation(
         }
 
         lastOpenedMessageId = messageId;
-        console.info("[push] opening schedule from notification", target.scheduleId);
-        openSchedule(target.scheduleId);
+        if (target.kind === "scheduleDetail") {
+            console.info("[push] opening schedule from notification", target.scheduleId);
+            openSchedule(target.scheduleId);
+            return;
+        }
+
+        console.info("[push] opening share inbox from notification");
+        openShareInbox();
     };
 
     const markDepartedFromData = async (
@@ -231,7 +248,7 @@ async function showLocalNotification(notification: LocalPushNotification): Promi
             body: notification.body,
             data: notification.data,
             sound: "default",
-            categoryIdentifier: getDepartNowCategoryIdentifier(notification.data),
+            categoryIdentifier: getNotificationActionCategoryFromData(notification.data),
         },
         trigger: Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : null,
     });
@@ -252,13 +269,13 @@ async function ensureNotificationPresentation(Notifications: ExpoNotificationsMo
 
 async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): Promise<void> {
     try {
-        // `departNow=true` payload에만 액션 버튼을 붙여 일반 일정 알림과 상세 이동 UX를 분리한다.
+        // 출발 리마인더에는 사전 알림과 정각 알림 모두에서 출발 완료 액션을 제공한다.
         await Notifications.setNotificationCategoryAsync(
-            SCHEDULE_DEPART_NOW_CATEGORY,
+            SCHEDULE_DEPARTURE_ACTION_CATEGORY,
             [
                 {
                     identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
-                    buttonTitle: "출발 완료",
+                    buttonTitle: "지금 출발 완료",
                     options: {
                         opensAppToForeground: true,
                     },
@@ -279,10 +296,4 @@ async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): 
     } catch (error) {
         console.warn("[push] notification action category setup failed", error);
     }
-}
-
-function getDepartNowCategoryIdentifier(data: Record<string, unknown>): string | undefined {
-    return data.type === "SCHEDULE_DEPARTURE_REMINDER" && data.departNow === "true"
-        ? SCHEDULE_DEPART_NOW_CATEGORY
-        : undefined;
 }

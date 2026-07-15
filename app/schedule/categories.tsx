@@ -19,8 +19,10 @@ import {
     createScheduleCategoryToApi,
     deleteScheduleCategoryFromApi,
     getScheduleCategoriesFromApi,
+    type ScheduleCategoryItem,
     updateScheduleCategoryToApi,
 } from "../../src/api/scheduleCategories";
+import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
@@ -49,9 +51,10 @@ export default function ScheduleCategoriesScreen() {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingTitle, setEditingTitle] = useState("");
     const [editingColor, setEditingColor] = useState(CATEGORY_COLORS[0]);
+    const [sharingCategory, setSharingCategory] = useState<ScheduleCategoryItem | null>(null);
 
     const categoryList = useMemo(
-        () => [...state.categories].filter((category) => category.id),
+        () => [...state.categories].filter((category) => category.id) as ScheduleCategoryItem[],
         [state.categories]
     );
 
@@ -220,6 +223,7 @@ export default function ScheduleCategoriesScreen() {
 
                 {categoryList.map((category) => {
                     const editing = editingId === category.id;
+                    const isShared = category.shared === true;
                     return (
                         <View
                             key={category.id}
@@ -277,25 +281,56 @@ export default function ScheduleCategoriesScreen() {
                                 <View style={styles.categoryRow}>
                                     <View style={styles.categoryInfo}>
                                         <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
-                                        <Text style={[styles.categoryTitle, { color: colors.textPrimary }]}>
-                                            {category.title}
-                                        </Text>
+                                        <View style={styles.categoryTitleWrap}>
+                                            <View style={styles.categoryTitleRow}>
+                                                <Text style={[styles.categoryTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                                                    {category.title}
+                                                </Text>
+                                                {isShared && (
+                                                    <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                                                        <Ionicons name="people-outline" size={13} color={colors.textSecondary} />
+                                                        <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
+                                                            공유됨
+                                                        </Text>
+                                                    </View>
+                                                )}
+                                            </View>
+                                            {isShared && (
+                                                <Text style={[styles.categoryAssist, { color: colors.textSecondary }]} numberOfLines={1}>
+                                                    받은 카테고리 · {category.sharePermission === "EDITOR" ? "편집 가능" : "보기 권한"}
+                                                </Text>
+                                            )}
+                                        </View>
                                     </View>
                                     <View style={styles.rowActions}>
+                                        {!isShared && (
+                                            <Pressable
+                                                onPress={() => setSharingCategory(category)}
+                                                accessibilityLabel={`${category.title} 공유`}
+                                                style={({ pressed }) => [
+                                                    styles.iconAction,
+                                                    { opacity: pressed ? 0.55 : 1 },
+                                                ]}
+                                            >
+                                                <Ionicons name="share-social-outline" size={20} color={colors.textPrimary} />
+                                            </Pressable>
+                                        )}
                                         <Pressable
                                             onPress={() => startEditing(category)}
+                                            disabled={isShared}
                                             style={({ pressed }) => [
                                                 styles.iconAction,
-                                                { opacity: pressed ? 0.55 : 1 },
+                                                { opacity: isShared ? 0.32 : pressed ? 0.55 : 1 },
                                             ]}
                                         >
                                             <Ionicons name="create-outline" size={20} color={colors.textPrimary} />
                                         </Pressable>
                                         <Pressable
                                             onPress={() => confirmDelete(category.id)}
+                                            disabled={isShared}
                                             style={({ pressed }) => [
                                                 styles.iconAction,
-                                                { opacity: pressed ? 0.55 : 1 },
+                                                { opacity: isShared ? 0.32 : pressed ? 0.55 : 1 },
                                             ]}
                                         >
                                             <Ionicons
@@ -311,6 +346,15 @@ export default function ScheduleCategoriesScreen() {
                     );
                 })}
             </ScrollView>
+            <ShareInvitationSheet
+                visible={!!sharingCategory}
+                resourceType="category"
+                resourceId={sharingCategory?.id}
+                title={sharingCategory?.title ?? "카테고리"}
+                subtitle="이 카테고리에 포함된 일정을 함께 볼 수 있어요"
+                accentColor={sharingCategory?.color}
+                onClose={() => setSharingCategory(null)}
+            />
         </KeyboardAvoidingView>
     );
 }
@@ -455,6 +499,35 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 16,
         fontWeight: "700",
+        letterSpacing: 0,
+    },
+    categoryTitleWrap: {
+        flex: 1,
+        minWidth: 0,
+        gap: 4,
+    },
+    categoryTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    categoryAssist: {
+        fontSize: 12,
+        fontWeight: "600",
+        letterSpacing: 0,
+    },
+    sharedBadge: {
+        height: 24,
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    sharedBadgeText: {
+        fontSize: 11,
+        fontWeight: "800",
         letterSpacing: 0,
     },
     rowActions: {

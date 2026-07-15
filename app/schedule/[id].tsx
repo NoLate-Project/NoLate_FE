@@ -1,24 +1,40 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, Easing, PanResponder, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import type { LayoutChangeEvent } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getSchedule, markScheduleDeparted } from "../../src/api/schedule";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import TmapMapView, {
-    type TmapLatLng,
     type TmapMapViewHandle,
-    type TmapMarker,
-    type TmapPathOverlay,
 } from "../../src/modules/map/TmapMapView";
 import type { RouteAlternativeOption } from "../../src/modules/map/tmapApi";
+import {
+    buildSavedRouteMapPresentation,
+    getSavedRouteFitCoords,
+    getSavedTransitLegCoords,
+} from "../../src/modules/map/savedRouteMapPresentation";
+import { parseTransitMapInteractionId } from "../../src/modules/map/transitMapInteraction";
+import RouteStepTimeline from "../../src/modules/schedule/components/route/RouteStepTimeline";
+import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
+import { buildSavedRouteDetailInfo } from "../../src/modules/schedule/savedRouteDetailPresentation";
+import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
+import type { RouteStep } from "../../src/modules/schedule/routeInfo";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import type { ScheduleItem, TravelMode } from "../../src/modules/schedule/types";
+import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
 import { createQaScheduleItem, QA_SCHEDULE_ID } from "../../src/modules/schedule/qaSamples";
+import { getAuthMember } from "../../src/modules/auth/authStorage";
+import {
+    buildDepartureParticipantPresentations,
+    getDepartureOverview,
+    getScheduleDetailSheetHeights,
+} from "../../src/modules/schedule/detailPresentation";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const ymdText = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -29,7 +45,6 @@ const SHEET_SNAP_VELOCITY_PROJECTION = 140;
 const MINUTE_MS = 60 * 1000;
 const SECOND_MS = 1000;
 const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
-const DEPARTURE_PANEL_FALLBACK_HEIGHT = 118;
 
 type DepartureDisplayState =
     | { kind: "countdown"; hours: number; minutes: number; seconds: number }
@@ -38,12 +53,7 @@ type DepartureDisplayState =
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
 
-function mapCoordFromPlace(place?: { lat?: number; lng?: number }): TmapLatLng | undefined {
-    if (typeof place?.lat !== "number" || typeof place.lng !== "number") return undefined;
-    return { latitude: place.lat, longitude: place.lng };
-}
-
-function mapCoordFromUnknown(value: unknown): TmapLatLng | undefined {
+function mapCoordFromUnknown(value: unknown): { latitude: number; longitude: number } | undefined {
     if (!value || typeof value !== "object") return undefined;
     const point = value as { lat?: unknown; lng?: unknown; latitude?: unknown; longitude?: unknown; coord?: unknown };
     if (point.coord) return mapCoordFromUnknown(point.coord);
@@ -51,97 +61,6 @@ function mapCoordFromUnknown(value: unknown): TmapLatLng | undefined {
     const lng = point.lng ?? point.longitude;
     if (typeof lat !== "number" || typeof lng !== "number") return undefined;
     return { latitude: lat, longitude: lng };
-}
-
-function routePathCoords(route: unknown): TmapLatLng[] {
-    const coords = (route as { pathCoords?: unknown })?.pathCoords;
-    if (!Array.isArray(coords)) return [];
-
-    return coords.flatMap((point) => {
-        const coord = mapCoordFromUnknown(point);
-        return coord ? [coord] : [];
-    });
-}
-
-function asRouteAlternative(route: unknown): RouteAlternativeOption | undefined {
-    if (!route || typeof route !== "object") return undefined;
-    return route as RouteAlternativeOption;
-}
-
-function routeVisualOverlays(route: unknown, isDark: boolean): TmapPathOverlay[] {
-    const storedOverlays = (route as { storedPathOverlays?: unknown })?.storedPathOverlays;
-    if (Array.isArray(storedOverlays)) {
-        const overlays = storedOverlays.flatMap((overlay, index) => {
-            const raw = overlay as {
-                id?: unknown;
-                coords?: unknown;
-                color?: unknown;
-                width?: unknown;
-                outlineColor?: unknown;
-                outlineWidth?: unknown;
-            };
-            if (!Array.isArray(raw.coords)) return [];
-            const coords = raw.coords.flatMap((coord) => {
-                const mapped = mapCoordFromUnknown(coord);
-                return mapped ? [mapped] : [];
-            });
-            if (coords.length < 2) return [];
-            return [{
-                id: typeof raw.id === "string" ? raw.id : `stored-route-overlay-${index}`,
-                coords,
-                color: typeof raw.color === "string" ? raw.color : "#A3AD1D",
-                width: typeof raw.width === "number" ? raw.width : 10,
-                outlineColor: typeof raw.outlineColor === "string"
-                    ? raw.outlineColor
-                    : (isDark ? "rgba(15,20,35,0.65)" : "rgba(255,255,255,0.95)"),
-                outlineWidth: typeof raw.outlineWidth === "number" ? raw.outlineWidth : 3,
-            }];
-        });
-        if (overlays.length > 0) return overlays;
-    }
-
-    const routeOption = asRouteAlternative(route);
-    const legs = routeOption?.transitLegs;
-    if (!Array.isArray(legs) || legs.length === 0) return [];
-
-    return legs.flatMap((leg, index) => {
-        const coords = getTransitLegStoredCoords(leg);
-        if (coords.length < 2) return [];
-        const isWalk = leg.kind === "WALK";
-        return [{
-            id: `detail-route-leg-${index}`,
-            coords,
-            color: isWalk ? (isDark ? "#E8E2A6" : "#7C8A13") : (leg.lineColor ? `#${leg.lineColor.replace(/^#/, "")}` : "#5AA2FF"),
-            width: isWalk ? 8 : 10,
-            outlineColor: isDark ? "rgba(15,20,35,0.65)" : "rgba(255,255,255,0.95)",
-            outlineWidth: 3,
-        }];
-    });
-}
-
-function getTransitLegStoredCoords(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]): TmapLatLng[] {
-    const pathCoords = routePathCoords({ pathCoords: leg.pathCoords });
-    if (pathCoords.length >= 2) return pathCoords;
-
-    const coords = [
-        mapCoordFromUnknown(leg.startCoord),
-        ...(Array.isArray(leg.passStops) ? leg.passStops.flatMap((stop) => {
-            const coord = mapCoordFromUnknown(stop.coord);
-            return coord ? [coord] : [];
-        }) : []),
-        mapCoordFromUnknown(leg.endCoord),
-    ].filter((coord): coord is TmapLatLng => !!coord);
-
-    return coords;
-}
-
-function storedRouteCoords(route: unknown): TmapLatLng[] {
-    const rootPath = routePathCoords(route);
-    if (rootPath.length >= 2) return rootPath;
-
-    const legs = asRouteAlternative(route)?.transitLegs;
-    if (!Array.isArray(legs)) return [];
-    return legs.flatMap(getTransitLegStoredCoords);
 }
 
 function formatCompactScheduleRange(startAt: string, endAt: string, hasEndTime = true) {
@@ -168,15 +87,6 @@ function travelModeLabel(mode?: TravelMode) {
 function routeNumberText(route: RouteAlternativeOption | undefined, fallbackMinutes?: number) {
     const minutes = route?.minutes ?? fallbackMinutes;
     return typeof minutes === "number" ? `${minutes}분` : "경로";
-}
-
-function routeMetricText(route: RouteAlternativeOption | undefined) {
-    if (!route) return undefined;
-    const metrics: string[] = [];
-    if (typeof route.transferCount === "number") metrics.push(`환승 ${route.transferCount}회`);
-    if (typeof route.walkMeters === "number") metrics.push(`도보 ${route.walkMeters}m`);
-    if (typeof route.fareWon === "number") metrics.push(`${route.fareWon.toLocaleString()}원`);
-    return metrics.join(" · ") || route.transitModeSummary;
 }
 
 function getRecommendedDepartureAt(item: ScheduleItem): Date | undefined {
@@ -207,9 +117,14 @@ function formatDepartureAssistText(item: ScheduleItem) {
     return chunks.join(" · ");
 }
 
-function getDepartureDisplayState(departureAt: Date | undefined, item: ScheduleItem, nowMs: number): DepartureDisplayState {
-    if (item.departedAt) {
-        return { kind: "status", text: `${hhmmText(fromISO(item.departedAt))}에 출발 완료됨`, tone: "completed" };
+function getDepartureDisplayState(
+    departureAt: Date | undefined,
+    item: ScheduleItem,
+    nowMs: number,
+    currentMemberDepartedAt?: string
+): DepartureDisplayState {
+    if (currentMemberDepartedAt) {
+        return { kind: "status", text: `${hhmmText(fromISO(currentMemberDepartedAt))}에 출발 완료됨`, tone: "completed" };
     }
 
     if (!departureAt) {
@@ -231,44 +146,6 @@ function getDepartureDisplayState(departureAt: Date | undefined, item: ScheduleI
     }
 
     return { kind: "status", text: "출발해야 할 시간이 지났어요", tone: "disabled" };
-}
-
-function legTitle(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]) {
-    if (leg.kind === "WALK") return "도보";
-    return leg.lineName || (leg.kind === "BUS" ? "버스" : leg.kind === "SUBWAY" ? "지하철" : "이동");
-}
-
-function legColor(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]) {
-    if (leg.kind === "WALK") return "#70B6FF";
-    if (leg.lineColor) return `#${leg.lineColor.replace(/^#/, "")}`;
-    return leg.kind === "BUS" ? "#2D7FF9" : "#A3AD1D";
-}
-
-function legDescription(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]) {
-    const chunks = [
-        leg.startName && leg.endName ? `${leg.startName} → ${leg.endName}` : undefined,
-        typeof leg.stationCount === "number" ? `${leg.stationCount}정거장` : undefined,
-        typeof leg.distanceMeters === "number" ? `${leg.distanceMeters}m` : undefined,
-    ].filter(Boolean);
-    return chunks.join(" · ");
-}
-
-function legTimelineTitle(
-    leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number],
-    index: number,
-    total: number
-) {
-    if (leg.kind === "WALK") {
-        if (index === 0) return `${leg.endName || "승차 지점"}까지 도보`;
-        if (index === total - 1) return `${leg.endName || "도착지"}까지 도보`;
-        return `${leg.endName || "환승 지점"}까지 이동`;
-    }
-    return `${leg.startName || "승차"}에서 ${leg.endName || "하차"}까지`;
-}
-
-function legStopText(leg: NonNullable<RouteAlternativeOption["transitLegs"]>[number]) {
-    if (typeof leg.stationCount !== "number") return undefined;
-    return `${leg.stationCount}개 정류장 이동`;
 }
 
 export default function ScheduleRoute() {
@@ -298,26 +175,41 @@ function ScheduleDetail() {
     const mapRef = useRef<TmapMapViewHandle>(null);
     const sheetStartOffsetRef = useRef(0);
     const [loading, setLoading] = useState(false);
-    const sheetMinHeight = Math.max(210, Math.round(windowHeight * 0.24));
-    const sheetMidHeight = Math.max(sheetMinHeight, Math.round(windowHeight * 0.34));
-    const sheetMaxHeight = Math.max(sheetMidHeight, Math.round(windowHeight * 0.66));
+    const {
+        minHeight: sheetMinHeight,
+        midHeight: sheetMidHeight,
+        maxHeight: sheetMaxHeight,
+    } = getScheduleDetailSheetHeights(windowHeight);
     const sheetCollapsedOffset = sheetMaxHeight - sheetMinHeight;
     const sheetMiddleOffset = sheetMaxHeight - sheetMidHeight;
     const sheetTranslateY = useRef(new Animated.Value(sheetMiddleOffset)).current;
+    const [mapZoom, setMapZoom] = useState(DEFAULT_CAMERA.zoom);
     const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
-    const [expandedStopLegs, setExpandedStopLegs] = useState<Record<number, boolean>>({});
+    const [selectedTransitStop, setSelectedTransitStop] = useState<{
+        legIndex: number;
+        stopIndex: number;
+    }>();
+    const [shareSheetVisible, setShareSheetVisible] = useState(false);
+    const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
     const [departureActionPending, setDepartureActionPending] = useState(false);
-    const [departurePanelExpanded, setDeparturePanelExpanded] = useState(false);
-    const [departurePanelContentHeight, setDeparturePanelContentHeight] = useState(DEPARTURE_PANEL_FALLBACK_HEIGHT);
     const [nowMs, setNowMs] = useState(() => Date.now());
     const countdownTickAnim = useRef(new Animated.Value(1)).current;
-    const departureExpandAnim = useRef(new Animated.Value(0)).current;
     const previousCountdownKeyRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
-    const recommendedDepartureAt = item ? getRecommendedDepartureAt(item) : undefined;
+    const canManageSchedule = useMemo(() => {
+        if (!item) return false;
+        if (typeof item.ownerMemberId !== "number") return true;
+        return currentMemberId === item.ownerMemberId;
+    }, [currentMemberId, item]);
+    const currentMemberDepartedAt = item?.myDepartedAt ?? (canManageSchedule ? item?.departedAt : undefined);
+    const departureParticipants = item?.departureParticipants ?? [];
+    const recommendedDepartureAt = useMemo(
+        () => item ? getRecommendedDepartureAt(item) : undefined,
+        [item?.departAt, item?.startAt, item?.travelMinutes]
+    );
     const departureDisplayState: DepartureDisplayState = item
-        ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs)
+        ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
         : { kind: "status", text: "", tone: "default" };
     const countdownAnimationKey = departureDisplayState.kind === "countdown"
         ? `${departureDisplayState.hours}:${departureDisplayState.minutes}:${departureDisplayState.seconds}`
@@ -334,13 +226,20 @@ function ScheduleDetail() {
     }, []);
 
     useEffect(() => {
-        Animated.timing(departureExpandAnim, {
-            toValue: departurePanelExpanded ? 1 : 0,
-            duration: departurePanelExpanded ? 240 : 180,
-            easing: departurePanelExpanded ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-            useNativeDriver: false,
-        }).start();
-    }, [departureExpandAnim, departurePanelExpanded]);
+        let cancelled = false;
+
+        getAuthMember()
+            .then((member) => {
+                if (!cancelled) setCurrentMemberId(member?.id ?? null);
+            })
+            .catch(() => {
+                if (!cancelled) setCurrentMemberId(null);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     useEffect(() => {
         if (!countdownAnimationKey) {
@@ -365,55 +264,21 @@ function ScheduleDetail() {
         }).start();
     }, [countdownAnimationKey, countdownTickAnim]);
 
-    const updateDeparturePanelHeight = useCallback((event: LayoutChangeEvent) => {
-        const nextHeight = Math.ceil(event.nativeEvent.layout.height);
-        if (nextHeight <= 0) return;
-        setDeparturePanelContentHeight((current) => (
-            Math.abs(current - nextHeight) > 1 ? nextHeight : current
-        ));
-    }, []);
-
     const countdownAnimatedStyle = useMemo(() => ({
         opacity: countdownTickAnim,
     }), [countdownTickAnim]);
-
-    const departureDropdownAnimatedStyle = useMemo(() => ({
-        height: departureExpandAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, departurePanelContentHeight],
+    const sheetQuickSummaryAnimatedStyle = useMemo(() => ({
+        height: sheetTranslateY.interpolate({
+            inputRange: [sheetMiddleOffset, sheetCollapsedOffset],
+            outputRange: [0, 108],
+            extrapolate: "clamp",
         }),
-        marginTop: departureExpandAnim.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0, 7],
+        opacity: sheetTranslateY.interpolate({
+            inputRange: [sheetMiddleOffset, sheetCollapsedOffset],
+            outputRange: [0, 1],
+            extrapolate: "clamp",
         }),
-        opacity: departureExpandAnim,
-    }), [departureExpandAnim, departurePanelContentHeight]);
-
-    const departureDropdownContentAnimatedStyle = useMemo(() => ({
-        opacity: departureExpandAnim.interpolate({
-            inputRange: [0, 0.35, 1],
-            outputRange: [0, 0.22, 1],
-        }),
-        transform: [
-            {
-                translateY: departureExpandAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [-8, 0],
-                }),
-            },
-        ],
-    }), [departureExpandAnim]);
-
-    const departureChevronAnimatedStyle = useMemo(() => ({
-        transform: [
-            {
-                rotate: departureExpandAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ["0deg", "180deg"],
-                }),
-            },
-        ],
-    }), [departureExpandAnim]);
+    }), [sheetCollapsedOffset, sheetMiddleOffset, sheetTranslateY]);
 
     useEffect(() => {
         sheetTranslateY.stopAnimation((current) => {
@@ -497,72 +362,114 @@ function ScheduleDetail() {
         };
     }, [dispatch, id, pathname]);
 
-    const originCoord = useMemo(() => mapCoordFromPlace(item?.origin), [item?.origin]);
-    const destinationCoord = useMemo(() => mapCoordFromPlace(item?.destination), [item?.destination]);
     const displayRoute = item?.route;
-
-    const pathCoords = useMemo(() => {
-        const savedPath = storedRouteCoords(displayRoute);
-        if (savedPath.length >= 2) return savedPath;
-        return [];
-    }, [displayRoute]);
-
-    const pathOverlays = useMemo(
-        () => routeVisualOverlays(displayRoute, mode === "dark"),
-        [displayRoute, mode]
+    const mapPresentation = useMemo(() => buildSavedRouteMapPresentation({
+        route: displayRoute,
+        origin: item?.origin,
+        destination: item?.destination,
+        mapZoom,
+        isDark,
+        focusedLegIndex,
+    }), [displayRoute, focusedLegIndex, isDark, item?.destination, item?.origin, mapZoom]);
+    const {
+        routeOption,
+        routeLegs,
+        pathOverlays: displayPathOverlays,
+        markers,
+    } = mapPresentation;
+    const mapCoords = useMemo(
+        () => getSavedRouteFitCoords(displayRoute, item?.origin, item?.destination),
+        [displayRoute, item?.destination, item?.origin]
     );
-    const routeOption = useMemo(() => asRouteAlternative(displayRoute), [displayRoute]);
-    const routeLegs = useMemo(
-        () => Array.isArray(routeOption?.transitLegs) ? routeOption.transitLegs : [],
-        [routeOption]
+    const routeDetailInfo = useMemo(() => buildSavedRouteDetailInfo({
+        route: displayRoute,
+        routeAlternative: routeOption,
+        origin: item?.origin,
+        destination: item?.destination,
+        departureAt: recommendedDepartureAt,
+    }), [displayRoute, item?.destination, item?.origin, recommendedDepartureAt, routeOption]);
+    const routeProgressSegments = useMemo(
+        () => buildTransitRouteProgressSegments(routeLegs),
+        [routeLegs]
     );
-    const displayPathOverlays = useMemo(() => {
-        if (typeof focusedLegIndex !== "number") return pathOverlays;
-        const leg = routeLegs[focusedLegIndex];
-        if (!leg) return pathOverlays;
-        const coords = getTransitLegStoredCoords(leg);
-        if (coords.length < 2) return pathOverlays;
-
-        return [
-            ...pathOverlays,
-            {
-                id: `focused-detail-leg-${focusedLegIndex}`,
-                coords,
-                color: legColor(leg),
-                width: 15,
-                outlineColor: isDark ? "#111827" : "#FFFFFF",
-                outlineWidth: 4,
-            },
-        ];
-    }, [focusedLegIndex, isDark, pathOverlays, routeLegs]);
+    const routeTravelSteps = useMemo(
+        () => routeDetailInfo?.steps.filter((step) => step.type !== "ORIGIN" && step.type !== "DESTINATION") ?? [],
+        [routeDetailInfo]
+    );
+    const selectedRouteStepId = typeof focusedLegIndex === "number"
+        ? routeTravelSteps[focusedLegIndex]?.id
+        : undefined;
+    const selectedRoutePassStopStepId = selectedTransitStop
+        ? routeTravelSteps[selectedTransitStop.legIndex]?.id
+        : undefined;
+    const selectedRoutePassStop = selectedTransitStop && selectedRoutePassStopStepId
+        ? {
+            stepId: selectedRoutePassStopStepId,
+            stopIndex: selectedTransitStop.stopIndex,
+        }
+        : undefined;
 
     const focusRouteLeg = useCallback((legIndex: number) => {
         const leg = routeLegs[legIndex];
         if (!leg) return;
 
-        const legCoords = getTransitLegStoredCoords(leg);
+        const legCoords = getSavedTransitLegCoords(leg);
         if (legCoords.length < 2) return;
 
         setFocusedLegIndex(legIndex);
-        mapRef.current?.fitToCoordinates(legCoords, { padding: 90 });
-    }, [routeLegs]);
-
-    const toggleLegStops = useCallback((legIndex: number) => {
-        setExpandedStopLegs((current) => ({
-            ...current,
-            [legIndex]: !current[legIndex],
-        }));
-    }, []);
+        setSelectedTransitStop(undefined);
+        snapSheetToOffset(sheetCollapsedOffset);
+        mapRef.current?.fitToCoordinates(legCoords, {
+            edgePadding: {
+                top: insets.top + 124,
+                right: 44,
+                bottom: sheetMinHeight + 28,
+                left: 44,
+            },
+        });
+    }, [insets.top, routeLegs, sheetCollapsedOffset, sheetMinHeight, snapSheetToOffset]);
 
     const focusTransitStop = useCallback((stop: { coord?: unknown }) => {
         const coord = mapCoordFromUnknown(stop.coord);
         if (!coord) return;
 
+        snapSheetToOffset(sheetCollapsedOffset);
         mapRef.current?.animateCameraTo({
             ...coord,
-            zoom: 17,
+            zoom: 17.2,
             duration: 420,
         });
+    }, [sheetCollapsedOffset, snapSheetToOffset]);
+
+    const handleMapMarkerPress = useCallback((event: { id: string; interactionId?: string }) => {
+        const interaction = parseTransitMapInteractionId(event.interactionId);
+        if (!interaction) return;
+        if (interaction.kind === "leg") {
+            focusRouteLeg(interaction.legIndex);
+            return;
+        }
+
+        const stop = routeLegs[interaction.legIndex]?.passStops?.[interaction.stopIndex];
+        if (!stop) return;
+        setFocusedLegIndex(interaction.legIndex);
+        setSelectedTransitStop({
+            legIndex: interaction.legIndex,
+            stopIndex: interaction.stopIndex,
+        });
+        focusTransitStop(stop);
+    }, [focusRouteLeg, focusTransitStop, routeLegs]);
+
+    const handleRouteStepPress = useCallback((step: RouteStep) => {
+        const legIndex = routeTravelSteps.findIndex((candidate) => candidate.id === step.id);
+        if (legIndex < 0) return;
+        // 타임라인 탭은 정류장 상세를 읽는 동작이므로 시트와 스크롤 위치를 유지한다.
+        setFocusedLegIndex(legIndex);
+        setSelectedTransitStop(undefined);
+    }, [routeTravelSteps]);
+
+    const handleMapZoomChanged = useCallback((zoom: number) => {
+        if (!Number.isFinite(zoom)) return;
+        setMapZoom((current) => Math.abs(current - zoom) < 0.04 ? current : zoom);
     }, []);
 
     const completeDeparture = useCallback(async () => {
@@ -576,7 +483,9 @@ function ScheduleDetail() {
                 type: "UPDATE_ITEM",
                 item: {
                     ...updated,
-                    departedAt: updated.departedAt ?? completedAt,
+                    myDepartedAt: updated.myDepartedAt ?? completedAt,
+                    departedAt: canManageSchedule ? (updated.departedAt ?? completedAt) : updated.departedAt,
+                    departureParticipants: updated.departureParticipants ?? item?.departureParticipants,
                 },
             });
         } catch (error) {
@@ -584,37 +493,32 @@ function ScheduleDetail() {
         } finally {
             setDepartureActionPending(false);
         }
-    }, [departureActionPending, dispatch, id]);
+    }, [canManageSchedule, departureActionPending, dispatch, id, item?.departureParticipants]);
 
-    const mapCoords = useMemo(() => {
-        const coords = [...pathCoords];
-        if (originCoord) coords.push(originCoord);
-        if (destinationCoord) coords.push(destinationCoord);
-        return coords;
-    }, [destinationCoord, originCoord, pathCoords]);
-
-    const markers = useMemo<TmapMarker[]>(() => {
-        const nextMarkers: TmapMarker[] = [];
-        if (originCoord) {
-            nextMarkers.push({
-                id: "origin",
-                ...originCoord,
-                caption: item?.origin?.name ?? "출발지",
-                markerStyle: "origin",
-                pinLabel: "출",
-            });
-        }
-        if (destinationCoord) {
-            nextMarkers.push({
-                id: "destination",
-                ...destinationCoord,
-                caption: item?.destination?.name ?? "도착지",
-                markerStyle: "destination",
-                pinLabel: "도",
-            });
-        }
-        return nextMarkers;
-    }, [destinationCoord, item?.destination?.name, item?.origin?.name, originCoord]);
+    const openCurrentRoutePlanner = useCallback(() => {
+        if (!item) return;
+        const targetSessionId = `schedule-detail-${item.id}-${Date.now()}`;
+        const travelMode = item.travelMode ?? routeOption?.mode ?? "CAR";
+        setRoutePlannerInitial(targetSessionId, {
+            origin: item.origin,
+            destination: item.destination,
+            travelMode,
+            travelMinutes: item.travelMinutes,
+            locationName: item.locationName,
+            route: item.route,
+        });
+        router.push({
+            pathname: "/schedule/route-planner",
+            params: {
+                sessionId: targetSessionId,
+                routeId: routeOption?.id,
+                routeIndex: "0",
+                sheetState: "middle",
+                entrySource: "schedule-detail",
+                departureAt: item.departAt ?? new Date().toISOString(),
+            },
+        });
+    }, [item, routeOption?.id, routeOption?.mode, router]);
 
     const camera = useMemo(() => {
         if (mapCoords.length === 0) return DEFAULT_CAMERA;
@@ -625,9 +529,16 @@ function ScheduleDetail() {
 
     const fitMap = useCallback(() => {
         if (mapCoords.length > 1) {
-            mapRef.current?.fitToCoordinates(mapCoords, { padding: 120 });
+            mapRef.current?.fitToCoordinates(mapCoords, {
+                edgePadding: {
+                    top: insets.top + 124,
+                    right: 44,
+                    bottom: sheetMidHeight + 28,
+                    left: 44,
+                },
+            });
         }
-    }, [mapCoords]);
+    }, [insets.top, mapCoords, sheetMidHeight]);
 
     useEffect(() => {
         fitMap();
@@ -651,19 +562,123 @@ function ScheduleDetail() {
     const travelText = item.travelMinutes
         ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
         : travelModeLabel(item.travelMode);
-    const hasDepartureInfo = Boolean(recommendedDepartureAt || item.departedAt || typeof item.travelMinutes === "number");
-    const departureCompleted = Boolean(item.departedAt);
+    const hasDepartureInfo = Boolean(recommendedDepartureAt || currentMemberDepartedAt || typeof item.travelMinutes === "number");
+    const departureCompleted = Boolean(currentMemberDepartedAt);
     const sheetBorder = isDark ? "#343434" : "#E2E8F0";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
     const secondaryText = isDark ? "#B8B8B8" : "#64748B";
-    const departureStatusColor = departureDisplayState.kind === "status" && departureDisplayState.tone === "completed"
-        ? (isDark ? "#86EFAC" : "#15803D")
-        : departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled"
+    const departureStatusMuted = departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled";
+    const departureStatusAccent = departureCompleted
+        ? (isDark ? "#86EFAC" : "#16A34A")
+        : departureStatusMuted
             ? secondaryText
-            : primaryText;
-    const departureStatusOpacity = departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled"
-        ? 0.52
-        : 1;
+            : colors.selectedDayBg;
+    const departureStatusIconBackground = departureCompleted
+        ? (isDark ? "rgba(34,197,94,0.18)" : "rgba(34,197,94,0.12)")
+        : departureStatusMuted
+            ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.06)")
+            : (isDark ? "rgba(96,165,250,0.18)" : "rgba(37,99,235,0.10)");
+    const participantPresentations = buildDepartureParticipantPresentations(departureParticipants, currentMemberId);
+    const departureOverview = getDepartureOverview(departureParticipants, currentMemberId);
+    const departedParticipantCount = departureOverview.departedCount;
+    const scheduleScopeLabel = departureParticipants.length > 1
+        ? `${departureParticipants.length}명 공유`
+        : item.category.title;
+    const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
+    const routeDetailMeta = [
+        `${arrivalTimeLabel} 도착`,
+        typeof routeOption?.transferCount === "number" ? `환승 ${routeOption.transferCount}회` : undefined,
+    ].filter(Boolean).join(" · ");
+    const departureCountLabel = departureOverview.totalCount > 0
+        ? `${departureOverview.departedCount}/${departureOverview.totalCount}`
+        : departureCompleted
+            ? "완료"
+            : "대기";
+    const routeDurationLabel = routeNumberText(routeOption, item.travelMinutes);
+    const collapsedRouteMeta = [
+        routeDurationLabel,
+        typeof routeOption?.transferCount === "number" ? `환승 ${routeOption.transferCount}회` : undefined,
+    ].filter(Boolean).join(" · ");
+    const departureActionTitle = departureCompleted
+        ? "출발 알림 완료"
+        : departureDisplayState.kind === "countdown"
+            ? `출발까지 ${departureDisplayState.hours > 0 ? `${departureDisplayState.hours}시간 ` : ""}${departureDisplayState.minutes}분 ${pad2(departureDisplayState.seconds)}초`
+            : departureStatusMuted
+                ? "아직 출발 전이에요"
+                : departureDisplayState.text;
+    const departureActionMeta = recommendedDepartureAt
+        ? `권장 출발 ${hhmmText(recommendedDepartureAt)}`
+        : formatDepartureAssistText(item);
+    const renderDepartureParticipantChips = () => {
+        if (departureParticipants.length <= 1) return null;
+        const hasHiddenParticipants = departureParticipants.length > 5;
+        const visibleParticipants = hasHiddenParticipants
+            ? participantPresentations.slice(0, 4)
+            : participantPresentations.slice(0, 5);
+
+        return (
+            <View style={styles.departureParticipants}>
+                {visibleParticipants.map((participant) => {
+                    const departed = participant.departed;
+
+                    return (
+                        <View
+                            key={`${participant.memberId}-${participant.role}`}
+                            style={styles.departureParticipantItem}
+                        >
+                            <View
+                                style={[
+                                    styles.departureParticipantAvatar,
+                                    {
+                                        backgroundColor: departed
+                                            ? (isDark ? "rgba(34,197,94,0.22)" : "rgba(34,197,94,0.14)")
+                                            : (isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.07)"),
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[
+                                        styles.departureParticipantAvatarText,
+                                        { color: departed ? (isDark ? "#BBF7D0" : "#166534") : secondaryText },
+                                    ]}
+                                >
+                                    {participant.avatarLabel}
+                                </Text>
+                                {departed && (
+                                    <View style={styles.departureParticipantCheck}>
+                                        <Ionicons name="checkmark" size={8} color="#FFFFFF" />
+                                    </View>
+                                )}
+                            </View>
+                            <Text
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                                style={[styles.departureParticipantName, { color: primaryText }]}
+                            >
+                                {participant.label}
+                            </Text>
+                        </View>
+                    );
+                })}
+                {hasHiddenParticipants && (
+                    <View style={styles.departureParticipantItem}>
+                        <View
+                            style={[
+                                styles.departureParticipantMore,
+                                { backgroundColor: isDark ? "rgba(255,255,255,0.075)" : "rgba(15,23,42,0.055)" },
+                            ]}
+                        >
+                            <Text style={[styles.departureParticipantMoreText, { color: secondaryText }]}>
+                                +{departureParticipants.length - 4}
+                            </Text>
+                        </View>
+                        <Text style={[styles.departureParticipantName, { color: secondaryText }]}>더보기</Text>
+                    </View>
+                )}
+            </View>
+        );
+    };
+
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar hidden />
@@ -672,13 +687,14 @@ function ScheduleDetail() {
                 camera={camera}
                 markers={markers}
                 pathOverlays={displayPathOverlays}
-                pathCoords={pathCoords}
-                pathColor="#A3AD1D"
-                pathWidth={10}
-                pathOutlineColor={mode === "dark" ? "rgba(15,20,35,0.62)" : "#FFFFFF"}
-                pathOutlineWidth={3}
+                clearRouteOverlays={displayPathOverlays.length === 0}
+                routeOverlayScope={`schedule-detail-${item.id}-${routeOption?.id ?? "route"}`}
+                routeFocusMode
                 nightModeEnabled={mode === "dark"}
                 showLocationButton={false}
+                showZoomControls={false}
+                onMarkerPress={handleMapMarkerPress}
+                onZoomChanged={handleMapZoomChanged}
                 onInitialized={fitMap}
                 fallbackBackgroundColor={colors.surface2}
                 fallbackTextColor={colors.textSecondary}
@@ -686,211 +702,86 @@ function ScheduleDetail() {
             />
 
             <View style={[styles.topOverlay, { paddingTop: insets.top + 2 }]}>
-                <View style={styles.topRow}>
-                    <CalendarGlassSurface
-                        interactive
-                        variant="mapCard"
-                        style={[styles.roundButtonGlass, { borderColor: sheetBorder }]}
-                    >
+                <CalendarGlassSurface
+                    interactive
+                    variant="mapCard"
+                    style={[styles.topHeaderGlass, { borderColor: sheetBorder }]}
+                >
+                    <View style={styles.topHeaderRow}>
                         <Pressable
                             onPress={() => router.replace("/schedule")}
+                            accessibilityLabel="일정 목록으로 돌아가기"
                             style={({ pressed }) => [
-                                styles.roundButton,
-                                { opacity: pressed ? 0.58 : 1 },
+                                styles.topHeaderIconButton,
+                                {
+                                    backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
+                                    borderColor: sheetBorder,
+                                    opacity: pressed ? 0.58 : 1,
+                                },
                             ]}
                         >
-                            <Text style={[styles.backIcon, { color: primaryText }]}>‹</Text>
+                            <Ionicons name="chevron-back" size={21} color={primaryText} />
                         </Pressable>
-                    </CalendarGlassSurface>
 
-                    <CalendarGlassSurface
-                        variant="mapCard"
-                        style={[styles.infoPanel, { borderColor: sheetBorder }]}
-                    >
-                        <View style={styles.infoHeaderRow}>
-                            <View style={styles.infoHeading}>
-                                <View style={[styles.categoryDot, { backgroundColor: item.category.color }]} />
-                                <Text style={[styles.infoTitle, { color: primaryText }]} numberOfLines={1}>{item.title}</Text>
-                            </View>
-                            <Pressable
-                                onPress={() => router.setParams({ mode: "edit" })}
-                                style={[
-                                    styles.editInlineButton,
-                                    {
-                                        backgroundColor: isDark
-                                            ? "rgba(255,255,255,0.10)"
-                                            : "rgba(255,255,255,0.54)",
-                                        borderColor: sheetBorder,
-                                    },
-                                ]}
-                            >
-                                <Text style={[styles.editInlineText, { color: primaryText }]}>수정</Text>
-                            </Pressable>
-                        </View>
-                        <View style={[styles.infoDivider, { backgroundColor: sheetBorder }]} />
-                        {!hasDepartureInfo && (
-                            <>
-                                <Text style={[styles.infoRoute, { color: primaryText }]} numberOfLines={1}>{routeTitle}</Text>
-                                <View style={styles.infoMetaRow}>
-                                    <Text style={[styles.infoTime, { color: secondaryText }]} numberOfLines={1}>
-                                        {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
-                                    </Text>
-                                    <View style={[styles.metaSeparator, { backgroundColor: sheetBorder }]} />
-                                    <Text style={[styles.infoTravel, { color: secondaryText }]} numberOfLines={1}>
-                                        {routeMetricText(routeOption) || travelText}
+                        <View style={styles.topHeaderContent}>
+                            <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
+                                {item.title}
+                            </Text>
+                            <Text style={[styles.topHeaderRoute, { color: primaryText }]} numberOfLines={1}>
+                                {routeTitle}
+                            </Text>
+                            <View style={styles.topHeaderMetaRow}>
+                                <View style={styles.topHeaderScope}>
+                                    <View style={[styles.topHeaderCategoryDot, { backgroundColor: item.category.color }]} />
+                                    <Text style={[styles.topHeaderMetaText, { color: secondaryText }]} numberOfLines={1}>
+                                        {scheduleScopeLabel}
                                     </Text>
                                 </View>
-                            </>
-                        )}
-                        {hasDepartureInfo && (
-                            <View style={styles.topDepartureContainer}>
+                                <Text style={[styles.topHeaderMetaSeparator, { color: secondaryText }]}>·</Text>
+                                <Text style={[styles.topHeaderMetaText, { color: secondaryText }]} numberOfLines={1}>
+                                    {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
+                                </Text>
+                                <Text style={[styles.topHeaderMetaSeparator, { color: secondaryText }]}>·</Text>
+                                <Text style={[styles.topHeaderMetaText, styles.topHeaderTravelMeta, { color: secondaryText }]} numberOfLines={1}>
+                                    {travelText}
+                                </Text>
+                            </View>
+                        </View>
+
+                        {canManageSchedule && (
+                            <View style={styles.topHeaderActions}>
                                 <Pressable
-                                    onPress={() => setDeparturePanelExpanded((expanded) => !expanded)}
+                                    onPress={() => setShareSheetVisible(true)}
+                                    accessibilityLabel="일정 공유"
                                     style={({ pressed }) => [
-                                        styles.topDepartureToggle,
-                                        { opacity: pressed ? 0.72 : 1 },
+                                        styles.topHeaderIconButton,
+                                        {
+                                            backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
+                                            borderColor: sheetBorder,
+                                            opacity: pressed ? 0.58 : 1,
+                                        },
                                     ]}
                                 >
-                                    <View style={styles.topDepartureCountdownRow}>
-                                        {departureDisplayState.kind === "countdown" ? (
-                                            <>
-                                                <Text
-                                                    style={[styles.topDepartureCountdownPrefix, { color: primaryText }]}
-                                                    numberOfLines={1}
-                                                >
-                                                    출발까지
-                                                </Text>
-                                                {departureDisplayState.hours > 0 && (
-                                                    <Animated.Text
-                                                        style={[
-                                                            styles.topDepartureCountdownSegment,
-                                                            { color: primaryText },
-                                                            countdownAnimatedStyle,
-                                                        ]}
-                                                        numberOfLines={1}
-                                                    >
-                                                        {departureDisplayState.hours}시간
-                                                    </Animated.Text>
-                                                )}
-                                                <Animated.Text
-                                                    style={[
-                                                        styles.topDepartureCountdownSegment,
-                                                        { color: primaryText },
-                                                        countdownAnimatedStyle,
-                                                    ]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {departureDisplayState.hours > 0
-                                                        ? pad2(departureDisplayState.minutes)
-                                                        : departureDisplayState.minutes}분
-                                                </Animated.Text>
-                                                <Animated.Text
-                                                    style={[
-                                                        styles.topDepartureCountdownSegment,
-                                                        { color: primaryText },
-                                                        countdownAnimatedStyle,
-                                                    ]}
-                                                    numberOfLines={1}
-                                                >
-                                                    {pad2(departureDisplayState.seconds)}초
-                                                </Animated.Text>
-                                            </>
-                                        ) : (
-                                            <Text
-                                                style={[
-                                                    styles.topDepartureStaticStatus,
-                                                    {
-                                                        color: departureStatusColor,
-                                                        opacity: departureStatusOpacity,
-                                                    },
-                                                ]}
-                                                numberOfLines={1}
-                                                adjustsFontSizeToFit
-                                                minimumFontScale={0.82}
-                                            >
-                                                {departureDisplayState.text}
-                                            </Text>
-                                        )}
-                                    </View>
-                                    <Animated.Text
-                                        style={[
-                                            styles.topDepartureChevron,
-                                            { color: secondaryText },
-                                            departureChevronAnimatedStyle,
-                                        ]}
-                                    >
-                                        ⌄
-                                    </Animated.Text>
+                                    <Ionicons name="share-social-outline" size={17} color={primaryText} />
                                 </Pressable>
-
-                                <Animated.View
-                                    pointerEvents={departurePanelExpanded ? "auto" : "none"}
-                                    style={[
-                                        styles.topDepartureDropdownClip,
-                                        departureDropdownAnimatedStyle,
+                                <Pressable
+                                    onPress={() => router.setParams({ mode: "edit" })}
+                                    accessibilityLabel="일정 수정"
+                                    style={({ pressed }) => [
+                                        styles.topHeaderIconButton,
+                                        {
+                                            backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.52)",
+                                            borderColor: sheetBorder,
+                                            opacity: pressed ? 0.58 : 1,
+                                        },
                                     ]}
                                 >
-                                    <Animated.View
-                                        onLayout={updateDeparturePanelHeight}
-                                        style={[
-                                            styles.topDepartureExpandedPanel,
-                                            departureDropdownContentAnimatedStyle,
-                                        ]}
-                                    >
-                                        <View style={[styles.topDepartureScheduleBlock, { borderTopColor: sheetBorder }]}>
-                                            <Text style={[styles.topDepartureRoute, { color: primaryText }]} numberOfLines={1}>
-                                                {routeTitle}
-                                            </Text>
-                                            <View style={styles.topDepartureMetaRow}>
-                                                <Text style={[styles.topDepartureMeta, { color: secondaryText }]} numberOfLines={1}>
-                                                    {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
-                                                </Text>
-                                                <View style={[styles.metaSeparator, { backgroundColor: sheetBorder }]} />
-                                                <Text style={[styles.topDepartureMeta, { color: secondaryText }]} numberOfLines={1}>
-                                                    {routeMetricText(routeOption) || travelText}
-                                                </Text>
-                                            </View>
-                                        </View>
-
-                                        <View style={styles.topDepartureExpanded}>
-                                            <View style={styles.topDepartureDetailText}>
-                                                <Text style={[styles.topDepartureAssist, { color: secondaryText, marginTop: 0 }]} numberOfLines={2}>
-                                                    {formatDepartureAssistText(item)}
-                                                </Text>
-                                            </View>
-                                            <Pressable
-                                                disabled={departureCompleted || departureActionPending}
-                                                onPress={completeDeparture}
-                                                style={({ pressed }) => [
-                                                    styles.topDepartureDoneButton,
-                                                    {
-                                                        backgroundColor: departureCompleted
-                                                            ? (isDark ? "#2D2D31" : "#E5E7EB")
-                                                            : colors.selectedDayBg,
-                                                        opacity: pressed ? 0.72 : 1,
-                                                    },
-                                                ]}
-                                            >
-                                                <Text
-                                                    style={[
-                                                        styles.topDepartureDoneText,
-                                                        {
-                                                            color: departureCompleted
-                                                                ? secondaryText
-                                                                : colors.selectedDayText,
-                                                        },
-                                                    ]}
-                                                >
-                                                    {departureCompleted ? "완료됨" : departureActionPending ? "처리 중" : "출발 완료"}
-                                                </Text>
-                                            </Pressable>
-                                        </View>
-                                    </Animated.View>
-                                </Animated.View>
+                                    <Ionicons name="create-outline" size={17} color={primaryText} />
+                                </Pressable>
                             </View>
                         )}
-                    </CalendarGlassSurface>
-                </View>
+                    </View>
+                </CalendarGlassSurface>
             </View>
 
             <Animated.View
@@ -912,6 +803,16 @@ function ScheduleDetail() {
                         },
                     ]}
                 >
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            styles.routeSheetOpaqueBackdrop,
+                            isDark
+                                ? styles.routeSheetOpaqueBackdropDark
+                                : styles.routeSheetOpaqueBackdropLight,
+                        ]}
+                    />
                     <View style={styles.sheetHandleHitArea} {...sheetPanResponder.panHandlers}>
                         <View style={[styles.sheetHandle, { backgroundColor: sheetBorder }]} />
                     </View>
@@ -921,169 +822,193 @@ function ScheduleDetail() {
                         showsVerticalScrollIndicator={false}
                         bounces={false}
                     >
-                        <View style={[styles.sheetHeader, { borderBottomColor: sheetBorder }]}>
-                            <View>
-                                <Text style={[styles.sheetEyebrow, { color: colors.selectedDayBg }]}>최적</Text>
-                                <Text style={[styles.sheetTitle, { color: primaryText }]}>
-                                    {routeNumberText(routeOption, item.travelMinutes)}
-                                </Text>
-                            </View>
-                            <Text style={[styles.sheetMeta, { color: secondaryText }]} numberOfLines={2}>
-                                {routeMetricText(routeOption) || travelText}
-                            </Text>
-                        </View>
+                        <Animated.View style={[styles.sheetQuickSummaryClip, sheetQuickSummaryAnimatedStyle]}>
+                            <Pressable
+                                onPress={() => snapSheetToOffset(sheetMiddleOffset)}
+                                accessibilityRole="button"
+                                accessibilityLabel="일정 상세 시트 펼치기"
+                                style={({ pressed }) => [
+                                    styles.sheetQuickSummary,
+                                    { borderBottomColor: sheetBorder, opacity: pressed ? 0.7 : 1 },
+                                ]}
+                            >
+                                <View style={styles.sheetQuickStat}>
+                                    <Text style={[styles.sheetQuickLabel, { color: secondaryText }]}>출발 현황</Text>
+                                    <Text style={[styles.sheetQuickValue, { color: departureStatusAccent }]}>
+                                        {departureCountLabel}
+                                    </Text>
+                                    <Text style={[styles.sheetQuickAssist, { color: secondaryText }]} numberOfLines={1}>
+                                        {departureOverview.movingLabel}
+                                    </Text>
+                                </View>
+                                <View style={styles.sheetQuickStat}>
+                                    <Text style={[styles.sheetQuickLabel, { color: secondaryText }]}>도착 예정</Text>
+                                    <Text style={[styles.sheetQuickValue, { color: primaryText }]}>{arrivalTimeLabel}</Text>
+                                    <Text style={[styles.sheetQuickAssist, { color: secondaryText }]} numberOfLines={1}>
+                                        {collapsedRouteMeta}
+                                    </Text>
+                                </View>
+                                <View
+                                    style={[
+                                        styles.sheetQuickExpand,
+                                        { backgroundColor: isDark ? "rgba(255,255,255,0.09)" : "rgba(15,23,42,0.06)" },
+                                    ]}
+                                >
+                                    <Ionicons name="chevron-up" size={16} color={primaryText} />
+                                </View>
+                            </Pressable>
+                        </Animated.View>
 
-                        {routeLegs.length > 0 && (
-                            <View style={styles.progressTrack}>
-                                {routeLegs.map((leg, index) => (
-                                    <View
-                                        key={`progress-${leg.kind}-${index}`}
+                        {(hasDepartureInfo || departureParticipants.length > 1) && (
+                            <View style={[styles.sheetDepartureSection, { borderBottomColor: sheetBorder }]}>
+                                <View style={styles.sheetSectionHeader}>
+                                    <Text style={[styles.sheetSectionTitle, { color: primaryText }]}>출발 현황</Text>
+                                    <Text
                                         style={[
-                                            styles.progressSegment,
+                                            styles.sheetSectionCount,
+                                            { color: departedParticipantCount > 0 ? departureStatusAccent : secondaryText },
+                                        ]}
+                                    >
+                                        {departureCountLabel} 출발
+                                    </Text>
+                                </View>
+
+                                {hasDepartureInfo && (
+                                    <View
+                                        style={[
+                                            styles.sheetDepartureAction,
                                             {
-                                                flex: Math.max(1, leg.durationMinutes || 1),
-                                                marginLeft: index === 0 ? 0 : 3,
-                                                backgroundColor: legColor(leg),
+                                                backgroundColor: isDark ? "rgba(255,255,255,0.055)" : "rgba(248,250,252,0.78)",
+                                                borderColor: sheetBorder,
                                             },
                                         ]}
                                     >
-                                        <Text style={styles.progressSegmentText} numberOfLines={1}>
-                                            {leg.kind === "WALK" ? `${leg.durationMinutes || ""}분` : legTitle(leg)}
-                                        </Text>
+                                        <View
+                                            style={[
+                                                styles.sheetDepartureStatusIcon,
+                                                { backgroundColor: departureStatusIconBackground },
+                                            ]}
+                                        >
+                                            <Ionicons
+                                                name={departureCompleted ? "checkmark" : "walk-outline"}
+                                                size={16}
+                                                color={departureStatusAccent}
+                                            />
+                                        </View>
+                                        <View style={styles.sheetDepartureActionCopy}>
+                                            <Animated.Text
+                                                style={[
+                                                    styles.sheetDepartureActionTitle,
+                                                    { color: primaryText },
+                                                    countdownAnimatedStyle,
+                                                ]}
+                                                numberOfLines={1}
+                                            >
+                                                {departureActionTitle}
+                                            </Animated.Text>
+                                            <Text
+                                                style={[styles.sheetDepartureActionMeta, { color: secondaryText }]}
+                                                numberOfLines={1}
+                                            >
+                                                {departureActionMeta}
+                                            </Text>
+                                        </View>
+                                        <Pressable
+                                            onPress={completeDeparture}
+                                            disabled={departureCompleted || departureActionPending}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="출발 알리기"
+                                            style={({ pressed }) => [
+                                                styles.sheetDepartureActionButton,
+                                                {
+                                                    backgroundColor: departureCompleted
+                                                        ? (isDark ? "rgba(34,197,94,0.16)" : "rgba(34,197,94,0.10)")
+                                                        : "#22C55E",
+                                                    opacity: pressed || departureActionPending ? 0.64 : 1,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.sheetDepartureActionButtonText,
+                                                    { color: departureCompleted ? departureStatusAccent : "#052E16" },
+                                                ]}
+                                            >
+                                                {departureCompleted ? "알림 완료" : departureActionPending ? "처리 중" : "출발 알리기"}
+                                            </Text>
+                                        </Pressable>
                                     </View>
-                                ))}
+                                )}
+
+                                {renderDepartureParticipantChips()}
                             </View>
                         )}
 
-                        {routeLegs.length > 0 ? (
-                            <View style={styles.timeline}>
-                                {routeLegs.map((leg, index) => (
-                                <Pressable
-                                    key={`${leg.kind}-${index}-${leg.startName ?? ""}`}
-                                    onPress={() => focusRouteLeg(index)}
-                                    style={[
-                                        styles.timelineItem,
-                                        focusedLegIndex === index && {
-                                            backgroundColor: isDark ? "rgba(47,128,255,0.10)" : "#EFF6FF",
-                                            borderColor: isDark ? "rgba(96,165,250,0.28)" : "#BFDBFE",
-                                        },
-                                    ]}
-                                >
-                                    <View style={styles.timelineRail}>
-                                        <View style={[styles.timelineDot, { backgroundColor: legColor(leg) }]}>
-                                            <Text style={styles.timelineDotText}>
-                                                {leg.kind === "WALK" && index === 0 ? "출" : leg.kind === "WALK" ? "도" : leg.kind === "BUS" ? "B" : "S"}
-                                            </Text>
-                                        </View>
-                                        {index < routeLegs.length - 1 && (
-                                            <View style={[styles.timelineLine, { backgroundColor: leg.kind === "WALK" ? sheetBorder : legColor(leg) }]} />
-                                        )}
-                                    </View>
-                                    <View style={styles.timelineContent}>
-                                        <View style={styles.timelineTopRow}>
-                                            <Text style={[styles.timelineTitle, { color: primaryText }]} numberOfLines={2}>
-                                                {legTimelineTitle(leg, index, routeLegs.length)}
-                                            </Text>
-                                            <Text style={[styles.timelineMeta, { color: secondaryText }]}>
-                                                {leg.durationMinutes ? `${leg.durationMinutes}분` : ""}
-                                            </Text>
-                                        </View>
-                                        <Text style={[styles.timelineAssist, { color: secondaryText }]} numberOfLines={2}>
-                                            {legDescription(leg) || leg.label || "구간 정보"}
+                        <View style={styles.sheetRouteSummary}>
+                            <View style={styles.sheetRouteTopRow}>
+                                <View style={styles.sheetRouteCopy}>
+                                    <View style={styles.sheetRouteKickerRow}>
+                                        <View style={[styles.sheetRouteLiveDot, { backgroundColor: "#22C55E" }]} />
+                                        <Text style={[styles.sheetRouteMeta, { color: secondaryText }]}>
+                                            {routeDetailMeta}
                                         </Text>
-                                        {leg.kind !== "WALK" && (
-                                            <View style={[styles.rideCard, { borderColor: sheetBorder }]}>
-                                                <View style={[styles.rideBadge, { backgroundColor: legColor(leg) }]}>
-                                                    <Text style={styles.rideBadgeText} numberOfLines={1}>{legTitle(leg)}</Text>
-                                                </View>
-                                                <Text style={[styles.rideText, { color: secondaryText }]} numberOfLines={1}>
-                                                    {legStopText(leg) || `${leg.distanceMeters || 0}m 이동`}
-                                                </Text>
-                                            </View>
-                                        )}
-                                        {!!legStopText(leg) && (
-                                            <>
-                                                <Pressable
-                                                    onPress={(event) => {
-                                                        event.stopPropagation();
-                                                        toggleLegStops(index);
-                                                    }}
-                                                    style={[styles.stopSummary, { borderTopColor: sheetBorder }]}
-                                                >
-                                                    <Text style={[styles.stopSummaryText, { color: secondaryText }]}>
-                                                        정류장 상세보기
-                                                    </Text>
-                                                    <View style={styles.stopSummaryAction}>
-                                                        <Text style={[styles.stopSummaryCount, { color: secondaryText }]}>
-                                                            {leg.passStops?.length ?? leg.stationCount ?? 0}개
-                                                        </Text>
-                                                        <Text style={[styles.stopSummaryChevron, { color: secondaryText }]}>
-                                                            {expandedStopLegs[index] ? "⌃" : "⌄"}
-                                                        </Text>
-                                                    </View>
-                                                </Pressable>
-
-                                                {expandedStopLegs[index] && Array.isArray(leg.passStops) && (
-                                                    <View
-                                                        style={[
-                                                            styles.stopList,
-                                                            {
-                                                                backgroundColor: isDark ? "#29292C" : "#FFFFFF",
-                                                                borderColor: sheetBorder,
-                                                            },
-                                                        ]}
-                                                    >
-                                                        {leg.passStops.map((stop, stopIndex) => (
-                                                            <Pressable
-                                                                key={`${index}-${stop.sequence ?? stopIndex}-${stop.name}`}
-                                                                onPress={(event) => {
-                                                                    event.stopPropagation();
-                                                                    focusTransitStop(stop);
-                                                                }}
-                                                                style={[
-                                                                    styles.stopListItem,
-                                                                    stopIndex < leg.passStops!.length - 1 && {
-                                                                        borderBottomColor: sheetBorder,
-                                                                        borderBottomWidth: StyleSheet.hairlineWidth,
-                                                                    },
-                                                                ]}
-                                                            >
-                                                                <View style={styles.stopListRail}>
-                                                                    <View style={[styles.stopListDot, { backgroundColor: legColor(leg) }]} />
-                                                                    {stopIndex < leg.passStops!.length - 1 && (
-                                                                        <View style={[styles.stopListLine, { backgroundColor: legColor(leg) }]} />
-                                                                    )}
-                                                                </View>
-                                                                <View style={styles.stopListTextWrap}>
-                                                                    <Text style={[styles.stopListName, { color: primaryText }]} numberOfLines={1}>
-                                                                        {stop.name}
-                                                                    </Text>
-                                                                    {!!stop.code && (
-                                                                        <Text style={[styles.stopListCode, { color: secondaryText }]}>
-                                                                            정류장 {stop.code}
-                                                                        </Text>
-                                                                    )}
-                                                                </View>
-                                                                {!!mapCoordFromUnknown(stop.coord) && (
-                                                                    <View
-                                                                        style={[
-                                                                            styles.stopMapButton,
-                                                                            { backgroundColor: isDark ? "#3A3A3D" : "#F1F5F9" },
-                                                                        ]}
-                                                                    >
-                                                                        <Text style={[styles.stopMapAction, { color: primaryText }]}>지도</Text>
-                                                                    </View>
-                                                                )}
-                                                            </Pressable>
-                                                        ))}
-                                                    </View>
-                                                )}
-                                            </>
-                                        )}
                                     </View>
-                                </Pressable>
-                                ))}
+                                    <Text style={[styles.sheetRouteTitle, { color: primaryText }]}>최적 경로</Text>
+                                </View>
+                                <View style={styles.sheetRouteActions}>
+                                    <Text style={[styles.sheetRouteDuration, { color: primaryText }]}>
+                                        {routeDurationLabel}
+                                    </Text>
+                                    <Pressable
+                                        onPress={openCurrentRoutePlanner}
+                                        disabled={!item.origin || !item.destination}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="현재 길찾기 화면에서 전체 경로 보기"
+                                        style={({ pressed }) => [
+                                            styles.sheetRouteMapButton,
+                                            {
+                                                backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.05)",
+                                                borderColor: sheetBorder,
+                                                opacity: !item.origin || !item.destination ? 0.35 : pressed ? 0.58 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Ionicons name="map-outline" size={21} color={primaryText} />
+                                    </Pressable>
+                                </View>
                             </View>
+                        </View>
+
+                        {routeProgressSegments.length > 0 && (
+                            <View style={styles.routeProgressSection}>
+                                <TransitRouteProgressBar
+                                    segments={routeProgressSegments}
+                                    isDark={isDark}
+                                    compact
+                                />
+                            </View>
+                        )}
+
+                        {!!routeDetailInfo && (
+                            <View style={[styles.routeDetailDivider, { backgroundColor: sheetBorder }]} />
+                        )}
+
+                        {routeDetailInfo ? (
+                            <>
+                                <Text style={[styles.routeDetailBaseTimeText, { color: secondaryText }]}>
+                                    {hhmmText(fromISO(routeDetailInfo.departureTime))} 기준
+                                </Text>
+                                <RouteStepTimeline
+                                    routeInfo={routeDetailInfo}
+                                    selectedStepId={selectedRouteStepId}
+                                    selectedPassStop={selectedRoutePassStop}
+                                    onStepPress={handleRouteStepPress}
+                                    forceDark={isDark}
+                                    primaryTextColor={primaryText}
+                                    secondaryTextColor={secondaryText}
+                                    compact
+                                />
+                            </>
                         ) : (
                             <Text style={[styles.sheetEmptyText, { color: secondaryText }]}>
                                 저장된 상세 경로가 없어요.
@@ -1098,6 +1023,16 @@ function ScheduleDetail() {
                     <Text style={styles.emptyMapText}>경로를 수정하면 지도가 표시돼요.</Text>
                 </View>
             )}
+
+            <ShareInvitationSheet
+                visible={shareSheetVisible}
+                resourceType="schedule"
+                resourceId={item.id}
+                title={item.title}
+                subtitle={formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
+                accentColor={item.category.color}
+                onClose={() => setShareSheetVisible(false)}
+            />
 
         </View>
     );
@@ -1115,158 +1050,146 @@ const styles = StyleSheet.create({
         zIndex: 30,
         elevation: 30,
     },
-    topRow: {
+    topHeaderGlass: {
+        minHeight: 88,
+        borderRadius: 16,
+        borderWidth: 1,
+        paddingHorizontal: 6,
+        paddingVertical: 6,
+        overflow: "hidden",
+    },
+    topHeaderRow: {
         flexDirection: "row",
         alignItems: "flex-start",
-        gap: 8,
-    },
-    roundButtonGlass: {
-        width: 46,
-        height: 46,
-        borderRadius: 23,
-        borderWidth: 1,
-        overflow: "hidden",
-        zIndex: 31,
-        elevation: 31,
-    },
-    roundButton: {
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    backIcon: {
-        fontSize: 40,
-        lineHeight: 44,
-        marginTop: -4,
-        fontWeight: "300",
-    },
-    editInlineButton: {
-        height: 27,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 10,
-        borderWidth: StyleSheet.hairlineWidth,
-    },
-    editInlineText: { fontSize: 12, fontWeight: "900" },
-    infoPanel: {
-        flex: 1,
-        borderRadius: 14,
-        paddingHorizontal: 11,
-        paddingVertical: 10,
-        gap: 5,
-        borderWidth: 1,
-    },
-    infoHeaderRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    infoHeading: { flex: 1, flexDirection: "row", alignItems: "center", gap: 7 },
-    categoryDot: { width: 7, height: 7, borderRadius: 4 },
-    infoTitle: { flex: 1, fontSize: 15, fontWeight: "900" },
-    infoDivider: { height: StyleSheet.hairlineWidth, marginVertical: 1 },
-    infoRoute: { fontSize: 15, fontWeight: "900", lineHeight: 20 },
-    infoMetaRow: { flexDirection: "row", alignItems: "center", gap: 7 },
-    infoTime: { flexShrink: 1, fontSize: 10, fontWeight: "700" },
-    metaSeparator: { width: 1, height: 10 },
-    infoTravel: { flex: 1, fontSize: 10, fontWeight: "800" },
-    topDepartureContainer: {
-        marginTop: 1,
-    },
-    topDepartureToggle: {
-        minHeight: 29,
-        flexDirection: "row",
-        alignItems: "center",
         gap: 7,
     },
-    topDepartureCountdownRow: {
-        flex: 1,
-        minWidth: 0,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 5,
-    },
-    topDepartureCountdownPrefix: {
-        flexShrink: 0,
-        fontSize: 14,
-        lineHeight: 18,
-        fontWeight: "900",
-    },
-    topDepartureCountdownSegment: {
-        flexShrink: 0,
-        fontSize: 14,
-        lineHeight: 18,
-        fontWeight: "900",
-        fontVariant: ["tabular-nums"],
-    },
-    topDepartureStaticStatus: {
-        flex: 1,
-        minWidth: 0,
-        fontSize: 14,
-        lineHeight: 18,
-        fontWeight: "900",
-    },
-    topDepartureChevron: {
-        width: 17,
-        fontSize: 16,
-        lineHeight: 18,
-        fontWeight: "900",
-        textAlign: "center",
-    },
-    topDepartureDropdownClip: {
-        overflow: "hidden",
-    },
-    topDepartureExpandedPanel: {
-        gap: 8,
-    },
-    topDepartureScheduleBlock: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        paddingTop: 7,
-        gap: 4,
-    },
-    topDepartureRoute: {
-        fontSize: 14,
-        lineHeight: 19,
-        fontWeight: "900",
-    },
-    topDepartureMetaRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 7,
-    },
-    topDepartureMeta: {
-        flexShrink: 1,
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "800",
-    },
-    topDepartureExpanded: {
-        minHeight: 46,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 9,
-    },
-    topDepartureDetailText: {
-        flex: 1,
-        minWidth: 0,
-    },
-    topDepartureAssist: {
-        marginTop: 2,
-        fontSize: 11,
-        lineHeight: 15,
-        fontWeight: "800",
-    },
-    topDepartureDoneButton: {
-        width: 78,
+    topHeaderIconButton: {
+        width: 36,
         height: 36,
         borderRadius: 18,
+        borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
     },
-    topDepartureDoneText: {
-        fontSize: 11,
+    topHeaderContent: {
+        flex: 1,
+        minWidth: 0,
+        paddingTop: 1,
+    },
+    topHeaderTitle: {
+        fontSize: 16,
+        lineHeight: 20,
         fontWeight: "900",
+        letterSpacing: 0,
+    },
+    topHeaderRoute: {
+        marginTop: 1,
+        fontSize: 13,
+        lineHeight: 17,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    topHeaderMetaRow: {
+        minWidth: 0,
+        marginTop: 3,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        overflow: "hidden",
+    },
+    topHeaderScope: {
+        maxWidth: 70,
+        flexShrink: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    topHeaderCategoryDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        flexShrink: 0,
+    },
+    topHeaderMetaText: {
+        flexShrink: 1,
+        fontSize: 9,
+        lineHeight: 13,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    topHeaderMetaSeparator: {
+        flexShrink: 0,
+        fontSize: 9,
+        lineHeight: 13,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    topHeaderTravelMeta: {
+        maxWidth: 62,
+    },
+    topHeaderActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    departureParticipants: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 6,
+    },
+    departureParticipantItem: {
+        flex: 1,
+        minWidth: 0,
+        maxWidth: 54,
+        alignItems: "center",
+        gap: 4,
+    },
+    departureParticipantAvatar: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    departureParticipantAvatarText: {
+        maxWidth: 22,
+        fontSize: 10,
+        lineHeight: 13,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    departureParticipantCheck: {
+        position: "absolute",
+        right: -2,
+        bottom: -1,
+        width: 13,
+        height: 13,
+        borderRadius: 7,
+        backgroundColor: "#22C55E",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    departureParticipantName: {
+        width: "100%",
+        textAlign: "center",
+        fontSize: 9,
+        lineHeight: 12,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    departureParticipantMore: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    departureParticipantMoreText: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
     routeSheet: {
         position: "absolute",
@@ -1278,11 +1201,20 @@ const styles = StyleSheet.create({
     },
     routeSheetGlass: {
         flex: 1,
-        borderTopLeftRadius: 28,
-        borderTopRightRadius: 28,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
         paddingHorizontal: 18,
         borderTopWidth: 1,
         overflow: "hidden",
+    },
+    routeSheetOpaqueBackdrop: {
+        opacity: 1,
+    },
+    routeSheetOpaqueBackdropDark: {
+        backgroundColor: "#171A20",
+    },
+    routeSheetOpaqueBackdropLight: {
+        backgroundColor: "#F8FAFC",
     },
     sheetHandleHitArea: {
         height: 32,
@@ -1290,174 +1222,198 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     sheetHandle: {
-        width: 52,
-        height: 5,
+        width: 34,
+        height: 4,
         borderRadius: 999,
     },
     sheetScroll: { flex: 1 },
     sheetScrollContent: { paddingBottom: 24 },
-    sheetHeader: {
-        flexDirection: "row",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-        gap: 12,
-        paddingBottom: 12,
-        borderBottomWidth: 1,
+    sheetQuickSummaryClip: {
+        overflow: "hidden",
     },
-    sheetEyebrow: { fontSize: 13, fontWeight: "900" },
-    sheetTitle: { fontSize: 30, fontWeight: "900", marginTop: 4 },
-    sheetMeta: {
+    sheetQuickSummary: {
+        minHeight: 108,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 14,
+        paddingHorizontal: 2,
+        paddingBottom: 9,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    sheetQuickStat: {
         flex: 1,
-        fontSize: 13,
-        fontWeight: "800",
-        textAlign: "right",
-        paddingBottom: 4,
+        minWidth: 0,
+        gap: 2,
     },
-    progressTrack: {
-        flexDirection: "row",
-        alignItems: "center",
-        height: 22,
-        marginTop: 14,
-        marginBottom: 14,
-    },
-    progressSegment: {
-        minWidth: 24,
-        height: "100%",
-        borderRadius: 999,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    progressSegmentText: {
-        color: "#FFFFFF",
+    sheetQuickLabel: {
         fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    sheetQuickValue: {
+        fontSize: 19,
+        lineHeight: 24,
         fontWeight: "900",
+        letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
     },
-    timeline: { paddingTop: 2 },
-    timelineItem: {
-        flexDirection: "row",
-        minHeight: 74,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: "transparent",
-        paddingHorizontal: 5,
-        paddingTop: 5,
+    sheetQuickAssist: {
+        fontSize: 9,
+        lineHeight: 13,
+        fontWeight: "700",
+        letterSpacing: 0,
     },
-    timelineRail: {
-        width: 30,
-        alignItems: "center",
-    },
-    timelineDot: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
+    sheetQuickExpand: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
         alignItems: "center",
         justifyContent: "center",
-        borderWidth: 2,
-        borderColor: "#FFFFFF",
-        zIndex: 2,
     },
-    timelineDotText: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
-    timelineLine: {
-        flex: 1,
-        width: 3,
-        minHeight: 38,
-    },
-    timelineContent: { flex: 1, paddingLeft: 8, paddingBottom: 18 },
-    timelineTopRow: {
-        flexDirection: "row",
-        alignItems: "flex-start",
+    sheetDepartureSection: {
         gap: 10,
+        paddingTop: 8,
+        paddingBottom: 13,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    timelineTitle: { flex: 1, fontSize: 16, fontWeight: "900", lineHeight: 22 },
-    timelineMeta: { fontSize: 13, fontWeight: "800", lineHeight: 22 },
-    timelineAssist: {
-        fontSize: 13,
-        fontWeight: "700",
-        lineHeight: 18,
-        marginTop: 4,
-    },
-    rideCard: {
-        minHeight: 52,
-        borderWidth: 1,
-        borderRadius: 12,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 9,
-        paddingHorizontal: 10,
-        marginTop: 8,
-    },
-    rideBadge: {
-        maxWidth: 130,
-        borderRadius: 7,
-        paddingHorizontal: 8,
-        paddingVertical: 5,
-    },
-    rideBadgeText: { color: "#FFFFFF", fontSize: 13, fontWeight: "900" },
-    rideText: { flex: 1, fontSize: 13, fontWeight: "800" },
-    stopSummary: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        marginTop: 8,
-        paddingTop: 9,
-        paddingBottom: 6,
+    sheetSectionHeader: {
+        minHeight: 18,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
     },
-    stopSummaryText: { flex: 1, fontSize: 13, fontWeight: "800" },
-    stopSummaryAction: { flexDirection: "row", alignItems: "center", gap: 7 },
-    stopSummaryCount: { fontSize: 11, fontWeight: "800" },
-    stopSummaryChevron: { fontSize: 15, fontWeight: "900" },
-    stopList: {
-        marginTop: 4,
-        borderWidth: 1,
-        borderRadius: 12,
-        overflow: "hidden",
-    },
-    stopListItem: {
-        minHeight: 54,
-        flexDirection: "row",
-        alignItems: "stretch",
-        paddingHorizontal: 8,
-    },
-    stopListRail: {
-        width: 20,
-        alignItems: "center",
-        paddingTop: 22,
-    },
-    stopListDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        zIndex: 2,
-    },
-    stopListLine: {
-        position: "absolute",
-        top: 29,
-        bottom: -26,
-        width: 2,
-        opacity: 0.45,
-    },
-    stopListTextWrap: {
-        flex: 1,
-        justifyContent: "center",
-        paddingHorizontal: 8,
-        paddingVertical: 7,
-    },
-    stopListName: { fontSize: 14, fontWeight: "800" },
-    stopListCode: { fontSize: 10, fontWeight: "700", marginTop: 2 },
-    stopMapButton: {
-        alignSelf: "center",
-        minWidth: 42,
-        height: 28,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 9,
-    },
-    stopMapAction: {
-        fontSize: 11,
+    sheetSectionTitle: {
+        fontSize: 13,
+        lineHeight: 18,
         fontWeight: "900",
+        letterSpacing: 0,
+    },
+    sheetSectionCount: {
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    sheetDepartureAction: {
+        minHeight: 54,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 8,
+        paddingHorizontal: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    sheetDepartureStatusIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    sheetDepartureActionCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    sheetDepartureActionTitle: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    sheetDepartureActionMeta: {
+        marginTop: 2,
+        fontSize: 9,
+        lineHeight: 13,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    sheetDepartureActionButton: {
+        minWidth: 82,
+        height: 34,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    sheetDepartureActionButtonText: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    sheetRouteSummary: {
+        paddingTop: 13,
+    },
+    sheetRouteTopRow: {
+        flexDirection: "row",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    sheetRouteCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    sheetRouteKickerRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    sheetRouteLiveDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+    },
+    sheetRouteMeta: {
+        flexShrink: 1,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    sheetRouteTitle: {
+        marginTop: 2,
+        fontSize: 20,
+        lineHeight: 25,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    sheetRouteDuration: {
+        fontSize: 28,
+        lineHeight: 32,
+        fontWeight: "900",
+        letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
+    },
+    sheetRouteActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+    },
+    sheetRouteMapButton: {
+        width: 38,
+        height: 38,
+        borderRadius: 8,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    routeProgressSection: {
+        marginTop: 10,
+    },
+    routeDetailDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginTop: 6,
+        marginBottom: 8,
+        opacity: 0.72,
+    },
+    routeDetailBaseTimeText: {
+        fontSize: 13,
+        fontWeight: "900",
+        lineHeight: 18,
+        paddingBottom: 5,
     },
     sheetEmptyText: {
         fontSize: 14,

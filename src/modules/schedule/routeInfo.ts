@@ -1,4 +1,11 @@
-import type { RouteAlternativeOption, RoutePathCoord, TransitLegDetail } from "../map/tmapApi";
+import type {
+    RouteAlternativeOption,
+    RouteApiProvider,
+    RouteGuideStep,
+    RoutePathCoord,
+    TransitLegDetail,
+} from "../map/tmapApi";
+import { getTransitBoardingDirectionHint } from "../map/transitStopLabelPresentation";
 import type { Place, TravelMode } from "./types";
 
 export type RouteStepType =
@@ -7,6 +14,8 @@ export type RouteStepType =
     | "WALK"
     | "SUBWAY"
     | "BUS"
+    | "DRIVE"
+    | "BIKE"
     | "TRANSFER";
 
 export type RouteCoordinate = {
@@ -31,21 +40,33 @@ export interface RouteStep {
     lineName?: string;
     lineColor?: string;
     badgeText?: string;
+    directionName?: string;
+    directionCode?: "UP" | "DOWN";
+    boardingPlatform?: string;
+    boardingExit?: string;
+    recommendedBoardingPosition?: string;
+    recommendedTransferPosition?: string;
     passStops?: RoutePassStop[];
     coordinates?: RouteCoordinate[];
 }
 
 export interface RouteInfo {
     id: string;
+    /** 시간표와 경로를 제공한 공급자. 기존 저장 데이터 호환을 위해 선택값으로 유지한다. */
+    provider?: RouteApiProvider;
     originName: string;
     destinationName: string;
     totalDurationMinutes: number;
     departureTime: string;
     arrivalTime: string;
     fare?: number;
+    tollFare?: number;
+    taxiFare?: number;
     transferCount?: number;
     walkingDistanceMeters?: number;
     totalDistanceMeters?: number;
+    /** 공급자 시간표가 아닌 현재 시각 + 경로 소요시간으로 계산한 경우 estimated. */
+    timeBasis: "provider_schedule" | "estimated";
     steps: RouteStep[];
 }
 
@@ -55,6 +76,7 @@ export const ROUTE_POINT_COLORS = {
     walk: "#9CA3AF",
     transfer: "#22C55E",
     activeBlue: "#2979FF",
+    bike: "#00897B",
 } as const;
 
 export const SUBWAY_LINE_COLORS: Array<{ pattern: RegExp; color: string }> = [
@@ -140,6 +162,11 @@ export function compactTransitLineLabel(lineName?: string): string | undefined {
         normalized = next;
     }
     normalized = normalized
+        .replace(/직행좌석\s*[:：]?\s*/g, "")
+        .replace(/일반좌석\s*[:：]?\s*/g, "")
+        .replace(/좌석\s*[:：]?\s*/g, "")
+        .replace(/일반\s*[:：]?\s*/g, "")
+        .replace(/급행\s*[:：]?\s*/g, "")
         .replace(/간선\s*[:：]?\s*/g, "")
         .replace(/지선\s*[:：]?\s*/g, "")
         .replace(/광역\s*[:：]?\s*/g, "")
@@ -154,6 +181,8 @@ export function compactTransitLineLabel(lineName?: string): string | undefined {
     if (!normalized) return undefined;
     const lineMatch = normalized.match(/\d+호선/);
     if (lineMatch?.[0]) return lineMatch[0];
+    const busNumberMatch = normalized.match(/^[A-Z]?\d{1,5}[A-Z]?/i);
+    if (busNumberMatch?.[0]) return busNumberMatch[0];
     const first = normalized.split(",")[0]?.trim() ?? normalized;
     return first.length > 10 ? `${first.slice(0, 10)}...` : first;
 }
@@ -196,6 +225,8 @@ export function getRouteStepColor(step: Pick<RouteStep, "type" | "lineName" | "l
     if (step.type === "DESTINATION") return ROUTE_POINT_COLORS.destination;
     if (step.type === "WALK") return ROUTE_POINT_COLORS.walk;
     if (step.type === "TRANSFER") return ROUTE_POINT_COLORS.transfer;
+    if (step.type === "DRIVE") return ROUTE_POINT_COLORS.activeBlue;
+    if (step.type === "BIKE") return ROUTE_POINT_COLORS.bike;
     if (step.type === "SUBWAY") return normalizeHexColor(step.lineColor) ?? getSubwayLineColor(step.lineName);
     if (step.type === "BUS") return getBusLineColor(step.lineName, step.lineColor);
     return ROUTE_POINT_COLORS.activeBlue;
@@ -239,6 +270,24 @@ function normalizeStopName(name?: string): string | undefined {
 function destinationHint(name?: string): string | undefined {
     const normalized = normalizeStopName(name);
     return normalized ? `${normalized}까지` : undefined;
+}
+
+export function getRouteStepDirectionHint(
+    step: RouteStep,
+    description?: string
+): string | undefined {
+    if (step.type !== "BUS" && step.type !== "SUBWAY") return undefined;
+
+    const directionHint = getTransitBoardingDirectionHint({
+        directionName: step.directionName,
+        startName: step.title,
+        passStops: step.passStops,
+    });
+    if (directionHint) return directionHint;
+
+    // endName is the end of this itinerary leg, not a train headsign. Keep the
+    // provider-safe "까지" wording when pass-stop geometry cannot reveal direction.
+    return description?.split("·")[0]?.trim() || undefined;
 }
 
 function legDuration(leg: TransitLegDetail): number | undefined {
@@ -295,8 +344,50 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
         lineName,
         lineColor,
         badgeText: lineName,
+        directionName: leg.directionName,
+        directionCode: leg.directionCode,
+        boardingPlatform: leg.boardingPlatform,
+        boardingExit: leg.boardingExit,
+        recommendedBoardingPosition: leg.recommendedBoardingPosition,
+        recommendedTransferPosition: leg.recommendedTransferPosition,
         passStops,
         coordinates: pathToRouteCoordinates(leg.pathCoords),
+    };
+}
+
+function routeStepTypeForMode(mode: TravelMode): RouteStepType {
+    if (mode === "WALK") return "WALK";
+    if (mode === "BIKE") return "BIKE";
+    if (mode === "CAR" || mode === "ETC") return "DRIVE";
+    return "TRANSFER";
+}
+
+function buildGuideRouteStep(
+    guide: RouteGuideStep,
+    mode: TravelMode,
+    index: number
+): RouteStep {
+    const type = routeStepTypeForMode(mode);
+    const roadName = guide.roadName && !guide.instruction.includes(guide.roadName)
+        ? guide.roadName
+        : undefined;
+    const durationText = isFiniteNumber(guide.durationMinutes) && guide.durationMinutes >= 0.5
+        ? formatRouteDuration(guide.durationMinutes)
+        : undefined;
+    const description = [
+        roadName,
+        formatRouteDistance(guide.distanceMeters),
+        durationText,
+    ].filter(Boolean).join(" · ") || undefined;
+    const pointCoordinate = pointToRouteCoordinate(guide.coordinate);
+    return {
+        id: `guide-${index}`,
+        type,
+        title: guide.instruction,
+        description,
+        durationMinutes: guide.durationMinutes,
+        distanceMeters: guide.distanceMeters,
+        coordinates: pathToRouteCoordinates(guide.pathCoords) ?? (pointCoordinate ? [pointCoordinate] : undefined),
     };
 }
 
@@ -329,11 +420,23 @@ function buildRouteSteps(option: RouteAlternativeOption, origin?: Place, destina
                 });
             }
         });
+    } else if (Array.isArray(option.guideSteps) && option.guideSteps.length > 0) {
+        option.guideSteps.forEach((guide, index) => {
+            steps.push(buildGuideRouteStep(guide, option.mode, index));
+        });
     } else if (Array.isArray(option.pathCoords) && option.pathCoords.length >= 2) {
+        const stepType = routeStepTypeForMode(option.mode);
+        const title = option.mode === "WALK"
+            ? "도보"
+            : option.mode === "BIKE"
+                ? "자전거 이동"
+                : option.mode === "CAR" || option.mode === "ETC"
+                    ? "차량 이동"
+                    : "이동";
         steps.push({
             id: "leg-0",
-            type: option.mode === "WALK" ? "WALK" : "TRANSFER",
-            title: option.mode === "WALK" ? "도보" : "이동",
+            type: stepType,
+            title,
             description: [formatRouteDistance(option.distanceMeters), formatRouteDuration(option.minutes)].filter(Boolean).join(" · "),
             durationMinutes: option.minutes,
             distanceMeters: option.distanceMeters,
@@ -359,18 +462,32 @@ export function buildRouteInfoFromAlternative(
     routeIndex = 0
 ): RouteInfo {
     const totalDurationMinutes = Math.max(0, Math.round(option.minutes ?? 0));
-    const arrivalAt = new Date(departureAt.getTime() + totalDurationMinutes * 60 * 1000);
+    const providerDepartureAt = option.providerDepartureAt ? new Date(option.providerDepartureAt) : undefined;
+    const providerArrivalAt = option.providerArrivalAt ? new Date(option.providerArrivalAt) : undefined;
+    const hasProviderSchedule = !!providerDepartureAt &&
+        !!providerArrivalAt &&
+        Number.isFinite(providerDepartureAt.getTime()) &&
+        Number.isFinite(providerArrivalAt.getTime()) &&
+        providerArrivalAt.getTime() >= providerDepartureAt.getTime();
+    const effectiveDepartureAt = hasProviderSchedule ? providerDepartureAt : departureAt;
+    const arrivalAt = hasProviderSchedule
+        ? providerArrivalAt
+        : new Date(effectiveDepartureAt.getTime() + totalDurationMinutes * 60 * 1000);
     return {
         id: option.id || `route-${routeIndex}`,
+        provider: option.provider,
         originName: placeName(origin, "출발지"),
         destinationName: placeName(destination, "도착지"),
         totalDurationMinutes,
-        departureTime: departureAt.toISOString(),
+        departureTime: effectiveDepartureAt.toISOString(),
         arrivalTime: arrivalAt.toISOString(),
         fare: option.fareWon,
+        tollFare: option.tollFareWon,
+        taxiFare: option.taxiFareWon,
         transferCount: option.transferCount,
         walkingDistanceMeters: option.walkMeters,
         totalDistanceMeters: option.distanceMeters,
+        timeBasis: hasProviderSchedule ? "provider_schedule" : "estimated",
         steps: buildRouteSteps(option, origin, destination),
     };
 }
@@ -389,6 +506,8 @@ export function isRouteInfo(value: unknown): value is RouteInfo {
         isFiniteNumber(route.totalDurationMinutes) &&
         typeof route.departureTime === "string" &&
         typeof route.arrivalTime === "string" &&
+        (route.provider === undefined || ["tmap", "odsay", "kakao", "naver", "openstreetmap"].includes(route.provider)) &&
+        (route.timeBasis === undefined || route.timeBasis === "provider_schedule" || route.timeBasis === "estimated") &&
         Array.isArray(route.steps) &&
         route.steps.every(isRouteStep);
 }
@@ -428,6 +547,7 @@ export function getRouteInfoFromRoute(
             totalDurationMinutes: fallback.travelMinutes,
             departureTime: departureAt.toISOString(),
             arrivalTime: arrivalAt.toISOString(),
+            timeBasis: "estimated",
             steps: buildRouteSteps(
                 {
                     id: "manual-route",
@@ -447,6 +567,12 @@ export function getRouteInfoFromRoute(
 export function buildRouteSummaryMetrics(routeInfo: RouteInfo): Array<{ key: string; label: string }> {
     const metrics: Array<{ key: string; label: string }> = [];
     if (isFiniteNumber(routeInfo.fare)) metrics.push({ key: "fare", label: `${routeInfo.fare.toLocaleString()}원` });
+    if (isFiniteNumber(routeInfo.tollFare) && routeInfo.tollFare > 0) {
+        metrics.push({ key: "toll", label: `통행료 ${routeInfo.tollFare.toLocaleString()}원` });
+    }
+    if (isFiniteNumber(routeInfo.taxiFare) && routeInfo.taxiFare > 0) {
+        metrics.push({ key: "taxi", label: `택시 예상 ${routeInfo.taxiFare.toLocaleString()}원` });
+    }
     if (isFiniteNumber(routeInfo.transferCount)) metrics.push({ key: "transfer", label: `환승 ${routeInfo.transferCount}회` });
     const walkText = formatRouteDistance(routeInfo.walkingDistanceMeters);
     if (walkText) metrics.push({ key: "walk", label: `도보 ${walkText}` });

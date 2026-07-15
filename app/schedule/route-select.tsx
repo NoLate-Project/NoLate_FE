@@ -6,6 +6,7 @@ import {
     Easing,
     Keyboard,
     LayoutAnimation,
+    Linking,
     Modal,
     Platform,
     Pressable,
@@ -14,10 +15,12 @@ import {
     StatusBar,
     Text,
     TextInput,
+    TouchableOpacity,
     UIManager,
     View,
 } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
+import type { GestureResponderEvent } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,13 +32,16 @@ import {
     type FavoritePlaceCategory,
 } from "../../src/api/favoritePlaces";
 import { getCurrentLocation } from "../../src/modules/map/currentLocation";
+import TmapMapView, { type TmapMarker } from "../../src/modules/map/TmapMapView";
 import {
     getRouteAlternativeOptions,
+    getRouteQualityLabel,
+    invalidateRouteSearch,
     reverseGeocodeToAddress,
     searchAddressByKeyword,
     type PlaceSearchItem,
     type RouteAlternativeOption,
-} from "../../src/modules/map/tmapApi";
+} from "../../src/modules/map/routingService";
 import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
 import {
     getRecentRoutePlaces,
@@ -52,9 +58,20 @@ import {
     getBusLineColor as getSharedBusLineColor,
     getSubwayLineColor as getSharedSubwayLineColor,
 } from "../../src/modules/schedule/routeInfo";
+import {
+    getNaverLikeRouteRecommendationLabel,
+    getNaverLikeRoutePriority,
+    getNaverLikeRouteTransferCount,
+    getNaverLikeRouteWalkMinutes,
+    selectNaverLikeRouteAlternatives,
+} from "../../src/modules/schedule/routeAlternativeRanking";
+import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 
 const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"];
+const MAP_PICKER_FALLBACK_LAT = 37.5665;
+const MAP_PICKER_FALLBACK_LNG = 126.978;
+const MAP_PICKER_DEFAULT_ZOOM = 14;
 
 type RoutePointTarget = "origin" | "destination";
 type TransitRouteFilter = "ALL" | "SUBWAY" | "BUS" | "MIXED";
@@ -69,6 +86,8 @@ type RouteProgressSegment = {
     color: string;
     kind: RouteSelectTransitLeg["kind"] | "TRANSFER";
     iconName: React.ComponentProps<typeof Ionicons>["name"];
+    flex: number;
+    isRide: boolean;
 };
 type RouteMetricChip = {
     key: string;
@@ -336,22 +355,16 @@ function configureRouteExpansionAnimation() {
     });
 }
 
-// 분 단위 소요 시간을 화면용 한국어 문자열로 바꾼다.
-function formatDuration(minutes?: number): string {
-    if (typeof minutes !== "number" || !Number.isFinite(minutes)) return "-";
-    const totalMinutes = Math.max(0, Math.round(minutes));
-    const hours = Math.floor(totalMinutes / 60);
-    const remainMinutes = totalMinutes % 60;
-    if (hours === 0) return `${remainMinutes}분`;
-    if (remainMinutes === 0) return `${hours}시간`;
-    return `${hours}시간 ${remainMinutes}분`;
-}
-
 // 미터 단위 거리를 m/km 화면 문자열로 바꾼다.
 function formatDistance(distanceMeters?: number): string | undefined {
     if (typeof distanceMeters !== "number") return undefined;
     if (distanceMeters >= 1000) return `${(distanceMeters / 1000).toFixed(1)}km`;
     return `${Math.round(distanceMeters)}m`;
+}
+
+function formatSearchResultDistance(distanceMeters?: number): string | undefined {
+    const formatted = formatDistance(distanceMeters);
+    return formatted ? `기준점에서 ${formatted}` : undefined;
 }
 
 // 카드에서 쓰는 오전/오후 시간 문자열을 만든다.
@@ -363,10 +376,10 @@ function formatRouteClock(date: Date): string {
     return `${period} ${displayHour}:${minutes}`;
 }
 
-function formatCurrentRouteNotice(date: Date): string {
+function formatCurrentRouteNoticeTime(date: Date): string {
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
-    return `추천 경로 · 현재 시간 ${hours}:${minutes} 기준`;
+    return `${hours}:${minutes}`;
 }
 
 // 경로 카드의 출발-도착 시간과 요금을 한 줄로 만든다.
@@ -374,49 +387,19 @@ function formatRouteTimeFare(option: RouteAlternativeOption, departureAt: Date):
     const chunks: string[] = [];
     if (typeof option.minutes === "number") {
         const arrivalAt = new Date(departureAt.getTime() + Math.max(0, option.minutes) * 60 * 1000);
-        chunks.push(`${formatRouteClock(departureAt)} - ${formatRouteClock(arrivalAt)}`);
+        chunks.push(`${formatRouteClock(arrivalAt)} 예상 도착`);
     }
     if (typeof option.fareWon === "number") chunks.push(`${option.fareWon.toLocaleString()}원`);
     return chunks.length ? chunks.join(" · ") : undefined;
 }
 
-// 긴 경로명을 배지 안에 들어가도록 줄인다.
-function compactCardBadgeLabel(label: string): string {
-    return label.length > 6 ? `${label.slice(0, 6)}…` : label;
-}
-
-// 대중교통 경로 후보를 지하철/버스/복합 경로로 분류한다.
-function getTransitRouteCategory(option: RouteAlternativeOption): TransitRouteFilter {
-    const legs = option.transitLegs ?? [];
-    const hasSubway = legs.some((leg) => leg.kind === "SUBWAY");
-    const hasBus = legs.some((leg) => leg.kind === "BUS");
-    if (hasSubway && hasBus) return "MIXED";
-    if (hasSubway) return "SUBWAY";
-    if (hasBus) return "BUS";
-    return "ALL";
-}
-
 // 대중교통 필터 탭에 표시할 경로 개수를 계산한다.
 function getTransitFilterCount(options: RouteAlternativeOption[], filter: TransitRouteFilter): number {
-    if (filter === "ALL") return options.length;
-    return options.filter((option) => getTransitRouteCategory(option) === filter).length;
+    return selectNaverLikeRouteAlternatives(options, "TRANSIT", filter).length;
 }
 
 function getRouteDisplayPriority(option: RouteAlternativeOption, mode: TravelMode): number {
-    if (mode !== "TRANSIT") return option.minutes ?? 9999;
-    const category = getTransitRouteCategory(option);
-    const legs = option.transitLegs ?? [];
-    const hasTransfer = getRouteTransferCount(option) > 0;
-    const legCountPenalty = Math.abs(legs.length - 5) * 60;
-    const categoryPriority = category === "SUBWAY"
-        ? 0
-        : category === "MIXED"
-            ? 160
-            : category === "BUS"
-                ? 320
-                : 480;
-    const transferBonus = hasTransfer ? 0 : 30;
-    return categoryPriority + legCountPenalty + transferBonus + (option.minutes ?? 999);
+    return getNaverLikeRoutePriority(option, mode);
 }
 
 function sortRouteAlternativesForDisplay(
@@ -424,16 +407,12 @@ function sortRouteAlternativesForDisplay(
     mode: TravelMode,
     filter: TransitRouteFilter = "ALL"
 ): RouteAlternativeOption[] {
-    const filtered = mode === "TRANSIT" && filter !== "ALL"
-        ? options.filter((option) => getTransitRouteCategory(option) === filter)
-        : options;
-
-    if (mode !== "TRANSIT") return filtered;
-    return [...filtered].sort((a, b) => {
+    if (mode === "TRANSIT") return selectNaverLikeRouteAlternatives(options, mode, filter);
+    return [...options].sort((a, b) => {
         const scoreDiff = getRouteDisplayPriority(a, mode) - getRouteDisplayPriority(b, mode);
         if (scoreDiff !== 0) return scoreDiff;
         return (a.minutes ?? 9999) - (b.minutes ?? 9999);
-    });
+    }).slice(0, 4);
 }
 
 // 노선명을 카드 막대 아래에 들어갈 짧은 라벨로 정리한다.
@@ -518,11 +497,11 @@ function buildRouteProgressSegments(option: RouteAlternativeOption, destinationN
             const prevEndName = formatRouteFlowStopDisplayName(prevLeg?.endName, prevLeg?.kind);
             const color = isTransferWalk ? ROUTE_SEGMENT_FALLBACK_COLORS.etc : getTransitLegColor(leg);
             const iconName: RouteProgressSegment["iconName"] = segmentKind === "SUBWAY"
-                ? "train-outline"
+                ? "train"
                 : segmentKind === "BUS"
-                    ? "bus-outline"
+                    ? "bus"
                     : segmentKind === "TRANSFER"
-                        ? "git-compare-outline"
+                        ? "swap-horizontal"
                         : segmentKind === "WALK"
                             ? "walk"
                             : "navigate-outline";
@@ -550,6 +529,8 @@ function buildRouteProgressSegments(option: RouteAlternativeOption, destinationN
                 color,
                 kind: segmentKind,
                 iconName,
+                flex: Math.max(0.8, minutes),
+                isRide: isRideLegKind(segmentKind),
             };
         })
         .filter((segment) => segment.minutes > 0);
@@ -563,40 +544,37 @@ function getTransitKindLabel(kind: RouteSelectTransitLeg["kind"]): string {
     return "이동";
 }
 
-function isRideLegKind(kind?: RouteSelectTransitLeg["kind"]): boolean {
+function isRideLegKind(kind?: RouteSelectTransitLeg["kind"] | "TRANSFER"): boolean {
     return kind === "SUBWAY" || kind === "BUS";
 }
 
 function getRouteTransferCount(option: RouteAlternativeOption): number {
-    if (typeof option.transferCount === "number" && Number.isFinite(option.transferCount)) {
-        return Math.max(0, Math.round(option.transferCount));
-    }
-
-    const rideLegs = (option.transitLegs ?? []).filter((leg) => isRideLegKind(leg.kind));
-    return Math.max(0, rideLegs.length - 1);
+    return getNaverLikeRouteTransferCount(option);
 }
 
 function getRouteWalkMinutes(option: RouteAlternativeOption): number {
-    const walkMinutes = (option.transitLegs ?? [])
-        .filter((leg) => leg.kind === "WALK")
-        .reduce((total, leg) => total + getLegDurationMinutes(leg), 0);
-    return Math.max(0, Math.round(walkMinutes));
+    return getNaverLikeRouteWalkMinutes(option);
 }
 
-function getRouteSlackMinutes(index: number): number {
-    return Math.max(1, 5 - (Math.max(0, index) * 2));
-}
+function buildRouteMetricChips(option: RouteAlternativeOption): RouteMetricChip[] {
+    const chips: RouteMetricChip[] = [];
 
-function buildRouteMetricChips(option: RouteAlternativeOption, absoluteIndex: number): RouteMetricChip[] {
-    const transferCount = getRouteTransferCount(option);
-    const walkMinutes = getRouteWalkMinutes(option);
-    const slackMinutes = getRouteSlackMinutes(absoluteIndex);
+    if (option.mode === "TRANSIT") {
+        chips.push({ key: "transfer", label: `환승 ${getRouteTransferCount(option)}회` });
+        chips.push({ key: "walk", label: `도보 ${getRouteWalkMinutes(option)}분` });
+    } else {
+        const distance = formatDistance(option.distanceMeters);
+        if (distance) chips.push({ key: "distance", label: distance });
+        if (typeof option.tollFareWon === "number" && option.tollFareWon > 0) {
+            chips.push({ key: "toll", label: `통행료 ${option.tollFareWon.toLocaleString()}원` });
+        }
+        if (typeof option.taxiFareWon === "number" && option.taxiFareWon > 0) {
+            chips.push({ key: "taxi", label: `택시 예상 ${option.taxiFareWon.toLocaleString()}원` });
+        }
+    }
 
-    return [
-        { key: "transfer", label: `환승 ${transferCount}회` },
-        { key: "walk", label: `도보 ${walkMinutes}분` },
-        { key: "slack", label: `여유 ${slackMinutes}분`, tone: "success" },
-    ];
+    chips.push({ key: "provider", label: getRouteQualityLabel(option), tone: "success" });
+    return chips;
 }
 
 function formatRouteStopName(name?: string): string | undefined {
@@ -637,65 +615,22 @@ function formatRouteFlowStopDisplayName(
     return normalized;
 }
 
-function getRouteFlowStopKey(name: string): string {
-    return name.replace(/\s+/g, "").replace(/역$/u, "").toLowerCase();
-}
-
-function buildRouteFlowPathSummary(
+function buildRouteBoardingSummary(
     option: RouteAlternativeOption,
-    originName?: string,
-    destinationName?: string
+    originName?: string
 ): string | undefined {
-    const legs = option.transitLegs ?? [];
-    if (!legs.length) return undefined;
+    const rideLegs = (option.transitLegs ?? []).filter((leg) => isRideLegKind(leg.kind));
+    if (!rideLegs.length) return undefined;
 
-    const stops: string[] = [];
-    const originFlowName = formatRouteFlowPointName(originName);
-    const destinationFlowName = formatRouteFlowPointName(destinationName);
-    const addStop = (name?: string, kind?: RouteSelectTransitLeg["kind"] | "TRANSFER") => {
-        let stop = formatRouteFlowStopDisplayName(name, kind);
-        if (!stop || stop === "도착지" || stop === "출발지") return;
-        const stopKey = getRouteFlowStopKey(stop);
-        if (originFlowName) {
-            const originKey = getRouteFlowStopKey(originFlowName);
-            if (stopKey.includes(originKey) || originKey.includes(stopKey)) {
-                stop = originFlowName;
-            }
-        }
-        if (destinationFlowName) {
-            const destinationKey = getRouteFlowStopKey(destinationFlowName);
-            if (stopKey.includes(destinationKey) || destinationKey.includes(stopKey)) {
-                stop = destinationFlowName;
-            }
-        }
-        const previous = stops[stops.length - 1];
-        if (previous && getRouteFlowStopKey(previous) === getRouteFlowStopKey(stop)) {
-            if (stop.endsWith("역") && !previous.endsWith("역")) {
-                stops[stops.length - 1] = stop;
-            }
-            return;
-        }
-        stops.push(stop);
-    };
-
-    addStop(originName);
-    legs.forEach((leg) => {
-        if (isRideLegKind(leg.kind)) {
-            addStop(leg.startName, leg.kind);
-            addStop(leg.endName, leg.kind);
-        }
-    });
-
-    if (stops.length < 2) {
-        legs.forEach((leg) => {
-            addStop(leg.startName, leg.kind);
-            addStop(leg.endName, leg.kind);
-        });
-    }
-    addStop(destinationName);
-
-    if (stops.length < 2) return undefined;
-    return stops.slice(0, 5).map(formatRouteFlowPointLabel).join(" → ");
+    return rideLegs.map((leg, index) => {
+        const lineLabel = compactLineLabel(leg) ?? getTransitKindLabel(leg.kind);
+        const startName = formatRouteFlowStopDisplayName(leg.startName, leg.kind) ??
+            formatRouteFlowPointName(originName);
+        const action = index === 0 ? "승차" : "환승";
+        return [lineLabel, startName ? `${startName} ${action}` : action]
+            .filter(Boolean)
+            .join(" ");
+    }).join("  →  ");
 }
 
 function formatDropdownPlaceName(
@@ -739,6 +674,7 @@ function formatRideLegStopCount(leg: RouteSelectTransitLeg): string | undefined 
     return leg.kind === "BUS" ? `${count}개 정류장` : `${count}정거장`;
 }
 
+// 선택된 경로는 구간 순서를 유지한 채 도보·승차·환승 정보를 세로로 펼친다.
 function buildRouteDropdownSummaryItems(
     option: RouteAlternativeOption,
     originName?: string,
@@ -747,11 +683,19 @@ function buildRouteDropdownSummaryItems(
     const legs = option.transitLegs ?? [];
     if (!legs.length) {
         const summary = option.stepSummary ? sanitizeRouteFlowText(option.stepSummary) : "";
-        return summary ? [{ key: `${option.id}:summary`, kind: "ETC", title: "경로 요약", subtitle: summary.replace(/→/g, " ") }] : [];
+        return summary
+            ? [{
+                key: `${option.id}:summary`,
+                kind: "ETC",
+                title: "경로 요약",
+                subtitle: summary.replace(/→/g, " "),
+            }]
+            : [];
     }
 
     const originFallback = formatDropdownPlaceName(originName) ?? "출발지";
     const destinationFallback = formatDropdownPlaceName(destinationName) ?? "도착지";
+
     return legs.map((leg, index) => {
         const minutes = getLegDurationMinutes(leg);
         const prevLeg = legs[index - 1];
@@ -782,22 +726,19 @@ function buildRouteDropdownSummaryItems(
             const nextStopName = endName ??
                 formatDropdownPlaceName(nextLeg?.startName, nextLeg?.kind) ??
                 (index === legs.length - 1 ? destinationFallback : undefined);
-            const subtitle = index === legs.length - 1
-                ? "도착지까지"
-                : `${nextStopName ?? "다음 지점"}까지`;
             return {
                 key,
                 kind: "WALK" as const,
                 title: `도보 ${minutes}분`,
-                subtitle,
+                subtitle: index === legs.length - 1
+                    ? "도착지까지"
+                    : `${nextStopName ?? "다음 지점"}까지`,
             };
         }
 
         if (isRideLegKind(leg.kind)) {
             const lineLabel = compactLineLabel(leg) ?? getTransitKindLabel(leg.kind);
-            const placeName = startName ??
-                formatDropdownPlaceName(leg.startName, leg.kind) ??
-                (index === 0 ? originFallback : undefined);
+            const placeName = startName ?? (index === 0 ? originFallback : undefined);
             const stopCountText = formatRideLegStopCount(leg);
             return {
                 key,
@@ -854,6 +795,8 @@ function buildPlaceFromSearchItem(item: PlaceSearchItem): Place {
         address: item.address,
         lat: item.lat,
         lng: item.lng,
+        provider: item.provider,
+        providerPlaceId: item.providerPlaceId,
     };
 }
 
@@ -934,6 +877,8 @@ function readTravelModeParam(value: string | string[] | undefined): TravelMode |
 export default function RouteSelectScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
+    const { mode, colors } = useTheme();
+    const isDark = mode === "dark";
     const params = useLocalSearchParams<{
         sessionId?: string;
         originName?: string;
@@ -945,10 +890,15 @@ export default function RouteSelectScreen() {
         destinationLat?: string;
         destinationLng?: string;
         travelMode?: string;
+        editTarget?: string;
         qaSearchQuery?: string;
         qaSearchTarget?: string;
     }>();
     const sessionId = readParam(params.sessionId) ?? "";
+    const editTargetParam = readParam(params.editTarget);
+    const forcedEditTarget: RoutePointTarget | undefined = editTargetParam === "origin" || editTargetParam === "destination"
+        ? editTargetParam
+        : undefined;
     const qaSearchQuery = readParam(params.qaSearchQuery);
     const qaSearchTarget: RoutePointTarget = readParam(params.qaSearchTarget) === "destination" ? "destination" : "origin";
     const sessionInitial = sessionId ? getRoutePlannerInitial(sessionId) : undefined;
@@ -988,10 +938,9 @@ export default function RouteSelectScreen() {
         params.travelMode,
     ]);
     const initial = sessionInitial ?? paramInitial;
-    const initialHasPersistedRoute = Boolean(initial && "route" in initial && initial.route);
-    const initialTravelMode = initial?.travelMode === "CAR" && !initialHasPersistedRoute
-        ? "TRANSIT"
-        : initial?.travelMode ?? "TRANSIT";
+    const initialTravelMode = SELECTABLE_TRAVEL_MODES.includes(initial?.travelMode as TravelMode)
+        ? initial?.travelMode as TravelMode
+        : "TRANSIT";
     const initialHasRouteCoords =
         typeof initial?.origin?.lat === "number" &&
         typeof initial.origin.lng === "number" &&
@@ -1007,8 +956,8 @@ export default function RouteSelectScreen() {
     const [destinationLat, setDestinationLat] = useState<number | undefined>(initial?.destination?.lat);
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
     const [travelMode, setTravelMode] = useState<TravelMode>(initialTravelMode);
-    const [activeTarget, setActiveTarget] = useState<RoutePointTarget>("origin");
-    const [isEditingRoutePoint, setIsEditingRoutePoint] = useState(!initialHasRouteCoords);
+    const [activeTarget, setActiveTarget] = useState<RoutePointTarget>(forcedEditTarget ?? "origin");
+    const [isEditingRoutePoint, setIsEditingRoutePoint] = useState(Boolean(forcedEditTarget) || !initialHasRouteCoords);
     const [recentPlaces, setRecentPlaces] = useState<Place[]>([]);
     const [favoriteSavingKey, setFavoriteSavingKey] = useState<string>();
     const [favoriteSheetPlace, setFavoriteSheetPlace] = useState<Place>();
@@ -1020,19 +969,26 @@ export default function RouteSelectScreen() {
     const [newCategoryName, setNewCategoryName] = useState("");
     const [newCategoryColor, setNewCategoryColor] = useState(FAVORITE_CATEGORY_COLORS[0]);
     const [creatingFavoriteCategory, setCreatingFavoriteCategory] = useState(false);
+    const [mapPickerVisible, setMapPickerVisible] = useState(false);
+    const [mapPickerTarget, setMapPickerTarget] = useState<RoutePointTarget>("origin");
+    const [mapPickerCoord, setMapPickerCoord] = useState<{ latitude: number; longitude: number }>();
+    const [mapPickerAddress, setMapPickerAddress] = useState<string>();
+    const [mapPickerResolving, setMapPickerResolving] = useState(false);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
     const [hasTypedSearchQuery, setHasTypedSearchQuery] = useState(false);
     const [searching, setSearching] = useState(false);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>([]);
     const [selectedRouteId, setSelectedRouteId] = useState<string | undefined>();
-    const [expandedRouteId, setExpandedRouteId] = useState<string | undefined>();
     const [transitRouteFilter, setTransitRouteFilter] = useState<TransitRouteFilter>("ALL");
     const [routeLoading, setRouteLoading] = useState(false);
     const [routeError, setRouteError] = useState<string | undefined>();
+    const [routeRequestVersion, setRouteRequestVersion] = useState(0);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const searchRequestIdRef = useRef(0);
+    const mapPickerRequestIdRef = useRef(0);
     const recentPlacesLoadedRef = useRef(false);
     const originTouchedRef = useRef(Boolean(initial?.origin));
-    const routeDepartureAt = useMemo(() => new Date(), []);
+    const [routeDepartureAt, setRouteDepartureAt] = useState(() => new Date());
     const routeContentAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
@@ -1114,11 +1070,15 @@ export default function RouteSelectScreen() {
     const hasTransitFilters = travelMode === "TRANSIT" && hasRouteCoords && routeAlternatives.length > 0;
     const routeListBottomPadding = Math.max(insets.bottom + 24, 36);
 
-    const persistInitial = useCallback((travelMinutes?: number) => {
-        if (!sessionId) return;
+    const persistInitial = useCallback((
+        travelMinutes?: number,
+        targetSessionId = sessionId,
+        routeToStore?: RouteAlternativeOption
+    ) => {
+        if (!targetSessionId) return;
         const nextOrigin = buildPlace(originText, originAddress, originLat, originLng);
         const nextDestination = buildPlace(destinationText, destinationAddress, destinationLat, destinationLng);
-        setRoutePlannerInitial(sessionId, {
+        setRoutePlannerInitial(targetSessionId, {
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
@@ -1126,6 +1086,7 @@ export default function RouteSelectScreen() {
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name || nextOrigin?.name,
+            route: routeToStore,
         });
     }, [
         destinationAddress,
@@ -1148,12 +1109,25 @@ export default function RouteSelectScreen() {
         router.replace("/schedule");
     }, [router]);
 
+    const goToScheduleList = useCallback(() => {
+        Keyboard.dismiss();
+        router.replace("/schedule");
+    }, [router]);
+
     const clearSearch = useCallback(() => {
+        searchRequestIdRef.current += 1;
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         setSearchResults([]);
         setHasTypedSearchQuery(false);
         setSearching(false);
     }, []);
+
+    const openRoutePointEditor = useCallback((target: RoutePointTarget = "origin") => {
+        Keyboard.dismiss();
+        setActiveTarget(target);
+        clearSearch();
+        setIsEditingRoutePoint(true);
+    }, [clearSearch]);
 
     useEffect(() => {
         setOriginText(initial?.origin?.name ?? "");
@@ -1165,9 +1139,14 @@ export default function RouteSelectScreen() {
         setDestinationLat(initial?.destination?.lat);
         setDestinationLng(initial?.destination?.lng);
         setTravelMode(initialTravelMode);
-        setActiveTarget("origin");
-        setIsEditingRoutePoint(!initialHasRouteCoords);
-        originTouchedRef.current = Boolean(initial?.origin);
+        setActiveTarget(forcedEditTarget ?? "origin");
+        setIsEditingRoutePoint(Boolean(forcedEditTarget) || !initialHasRouteCoords);
+        originTouchedRef.current = Boolean(
+            initial?.origin?.name ||
+            initial?.origin?.address ||
+            typeof initial?.origin?.lat === "number" ||
+            typeof initial?.origin?.lng === "number"
+        );
         clearSearch();
     }, [
         clearSearch,
@@ -1181,8 +1160,17 @@ export default function RouteSelectScreen() {
         initial?.origin?.name,
         initialTravelMode,
         initialHasRouteCoords,
+        forcedEditTarget,
         sessionId,
     ]);
+
+    useEffect(() => {
+        if (!forcedEditTarget) return;
+        Keyboard.dismiss();
+        setActiveTarget(forcedEditTarget);
+        setIsEditingRoutePoint(true);
+        clearSearch();
+    }, [clearSearch, forcedEditTarget]);
 
     useEffect(() => {
         const query = qaSearchQuery?.trim();
@@ -1261,6 +1249,8 @@ export default function RouteSelectScreen() {
     }, []);
 
     const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
+        const requestId = searchRequestIdRef.current + 1;
+        searchRequestIdRef.current = requestId;
         setActiveTarget(target);
         setIsEditingRoutePoint(true);
         setHasTypedSearchQuery(text.trim().length > 0);
@@ -1287,16 +1277,28 @@ export default function RouteSelectScreen() {
         searchDebounceRef.current = setTimeout(async () => {
             try {
                 setSearching(true);
-                const items = await searchAddressByKeyword(text.trim());
+                const oppositePoint = target === "origin"
+                    ? (typeof destinationLat === "number" && typeof destinationLng === "number"
+                        ? { lat: destinationLat, lng: destinationLng }
+                        : undefined)
+                    : (typeof originLat === "number" && typeof originLng === "number"
+                        ? { lat: originLat, lng: originLng }
+                        : undefined);
+                const items = await searchAddressByKeyword(text.trim(), {
+                    center: oppositePoint,
+                    radiusKm: 33,
+                });
+                if (searchRequestIdRef.current !== requestId) return;
                 setSearchResults(items);
             } catch (error) {
+                if (searchRequestIdRef.current !== requestId) return;
                 const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
                 Alert.alert("검색 실패", message);
             } finally {
-                setSearching(false);
+                if (searchRequestIdRef.current === requestId) setSearching(false);
             }
         }, 450);
-    }, []);
+    }, [destinationLat, destinationLng, originLat, originLng]);
 
     const applyPlace = useCallback((target: RoutePointTarget, item: PlaceSearchItem) => {
         const nextPlace = buildPlaceFromSearchItem(item);
@@ -1307,7 +1309,7 @@ export default function RouteSelectScreen() {
         );
     }, [applyPlaceToTarget, rememberRecentPlace]);
 
-    const useCurrentLocationForTarget = useCallback(async (target: RoutePointTarget) => {
+    const applyCurrentLocationToTarget = useCallback(async (target: RoutePointTarget) => {
         try {
             setSearching(true);
             const location = await getCurrentLocation();
@@ -1330,13 +1332,82 @@ export default function RouteSelectScreen() {
         }
     }, [applyPlaceToTarget]);
 
-    const useCurrentLocationForActiveTarget = useCallback(() => {
-        useCurrentLocationForTarget(activeTarget);
-    }, [activeTarget, useCurrentLocationForTarget]);
+    const applyCurrentLocationToActiveTarget = useCallback(() => {
+        applyCurrentLocationToTarget(activeTarget);
+    }, [activeTarget, applyCurrentLocationToTarget]);
 
-    const useRecentPlaceForActiveTarget = useCallback((place: Place) => {
+    const applyRecentPlaceToActiveTarget = useCallback((place: Place) => {
         applyPlaceToTarget(activeTarget, place);
     }, [activeTarget, applyPlaceToTarget]);
+
+    const getMapPickerInitialCoord = useCallback((target: RoutePointTarget) => {
+        const targetLat = target === "origin" ? originLat : destinationLat;
+        const targetLng = target === "origin" ? originLng : destinationLng;
+        if (typeof targetLat === "number" && typeof targetLng === "number") {
+            return { latitude: targetLat, longitude: targetLng };
+        }
+
+        const pairedLat = target === "origin" ? destinationLat : originLat;
+        const pairedLng = target === "origin" ? destinationLng : originLng;
+        if (typeof pairedLat === "number" && typeof pairedLng === "number") {
+            return { latitude: pairedLat, longitude: pairedLng };
+        }
+
+        return { latitude: MAP_PICKER_FALLBACK_LAT, longitude: MAP_PICKER_FALLBACK_LNG };
+    }, [destinationLat, destinationLng, originLat, originLng]);
+
+    const openMapForPointSelection = useCallback(() => {
+        Keyboard.dismiss();
+        const target = activeTarget;
+        const initialCoord = getMapPickerInitialCoord(target);
+        setMapPickerTarget(target);
+        setMapPickerCoord(initialCoord);
+        setMapPickerAddress(undefined);
+        setMapPickerVisible(true);
+    }, [activeTarget, getMapPickerInitialCoord]);
+
+    const closeMapPicker = useCallback(() => {
+        mapPickerRequestIdRef.current += 1;
+        setMapPickerVisible(false);
+        setMapPickerResolving(false);
+    }, []);
+
+    const selectMapPickerCoord = useCallback(async ({ latitude, longitude }: { latitude: number; longitude: number }) => {
+        const requestId = mapPickerRequestIdRef.current + 1;
+        mapPickerRequestIdRef.current = requestId;
+        setMapPickerCoord({ latitude, longitude });
+        setMapPickerAddress(undefined);
+        setMapPickerResolving(true);
+        try {
+            const address = await reverseGeocodeToAddress(latitude, longitude);
+            if (mapPickerRequestIdRef.current !== requestId) return;
+            setMapPickerAddress(address);
+        } catch {
+            if (mapPickerRequestIdRef.current !== requestId) return;
+            setMapPickerAddress(undefined);
+        } finally {
+            if (mapPickerRequestIdRef.current === requestId) setMapPickerResolving(false);
+        }
+    }, []);
+
+    const confirmMapPickerSelection = useCallback(() => {
+        if (!mapPickerCoord) {
+            Alert.alert("위치 선택 필요", "지도에서 위치를 선택해 주세요.");
+            return;
+        }
+
+        const label = mapPickerTarget === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
+        const place: Place = {
+            name: mapPickerAddress || label,
+            address: mapPickerAddress,
+            lat: mapPickerCoord.latitude,
+            lng: mapPickerCoord.longitude,
+        };
+
+        rememberRecentPlace(place);
+        applyPlaceToTarget(mapPickerTarget, place);
+        setMapPickerVisible(false);
+    }, [applyPlaceToTarget, mapPickerAddress, mapPickerCoord, mapPickerTarget, rememberRecentPlace]);
 
     const loadFavoriteCategories = useCallback(async () => {
         setFavoriteCategoryLoading(true);
@@ -1479,6 +1550,11 @@ export default function RouteSelectScreen() {
         originText,
     ]);
 
+    const openCompactRouteEditor = useCallback((event: GestureResponderEvent) => {
+        const tapY = event.nativeEvent.locationY;
+        openRoutePointEditor(tapY > 34 ? "destination" : "origin");
+    }, [openRoutePointEditor]);
+
     useEffect(() => () => {
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     }, []);
@@ -1500,15 +1576,27 @@ export default function RouteSelectScreen() {
         }
     }, [transitRouteFilter, travelMode]);
 
+    const retryRouteSearch = useCallback(() => {
+        invalidateRouteSearch(origin, destination, travelMode);
+        setRouteRequestVersion((current) => current + 1);
+    }, [destination, origin, travelMode]);
+
+    const openRouteAttribution = useCallback((option: RouteAlternativeOption) => {
+        if (!option.attributionUrl) return;
+        Linking.openURL(option.attributionUrl).catch(() => {
+            Alert.alert("지도 정보", "OpenStreetMap 페이지를 열지 못했습니다.");
+        });
+    }, []);
+
     useEffect(() => {
         let cancelled = false;
         setSelectedRouteId(undefined);
-        setExpandedRouteId(undefined);
         setRouteAlternatives([]);
         setRouteError(undefined);
 
         if (!hasRouteCoords) return;
 
+        setRouteDepartureAt(new Date());
         setRouteLoading(true);
         getRouteAlternativeOptions(origin, destination, travelMode)
             .then((items) => {
@@ -1517,7 +1605,6 @@ export default function RouteSelectScreen() {
                 const firstDisplayRouteId = displayItems[0]?.id;
                 setRouteAlternatives(items);
                 setSelectedRouteId(firstDisplayRouteId);
-                setExpandedRouteId(firstDisplayRouteId);
                 setRouteError(items.length ? undefined : "표시할 경로가 없습니다.");
             })
             .catch((error) => {
@@ -1532,27 +1619,31 @@ export default function RouteSelectScreen() {
         return () => {
             cancelled = true;
         };
-    }, [destination, hasRouteCoords, origin, travelMode]);
+    }, [destination, hasRouteCoords, origin, routeRequestVersion, travelMode]);
 
     useEffect(() => {
         if (!visibleRouteAlternatives.length) return;
         if (selectedRouteId && visibleRouteAlternatives.some((option) => option.id === selectedRouteId)) return;
         setSelectedRouteId(visibleRouteAlternatives[0].id);
-        setExpandedRouteId(visibleRouteAlternatives[0].id);
     }, [selectedRouteId, visibleRouteAlternatives]);
 
     const openMapForOption = useCallback((routeOption?: RouteAlternativeOption) => {
-        if (!sessionId) return;
         const targetRoute = routeOption ?? selectedRoute;
+        if (!targetRoute) {
+            Alert.alert("경로 선택 필요", "상세 지도에서 확인할 경로를 선택해 주세요.");
+            return;
+        }
         const targetIndex = targetRoute
             ? routeAlternatives.findIndex((option) => option.id === targetRoute.id)
             : selectedRouteIndex;
-        persistInitial(targetRoute?.minutes);
+        const targetSessionId = sessionId || `route-preview-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        // 목록과 상세 화면이 같은 경로 객체를 사용해야 필터/정렬 순서 차이로 경로가 바뀌지 않는다.
+        persistInitial(targetRoute.minutes, targetSessionId, targetRoute);
         router.replace({
             pathname: "/schedule/route-planner",
             params: {
-                sessionId,
-                routeId: targetRoute?.id ?? "",
+                sessionId: targetSessionId,
+                routeId: targetRoute.id,
                 routeIndex: targetIndex >= 0 ? String(targetIndex) : "0",
             },
         });
@@ -1603,37 +1694,78 @@ export default function RouteSelectScreen() {
         travelMode,
     ]);
 
-    const openMapForRouteReset = useCallback(() => {
-        openMapForOption();
-    }, [openMapForOption]);
-
     const exitSearchMode = useCallback(() => {
         clearSearch();
         setIsEditingRoutePoint(false);
     }, [clearSearch]);
 
-    const routeUi = {
-        background: "#0F1117",
-        surface: "#171A20",
-        surface2: "#23262D",
-        border: "#2A2F3A",
-        borderStrong: "#474950",
-        textPrimary: "#F5F7FA",
-        textSecondary: "#9CA3AF",
-        textDisabled: "#6B7280",
-        inputBackground: "#0B0D12",
-        inputBorder: "#2A2F3A",
-        inputBorderFocused: "#2979FF",
-        inputPlaceholder: "#6B7280",
-        clearButtonBg: "#474950",
-        clearButtonText: "#FFFFFF",
-        accentBlue: "#2979FF",
-        accentGreen: "#22C55E",
-        accentRed: "#FF4444",
-    };
-    const modeSelectedBg = routeUi.accentBlue;
+    const routeUi = isDark
+        ? {
+            background: "#0F1117",
+            surface: "#171A20",
+            surface2: "#23262D",
+            selectedSurface: "#171A20",
+            selectedBorder: "rgba(47,140,255,0.72)",
+            selectedModeBg: "rgba(41,121,255,0.13)",
+            neutralChipBg: "rgba(255,255,255,0.025)",
+            neutralChipBorder: "rgba(255,255,255,0.10)",
+            successChipBg: "rgba(34,197,94,0.09)",
+            successChipBorder: "rgba(34,197,94,0.18)",
+            border: "#2A2F3A",
+            borderStrong: "#474950",
+            textPrimary: "#F5F7FA",
+            textSecondary: "#9CA3AF",
+            textDisabled: "#6B7280",
+            inputBackground: "#0B0D12",
+            inputBorder: "#2A2F3A",
+            inputBorderFocused: "#2979FF",
+            inputPlaceholder: "#6B7280",
+            clearButtonBg: "#474950",
+            clearButtonText: "#FFFFFF",
+            accentBlue: "#2979FF",
+            accentGreen: "#22C55E",
+            accentRed: "#FF4444",
+            progressTrackBg: "#4F5760",
+            progressTrackBorder: "rgba(255,255,255,0.04)",
+            progressTrackText: "#FFFFFF",
+            progressNeutralIconBg: "#9CA3AF",
+            progressIconBorder: "rgba(10,11,14,0.9)",
+            progressIconShadowOpacity: 0.24,
+        }
+        : {
+            background: colors.background,
+            surface: "#FFFFFF",
+            surface2: "#F2F4F8",
+            selectedSurface: "#FFFFFF",
+            selectedBorder: "rgba(30,104,255,0.72)",
+            selectedModeBg: "rgba(41,121,255,0.10)",
+            neutralChipBg: "#F8FAFC",
+            neutralChipBorder: "#E2E8F0",
+            successChipBg: "rgba(34,197,94,0.10)",
+            successChipBorder: "rgba(34,197,94,0.22)",
+            border: "#E2E8F0",
+            borderStrong: "#CBD5E1",
+            textPrimary: "#111827",
+            textSecondary: "#667085",
+            textDisabled: "#98A2B3",
+            inputBackground: colors.inputBackground,
+            inputBorder: colors.inputBorder,
+            inputBorderFocused: "#2979FF",
+            inputPlaceholder: colors.inputPlaceholder,
+            clearButtonBg: "#E5E7EB",
+            clearButtonText: "#111827",
+            accentBlue: "#1E68FF",
+            accentGreen: "#16A34A",
+            accentRed: "#EF4444",
+            progressTrackBg: "#EEF3F8",
+            progressTrackBorder: "#DDE6F0",
+            progressTrackText: "#667085",
+            progressNeutralIconBg: "#A6B0BD",
+            progressIconBorder: "#FFFFFF",
+            progressIconShadowOpacity: 0.12,
+        };
     const modeSelectedText = "#FFFFFF";
-    const statusBarStyle = "light-content";
+    const statusBarStyle = isDark ? "light-content" : "dark-content";
     const favoriteSheetSaving = favoriteSheetPlace
         ? favoriteSavingKey === getPlaceActionKey(favoriteSheetPlace)
         : false;
@@ -1854,12 +1986,130 @@ export default function RouteSelectScreen() {
             </View>
         </Modal>
     );
+    const mapPickerCamera = {
+        latitude: mapPickerCoord?.latitude ?? MAP_PICKER_FALLBACK_LAT,
+        longitude: mapPickerCoord?.longitude ?? MAP_PICKER_FALLBACK_LNG,
+        zoom: MAP_PICKER_DEFAULT_ZOOM,
+    };
+    const mapPickerMarkers = useMemo<TmapMarker[]>(() => {
+        const markers: TmapMarker[] = [];
+        if (placeHasCoords(origin)) {
+            markers.push({
+                id: "map-picker-origin",
+                latitude: origin.lat,
+                longitude: origin.lng,
+                markerStyle: "origin",
+                pinLabel: "출",
+                caption: "출발지",
+                zIndex: 20,
+            });
+        }
+        if (placeHasCoords(destination)) {
+            markers.push({
+                id: "map-picker-destination",
+                latitude: destination.lat,
+                longitude: destination.lng,
+                markerStyle: "destination",
+                pinLabel: "도",
+                caption: "도착지",
+                zIndex: 20,
+            });
+        }
+        if (mapPickerCoord) {
+            markers.push({
+                id: "map-picker-selected",
+                latitude: mapPickerCoord.latitude,
+                longitude: mapPickerCoord.longitude,
+                markerStyle: mapPickerTarget === "origin" ? "origin" : "destination",
+                pinLabel: mapPickerTarget === "origin" ? "출" : "도",
+                caption: mapPickerTarget === "origin" ? "선택한 출발지" : "선택한 도착지",
+                zIndex: 40,
+            });
+        }
+        return markers;
+    }, [destination, mapPickerCoord, mapPickerTarget, origin]);
+    const mapPickerTitle = mapPickerTarget === "origin" ? "출발지 지도 선택" : "도착지 지도 선택";
+    const mapPickerSheet = (
+        <Modal
+            visible={mapPickerVisible}
+            animationType="slide"
+            onRequestClose={closeMapPicker}
+        >
+            <View style={[styles.mapPickerRoot, { backgroundColor: routeUi.background }]}>
+                <TmapMapView
+                    style={styles.mapPickerMap}
+                    camera={mapPickerCamera}
+                    markers={mapPickerMarkers}
+                    nightModeEnabled={isDark}
+                    showLocationButton={false}
+                    showZoomControls
+                    onTapMap={selectMapPickerCoord}
+                    fallbackBackgroundColor={routeUi.surface2}
+                    fallbackTextColor={routeUi.textSecondary}
+                />
+                <View style={[styles.mapPickerHeader, { paddingTop: insets.top + 8 }]}>
+                    <Pressable onPress={closeMapPicker} style={[styles.mapPickerIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
+                        <Text style={[styles.mapPickerBackText, { color: routeUi.textPrimary }]}>‹</Text>
+                    </Pressable>
+                    <View style={[styles.mapPickerTitleBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
+                        <Text numberOfLines={1} style={[styles.mapPickerTitle, { color: routeUi.textPrimary }]}>
+                            {mapPickerTitle}
+                        </Text>
+                    </View>
+                </View>
+                <CalendarGlassSurface
+                    prominent
+                    variant="mapCard"
+                    style={[
+                        styles.mapPickerBottomSheet,
+                        {
+                            borderColor: routeUi.border,
+                            paddingBottom: Math.max(insets.bottom + 14, 22),
+                        },
+                    ]}
+                >
+                    <Text style={[styles.mapPickerInstruction, { color: routeUi.textPrimary }]}>
+                        지도에서 사용할 위치를 탭하세요
+                    </Text>
+                    <View style={styles.mapPickerAddressRow}>
+                        {mapPickerResolving ? (
+                            <ActivityIndicator size="small" color={routeUi.accentBlue} />
+                        ) : (
+                            <Ionicons name="location" size={17} color={routeUi.accentBlue} />
+                        )}
+                        <Text numberOfLines={2} style={[styles.mapPickerAddressText, { color: routeUi.textSecondary }]}>
+                            {mapPickerAddress || (
+                                mapPickerCoord
+                                    ? `${mapPickerCoord.latitude.toFixed(5)}, ${mapPickerCoord.longitude.toFixed(5)}`
+                                    : "아직 선택한 위치가 없습니다"
+                            )}
+                        </Text>
+                    </View>
+                    <View style={styles.mapPickerActionRow}>
+                        <Pressable
+                            onPress={closeMapPicker}
+                            style={[styles.mapPickerSecondaryButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
+                        >
+                            <Text style={[styles.mapPickerSecondaryText, { color: routeUi.textPrimary }]}>취소</Text>
+                        </Pressable>
+                        <Pressable
+                            onPress={confirmMapPickerSelection}
+                            style={[styles.mapPickerPrimaryButton, { backgroundColor: routeUi.accentBlue }]}
+                        >
+                            <Text style={styles.mapPickerPrimaryText}>이 위치 사용</Text>
+                        </Pressable>
+                    </View>
+                </CalendarGlassSurface>
+            </View>
+        </Modal>
+    );
 
     if (isEditingRoutePoint) {
         return (
             <View style={[styles.screen, { backgroundColor: routeUi.background, paddingTop: insets.top + 10 }]}>
                 <StatusBar barStyle={statusBarStyle} />
                 {favoriteSaveSheet}
+                {mapPickerSheet}
                 <View style={styles.searchModeHeader}>
                     <Pressable onPress={exitSearchMode} style={styles.searchModeBackButton}>
                         <Text style={[styles.searchModeBackText, { color: routeUi.textPrimary }]}>‹</Text>
@@ -1884,18 +2134,26 @@ export default function RouteSelectScreen() {
                             </Pressable>
                         )}
                     </View>
+                    <Pressable
+                        onPress={goToScheduleList}
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 목록으로 이동"
+                        style={[styles.scheduleListIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                    >
+                        <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
+                    </Pressable>
                 </View>
 
                 <View style={styles.searchModeActionRow}>
                     <Pressable
-                        onPress={useCurrentLocationForActiveTarget}
+                        onPress={applyCurrentLocationToActiveTarget}
                         style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
                     >
                         <Ionicons name="navigate-outline" size={22} color={routeUi.accentBlue} />
                         <Text style={[styles.searchModeActionText, { color: routeUi.accentBlue }]}>내 위치</Text>
                     </Pressable>
                     <Pressable
-                        onPress={openMapForRouteReset}
+                        onPress={openMapForPointSelection}
                         style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
                     >
                         <Ionicons name="map-outline" size={23} color={routeUi.textSecondary} />
@@ -1952,9 +2210,9 @@ export default function RouteSelectScreen() {
                                                 <Text numberOfLines={1} style={[styles.searchResultTitle, { color: routeUi.textPrimary }]}>
                                                     {item.name}
                                                 </Text>
-                                                {!!item.category && (
+                                                {!!(item.category || formatSearchResultDistance(item.distanceMeters)) && (
                                                     <Text numberOfLines={1} style={styles.searchResultCategory}>
-                                                        {item.category}
+                                                        {[item.category, formatSearchResultDistance(item.distanceMeters)].filter(Boolean).join(" · ")}
                                                     </Text>
                                                 )}
                                                 <Text numberOfLines={1} style={[styles.searchResultAddress, { color: routeUi.textSecondary }]}>
@@ -1998,7 +2256,7 @@ export default function RouteSelectScreen() {
                                             ]}
                                         >
                                             <Pressable
-                                                onPress={() => useRecentPlaceForActiveTarget(place)}
+                                                onPress={() => applyRecentPlaceToActiveTarget(place)}
                                                 style={styles.searchModeRecentMain}
                                             >
                                                 <View style={[styles.searchModeListIcon, { backgroundColor: routeUi.surface2 }]}>
@@ -2061,6 +2319,7 @@ export default function RouteSelectScreen() {
         >
             <StatusBar barStyle={statusBarStyle} />
             {favoriteSaveSheet}
+            {mapPickerSheet}
             {!shouldShowRouteResults && (
                 <View style={styles.headerRow}>
                     <Pressable onPress={close} style={[styles.headerButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}>
@@ -2072,6 +2331,15 @@ export default function RouteSelectScreen() {
                             출발지와 도착지를 입력하고 경로를 선택하세요
                         </Text>
                     </View>
+                    <Pressable
+                        onPress={goToScheduleList}
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 목록으로 이동"
+                        style={[styles.headerScheduleButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
+                    >
+                        <Ionicons name="calendar-outline" size={17} color={routeUi.textPrimary} />
+                        <Text style={[styles.headerScheduleButtonText, { color: routeUi.textPrimary }]}>일정</Text>
+                    </Pressable>
                 </View>
             )}
 
@@ -2123,28 +2391,54 @@ export default function RouteSelectScreen() {
                 )}
 
                 {shouldShowRouteResults && (
-                    <View style={[styles.routeCompactCard, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
-                        <Pressable onPress={swapPlaces} style={styles.routeCompactSwap}>
-                            <Ionicons name="swap-vertical" size={20} color={routeUi.textSecondary} />
+                    <View style={styles.routeResultHeaderRow}>
+                    <TouchableOpacity
+                        testID="route-compact-edit-card"
+                        accessibilityRole="button"
+                        accessibilityLabel="출발지와 도착지 수정"
+                        hitSlop={8}
+                        activeOpacity={0.86}
+                        onPressIn={openCompactRouteEditor}
+                        onPress={openCompactRouteEditor}
+                        style={[
+                            styles.routeCompactCard,
+                            styles.routeCompactCardInHeader,
+                            { backgroundColor: routeUi.surface, borderColor: routeUi.border },
+                        ]}
+                    >
+                        <View pointerEvents="none" style={styles.routeCompactEditArea}>
+                            <View style={styles.routeCompactRail}>
+                                <View style={[styles.routeCompactLine, { backgroundColor: routeUi.border }]} />
+                                <View style={styles.routeCompactMarkerRow}>
+                                    <View style={[styles.routeCompactDot, { borderColor: routeUi.accentGreen }]} />
+                                </View>
+                                <View style={styles.routeCompactMarkerRow}>
+                                    <View style={[styles.routeCompactDot, { borderColor: routeUi.accentRed }]} />
+                                </View>
+                            </View>
+                            <View style={styles.routeCompactTexts}>
+                                <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
+                                    {originText || "출발지"}
+                                </Text>
+                                <View style={[styles.routeCompactDivider, { backgroundColor: routeUi.border }]} />
+                                <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
+                                    {destinationText || "도착지"}
+                                </Text>
+                            </View>
+                        </View>
+                        <View pointerEvents="none" style={styles.routeCompactSwap}>
+                            <Ionicons name="swap-vertical" size={23} color={routeUi.textSecondary} />
+                        </View>
+                    </TouchableOpacity>
+                        <Pressable
+                            onPress={goToScheduleList}
+                            accessibilityRole="button"
+                            accessibilityLabel="일정 목록으로 이동"
+                            style={[styles.routeResultScheduleButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                        >
+                            <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
+                            <Text style={[styles.routeResultScheduleButtonText, { color: routeUi.textSecondary }]}>일정</Text>
                         </Pressable>
-                        <View style={styles.routeCompactRail}>
-                            <View style={[styles.routeCompactDot, { borderColor: routeUi.accentGreen }]}>
-                                <Ionicons name="navigate" size={10} color={routeUi.accentGreen} />
-                            </View>
-                            <View style={[styles.routeCompactLine, { backgroundColor: routeUi.border }]} />
-                            <View style={[styles.routeCompactDot, { borderColor: routeUi.accentRed }]}>
-                                <Ionicons name="location" size={10} color={routeUi.accentRed} />
-                            </View>
-                        </View>
-                        <View style={styles.routeCompactTexts}>
-                            <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
-                                {originText || "출발지"}
-                            </Text>
-                            <View style={[styles.routeCompactDivider, { backgroundColor: routeUi.border }]} />
-                            <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
-                                {destinationText || "도착지"}
-                            </Text>
-                        </View>
                     </View>
                 )}
 
@@ -2158,8 +2452,8 @@ export default function RouteSelectScreen() {
                                 selected={selected}
                                 label={TRAVEL_MODE_META[modeItem].label}
                                 iconName={TRAVEL_MODE_ICONS[modeItem] ?? "navigate"}
-                                backgroundColor={selected ? "rgba(41,121,255,0.16)" : "transparent"}
-                                borderColor={selected ? routeUi.accentBlue : "transparent"}
+	                                backgroundColor={selected ? routeUi.selectedModeBg : "transparent"}
+                                borderColor={selected ? "rgba(41,121,255,0.95)" : "transparent"}
                                 textColor={selected ? routeUi.accentBlue : routeUi.textSecondary}
                                 onPress={() => selectTravelMode(modeItem)}
                             />
@@ -2174,7 +2468,7 @@ export default function RouteSelectScreen() {
                     <ScrollView
                         horizontal
                         showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.transitFilterRow}
+	                        contentContainerStyle={[styles.transitFilterRow, { borderBottomColor: routeUi.border }]}
                     >
                         {TRANSIT_FILTER_ITEMS.map((item) => {
                             const selected = transitRouteFilter === item.key;
@@ -2198,9 +2492,23 @@ export default function RouteSelectScreen() {
 
                 {hasTransitFilters && visibleRouteAlternatives.length > 0 && (
                     <View style={styles.currentRouteNotice}>
-                        <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
-                            {formatCurrentRouteNotice(routeDepartureAt)}
-                        </Text>
+                        <View style={styles.currentRouteTimeGroup}>
+                            <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
+                                현재 시간
+                            </Text>
+                            <Text style={[styles.currentRouteNoticeTimeText, { color: routeUi.accentBlue }]}>
+                                {formatCurrentRouteNoticeTime(routeDepartureAt)}
+                            </Text>
+                            <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
+                                기준
+                            </Text>
+                        </View>
+                        <View style={styles.currentRouteSortGroup}>
+                            <Text style={[styles.currentRouteSortText, { color: routeUi.textSecondary }]}>
+                                최적 경로순
+                            </Text>
+                            <Ionicons name="chevron-down" size={14} color={routeUi.textSecondary} />
+                        </View>
                     </View>
                 )}
 
@@ -2215,6 +2523,13 @@ export default function RouteSelectScreen() {
                     {hasRouteCoords && !routeLoading && !!routeError && (
                         <View style={[styles.emptyCard, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
                             <Text style={[styles.emptyText, { color: routeUi.textSecondary }]}>{routeError}</Text>
+                            <Pressable
+                                onPress={retryRouteSearch}
+                                style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
+                            >
+                                <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                                <Text style={styles.emptyRetryText}>다시 검색</Text>
+                            </Pressable>
                         </View>
                     )}
 
@@ -2228,7 +2543,6 @@ export default function RouteSelectScreen() {
 
                     {hasRouteCoords && !routeLoading && !routeError && visibleRouteAlternatives.map((option, displayIndex) => {
                         const selected = selectedRouteId === option.id;
-                        const expanded = expandedRouteId === option.id;
                         const routeInfo = buildRouteInfoFromAlternative(
                             option,
                             origin ?? undefined,
@@ -2237,21 +2551,19 @@ export default function RouteSelectScreen() {
                             displayIndex
                         );
                         const progressSegments = buildRouteProgressSegments(option, destinationText);
-                        const routeFlowPathSummary = buildRouteFlowPathSummary(option, originText, destinationText);
-                        const routeFlowMinWidth = progressSegments.length <= 3
-                            ? 78
-                            : progressSegments.length >= 6
-                                ? 42
-                                : 46;
-                        const routeMetricChips = buildRouteMetricChips(option, displayIndex);
-                        const accent = selected ? "rgba(64,148,255,0.78)" : routeUi.border;
-                        const cardBackground = selected ? "rgba(18,27,43,0.34)" : routeUi.surface;
+                        const routeMetricChips = buildRouteMetricChips(option);
+                        const accent = selected ? routeUi.selectedBorder : routeUi.border;
+                        const cardBackground = selected ? routeUi.selectedSurface : routeUi.surface;
                         const routeTimeFare = formatRouteTimeFare(option, routeDepartureAt);
-                        const dropdownSummaryItems = buildRouteDropdownSummaryItems(option, originText, destinationText);
-                        const toggleRoute = () => {
+                        const routeBoardingSummary = buildRouteBoardingSummary(option, originText);
+                        const dropdownSummaryItems = buildRouteDropdownSummaryItems(
+                            option,
+                            originText,
+                            destinationText
+                        );
+                        const selectRoute = () => {
                             configureRouteExpansionAnimation();
                             setSelectedRouteId(option.id);
-                            setExpandedRouteId((current) => current === option.id ? undefined : option.id);
                         };
                         return (
                             <View key={option.id} style={styles.routeCandidateItem}>
@@ -2263,23 +2575,35 @@ export default function RouteSelectScreen() {
                                             backgroundColor: cardBackground,
                                             borderColor: accent,
                                         },
-                                        selected
-                                            ? styles.routeOptionCardSelectedDark
-                                            : styles.routeOptionCardInactive,
-                                    ]}
-                                >
-                                    <Pressable onPress={toggleRoute} style={styles.routeOptionPressable}>
+	                                        selected
+	                                            ? (isDark ? styles.routeOptionCardSelectedDark : styles.routeOptionCardSelectedLight)
+	                                            : styles.routeOptionCardInactive,
+	                                    ]}
+	                                >
+	                                    <Pressable onPress={selectRoute} style={styles.routeOptionPressable}>
                                         <View style={styles.routeOptionHeader}>
                                             <View style={styles.routeOptionHeaderRow}>
-                                                <View
-                                                    style={[
-                                                        styles.routeOptionLabelPill,
-                                                        { backgroundColor: routeUi.surface2 },
-                                                    ]}
-                                                >
-                                                    <Text style={[styles.routeOptionLabel, { color: selected ? routeUi.accentBlue : routeUi.textSecondary }]}>
-                                                        {displayIndex <= 0 ? "추천" : `대안 ${displayIndex}`}
-                                                    </Text>
+                                                <View style={styles.routeOptionTitleMetaRow}>
+                                                    <View
+                                                        style={[
+                                                            styles.routeOptionLabelPill,
+                                                            { backgroundColor: selected ? routeUi.selectedBorder : routeUi.surface2 },
+                                                        ]}
+                                                    >
+                                                        {selected && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
+                                                        <Text style={[styles.routeOptionLabel, { color: selected ? "#FFFFFF" : routeUi.textSecondary }]}>
+                                                            {getNaverLikeRouteRecommendationLabel(
+                                                                option,
+                                                                visibleRouteAlternatives,
+                                                                displayIndex
+                                                            )}
+                                                        </Text>
+                                                    </View>
+                                                    {!!routeTimeFare && (
+                                                        <Text numberOfLines={1} style={[styles.routeOptionTimeFare, { color: routeUi.textSecondary }]}>
+                                                            {routeTimeFare}
+                                                        </Text>
+                                                    )}
                                                 </View>
                                                 <View style={styles.routeOptionDurationWrap}>
                                                     <Text numberOfLines={1} style={[styles.routeOptionDuration, { color: routeUi.textPrimary }]}>
@@ -2287,11 +2611,6 @@ export default function RouteSelectScreen() {
                                                     </Text>
                                                 </View>
                                             </View>
-                                            {!!routeTimeFare && (
-                                                <Text numberOfLines={1} style={[styles.routeOptionTimeFare, { color: routeUi.textSecondary }]}>
-                                                    {routeTimeFare}
-                                                </Text>
-                                            )}
                                             <View style={styles.routeMetricRow}>
                                                 {routeMetricChips.map((metric) => {
                                                     const success = metric.tone === "success";
@@ -2300,10 +2619,10 @@ export default function RouteSelectScreen() {
                                                             key={`${option.id}-${metric.key}`}
                                                             style={[
                                                                 styles.routeMetricChip,
-                                                                {
-                                                                    backgroundColor: success ? "rgba(34,197,94,0.09)" : "rgba(255,255,255,0.025)",
-                                                                    borderColor: success ? "rgba(34,197,94,0.18)" : "rgba(255,255,255,0.10)",
-                                                                },
+	                                                                {
+	                                                                    backgroundColor: success ? routeUi.successChipBg : routeUi.neutralChipBg,
+	                                                                    borderColor: success ? routeUi.successChipBorder : routeUi.neutralChipBorder,
+	                                                                },
                                                             ]}
                                                         >
                                                             <Text
@@ -2320,142 +2639,240 @@ export default function RouteSelectScreen() {
                                                 })}
                                             </View>
                                             {progressSegments.length > 0 && (
-                                                <View style={[styles.routeFlowStrip, { borderTopColor: routeUi.border }]}>
-                                                    {progressSegments.map((segment, segmentIndex) => (
-                                                        <View
-                                                            key={`${option.id}-${segment.key}`}
-                                                            style={[
-                                                                styles.routeFlowSegment,
-                                                                {
-                                                                    flexGrow: Math.max(1, Math.min(14, segment.minutes)),
-                                                                    flexBasis: 0,
-                                                                    minWidth: routeFlowMinWidth,
-                                                                },
-                                                            ]}
-                                                        >
-                                                            <View style={styles.routeFlowTopLine}>
-                                                                <View style={styles.routeFlowMarker}>
-                                                                    <Ionicons
-                                                                        name={segment.iconName}
-                                                                        size={segment.kind === "WALK" || segment.kind === "TRANSFER" ? 17 : 18}
-                                                                        color={segment.kind === "WALK"
-                                                                            ? routeUi.textPrimary
-                                                                            : segment.kind === "TRANSFER"
-                                                                                ? routeUi.textSecondary
-                                                                                : segment.color}
-                                                                    />
-                                                                    {segment.kind !== "WALK" && segment.kind !== "TRANSFER" && (
-                                                                        <Text
-                                                                            numberOfLines={1}
-                                                                            style={[styles.routeFlowLineText, { color: segment.color }]}
-                                                                        >
-                                                                            {segment.label}
-                                                                        </Text>
-                                                                    )}
-                                                                </View>
-                                                                {segmentIndex < progressSegments.length - 1 && (
-                                                                    <Ionicons name="chevron-forward" size={10} color={routeUi.textSecondary} />
-                                                                )}
-                                                            </View>
-                                                            <Text numberOfLines={1} style={[styles.routeFlowDurationText, { color: routeUi.textPrimary }]}>
-                                                                {segment.detailLabel}
-                                                            </Text>
-                                                            {!!segment.pointLabel && (
-                                                                <Text numberOfLines={1} style={[styles.routeFlowPointText, { color: routeUi.textSecondary }]}>
-                                                                    {segment.pointLabel}
-                                                                </Text>
-                                                            )}
-                                                        </View>
-                                                    ))}
-                                                </View>
-                                            )}
-                                            {!!routeFlowPathSummary && (
-                                                <Text numberOfLines={1} style={[styles.routeFlowPathSummary, { color: routeUi.textSecondary }]}>
-                                                    {routeFlowPathSummary}
-                                                </Text>
-                                            )}
-                                        </View>
-	                                    </Pressable>
-	                                {expanded && (
-	                                    <AnimatedRouteExpansion
-	                                        style={[
-	                                            styles.routeOptionExpansion,
-	                                            {
-	                                                backgroundColor: "transparent",
-	                                                borderTopColor: "rgba(255,255,255,0.08)",
-	                                            },
-	                                        ]}
-	                                    >
-                                        <View style={styles.routeDropdownSummaryList}>
-                                            {dropdownSummaryItems.map((summaryItem, summaryIndex) => {
-                                                const itemColor = summaryItem.color ??
-                                                    (summaryItem.kind === "TRANSFER" ? routeUi.textSecondary : routeUi.borderStrong);
-                                                const titleColor = summaryItem.kind === "SUBWAY" || summaryItem.kind === "BUS"
-                                                    ? itemColor
-                                                    : routeUi.textPrimary;
-                                                const isLastSummaryItem = summaryIndex === dropdownSummaryItems.length - 1;
-                                                const iconName = summaryItem.kind === "SUBWAY"
-                                                    ? "train-outline"
-                                                    : summaryItem.kind === "BUS"
-                                                        ? "bus-outline"
-                                                        : summaryItem.kind === "TRANSFER"
-                                                            ? "swap-horizontal"
-                                                            : summaryItem.kind === "WALK"
-                                                                ? "walk"
-                                                                : "navigate-outline";
-                                                return (
-                                                    <View key={summaryItem.key} style={styles.routeDropdownSummaryRow}>
-                                                        <View style={styles.routeDropdownMarkerColumn}>
-                                                            <View style={[styles.routeDropdownIcon, { borderColor: itemColor }]}>
-	                                                                <Ionicons name={iconName} size={13} color={itemColor} />
-                                                            </View>
-                                                            {!isLastSummaryItem && (
-                                                                <View style={[styles.routeDropdownConnector, { backgroundColor: itemColor }]} />
-                                                            )}
-                                                        </View>
-                                                        <View style={styles.routeDropdownStepTextWrap}>
-                                                            <Text
-                                                                numberOfLines={1}
-                                                                style={[styles.routeDropdownStepLine, { color: titleColor }]}
+                                                <View
+                                                    style={[
+                                                        styles.routeFlowTrack,
+                                                        {
+                                                            backgroundColor: routeUi.progressTrackBg,
+                                                            borderColor: routeUi.progressTrackBorder,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {progressSegments.map((segment, segmentIndex) => {
+                                                        const isFirstSegment = segmentIndex === 0;
+                                                        const isLastSegment = segmentIndex === progressSegments.length - 1;
+                                                        const shouldFloatOnBaseTrack = !segment.isRide;
+                                                        const isTransitTransferSpacer = shouldFloatOnBaseTrack && !isFirstSegment && !isLastSegment;
+                                                        const shouldShowSegmentLabel = segment.isRide || isFirstSegment || isLastSegment;
+                                                        const isEdgeWalkSegment = segment.kind === "WALK" && (isFirstSegment || isLastSegment);
+                                                        const shouldUsePinnedDuration = shouldShowSegmentLabel &&
+                                                            (segment.isRide || isEdgeWalkSegment) &&
+                                                            segment.minutes <= 4;
+                                                        const segmentDisplayColor = segment.isRide ? segment.color : routeUi.progressNeutralIconBg;
+                                                        return (
+                                                            <View
+                                                                key={`${option.id}-${segment.key}`}
+                                                                style={[
+                                                                    styles.routeFlowTrackSegment,
+                                                                    {
+                                                                        flex: isTransitTransferSpacer ? 0 : segment.flex,
+                                                                        width: isTransitTransferSpacer ? 10 : undefined,
+                                                                        minWidth: isTransitTransferSpacer ? 10 : segment.isRide ? 44 : isEdgeWalkSegment ? 52 : 18,
+                                                                        backgroundColor: shouldFloatOnBaseTrack ? "transparent" : segmentDisplayColor,
+                                                                        marginLeft: segmentIndex === 0 ? 0 : 0,
+                                                                    },
+                                                                ]}
                                                             >
-                                                                {summaryItem.title}
-                                                            </Text>
-                                                                {!!summaryItem.subtitle && (
-                                                                    <Text numberOfLines={1} style={[styles.routeDropdownStepMeta, { color: routeUi.textSecondary }]}>
-                                                                        {summaryItem.subtitle}
+                                                                {(segment.isRide || isFirstSegment) && (
+                                                                    <View
+                                                                        style={[
+                                                                            styles.routeFlowSegmentIconBadge,
+                                                                            {
+                                                                                backgroundColor: segmentDisplayColor,
+                                                                                borderColor: routeUi.progressIconBorder,
+                                                                                shadowOpacity: routeUi.progressIconShadowOpacity,
+                                                                            },
+                                                                        ]}
+                                                                    >
+                                                                        <Ionicons name={segment.iconName} size={15} color="#FFFFFF" />
+                                                                    </View>
+                                                                )}
+                                                                {shouldShowSegmentLabel && (
+                                                                    <Text
+                                                                        numberOfLines={1}
+                                                                        style={[
+                                                                            styles.routeFlowDurationText,
+                                                                            shouldUsePinnedDuration && styles.routeFlowPinnedDurationText,
+                                                                            segment.isRide && styles.routeFlowRideDurationText,
+                                                                            isFirstSegment && styles.routeFlowLeadingDurationText,
+                                                                            isLastSegment && styles.routeFlowTrailingDurationText,
+                                                                            { color: segment.isRide ? "#FFFFFF" : routeUi.progressTrackText },
+                                                                        ]}
+                                                                    >
+                                                                        {segment.detailLabel.replace("환승 ", "")}
                                                                     </Text>
                                                                 )}
+                                                            </View>
+                                                        );
+                                                    })}
+                                                </View>
+                                            )}
+                                            {progressSegments.length > 0 && (
+                                                <View style={styles.routeFlowLineLabelRow}>
+                                                    {progressSegments.map((segment, segmentIndex) => {
+                                                        const isTransitTransferSpacer = !segment.isRide &&
+                                                            segmentIndex > 0 &&
+                                                            segmentIndex < progressSegments.length - 1;
+                                                        return (
+                                                            <View
+                                                                key={`${option.id}-${segment.key}-line`}
+                                                                style={[
+                                                                    styles.routeFlowLineLabelCell,
+                                                                    {
+                                                                        flex: isTransitTransferSpacer ? 0 : segment.flex,
+                                                                        width: isTransitTransferSpacer ? 10 : undefined,
+                                                                        minWidth: isTransitTransferSpacer ? 10 : undefined,
+                                                                    },
+                                                                ]}
+                                                            >
+                                                                {!!segment.lineLabel && (
+                                                                    <Text numberOfLines={1} style={[styles.routeFlowLineLabelText, { color: segment.color }]}>
+                                                                        {segment.lineLabel}
+                                                                    </Text>
+                                                                )}
+                                                            </View>
+                                                        );
+                                                    })}
+	                                                </View>
+	                                            )}
+	                                            {!selected && !!routeBoardingSummary && (
+	                                                <View
+	                                                    style={[styles.routeBoardingSummaryRow, { borderTopColor: routeUi.border }]}
+	                                                >
+	                                                    <Ionicons name="navigate-circle-outline" size={17} color={routeUi.textSecondary} />
+	                                                    <Text
+	                                                        numberOfLines={1}
+	                                                        style={[styles.routeBoardingSummaryText, { color: routeUi.textSecondary }]}
+	                                                    >
+	                                                        {routeBoardingSummary}
+	                                                    </Text>
+	                                                </View>
+	                                            )}
+	                                        </View>
+									</Pressable>
+                                    {selected && dropdownSummaryItems.length > 0 && (
+                                        <AnimatedRouteExpansion
+                                            style={[
+                                                styles.routeOptionExpansion,
+                                                { borderTopColor: routeUi.border },
+                                            ]}
+                                        >
+                                            <View style={styles.routeDropdownSummaryList}>
+                                                {dropdownSummaryItems.map((summary, summaryIndex) => {
+                                                    const isRide = isRideLegKind(summary.kind);
+                                                    const itemColor = summary.color ??
+                                                        (summary.kind === "TRANSFER"
+                                                            ? routeUi.textSecondary
+                                                            : routeUi.borderStrong);
+                                                    const iconName: React.ComponentProps<typeof Ionicons>["name"] =
+                                                        summary.kind === "SUBWAY"
+                                                            ? "train"
+                                                            : summary.kind === "BUS"
+                                                                ? "bus"
+                                                                : summary.kind === "TRANSFER"
+                                                                    ? "swap-horizontal"
+                                                                    : summary.kind === "WALK"
+                                                                        ? "walk"
+                                                                        : "navigate-outline";
+                                                    return (
+                                                        <View key={summary.key} style={styles.routeDropdownSummaryRow}>
+                                                            <View style={styles.routeDropdownMarkerColumn}>
+                                                                <View
+                                                                    style={[
+                                                                        styles.routeDropdownIcon,
+                                                                        {
+                                                                            borderColor: itemColor,
+                                                                            backgroundColor: isRide ? itemColor : "transparent",
+                                                                        },
+                                                                    ]}
+                                                                >
+                                                                    <Ionicons
+                                                                        name={iconName}
+                                                                        size={14}
+                                                                        color={isRide ? "#FFFFFF" : itemColor}
+                                                                    />
+                                                                </View>
+                                                                {summaryIndex < dropdownSummaryItems.length - 1 && (
+                                                                    <View
+                                                                        style={[
+                                                                            styles.routeDropdownConnector,
+                                                                            { backgroundColor: itemColor },
+                                                                        ]}
+                                                                    />
+                                                                )}
+                                                            </View>
+                                                            <View style={styles.routeDropdownStepTextWrap}>
+                                                                <Text
+                                                                    numberOfLines={1}
+                                                                    style={[
+                                                                        styles.routeDropdownStepLine,
+                                                                        { color: isRide ? itemColor : routeUi.textPrimary },
+                                                                    ]}
+                                                                >
+                                                                    {summary.title}
+                                                                </Text>
+                                                                {!!summary.subtitle && (
+                                                                    <Text
+                                                                        numberOfLines={1}
+                                                                        style={[
+                                                                            styles.routeDropdownStepMeta,
+                                                                            { color: routeUi.textSecondary },
+                                                                        ]}
+                                                                    >
+                                                                        {summary.subtitle}
+                                                                    </Text>
+                                                                )}
+                                                            </View>
                                                         </View>
-                                                    </View>
-                                                );
-                                            })}
-                                        </View>
-	                                        <View style={[styles.routeDropdownButtons, { borderTopColor: "rgba(255,255,255,0.08)" }]}>
-	                                            <Pressable
-	                                                onPress={() => openMapForOption(option)}
-	                                                style={[
-	                                                    styles.routeDropdownSecondaryButton,
-	                                                    {
-	                                                        backgroundColor: "rgba(255,255,255,0.045)",
-	                                                        borderColor: "rgba(255,255,255,0.08)",
-	                                                    },
-	                                                ]}
-	                                            >
-                                                <Text style={[styles.routeDropdownSecondaryButtonText, { color: routeUi.textPrimary }]}>
+                                                    );
+                                                })}
+                                            </View>
+                                        </AnimatedRouteExpansion>
+                                    )}
+                                    {!!option.attributionText && !!option.attributionUrl && (
+                                        <Pressable
+                                            accessibilityRole="link"
+                                            onPress={() => openRouteAttribution(option)}
+                                            style={[styles.routeAttributionLink, { borderTopColor: routeUi.border }]}
+                                        >
+                                            <Text style={[styles.routeAttributionText, { color: routeUi.textSecondary }]}>
+                                                {option.attributionText} · 지도 수정
+                                            </Text>
+                                            <Ionicons name="open-outline" size={13} color={routeUi.textSecondary} />
+                                        </Pressable>
+                                    )}
+									{selected && (
+                                        <View
+                                            style={[
+                                                styles.routeCardActions,
+                                                { borderTopColor: routeUi.border },
+                                            ]}
+                                        >
+                                            <Pressable
+                                                onPress={() => openMapForOption(option)}
+                                                style={[
+                                                    styles.routeCardSecondaryButton,
+                                                    {
+                                                        backgroundColor: routeUi.surface,
+                                                        borderColor: routeUi.border,
+                                                    },
+                                                ]}
+                                            >
+                                                <Ionicons name="map-outline" size={15} color={routeUi.textPrimary} />
+                                                <Text style={[styles.routeCardSecondaryButtonText, { color: routeUi.textPrimary }]}>
                                                     경로 상세 보기
                                                 </Text>
                                             </Pressable>
                                             <Pressable
-                                                onPress={() => saveRouteOption(option, Math.max(0, displayIndex))}
-                                                style={[styles.routeDropdownPrimaryButton, { backgroundColor: routeUi.accentBlue }]}
+                                                onPress={() => saveRouteOption(option, displayIndex)}
+                                                style={[styles.routeCardPrimaryButton, { backgroundColor: routeUi.accentBlue }]}
                                             >
-                                                <Text style={styles.routeDropdownPrimaryButtonText}>
+                                                <Text style={styles.routeCardPrimaryButtonText}>
                                                     이 경로로 저장
                                                 </Text>
                                             </Pressable>
-	                                        </View>
-	                                    </AnimatedRouteExpansion>
-	                                )}
+                                        </View>
+                                    )}
 	                                </AnimatedRouteCardShell>
 	                            </View>
                         );
@@ -2506,8 +2923,30 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "600",
     },
+    headerScheduleButton: {
+        minWidth: 64,
+        height: 42,
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+    },
+    headerScheduleButtonText: {
+        fontSize: 13,
+        fontWeight: "900",
+        lineHeight: 16,
+        letterSpacing: 0,
+    },
     content: {
         paddingHorizontal: 16,
+        gap: 10,
+    },
+    routeResultHeaderRow: {
+        flexDirection: "row",
+        alignItems: "stretch",
         gap: 8,
     },
     routeCard: {
@@ -2517,50 +2956,95 @@ const styles = StyleSheet.create({
         gap: 14,
     },
     routeCompactCard: {
-        minHeight: 54,
+        minHeight: 78,
         borderWidth: 1,
-        borderRadius: 16,
-        paddingHorizontal: 9,
-        paddingVertical: 5,
+        borderRadius: 20,
+        paddingLeft: 18,
+        paddingRight: 12,
+        paddingVertical: 11,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
+        gap: 12,
+        position: "relative",
+        overflow: "hidden",
+    },
+    routeCompactCardInHeader: {
+        flex: 1,
+    },
+    routeResultScheduleButton: {
+        width: 62,
+        borderRadius: 20,
+        borderWidth: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+    },
+    routeResultScheduleButtonText: {
+        fontSize: 11,
+        fontWeight: "900",
+        lineHeight: 14,
+        letterSpacing: 0,
+    },
+    routeCompactCardPressed: {
+        opacity: 0.86,
     },
     routeCompactSwap: {
-        width: 22,
-        height: 34,
+        width: 40,
+        height: 54,
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 3,
+    },
+    routeCompactTapOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 2,
+    },
+    routeCompactEditArea: {
+        flex: 1,
+        minWidth: 0,
+        alignSelf: "stretch",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    routeCompactRail: {
+        width: 20,
+        alignSelf: "stretch",
+        justifyContent: "space-between",
+        paddingVertical: 3,
+        position: "relative",
+    },
+    routeCompactMarkerRow: {
+        minHeight: 22,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
     },
-    routeCompactRail: {
-        width: 16,
-        alignItems: "center",
-        alignSelf: "stretch",
-        paddingVertical: 3,
-    },
     routeCompactDot: {
-        width: 12,
-        height: 12,
-        borderRadius: 6,
+        width: 10,
+        height: 10,
+        borderRadius: 999,
         borderWidth: 2,
         alignItems: "center",
         justifyContent: "center",
     },
     routeCompactLine: {
-        width: 2,
-        flex: 1,
-        marginVertical: 2,
-        borderRadius: 2,
+        position: "absolute",
+        left: 9.5,
+        top: 25,
+        bottom: 25,
+        width: StyleSheet.hairlineWidth,
+        borderRadius: 999,
     },
     routeCompactTexts: {
         flex: 1,
         minWidth: 0,
-        gap: 3,
+        gap: 5,
     },
     routeCompactText: {
-        fontSize: 13,
+        fontSize: 17,
         fontWeight: "900",
-        lineHeight: 16,
+        lineHeight: 22,
     },
     routeCompactDivider: {
         height: StyleSheet.hairlineWidth,
@@ -2629,6 +3113,14 @@ const styles = StyleSheet.create({
         fontSize: 42,
         fontWeight: "300",
         lineHeight: 44,
+    },
+    scheduleListIconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
     },
     searchModeSearchBox: {
         flex: 1,
@@ -2996,25 +3488,25 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 8,
+        gap: 10,
         paddingTop: 0,
-        paddingBottom: 1,
+        paddingBottom: 6,
         paddingHorizontal: 0,
     },
     modeButtonShell: {
         flex: 0,
-        minWidth: 46,
+        minWidth: 50,
     },
     modeButtonShellSelected: {
         flex: 0,
-        minWidth: 82,
+        minWidth: 72,
     },
     modeButton: {
-        minHeight: 36,
+        minHeight: 42,
         borderWidth: 0,
-        borderRadius: 999,
-        paddingVertical: 6,
-        paddingHorizontal: 10,
+        borderRadius: 18,
+        paddingVertical: 7,
+        paddingHorizontal: 12,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
@@ -3022,10 +3514,10 @@ const styles = StyleSheet.create({
     },
     modeButtonSelected: {
         borderWidth: 1,
-        width: 82,
+        width: 72,
     },
     modeButtonIconOnly: {
-        width: 42,
+        width: 50,
         paddingHorizontal: 0,
     },
     modeButtonText: {
@@ -3035,8 +3527,9 @@ const styles = StyleSheet.create({
     },
     transitFilterRow: {
         width: "100%",
-        gap: 22,
-        paddingHorizontal: 6,
+        justifyContent: "space-between",
+        gap: 0,
+        paddingHorizontal: 0,
         paddingTop: 0,
         paddingBottom: 0,
         borderBottomWidth: StyleSheet.hairlineWidth,
@@ -3044,10 +3537,11 @@ const styles = StyleSheet.create({
     },
     transitFilterTab: {
         position: "relative",
-        minHeight: 34,
+        minHeight: 39,
         borderWidth: 0,
         borderRadius: 0,
-        paddingHorizontal: 0,
+        minWidth: 76,
+        paddingHorizontal: 2,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -3056,12 +3550,12 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        height: 3,
+        height: 2,
         borderRadius: 999,
     },
     transitFilterText: {
-        fontSize: 12,
-        fontWeight: "900",
+        fontSize: 14,
+        fontWeight: "800",
         letterSpacing: 0,
     },
     routeSortRow: {
@@ -3089,14 +3583,46 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     currentRouteNotice: {
-        paddingHorizontal: 2,
-        paddingTop: 2,
-        paddingBottom: 1,
+        minHeight: 46,
+        paddingHorizontal: 8,
+        paddingTop: 9,
+        paddingBottom: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    currentRouteTimeGroup: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
     },
     currentRouteNoticeText: {
         fontSize: 13,
         fontWeight: "600",
-        lineHeight: 17,
+        lineHeight: 19,
+        letterSpacing: 0,
+    },
+    currentRouteNoticeTimeText: {
+        fontSize: 14,
+        fontWeight: "800",
+        lineHeight: 19,
+        letterSpacing: 0,
+    },
+    currentRouteSortGroup: {
+        minHeight: 28,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 2,
+    },
+    currentRouteSortText: {
+        flexShrink: 0,
+        fontSize: 13,
+        fontWeight: "700",
+        lineHeight: 19,
         letterSpacing: 0,
     },
     routeList: {
@@ -3121,6 +3647,22 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         lineHeight: 18,
     },
+    emptyRetryButton: {
+        minHeight: 36,
+        borderRadius: 8,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+    },
+    emptyRetryText: {
+        color: "#FFFFFF",
+        fontSize: 13,
+        fontWeight: "800",
+        lineHeight: 17,
+        letterSpacing: 0,
+    },
     routeOptionCard: {
         borderRadius: 18,
         borderWidth: 1,
@@ -3139,29 +3681,26 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     routeOptionCardSelectedLight: {
-        borderWidth: 0,
-        shadowColor: "#000000",
-        shadowOpacity: 0.06,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 6 },
-        elevation: 2,
+        borderWidth: 1,
+        shadowColor: "#1E68FF",
+        shadowOpacity: 0.05,
+        shadowRadius: 7,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 1,
     },
     routeOptionCardSelectedDark: {
         borderWidth: 1,
-        shadowColor: "#000000",
-        shadowOpacity: 0,
-        shadowRadius: 0,
-        shadowOffset: { width: 0, height: 0 },
-        elevation: 0,
+        shadowColor: "#2F8CFF",
+        shadowOpacity: 0.08,
+        shadowRadius: 7,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 1,
     },
     routeOptionExpansion: {
         borderTopWidth: StyleSheet.hairlineWidth,
-        marginTop: 0,
         marginHorizontal: 14,
-        paddingHorizontal: 0,
         paddingTop: 10,
-        paddingBottom: 10,
-        gap: 9,
+        paddingBottom: 8,
         overflow: "hidden",
     },
     routeDropdownSummaryList: {
@@ -3183,7 +3722,7 @@ const styles = StyleSheet.create({
     routeDropdownIcon: {
         width: 24,
         height: 24,
-        borderRadius: 999,
+        borderRadius: 12,
         borderWidth: 1.4,
         alignItems: "center",
         justifyContent: "center",
@@ -3193,7 +3732,7 @@ const styles = StyleSheet.create({
         flex: 1,
         minHeight: 11,
         marginTop: 3,
-        opacity: 0.28,
+        opacity: 0.32,
         borderRadius: 1,
     },
     routeDropdownStepTextWrap: {
@@ -3214,64 +3753,92 @@ const styles = StyleSheet.create({
         lineHeight: 17,
         letterSpacing: 0,
     },
-    routeDropdownButtons: {
+    routeAttributionLink: {
+        minHeight: 34,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 14,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        paddingTop: 8,
-        marginTop: 2,
+        justifyContent: "flex-end",
+        gap: 4,
     },
-    routeDropdownSecondaryButton: {
+    routeAttributionText: {
+        fontSize: 11,
+        fontWeight: "600",
+        lineHeight: 15,
+        letterSpacing: 0,
+    },
+    routeCardActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 10,
+        paddingBottom: 12,
+        paddingHorizontal: 14,
+    },
+    routeCardSecondaryButton: {
         flex: 1,
-        minHeight: 40,
+        minHeight: 42,
         borderWidth: 1,
-        borderRadius: 13,
+        borderRadius: 14,
         alignItems: "center",
         justifyContent: "center",
+        flexDirection: "row",
+        gap: 5,
         paddingHorizontal: 10,
     },
-    routeDropdownSecondaryButtonText: {
+    routeCardSecondaryButtonText: {
         fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
     },
-    routeDropdownPrimaryButton: {
+    routeCardPrimaryButton: {
         flex: 1.15,
-        minHeight: 40,
-        borderRadius: 13,
+        minHeight: 42,
+        borderRadius: 14,
         alignItems: "center",
         justifyContent: "center",
+        flexDirection: "row",
+        gap: 5,
         paddingHorizontal: 10,
     },
-    routeDropdownPrimaryButtonText: {
+    routeCardPrimaryButtonText: {
         color: "#FFFFFF",
         fontSize: 14,
         fontWeight: "800",
         letterSpacing: 0,
     },
     routeOptionPressable: {
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        gap: 3,
+        paddingHorizontal: 16,
+        paddingVertical: 13,
+        gap: 7,
     },
     routeOptionHeader: {
         alignItems: "flex-start",
-        gap: 3,
+        gap: 8,
     },
     routeOptionHeaderRow: {
         width: "100%",
         flexDirection: "row",
-        alignItems: "flex-start",
+        alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
     },
+    routeOptionTitleMetaRow: {
+        flex: 1,
+        minWidth: 0,
+        alignItems: "flex-start",
+        gap: 5,
+    },
     routeOptionLabelPill: {
-        minHeight: 20,
+        minHeight: 25,
         borderRadius: 999,
-        paddingHorizontal: 7,
+        paddingHorizontal: 10,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
+        gap: 4,
     },
     routeOptionTopRow: {
         width: "100%",
@@ -3281,19 +3848,19 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     routeOptionLabel: {
-        fontSize: 10,
+        fontSize: 12,
         fontWeight: "900",
         letterSpacing: 0,
-        lineHeight: 12.5,
+        lineHeight: 15,
     },
     routeOptionDuration: {
         flexShrink: 0,
         maxWidth: 164,
         textAlign: "right",
-        fontSize: 18,
+        fontSize: 34,
         fontWeight: "800",
         letterSpacing: 0,
-        lineHeight: 21,
+        lineHeight: 39,
     },
     routeOptionDurationWrap: {
         flexShrink: 0,
@@ -3302,9 +3869,11 @@ const styles = StyleSheet.create({
         gap: 5,
     },
     routeOptionTimeFare: {
-        fontSize: 11,
+        flex: 1,
+        minWidth: 0,
+        fontSize: 15,
         fontWeight: "800",
-        lineHeight: 14,
+        lineHeight: 19,
         letterSpacing: 0,
     },
     routeOptionCondition: {
@@ -3316,24 +3885,24 @@ const styles = StyleSheet.create({
     routeMetricRow: {
         flexDirection: "row",
         flexWrap: "wrap",
-        gap: 4,
+        gap: 5,
         paddingTop: 0,
-        paddingBottom: 1,
+        paddingBottom: 2,
     },
     routeMetricChip: {
-        minHeight: 18,
+        minHeight: 24,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 999,
-        paddingHorizontal: 6,
+        paddingHorizontal: 9,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 4,
     },
     routeMetricText: {
-        fontSize: 9,
+        fontSize: 12,
         fontWeight: "900",
-        lineHeight: 11,
+        lineHeight: 14,
         letterSpacing: 0,
     },
     routeStepBadgeRow: {
@@ -3370,11 +3939,12 @@ const styles = StyleSheet.create({
     },
     routeFlowStrip: {
         width: "100%",
-        minHeight: 62,
+        minHeight: 70,
         flexDirection: "row",
         alignItems: "flex-start",
+        justifyContent: "flex-start",
         borderTopWidth: StyleSheet.hairlineWidth,
-        paddingTop: 8,
+        paddingTop: 10,
         paddingHorizontal: 0,
         overflow: "hidden",
     },
@@ -3386,11 +3956,49 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         columnGap: 2,
     },
+    routeFlowTrack: {
+        width: "100%",
+        height: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        borderRadius: 999,
+        borderWidth: StyleSheet.hairlineWidth,
+        overflow: "visible",
+        marginTop: 7,
+    },
+    routeFlowTrackSegment: {
+        height: "100%",
+        minWidth: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 2,
+        borderTopLeftRadius: 999,
+        borderBottomLeftRadius: 999,
+        borderTopRightRadius: 999,
+        borderBottomRightRadius: 999,
+        overflow: "visible",
+    },
+    routeFlowSegmentIconBadge: {
+        position: "absolute",
+        left: -2,
+        top: -8,
+        width: 30,
+        height: 30,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        shadowColor: "#000000",
+        shadowRadius: 5,
+        shadowOffset: { width: 0, height: 2 },
+        zIndex: 4,
+    },
     routeFlowSegment: {
         minWidth: 0,
         alignItems: "center",
-        gap: 2,
-        paddingHorizontal: 0,
+        gap: 3,
+        paddingHorizontal: 1,
+        position: "relative",
     },
     routeFlowSegmentSparse: {
         width: 86,
@@ -3402,51 +4010,134 @@ const styles = StyleSheet.create({
         width: 54,
     },
     routeFlowTopLine: {
-        minHeight: 21,
+        minHeight: 24,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 3,
+        gap: 5,
         maxWidth: "100%",
+    },
+    routeFlowConnector: {
+        position: "absolute",
+        top: 30,
+        right: -1,
+        width: 2,
+        height: 18,
+        borderRadius: 999,
+        opacity: 0.42,
     },
     routeFlowMarker: {
-        minHeight: 20,
+        minHeight: 23,
         maxWidth: "100%",
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
-        gap: 3,
+        gap: 4,
     },
     routeFlowLineText: {
-        maxWidth: 54,
-        fontSize: 12,
+        maxWidth: 62,
+        fontSize: 13,
         fontWeight: "900",
         letterSpacing: 0,
-        lineHeight: 14.5,
+        lineHeight: 16,
     },
     routeFlowDurationText: {
         maxWidth: "100%",
-        fontSize: 11.5,
+        fontSize: 10,
         fontWeight: "900",
-        lineHeight: 13.5,
+        lineHeight: 12,
         letterSpacing: 0,
         textAlign: "center",
     },
+    routeFlowPinnedDurationText: {
+        position: "absolute",
+        left: 0,
+        top: 2,
+        minWidth: 30,
+        maxWidth: 42,
+        paddingHorizontal: 2,
+        zIndex: 6,
+    },
+    routeFlowRideDurationText: {
+        marginLeft: 24,
+        paddingRight: 3,
+    },
+    routeFlowLeadingDurationText: {
+        marginLeft: 32,
+        paddingRight: 2,
+    },
+    routeFlowTrailingDurationText: {
+        marginLeft: 12,
+    },
+    routeFlowLineLabelRow: {
+        width: "100%",
+        flexDirection: "row",
+        alignItems: "flex-start",
+        minHeight: 14,
+        marginTop: 2,
+    },
+    routeFlowLineLabelCell: {
+        minWidth: 12,
+        alignItems: "center",
+    },
+    routeFlowLineLabelText: {
+        fontSize: 11,
+        fontWeight: "900",
+        lineHeight: 14,
+        letterSpacing: 0,
+    },
     routeFlowPointText: {
         maxWidth: "100%",
-        fontSize: 9.75,
+        fontSize: 10.75,
         fontWeight: "800",
-        lineHeight: 12,
+        lineHeight: 13.5,
         letterSpacing: 0,
         textAlign: "center",
     },
     routeFlowPathSummary: {
         maxWidth: "100%",
-        paddingTop: 3,
+        paddingTop: 2,
         paddingLeft: 2,
-        fontSize: 11.25,
-        fontWeight: "600",
-        lineHeight: 14,
+        fontSize: 13,
+        fontWeight: "700",
+        lineHeight: 17,
+        letterSpacing: 0,
+    },
+    routeSelectionActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+        paddingTop: 4,
+        paddingBottom: 2,
+    },
+    routeSelectionSecondaryButton: {
+        flex: 1,
+        minHeight: 46,
+        borderWidth: 1,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "row",
+        gap: 7,
+        paddingHorizontal: 10,
+    },
+    routeSelectionSecondaryButtonText: {
+        fontSize: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    routeSelectionPrimaryButton: {
+        flex: 1.15,
+        minHeight: 46,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 10,
+    },
+    routeSelectionPrimaryButtonText: {
+        color: "#FFFFFF",
+        fontSize: 15,
+        fontWeight: "800",
         letterSpacing: 0,
     },
     routeProgressTrackLight: {
@@ -3459,6 +4150,24 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontWeight: "900",
         lineHeight: 11,
+        letterSpacing: 0,
+    },
+    routeBoardingSummaryRow: {
+        width: "100%",
+        minHeight: 32,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        marginTop: 5,
+        paddingTop: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    routeBoardingSummaryText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 13,
+        fontWeight: "800",
+        lineHeight: 17,
         letterSpacing: 0,
     },
     routeOptionDetailTapArea: {
@@ -3480,5 +4189,110 @@ const styles = StyleSheet.create({
         fontSize: 20,
         fontWeight: "900",
         lineHeight: 20,
+    },
+    mapPickerRoot: {
+        flex: 1,
+    },
+    mapPickerMap: {
+        ...StyleSheet.absoluteFillObject,
+    },
+    mapPickerHeader: {
+        position: "absolute",
+        left: 16,
+        right: 16,
+        top: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        zIndex: 5,
+    },
+    mapPickerIconButton: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    mapPickerBackText: {
+        fontSize: 34,
+        fontWeight: "700",
+        lineHeight: 38,
+        marginTop: -2,
+    },
+    mapPickerTitleBox: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: 16,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 14,
+    },
+    mapPickerTitle: {
+        fontSize: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    mapPickerBottomSheet: {
+        position: "absolute",
+        left: 14,
+        right: 14,
+        bottom: 12,
+        borderRadius: 18,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingTop: 18,
+        paddingHorizontal: 16,
+        gap: 13,
+        zIndex: 5,
+    },
+    mapPickerInstruction: {
+        fontSize: 18,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    mapPickerAddressRow: {
+        minHeight: 42,
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 9,
+    },
+    mapPickerAddressText: {
+        flex: 1,
+        fontSize: 13,
+        fontWeight: "700",
+        lineHeight: 18,
+        letterSpacing: 0,
+    },
+    mapPickerActionRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    mapPickerSecondaryButton: {
+        flex: 1,
+        minHeight: 48,
+        borderRadius: 14,
+        borderWidth: 1,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    mapPickerSecondaryText: {
+        fontSize: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    mapPickerPrimaryButton: {
+        flex: 1.25,
+        minHeight: 48,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    mapPickerPrimaryText: {
+        color: "#FFFFFF",
+        fontSize: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
 });

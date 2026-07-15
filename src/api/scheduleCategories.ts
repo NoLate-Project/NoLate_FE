@@ -1,6 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
-import type { ScheduleCategory } from "../modules/schedule/types";
+import type { ScheduleCategory, ScheduleSharePermission } from "../modules/schedule/types";
 
 export type ScheduleCategoryItem = ScheduleCategory & {
     iconKey?: string;
@@ -14,6 +14,9 @@ type ScheduleCategoryDto = {
     color?: string | null;
     iconKey?: string | null;
     sortOrder?: number | null;
+    ownerMemberId?: number | null;
+    shared?: boolean | null;
+    sharePermission?: ScheduleSharePermission | null;
     updatedAt?: string | null;
 };
 
@@ -31,7 +34,7 @@ type UpdateScheduleCategoryPayload = {
 };
 
 function normalizeScheduleCategory(dto: ScheduleCategoryDto): ScheduleCategoryItem {
-    return {
+    const category: ScheduleCategoryItem = {
         id: dto.id === undefined || dto.id === null ? "" : String(dto.id),
         title: dto.title?.trim() || "카테고리",
         color: dto.color?.trim() || "#5A96FF",
@@ -39,6 +42,20 @@ function normalizeScheduleCategory(dto: ScheduleCategoryDto): ScheduleCategoryIt
         sortOrder: typeof dto.sortOrder === "number" ? dto.sortOrder : undefined,
         updatedAt: dto.updatedAt ?? undefined,
     };
+
+    if (typeof dto.ownerMemberId === "number") {
+        category.ownerMemberId = dto.ownerMemberId;
+    }
+
+    if (typeof dto.shared === "boolean") {
+        category.shared = dto.shared;
+    }
+
+    if (dto.sharePermission) {
+        category.sharePermission = dto.sharePermission;
+    }
+
+    return category;
 }
 
 export async function getScheduleCategoriesFromApi(): Promise<ScheduleCategoryItem[]> {

@@ -1,4 +1,4 @@
-import * as SecureStore from "expo-secure-store";
+import * as SecureStore from "../storage/secureStorage";
 
 const ACCESS_TOKEN_KEY = "nolte_access_token";
 const REFRESH_TOKEN_KEY = "nolte_refresh_token";

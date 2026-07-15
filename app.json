@@ -56,6 +56,8 @@
     "permissions": [
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
+      "READ_CALENDAR",
+      "WRITE_CALENDAR",
       "RECORD_AUDIO"
     ]
   },
@@ -64,15 +66,30 @@
     "buildNumber": "32",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
-      "aps-environment": "$(APS_ENVIRONMENT)"
+      "aps-environment": "$(APS_ENVIRONMENT)",
+      "keychain-access-groups": [
+        "$(AppIdentifierPrefix)com.anonymous.nolatefe"
+      ]
     },
     "infoPlist": {
       "ITSAppUsesNonExemptEncryption": false,
       "KAKAO_APP_SCHEME": "kakao9586a8e3a28f3a6fbe3e23b9b34ec206",
       "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",
+      "NSCalendarsUsageDescription": "NoLate에서 캘린더 일정을 가져와 출발 알림을 준비하기 위해 캘린더 접근 권한이 필요합니다.",
+      "NSCalendarsFullAccessUsageDescription": "NoLate에서 선택한 캘린더 일정을 가져와 출발 알림을 준비하기 위해 전체 캘린더 접근 권한이 필요합니다.",
+      "NSRemindersUsageDescription": "NoLate에서 리마인더 일정을 확인해 출발 알림 후보를 준비하기 위해 리마인더 접근 권한이 필요합니다.",
+      "NSRemindersFullAccessUsageDescription": "NoLate에서 리마인더 일정을 확인해 출발 알림 후보를 준비하기 위해 전체 리마인더 접근 권한이 필요합니다.",
       "NSCameraUsageDescription": "NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.",
       "NSPhotoLibraryUsageDescription": "NoLate에서 사진 속 일정 정보를 불러오기 위해 사진 보관함 권한이 필요합니다.",
       "NSMicrophoneUsageDescription": "NoLate에서 음성으로 빠른 일정을 만들기 위해 마이크 권한이 필요합니다.",
+      "NSSpeechRecognitionUsageDescription": "NoLate에서 음성을 텍스트로 변환해 빠른 일정을 만들기 위해 음성 인식 권한이 필요합니다.",
+      "LSApplicationQueriesSchemes": [
+        "kakaokompassauth",
+        "storykompassauth",
+        "kakaolink",
+        "naversearchapp",
+        "naversearchthirdlogin"
+      ],
       "UIBackgroundModes": [
         "remote-notification"
       ],

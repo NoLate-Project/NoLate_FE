@@ -143,6 +143,8 @@ export async function saveFavoritePlaceToApi(
         address: place.address?.trim() || undefined,
         lat: place.lat,
         lng: place.lng,
+        provider: place.provider?.trim() || undefined,
+        providerPlaceId: place.providerPlaceId?.trim() || undefined,
     };
     const response = await apiPost<ApiEnvelope<FavoritePlaceDto>, SaveFavoritePlacePayload>(
         "/api/favorite-places",

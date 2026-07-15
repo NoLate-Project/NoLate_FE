@@ -1,4 +1,5 @@
 import React from "react";
+import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
@@ -39,6 +40,9 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
     const travelText = typeof item.travelMinutes === "number"
         ? `${getTravelModeLabel(item.travelMode ?? "ETC")} ${item.travelMinutes}분`
         : "";
+    const sharePermission = item.sharePermission ?? item.category?.sharePermission;
+    const isShared = item.category?.shared === true || Boolean(sharePermission);
+    const shareLabel = sharePermission === "EDITOR" ? "편집 공유" : "공유됨";
     const metaText = [
         item.category?.title,
         routeText,
@@ -50,6 +54,12 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
 
     return (
         <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={[
+                time.secondary ? `${time.primary}~${time.secondary}` : time.primary,
+                item.title,
+                metaText,
+            ].filter(Boolean).join(", ")}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.row,
@@ -84,12 +94,22 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
                     ],
                 ]}
             >
-                <Text
-                    numberOfLines={1}
-                    style={[styles.title, { color: colors.textPrimary }]}
-                >
-                    {item.title}
-                </Text>
+                <View style={styles.titleRow}>
+                    <Text
+                        numberOfLines={1}
+                        style={[styles.title, { color: colors.textPrimary }]}
+                    >
+                        {item.title}
+                    </Text>
+                    {isShared && (
+                        <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                            <Ionicons name="people-outline" size={13} color={colors.textSecondary} />
+                            <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
+                                {shareLabel}
+                            </Text>
+                        </View>
+                    )}
+                </View>
 
                 {metaText ? (
                     <Text
@@ -147,8 +167,29 @@ const styles = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
     title: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 17,
         lineHeight: 22,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    titleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    sharedBadge: {
+        height: 23,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 12,
+        paddingHorizontal: 7,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    sharedBadgeText: {
+        fontSize: 11,
         fontWeight: "800",
         letterSpacing: 0,
     },

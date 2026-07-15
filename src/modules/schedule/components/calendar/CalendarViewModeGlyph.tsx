@@ -10,17 +10,23 @@ type Props = {
     mode: CalendarViewMode;
     color: string;
     size?: number;
+    toolbar?: boolean;
 };
 
 const FALLBACK_ICON_BY_MODE: Record<CalendarViewMode, IconName> = {
-    compact: "remove-outline",
-    stack: "albums-outline",
+    compact: "albums-outline",
+    stack: "calendar-clear-outline",
     detail: "reader-outline",
     week: "calendar-outline",
     list: "list-outline",
 };
 
-export default function CalendarViewModeGlyph({ mode, color, size = 26 }: Props) {
+export default function CalendarViewModeGlyph({
+    mode,
+    color,
+    size = 26,
+    toolbar = false,
+}: Props) {
     const unit = size / 28;
     const lineWidth = Math.max(2, 2.2 * unit);
     const roundedLine = {
@@ -29,40 +35,24 @@ export default function CalendarViewModeGlyph({ mode, color, size = 26 }: Props)
         borderRadius: 999,
     };
 
+    if (toolbar) {
+        return <Ionicons name="albums-outline" size={size} color={color} />;
+    }
+
     if (mode === "compact") {
         return (
             <View
                 pointerEvents="none"
                 style={[styles.container, { width: size, height: size }]}
             >
-                <View
-                    style={[
-                        styles.compactTrack,
-                        roundedLine,
-                        {
-                            width: 22 * unit,
-                            height: 7 * unit,
-                        },
-                    ]}
-                >
-                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
-                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
-                    <View style={[styles.compactDivider, { backgroundColor: color }]} />
-                </View>
+                <View style={[styles.compactBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
+                <View style={[styles.compactBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
             </View>
         );
     }
 
     if (mode === "stack") {
-        return (
-            <View
-                pointerEvents="none"
-                style={[styles.container, { width: size, height: size }]}
-            >
-                <View style={[styles.stackBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
-                <View style={[styles.stackBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
-            </View>
-        );
+        return <Ionicons name="calendar-clear-outline" size={size} color={color} />;
     }
 
     if (mode === "detail") {
@@ -106,18 +96,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
     },
-    compactTrack: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-evenly",
-        overflow: "hidden",
-    },
-    compactDivider: {
-        width: 2,
-        height: "100%",
-        opacity: 0.9,
-    },
-    stackBar: {
+    compactBar: {
         marginVertical: 2,
     },
     detailBar: {

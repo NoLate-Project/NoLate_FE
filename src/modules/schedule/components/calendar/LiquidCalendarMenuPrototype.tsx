@@ -22,11 +22,13 @@ export type LiquidCalendarMenuVariant = "calendar" | "timeline";
 export type LiquidCalendarMenuPrototypeProps = ViewProps & {
     selectedMode?: LiquidCalendarMenuSelectionMode;
     viewModeVariant?: LiquidCalendarMenuVariant;
+    showsViewModeButton?: boolean;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
     closeRequest?: number;
     addMenuRequest?: number;
+    searchRequest?: number;
     quickAddRequest?: number;
     manualAddRequest?: number;
     searchExpandedWidth?: number;
@@ -45,11 +47,13 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
 type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
     selectedMode?: string;
     viewModeVariant?: LiquidCalendarMenuVariant;
+    showsViewModeButton?: boolean;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
     tapRequest?: number;
     closeRequest?: number;
     addMenuRequest?: number;
+    searchRequest?: number;
     quickAddRequest?: number;
     manualAddRequest?: number;
     searchExpandedWidth?: number;
@@ -102,11 +106,13 @@ function isKnownSelectionMode(mode: string): mode is LiquidCalendarMenuSelection
 export default function LiquidCalendarMenuPrototype({
     selectedMode,
     viewModeVariant = "calendar",
+    showsViewModeButton = true,
     disabled = false,
     colorScheme = "dark",
     tapRequest,
     closeRequest,
     addMenuRequest,
+    searchRequest,
     quickAddRequest,
     manualAddRequest,
     searchExpandedWidth,
@@ -193,11 +199,13 @@ export default function LiquidCalendarMenuPrototype({
             <NativePrototype
                 selectedMode={selectedMode}
                 viewModeVariant={viewModeVariant}
+                showsViewModeButton={showsViewModeButton}
                 disabled={disabled}
                 colorScheme={colorScheme}
                 tapRequest={tapRequest}
                 closeRequest={closeRequest}
                 addMenuRequest={addMenuRequest}
+                searchRequest={searchRequest}
                 quickAddRequest={quickAddRequest}
                 manualAddRequest={manualAddRequest}
                 searchExpandedWidth={searchExpandedWidth}

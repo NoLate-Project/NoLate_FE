@@ -23,6 +23,10 @@ import {
     saveAuthTokens,
     type StoredAuthMember,
 } from "../src/modules/auth/authStorage";
+import {
+    refreshCalendarConnectionSnapshotFromDevice,
+    type CalendarConnectionSnapshot,
+} from "../src/modules/onboarding/calendarConnectionStorage";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 
 const getErrorMessage = (error: unknown) =>
@@ -43,6 +47,19 @@ function formatLoginType(loginType?: string) {
         default:
             return "확인 중";
     }
+}
+
+function formatConnectionDate(value?: string) {
+    if (!value) return "아직 없음";
+
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return "확인 필요";
+
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    return `${month}월 ${day}일 ${hour}:${minute}`;
 }
 
 function AccountInfoRow({
@@ -80,6 +97,17 @@ function AccountInfoRow({
     );
 }
 
+function CalendarConnectionStat({ label, value }: { label: string; value: string }) {
+    const { colors } = useTheme();
+
+    return (
+        <View style={styles.calendarStatItem}>
+            <Text style={[styles.calendarStatValue, { color: colors.textPrimary }]}>{value}</Text>
+            <Text style={[styles.calendarStatLabel, { color: colors.textSecondary }]}>{label}</Text>
+        </View>
+    );
+}
+
 export default function ProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -87,6 +115,7 @@ export default function ProfileScreen() {
     const { signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
     const [account, setAccount] = useState<StoredAuthMember | null>(null);
+    const [calendarConnection, setCalendarConnection] = useState<CalendarConnectionSnapshot | null>(null);
     const [signingOut, setSigningOut] = useState(false);
 
     const rawDisplayName = account?.name?.trim() ?? "";
@@ -117,13 +146,18 @@ export default function ProfileScreen() {
 
     const loadProfile = useCallback(async () => {
         try {
-            const [next] = await Promise.all([
+            const [next, , nextCalendarConnection] = await Promise.all([
                 getMyProfile(),
                 loadAccount().catch((error) => {
                     console.warn("[profile] account info load failed", error);
                 }),
+                refreshCalendarConnectionSnapshotFromDevice().catch((error) => {
+                    console.warn("[profile] calendar connection load failed", error);
+                    return null;
+                }),
             ]);
             setProfile(next);
+            setCalendarConnection(nextCalendarConnection);
         } catch (error) {
             Alert.alert("프로필 조회 실패", getErrorMessage(error));
         }
@@ -155,6 +189,10 @@ export default function ProfileScreen() {
         }
 
         router.replace("/schedule");
+    }, [router]);
+
+    const openCalendarOnboarding = useCallback(() => {
+        router.push("/onboarding/calendar-import");
     }, [router]);
 
     return (
@@ -254,6 +292,93 @@ export default function ProfileScreen() {
                             colors={colors}
                             showDivider={false}
                         />
+                    </CalendarGlassSurface>
+                </View>
+
+                <View style={styles.section}>
+                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>캘린더 연동</Text>
+                    <CalendarGlassSurface
+                        interactive={!calendarConnection}
+                        variant="card"
+                        tone="solidCard"
+                        style={[styles.calendarConnectionCard, { borderColor: colors.border }]}
+                    >
+                        {calendarConnection ? (
+                            <View style={styles.calendarConnectionContent}>
+                                <View style={styles.calendarConnectionHeader}>
+                                    <View style={[styles.calendarConnectionIcon, { backgroundColor: colors.selectedDayBg }]}>
+                                        <Ionicons name="calendar-outline" size={21} color={colors.selectedDayText} />
+                                    </View>
+                                    <View style={styles.calendarConnectionTitleWrap}>
+                                        <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
+                                            {calendarConnection.providerLabel}
+                                        </Text>
+                                        <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
+                                            이 기기에서 연동됨
+                                        </Text>
+                                    </View>
+                                    <View style={styles.connectedBadge}>
+                                        <Text style={styles.connectedBadgeText}>연동됨</Text>
+                                    </View>
+                                </View>
+                                <View style={[styles.calendarStats, { borderTopColor: colors.border }]}>
+                                    <CalendarConnectionStat
+                                        label="캘린더"
+                                        value={`${calendarConnection.calendarCount}개`}
+                                    />
+                                    <CalendarConnectionStat
+                                        label="후보 일정"
+                                        value={`${calendarConnection.eventCandidateCount}개`}
+                                    />
+                                    <CalendarConnectionStat
+                                        label="가져온 일정"
+                                        value={`${calendarConnection.importedCount}개`}
+                                    />
+                                </View>
+                                {calendarConnection.calendarNames.length > 0 ? (
+                                    <View style={styles.syncedCalendarList}>
+                                        {calendarConnection.calendarNames.map((name) => (
+                                            <View key={name} style={[styles.syncedCalendarPill, { borderColor: colors.border }]}>
+                                                <Ionicons name="ellipse" size={7} color={colors.textSecondary} />
+                                                <Text
+                                                    numberOfLines={1}
+                                                    style={[styles.syncedCalendarPillText, { color: colors.textPrimary }]}
+                                                >
+                                                    {name}
+                                                </Text>
+                                            </View>
+                                        ))}
+                                    </View>
+                                ) : null}
+                                <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
+                                    마지막 확인 {formatConnectionDate(calendarConnection.lastScannedAt)}
+                                    {calendarConnection.lastImportedAt
+                                        ? ` · 마지막 가져오기 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
+                                        : ""}
+                                </Text>
+                            </View>
+                        ) : (
+                            <Pressable
+                                onPress={openCalendarOnboarding}
+                                style={({ pressed }) => [
+                                    styles.calendarEmptyButton,
+                                    { opacity: pressed ? 0.62 : 1 },
+                                ]}
+                            >
+                                <View style={[styles.calendarConnectionIcon, { backgroundColor: colors.selectedDayBg }]}>
+                                    <Ionicons name="calendar-outline" size={21} color={colors.selectedDayText} />
+                                </View>
+                                <View style={styles.calendarConnectionTitleWrap}>
+                                    <Text style={[styles.calendarConnectionTitle, { color: colors.textPrimary }]}>
+                                        연동된 캘린더 없음
+                                    </Text>
+                                    <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
+                                        Apple 또는 휴대폰 캘린더에서 일정을 가져올 수 있어요
+                                    </Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                            </Pressable>
+                        )}
                     </CalendarGlassSurface>
                 </View>
 
@@ -431,6 +556,106 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 14,
+    },
+    calendarConnectionCard: {
+        borderWidth: 1,
+        borderRadius: 18,
+        overflow: "hidden",
+    },
+    calendarConnectionContent: {
+        padding: 16,
+        gap: 13,
+    },
+    calendarConnectionHeader: {
+        minHeight: 46,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    calendarConnectionIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#111111",
+    },
+    calendarConnectionTitleWrap: {
+        flex: 1,
+        minWidth: 0,
+        gap: 3,
+    },
+    calendarConnectionTitle: {
+        fontSize: 15,
+        fontWeight: "900",
+    },
+    calendarConnectionHint: {
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "700",
+    },
+    connectedBadge: {
+        borderRadius: 12,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        backgroundColor: "rgba(34,197,94,0.14)",
+    },
+    connectedBadgeText: {
+        color: "#22c55e",
+        fontSize: 11,
+        fontWeight: "900",
+    },
+    calendarStats: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 12,
+        flexDirection: "row",
+        gap: 10,
+    },
+    calendarStatItem: {
+        flex: 1,
+        minWidth: 0,
+        gap: 3,
+    },
+    calendarStatValue: {
+        fontSize: 15,
+        fontWeight: "900",
+    },
+    calendarStatLabel: {
+        fontSize: 11,
+        fontWeight: "800",
+    },
+    syncedCalendarList: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 7,
+    },
+    syncedCalendarPill: {
+        maxWidth: "100%",
+        minHeight: 30,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    syncedCalendarPillText: {
+        flexShrink: 1,
+        minWidth: 0,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    calendarConnectionFooter: {
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "700",
+    },
+    calendarEmptyButton: {
+        minHeight: 78,
+        paddingHorizontal: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
     },
     settingTextWrap: {
         flex: 1,

@@ -1,11 +1,15 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
+import type { SharedValue } from "react-native-reanimated";
 import ScheduleCalendar from "./ScheduleCalendar";
 import type { ScheduleItem } from "../../types";
 import type { CalendarViewMode } from "./viewMode";
 
+export type DayTransitionContext = "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
+
 type Props = {
     selectedDay: string;
+    focusedMonth?: string;
     items: ScheduleItem[];
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
@@ -14,12 +18,16 @@ type Props = {
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
     headerOffset?: number;
-    topSafeInset?: number;
+    transitionMonthKey?: string;
+    transitionActive?: boolean;
+    transitionContext?: DayTransitionContext;
+    animatedDayHeight?: SharedValue<number>;
 };
 
 // 일정 캘린더에 선택 날짜와 일정 목록을 연결한다.
 export default function CalendarWrapper({
     selectedDay,
+    focusedMonth,
     items,
     onSelectDay,
     onOpenDay,
@@ -28,14 +36,19 @@ export default function CalendarWrapper({
     scrollRequest,
     onVisibleMonthChange,
     headerOffset,
-    topSafeInset,
+    transitionMonthKey,
+    transitionActive = false,
+    transitionContext = "idle",
+    animatedDayHeight,
 }: Props) {
-    const shouldUseCompactHeight = viewMode === "list" || viewMode === "week";
+    const shouldUseCompactHeight =
+        viewMode === "detail" || viewMode === "list" || viewMode === "week";
 
     return (
         <View style={shouldUseCompactHeight ? styles.compact : styles.full}>
             <ScheduleCalendar
                 selectedDay={selectedDay}
+                focusedMonth={focusedMonth}
                 items={items}
                 onSelectDay={onSelectDay}
                 onOpenDay={onOpenDay}
@@ -44,7 +57,10 @@ export default function CalendarWrapper({
                 scrollRequest={scrollRequest}
                 onVisibleMonthChange={onVisibleMonthChange}
                 headerOffset={headerOffset}
-                topSafeInset={topSafeInset}
+                transitionMonthKey={transitionMonthKey}
+                transitionActive={transitionActive}
+                transitionContext={transitionContext}
+                animatedDayHeight={animatedDayHeight}
             />
         </View>
     );

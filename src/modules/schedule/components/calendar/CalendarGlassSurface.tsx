@@ -33,6 +33,7 @@ type Props = ViewProps & {
     variant?: LiquidGlassVariant;
     tone?: "default" | "flat" | "softGlass" | "menuLiquid" | "solidCard";
     glow?: boolean;
+    forceColorScheme?: "dark" | "light";
 };
 
 type ContainerProps = ViewProps & {
@@ -165,22 +166,32 @@ export default function CalendarGlassSurface({
     variant = "card",
     tone = "default",
     glow = false,
+    forceColorScheme,
     style,
     ...viewProps
 }: Props) {
     const { mode } = useTheme();
+    const effectiveMode = forceColorScheme ?? mode;
     const [reduceTransparency, setReduceTransparency] = useState(false);
     const nativeGlassAvailable = canUseNativeGlass();
     const glassEffect = nativeGlassAvailable ? loadGlassEffect() : null;
-    const palette = getGlassPalette(mode, clear, prominent, variant, reduceTransparency);
+    const palette = getGlassPalette(effectiveMode, clear, prominent, variant, reduceTransparency);
     const isFlatTone = tone === "flat";
     const isSoftGlassTone = tone === "softGlass";
     const isMenuLiquidTone = tone === "menuLiquid";
     const isSolidCardTone = tone === "solidCard";
     const usesTonedSurface = isFlatTone || isSoftGlassTone || isMenuLiquidTone || isSolidCardTone;
-    const menuLiquidNativeTint = mode === "dark"
+    const menuLiquidNativeTint = effectiveMode === "dark"
         ? "rgba(8, 9, 14, 0.76)"
         : "rgba(255, 255, 255, 0.76)";
+    const solidCardNativeTint = effectiveMode === "dark"
+        ? "rgba(9, 10, 13, 0.96)"
+        : "rgba(255, 255, 255, 0.86)";
+    const nativeTintColor = isSolidCardTone
+        ? solidCardNativeTint
+        : isMenuLiquidTone
+            ? menuLiquidNativeTint
+            : palette.nativeTint;
 
     useEffect(() => {
         let mounted = true;
@@ -207,23 +218,23 @@ export default function CalendarGlassSurface({
         return (
             <GlassView
                 {...viewProps}
-                colorScheme={mode}
+                colorScheme={effectiveMode}
                 glassEffectStyle="regular"
                 isInteractive={interactive}
-                tintColor={isMenuLiquidTone ? menuLiquidNativeTint : palette.nativeTint}
+                tintColor={nativeTintColor}
                 style={[
                     styles.surface,
                     styles.clipped,
                     styles.nativeDepth,
                     variant === "bottomBar" && styles.bottomBarDepth,
                     variant === "mapCard" && styles.mapDepth,
-                    style,
                     isMenuLiquidTone && (
-                        mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                        effectiveMode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
                     ),
                     isSolidCardTone && (
-                        mode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                        effectiveMode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
                     ),
+                    style,
                 ]}
             >
                 {!isSolidCardTone && (prominent || reduceTransparency) && (
@@ -313,14 +324,14 @@ export default function CalendarGlassSurface({
                 styles.fallbackDepth,
                 variant === "bottomBar" && styles.bottomBarDepth,
                 variant === "mapCard" && styles.mapDepth,
-                style,
                 { backgroundColor: palette.background },
                 isMenuLiquidTone && (
-                    mode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                    effectiveMode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
                 ),
                 isSolidCardTone && (
-                    mode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                    effectiveMode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
                 ),
+                style,
                 styles.clipped,
                 Platform.OS === "android" && styles.androidDepth,
             ]}
@@ -334,7 +345,7 @@ export default function CalendarGlassSurface({
                         isFlatTone && styles.prominentFillFlat,
                         isSoftGlassTone && styles.prominentFillSoftGlass,
                         isMenuLiquidTone && styles.prominentFillMenuLiquid,
-                        mode === "dark"
+                        effectiveMode === "dark"
                             ? styles.prominentFillDark
                             : styles.prominentFillLight,
                     ]}
@@ -447,7 +458,7 @@ const styles = StyleSheet.create({
         backgroundColor: "rgba(255, 255, 255, 0.79)",
     },
     solidCardSurfaceDark: {
-        backgroundColor: "rgba(28, 29, 33, 0.86)",
+        backgroundColor: "rgba(9, 10, 13, 0.96)",
     },
     solidCardSurfaceLight: {
         backgroundColor: "rgba(255, 255, 255, 0.84)",

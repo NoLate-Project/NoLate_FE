@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import {
     Pressable,
     ScrollView,
@@ -16,12 +16,10 @@ type Props = {
     selectedDay: string;
     firstDay: 0 | 1;
     topInset?: number;
-    onChangeYear: (year: number) => void;
+    todayRequest?: number;
+    reduceMotionEnabled?: boolean;
     onSelectMonth: (year: number, month: number) => void;
-    onClose: () => void;
 };
-
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
     const daysInMonth = new Date(year, month, 0).getDate();
@@ -34,13 +32,14 @@ function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
     });
 }
 
-export default function CalendarYearOverviewModal({
+function CalendarYearOverviewModal({
     visible,
     year,
     selectedDay,
     firstDay,
     topInset = 0,
-    onChangeYear,
+    todayRequest = 0,
+    reduceMotionEnabled = false,
     onSelectMonth,
 }: Props) {
     const { colors, mode } = useTheme();
@@ -50,23 +49,50 @@ export default function CalendarYearOverviewModal({
     const todayYear = today.getFullYear();
     const todayMonth = today.getMonth() + 1;
     const todayDate = today.getDate();
-    const weekdayLabels = Array.from({ length: 7 }, (_, index) => (
-        WEEKDAYS[(firstDay + index) % 7]
-    ));
     const currentYear = todayYear;
     const accentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
-    const visibleYears = [year, year + 1, year + 2];
+    const visibleYears = Array.from(new Set([year, year + 1, year + 2, currentYear]))
+        .sort((left, right) => left - right);
+    const scrollRef = useRef<ScrollView>(null);
+    const yearOffsetsRef = useRef<Record<number, number>>({});
+    const handledTodayRequestRef = useRef(todayRequest);
+    const contentTopPadding = Math.max(topInset + 63, 103);
 
-    if (!visible) return null;
+    React.useEffect(() => {
+        if (!visible || handledTodayRequestRef.current === todayRequest) return;
+        handledTodayRequestRef.current = todayRequest;
+
+        const scrollToToday = () => {
+            const yearOffset = yearOffsetsRef.current[todayYear];
+            if (!Number.isFinite(yearOffset)) return;
+
+            scrollRef.current?.scrollTo({
+                y: Math.max(0, yearOffset - contentTopPadding),
+                animated: !reduceMotionEnabled,
+            });
+        };
+
+        const firstFrame = requestAnimationFrame(() => {
+            requestAnimationFrame(scrollToToday);
+        });
+        return () => cancelAnimationFrame(firstFrame);
+    }, [
+        contentTopPadding,
+        reduceMotionEnabled,
+        todayRequest,
+        todayYear,
+        visible,
+    ]);
 
     return (
         <View style={[styles.safeArea, { backgroundColor: colors.calendarBackground }]}>
             <ScrollView
+                ref={scrollRef}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={[
                     styles.content,
                     {
-                        paddingTop: Math.max(topInset + 88, 124),
+                        paddingTop: contentTopPadding,
                         paddingBottom: Math.max(insets.bottom + 118, 148),
                     },
                 ]}
@@ -77,8 +103,14 @@ export default function CalendarYearOverviewModal({
                         : colors.textPrimary;
 
                     return (
-                        <View key={sectionYear} style={styles.yearSection}>
-                            <View style={styles.yearHeader}>
+                        <View
+                            key={sectionYear}
+                            style={styles.yearSection}
+                            onLayout={(event) => {
+                                yearOffsetsRef.current[sectionYear] = event.nativeEvent.layout.y;
+                            }}
+                        >
+                            <View style={[styles.yearHeader, { borderBottomColor: colors.border }]}>
                                 <Text style={[styles.yearTitle, { color: sectionYearColor }]}>
                                     {sectionYear}년
                                 </Text>
@@ -87,6 +119,7 @@ export default function CalendarYearOverviewModal({
                             <View style={styles.monthGrid}>
                                 {Array.from({ length: 12 }, (_, index) => {
                                     const month = index + 1;
+                                    const monthKey = `${sectionYear}-${month}`;
                                     const cells = getMonthCells(sectionYear, month, firstDay);
                                     const isSelectedMonth =
                                         selectedDate.getFullYear() === sectionYear &&
@@ -97,11 +130,8 @@ export default function CalendarYearOverviewModal({
 
                                     return (
                                         <Pressable
-                                            key={`${sectionYear}-${month}`}
-                                            onPress={() => {
-                                                onChangeYear(sectionYear);
-                                                onSelectMonth(sectionYear, month);
-                                            }}
+                                            key={monthKey}
+                                            onPress={() => onSelectMonth(sectionYear, month)}
                                             style={({ pressed }) => [
                                                 styles.monthPreview,
                                                 { opacity: pressed ? 0.55 : 1 },
@@ -122,17 +152,6 @@ export default function CalendarYearOverviewModal({
                                                 {month}월
                                             </Text>
 
-                                            <View style={styles.weekRow}>
-                                                {weekdayLabels.map((label, weekdayIndex) => (
-                                                    <Text
-                                                        key={`${label}-${weekdayIndex}`}
-                                                        style={[styles.weekday, { color: colors.textSecondary }]}
-                                                    >
-                                                        {label}
-                                                    </Text>
-                                                ))}
-                                            </View>
-
                                             <View style={styles.daysGrid}>
                                                 {cells.map((day, cellIndex) => {
                                                     const isSelectedDay =
@@ -141,6 +160,16 @@ export default function CalendarYearOverviewModal({
                                                         sectionYear === todayYear &&
                                                         month === todayMonth &&
                                                         day === todayDate;
+                                                    const badgeFill = isToday
+                                                        ? accentColor
+                                                        : isSelectedDay
+                                                            ? colors.selectedDayBg
+                                                            : "transparent";
+                                                    const badgeTextColor = isToday
+                                                        ? "#ffffff"
+                                                        : isSelectedDay
+                                                            ? colors.selectedDayText
+                                                            : colors.textPrimary;
                                                     return (
                                                         <View key={cellIndex} style={styles.dayCell}>
                                                             {day !== null && (
@@ -148,9 +177,8 @@ export default function CalendarYearOverviewModal({
                                                                     style={[
                                                                         styles.dayBadge,
                                                                         (isSelectedDay || isToday) && {
-                                                                            backgroundColor: isToday
-                                                                                ? accentColor
-                                                                                : colors.selectedDayBg,
+                                                                            backgroundColor: badgeFill,
+                                                                            borderColor: "transparent",
                                                                         },
                                                                     ]}
                                                                 >
@@ -159,7 +187,7 @@ export default function CalendarYearOverviewModal({
                                                                             styles.dayText,
                                                                             {
                                                                                 color: isSelectedDay || isToday
-                                                                                    ? colors.selectedDayText
+                                                                                    ? badgeTextColor
                                                                                     : colors.textPrimary,
                                                                             },
                                                                         ]}
@@ -184,53 +212,47 @@ export default function CalendarYearOverviewModal({
     );
 }
 
+export default React.memo(CalendarYearOverviewModal);
+
 const styles = StyleSheet.create({
     safeArea: {
         flex: 1,
     },
     content: {
-        paddingHorizontal: 18,
+        paddingHorizontal: 24,
     },
     yearSection: {
         marginBottom: 44,
     },
     yearHeader: {
-        marginBottom: 18,
+        marginBottom: 13,
+        paddingBottom: 2,
+        borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "flex-start",
     },
     yearTitle: {
-        fontSize: 46,
-        lineHeight: 52,
-        fontWeight: "900",
+        fontSize: 34,
+        lineHeight: 40,
+        fontWeight: "700",
         letterSpacing: 0,
     },
     monthGrid: {
         flexDirection: "row",
         flexWrap: "wrap",
         justifyContent: "space-between",
-        rowGap: 28,
+        rowGap: 20,
     },
     monthPreview: {
         width: "31%",
-        minHeight: 124,
+        minHeight: 130,
     },
     monthTitle: {
-        fontSize: 16,
-        fontWeight: "900",
-        marginBottom: 6,
-        letterSpacing: 0,
-    },
-    weekRow: {
-        flexDirection: "row",
-    },
-    weekday: {
-        width: "14.2857%",
-        textAlign: "center",
-        fontSize: 7,
+        fontSize: 20,
         fontWeight: "700",
-        marginBottom: 3,
+        marginBottom: 1,
+        letterSpacing: 0,
     },
     daysGrid: {
         flexDirection: "row",
@@ -238,19 +260,21 @@ const styles = StyleSheet.create({
     },
     dayCell: {
         width: "14.2857%",
-        height: 13,
+        height: 17.3333,
         alignItems: "center",
         justifyContent: "center",
     },
     dayBadge: {
-        minWidth: 13,
-        height: 13,
-        borderRadius: 6.5,
+        minWidth: 15,
+        height: 15,
+        borderRadius: 7.5,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "transparent",
         alignItems: "center",
         justifyContent: "center",
     },
     dayText: {
-        fontSize: 7,
-        fontWeight: "700",
+        fontSize: 10,
+        fontWeight: "600",
     },
 });

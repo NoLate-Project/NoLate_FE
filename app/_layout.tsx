@@ -29,11 +29,18 @@ export default function RootLayout() {
             .catch((error) => {
                 console.warn("[push] foreground notification setup failed", error);
             });
-        configurePushNavigation((scheduleId) => {
-            InteractionManager.runAfterInteractions(() => {
-                router.push(createScheduleDetailRoute(scheduleId));
-            });
-        })
+        configurePushNavigation(
+            (scheduleId) => {
+                InteractionManager.runAfterInteractions(() => {
+                    router.push(createScheduleDetailRoute(scheduleId));
+                });
+            },
+            () => {
+                InteractionManager.runAfterInteractions(() => {
+                    router.push("/share/inbox");
+                });
+            },
+        )
             .then((listener) => {
                 unsubscribeNavigation = listener;
             })
@@ -62,7 +69,11 @@ function RootNavigator() {
             <Stack.Screen name="index" />
             <Stack.Screen name="auth/login" />
             <Stack.Screen name="auth/signup" />
-            {__DEV__ && <Stack.Screen name="dev/view-mode-glass-control" />}
+            <Stack.Screen name="share/[token]" />
+            {__DEV__ && <Stack.Screen name="dev/calendar-import-preview" />}
+            {__DEV__ && <Stack.Screen name="dev/calendar-import-scan" />}
+            {__DEV__ && <Stack.Screen name="dev/auth-session" />}
+            {__DEV__ && <Stack.Screen name="dev/share-preview" />}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
                     name="profile"
@@ -71,14 +82,16 @@ function RootNavigator() {
                         animationDuration: 180,
                     }}
                 />
-                <Stack.Screen name="schedule/index" />
                 <Stack.Screen
-                    name="schedule/timetable"
+                    name="onboarding/calendar-import"
                     options={{
                         animation: "fade",
                         animationDuration: 180,
                     }}
                 />
+                <Stack.Screen name="schedule/index" />
+                <Stack.Screen name="schedule/categories" />
+                <Stack.Screen name="share/inbox" />
                 <Stack.Screen name="schedule/route-select" />
                 <Stack.Screen name="schedule/route-planner" />
                 <Stack.Screen name="schedule/[id]" />

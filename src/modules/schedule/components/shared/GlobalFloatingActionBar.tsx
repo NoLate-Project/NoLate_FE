@@ -15,6 +15,7 @@ export type FloatingBarAction = {
     label?: string;
     icon?: React.ComponentProps<typeof Ionicons>["name"];
     nativeSymbolName?: string;
+    badgeCount?: number;
     accessibilityLabel: string;
     onPress: () => void;
     disabled?: boolean;
@@ -26,6 +27,7 @@ type Props = {
     rightActions?: FloatingBarAction[];
     bottomInset?: number;
     hidden?: boolean;
+    disabled?: boolean;
     style?: ViewStyle;
 };
 
@@ -34,12 +36,15 @@ export default function GlobalFloatingActionBar({
     rightActions = [],
     bottomInset = 0,
     hidden = false,
+    disabled = false,
     style,
 }: Props) {
     const { colors, mode } = useTheme();
     const progress = useRef(new Animated.Value(hidden ? 0 : 1)).current;
     const actionSignature = useMemo(
-        () => [...leftActions, ...rightActions].map((action) => action.key).join("|"),
+        () => [...leftActions, ...rightActions]
+            .map((action) => `${action.key}:${action.badgeCount ?? 0}`)
+            .join("|"),
         [leftActions, rightActions]
     );
 
@@ -84,20 +89,28 @@ export default function GlobalFloatingActionBar({
             const buttonWidth = action.icon ? FLOATING_ICON_ONLY_WIDTH : FLOATING_LABEL_WIDTH;
 
             return (
-                <LiquidGlassIconButton
-                    symbolName={nativeSymbolName}
-                    label={!action.icon ? action.label : undefined}
-                    buttonWidth={buttonWidth}
-                    buttonHeight={FLOATING_PILL_HEIGHT}
-                    disabled={action.disabled}
-                    colorScheme={mode}
-                    accessibilityLabel={action.accessibilityLabel}
-                    onPress={action.onPress}
+                <View
                     style={[
-                        styles.nativeActionButton,
+                        styles.nativeActionHost,
                         { width: buttonWidth },
                     ]}
-                />
+                >
+                    <LiquidGlassIconButton
+                        symbolName={nativeSymbolName}
+                        label={!action.icon ? action.label : undefined}
+                        buttonWidth={buttonWidth}
+                        buttonHeight={FLOATING_PILL_HEIGHT}
+                        disabled={action.disabled}
+                        colorScheme={mode}
+                        accessibilityLabel={action.accessibilityLabel}
+                        onPress={action.onPress}
+                        style={[
+                            styles.nativeActionButton,
+                            { width: buttonWidth },
+                        ]}
+                    />
+                    <ActionBadge count={action.badgeCount} mode={mode} />
+                </View>
             );
         }
 
@@ -136,7 +149,7 @@ export default function GlobalFloatingActionBar({
 
     return (
         <Animated.View
-            pointerEvents={hidden ? "none" : "box-none"}
+            pointerEvents={hidden || disabled ? "none" : "box-none"}
             style={[
                 styles.host,
                 {
@@ -162,6 +175,10 @@ function getNativeSymbolName(icon?: React.ComponentProps<typeof Ionicons>["name"
     switch (icon) {
         case "person-circle-outline":
             return "person.circle";
+        case "mail-unread-outline":
+            return "envelope.badge";
+        case "mail-outline":
+            return "envelope";
         case "search":
             return "magnifyingglass";
         case "add":
@@ -169,6 +186,44 @@ function getNativeSymbolName(icon?: React.ComponentProps<typeof Ionicons>["name"
         default:
             return "circle";
     }
+}
+
+function formatBadgeCount(count?: number) {
+    if (!count || count <= 0) return null;
+    return count > 99 ? "99+" : String(count);
+}
+
+function ActionBadge({
+    count,
+    mode,
+}: {
+    count?: number;
+    mode: ReturnType<typeof useTheme>["mode"];
+}) {
+    const label = formatBadgeCount(count);
+    if (!label) return null;
+
+    return (
+        <View
+            pointerEvents="none"
+            style={[
+                styles.badge,
+                {
+                    backgroundColor: mode === "dark" ? "#FF453A" : "#FF3B30",
+                    borderColor: mode === "dark" ? "#1C1C1E" : "#FFFFFF",
+                },
+            ]}
+        >
+            <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.78}
+                style={styles.badgeText}
+            >
+                {label}
+            </Text>
+        </View>
+    );
 }
 
 function ActionButton({
@@ -213,11 +268,14 @@ function ActionButton({
             ]}
         >
             {!!action.icon && (
-                <Ionicons
-                    name={action.icon}
-                    size={24}
-                    color={colors.textPrimary}
-                />
+                <View style={styles.iconHost}>
+                    <Ionicons
+                        name={action.icon}
+                        size={24}
+                        color={colors.textPrimary}
+                    />
+                    <ActionBadge count={action.badgeCount} mode={mode} />
+                </View>
             )}
             {!action.icon && !!action.label && (
                 <Text
@@ -234,6 +292,7 @@ function ActionButton({
                     {action.label}
                 </Text>
             )}
+            {!action.icon && <ActionBadge count={action.badgeCount} mode={mode} />}
         </Pressable>
     );
 }
@@ -268,6 +327,10 @@ const styles = StyleSheet.create({
     singleIconActionSurface: {
         width: FLOATING_ICON_ONLY_WIDTH,
     },
+    nativeActionHost: {
+        height: FLOATING_PILL_HEIGHT,
+        position: "relative",
+    },
     nativeActionButton: {
         height: FLOATING_PILL_HEIGHT,
     },
@@ -288,6 +351,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",
+        position: "relative",
     },
     wideIconAction: {
         width: "100%",
@@ -306,6 +370,33 @@ const styles = StyleSheet.create({
     actionText: {
         fontSize: 15,
         fontWeight: "800",
+        letterSpacing: 0,
+    },
+    iconHost: {
+        width: 28,
+        height: 28,
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+    },
+    badge: {
+        position: "absolute",
+        top: -3,
+        right: 2,
+        minWidth: 17,
+        height: 17,
+        paddingHorizontal: 4,
+        borderRadius: 9,
+        borderWidth: 1.5,
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 4,
+    },
+    badgeText: {
+        color: "#FFFFFF",
+        fontSize: 9,
+        fontWeight: "900",
+        lineHeight: 11,
         letterSpacing: 0,
     },
 });

@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import * as SecureStore from "expo-secure-store";
+import * as SecureStore from "../storage/secureStorage";
 import { PermissionsAndroid, Platform } from "react-native";
 import {
     AuthorizationStatus,

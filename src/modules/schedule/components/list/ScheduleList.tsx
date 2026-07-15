@@ -22,6 +22,17 @@ function formatDateLabel(ymd: string): string {
     return `${month}월 ${day}일 ${dayNames[d.getDay()]}요일`;
 }
 
+function formatDisplayError(error?: string | null): string | null {
+    if (!error) return null;
+    if (/403|forbidden|status code/i.test(error)) {
+        return "일정을 불러오지 못했습니다";
+    }
+    if (/network|timeout/i.test(error)) {
+        return "네트워크 상태를 확인한 뒤 다시 시도해 주세요";
+    }
+    return error;
+}
+
 // 선택 날짜의 일정 목록을 표시한다.
 export default function ScheduleList({ selectedDay, items, loading = false, error, onPressRetry }: Props) {
     const { colors } = useTheme();
@@ -29,6 +40,7 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
     const listOpacity = useRef(new Animated.Value(1)).current;
     const listTranslate = useRef(new Animated.Value(0)).current;
     const prevDayRef = useRef(selectedDay);
+    const displayError = formatDisplayError(error);
 
     useEffect(() => {
         if (prevDayRef.current === selectedDay) return;
@@ -81,14 +93,14 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                             일정을 불러오는 중이에요
                         </Text>
                     </CalendarGlassSurface>
-                ) : error ? (
+                ) : displayError ? (
                     <CalendarGlassSurface
                         prominent
                         variant="card"
                         style={[styles.stateCard, { borderColor: colors.border }]}
                     >
                         <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
-                            {error}
+                            {displayError}
                         </Text>
                         <CalendarGlassSurface
                             interactive

@@ -1,24 +1,29 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     FlatList,
-    NativeScrollEvent,
-    NativeSyntheticEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     Pressable,
     StyleSheet,
     Text,
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
 import { Calendar, DateData } from "react-native-calendars";
+import type { SharedValue } from "react-native-reanimated";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { enumerateDaysBetween } from "../../../../../lib/util/data";
 import CustomDay from "./CustomDay";
-import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
+import {
+    CALENDAR_DAY_HEIGHTS,
+    isContinuousMonthViewMode,
+    type CalendarViewMode,
+} from "./viewMode";
 
 type Props = {
     selectedDay: string;
+    focusedMonth?: string;
     items: ScheduleItem[];
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
@@ -27,7 +32,10 @@ type Props = {
     scrollRequest: number;
     onVisibleMonthChange: (month: string) => void;
     headerOffset?: number;
-    topSafeInset?: number;
+    transitionMonthKey?: string;
+    transitionActive?: boolean;
+    transitionContext?: "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
+    animatedDayHeight?: SharedValue<number>;
 };
 
 type CalendarDayComponentProps = {
@@ -36,59 +44,121 @@ type CalendarDayComponentProps = {
     marking?: React.ComponentProps<typeof CustomDay>["marking"];
 };
 
-const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-const CONTINUOUS_MONTH_RANGE = 24;
-const WEEKDAY_HEADER_HEIGHT = 42;
-const CONTINUOUS_MONTH_HEADER_HEIGHT = 52;
-const CONTINUOUS_MONTH_DIVIDER_HEIGHT = StyleSheet.hairlineWidth;
+type CalendarMarkedEvent = NonNullable<
+    NonNullable<CalendarDayComponentProps["marking"]>["events"]
+>[number];
 
-type ContinuousMonth = {
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const STACK_MONTH_RANGE = 60;
+const WEEKDAY_HEADER_HEIGHT = 42;
+const STACK_MONTH_HEADER_HEIGHT = 52;
+const STACK_MONTH_DIVIDER_HEIGHT = StyleSheet.hairlineWidth;
+const CALENDAR_HEADER_TOP_MARGIN = 14;
+const CALENDAR_HEADER_BOTTOM_MARGIN = 8;
+const CALENDAR_HEADER_SPACING =
+    CALENDAR_HEADER_TOP_MARGIN + CALENDAR_HEADER_BOTTOM_MARGIN;
+const CALENDAR_CONTENT_BOTTOM_PADDING = 4;
+const TRANSITION_MONTH_PREFIX = "month-";
+
+type FixedCalendarHeightOptions = {
+    viewMode: CalendarViewMode;
+    month: string;
+    firstDay: 0 | 1;
+    headerOffset: number;
+};
+
+type StackMonth = {
     key: string;
     year: number;
     month: number;
     dateString: string;
     days: Array<DateData | null>;
-    weekCount: number;
     dayHeight: number;
     headerHeight: number;
     height: number;
 };
 
+function getMonthWeekCount(month: string, firstDay: 0 | 1): number {
+    const [yearText, monthText] = month.slice(0, 7).split("-");
+    const year = Number(yearText);
+    const monthNumber = Number(monthText);
+    if (!Number.isFinite(year) || !Number.isFinite(monthNumber)) return 6;
+
+    const monthIndex = monthNumber - 1;
+    const leadingBlankCount = (
+        new Date(year, monthIndex, 1).getDay() - firstDay + 7
+    ) % 7;
+    const dayCount = new Date(year, monthIndex + 1, 0).getDate();
+    return Math.ceil((leadingBlankCount + dayCount) / 7);
+}
+
+/** 패널형 월간 달력의 높이를 실제 Calendar 레이아웃과 동일하게 계산한다. */
+export function getFixedScheduleCalendarHeight({
+    viewMode,
+    month,
+    firstDay,
+    headerOffset,
+}: FixedCalendarHeightOptions): number | null {
+    if (viewMode !== "detail" && viewMode !== "list" && viewMode !== "week") {
+        return null;
+    }
+
+    if (viewMode === "week") {
+        return 58 + WEEKDAY_HEADER_HEIGHT + CALENDAR_DAY_HEIGHTS.week;
+    }
+
+    return headerOffset
+        + CALENDAR_HEADER_SPACING
+        + getMonthWeekCount(month, firstDay) * CALENDAR_DAY_HEIGHTS[viewMode]
+        + CALENDAR_CONTENT_BOTTOM_PADDING;
+}
+
+function normalizeMonthCandidate(value: string | null | undefined): string | null {
+    if (!value) return null;
+
+    const trimmed = value.startsWith(TRANSITION_MONTH_PREFIX)
+        ? value.slice(TRANSITION_MONTH_PREFIX.length)
+        : value;
+    const candidate = trimmed.length > 7 ? trimmed.slice(0, 7) : trimmed;
+
+    return /^\d{4}-\d{2}$/.test(candidate) ? candidate : null;
+}
+
 function toDateString(year: number, month: number, day = 1) {
     return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function getTodayDateString() {
-    const today = new Date();
-    return toDateString(today.getFullYear(), today.getMonth() + 1, today.getDate());
-}
-
-function createContinuousMonth(
+function createStackMonth(
     date: Date,
     firstDay: 0 | 1,
     dayHeight: number,
     headerHeight: number
-): ContinuousMonth {
+): StackMonth {
     const year = date.getFullYear();
     const monthIndex = date.getMonth();
     const month = monthIndex + 1;
     const dayCount = new Date(year, monthIndex + 1, 0).getDate();
-    const leadingBlankCount = (new Date(year, monthIndex, 1).getDay() - firstDay + 7) % 7;
+    const leadingBlankCount = (
+        new Date(year, monthIndex, 1).getDay() - firstDay + 7
+    ) % 7;
     const weekCount = Math.ceil((leadingBlankCount + dayCount) / 7);
     const totalCellCount = weekCount * 7;
-    const days = Array.from({ length: totalCellCount }, (_, index): DateData | null => {
-        const day = index - leadingBlankCount + 1;
-        if (day < 1 || day > dayCount) return null;
+    const days = Array.from(
+        { length: totalCellCount },
+        (_, index): DateData | null => {
+            const day = index - leadingBlankCount + 1;
+            if (day < 1 || day > dayCount) return null;
 
-        const current = new Date(year, monthIndex, day);
-        return {
-            year,
-            month,
-            day,
-            dateString: toDateString(year, month, day),
-            timestamp: current.getTime(),
-        };
-    });
+            const current = new Date(year, monthIndex, day);
+            return {
+                year,
+                month,
+                day,
+                dateString: toDateString(year, month, day),
+                timestamp: current.getTime(),
+            };
+        }
+    );
 
     return {
         key: `${year}-${String(month).padStart(2, "0")}`,
@@ -96,28 +166,51 @@ function createContinuousMonth(
         month,
         dateString: toDateString(year, month),
         days,
-        weekCount,
         dayHeight,
         headerHeight,
         height:
             headerHeight
             + weekCount * dayHeight
-            + CONTINUOUS_MONTH_DIVIDER_HEIGHT,
+            + STACK_MONTH_DIVIDER_HEIGHT,
     };
 }
 
-function moveMonth(day: string, amount: number) {
-    const current = new Date(`${day}T00:00:00`);
-    const next = new Date(current.getFullYear(), current.getMonth() + amount, 1);
-    const year = next.getFullYear();
-    const month = String(next.getMonth() + 1).padStart(2, "0");
-    return `${year}-${month}-01`;
+function getTodayDateString() {
+    const today = new Date();
+    return toDateString(today.getFullYear(), today.getMonth() + 1, today.getDate());
 }
 
 function moveDay(day: string, amount: number) {
     const next = new Date(`${day}T00:00:00`);
     next.setDate(next.getDate() + amount);
     return toDateString(next.getFullYear(), next.getMonth() + 1, next.getDate());
+}
+
+function enumerateScheduleDays(item: ScheduleItem) {
+    const start = new Date(item.startAt);
+    const end = new Date(item.endAt);
+    if (Number.isNaN(start.getTime())) return [];
+    if (Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+        return [toDateString(start.getFullYear(), start.getMonth() + 1, start.getDate())];
+    }
+
+    // Calendar ranges are end-exclusive. Subtracting 1ms prevents an event
+    // ending exactly at midnight from leaving a marker on the following day.
+    return enumerateDaysBetween(item.startAt, new Date(end.getTime() - 1));
+}
+
+function compareMarkedEvents(left: CalendarMarkedEvent, right: CalendarMarkedEvent) {
+    if (Boolean(left.allDay) !== Boolean(right.allDay)) {
+        return left.allDay ? -1 : 1;
+    }
+
+    const leftStart = new Date(left.startAt).getTime();
+    const rightStart = new Date(right.startAt).getTime();
+    if (Number.isFinite(leftStart) && Number.isFinite(rightStart) && leftStart !== rightStart) {
+        return leftStart - rightStart;
+    }
+
+    return left.title.localeCompare(right.title, "ko");
 }
 
 function createWeekDays(day: string, firstDay: 0 | 1) {
@@ -153,9 +246,10 @@ function formatWeekTitle(days: DateData[]) {
     return `${first.month}월 ${first.day}일-${last.month}월 ${last.day}일`;
 }
 
-// 일정 목록을 월간 캘린더 UI로 표시한다.
+// 축소형과 스택형은 월이 위아래로 이어지는 목록을, 패널형은 고정 Calendar를 사용한다.
 export default function ScheduleCalendar({
     selectedDay,
+    focusedMonth,
     items,
     onSelectDay,
     onOpenDay,
@@ -164,25 +258,33 @@ export default function ScheduleCalendar({
     scrollRequest,
     onVisibleMonthChange,
     headerOffset = 0,
+    transitionMonthKey,
+    transitionActive = false,
+    animatedDayHeight,
 }: Props) {
     const { colors, mode } = useTheme();
-    const calendarListRef = useRef<FlatList<ContinuousMonth>>(null);
-    const handledScrollRequestRef = useRef(scrollRequest);
-    const initialMonthRef = useRef(new Date(`${selectedDay.slice(0, 7)}-01T00:00:00`));
     const todayDateString = useMemo(getTodayDateString, []);
-    const [activeMonth, setActiveMonth] = useState(selectedDay.slice(0, 7));
-    const activeMonthRef = useRef(activeMonth);
-    const continuousListTopPadding = Math.max(headerOffset, 0);
-    const listModeTopPadding = Math.max(headerOffset + 68, 0);
+    const visibleMonth = normalizeMonthCandidate(transitionMonthKey)
+        ?? normalizeMonthCandidate(focusedMonth)
+        ?? selectedDay.slice(0, 7);
+    const initialDate = selectedDay.startsWith(`${visibleMonth}-`)
+        ? selectedDay
+        : `${visibleMonth}-01`;
+    const stackListRef = useRef<FlatList<StackMonth>>(null);
+    const handledStackScrollRequestRef = useRef(scrollRequest);
+    const initialStackMonthRef = useRef(
+        new Date(`${visibleMonth}-01T00:00:00`)
+    );
+    const [activeStackMonth, setActiveStackMonth] = useState(visibleMonth);
+    const activeStackMonthRef = useRef(activeStackMonth);
 
-    // 일정 목록을 캘린더 마킹 데이터로 변환한다.
     const markedDates = useMemo(() => {
         const dateMap: Record<string, any> = {};
         const dateSingleDay: Record<string, ScheduleItem[]> = {};
         const dateMultiDay: Record<string, any[]> = {};
 
         items.forEach((item) => {
-            const dates = enumerateDaysBetween(item.startAt, item.endAt);
+            const dates = enumerateScheduleDays(item);
             const isMultiDay = dates.length > 1;
 
             dates.forEach((date) => {
@@ -192,6 +294,10 @@ export default function ScheduleCalendar({
                     id: item.id,
                     title: item.title,
                     color: item.category.color,
+                    startAt: item.startAt,
+                    allDay: item.allDay,
+                    travelMode: item.travelMode
+                        ?? (item.travelMinutes || item.departAt || item.route ? "ETC" : undefined),
                 });
             });
 
@@ -206,6 +312,7 @@ export default function ScheduleCalendar({
                 });
             } else {
                 const date = dates[0];
+                if (!date) return;
                 if (!dateSingleDay[date]) dateSingleDay[date] = [];
                 dateSingleDay[date].push(item);
             }
@@ -216,6 +323,7 @@ export default function ScheduleCalendar({
             if (dateSingleDay[date]) {
                 dateMap[date].dots = dateSingleDay[date].map((item) => ({
                     color: item.category.color,
+                    travelMode: item.travelMode,
                 }));
                 dateMap[date].marked = true;
                 delete dateSingleDay[date];
@@ -226,30 +334,53 @@ export default function ScheduleCalendar({
             dateMap[date] = {
                 ...dateMap[date],
                 marked: true,
-                dots: dateSingleDay[date].map((item) => ({ color: item.category.color })),
+                dots: dateSingleDay[date].map((item) => ({
+                    color: item.category.color,
+                    travelMode: item.travelMode,
+                })),
             };
         });
 
-        if (dateMap[selectedDay]) {
-            dateMap[selectedDay].selected = true;
-        } else {
-            dateMap[selectedDay] = { selected: true };
-        }
+        Object.values(dateMap).forEach((marking) => {
+            marking.events?.sort(compareMarkedEvents);
+        });
 
+        dateMap[selectedDay] = {
+            ...(dateMap[selectedDay] ?? {}),
+            selected: true,
+        };
         return dateMap;
     }, [items, selectedDay]);
 
-    // 캘린더 라이브러리가 넘겨준 날짜 정보를 앱 전용 날짜 셀로 렌더링한다.
     const renderDay = useCallback(({ date, state, marking }: CalendarDayComponentProps) => (
         <CustomDay
             date={date}
             state={state}
             marking={marking}
             viewMode={viewMode}
+            animatedCellHeight={animatedDayHeight}
             isSelectedDay={date?.dateString === selectedDay}
-            onPress={(d) => onOpenDay(d.dateString)}
+            onPress={(day) => {
+                if (viewMode === "detail") {
+                    if (day.dateString === selectedDay) {
+                        onOpenDay(day.dateString);
+                        return;
+                    }
+                    onSelectDay(day.dateString);
+                    onVisibleMonthChange(day.dateString);
+                    return;
+                }
+                onOpenDay(day.dateString);
+            }}
         />
-    ), [onOpenDay, selectedDay, viewMode]);
+    ), [
+        animatedDayHeight,
+        onOpenDay,
+        onSelectDay,
+        onVisibleMonthChange,
+        selectedDay,
+        viewMode,
+    ]);
 
     const calendarTheme = {
         weekVerticalMargin: 0,
@@ -265,29 +396,17 @@ export default function ScheduleCalendar({
         "stylesheet.calendar.header": {
             header: {
                 flexDirection: "row",
-                justifyContent: viewMode === "list" ? "space-between" : "flex-start",
+                justifyContent: "flex-start",
                 alignItems: "center",
-                paddingHorizontal: viewMode === "list" ? 2 : 16,
-                marginTop: viewMode === "list" ? 6 : 14,
-                marginBottom: viewMode === "list" ? 10 : 8,
-            },
-        },
-        "stylesheet.calendar-list.main": {
-            flatListContainer: {
-                flex: 1,
-                backgroundColor: colors.calendarBackground,
-            },
-            container: {
-                flex: 1,
-                backgroundColor: colors.calendarBackground,
+                paddingHorizontal: 16,
+                marginTop: CALENDAR_HEADER_TOP_MARGIN,
+                marginBottom: CALENDAR_HEADER_BOTTOM_MARGIN,
             },
         },
     } as React.ComponentProps<typeof Calendar>["theme"] & Record<string, unknown>;
 
     const weekdayLabels = useMemo(() => (
-        Array.from({ length: 7 }, (_, index) => (
-            WEEKDAYS[(firstDay + index) % 7]
-        ))
+        Array.from({ length: 7 }, (_, index) => WEEKDAYS[(firstDay + index) % 7])
     ), [firstDay]);
     const weekdayHeader = useMemo(() => (
         <View
@@ -309,113 +428,120 @@ export default function ScheduleCalendar({
             ))}
         </View>
     ), [colors.border, colors.dayHeaderColor, weekdayLabels]);
-    const selectedWeekDays = useMemo(
-        () => createWeekDays(selectedDay, firstDay),
-        [firstDay, selectedDay]
-    );
-    const selectedWeekTitle = useMemo(
-        () => formatWeekTitle(selectedWeekDays),
-        [selectedWeekDays]
-    );
 
-    const continuousMonths = useMemo(() => {
-        const initialMonth = initialMonthRef.current;
-        const initialMonthKey = `${initialMonth.getFullYear()}-${String(initialMonth.getMonth() + 1).padStart(2, "0")}`;
+    const stackMonths = useMemo(() => {
+        const initialMonth = initialStackMonthRef.current;
+        const initialMonthKey = `${initialMonth.getFullYear()}-${String(
+            initialMonth.getMonth() + 1
+        ).padStart(2, "0")}`;
+
         return Array.from(
-            { length: CONTINUOUS_MONTH_RANGE * 2 + 1 },
+            { length: STACK_MONTH_RANGE * 2 + 1 },
             (_, index) => {
                 const monthDate = new Date(
                     initialMonth.getFullYear(),
-                    initialMonth.getMonth() + index - CONTINUOUS_MONTH_RANGE,
+                    initialMonth.getMonth() + index - STACK_MONTH_RANGE,
                     1
                 );
-                const key = `${monthDate.getFullYear()}-${String(monthDate.getMonth() + 1).padStart(2, "0")}`;
-                const isInitialMonth = key === initialMonthKey;
+                const monthKey = `${monthDate.getFullYear()}-${String(
+                    monthDate.getMonth() + 1
+                ).padStart(2, "0")}`;
 
-                return createContinuousMonth(
+                return createStackMonth(
                     monthDate,
                     firstDay,
                     CALENDAR_DAY_HEIGHTS[viewMode],
-                    isInitialMonth ? 0 : CONTINUOUS_MONTH_HEADER_HEIGHT
+                    monthKey === initialMonthKey ? 0 : STACK_MONTH_HEADER_HEIGHT
                 );
             }
         );
     }, [firstDay, viewMode]);
-
-    const monthLayouts = useMemo(() => {
+    const stackMonthLayouts = useMemo(() => {
         let offset = 0;
-        return continuousMonths.map((month) => {
-            const layout = { length: month.height, offset, index: 0 };
+        return stackMonths.map((month, index) => {
+            const layout = { length: month.height, offset, index };
             offset += month.height;
             return layout;
         });
-    }, [continuousMonths]);
-
-    const selectedMonthIndex = useMemo(
-        () => continuousMonths.findIndex((month) => selectedDay.startsWith(month.key)),
-        [continuousMonths, selectedDay]
+    }, [stackMonths]);
+    const stackTargetMonthKey = normalizeMonthCandidate(transitionMonthKey)
+        ?? normalizeMonthCandidate(focusedMonth)
+        ?? selectedDay.slice(0, 7);
+    const stackTargetMonthIndex = useMemo(
+        () => stackMonths.findIndex((month) => month.key === stackTargetMonthKey),
+        [stackMonths, stackTargetMonthKey]
     );
-
     const visibleMonthChangeRef = useRef(onVisibleMonthChange);
     visibleMonthChangeRef.current = onVisibleMonthChange;
 
-    const updateActiveMonth = useCallback((month: ContinuousMonth) => {
-        if (activeMonthRef.current === month.key) return;
+    const updateActiveStackMonth = useCallback((
+        month: StackMonth,
+        notifyParent = true
+    ) => {
+        if (activeStackMonthRef.current === month.key) return;
 
-        activeMonthRef.current = month.key;
-        setActiveMonth(month.key);
-        visibleMonthChangeRef.current(month.dateString);
+        activeStackMonthRef.current = month.key;
+        setActiveStackMonth(month.key);
+        if (notifyParent) visibleMonthChangeRef.current(month.dateString);
     }, []);
 
-    useFocusEffect(
-        useCallback(() => {
-            if (viewMode === "list" || viewMode === "week" || selectedMonthIndex < 0) return;
+    useEffect(() => {
+        if (!isContinuousMonthViewMode(viewMode) || stackTargetMonthIndex < 0) return;
 
-            const selectedMonth = continuousMonths[selectedMonthIndex];
-            const shouldAnimate = handledScrollRequestRef.current !== scrollRequest;
-            handledScrollRequestRef.current = scrollRequest;
-            updateActiveMonth(selectedMonth);
+        const targetMonth = stackMonths[stackTargetMonthIndex];
+        const shouldAnimate = handledStackScrollRequestRef.current !== scrollRequest;
+        handledStackScrollRequestRef.current = scrollRequest;
+        updateActiveStackMonth(
+            targetMonth,
+            !transitionActive && !normalizeMonthCandidate(transitionMonthKey)
+        );
 
-            const scrollTimer = setTimeout(() => {
-                calendarListRef.current?.scrollToOffset({
-                    offset: Math.max(0, monthLayouts[selectedMonthIndex].offset),
-                    animated: shouldAnimate,
-                });
-            }, 120);
+        const scrollTimer = setTimeout(() => {
+            stackListRef.current?.scrollToOffset({
+                offset: Math.max(0, stackMonthLayouts[stackTargetMonthIndex].offset),
+                animated: shouldAnimate,
+            });
+        }, 80);
 
-            return () => clearTimeout(scrollTimer);
-        }, [
-            continuousMonths,
-            monthLayouts,
-            scrollRequest,
-            selectedMonthIndex,
-            updateActiveMonth,
-            viewMode,
-        ])
-    );
+        return () => clearTimeout(scrollTimer);
+    }, [
+        scrollRequest,
+        stackMonthLayouts,
+        stackMonths,
+        stackTargetMonthIndex,
+        transitionActive,
+        transitionMonthKey,
+        updateActiveStackMonth,
+        viewMode,
+    ]);
 
-    const handleContinuousScroll = useCallback((
+    const handleStackScroll = useCallback((
         event: NativeSyntheticEvent<NativeScrollEvent>
     ) => {
         const monthSwitchLine = event.nativeEvent.contentOffset.y
             + event.nativeEvent.layoutMeasurement.height * 0.32;
         let activeIndex = 0;
 
-        for (let index = 1; index < monthLayouts.length; index += 1) {
-            if (monthLayouts[index].offset > monthSwitchLine) {
-                break;
-            }
+        for (let index = 1; index < stackMonthLayouts.length; index += 1) {
+            if (stackMonthLayouts[index].offset > monthSwitchLine) break;
             activeIndex = index;
         }
 
-        const nextActiveMonth = continuousMonths[activeIndex];
-        if (nextActiveMonth) updateActiveMonth(nextActiveMonth);
-    }, [continuousMonths, monthLayouts, updateActiveMonth]);
+        const nextActiveMonth = stackMonths[activeIndex];
+        if (nextActiveMonth) {
+            updateActiveStackMonth(nextActiveMonth, !transitionActive);
+        }
+    }, [
+        stackMonthLayouts,
+        stackMonths,
+        transitionActive,
+        updateActiveStackMonth,
+    ]);
 
-    const renderContinuousMonth = useCallback(({ item }: { item: ContinuousMonth }) => (
+    const renderStackMonth = useCallback(({ item }: { item: StackMonth }) => (
         <View
             style={[
-                styles.continuousMonth,
+                styles.stackMonth,
                 {
                     height: item.height,
                     backgroundColor: colors.calendarBackground,
@@ -424,18 +550,18 @@ export default function ScheduleCalendar({
             ]}
         >
             {item.headerHeight > 0 && (
-                <View style={[styles.continuousMonthHeader, { height: item.headerHeight }]}>
-                    <Text style={[styles.monthTitle, { color: colors.monthTextColor }]}>
+                <View style={[styles.stackMonthHeader, { height: item.headerHeight }]}>
+                    <Text style={[styles.stackMonthTitle, { color: colors.monthTextColor }]}>
                         {item.month}월
                     </Text>
                 </View>
             )}
-            <View style={styles.monthGrid}>
+            <View style={styles.stackMonthGrid}>
                 {item.days.map((date, index) => (
                     <View
                         key={date?.dateString ?? `${item.key}-blank-${index}`}
                         style={[
-                            styles.dayCell,
+                            styles.stackDayCell,
                             {
                                 height: item.dayHeight,
                                 borderTopColor: colors.border,
@@ -447,6 +573,7 @@ export default function ScheduleCalendar({
                             state={date?.dateString === todayDateString ? "today" : undefined}
                             marking={date ? markedDates[date.dateString] : undefined}
                             viewMode={viewMode}
+                            animatedCellHeight={animatedDayHeight}
                             isSelectedDay={date?.dateString === selectedDay}
                             onPress={(day) => onOpenDay(day.dateString)}
                         />
@@ -455,17 +582,63 @@ export default function ScheduleCalendar({
             </View>
         </View>
     ), [
+        animatedDayHeight,
         colors.border,
         colors.calendarBackground,
-        colors.border,
         colors.monthTextColor,
         markedDates,
         onOpenDay,
         selectedDay,
         todayDateString,
-        weekdayHeader,
         viewMode,
     ]);
+
+    const selectedWeekDays = useMemo(
+        () => createWeekDays(selectedDay, firstDay),
+        [firstDay, selectedDay]
+    );
+    const selectedWeekTitle = useMemo(
+        () => formatWeekTitle(selectedWeekDays),
+        [selectedWeekDays]
+    );
+
+    if (isContinuousMonthViewMode(viewMode)) {
+        return (
+            <View
+                style={[
+                    styles.stackList,
+                    {
+                        paddingTop: Math.max(headerOffset, 0),
+                        backgroundColor: colors.calendarBackground,
+                    },
+                ]}
+            >
+                <FlatList
+                    ref={stackListRef}
+                    key={`${mode}-${viewMode}-${firstDay}`}
+                    data={stackMonths}
+                    extraData={activeStackMonth}
+                    renderItem={renderStackMonth}
+                    keyExtractor={(item) => item.key}
+                    initialScrollIndex={
+                        stackTargetMonthIndex >= 0
+                            ? stackTargetMonthIndex
+                            : STACK_MONTH_RANGE
+                    }
+                    getItemLayout={(_, index) => stackMonthLayouts[index]}
+                    onScroll={handleStackScroll}
+                    scrollEventThrottle={16}
+                    showsVerticalScrollIndicator={false}
+                    removeClippedSubviews={false}
+                    style={styles.stackList}
+                    contentContainerStyle={styles.stackListContent}
+                    initialNumToRender={3}
+                    maxToRenderPerBatch={4}
+                    windowSize={7}
+                />
+            </View>
+        );
+    }
 
     if (viewMode === "week") {
         return (
@@ -509,6 +682,7 @@ export default function ScheduleCalendar({
                                 state={date.dateString === todayDateString ? "today" : undefined}
                                 marking={markedDates[date.dateString]}
                                 viewMode={viewMode}
+                                animatedCellHeight={animatedDayHeight}
                                 isSelectedDay={date.dateString === selectedDay}
                                 onPress={(day) => {
                                     onVisibleMonthChange(day.dateString);
@@ -522,65 +696,24 @@ export default function ScheduleCalendar({
         );
     }
 
-    if (viewMode !== "list") {
-        return (
-            <View
-                style={[
-                    styles.calendarList,
-                    {
-                        paddingTop: continuousListTopPadding,
-                        backgroundColor: colors.calendarBackground,
-                    },
-                ]}
-            >
-                <FlatList
-                    ref={calendarListRef}
-                    key={`${mode}-${viewMode}-${firstDay}`}
-                    data={continuousMonths}
-                    extraData={activeMonth}
-                    renderItem={renderContinuousMonth}
-                    keyExtractor={(item) => item.key}
-                    initialScrollIndex={
-                        selectedMonthIndex >= 0 ? selectedMonthIndex : CONTINUOUS_MONTH_RANGE
-                    }
-                    getItemLayout={(_, index) => ({
-                        ...monthLayouts[index],
-                        index,
-                    })}
-                    onScroll={handleContinuousScroll}
-                    scrollEventThrottle={16}
-                    showsVerticalScrollIndicator={false}
-                    removeClippedSubviews={false}
-                    style={[styles.calendarList, { backgroundColor: colors.calendarBackground }]}
-                    contentContainerStyle={styles.continuousListContent}
-                    initialNumToRender={3}
-                    maxToRenderPerBatch={4}
-                    windowSize={7}
-                />
-            </View>
-        );
-    }
-
     return (
         <View
             style={[
-                styles.listCalendarContainer,
+                styles.monthCalendarContainer,
                 {
                     backgroundColor: colors.calendarBackground,
-                    paddingTop: listModeTopPadding,
+                    paddingTop: Math.max(headerOffset, 0),
                 },
             ]}
         >
-            {weekdayHeader}
             <Calendar
-                key={`${mode}-${viewMode}-${firstDay}-${selectedDay.slice(0, 7)}-${scrollRequest}`}
-                current={selectedDay}
+                key={`${mode}-${firstDay}`}
+                initialDate={initialDate}
                 firstDay={firstDay}
                 enableSwipeMonths
                 hideArrows
                 hideDayNames
                 hideExtraDays={false}
-                onDayPress={(day: DateData) => onOpenDay(day.dateString)}
                 onMonthChange={(month: DateData) => {
                     onVisibleMonthChange(month.dateString);
                     onSelectDay(month.dateString);
@@ -596,38 +729,39 @@ export default function ScheduleCalendar({
 }
 
 const styles = StyleSheet.create({
-    calendar: {
-        paddingHorizontal: 12,
-        paddingBottom: 4,
-    },
-    calendarList: {
+    stackList: {
         flex: 1,
     },
-    listCalendarContainer: {
-        flexShrink: 0,
-    },
-    continuousListContent: {
+    stackListContent: {
         paddingBottom: 156,
     },
-    continuousMonth: {
+    stackMonth: {
         borderBottomWidth: 0,
     },
-    continuousMonthHeader: {
+    stackMonthHeader: {
         paddingHorizontal: 28,
         justifyContent: "center",
     },
-    monthGrid: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-    },
-    dayCell: {
-        width: "14.2857%",
-        borderTopWidth: StyleSheet.hairlineWidth,
-    },
-    monthTitle: {
+    stackMonthTitle: {
         fontSize: 25,
         fontWeight: "900",
         letterSpacing: 0,
+    },
+    stackMonthGrid: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+    },
+    stackDayCell: {
+        width: "14.2857%",
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    calendar: {
+        paddingHorizontal: 12,
+        paddingBottom: CALENDAR_CONTENT_BOTTOM_PADDING,
+    },
+    monthCalendarContainer: {
+        flexShrink: 0,
+        overflow: "hidden",
     },
     weekdayHeader: {
         height: WEEKDAY_HEADER_HEIGHT,
@@ -639,8 +773,8 @@ const styles = StyleSheet.create({
     weekdayText: {
         width: "14.2857%",
         textAlign: "center",
-        fontSize: 15,
-        fontWeight: "900",
+        fontSize: 13,
+        fontWeight: "600",
         opacity: 0.92,
     },
     listMonthHeader: {
