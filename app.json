@@ -48,7 +48,8 @@
         "cameraPermission": "NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.",
         "microphonePermission": false
       }
-    ]
+    ],
+    "expo-web-browser"
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",

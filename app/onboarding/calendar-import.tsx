@@ -1,10 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as AuthSession from "expo-auth-session";
+import * as GoogleAuth from "expo-auth-session/providers/google";
 import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import type { ComponentProps } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
+    AccessibilityInfo,
+    Animated,
     Alert,
+    Easing,
     Image,
     Platform,
     Pressable,
@@ -27,17 +32,31 @@ import {
     loadDeviceCalendarImportSummary,
     requestDeviceCalendarPermission,
     type DeviceCalendarCandidate,
+    type DeviceCalendarImportSummary,
+    type DeviceCalendarProvider,
 } from "../../src/modules/onboarding/deviceCalendarImport";
+import {
+    GOOGLE_CALENDAR_CLIENT_ID,
+    GOOGLE_CALENDAR_SCOPES,
+    loadGoogleCalendarImportSummary,
+    saveGoogleCalendarAccessToken,
+} from "../../src/modules/onboarding/googleCalendarImport";
 import {
     recordCalendarImportCompleted,
     recordCalendarScan,
 } from "../../src/modules/onboarding/calendarConnectionStorage";
+import QuickScheduleLogoLoader from "../../src/modules/schedule/components/form/QuickScheduleLogoLoader";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import type { ScheduleCategory, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type OnboardingStep = "intro" | "provider" | "permission" | "scanning" | "select" | "enrich" | "complete";
-type CalendarProviderId = "device" | "google" | "notion" | "timetree";
+WebBrowser.maybeCompleteAuthSession();
+
+const STEP_MOTION_DURATION_MS = 260;
+const FOOTER_MOTION_DURATION_MS = 220;
+
+type CalendarProviderId = "device" | "google";
 
 type CalendarProviderOption = {
     id: CalendarProviderId;
@@ -54,6 +73,12 @@ type CandidateSourceGroup = {
     color?: string;
     totalCount: number;
     selectedCount: number;
+};
+
+type CalendarScanResult = {
+    provider: DeviceCalendarProvider;
+    providerLabel: string;
+    summary: DeviceCalendarImportSummary;
 };
 
 const FALLBACK_CATEGORY: ScheduleCategory = {
@@ -89,10 +114,29 @@ export default function CalendarImportOnboarding() {
     const styles = createStyles(colors, mode);
     const { state, dispatch } = useScheduleStore();
     const deviceProviderLabel = getCalendarProviderLabel();
+    const scrollViewRef = useRef<ScrollView>(null);
+    const currentStepRef = useRef<OnboardingStep>("intro");
+    const stepMotionDidMountRef = useRef(false);
+    const stepMotion = useRef(new Animated.Value(1)).current;
+    const footerMotion = useRef(new Animated.Value(1)).current;
+
+    const [googleAuthRequest, , promptGoogleCalendarAuth] = GoogleAuth.useAuthRequest(
+        {
+            iosClientId: GOOGLE_CALENDAR_CLIENT_ID,
+            androidClientId: GOOGLE_CALENDAR_CLIENT_ID,
+            webClientId: GOOGLE_CALENDAR_CLIENT_ID,
+            scopes: GOOGLE_CALENDAR_SCOPES,
+            selectAccount: true,
+            shouldAutoExchangeCode: false,
+        },
+        { scheme: "nolate" }
+    );
 
     const [step, setStep] = useState<OnboardingStep>("intro");
+    const [stepTransitionDirection, setStepTransitionDirection] = useState<1 | -1>(1);
+    const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
     const [selectedProviderIds, setSelectedProviderIds] = useState<Set<CalendarProviderId>>(
-        () => new Set(["device"])
+        () => new Set(["device", "google"])
     );
     const [scanStage, setScanStage] = useState(0);
     const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
@@ -126,17 +170,117 @@ export default function CalendarImportOnboarding() {
         () => buildCalendarProviderOptions(deviceProviderLabel),
         [deviceProviderLabel]
     );
-    const selectedFutureProviderCount = useMemo(
-        () => providerOptions.filter((provider) => selectedProviderIds.has(provider.id) && !provider.available).length,
-        [providerOptions, selectedProviderIds]
-    );
-    const hasDeviceProviderSelected = selectedProviderIds.has("device");
     const providerCtaLabel = selectedProviderIds.size === 0
         ? "캘린더를 선택해 주세요"
-        : hasDeviceProviderSelected
-            ? "선택한 캘린더 연결하기"
-            : `${deviceProviderLabel}도 선택해 주세요`;
+        : "선택한 캘린더 연결하기";
+    const permissionProviderLabel = useMemo(() => {
+        const labels = [
+            selectedProviderIds.has("device") ? deviceProviderLabel : null,
+            selectedProviderIds.has("google") ? getCalendarProviderLabel("GOOGLE") : null,
+        ].filter((label): label is string => Boolean(label));
+
+        if (labels.length === 0) return "캘린더";
+        if (labels.length === 1) return labels[0];
+        return "선택한 캘린더";
+    }, [deviceProviderLabel, selectedProviderIds]);
     const canGoBack = step !== "intro" && step !== "scanning" && step !== "complete" && !importing;
+
+    const stepMotionStyle = {
+        opacity: stepMotion,
+        transform: [
+            {
+                translateX: stepMotion.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [stepTransitionDirection * 18, 0],
+                }),
+            },
+            {
+                translateY: stepMotion.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [10, 0],
+                }),
+            },
+            {
+                scale: stepMotion.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.985, 1],
+                }),
+            },
+        ],
+    };
+    const footerMotionStyle = {
+        opacity: footerMotion,
+        transform: [
+            {
+                translateY: footerMotion.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [14, 0],
+                }),
+            },
+        ],
+    };
+
+    const goToStep = (nextStep: OnboardingStep) => {
+        const currentStep = currentStepRef.current;
+        const nextDirection = motionStepIndex(nextStep) < motionStepIndex(currentStep) ? -1 : 1;
+
+        setStepTransitionDirection(nextDirection);
+        currentStepRef.current = nextStep;
+        setStep(nextStep);
+    };
+
+    useEffect(() => {
+        let mounted = true;
+
+        AccessibilityInfo.isReduceMotionEnabled()
+            .then((enabled) => {
+                if (mounted) setReduceMotionEnabled(enabled);
+            })
+            .catch(() => {});
+
+        const subscription = AccessibilityInfo.addEventListener?.(
+            "reduceMotionChanged",
+            setReduceMotionEnabled
+        );
+
+        return () => {
+            mounted = false;
+            subscription?.remove?.();
+        };
+    }, []);
+
+    useEffect(() => {
+        currentStepRef.current = step;
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+
+        if (!stepMotionDidMountRef.current || reduceMotionEnabled) {
+            stepMotionDidMountRef.current = true;
+            stepMotion.setValue(1);
+            footerMotion.setValue(1);
+            return;
+        }
+
+        stepMotion.stopAnimation();
+        footerMotion.stopAnimation();
+        stepMotion.setValue(0);
+        footerMotion.setValue(0);
+
+        Animated.parallel([
+            Animated.timing(stepMotion, {
+                toValue: 1,
+                duration: STEP_MOTION_DURATION_MS,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.timing(footerMotion, {
+                toValue: 1,
+                duration: FOOTER_MOTION_DURATION_MS,
+                delay: 45,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, [footerMotion, reduceMotionEnabled, step, stepMotion]);
 
     useEffect(() => {
         let cancelled = false;
@@ -167,16 +311,16 @@ export default function CalendarImportOnboarding() {
 
         switch (step) {
             case "provider":
-                setStep("intro");
+                goToStep("intro");
                 break;
             case "permission":
-                setStep("provider");
+                goToStep("provider");
                 break;
             case "select":
-                setStep("permission");
+                goToStep("permission");
                 break;
             case "enrich":
-                setStep("select");
+                goToStep("select");
                 break;
             default:
                 break;
@@ -197,35 +341,112 @@ export default function CalendarImportOnboarding() {
 
     const scanCalendars = async () => {
         setErrorMessage(null);
-        setStep("scanning");
+        goToStep("scanning");
         setScanStage(0);
 
         try {
-            const granted = await requestDeviceCalendarPermission();
-            if (!granted) {
-                setErrorMessage("캘린더 권한이 꺼져 있어요. 지금은 일정 없이 시작할 수 있습니다.");
-                setStep("permission");
+            const scans: CalendarScanResult[] = [];
+            const failures: string[] = [];
+            const wantsDeviceCalendar = selectedProviderIds.has("device");
+            const wantsGoogleCalendar = selectedProviderIds.has("google");
+            setScanStage(1);
+
+            if (wantsDeviceCalendar) {
+                const granted = await requestDeviceCalendarPermission();
+                if (granted) {
+                    scans.push({
+                        provider: getDeviceCalendarProvider(),
+                        providerLabel: deviceProviderLabel,
+                        summary: await loadDeviceCalendarImportSummary(),
+                    });
+                } else {
+                    failures.push(`${deviceProviderLabel} 권한이 꺼져 있어요.`);
+                }
+            }
+
+            if (wantsGoogleCalendar) {
+                const accessToken = await requestGoogleCalendarAccessToken();
+                if (accessToken) {
+                    scans.push({
+                        provider: "GOOGLE",
+                        providerLabel: getCalendarProviderLabel("GOOGLE"),
+                        summary: await loadGoogleCalendarImportSummary(accessToken),
+                    });
+                } else {
+                    failures.push("Google Calendar 연결이 취소됐어요.");
+                }
+            }
+
+            if (scans.length === 0) {
+                setErrorMessage(
+                    failures.length > 0
+                        ? failures.join("\n")
+                        : "연결된 캘린더에서 일정을 불러오지 못했습니다."
+                );
+                goToStep("permission");
                 return;
             }
 
-            setScanStage(1);
-            const summary = await loadDeviceCalendarImportSummary();
-            const loadedCandidates = summary.candidates;
+            const loadedCandidates = mergeCalendarCandidates(
+                scans.flatMap((scan) => scan.summary.candidates)
+            );
             await recordCalendarScan({
-                provider: getDeviceCalendarProvider(),
-                providerLabel: deviceProviderLabel,
-                calendarCount: summary.calendarCount,
-                calendarNames: summary.calendarSources.map((calendar) => calendar.title),
+                provider: scans[0].provider,
+                providerLabel: scans.map((scan) => scan.providerLabel).join(" + "),
+                providerLabels: scans.map((scan) => scan.providerLabel),
+                calendarCount: scans.reduce((total, scan) => total + scan.summary.calendarCount, 0),
+                calendarNames: scans.flatMap((scan) => scan.summary.calendarSources.map((calendar) => calendar.title)),
                 eventCandidateCount: loadedCandidates.length,
             });
             setScanStage(2);
             setCandidates(loadedCandidates);
             setSelectedIds(getDefaultSelectedCandidateIds(loadedCandidates));
-            setStep("select");
+            goToStep("select");
         } catch (error) {
             setErrorMessage(getErrorMessage(error, "캘린더 일정을 불러오지 못했습니다."));
-            setStep("permission");
+            goToStep("permission");
         }
+    };
+
+    const requestGoogleCalendarAccessToken = async (): Promise<string | null> => {
+        if (!googleAuthRequest) {
+            throw new Error("Google Calendar 연결 준비가 아직 끝나지 않았어요. 잠시 후 다시 시도해 주세요.");
+        }
+
+        const result = await promptGoogleCalendarAuth();
+        if (result.type !== "success") return null;
+
+        if (result.authentication?.accessToken) {
+            await saveGoogleCalendarAccessToken({
+                accessToken: result.authentication.accessToken,
+                expiresIn: result.authentication.expiresIn,
+            });
+            return result.authentication.accessToken;
+        }
+
+        const code = result.params.code;
+        if (!code || !googleAuthRequest.codeVerifier) {
+            throw new Error("Google Calendar 인증 코드를 확인하지 못했습니다.");
+        }
+
+        const tokenResponse = await AuthSession.exchangeCodeAsync(
+            {
+                clientId: GOOGLE_CALENDAR_CLIENT_ID,
+                code,
+                redirectUri: googleAuthRequest.redirectUri,
+                scopes: GOOGLE_CALENDAR_SCOPES,
+                extraParams: {
+                    code_verifier: googleAuthRequest.codeVerifier,
+                },
+            },
+            GoogleAuth.discovery
+        );
+
+        await saveGoogleCalendarAccessToken({
+            accessToken: tokenResponse.accessToken,
+            expiresIn: tokenResponse.expiresIn,
+        });
+        return tokenResponse.accessToken;
     };
 
     const toggleCandidate = (candidate: DeviceCalendarCandidate) => {
@@ -295,7 +516,7 @@ export default function CalendarImportOnboarding() {
 
             setImportedCount(successCount);
             await recordCalendarImportCompleted(successCount);
-            setStep("complete");
+            goToStep("complete");
         } catch (error) {
             Alert.alert("가져오기 실패", getErrorMessage(error, "선택한 일정을 가져오지 못했습니다."));
         } finally {
@@ -321,23 +542,14 @@ export default function CalendarImportOnboarding() {
                 >
                     <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
                 </Pressable>
-                <View style={styles.progressRow}>
-                    {["intro", "provider", "permission", "select", "enrich", "complete"].map((value) => (
-                        <View
-                            key={value}
-                            style={[
-                                styles.progressDot,
-                                progressIndex(step) >= progressIndex(value as OnboardingStep) && styles.progressDotActive,
-                            ]}
-                        />
-                    ))}
-                </View>
             </View>
 
             <ScrollView
+                ref={scrollViewRef}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.content}
             >
+                <Animated.View style={[styles.stepMotion, stepMotionStyle]}>
                 {step === "intro" && (
                     <View style={[styles.stepWrap, styles.introWrap]}>
                         <View style={styles.introLogoWrap}>
@@ -373,22 +585,13 @@ export default function CalendarImportOnboarding() {
                                 />
                             ))}
                         </View>
-
-                        {selectedFutureProviderCount > 0 ? (
-                            <View style={styles.providerNotice}>
-                                <Ionicons name="information-circle-outline" size={17} color={colors.textSecondary} />
-                                <Text style={styles.providerNoticeText}>
-                                    Google, Notion, TimeTree 직접 연동은 준비 중이에요. 지금은 {deviceProviderLabel}를 먼저 연결할 수 있습니다.
-                                </Text>
-                            </View>
-                        ) : null}
                     </View>
                 )}
 
                 {step === "permission" && (
                     <View style={styles.stepWrap}>
                         <StepIcon name={Platform.OS === "ios" ? "calendar-outline" : "phone-portrait-outline"} />
-                        <Text style={styles.title}>{deviceProviderLabel}에서{"\n"}다가오는 일정을 찾아볼게요</Text>
+                        <Text style={styles.title}>{permissionProviderLabel}에서{"\n"}다가오는 일정을 찾아볼게요</Text>
                         <Text style={styles.subtitle}>
                             가져올 일정은 직접 고르고, 원본 캘린더는 수정하지 않습니다.
                         </Text>
@@ -403,7 +606,10 @@ export default function CalendarImportOnboarding() {
 
                 {step === "scanning" && (
                     <View style={styles.stepWrap}>
-                        <ActivityIndicator size="large" color={colors.textPrimary} />
+                        <QuickScheduleLogoLoader
+                            variant="calendar"
+                            accessibilityLabel={`다가오는 일정을 찾고 있어요. ${SCAN_MESSAGES[Math.min(scanStage, SCAN_MESSAGES.length - 1)]}`}
+                        />
                         <Text style={styles.title}>다가오는 일정을{"\n"}찾고 있어요</Text>
                         <View style={styles.scanList}>
                             {SCAN_MESSAGES.map((message, index) => (
@@ -566,12 +772,13 @@ export default function CalendarImportOnboarding() {
                         </Text>
                     </View>
                 )}
+                </Animated.View>
             </ScrollView>
 
-            <View style={styles.footer}>
+            <Animated.View style={[styles.footer, footerMotionStyle]}>
                 {step === "intro" && (
                     <>
-                        <PrimaryButton label="일정 불러오기" onPress={() => setStep("provider")} />
+                        <PrimaryButton label="일정 불러오기" onPress={() => goToStep("provider")} />
                         <GhostButton label="일정 없이 시작하기" onPress={skipOnboarding} />
                     </>
                 )}
@@ -579,8 +786,8 @@ export default function CalendarImportOnboarding() {
                     <>
                         <PrimaryButton
                             label={providerCtaLabel}
-                            disabled={!hasDeviceProviderSelected}
-                            onPress={() => setStep("permission")}
+                            disabled={selectedProviderIds.size === 0}
+                            onPress={() => goToStep("permission")}
                         />
                         <GhostButton label="일정 없이 시작하기" onPress={skipOnboarding} />
                     </>
@@ -596,7 +803,7 @@ export default function CalendarImportOnboarding() {
                     <>
                         <PrimaryButton
                             label={selectedIds.size > 0 ? `선택한 일정 ${selectedIds.size}개 가져오기` : "전체 일정 선택하기"}
-                            onPress={selectedIds.size > 0 ? () => setStep("enrich") : selectAllCandidates}
+                            onPress={selectedIds.size > 0 ? () => goToStep("enrich") : selectAllCandidates}
                         />
                         <GhostButton label="이전으로" onPress={goBackStep} />
                     </>
@@ -608,13 +815,13 @@ export default function CalendarImportOnboarding() {
                             disabled={importing}
                             onPress={importSelectedSchedules}
                         />
-                        <GhostButton label="이전으로" disabled={importing} onPress={() => setStep("select")} />
+                        <GhostButton label="이전으로" disabled={importing} onPress={() => goToStep("select")} />
                     </>
                 )}
                 {step === "complete" && (
                     <PrimaryButton label="내 일정 보기" onPress={skipOnboarding} />
                 )}
-            </View>
+            </Animated.View>
         </View>
     );
 }
@@ -919,21 +1126,22 @@ function GhostButton({
     );
 }
 
-function progressIndex(step: OnboardingStep): number {
+function motionStepIndex(step: OnboardingStep): number {
     switch (step) {
         case "intro":
             return 0;
         case "provider":
             return 1;
         case "permission":
-        case "scanning":
             return 2;
-        case "select":
+        case "scanning":
             return 3;
-        case "enrich":
+        case "select":
             return 4;
-        case "complete":
+        case "enrich":
             return 5;
+        case "complete":
+            return 6;
     }
 }
 
@@ -969,28 +1177,42 @@ function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProv
         {
             id: "google",
             title: "Google Calendar",
-            description: "Google 계정 직접 연결",
+            description: "Google 계정에서 일정 가져오기",
             icon: "logo-google",
-            available: false,
-            badge: "다음",
-        },
-        {
-            id: "notion",
-            title: "Notion",
-            description: "Notion DB 일정 가져오기",
-            icon: "document-text-outline",
-            available: false,
-            badge: "준비 중",
-        },
-        {
-            id: "timetree",
-            title: "TimeTree",
-            description: "공유 캘린더 가져오기",
-            icon: "people-outline",
-            available: false,
-            badge: "준비 중",
+            available: true,
+            badge: "직접 연결",
         },
     ];
+}
+
+function mergeCalendarCandidates(candidates: DeviceCalendarCandidate[]): DeviceCalendarCandidate[] {
+    const seen = new Set<string>();
+
+    return candidates
+        .filter((candidate) => {
+            const key = [
+                candidate.title.trim().toLowerCase(),
+                candidate.startAt,
+                candidate.endAt,
+                candidate.locationName?.trim().toLowerCase() ?? "",
+            ].join("|");
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        })
+        .sort(compareCandidatesForDisplay);
+}
+
+function compareCandidatesForDisplay(a: DeviceCalendarCandidate, b: DeviceCalendarCandidate): number {
+    if (a.recommended !== b.recommended) {
+        return a.recommended ? -1 : 1;
+    }
+
+    if (a.requiresTimeReview !== b.requiresTimeReview) {
+        return a.requiresTimeReview ? 1 : -1;
+    }
+
+    return new Date(a.startAt).getTime() - new Date(b.startAt).getTime();
 }
 
 function buildCandidateSourceGroups(
@@ -1045,27 +1267,14 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         backButtonHidden: {
             opacity: 0,
         },
-        progressRow: {
-            flex: 1,
-            height: 22,
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-        },
-        progressDot: {
-            flex: 1,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: isDark ? "#24262C" : "#EAEBEF",
-        },
-        progressDotActive: {
-            backgroundColor: colors.textPrimary,
-        },
         content: {
             flexGrow: 1,
             justifyContent: "center",
             paddingTop: 32,
             paddingBottom: 22,
+        },
+        stepMotion: {
+            width: "100%",
         },
         stepWrap: {
             gap: 16,

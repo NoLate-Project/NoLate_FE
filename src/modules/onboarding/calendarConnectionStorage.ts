@@ -7,12 +7,17 @@ import {
     loadDeviceCalendarImportSummary,
     type DeviceCalendarProvider,
 } from "./deviceCalendarImport";
+import {
+    getStoredGoogleCalendarAccessToken,
+    loadGoogleCalendarImportSummary,
+} from "./googleCalendarImport";
 
 const CALENDAR_CONNECTION_KEY = "nolate_calendar_connection_snapshot";
 
 export type CalendarConnectionSnapshot = {
     provider: DeviceCalendarProvider;
     providerLabel: string;
+    providerLabels: string[];
     status: "CONNECTED";
     calendarCount: number;
     calendarNames: string[];
@@ -41,6 +46,7 @@ export async function saveCalendarConnectionSnapshot(snapshot: CalendarConnectio
 export async function recordCalendarScan(snapshot: {
     provider: DeviceCalendarProvider;
     providerLabel: string;
+    providerLabels?: string[];
     calendarCount: number;
     calendarNames: string[];
     eventCandidateCount: number;
@@ -52,6 +58,7 @@ export async function recordCalendarScan(snapshot: {
     await saveCalendarConnectionSnapshot({
         provider: snapshot.provider,
         providerLabel: snapshot.providerLabel,
+        providerLabels: normalizeCalendarNames(snapshot.providerLabels ?? [snapshot.providerLabel]),
         status: "CONNECTED",
         calendarCount: snapshot.calendarCount,
         calendarNames: normalizeCalendarNames(snapshot.calendarNames),
@@ -75,18 +82,53 @@ export async function recordCalendarImportCompleted(importedCount: number): Prom
 
 export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<CalendarConnectionSnapshot | null> {
     const current = await getCalendarConnectionSnapshot();
+    const scans: Array<{
+        provider: DeviceCalendarProvider;
+        providerLabel: string;
+        calendarCount: number;
+        calendarNames: string[];
+        eventCandidateCount: number;
+    }> = [];
 
-    if (!(await hasDeviceCalendarPermission())) {
+    if (await hasDeviceCalendarPermission()) {
+        const summary = await loadDeviceCalendarImportSummary();
+        scans.push({
+            provider: getDeviceCalendarProvider(),
+            providerLabel: getCalendarProviderLabel(),
+            calendarCount: summary.calendarCount,
+            calendarNames: summary.calendarSources.map((calendar) => calendar.title),
+            eventCandidateCount: summary.candidates.length,
+        });
+    }
+
+    const googleAccessToken = await getStoredGoogleCalendarAccessToken();
+    if (googleAccessToken) {
+        try {
+            const summary = await loadGoogleCalendarImportSummary(googleAccessToken);
+            scans.push({
+                provider: "GOOGLE",
+                providerLabel: getCalendarProviderLabel("GOOGLE"),
+                calendarCount: summary.calendarCount,
+                calendarNames: summary.calendarSources.map((calendar) => calendar.title),
+                eventCandidateCount: summary.candidates.length,
+            });
+        } catch {
+            // Google access token은 만료/철회될 수 있다. 프로필 진입을 막지 않고
+            // 기존 기기 캘린더 상태만 유지한다.
+        }
+    }
+
+    if (scans.length === 0) {
         return current;
     }
 
-    const summary = await loadDeviceCalendarImportSummary();
     await recordCalendarScan({
-        provider: getDeviceCalendarProvider(),
-        providerLabel: getCalendarProviderLabel(),
-        calendarCount: summary.calendarCount,
-        calendarNames: summary.calendarSources.map((calendar) => calendar.title),
-        eventCandidateCount: summary.candidates.length,
+        provider: scans[0].provider,
+        providerLabel: scans.map((scan) => scan.providerLabel).join(" + "),
+        providerLabels: scans.map((scan) => scan.providerLabel),
+        calendarCount: scans.reduce((total, scan) => total + scan.calendarCount, 0),
+        calendarNames: scans.flatMap((scan) => scan.calendarNames),
+        eventCandidateCount: scans.reduce((total, scan) => total + scan.eventCandidateCount, 0),
     });
 
     return getCalendarConnectionSnapshot();
@@ -97,7 +139,7 @@ function normalizeCalendarConnectionSnapshot(value: unknown): CalendarConnection
 
     const record = value as Partial<CalendarConnectionSnapshot>;
     const provider = record.provider;
-    if (provider !== "APPLE_DEVICE" && provider !== "ANDROID_DEVICE") return null;
+    if (provider !== "APPLE_DEVICE" && provider !== "ANDROID_DEVICE" && provider !== "GOOGLE") return null;
 
     const lastScannedAt = normalizeIsoDate(record.lastScannedAt);
     if (!lastScannedAt) return null;
@@ -105,6 +147,9 @@ function normalizeCalendarConnectionSnapshot(value: unknown): CalendarConnection
     return {
         provider,
         providerLabel: normalizeText(record.providerLabel) || providerLabelFallback(provider),
+        providerLabels: normalizeCalendarNames(record.providerLabels).length > 0
+            ? normalizeCalendarNames(record.providerLabels)
+            : [normalizeText(record.providerLabel) || providerLabelFallback(provider)],
         status: "CONNECTED",
         calendarCount: normalizeNumber(record.calendarCount),
         calendarNames: normalizeCalendarNames(record.calendarNames),
@@ -143,5 +188,6 @@ function normalizeIsoDate(value: unknown): string | null {
 }
 
 function providerLabelFallback(provider: DeviceCalendarProvider): string {
+    if (provider === "GOOGLE") return "Google Calendar";
     return provider === "APPLE_DEVICE" ? "Apple 캘린더" : "Android 캘린더";
 }

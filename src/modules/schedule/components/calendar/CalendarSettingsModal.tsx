@@ -3,7 +3,6 @@ import {
     Modal,
     Pressable,
     StyleSheet,
-    Switch,
     Text,
     View,
 } from "react-native";
@@ -11,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import ThemeModeSwitch from "../../../theme/ThemeModeSwitch";
 import CalendarGlassSurface from "./CalendarGlassSurface";
 
 type Props = {
@@ -27,7 +27,7 @@ export default function CalendarSettingsModal({
     onClose,
 }: Props) {
     const insets = useSafeAreaInsets();
-    const { colors, mode, toggleMode } = useTheme();
+    const { colors } = useTheme();
 
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -96,12 +96,7 @@ export default function CalendarSettingsModal({
                                     캘린더 화면 테마
                                 </Text>
                             </View>
-                            <Switch
-                                value={mode === "dark"}
-                                onValueChange={toggleMode}
-                                trackColor={{ false: colors.border, true: "#34c759" }}
-                                thumbColor="#ffffff"
-                            />
+                            <ThemeModeSwitch />
                         </View>
                     </CalendarGlassSurface>
                 </Pressable>

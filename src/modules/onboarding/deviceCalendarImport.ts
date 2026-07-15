@@ -4,7 +4,7 @@ import { Platform } from "react-native";
 import type { SchedulePayload } from "../../api/schedule";
 import type { ScheduleCategory, TravelMode } from "../schedule/types";
 
-export type DeviceCalendarProvider = "APPLE_DEVICE" | "ANDROID_DEVICE";
+export type DeviceCalendarProvider = "APPLE_DEVICE" | "ANDROID_DEVICE" | "GOOGLE";
 
 export type DeviceCalendarCandidate = {
     id: string;
@@ -71,6 +71,7 @@ export function getDeviceCalendarProvider(): DeviceCalendarProvider {
 }
 
 export function getCalendarProviderLabel(provider = getDeviceCalendarProvider()): string {
+    if (provider === "GOOGLE") return "Google Calendar";
     return provider === "APPLE_DEVICE" ? "Apple 캘린더" : "Android 캘린더";
 }
 

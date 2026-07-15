@@ -3,7 +3,6 @@ import { Redirect } from "expo-router";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     ScrollView,
     StatusBar,
     StyleSheet,
@@ -22,6 +21,7 @@ import {
     type DeviceCalendarSource,
 } from "../../src/modules/onboarding/deviceCalendarImport";
 import { recordCalendarScan } from "../../src/modules/onboarding/calendarConnectionStorage";
+import QuickScheduleLogoLoader from "../../src/modules/schedule/components/form/QuickScheduleLogoLoader";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type ScanState =
@@ -125,7 +125,10 @@ export default function DevCalendarImportScan() {
 
                 {state.status === "loading" ? (
                     <View style={styles.centerBox}>
-                        <ActivityIndicator size="large" color={colors.textPrimary} />
+                        <QuickScheduleLogoLoader
+                            variant="calendar"
+                            accessibilityLabel="캘린더를 스캔하는 중"
+                        />
                         <Text style={[styles.centerText, { color: colors.textSecondary }]}>
                             캘린더를 스캔하는 중
                         </Text>
