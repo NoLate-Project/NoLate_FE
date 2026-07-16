@@ -67,6 +67,7 @@ import {
 } from "../../src/modules/schedule/routeAlternativeRanking";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
 
 const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"];
 const MAP_PICKER_FALLBACK_LAT = 37.5665;
@@ -80,12 +81,9 @@ type RouteProgressSegment = {
     key: string;
     label: string;
     lineLabel?: string;
-    detailLabel: string;
-    pointLabel?: string;
     minutes: number;
     color: string;
     kind: RouteSelectTransitLeg["kind"] | "TRANSFER";
-    iconName: React.ComponentProps<typeof Ionicons>["name"];
     flex: number;
     isRide: boolean;
 };
@@ -474,11 +472,10 @@ function getLegDurationMinutes(leg: RouteSelectTransitLeg): number {
     return 1;
 }
 
-// 경로 후보를 카드의 구간 막대 데이터로 변환한다.
-function buildRouteProgressSegments(option: RouteAlternativeOption, destinationName?: string): RouteProgressSegment[] {
+// 경로 후보를 공용 구간 막대 데이터로 변환한다.
+function buildRouteProgressSegments(option: RouteAlternativeOption): RouteProgressSegment[] {
     const legs = option.transitLegs ?? [];
     if (!legs.length) return [];
-    const destinationFlowName = formatRouteFlowPointName(destinationName);
 
     return legs
         .map((leg, index) => {
@@ -492,43 +489,14 @@ function buildRouteProgressSegments(option: RouteAlternativeOption, destinationN
                 isRideLegKind(nextLeg?.kind);
             const lineLabel = leg.kind === "WALK" ? undefined : compactLineLabel(leg);
             const segmentKind: RouteProgressSegment["kind"] = isTransferWalk ? "TRANSFER" : leg.kind;
-            const startName = formatRouteFlowStopDisplayName(leg.startName, segmentKind);
-            const endName = formatRouteFlowStopDisplayName(leg.endName, segmentKind);
-            const prevEndName = formatRouteFlowStopDisplayName(prevLeg?.endName, prevLeg?.kind);
             const color = isTransferWalk ? ROUTE_SEGMENT_FALLBACK_COLORS.etc : getTransitLegColor(leg);
-            const iconName: RouteProgressSegment["iconName"] = segmentKind === "SUBWAY"
-                ? "train"
-                : segmentKind === "BUS"
-                    ? "bus"
-                    : segmentKind === "TRANSFER"
-                        ? "swap-horizontal"
-                        : segmentKind === "WALK"
-                            ? "walk"
-                            : "navigate-outline";
-            const label = isTransferWalk
-                ? "환승"
-                : lineLabel ?? (leg.kind === "WALK" ? "도보" : getTransitKindLabel(leg.kind));
-            const detailLabel = isTransferWalk ? `환승 ${minutes}분` : `${minutes}분`;
-            const pointLabel = (() => {
-                if (isTransferWalk) return `${formatRouteFlowPointLabel(startName ?? endName ?? prevEndName ?? "환승")} 이동`;
-                if (leg.kind === "WALK") {
-                    if (index === legs.length - 1) {
-                        return `${formatRouteFlowPointLabel(endName ?? destinationFlowName ?? "도착지")} 도착`;
-                    }
-                    return `${formatRouteFlowPointLabel(endName ?? "다음 지점")}까지`;
-                }
-                return `${formatRouteFlowPointLabel(startName ?? "정류장")} 승차`;
-            })();
             return {
                 key: `${segmentKind}:${lineLabel ?? leg.label}:${index}`,
-                label,
+                label: `${minutes}분`,
                 lineLabel,
-                detailLabel,
-                pointLabel,
                 minutes,
                 color,
                 kind: segmentKind,
-                iconName,
                 flex: Math.max(0.8, minutes),
                 isRide: isRideLegKind(segmentKind),
             };
@@ -536,7 +504,6 @@ function buildRouteProgressSegments(option: RouteAlternativeOption, destinationN
         .filter((segment) => segment.minutes > 0);
 }
 
-// 대중교통 구간의 종류를 사용자가 이해하기 쉬운 이름으로 바꾼다.
 function getTransitKindLabel(kind: RouteSelectTransitLeg["kind"]): string {
     if (kind === "SUBWAY") return "지하철";
     if (kind === "BUS") return "버스";
@@ -593,14 +560,6 @@ function formatRouteFlowPointName(name?: string): string | undefined {
         .replace(/\s*출구.*$/g, "")
         .trim();
     return normalized || undefined;
-}
-
-function truncateRouteFlowLabel(label: string, maxLength = 6): string {
-    return label.length > maxLength ? `${label.slice(0, maxLength)}…` : label;
-}
-
-function formatRouteFlowPointLabel(label: string): string {
-    return truncateRouteFlowLabel(label.replace(/\s+/g, " ").trim(), 6);
 }
 
 function formatRouteFlowStopDisplayName(
@@ -1725,12 +1684,6 @@ export default function RouteSelectScreen() {
             accentBlue: "#2979FF",
             accentGreen: "#22C55E",
             accentRed: "#FF4444",
-            progressTrackBg: "#4F5760",
-            progressTrackBorder: "rgba(255,255,255,0.04)",
-            progressTrackText: "#FFFFFF",
-            progressNeutralIconBg: "#9CA3AF",
-            progressIconBorder: "rgba(10,11,14,0.9)",
-            progressIconShadowOpacity: 0.24,
         }
         : {
             background: colors.background,
@@ -1757,12 +1710,6 @@ export default function RouteSelectScreen() {
             accentBlue: "#1E68FF",
             accentGreen: "#16A34A",
             accentRed: "#EF4444",
-            progressTrackBg: "#EEF3F8",
-            progressTrackBorder: "#DDE6F0",
-            progressTrackText: "#667085",
-            progressNeutralIconBg: "#A6B0BD",
-            progressIconBorder: "#FFFFFF",
-            progressIconShadowOpacity: 0.12,
         };
     const modeSelectedText = "#FFFFFF";
     const statusBarStyle = isDark ? "light-content" : "dark-content";
@@ -2550,7 +2497,7 @@ export default function RouteSelectScreen() {
                             routeDepartureAt,
                             displayIndex
                         );
-                        const progressSegments = buildRouteProgressSegments(option, destinationText);
+                        const progressSegments = buildRouteProgressSegments(option);
                         const routeMetricChips = buildRouteMetricChips(option);
                         const accent = selected ? routeUi.selectedBorder : routeUi.border;
                         const cardBackground = selected ? routeUi.selectedSurface : routeUi.surface;
@@ -2639,102 +2586,12 @@ export default function RouteSelectScreen() {
                                                 })}
                                             </View>
                                             {progressSegments.length > 0 && (
-                                                <View
-                                                    style={[
-                                                        styles.routeFlowTrack,
-                                                        {
-                                                            backgroundColor: routeUi.progressTrackBg,
-                                                            borderColor: routeUi.progressTrackBorder,
-                                                        },
-                                                    ]}
-                                                >
-                                                    {progressSegments.map((segment, segmentIndex) => {
-                                                        const isFirstSegment = segmentIndex === 0;
-                                                        const isLastSegment = segmentIndex === progressSegments.length - 1;
-                                                        const shouldFloatOnBaseTrack = !segment.isRide;
-                                                        const isTransitTransferSpacer = shouldFloatOnBaseTrack && !isFirstSegment && !isLastSegment;
-                                                        const shouldShowSegmentLabel = segment.isRide || isFirstSegment || isLastSegment;
-                                                        const isEdgeWalkSegment = segment.kind === "WALK" && (isFirstSegment || isLastSegment);
-                                                        const shouldUsePinnedDuration = shouldShowSegmentLabel &&
-                                                            (segment.isRide || isEdgeWalkSegment) &&
-                                                            segment.minutes <= 4;
-                                                        const segmentDisplayColor = segment.isRide ? segment.color : routeUi.progressNeutralIconBg;
-                                                        return (
-                                                            <View
-                                                                key={`${option.id}-${segment.key}`}
-                                                                style={[
-                                                                    styles.routeFlowTrackSegment,
-                                                                    {
-                                                                        flex: isTransitTransferSpacer ? 0 : segment.flex,
-                                                                        width: isTransitTransferSpacer ? 10 : undefined,
-                                                                        minWidth: isTransitTransferSpacer ? 10 : segment.isRide ? 44 : isEdgeWalkSegment ? 52 : 18,
-                                                                        backgroundColor: shouldFloatOnBaseTrack ? "transparent" : segmentDisplayColor,
-                                                                        marginLeft: segmentIndex === 0 ? 0 : 0,
-                                                                    },
-                                                                ]}
-                                                            >
-                                                                {(segment.isRide || isFirstSegment) && (
-                                                                    <View
-                                                                        style={[
-                                                                            styles.routeFlowSegmentIconBadge,
-                                                                            {
-                                                                                backgroundColor: segmentDisplayColor,
-                                                                                borderColor: routeUi.progressIconBorder,
-                                                                                shadowOpacity: routeUi.progressIconShadowOpacity,
-                                                                            },
-                                                                        ]}
-                                                                    >
-                                                                        <Ionicons name={segment.iconName} size={15} color="#FFFFFF" />
-                                                                    </View>
-                                                                )}
-                                                                {shouldShowSegmentLabel && (
-                                                                    <Text
-                                                                        numberOfLines={1}
-                                                                        style={[
-                                                                            styles.routeFlowDurationText,
-                                                                            shouldUsePinnedDuration && styles.routeFlowPinnedDurationText,
-                                                                            segment.isRide && styles.routeFlowRideDurationText,
-                                                                            isFirstSegment && styles.routeFlowLeadingDurationText,
-                                                                            isLastSegment && styles.routeFlowTrailingDurationText,
-                                                                            { color: segment.isRide ? "#FFFFFF" : routeUi.progressTrackText },
-                                                                        ]}
-                                                                    >
-                                                                        {segment.detailLabel.replace("환승 ", "")}
-                                                                    </Text>
-                                                                )}
-                                                            </View>
-                                                        );
-                                                    })}
-                                                </View>
-                                            )}
-                                            {progressSegments.length > 0 && (
-                                                <View style={styles.routeFlowLineLabelRow}>
-                                                    {progressSegments.map((segment, segmentIndex) => {
-                                                        const isTransitTransferSpacer = !segment.isRide &&
-                                                            segmentIndex > 0 &&
-                                                            segmentIndex < progressSegments.length - 1;
-                                                        return (
-                                                            <View
-                                                                key={`${option.id}-${segment.key}-line`}
-                                                                style={[
-                                                                    styles.routeFlowLineLabelCell,
-                                                                    {
-                                                                        flex: isTransitTransferSpacer ? 0 : segment.flex,
-                                                                        width: isTransitTransferSpacer ? 10 : undefined,
-                                                                        minWidth: isTransitTransferSpacer ? 10 : undefined,
-                                                                    },
-                                                                ]}
-                                                            >
-                                                                {!!segment.lineLabel && (
-                                                                    <Text numberOfLines={1} style={[styles.routeFlowLineLabelText, { color: segment.color }]}>
-                                                                        {segment.lineLabel}
-                                                                    </Text>
-                                                                )}
-                                                            </View>
-                                                        );
-                                                    })}
-	                                                </View>
-	                                            )}
+                                                <TransitRouteProgressBar
+                                                    segments={progressSegments}
+                                                    isDark={isDark}
+                                                    compact
+                                                />
+	                                        )}
 	                                            {!selected && !!routeBoardingSummary && (
 	                                                <View
 	                                                    style={[styles.routeBoardingSummaryRow, { borderTopColor: routeUi.border }]}
@@ -3956,43 +3813,6 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         columnGap: 2,
     },
-    routeFlowTrack: {
-        width: "100%",
-        height: 16,
-        flexDirection: "row",
-        alignItems: "center",
-        borderRadius: 999,
-        borderWidth: StyleSheet.hairlineWidth,
-        overflow: "visible",
-        marginTop: 7,
-    },
-    routeFlowTrackSegment: {
-        height: "100%",
-        minWidth: 12,
-        alignItems: "center",
-        justifyContent: "center",
-        paddingHorizontal: 2,
-        borderTopLeftRadius: 999,
-        borderBottomLeftRadius: 999,
-        borderTopRightRadius: 999,
-        borderBottomRightRadius: 999,
-        overflow: "visible",
-    },
-    routeFlowSegmentIconBadge: {
-        position: "absolute",
-        left: -2,
-        top: -8,
-        width: 30,
-        height: 30,
-        borderRadius: 999,
-        alignItems: "center",
-        justifyContent: "center",
-        borderWidth: 1,
-        shadowColor: "#000000",
-        shadowRadius: 5,
-        shadowOffset: { width: 0, height: 2 },
-        zIndex: 4,
-    },
     routeFlowSegment: {
         minWidth: 0,
         alignItems: "center",
@@ -4040,51 +3860,6 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         letterSpacing: 0,
         lineHeight: 16,
-    },
-    routeFlowDurationText: {
-        maxWidth: "100%",
-        fontSize: 10,
-        fontWeight: "900",
-        lineHeight: 12,
-        letterSpacing: 0,
-        textAlign: "center",
-    },
-    routeFlowPinnedDurationText: {
-        position: "absolute",
-        left: 0,
-        top: 2,
-        minWidth: 30,
-        maxWidth: 42,
-        paddingHorizontal: 2,
-        zIndex: 6,
-    },
-    routeFlowRideDurationText: {
-        marginLeft: 24,
-        paddingRight: 3,
-    },
-    routeFlowLeadingDurationText: {
-        marginLeft: 32,
-        paddingRight: 2,
-    },
-    routeFlowTrailingDurationText: {
-        marginLeft: 12,
-    },
-    routeFlowLineLabelRow: {
-        width: "100%",
-        flexDirection: "row",
-        alignItems: "flex-start",
-        minHeight: 14,
-        marginTop: 2,
-    },
-    routeFlowLineLabelCell: {
-        minWidth: 12,
-        alignItems: "center",
-    },
-    routeFlowLineLabelText: {
-        fontSize: 11,
-        fontWeight: "900",
-        lineHeight: 14,
-        letterSpacing: 0,
     },
     routeFlowPointText: {
         maxWidth: "100%",

@@ -6,6 +6,64 @@ export type DepartureParticipantPresentation = ScheduleDepartureParticipant & {
     label: string;
 };
 
+export type ScheduleCountdownPresentation = {
+    phase: "upcoming" | "active" | "ended";
+    label: string;
+    compactValue: string;
+    detailValue: string;
+};
+
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+function formatCountdownValues(milliseconds: number) {
+    const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+    const days = Math.floor(totalSeconds / 86_400);
+    const totalHours = Math.floor(totalSeconds / 3_600);
+    const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+    const minutes = Math.floor((totalSeconds % 3_600) / 60);
+    const seconds = totalSeconds % 60;
+    const compactValue = days > 0
+        ? `${days}일 ${pad2(hours)}:${pad2(minutes)}`
+        : `${pad2(totalHours)}:${pad2(minutes)}:${pad2(seconds)}`;
+    const detailParts = [
+        days > 0 ? `${days}일` : undefined,
+        (days > 0 || hours > 0) ? `${hours}시간` : undefined,
+        `${minutes}분`,
+        `${pad2(seconds)}초`,
+    ].filter(Boolean);
+
+    return { compactValue, detailValue: detailParts.join(" ") };
+}
+
+export function getScheduleCountdownPresentation(
+    startAtMs: number,
+    endAtMs: number | undefined,
+    nowMs: number
+): ScheduleCountdownPresentation {
+    if (nowMs < startAtMs) {
+        return {
+            phase: "upcoming",
+            label: "일정까지",
+            ...formatCountdownValues(startAtMs - nowMs),
+        };
+    }
+
+    if (typeof endAtMs === "number" && endAtMs > startAtMs && nowMs < endAtMs) {
+        return {
+            phase: "active",
+            label: "종료까지",
+            ...formatCountdownValues(endAtMs - nowMs),
+        };
+    }
+
+    return {
+        phase: "ended",
+        label: "일정 상태",
+        compactValue: "종료",
+        detailValue: "종료된 일정이에요",
+    };
+}
+
 export function buildDepartureParticipantPresentations(
     participants: ScheduleDepartureParticipant[],
     currentMemberId: number | null
@@ -51,9 +109,13 @@ export function getDepartureOverview(
 }
 
 export function getScheduleDetailSheetHeights(windowHeight: number) {
-    const minHeight = Math.max(138, Math.round(windowHeight * 0.16));
+    const minHeight = Math.max(124, Math.round(windowHeight * 0.145));
     const midHeight = Math.max(340, Math.round(windowHeight * 0.42));
-    const maxHeight = Math.max(midHeight, Math.round(windowHeight * 0.72));
+    const contentFitMaxHeight = Math.min(
+        680,
+        Math.max(460, Math.round(windowHeight * 0.72))
+    );
+    const maxHeight = Math.max(midHeight, contentFitMaxHeight);
 
     return { minHeight, midHeight, maxHeight };
 }

@@ -1,5 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Easing, PanResponder, Pressable, ScrollView, StatusBar, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import {
+    Alert,
+    Animated,
+    PanResponder,
+    Pressable,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    useWindowDimensions,
+    View,
+    type LayoutChangeEvent,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +32,9 @@ import {
 import { parseTransitMapInteractionId } from "../../src/modules/map/transitMapInteraction";
 import RouteStepTimeline from "../../src/modules/schedule/components/route/RouteStepTimeline";
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
+import TransitRouteSummaryRow, {
+    getTransitRouteSummaryAccessibilityLabel,
+} from "../../src/modules/schedule/components/route/TransitRouteSummaryRow";
 import { buildSavedRouteDetailInfo } from "../../src/modules/schedule/savedRouteDetailPresentation";
 import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import type { RouteStep } from "../../src/modules/schedule/routeInfo";
@@ -33,6 +48,7 @@ import { getAuthMember } from "../../src/modules/auth/authStorage";
 import {
     buildDepartureParticipantPresentations,
     getDepartureOverview,
+    getScheduleCountdownPresentation,
     getScheduleDetailSheetHeights,
 } from "../../src/modules/schedule/detailPresentation";
 
@@ -46,6 +62,11 @@ const MINUTE_MS = 60 * 1000;
 const SECOND_MS = 1000;
 const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
 const APP_ACCENT_BLUE = "#2979FF";
+const SHEET_HANDLE_HEIGHT = 32;
+const SHEET_COMPACT_BOTTOM_GUTTER = 20;
+const DETAIL_OVERVIEW_ZOOM_DELTA = -1;
+
+type SheetSnapMode = "compact" | "expanded";
 
 type DepartureDisplayState =
     | { kind: "countdown"; hours: number; minutes: number; seconds: number }
@@ -101,21 +122,6 @@ function getRecommendedDepartureAt(item: ScheduleItem): Date | undefined {
 
     const startAt = fromISO(item.startAt);
     return new Date(startAt.getTime() - (item.travelMinutes * MINUTE_MS));
-}
-
-function formatDepartureAssistText(item: ScheduleItem) {
-    const chunks = [
-        typeof item.travelMinutes === "number"
-            ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
-            : travelModeLabel(item.travelMode),
-        `${hhmmText(fromISO(item.startAt))} 일정 기준`,
-    ];
-
-    if (item.notificationEnabled && typeof item.notificationLeadMinutes === "number") {
-        chunks.push(`${item.notificationLeadMinutes}분 전 알림 시작`);
-    }
-
-    return chunks.join(" · ");
 }
 
 function getDepartureDisplayState(
@@ -174,16 +180,33 @@ function ScheduleDetail() {
     const isDark = mode === "dark";
     const { state, dispatch } = useScheduleStore();
     const mapRef = useRef<TmapMapViewHandle>(null);
+    const sheetScrollRef = useRef<ScrollView>(null);
     const sheetStartOffsetRef = useRef(0);
+    const sheetSnapModeRef = useRef<SheetSnapMode>("compact");
     const [loading, setLoading] = useState(false);
     const {
-        minHeight: sheetMinHeight,
-        midHeight: sheetMidHeight,
+        minHeight: sheetBaseMinHeight,
         maxHeight: sheetMaxHeight,
     } = getScheduleDetailSheetHeights(windowHeight);
+    const sheetMinHeight = sheetBaseMinHeight + SHEET_COMPACT_BOTTOM_GUTTER;
+    const sheetBottomPadding = Math.max(insets.bottom, 14);
+    const [expandedContentHeight, setExpandedContentHeight] = useState(0);
+    const desiredExpandedHeight = expandedContentHeight > 0
+        ? SHEET_HANDLE_HEIGHT + expandedContentHeight + sheetBottomPadding
+        : sheetMaxHeight;
+    const expandedVisibleHeight = clamp(
+        desiredExpandedHeight,
+        Math.min(sheetMaxHeight, sheetMinHeight + 1),
+        sheetMaxHeight
+    );
     const sheetCollapsedOffset = sheetMaxHeight - sheetMinHeight;
-    const sheetMiddleOffset = sheetMaxHeight - sheetMidHeight;
-    const sheetTranslateY = useRef(new Animated.Value(sheetMiddleOffset)).current;
+    const sheetExpandedOffset = Math.min(
+        sheetMaxHeight - expandedVisibleHeight,
+        Math.max(0, sheetCollapsedOffset - 1)
+    );
+    const sheetCompactContentHeight = Math.max(92, sheetMinHeight - SHEET_HANDLE_HEIGHT);
+    const sheetTranslateY = useRef(new Animated.Value(sheetCollapsedOffset)).current;
+    const [sheetMode, setSheetMode] = useState<SheetSnapMode>("compact");
     const [mapZoom, setMapZoom] = useState(DEFAULT_CAMERA.zoom);
     const [focusedLegIndex, setFocusedLegIndex] = useState<number | undefined>();
     const [selectedTransitStop, setSelectedTransitStop] = useState<{
@@ -193,9 +216,8 @@ function ScheduleDetail() {
     const [shareSheetVisible, setShareSheetVisible] = useState(false);
     const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
     const [departureActionPending, setDepartureActionPending] = useState(false);
+    const [participantsExpanded, setParticipantsExpanded] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
-    const countdownTickAnim = useRef(new Animated.Value(1)).current;
-    const previousCountdownKeyRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
     const canManageSchedule = useMemo(() => {
@@ -212,9 +234,6 @@ function ScheduleDetail() {
     const departureDisplayState: DepartureDisplayState = item
         ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
         : { kind: "status", text: "", tone: "default" };
-    const countdownAnimationKey = departureDisplayState.kind === "countdown"
-        ? `${departureDisplayState.hours}:${departureDisplayState.minutes}:${departureDisplayState.seconds}`
-        : undefined;
 
     useEffect(() => {
         const intervalId = setInterval(() => {
@@ -225,6 +244,11 @@ function ScheduleDetail() {
             clearInterval(intervalId);
         };
     }, []);
+
+    useEffect(() => {
+        setParticipantsExpanded(false);
+        setExpandedContentHeight(0);
+    }, [id]);
 
     useEffect(() => {
         let cancelled = false;
@@ -242,77 +266,61 @@ function ScheduleDetail() {
         };
     }, []);
 
-    useEffect(() => {
-        if (!countdownAnimationKey) {
-            previousCountdownKeyRef.current = undefined;
-            countdownTickAnim.setValue(1);
-            return;
-        }
-        if (previousCountdownKeyRef.current === undefined) {
-            previousCountdownKeyRef.current = countdownAnimationKey;
-            return;
-        }
-        if (previousCountdownKeyRef.current === countdownAnimationKey) return;
-
-        previousCountdownKeyRef.current = countdownAnimationKey;
-        countdownTickAnim.stopAnimation();
-        countdownTickAnim.setValue(0.86);
-        Animated.timing(countdownTickAnim, {
-            toValue: 1,
-            duration: 180,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-        }).start();
-    }, [countdownAnimationKey, countdownTickAnim]);
-
-    const countdownAnimatedStyle = useMemo(() => ({
-        opacity: countdownTickAnim,
-    }), [countdownTickAnim]);
     const sheetQuickSummaryAnimatedStyle = useMemo(() => ({
         height: sheetTranslateY.interpolate({
-            inputRange: [sheetMiddleOffset, sheetCollapsedOffset],
-            outputRange: [0, 108],
+            inputRange: [sheetExpandedOffset, sheetCollapsedOffset],
+            outputRange: [0, sheetCompactContentHeight],
             extrapolate: "clamp",
         }),
         opacity: sheetTranslateY.interpolate({
-            inputRange: [sheetMiddleOffset, sheetCollapsedOffset],
+            inputRange: [sheetExpandedOffset, sheetCollapsedOffset],
             outputRange: [0, 1],
             extrapolate: "clamp",
         }),
-    }), [sheetCollapsedOffset, sheetMiddleOffset, sheetTranslateY]);
+    }), [sheetCollapsedOffset, sheetCompactContentHeight, sheetExpandedOffset, sheetTranslateY]);
 
     useEffect(() => {
-        sheetTranslateY.stopAnimation((current) => {
-            sheetTranslateY.setValue(clamp(current, 0, sheetCollapsedOffset));
+        sheetTranslateY.stopAnimation(() => {
+            const nextOffset = sheetSnapModeRef.current === "expanded"
+                ? sheetExpandedOffset
+                : sheetCollapsedOffset;
+            sheetTranslateY.setValue(nextOffset);
         });
-    }, [sheetCollapsedOffset, sheetTranslateY]);
+    }, [sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
 
-    const getSheetSnapOffset = useCallback((current: number, velocityY: number) => {
+    const getSheetSnapMode = useCallback((current: number, velocityY: number): SheetSnapMode => {
         const projectedOffset = clamp(
             current + (velocityY * SHEET_SNAP_VELOCITY_PROJECTION),
-            0,
+            sheetExpandedOffset,
             sheetCollapsedOffset
         );
-        const snapPoints = [0, sheetMiddleOffset, sheetCollapsedOffset];
+        return Math.abs(projectedOffset - sheetExpandedOffset) < Math.abs(projectedOffset - sheetCollapsedOffset)
+            ? "expanded"
+            : "compact";
+    }, [sheetCollapsedOffset, sheetExpandedOffset]);
 
-        return snapPoints.reduce((closest, point) => (
-            Math.abs(point - projectedOffset) < Math.abs(closest - projectedOffset)
-                ? point
-                : closest
-        ), sheetMiddleOffset);
-    }, [sheetCollapsedOffset, sheetMiddleOffset]);
-
-    const snapSheetToOffset = useCallback((nextOffset: number) => {
+    const snapSheet = useCallback((nextMode: SheetSnapMode) => {
+        sheetSnapModeRef.current = nextMode;
+        setSheetMode(nextMode);
+        if (nextMode === "compact") {
+            setParticipantsExpanded(false);
+            sheetScrollRef.current?.scrollTo({ y: 0, animated: false });
+        }
         Animated.spring(sheetTranslateY, {
-            toValue: nextOffset,
+            toValue: nextMode === "expanded" ? sheetExpandedOffset : sheetCollapsedOffset,
             damping: 26,
             stiffness: 210,
             mass: 0.92,
             restDisplacementThreshold: 0.35,
             restSpeedThreshold: 0.35,
-            useNativeDriver: true,
+            useNativeDriver: false,
         }).start();
-    }, [sheetTranslateY]);
+    }, [sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
+
+    const handleExpandedContentLayout = useCallback((event: LayoutChangeEvent) => {
+        const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+        setExpandedContentHeight((current) => Math.abs(current - nextHeight) > 1 ? nextHeight : current);
+    }, []);
 
     const sheetPanResponder = useMemo(
         () => PanResponder.create({
@@ -326,18 +334,30 @@ function ScheduleDetail() {
                 });
             },
             onPanResponderMove: (_event, gesture) => {
-                sheetTranslateY.setValue(clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset));
+                sheetTranslateY.setValue(clamp(
+                    sheetStartOffsetRef.current + gesture.dy,
+                    sheetExpandedOffset,
+                    sheetCollapsedOffset
+                ));
             },
             onPanResponderRelease: (_event, gesture) => {
-                const currentOffset = clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset);
-                snapSheetToOffset(getSheetSnapOffset(currentOffset, gesture.vy));
+                const currentOffset = clamp(
+                    sheetStartOffsetRef.current + gesture.dy,
+                    sheetExpandedOffset,
+                    sheetCollapsedOffset
+                );
+                snapSheet(getSheetSnapMode(currentOffset, gesture.vy));
             },
             onPanResponderTerminate: (_event, gesture) => {
-                const currentOffset = clamp(sheetStartOffsetRef.current + gesture.dy, 0, sheetCollapsedOffset);
-                snapSheetToOffset(getSheetSnapOffset(currentOffset, gesture.vy));
+                const currentOffset = clamp(
+                    sheetStartOffsetRef.current + gesture.dy,
+                    sheetExpandedOffset,
+                    sheetCollapsedOffset
+                );
+                snapSheet(getSheetSnapMode(currentOffset, gesture.vy));
             },
         }),
-        [getSheetSnapOffset, sheetCollapsedOffset, sheetTranslateY, snapSheetToOffset]
+        [getSheetSnapMode, sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY, snapSheet]
     );
 
     useEffect(() => {
@@ -419,7 +439,7 @@ function ScheduleDetail() {
 
         setFocusedLegIndex(legIndex);
         setSelectedTransitStop(undefined);
-        snapSheetToOffset(sheetCollapsedOffset);
+        snapSheet("compact");
         mapRef.current?.fitToCoordinates(legCoords, {
             edgePadding: {
                 top: insets.top + 124,
@@ -428,19 +448,19 @@ function ScheduleDetail() {
                 left: 44,
             },
         });
-    }, [insets.top, routeLegs, sheetCollapsedOffset, sheetMinHeight, snapSheetToOffset]);
+    }, [insets.top, routeLegs, sheetMinHeight, snapSheet]);
 
     const focusTransitStop = useCallback((stop: { coord?: unknown }) => {
         const coord = mapCoordFromUnknown(stop.coord);
         if (!coord) return;
 
-        snapSheetToOffset(sheetCollapsedOffset);
+        snapSheet("compact");
         mapRef.current?.animateCameraTo({
             ...coord,
             zoom: 17.2,
             duration: 420,
         });
-    }, [sheetCollapsedOffset, snapSheetToOffset]);
+    }, [snapSheet]);
 
     const handleMapMarkerPress = useCallback((event: { id: string; interactionId?: string }) => {
         const interaction = parseTransitMapInteractionId(event.interactionId);
@@ -534,12 +554,13 @@ function ScheduleDetail() {
                 edgePadding: {
                     top: insets.top + 124,
                     right: 44,
-                    bottom: sheetMidHeight + 28,
+                    bottom: sheetMinHeight + 28,
                     left: 44,
                 },
             });
+            mapRef.current?.zoomBy(DETAIL_OVERVIEW_ZOOM_DELTA);
         }
-    }, [insets.top, mapCoords, sheetMidHeight]);
+    }, [insets.top, mapCoords, sheetMinHeight]);
 
     useEffect(() => {
         fitMap();
@@ -565,30 +586,37 @@ function ScheduleDetail() {
         : travelModeLabel(item.travelMode);
     const hasDepartureInfo = Boolean(recommendedDepartureAt || currentMemberDepartedAt || typeof item.travelMinutes === "number");
     const departureCompleted = Boolean(currentMemberDepartedAt);
-    const sheetBorder = isDark ? "#343434" : "#E2E8F0";
+    const sheetBorder = isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.11)";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
     const secondaryText = isDark ? "#B8B8B8" : "#64748B";
-    const topCardBorder = isDark ? "rgba(255,255,255,0.14)" : "rgba(15,23,42,0.12)";
     const topCardControlBg = isDark ? "rgba(255,255,255,0.07)" : "rgba(15,23,42,0.05)";
     const topCardAccentText = isDark ? "#78B4FF" : APP_ACCENT_BLUE;
-    const topCardAccentBg = isDark ? "rgba(41,121,255,0.18)" : "rgba(41,121,255,0.10)";
     const departureStatusMuted = departureDisplayState.kind === "status" && departureDisplayState.tone === "disabled";
     const departureStatusAccent = departureCompleted
         ? (isDark ? "#86EFAC" : "#16A34A")
         : departureStatusMuted
             ? secondaryText
             : colors.selectedDayBg;
-    const departureStatusIconBackground = departureCompleted
-        ? (isDark ? "rgba(34,197,94,0.18)" : "rgba(34,197,94,0.12)")
-        : departureStatusMuted
-            ? (isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.06)")
-            : (isDark ? "rgba(96,165,250,0.18)" : "rgba(37,99,235,0.10)");
     const participantPresentations = buildDepartureParticipantPresentations(departureParticipants, currentMemberId);
     const departureOverview = getDepartureOverview(departureParticipants, currentMemberId);
-    const departedParticipantCount = departureOverview.departedCount;
-    const scheduleScopeLabel = departureParticipants.length > 1
-        ? `${departureParticipants.length}명 공유`
-        : item.category.title;
+    const scheduleRangeLabel = formatCompactScheduleRange(
+        item.startAt,
+        item.endAt,
+        item.hasEndTime !== false
+    );
+    const scheduleCountdown = getScheduleCountdownPresentation(
+        fromISO(item.startAt).getTime(),
+        item.hasEndTime !== false ? fromISO(item.endAt).getTime() : undefined,
+        nowMs
+    );
+    const scheduleCountdownAccent = scheduleCountdown.phase === "active"
+        ? "#22C55E"
+        : scheduleCountdown.phase === "ended"
+            ? secondaryText
+            : topCardAccentText;
+    const scheduleCountdownOverviewLabel = scheduleCountdown.phase === "ended"
+        ? scheduleCountdown.label
+        : `${scheduleCountdown.label} 남은 시간`;
     const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
     const routeDetailMeta = [
         `${arrivalTimeLabel} 도착`,
@@ -600,35 +628,33 @@ function ScheduleDetail() {
             ? "완료"
             : "대기";
     const routeDurationLabel = routeNumberText(routeOption, item.travelMinutes);
-    const collapsedRouteMeta = [
-        routeDurationLabel,
-        typeof routeOption?.transferCount === "number" ? `환승 ${routeOption.transferCount}회` : undefined,
-    ].filter(Boolean).join(" · ");
     const departureActionTitle = departureCompleted
         ? "출발 알림 완료"
-        : departureDisplayState.kind === "countdown"
-            ? `출발까지 ${departureDisplayState.hours > 0 ? `${departureDisplayState.hours}시간 ` : ""}${departureDisplayState.minutes}분 ${pad2(departureDisplayState.seconds)}초`
-            : departureStatusMuted
-                ? "아직 출발 전이에요"
-                : departureDisplayState.text;
-    const departureActionMeta = recommendedDepartureAt
-        ? `권장 출발 ${hhmmText(recommendedDepartureAt)}`
-        : formatDepartureAssistText(item);
+        : departureStatusMuted && departureDisplayState.kind === "status"
+            ? departureDisplayState.text
+            : recommendedDepartureAt
+                ? `권장 출발 ${hhmmText(recommendedDepartureAt)}`
+                : departureDisplayState.kind === "status"
+                    ? departureDisplayState.text
+                    : "출발 준비";
+    const compactDepartureSummary = [
+        hasDepartureInfo ? departureActionTitle : undefined,
+        departureOverview.totalCount > 0 ? `${departureCountLabel} 출발` : undefined,
+        departureOverview.totalCount > 0 ? departureOverview.movingLabel : undefined,
+    ].filter(Boolean).join(" · ");
     const renderDepartureParticipantChips = () => {
         if (departureParticipants.length <= 1) return null;
-        const hasHiddenParticipants = departureParticipants.length > 5;
-        const visibleParticipants = hasHiddenParticipants
-            ? participantPresentations.slice(0, 4)
-            : participantPresentations.slice(0, 5);
 
         return (
             <View style={styles.departureParticipants}>
-                {visibleParticipants.map((participant) => {
+                {participantPresentations.map((participant) => {
                     const departed = participant.departed;
 
                     return (
                         <View
                             key={`${participant.memberId}-${participant.role}`}
+                            accessible
+                            accessibilityLabel={`${participant.label}, ${departed ? "출발함" : "대기 중"}`}
                             style={styles.departureParticipantItem}
                         >
                             <View
@@ -665,28 +691,13 @@ function ScheduleDetail() {
                         </View>
                     );
                 })}
-                {hasHiddenParticipants && (
-                    <View style={styles.departureParticipantItem}>
-                        <View
-                            style={[
-                                styles.departureParticipantMore,
-                                { backgroundColor: isDark ? "rgba(255,255,255,0.075)" : "rgba(15,23,42,0.055)" },
-                            ]}
-                        >
-                            <Text style={[styles.departureParticipantMoreText, { color: secondaryText }]}>
-                                +{departureParticipants.length - 4}
-                            </Text>
-                        </View>
-                        <Text style={[styles.departureParticipantName, { color: secondaryText }]}>더보기</Text>
-                    </View>
-                )}
             </View>
         );
     };
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
-            <StatusBar hidden />
+            <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
             <TmapMapView
                 ref={mapRef}
                 camera={camera}
@@ -706,13 +717,26 @@ function ScheduleDetail() {
                 style={styles.fullMap}
             />
 
-            <View style={[styles.topOverlay, { paddingTop: insets.top + 2 }]}>
+            <View style={styles.topOverlay}>
                 <CalendarGlassSurface
-                    interactive
-                    variant="mapCard"
-                    tone="solidCard"
-                    style={[styles.topHeaderGlass, { borderColor: topCardBorder }]}
+                    variant="sheet"
+                    tone="flat"
+                    style={[
+                        styles.topHeaderGlass,
+                        {
+                            paddingTop: insets.top + 6,
+                            borderBottomColor: sheetBorder,
+                        },
+                    ]}
                 >
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            styles.panelOpaqueBackdrop,
+                            isDark ? styles.panelOpaqueBackdropDark : styles.panelOpaqueBackdropLight,
+                        ]}
+                    />
                     <View style={styles.topHeaderRow}>
                         <Pressable
                             onPress={() => router.replace("/schedule")}
@@ -720,8 +744,7 @@ function ScheduleDetail() {
                             style={({ pressed }) => [
                                 styles.topHeaderIconButton,
                                 {
-                                    backgroundColor: topCardControlBg,
-                                    borderColor: topCardBorder,
+                                    backgroundColor: pressed ? topCardControlBg : "transparent",
                                     opacity: pressed ? 0.58 : 1,
                                 },
                             ]}
@@ -731,34 +754,12 @@ function ScheduleDetail() {
 
                         <View style={styles.topHeaderContent}>
                             <View style={styles.topHeaderTitleRow}>
-                                <View style={[styles.topHeaderKindBadge, { backgroundColor: topCardAccentBg }]}>
-                                    <Ionicons name="calendar-clear-outline" size={11} color={topCardAccentText} />
+                                <View style={styles.topHeaderKindBadge}>
+                                    <Ionicons name="calendar-clear-outline" size={13} color={topCardAccentText} />
                                     <Text style={[styles.topHeaderKindText, { color: topCardAccentText }]}>일정</Text>
                                 </View>
                                 <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
                                     {item.title}
-                                </Text>
-                            </View>
-                            <View style={styles.topHeaderRouteRow}>
-                                <Ionicons name="navigate-outline" size={11} color={topCardAccentText} />
-                                <Text style={[styles.topHeaderRoute, { color: primaryText }]} numberOfLines={1}>
-                                    {routeTitle}
-                                </Text>
-                            </View>
-                            <View style={styles.topHeaderMetaRow}>
-                                <View style={styles.topHeaderScope}>
-                                    <View style={[styles.topHeaderCategoryDot, { backgroundColor: item.category.color }]} />
-                                    <Text style={[styles.topHeaderMetaText, { color: secondaryText }]} numberOfLines={1}>
-                                        {scheduleScopeLabel}
-                                    </Text>
-                                </View>
-                                <Text style={[styles.topHeaderMetaSeparator, { color: secondaryText }]}>·</Text>
-                                <Text style={[styles.topHeaderMetaText, { color: secondaryText }]} numberOfLines={1}>
-                                    {formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
-                                </Text>
-                                <Text style={[styles.topHeaderMetaSeparator, { color: secondaryText }]}>·</Text>
-                                <Text style={[styles.topHeaderMetaText, styles.topHeaderTravelMeta, { color: secondaryText }]} numberOfLines={1}>
-                                    {travelText}
                                 </Text>
                             </View>
                         </View>
@@ -771,13 +772,12 @@ function ScheduleDetail() {
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
                                         {
-                                            backgroundColor: topCardControlBg,
-                                            borderColor: topCardBorder,
+                                            backgroundColor: pressed ? topCardControlBg : "transparent",
                                             opacity: pressed ? 0.58 : 1,
                                         },
                                     ]}
                                 >
-                                    <Ionicons name="share-social-outline" size={17} color={primaryText} />
+                                    <Ionicons name="share-social-outline" size={20} color={primaryText} />
                                 </Pressable>
                                 <Pressable
                                     onPress={() => router.setParams({ mode: "edit" })}
@@ -785,16 +785,34 @@ function ScheduleDetail() {
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
                                         {
-                                            backgroundColor: topCardControlBg,
-                                            borderColor: topCardBorder,
+                                            backgroundColor: pressed ? topCardControlBg : "transparent",
                                             opacity: pressed ? 0.58 : 1,
                                         },
                                     ]}
                                 >
-                                    <Ionicons name="create-outline" size={17} color={primaryText} />
+                                    <Ionicons name="create-outline" size={20} color={primaryText} />
                                 </Pressable>
                             </View>
                         )}
+                    </View>
+
+                    <View
+                        style={[
+                            styles.topHeaderRouteBar,
+                            { borderTopColor: sheetBorder },
+                        ]}
+                    >
+                        <View style={styles.topHeaderRouteBarMain}>
+                            <Ionicons name="navigate-outline" size={13} color={topCardAccentText} />
+                            <Text style={[styles.topHeaderRouteBarText, { color: primaryText }]} numberOfLines={1}>
+                                {routeTitle}
+                            </Text>
+                        </View>
+                        <View style={styles.topHeaderTravelPill}>
+                            <Text style={[styles.topHeaderTravelText, { color: topCardAccentText }]} numberOfLines={1}>
+                                {travelText}
+                            </Text>
+                        </View>
                     </View>
                 </CalendarGlassSurface>
             </View>
@@ -809,125 +827,153 @@ function ScheduleDetail() {
                 ]}
             >
                 <CalendarGlassSurface
-                    variant="mapCard"
+                    variant="sheet"
+                    tone="flat"
                     style={[
                         styles.routeSheetGlass,
-                        {
-                            paddingBottom: Math.max(insets.bottom, 14),
-                            borderColor: sheetBorder,
-                        },
+                        { borderColor: sheetBorder },
                     ]}
                 >
                     <View
                         pointerEvents="none"
                         style={[
                             StyleSheet.absoluteFillObject,
-                            styles.routeSheetOpaqueBackdrop,
-                            isDark
-                                ? styles.routeSheetOpaqueBackdropDark
-                                : styles.routeSheetOpaqueBackdropLight,
+                            styles.panelOpaqueBackdrop,
+                            isDark ? styles.panelOpaqueBackdropDark : styles.panelOpaqueBackdropLight,
                         ]}
                     />
                     <View style={styles.sheetHandleHitArea} {...sheetPanResponder.panHandlers}>
                         <View style={[styles.sheetHandle, { backgroundColor: sheetBorder }]} />
                     </View>
                     <ScrollView
+                        ref={sheetScrollRef}
                         style={styles.sheetScroll}
-                        contentContainerStyle={styles.sheetScrollContent}
+                        contentContainerStyle={[
+                            styles.sheetScrollContent,
+                            { paddingBottom: sheetBottomPadding },
+                        ]}
                         showsVerticalScrollIndicator={false}
                         bounces={false}
+                        scrollEnabled={sheetMode === "expanded"}
                     >
                         <Animated.View style={[styles.sheetQuickSummaryClip, sheetQuickSummaryAnimatedStyle]}>
                             <Pressable
-                                onPress={() => snapSheetToOffset(sheetMiddleOffset)}
+                                onPress={() => snapSheet("expanded")}
                                 accessibilityRole="button"
-                                accessibilityLabel="일정 상세 시트 펼치기"
+                                accessibilityLabel={[
+                                    "일정 상세 시트 펼치기",
+                                    `${scheduleCountdownOverviewLabel} ${scheduleCountdown.compactValue}`,
+                                    compactDepartureSummary,
+                                    routeProgressSegments.length > 0
+                                        ? getTransitRouteSummaryAccessibilityLabel(routeProgressSegments)
+                                        : undefined,
+                                ].filter(Boolean).join(", ")}
                                 style={({ pressed }) => [
                                     styles.sheetQuickSummary,
                                     { borderBottomColor: sheetBorder, opacity: pressed ? 0.7 : 1 },
                                 ]}
                             >
-                                <View style={styles.sheetQuickStat}>
-                                    <Text style={[styles.sheetQuickLabel, { color: secondaryText }]}>출발 현황</Text>
-                                    <Text style={[styles.sheetQuickValue, { color: departureStatusAccent }]}>
-                                        {departureCountLabel}
-                                    </Text>
-                                    <Text style={[styles.sheetQuickAssist, { color: secondaryText }]} numberOfLines={1}>
-                                        {departureOverview.movingLabel}
-                                    </Text>
+                                <View style={styles.sheetQuickSummaryMain}>
+                                    <View style={styles.sheetQuickCountdown}>
+                                        <View style={styles.sheetQuickLabelRow}>
+                                            <Ionicons name="time-outline" size={13} color={scheduleCountdownAccent} />
+                                            <Text style={[styles.sheetQuickLabel, { color: secondaryText }]}>
+                                                {scheduleCountdownOverviewLabel}
+                                            </Text>
+                                        </View>
+                                        <Text style={[styles.sheetQuickValue, { color: primaryText }]}>
+                                            {scheduleCountdown.compactValue}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.sheetQuickTrailing}>
+                                        <Text style={[styles.sheetQuickDate, { color: secondaryText }]} numberOfLines={1}>
+                                            {scheduleRangeLabel}
+                                        </Text>
+                                        <View style={styles.sheetQuickExpand}>
+                                            <Ionicons name="chevron-up" size={17} color={primaryText} />
+                                        </View>
+                                    </View>
                                 </View>
-                                <View style={styles.sheetQuickStat}>
-                                    <Text style={[styles.sheetQuickLabel, { color: secondaryText }]}>도착 예정</Text>
-                                    <Text style={[styles.sheetQuickValue, { color: primaryText }]}>{arrivalTimeLabel}</Text>
-                                    <Text style={[styles.sheetQuickAssist, { color: secondaryText }]} numberOfLines={1}>
-                                        {collapsedRouteMeta}
-                                    </Text>
-                                </View>
-                                <View
-                                    style={[
-                                        styles.sheetQuickExpand,
-                                        { backgroundColor: isDark ? "rgba(255,255,255,0.09)" : "rgba(15,23,42,0.06)" },
-                                    ]}
-                                >
-                                    <Ionicons name="chevron-up" size={16} color={primaryText} />
-                                </View>
+                                {!!compactDepartureSummary && (
+                                    <View style={styles.sheetQuickStatusRow}>
+                                        <Ionicons
+                                            name={departureCompleted ? "checkmark-circle-outline" : "walk-outline"}
+                                            size={13}
+                                            color={departureStatusAccent}
+                                        />
+                                        <Text
+                                            style={[styles.sheetQuickStatus, { color: secondaryText }]}
+                                            numberOfLines={1}
+                                        >
+                                            {compactDepartureSummary}
+                                        </Text>
+                                    </View>
+                                )}
+                                {routeProgressSegments.length > 0 && (
+                                    <TransitRouteSummaryRow
+                                        segments={routeProgressSegments}
+                                        isDark={isDark}
+                                    />
+                                )}
                             </Pressable>
                         </Animated.View>
 
-                        {(hasDepartureInfo || departureParticipants.length > 1) && (
-                            <View style={[styles.sheetDepartureSection, { borderBottomColor: sheetBorder }]}>
-                                <View style={styles.sheetSectionHeader}>
-                                    <Text style={[styles.sheetSectionTitle, { color: primaryText }]}>출발 현황</Text>
-                                    <Text
-                                        style={[
-                                            styles.sheetSectionCount,
-                                            { color: departedParticipantCount > 0 ? departureStatusAccent : secondaryText },
-                                        ]}
-                                    >
-                                        {departureCountLabel} 출발
-                                    </Text>
-                                </View>
-
-                                {hasDepartureInfo && (
-                                    <View
-                                        style={[
-                                            styles.sheetDepartureAction,
-                                            {
-                                                backgroundColor: isDark ? "rgba(255,255,255,0.055)" : "rgba(248,250,252,0.78)",
-                                                borderColor: sheetBorder,
-                                            },
-                                        ]}
-                                    >
-                                        <View
-                                            style={[
-                                                styles.sheetDepartureStatusIcon,
-                                                { backgroundColor: departureStatusIconBackground },
+                        <View
+                            onLayout={handleExpandedContentLayout}
+                            pointerEvents={sheetMode === "expanded" ? "auto" : "none"}
+                            accessibilityElementsHidden={sheetMode !== "expanded"}
+                            importantForAccessibility={sheetMode === "expanded" ? "auto" : "no-hide-descendants"}
+                            style={styles.sheetExpandedContent}
+                        >
+                        <View style={[styles.sheetStatusSection, { borderBottomColor: sheetBorder }]}>
+                            <View
+                                style={[
+                                    styles.sheetStatusHero,
+                                    { borderLeftColor: scheduleCountdownAccent },
+                                ]}
+                            >
+                                <View style={styles.sheetStatusHeader}>
+                                    <View style={styles.sheetScheduleOverviewLabelRow}>
+                                        <Ionicons
+                                            name={scheduleCountdown.phase === "ended" ? "checkmark-circle-outline" : "time-outline"}
+                                            size={14}
+                                            color={scheduleCountdownAccent}
+                                        />
+                                        <Text style={[styles.sheetScheduleOverviewLabel, { color: secondaryText }]}>
+                                            {scheduleCountdownOverviewLabel}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.sheetStatusHeaderTrailing}>
+                                        <Text style={[styles.sheetScheduleOverviewDate, { color: secondaryText }]} numberOfLines={1}>
+                                            {scheduleRangeLabel}
+                                        </Text>
+                                        <Pressable
+                                            onPress={() => snapSheet("compact")}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="일정 상세 시트 접기"
+                                            style={({ pressed }) => [
+                                                styles.sheetScheduleCollapse,
+                                                {
+                                                    backgroundColor: pressed ? topCardControlBg : "transparent",
+                                                    opacity: pressed ? 0.58 : 1,
+                                                },
                                             ]}
                                         >
-                                            <Ionicons
-                                                name={departureCompleted ? "checkmark" : "walk-outline"}
-                                                size={16}
-                                                color={departureStatusAccent}
-                                            />
-                                        </View>
-                                        <View style={styles.sheetDepartureActionCopy}>
-                                            <Animated.Text
-                                                style={[
-                                                    styles.sheetDepartureActionTitle,
-                                                    { color: primaryText },
-                                                    countdownAnimatedStyle,
-                                                ]}
-                                                numberOfLines={1}
-                                            >
-                                                {departureActionTitle}
-                                            </Animated.Text>
-                                            <Text
-                                                style={[styles.sheetDepartureActionMeta, { color: secondaryText }]}
-                                                numberOfLines={1}
-                                            >
-                                                {departureActionMeta}
-                                            </Text>
-                                        </View>
+                                            <Ionicons name="chevron-down" size={19} color={primaryText} />
+                                        </Pressable>
+                                    </View>
+                                </View>
+
+                                <View style={styles.sheetStatusMainRow}>
+                                    <Text
+                                        style={[styles.sheetScheduleOverviewValue, { color: primaryText }]}
+                                        numberOfLines={1}
+                                        adjustsFontSizeToFit
+                                        minimumFontScale={0.72}
+                                    >
+                                        {scheduleCountdown.compactValue}
+                                    </Text>
+                                    {hasDepartureInfo && (
                                         <Pressable
                                             onPress={completeDeparture}
                                             disabled={departureCompleted || departureActionPending}
@@ -952,14 +998,71 @@ function ScheduleDetail() {
                                                 {departureCompleted ? "알림 완료" : departureActionPending ? "처리 중" : "출발 알리기"}
                                             </Text>
                                         </Pressable>
+                                    )}
+                                </View>
+
+                                {!!compactDepartureSummary && (
+                                    <View style={styles.sheetStatusMetaRow}>
+                                        <Ionicons
+                                            name={departureCompleted ? "checkmark-circle-outline" : "walk-outline"}
+                                            size={14}
+                                            color={departureStatusAccent}
+                                        />
+                                        <Text
+                                            style={[styles.sheetStatusMeta, { color: secondaryText }]}
+                                            numberOfLines={1}
+                                        >
+                                            {compactDepartureSummary}
+                                        </Text>
                                     </View>
                                 )}
-
-                                {renderDepartureParticipantChips()}
                             </View>
-                        )}
 
-                        <View style={styles.sheetRouteSummary}>
+                            {departureParticipants.length > 1 && (
+                                <Pressable
+                                    onPress={() => setParticipantsExpanded((expanded) => !expanded)}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded: participantsExpanded }}
+                                    accessibilityLabel={`참여자 ${departureParticipants.length}명 ${participantsExpanded ? "접기" : "보기"}, ${departureOverview.movingLabel}, ${departureCountLabel} 출발`}
+                                    style={({ pressed }) => [
+                                        styles.sheetParticipantDisclosure,
+                                        {
+                                            borderTopColor: sheetBorder,
+                                            opacity: pressed ? 0.56 : 1,
+                                        },
+                                    ]}
+                                >
+                                    <View style={styles.sheetParticipantDisclosureTitle}>
+                                        <Ionicons name="people-outline" size={16} color={secondaryText} />
+                                        <Text style={[styles.sheetSectionTitle, { color: primaryText }]}>
+                                            참여자 {departureParticipants.length}명
+                                        </Text>
+                                    </View>
+                                    <View style={styles.sheetParticipantDisclosureSummary}>
+                                        <Text
+                                            numberOfLines={1}
+                                            style={[styles.sheetParticipantSummary, { color: secondaryText }]}
+                                        >
+                                            {departureOverview.movingLabel} · {departureCountLabel} 출발
+                                        </Text>
+                                        <Ionicons
+                                            name={participantsExpanded ? "chevron-up" : "chevron-down"}
+                                            size={15}
+                                            color={secondaryText}
+                                        />
+                                    </View>
+                                </Pressable>
+                            )}
+
+                            {participantsExpanded && renderDepartureParticipantChips()}
+                        </View>
+
+                        <View
+                            style={[
+                                styles.sheetRouteSummary,
+                                { borderBottomColor: sheetBorder },
+                            ]}
+                        >
                             <View style={styles.sheetRouteTopRow}>
                                 <View style={styles.sheetRouteCopy}>
                                     <View style={styles.sheetRouteKickerRow}>
@@ -982,8 +1085,7 @@ function ScheduleDetail() {
                                         style={({ pressed }) => [
                                             styles.sheetRouteMapButton,
                                             {
-                                                backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.05)",
-                                                borderColor: sheetBorder,
+                                                backgroundColor: pressed ? topCardControlBg : "transparent",
                                                 opacity: !item.origin || !item.destination ? 0.35 : pressed ? 0.58 : 1,
                                             },
                                         ]}
@@ -992,27 +1094,25 @@ function ScheduleDetail() {
                                     </Pressable>
                                 </View>
                             </View>
+                            {routeProgressSegments.length > 0 && (
+                                <View style={styles.routeProgressSection}>
+                                    <TransitRouteProgressBar
+                                        segments={routeProgressSegments}
+                                        isDark={isDark}
+                                        compact
+                                    />
+                                </View>
+                            )}
                         </View>
-
-                        {routeProgressSegments.length > 0 && (
-                            <View style={styles.routeProgressSection}>
-                                <TransitRouteProgressBar
-                                    segments={routeProgressSegments}
-                                    isDark={isDark}
-                                    compact
-                                />
-                            </View>
-                        )}
-
-                        {!!routeDetailInfo && (
-                            <View style={[styles.routeDetailDivider, { backgroundColor: sheetBorder }]} />
-                        )}
 
                         {routeDetailInfo ? (
                             <>
-                                <Text style={[styles.routeDetailBaseTimeText, { color: secondaryText }]}>
-                                    {hhmmText(fromISO(routeDetailInfo.departureTime))} 기준
-                                </Text>
+                                <View style={[styles.routeDetailHeader, { borderBottomColor: sheetBorder }]}>
+                                    <Text style={[styles.routeDetailSectionTitle, { color: primaryText }]}>경로 상세</Text>
+                                    <Text style={[styles.routeDetailBaseTimeText, { color: secondaryText }]}>
+                                        {hhmmText(fromISO(routeDetailInfo.departureTime))} 출발 기준
+                                    </Text>
+                                </View>
                                 <RouteStepTimeline
                                     routeInfo={routeDetailInfo}
                                     selectedStepId={selectedRouteStepId}
@@ -1029,6 +1129,7 @@ function ScheduleDetail() {
                                 저장된 상세 경로가 없어요.
                             </Text>
                         )}
+                        </View>
                     </ScrollView>
                 </CalendarGlassSurface>
             </Animated.View>
@@ -1061,17 +1162,22 @@ const styles = StyleSheet.create({
         top: 0,
         left: 0,
         right: 0,
-        paddingHorizontal: 16,
         zIndex: 30,
-        elevation: 30,
+        elevation: 0,
     },
     topHeaderGlass: {
-        minHeight: 96,
-        borderRadius: 12,
-        borderWidth: 1,
-        paddingHorizontal: 8,
-        paddingVertical: 8,
+        minHeight: 112,
+        borderTopLeftRadius: 0,
+        borderTopRightRadius: 0,
+        borderBottomLeftRadius: 24,
+        borderBottomRightRadius: 24,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 16,
+        paddingBottom: 12,
         overflow: "hidden",
+        shadowOpacity: 0,
+        shadowRadius: 0,
+        elevation: 0,
     },
     topHeaderRow: {
         flexDirection: "row",
@@ -1079,10 +1185,9 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     topHeaderIconButton: {
-        width: 36,
-        height: 36,
-        borderRadius: 8,
-        borderWidth: StyleSheet.hairlineWidth,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -1094,100 +1199,85 @@ const styles = StyleSheet.create({
         minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
-        gap: 7,
+        gap: 9,
     },
     topHeaderKindBadge: {
-        height: 20,
-        borderRadius: 6,
-        paddingHorizontal: 6,
+        minHeight: 18,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 3,
+        gap: 4,
         flexShrink: 0,
     },
     topHeaderKindText: {
-        fontSize: 9,
-        lineHeight: 12,
-        fontWeight: "900",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
         letterSpacing: 0,
     },
     topHeaderTitle: {
         flex: 1,
         minWidth: 0,
-        fontSize: 15,
-        lineHeight: 19,
+        fontSize: 17,
+        lineHeight: 22,
         fontWeight: "900",
         letterSpacing: 0,
-    },
-    topHeaderRouteRow: {
-        minWidth: 0,
-        marginTop: 3,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-    },
-    topHeaderRoute: {
-        flex: 1,
-        minWidth: 0,
-        fontSize: 13,
-        lineHeight: 17,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
-    topHeaderMetaRow: {
-        minWidth: 0,
-        marginTop: 4,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        overflow: "hidden",
-    },
-    topHeaderScope: {
-        maxWidth: 70,
-        flexShrink: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-    },
-    topHeaderCategoryDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        flexShrink: 0,
-    },
-    topHeaderMetaText: {
-        flexShrink: 1,
-        fontSize: 9.5,
-        lineHeight: 13,
-        fontWeight: "700",
-        letterSpacing: 0,
-    },
-    topHeaderMetaSeparator: {
-        flexShrink: 0,
-        fontSize: 9,
-        lineHeight: 13,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    topHeaderTravelMeta: {
-        maxWidth: 62,
     },
     topHeaderActions: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 4,
+        gap: 0,
+    },
+    topHeaderRouteBar: {
+        minHeight: 42,
+        marginTop: 6,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 10,
+        paddingHorizontal: 4,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    topHeaderRouteBarMain: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    topHeaderRouteBarText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    topHeaderTravelPill: {
+        maxWidth: 112,
+        minHeight: 28,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    topHeaderTravelText: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
     departureParticipants: {
         flexDirection: "row",
+        flexWrap: "wrap",
         alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 6,
+        rowGap: 10,
+        paddingTop: 8,
+        paddingBottom: 2,
     },
     departureParticipantItem: {
-        flex: 1,
+        width: "25%",
+        flexGrow: 0,
+        flexShrink: 0,
         minWidth: 0,
-        maxWidth: 54,
         alignItems: "center",
         gap: 4,
     },
@@ -1224,19 +1314,6 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
     },
-    departureParticipantMore: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    departureParticipantMoreText: {
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
     routeSheet: {
         position: "absolute",
         left: 0,
@@ -1247,19 +1324,19 @@ const styles = StyleSheet.create({
     },
     routeSheetGlass: {
         flex: 1,
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
-        paddingHorizontal: 18,
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingHorizontal: 20,
         borderTopWidth: 1,
         overflow: "hidden",
     },
-    routeSheetOpaqueBackdrop: {
+    panelOpaqueBackdrop: {
         opacity: 1,
     },
-    routeSheetOpaqueBackdropDark: {
+    panelOpaqueBackdropDark: {
         backgroundColor: "#171A20",
     },
-    routeSheetOpaqueBackdropLight: {
+    panelOpaqueBackdropLight: {
         backgroundColor: "#F8FAFC",
     },
     sheetHandleHitArea: {
@@ -1273,23 +1350,33 @@ const styles = StyleSheet.create({
         borderRadius: 999,
     },
     sheetScroll: { flex: 1 },
-    sheetScrollContent: { paddingBottom: 24 },
+    sheetScrollContent: { paddingBottom: 0 },
     sheetQuickSummaryClip: {
         overflow: "hidden",
     },
     sheetQuickSummary: {
-        minHeight: 108,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 14,
-        paddingHorizontal: 2,
-        paddingBottom: 9,
+        minHeight: 92,
+        justifyContent: "center",
+        gap: 5,
+        paddingTop: 3,
+        paddingBottom: 8,
+        paddingHorizontal: 1,
         borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    sheetQuickStat: {
+    sheetQuickSummaryMain: {
+        width: "100%",
+        flexDirection: "row",
+        alignItems: "flex-end",
+        gap: 12,
+    },
+    sheetQuickCountdown: {
         flex: 1,
         minWidth: 0,
-        gap: 2,
+    },
+    sheetQuickLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
     },
     sheetQuickLabel: {
         fontSize: 10,
@@ -1298,103 +1385,184 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     sheetQuickValue: {
-        fontSize: 19,
-        lineHeight: 24,
+        marginTop: 1,
+        fontSize: 24,
+        lineHeight: 29,
         fontWeight: "900",
         letterSpacing: 0,
         fontVariant: ["tabular-nums"],
     },
-    sheetQuickAssist: {
-        fontSize: 9,
-        lineHeight: 13,
+    sheetQuickTrailing: {
+        minWidth: 108,
+        alignItems: "flex-end",
+        justifyContent: "flex-end",
+    },
+    sheetQuickDate: {
+        fontSize: 10,
+        lineHeight: 14,
         fontWeight: "700",
         letterSpacing: 0,
     },
     sheetQuickExpand: {
-        width: 32,
+        width: 44,
         height: 32,
-        borderRadius: 16,
         alignItems: "center",
         justifyContent: "center",
     },
-    sheetDepartureSection: {
-        gap: 10,
-        paddingTop: 8,
-        paddingBottom: 13,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+    sheetQuickStatusRow: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
     },
-    sheetSectionHeader: {
-        minHeight: 18,
+    sheetQuickStatus: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    sheetExpandedContent: {
+        width: "100%",
+    },
+    sheetStatusSection: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingTop: 8,
+        paddingBottom: 8,
+    },
+    sheetStatusHero: {
+        borderLeftWidth: 3,
+        borderRadius: 2,
+        paddingLeft: 12,
+        paddingVertical: 5,
+    },
+    sheetStatusHeader: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
     },
-    sheetSectionTitle: {
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    sheetSectionCount: {
-        fontSize: 11,
-        lineHeight: 16,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    sheetDepartureAction: {
-        minHeight: 54,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 8,
-        paddingHorizontal: 9,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    sheetDepartureStatusIcon: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    sheetDepartureActionCopy: {
+    sheetStatusHeaderTrailing: {
         flex: 1,
         minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 2,
     },
-    sheetDepartureActionTitle: {
+    sheetStatusMainRow: {
+        minHeight: 44,
+        marginTop: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    sheetScheduleOverviewLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    sheetScheduleOverviewLabel: {
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "900",
+        fontWeight: "800",
         letterSpacing: 0,
     },
-    sheetDepartureActionMeta: {
-        marginTop: 2,
-        fontSize: 9,
-        lineHeight: 13,
+    sheetScheduleOverviewValue: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 28,
+        lineHeight: 33,
+        fontWeight: "900",
+        letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
+    },
+    sheetScheduleOverviewDate: {
+        fontSize: 11,
+        lineHeight: 15,
         fontWeight: "700",
         letterSpacing: 0,
     },
+    sheetScheduleCollapse: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    sheetSectionTitle: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    sheetParticipantDisclosure: {
+        width: "100%",
+        minHeight: 44,
+        marginTop: 6,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    sheetParticipantDisclosureTitle: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    sheetParticipantDisclosureSummary: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 5,
+    },
+    sheetParticipantSummary: {
+        flexShrink: 1,
+        textAlign: "right",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    sheetStatusMetaRow: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    sheetStatusMeta: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
     sheetDepartureActionButton: {
-        minWidth: 82,
-        height: 34,
-        borderRadius: 8,
-        paddingHorizontal: 10,
+        minWidth: 96,
+        height: 44,
+        borderRadius: 14,
+        paddingHorizontal: 14,
         alignItems: "center",
         justifyContent: "center",
     },
     sheetDepartureActionButtonText: {
-        fontSize: 10,
-        lineHeight: 14,
+        fontSize: 12,
+        lineHeight: 16,
         fontWeight: "900",
         letterSpacing: 0,
     },
     sheetRouteSummary: {
-        paddingTop: 13,
+        paddingVertical: 14,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     sheetRouteTopRow: {
         flexDirection: "row",
-        alignItems: "flex-end",
+        alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
     },
@@ -1421,14 +1589,14 @@ const styles = StyleSheet.create({
     },
     sheetRouteTitle: {
         marginTop: 2,
-        fontSize: 20,
-        lineHeight: 25,
+        fontSize: 18,
+        lineHeight: 23,
         fontWeight: "900",
         letterSpacing: 0,
     },
     sheetRouteDuration: {
-        fontSize: 28,
-        lineHeight: 32,
+        fontSize: 26,
+        lineHeight: 30,
         fontWeight: "900",
         letterSpacing: 0,
         fontVariant: ["tabular-nums"],
@@ -1441,25 +1609,36 @@ const styles = StyleSheet.create({
     sheetRouteMapButton: {
         width: 38,
         height: 38,
-        borderRadius: 8,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 19,
         alignItems: "center",
         justifyContent: "center",
     },
     routeProgressSection: {
-        marginTop: 10,
+        marginTop: 12,
     },
-    routeDetailDivider: {
-        height: StyleSheet.hairlineWidth,
-        marginTop: 6,
-        marginBottom: 8,
-        opacity: 0.72,
+    routeDetailHeader: {
+        minHeight: 38,
+        marginTop: 12,
+        paddingHorizontal: 2,
+        paddingBottom: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    routeDetailSectionTitle: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
     routeDetailBaseTimeText: {
-        fontSize: 13,
-        fontWeight: "900",
-        lineHeight: 18,
-        paddingBottom: 5,
+        flexShrink: 1,
+        fontSize: 10,
+        fontWeight: "800",
+        lineHeight: 14,
+        textAlign: "right",
     },
     sheetEmptyText: {
         fontSize: 14,

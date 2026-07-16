@@ -7,6 +7,10 @@ export function createQaScheduleItem(now = new Date()): ScheduleItem {
     start.setHours(14, 30, 0, 0);
     const end = new Date(start);
     end.setMinutes(end.getMinutes() + 45);
+    if (now.getTime() >= end.getTime()) {
+        start.setDate(start.getDate() + 1);
+        end.setTime(start.getTime() + (45 * 60 * 1000));
+    }
     const depart = new Date(start);
     depart.setMinutes(depart.getMinutes() - 32);
 

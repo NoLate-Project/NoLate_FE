@@ -1,6 +1,7 @@
 import {
     buildDepartureParticipantPresentations,
     getDepartureOverview,
+    getScheduleCountdownPresentation,
     getScheduleDetailSheetHeights,
 } from "../src/modules/schedule/detailPresentation";
 import { createQaScheduleItem } from "../src/modules/schedule/qaSamples";
@@ -32,9 +33,34 @@ describe("schedule detail presentation", () => {
 
     it("uses stable compact, middle, and expanded sheet heights", () => {
         expect(getScheduleDetailSheetHeights(874)).toEqual({
-            minHeight: 140,
+            minHeight: 127,
             midHeight: 367,
             maxHeight: 629,
+        });
+    });
+
+    it("presents a live schedule countdown before and during an event", () => {
+        const nowMs = new Date("2026-07-15T09:00:00+09:00").getTime();
+        const startAtMs = nowMs + (((5 * 60 * 60) + (7 * 60) + 9) * 1000);
+        const endAtMs = startAtMs + (45 * 60 * 1000);
+
+        expect(getScheduleCountdownPresentation(startAtMs, endAtMs, nowMs)).toEqual({
+            phase: "upcoming",
+            label: "일정까지",
+            compactValue: "05:07:09",
+            detailValue: "5시간 7분 09초",
+        });
+        expect(getScheduleCountdownPresentation(startAtMs, endAtMs, startAtMs + (10 * 60 * 1000))).toEqual({
+            phase: "active",
+            label: "종료까지",
+            compactValue: "00:35:00",
+            detailValue: "35분 00초",
+        });
+        expect(getScheduleCountdownPresentation(startAtMs, endAtMs, endAtMs)).toEqual({
+            phase: "ended",
+            label: "일정 상태",
+            compactValue: "종료",
+            detailValue: "종료된 일정이에요",
         });
     });
 
@@ -55,5 +81,13 @@ describe("schedule detail presentation", () => {
         }));
         expect(route.transitLegs).toHaveLength(4);
         expect(route.routeInfo?.steps).toHaveLength(6);
+    });
+
+    it("keeps the QA schedule upcoming after today's sample event has ended", () => {
+        const now = new Date("2026-07-13T23:00:00+09:00");
+        const item = createQaScheduleItem(now);
+
+        expect(new Date(item.startAt).getTime()).toBeGreaterThan(now.getTime());
+        expect(new Date(item.endAt).getTime() - new Date(item.startAt).getTime()).toBe(45 * 60 * 1000);
     });
 });
