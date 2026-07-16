@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
-    ActivityIndicator,
     Animated,
     Linking,
     Modal,
@@ -18,6 +17,7 @@ import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
+import BrandedLoader from "../../src/ui/BrandedLoader";
 
 import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
 import {
@@ -127,7 +127,11 @@ import {
     TRANSIT_PROGRESS_NEUTRAL_COLOR,
     type TransitRouteProgressSegment,
 } from "../../src/modules/schedule/transitRouteProgress";
-import { saveFavoriteDeparturePlace } from "../../src/modules/schedule/favoriteDeparture";
+import {
+    getFavoriteDeparturePlace,
+    hasFavoriteDepartureCoords,
+    saveFavoriteDeparturePlace,
+} from "../../src/modules/schedule/favoriteDeparture";
 import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
 import { resolveRouteSelectionHandoff } from "../../src/modules/schedule/routeSelectionHandoff";
 
@@ -179,8 +183,6 @@ const TRANSIT_SEGMENT_DETAIL_MIN_ZOOM = 13.8;
 const ENABLE_NATIVE_ROUTE_DIRECTION = true;
 // 본선과 화살표를 같은 native Polyline에 유지해야 줌 도중 위상과 위치가 함께 갱신된다.
 const TRANSIT_NATIVE_DIRECTION_MIN_ZOOM = TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
-const QA_ACTUAL_API_BUS_ROUTE_ID = "qa-api-bus-seoul-station-namsan";
-const QA_ACTUAL_API_SUBWAY_ROUTE_ID = "qa-api-subway-seoul-station-gangnam";
 // 화면 혼잡을 줄이기 위한 이벤트 배지 최대 개수.
 const TRANSIT_BADGE_MAX_COUNT = 18;
 const TRANSIT_WALK_RIDE_SNAP_MAX_METERS = CONNECTOR_POLICY.snapEndpointMeters;
@@ -3742,370 +3744,6 @@ function buildRouteEndpointAccessOverlays(
     });
 }
 
-function buildQaSeoulGangnamTransitFixture(): RouteAlternativeOption {
-    const walkToSeoulLine4: RoutePathCoord[] = [
-        { lat: 37.5559, lng: 126.9723 },
-        { lat: 37.55565, lng: 126.97232 },
-        { lat: 37.5553, lng: 126.97238 },
-        { lat: 37.55485, lng: 126.97246 },
-        { lat: 37.55435, lng: 126.97254 },
-        { lat: 37.5536, lng: 126.9726 },
-    ];
-    const line4Path: RoutePathCoord[] = [
-        { lat: 37.5536, lng: 126.9726 },
-        { lat: 37.5495, lng: 126.9724 },
-        { lat: 37.5446, lng: 126.9721 },
-        { lat: 37.5398, lng: 126.9730 },
-        { lat: 37.5355, lng: 126.9740 },
-        { lat: 37.5312, lng: 126.9714 },
-        { lat: 37.5293, lng: 126.9679 },
-        { lat: 37.5245, lng: 126.9708 },
-        { lat: 37.5223, lng: 126.9743 },
-        { lat: 37.5150, lng: 126.9771 },
-        { lat: 37.5029, lng: 126.9803 },
-        { lat: 37.4935, lng: 126.9814 },
-        { lat: 37.4863, lng: 126.9816 },
-        { lat: 37.4766, lng: 126.9816 },
-    ];
-    const sadangTransferWalk: RoutePathCoord[] = [
-        { lat: 37.4766, lng: 126.9816 },
-        { lat: 37.4766, lng: 126.9820 },
-        { lat: 37.4767, lng: 126.9825 },
-        { lat: 37.4768, lng: 126.9830 },
-    ];
-    const line2Path: RoutePathCoord[] = [
-        { lat: 37.4768, lng: 126.9830 },
-        { lat: 37.4785, lng: 126.9900 },
-        { lat: 37.4814, lng: 126.9977 },
-        { lat: 37.4864, lng: 127.0032 },
-        { lat: 37.4919, lng: 127.0079 },
-        { lat: 37.4934, lng: 127.0146 },
-        { lat: 37.4957, lng: 127.0213 },
-        { lat: 37.4979, lng: 127.0276 },
-    ];
-    const transitLegs: TransitLegDetail[] = [
-        {
-            kind: "WALK",
-            label: "서울역 2번 출구까지",
-            durationMinutes: 4,
-            distanceMeters: 309,
-            startName: "서울역 1호선",
-            endName: "서울역 4호선",
-            startCoord: walkToSeoulLine4[0],
-            endCoord: walkToSeoulLine4[walkToSeoulLine4.length - 1],
-            pathCoords: walkToSeoulLine4,
-            pathCoordsIsExact: true,
-        },
-        {
-            kind: "SUBWAY",
-            label: "4호선 서울역 승차",
-            lineName: "4호선",
-            durationMinutes: 16,
-            distanceMeters: 9530,
-            stationCount: 7,
-            startName: "서울역",
-            endName: "사당",
-            startCoord: line4Path[0],
-            endCoord: line4Path[line4Path.length - 1],
-            pathCoords: line4Path,
-            pathCoordsIsExact: true,
-            passStops: [
-                { name: "숙대입구", coord: { lat: 37.5446, lng: 126.9721 }, sequence: 1 },
-                { name: "삼각지", coord: { lat: 37.5355, lng: 126.9740 }, sequence: 2 },
-                { name: "신용산", coord: { lat: 37.5293, lng: 126.9679 }, sequence: 3 },
-                { name: "이촌", coord: { lat: 37.5223, lng: 126.9743 }, sequence: 4 },
-                { name: "동작", coord: { lat: 37.5029, lng: 126.9803 }, sequence: 5 },
-                { name: "총신대입구", coord: { lat: 37.4863, lng: 126.9816 }, sequence: 6 },
-                { name: "사당", coord: { lat: 37.4766, lng: 126.9816 }, sequence: 7 },
-            ],
-        },
-        {
-            kind: "WALK",
-            label: "사당역 환승 통로",
-            durationMinutes: 3,
-            distanceMeters: 74,
-            startName: "사당역 4호선",
-            endName: "사당역 2호선",
-            startCoord: sadangTransferWalk[0],
-            endCoord: sadangTransferWalk[sadangTransferWalk.length - 1],
-            pathCoords: sadangTransferWalk,
-            pathCoordsIsExact: true,
-        },
-        {
-            kind: "SUBWAY",
-            label: "2호선 사당역 승차",
-            lineName: "2호선",
-            durationMinutes: 9,
-            distanceMeters: 4510,
-            stationCount: 4,
-            startName: "사당",
-            endName: "강남",
-            startCoord: line2Path[0],
-            endCoord: line2Path[line2Path.length - 1],
-            pathCoords: line2Path,
-            pathCoordsIsExact: true,
-            passStops: [
-                { name: "방배", coord: { lat: 37.4814, lng: 126.9977 }, sequence: 1 },
-                { name: "서초", coord: { lat: 37.4919, lng: 127.0079 }, sequence: 2 },
-                { name: "교대", coord: { lat: 37.4934, lng: 127.0146 }, sequence: 3 },
-                { name: "강남", coord: { lat: 37.4979, lng: 127.0276 }, sequence: 4 },
-            ],
-        },
-    ];
-
-    return {
-        id: "qa-seoul-gangnam-line4-line2",
-        mode: "TRANSIT",
-        minutes: 35,
-        distanceMeters: 14393,
-        transferCount: 1,
-        walkMeters: 383,
-        fareWon: 1650,
-        source: "api",
-        provider: "tmap",
-        stepSummary: "도보 4분 · 4호선 16분 · 환승 3분 · 2호선 9분",
-        transitModeSummary: "4호선 + 환승 1회",
-        transitLegs,
-        pathCoords: transitLegs.flatMap((leg) => leg.pathCoords ?? []),
-    };
-}
-
-function buildQaBusTransitFixture(): RouteAlternativeOption {
-    const walkToBusStop: RoutePathCoord[] = [
-        { lat: 37.48495, lng: 126.97105 },
-        { lat: 37.48482, lng: 126.97138 },
-        { lat: 37.48462, lng: 126.97178 },
-    ];
-    const busPath: RoutePathCoord[] = [
-        { lat: 37.48462, lng: 126.97178 },
-        { lat: 37.48448, lng: 126.97208 },
-        { lat: 37.48425, lng: 126.97255 },
-        { lat: 37.48398, lng: 126.97305 },
-        { lat: 37.48374, lng: 126.97358 },
-        { lat: 37.48348, lng: 126.97412 },
-        { lat: 37.48318, lng: 126.97472 },
-        { lat: 37.48286, lng: 126.97534 },
-        { lat: 37.48248, lng: 126.97605 },
-        { lat: 37.48212, lng: 126.97672 },
-        { lat: 37.48172, lng: 126.97738 },
-        { lat: 37.48126, lng: 126.97805 },
-        { lat: 37.48082, lng: 126.97872 },
-        { lat: 37.48032, lng: 126.97938 },
-        { lat: 37.47982, lng: 126.98008 },
-        { lat: 37.47934, lng: 126.98082 },
-        { lat: 37.47892, lng: 126.98158 },
-        { lat: 37.47856, lng: 126.98234 },
-        { lat: 37.47818, lng: 126.98310 },
-        { lat: 37.47784, lng: 126.98392 },
-        { lat: 37.47760, lng: 126.98462 },
-        { lat: 37.47738, lng: 126.98524 },
-    ];
-    const walkToDestination: RoutePathCoord[] = [
-        { lat: 37.47738, lng: 126.98524 },
-        { lat: 37.47718, lng: 126.98488 },
-        { lat: 37.47692, lng: 126.98432 },
-    ];
-    const transitLegs: TransitLegDetail[] = [
-        {
-            kind: "WALK",
-            label: "남성역 버스정류장까지",
-            durationMinutes: 3,
-            distanceMeters: 180,
-            startName: "남성역 7호선",
-            endName: "남성역 정류장",
-            startCoord: walkToBusStop[0],
-            endCoord: walkToBusStop[walkToBusStop.length - 1],
-            pathCoords: walkToBusStop,
-            pathCoordsIsExact: true,
-            pathGeometrySource: "WALK_STEPS_LINESTRING",
-            rawPathPointCount: walkToBusStop.length,
-        },
-        {
-            kind: "BUS",
-            label: "N64 남성역 승차",
-            lineName: "N64",
-            lineColor: "#1E88E5",
-            durationMinutes: 10,
-            distanceMeters: 1780,
-            stationCount: 5,
-            startName: "남성역",
-            endName: "사당역",
-            startCoord: busPath[0],
-            endCoord: busPath[busPath.length - 1],
-            pathCoords: busPath,
-            pathCoordsIsExact: true,
-            pathGeometrySource: "TRANSIT_PASS_SHAPE_LINESTRING",
-            rawPathPointCount: busPath.length,
-            passStops: [
-                { name: "남성역", coord: busPath[0], sequence: 1, code: "22001" },
-                { name: "남성시장", coord: busPath[4], sequence: 2, code: "22002" },
-                { name: "총신대입구", coord: busPath[10], sequence: 3, code: "22003" },
-                { name: "사당역입구", coord: busPath[15], sequence: 4, code: "22004" },
-                { name: "사당역", coord: busPath[busPath.length - 1], sequence: 5, code: "22005" },
-            ],
-        },
-        {
-            kind: "WALK",
-            label: "사당역 2번 출구까지",
-            durationMinutes: 2,
-            distanceMeters: 120,
-            startName: "사당역 정류장",
-            endName: "사당역 2번 출구",
-            startCoord: walkToDestination[0],
-            endCoord: walkToDestination[walkToDestination.length - 1],
-            pathCoords: walkToDestination,
-            pathCoordsIsExact: true,
-            pathGeometrySource: "WALK_STEPS_LINESTRING",
-            rawPathPointCount: walkToDestination.length,
-        },
-    ];
-
-    return {
-        id: "qa-bus-n64-namseong-sadang",
-        mode: "TRANSIT",
-        minutes: 15,
-        distanceMeters: 2080,
-        transferCount: 0,
-        walkMeters: 300,
-        fareWon: 1500,
-        source: "api",
-        provider: "tmap",
-        stepSummary: "도보 3분 · N64 10분 · 도보 2분",
-        transitModeSummary: "N64",
-        transitLegs,
-        pathCoords: transitLegs.flatMap((leg) => leg.pathCoords ?? []),
-    };
-}
-
-function getQaTransitFixture(routeId?: string): RouteAlternativeOption {
-    if (routeId === "qa-bus-n64-namseong-sadang") return buildQaBusTransitFixture();
-    return buildQaSeoulGangnamTransitFixture();
-}
-
-type QaActualApiTransitRouteConfig = {
-    id: string;
-    origin: Place;
-    destination: Place;
-    preferredMode: "BUS" | "SUBWAY";
-    requiredLineNames?: string[];
-};
-
-const QA_ACTUAL_API_TRANSIT_ROUTE_CONFIGS: Record<string, QaActualApiTransitRouteConfig> = {
-    [QA_ACTUAL_API_BUS_ROUTE_ID]: {
-        id: QA_ACTUAL_API_BUS_ROUTE_ID,
-        preferredMode: "BUS",
-        origin: {
-            name: "서울역",
-            address: "서울 중구 한강대로 405",
-            lat: 37.55465,
-            lng: 126.97061,
-        },
-        destination: {
-            name: "남산서울타워",
-            address: "서울 용산구 남산공원길 105",
-            lat: 37.55117,
-            lng: 126.98823,
-        },
-    },
-    [QA_ACTUAL_API_SUBWAY_ROUTE_ID]: {
-        id: QA_ACTUAL_API_SUBWAY_ROUTE_ID,
-        preferredMode: "SUBWAY",
-        requiredLineNames: ["4호선", "2호선"],
-        origin: {
-            name: "서울역 1호선",
-            address: "서울 중구 한강대로 지하 392",
-            lat: 37.5559,
-            lng: 126.9723,
-        },
-        destination: {
-            name: "강남역 2호선",
-            address: "서울 강남구 강남대로 지하 396",
-            lat: 37.49790,
-            lng: 127.02760,
-        },
-    },
-};
-
-function getQaActualApiTransitRouteConfig(routeId?: string): QaActualApiTransitRouteConfig | undefined {
-    if (!routeId) return undefined;
-    return QA_ACTUAL_API_TRANSIT_ROUTE_CONFIGS[routeId];
-}
-
-function getTransitLegActualGeometryPointCount(
-    leg: TransitLegDetail | undefined,
-    preferredMode: "BUS" | "SUBWAY"
-): number {
-    if (
-        !leg ||
-        leg.kind !== preferredMode ||
-        leg.pathGeometrySource !== "TRANSIT_PASS_SHAPE_LINESTRING" ||
-        !Array.isArray(leg.pathCoords)
-    ) {
-        return 0;
-    }
-    return leg.pathCoords.length;
-}
-
-function getActualTransitGeometryPointCount(
-    option: RouteAlternativeOption,
-    preferredMode: "BUS" | "SUBWAY"
-): number {
-    if (!Array.isArray(option.transitLegs)) return 0;
-    return option.transitLegs.reduce((maxPointCount, leg) => (
-        Math.max(maxPointCount, getTransitLegActualGeometryPointCount(leg, preferredMode))
-    ), 0);
-}
-
-function selectActualApiTransitGeometryAlternative(
-    alternatives: RouteAlternativeOption[],
-    config: QaActualApiTransitRouteConfig
-): RouteAlternativeOption | undefined {
-    const candidates = alternatives
-        .map((option, index) => ({
-            option,
-            index,
-            geometryPointCount: getActualTransitGeometryPointCount(option, config.preferredMode),
-        }))
-        .filter((item) => {
-            if (item.geometryPointCount < 10) return false;
-            const rideLegs = item.option.transitLegs?.filter((leg) => isRideLegKind(leg.kind)) ?? [];
-            if (config.preferredMode === "SUBWAY" && rideLegs.some((leg) => leg.kind !== "SUBWAY")) {
-                return false;
-            }
-            return config.requiredLineNames?.every((requiredLine) => (
-                rideLegs.some((leg) => compactTransitLineLabel(leg.lineName) === requiredLine)
-            )) ?? true;
-        });
-
-    if (!candidates.length) return undefined;
-    candidates.sort((a, b) => {
-        if (a.index !== b.index) return a.index - b.index;
-        return b.geometryPointCount - a.geometryPointCount;
-    });
-    return candidates[0]?.option;
-}
-
-function getRouteEndpointPlaceFromAlternative(
-    option: RouteAlternativeOption,
-    position: "origin" | "destination"
-): Place | undefined {
-    const firstLeg = option.transitLegs?.[0];
-    const lastLeg = option.transitLegs?.[option.transitLegs.length - 1];
-    const coord = position === "origin"
-        ? (firstLeg?.startCoord ?? option.pathCoords?.[0])
-        : (lastLeg?.endCoord ?? option.pathCoords?.[option.pathCoords.length - 1]);
-    if (!coord) return undefined;
-    const name = position === "origin"
-        ? (firstLeg?.startName ?? "출발지")
-        : (lastLeg?.endName ?? "도착지");
-    return {
-        name,
-        address: name,
-        lat: coord.lat,
-        lng: coord.lng,
-    };
-}
-
 export default function RoutePlannerScreen() {
     const router = useRouter();
     const pathname = usePathname();
@@ -4134,10 +3772,6 @@ export default function RoutePlannerScreen() {
         destinationLat?: string;
         destinationLng?: string;
         departureAt?: string;
-        qaSurface?: string;
-        qaPreset?: string;
-        qaLayerMode?: string;
-        qaExpandStepId?: string;
         entrySource?: string;
     }>();
     const isRouteSelectionScreen = pathname === "/schedule/route-select";
@@ -4200,13 +3834,11 @@ export default function RoutePlannerScreen() {
         () => resolveRouteSelectionHandoff(initial?.route, initial?.travelMode ?? "CAR", forcedRouteId),
         [forcedRouteId, initial?.route, initial?.travelMode]
     );
-    const qaCameraPresetId = useMemo(() => parseQaCameraPresetParam(params.qaPreset), [params.qaPreset]);
-    const qaLayerMode = useMemo(() => parseRouteQaLayerModeParam(params.qaLayerMode), [params.qaLayerMode]);
+    const qaCameraPresetId = parseQaCameraPresetParam(undefined);
+    const qaLayerMode = parseRouteQaLayerModeParam(undefined);
     const isRouteQaBaseOnly = qaLayerMode === "BASE_ONLY";
     // 지도 테마는 사용자 프로필 테마를 따르고, QA용 dim 막도 기본 화면에는 얹지 않는다.
     const qaMapBaseDimOpacity = 0;
-    const qaSurface = typeof params.qaSurface === "string" ? params.qaSurface : "";
-    const qaExpandStepId = typeof params.qaExpandStepId === "string" ? params.qaExpandStepId : undefined;
     const shouldReturnToScheduleDetail = params.entrySource === "schedule-detail";
 
     const [originName, setOriginName] = useState(initial?.origin?.name ?? "");
@@ -4215,6 +3847,7 @@ export default function RoutePlannerScreen() {
     const [destinationAddress, setDestinationAddress] = useState(initial?.destination?.address ?? "");
     const [originLat, setOriginLat] = useState<number | undefined>(initial?.origin?.lat);
     const [originLng, setOriginLng] = useState<number | undefined>(initial?.origin?.lng);
+    const [originUsesDefault, setOriginUsesDefault] = useState(false);
     const [destinationLat, setDestinationLat] = useState<number | undefined>(initial?.destination?.lat);
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
     const [travelMode, setTravelMode] = useState<TravelMode>(initial?.travelMode ?? "CAR");
@@ -4279,6 +3912,7 @@ export default function RoutePlannerScreen() {
     const appliedDepartureParamRef = useRef<string | undefined>(paramDepartureAt?.toISOString());
     const [routeRefreshTick, setRouteRefreshTick] = useState(0);
     const initializedOriginRef = useRef(false);
+    const originTouchedRef = useRef(Boolean(initial?.origin));
     const prevHasRouteReadyRef = useRef(false);
     const lastCameraActionKeyRef = useRef("");
     const lastCameraQaLogSignatureRef = useRef("");
@@ -4907,6 +4541,7 @@ export default function RoutePlannerScreen() {
         setDestinationAddress(initial?.destination?.address ?? "");
         setOriginLat(initial?.origin?.lat);
         setOriginLng(initial?.origin?.lng);
+        setOriginUsesDefault(false);
         setDestinationLat(initial?.destination?.lat);
         setDestinationLng(initial?.destination?.lng);
         setTravelMode(initial?.travelMode ?? "CAR");
@@ -4929,6 +4564,8 @@ export default function RoutePlannerScreen() {
         lastCameraActionKeyRef.current = "";
         const hasInitialOrigin = typeof initial?.origin?.lat === "number" && typeof initial?.origin?.lng === "number";
         const hasInitialDestination = typeof initial?.destination?.lat === "number" && typeof initial?.destination?.lng === "number";
+        originTouchedRef.current = hasInitialOrigin;
+        initializedOriginRef.current = hasInitialOrigin;
         if (forcedEditTarget) {
             setActiveTarget(forcedEditTarget);
         } else if (forcedFocusTarget === "origin" && hasInitialOrigin) {
@@ -5000,16 +4637,6 @@ export default function RoutePlannerScreen() {
             setIsRoutePointEditMode(true);
         }
     }, [hasRouteReady, isRoutePointEditMode]);
-
-    useEffect(() => {
-        if (qaSurface !== "route-eta" || !hasRouteReady) return;
-        if (isRoutePointEditMode) {
-            setIsRoutePointEditMode(false);
-        }
-        if (activeTarget !== null) {
-            setActiveTarget(null);
-        }
-    }, [activeTarget, hasRouteReady, isRoutePointEditMode, qaSurface]);
 
     useEffect(() => {
         // 경로 편집으로 돌아가거나 좌표가 사라지면 상세 단계는 자동 해제한다.
@@ -5154,22 +4781,6 @@ export default function RoutePlannerScreen() {
                 setEtaLoading(true);
                 setAlternativesError(undefined);
 
-                const actualApiQaConfig = getQaActualApiTransitRouteConfig(forcedRouteId);
-                const isActualApiTransitQa = qaSurface === "route-eta" &&
-                    travelMode === "TRANSIT" &&
-                    !!actualApiQaConfig;
-
-                if (qaSurface === "route-eta" && travelMode === "TRANSIT" && !isActualApiTransitQa) {
-                    const fixture = getQaTransitFixture(forcedRouteId);
-                    const sortedAlternatives = [fixture];
-                    setRouteAlternatives(sortedAlternatives);
-                    setSelectedAlternativeId(fixture.id);
-                    selectedAlternativeIdRef.current = fixture.id;
-                    setFocusedTransitLegIndex(undefined);
-                    setAlternativesError(undefined);
-                    return;
-                }
-
                 const nextAlternatives = await getRouteAlternativeOptions(
                     { name: originName, address: originAddress, lat: originLat, lng: originLng },
                     { name: destinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng },
@@ -5192,28 +4803,7 @@ export default function RoutePlannerScreen() {
                     return;
                 }
 
-                const actualApiQaSelected = isActualApiTransitQa && actualApiQaConfig
-                    ? selectActualApiTransitGeometryAlternative(sortedAlternatives, actualApiQaConfig)
-                    : undefined;
-                if (isActualApiTransitQa && actualApiQaConfig && !actualApiQaSelected) {
-                    console.warn("[route-geometry-qa] no matching actual passShape geometry alternative", {
-                        forcedRouteId,
-                        preferredMode: actualApiQaConfig.preferredMode,
-                        requiredLineNames: actualApiQaConfig.requiredLineNames,
-                        alternativeCount: sortedAlternatives.length,
-                        candidates: sortedAlternatives.map((item) => ({
-                            id: item.id,
-                            transitModeSummary: item.transitModeSummary,
-                            geometryPointCount: getActualTransitGeometryPointCount(
-                                item,
-                                actualApiQaConfig.preferredMode
-                            ),
-                        })),
-                    });
-                }
-
-                const selected = actualApiQaSelected ??
-                    sortedAlternatives.find((item) => item.id === forcedRouteId) ??
+                const selected = sortedAlternatives.find((item) => item.id === forcedRouteId) ??
                     sortedAlternatives.find((item) => item.id === selectedAlternativeIdRef.current) ??
                     sortedAlternatives[0];
                 setSelectedAlternativeId(selected.id);
@@ -5249,7 +4839,6 @@ export default function RoutePlannerScreen() {
         destinationLat,
         destinationLng,
         forcedRouteId,
-        qaSurface,
         handoffRoute,
         isHandoffRequestCurrent,
         requestedTransitDepartureAt,
@@ -7551,9 +7140,10 @@ export default function RoutePlannerScreen() {
 
         try {
             await saveFavoriteDeparturePlace(originPlace);
-            Alert.alert("즐겨찾기 저장", "출발지를 즐겨찾기에 저장했습니다.");
+            setOriginUsesDefault(true);
+            Alert.alert("기본 출발지", "현재 출발지를 기본 출발지로 저장했습니다.");
         } catch {
-            Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
+            Alert.alert("기본 출발지 저장 실패", "잠시 후 다시 시도해 주세요.");
         }
     }, [originAddress, originLat, originLng, originName]);
 
@@ -7565,6 +7155,8 @@ export default function RoutePlannerScreen() {
         }
 
         if (target === "origin") {
+            originTouchedRef.current = true;
+            setOriginUsesDefault(false);
             setOriginLat(place.lat);
             setOriginLng(place.lng);
             setOriginAddress(place.address);
@@ -7595,6 +7187,8 @@ export default function RoutePlannerScreen() {
             const address = await reverseGeocodeToAddress(loc.latitude, loc.longitude).catch(() => undefined);
             const placeName = address || "현재 위치";
             if (target === "origin") {
+                originTouchedRef.current = true;
+                setOriginUsesDefault(false);
                 setOriginLat(loc.latitude);
                 setOriginLng(loc.longitude);
                 setOriginName(placeName);
@@ -7659,92 +7253,58 @@ export default function RoutePlannerScreen() {
 
     useEffect(() => {
         if (initializedOriginRef.current) return;
-        if (qaSurface) {
-            initializedOriginRef.current = true;
-            return;
-        }
         if (typeof originLat === "number" && typeof originLng === "number") {
             initializedOriginRef.current = true;
             return;
         }
+        if (forcedEditTarget === "origin") {
+            initializedOriginRef.current = true;
+            return;
+        }
         initializedOriginRef.current = true;
-        requestCurrentLocation("origin").catch(() => {
-            // ignore
-        });
-    }, [originLat, originLng, qaSurface, requestCurrentLocation]);
+        let cancelled = false;
 
-    useEffect(() => {
-        if (!qaSurface) return;
+        const applyStoredOriginOrCurrentLocation = async () => {
+            const storedOrigin = await getFavoriteDeparturePlace().catch(() => null);
+            if (cancelled || originTouchedRef.current) return;
 
-        if (qaSurface === "permission") {
-            initializedOriginRef.current = true;
-            setLocationPromptTarget("origin");
-            return;
-        }
+            if (hasFavoriteDepartureCoords(storedOrigin)) {
+                originTouchedRef.current = true;
+                setOriginName(storedOrigin.name?.trim() || storedOrigin.address?.trim() || "기본 출발지");
+                setOriginAddress(storedOrigin.address?.trim() || "");
+                setOriginLat(storedOrigin.lat);
+                setOriginLng(storedOrigin.lng);
+                setOriginUsesDefault(true);
 
-        if (qaSurface === "location-search") {
-            initializedOriginRef.current = true;
-            setIsRoutePointEditMode(true);
-            setActiveTarget("destination");
-            setSearchQuery("강남역");
-            setSearchResults([
-                {
-                    name: "강남역",
-                    address: "서울 강남구 강남대로 396",
-                    lat: 37.4979,
-                    lng: 127.0276,
-                },
-            ]);
-            return;
-        }
-
-        if (qaSurface === "route-eta") {
-            const actualApiQaRoute = getQaActualApiTransitRouteConfig(forcedRouteId);
-            if (actualApiQaRoute) {
-                initializedOriginRef.current = true;
-                setOriginName(actualApiQaRoute.origin.name ?? "서울역");
-                setOriginAddress(actualApiQaRoute.origin.address ?? "서울 중구 한강대로 405");
-                setOriginLat(actualApiQaRoute.origin.lat);
-                setOriginLng(actualApiQaRoute.origin.lng);
-                setDestinationName(actualApiQaRoute.destination.name ?? "남산서울타워");
-                setDestinationAddress(actualApiQaRoute.destination.address ?? "서울 용산구 남산공원길 105");
-                setDestinationLat(actualApiQaRoute.destination.lat);
-                setDestinationLng(actualApiQaRoute.destination.lng);
-                setTravelMode("TRANSIT");
-                setEtaMinutes(undefined);
-                setIsRoutePointEditMode(false);
-                setActiveTarget(null);
-                if (!forcedSheetState) {
-                    setIsBottomSheetHidden(false);
-                    setBottomSheetSnap("middle");
-                    setIsBottomSheetCollapsed(true);
+                const hasDestination =
+                    typeof destinationLat === "number" &&
+                    typeof destinationLng === "number";
+                if (hasDestination && !forcedEditTarget) {
+                    setActiveTarget(null);
+                    setIsRoutePointEditMode(false);
+                } else {
+                    setActiveTarget("destination");
+                    setIsRoutePointEditMode(true);
                 }
                 return;
             }
 
-            const fixture = getQaTransitFixture(forcedRouteId);
-            const fixtureOrigin = getRouteEndpointPlaceFromAlternative(fixture, "origin");
-            const fixtureDestination = getRouteEndpointPlaceFromAlternative(fixture, "destination");
-            initializedOriginRef.current = true;
-            setOriginName(fixtureOrigin?.name ?? "서울역");
-            setOriginAddress(fixtureOrigin?.address ?? "서울 중구 한강대로 405");
-            setOriginLat(fixtureOrigin?.lat ?? 37.5559);
-            setOriginLng(fixtureOrigin?.lng ?? 126.9723);
-            setDestinationName(fixtureDestination?.name ?? "강남역 2호선");
-            setDestinationAddress(fixtureDestination?.address ?? "서울 강남구 강남대로 396");
-            setDestinationLat(fixtureDestination?.lat ?? 37.4979);
-            setDestinationLng(fixtureDestination?.lng ?? 127.0276);
-            setTravelMode("TRANSIT");
-            setEtaMinutes(fixture.minutes);
-            setIsRoutePointEditMode(false);
-            setActiveTarget(null);
-            if (!forcedSheetState) {
-                setIsBottomSheetHidden(false);
-                setBottomSheetSnap("middle");
-                setIsBottomSheetCollapsed(true);
-            }
-        }
-    }, [forcedRouteId, forcedSheetState, qaSurface]);
+            // 저장값이 없는 사용자만 기존 동작대로 현재 위치 권한 흐름을 사용한다.
+            await requestCurrentLocation("origin");
+        };
+
+        applyStoredOriginOrCurrentLocation().catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
+    }, [
+        destinationLat,
+        destinationLng,
+        forcedEditTarget,
+        originLat,
+        originLng,
+        requestCurrentLocation,
+    ]);
 
     const onPressOriginTarget = () => {
         if (activeTarget === "origin") {
@@ -7759,6 +7319,7 @@ export default function RoutePlannerScreen() {
         if (typeof originLat === "number" && typeof originLng === "number") {
             return;
         }
+        originTouchedRef.current = true;
         requestCurrentLocation("origin").catch(() => {
             // ignore
         });
@@ -7784,6 +7345,8 @@ export default function RoutePlannerScreen() {
         const tappedTarget = activeTarget;
 
         if (tappedTarget === "origin") {
+            originTouchedRef.current = true;
+            setOriginUsesDefault(false);
             setOriginLat(latitude);
             setOriginLng(longitude);
             setActiveTarget("destination");
@@ -7818,6 +7381,10 @@ export default function RoutePlannerScreen() {
 
     const handleSearchChange = (text: string) => {
         if (isRoutePointLocked || !hasActiveTarget) return;
+        if (activeTarget === "origin") {
+            originTouchedRef.current = true;
+            setOriginUsesDefault(false);
+        }
         const requestId = searchRequestIdRef.current + 1;
         searchRequestIdRef.current = requestId;
         setSearchQuery(text);
@@ -8530,7 +8097,11 @@ export default function RoutePlannerScreen() {
 
                         {etaLoading ? (
                             <View style={styles.transitReferenceLoadingRow}>
-                                <ActivityIndicator size="small" color="#4D9BFF" />
+                                <BrandedLoader
+                                    size="button"
+                                    variant="route"
+                                    accessibilityLabel="경로 옵션을 계산하고 있어요"
+                                />
                                 <Text style={styles.transitReferenceLoadingText}>경로 옵션 계산 중...</Text>
                             </View>
                         ) : null}
@@ -8696,7 +8267,11 @@ export default function RoutePlannerScreen() {
                                 isDark ? styles.mapLoadingSurfaceDark : styles.mapLoadingSurfaceLight,
                             ]}
                         >
-                            <ActivityIndicator size="small" color={isDark ? "#78B4FF" : "#2979FF"} />
+                            <BrandedLoader
+                                size="section"
+                                variant="route"
+                                accessibilityLabel="지도를 준비하고 있어요"
+                            />
                         </View>
                     )}
                     <View pointerEvents="box-none" style={[styles.routeDetailMapHeader, { paddingTop: insets.top + 10 }]}>
@@ -8770,11 +8345,19 @@ export default function RoutePlannerScreen() {
                                     forceDark
                                     primaryTextColor="#F5F7FA"
                                     secondaryTextColor="#9CA3AF"
-                                    initialExpandedStepId={qaExpandStepId}
                                     compact
                                 />
                             ) : (
-                                <Text style={styles.routeDetailEmptyText}>상세 경로를 불러오는 중입니다.</Text>
+                                <View style={styles.routeDetailLoadingRow}>
+                                    <BrandedLoader
+                                        size="button"
+                                        variant="route"
+                                        accessibilityLabel="상세 경로를 불러오고 있어요"
+                                    />
+                                    <Text style={styles.routeDetailEmptyText}>
+                                        상세 경로를 불러오는 중입니다.
+                                    </Text>
+                                </View>
                             )}
                         </View>
                     </ScrollView>
@@ -8850,7 +8433,11 @@ export default function RoutePlannerScreen() {
                         isDark ? styles.mapLoadingSurfaceDark : styles.mapLoadingSurfaceLight,
                     ]}
                 >
-                    <ActivityIndicator size="small" color={isDark ? "#78B4FF" : "#2979FF"} />
+                    <BrandedLoader
+                        size="section"
+                        variant="route"
+                        accessibilityLabel="지도를 준비하고 있어요"
+                    />
                 </View>
             )}
 
@@ -8954,7 +8541,14 @@ export default function RoutePlannerScreen() {
                             style={[styles.searchInput, { color: colors.textPrimary }]}
                         />
                         {searching
-                                ? <ActivityIndicator size="small" color={colors.selectedDayBg} style={styles.searchIcon} />
+                                ? (
+                                    <BrandedLoader
+                                        size="button"
+                                        variant="route"
+                                        accessibilityLabel="장소를 검색하고 있어요"
+                                        style={styles.searchIcon}
+                                    />
+                                )
                                 : searchQuery.length > 0
                                     ? (
                                         <Pressable onPress={() => { setSearchQuery(""); setSearchResults([]); }} style={styles.searchIcon}>
@@ -9063,7 +8657,7 @@ export default function RoutePlannerScreen() {
                                 style={[styles.routePreviewActionBtn, { backgroundColor: overlayPanelBg }]}
                             >
                                 <Text style={[styles.routePreviewActionText, { color: colors.textPrimary }]}>
-                                    출발지 즐겨찾기
+                                    {originUsesDefault ? "기본 출발지" : "기본 출발지로 설정"}
                                 </Text>
                             </Pressable>
                         </View>
@@ -9176,7 +8770,11 @@ export default function RoutePlannerScreen() {
 
                             {etaLoading ? (
                                 <View style={styles.alternativeLoadingRow}>
-                                    <ActivityIndicator size="small" color={colors.selectedDayBg} />
+                                    <BrandedLoader
+                                        size="button"
+                                        variant="route"
+                                        accessibilityLabel="경로 옵션을 계산하고 있어요"
+                                    />
                                     <Text style={[styles.alternativeLoadingText, { color: colors.textSecondary }]}>
                                         경로 옵션 계산 중..
                                     </Text>
@@ -9411,7 +9009,11 @@ export default function RoutePlannerScreen() {
 
                                     {etaLoading ? (
                                         <View style={styles.alternativeLoadingRow}>
-                                            <ActivityIndicator size="small" color={colors.selectedDayBg} />
+                                            <BrandedLoader
+                                                size="button"
+                                                variant="route"
+                                                accessibilityLabel="경로 옵션을 계산하고 있어요"
+                                            />
                                             <Text style={[styles.alternativeLoadingText, { color: colors.textSecondary }]}>경로 옵션 계산 중...</Text>
                                         </View>
                                     ) : null}
@@ -9872,7 +9474,11 @@ export default function RoutePlannerScreen() {
                                 ]}
                             >
                                 {locationPromptLoading ? (
-                                    <ActivityIndicator color={ORIGIN_COLOR} />
+                                    <BrandedLoader
+                                        size="button"
+                                        variant="route"
+                                        accessibilityLabel="위치 권한을 확인하고 있어요"
+                                    />
                                 ) : (
                                     <Text style={styles.permissionPrimaryText}>계속</Text>
                                 )}
@@ -10401,6 +10007,11 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "700",
         lineHeight: 18,
+    },
+    routeDetailLoadingRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
     },
     routeDetailActionBar: {
         position: "absolute",

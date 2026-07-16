@@ -1,19 +1,207 @@
 import type { CalendarViewMode } from "./components/calendar/viewMode";
+import {
+    CALENDAR_TRANSITION_DURATION_MS,
+} from "./calendarMotionBudget";
+
+export {
+    CALENDAR_INTERACTION_BUDGET_MS,
+    CALENDAR_TRANSITION_DURATION_MS,
+} from "./calendarMotionBudget";
 
 const CALENDAR_DEPTH_BEZIER = Object.freeze([0.25, 0.1, 0.25, 1] as const);
 
 export const CALENDAR_DEPTH_MOTION = Object.freeze({
-    depthSlideDurationMs: 320,
-    modeChangeDurationMs: 220,
-    reduceMotionDurationMs: 160,
+    depthSlideDurationMs: CALENDAR_TRANSITION_DURATION_MS,
+    modeChangeDurationMs: CALENDAR_TRANSITION_DURATION_MS,
+    reduceMotionDurationMs: CALENDAR_TRANSITION_DURATION_MS,
     bezier: CALENDAR_DEPTH_BEZIER,
 });
+
+export type DetailMonthSwipeDirection = -1 | 1;
+
+/**
+ * 상세형 월 스와이프는 달력 셀을 한 벌만 유지한 채 midpoint에서 월을 교체한다.
+ * React commit을 위한 한 프레임까지 포함해 160ms 전환 예산 안에 정착한다.
+ */
+export const DETAIL_MONTH_SWIPE_MOTION = Object.freeze({
+    exitDurationMs: 48,
+    commitFrameBudgetMs: 16,
+    commitWatchdogMs: 120,
+    enterDurationMs: 96,
+    travel: 24,
+    reduceMotionExitDurationMs: 24,
+    reduceMotionEnterDurationMs: 40,
+    reduceMotionTravel: 0,
+    bezier: CALENDAR_DEPTH_BEZIER,
+});
+
+/** 상세형 월간 달력이 손가락을 따라가는 가로 드래그 판정값. */
+export const DETAIL_MONTH_SWIPE_GESTURE = Object.freeze({
+    activationDistance: 8,
+    directionDominance: 1.2,
+    distanceThreshold: 36,
+    velocityThreshold: 0.35,
+    velocityProjection: 80,
+    followRatio: 0.55,
+    cancelDurationMs: 80,
+    maxOpacityLoss: 0.08,
+});
+
+export function shouldClaimDetailMonthSwipeGesture(
+    dx: number,
+    dy: number
+): boolean {
+    if (![dx, dy].every(Number.isFinite)) return false;
+
+    const horizontalDistance = Math.abs(dx);
+    const verticalDistance = Math.abs(dy);
+    return horizontalDistance >= DETAIL_MONTH_SWIPE_GESTURE.activationDistance
+        && horizontalDistance
+            >= verticalDistance * DETAIL_MONTH_SWIPE_GESTURE.directionDominance;
+}
+
+export function getDetailMonthSwipeGestureDirection(
+    dx: number,
+    vx: number
+): DetailMonthSwipeDirection | null {
+    if (![dx, vx].every(Number.isFinite)) return null;
+
+    if (Math.abs(dx) >= DETAIL_MONTH_SWIPE_GESTURE.distanceThreshold) {
+        return dx > 0 ? -1 : 1;
+    }
+
+    if (Math.abs(vx) >= DETAIL_MONTH_SWIPE_GESTURE.velocityThreshold) {
+        return vx > 0 ? -1 : 1;
+    }
+
+    const projectedDistance = dx
+        + vx * DETAIL_MONTH_SWIPE_GESTURE.velocityProjection;
+    if (Math.abs(projectedDistance)
+        >= DETAIL_MONTH_SWIPE_GESTURE.distanceThreshold) {
+        return projectedDistance > 0 ? -1 : 1;
+    }
+
+    return null;
+}
+
+export function getDetailMonthSwipeFollowOffset(
+    dx: number,
+    reduceMotion = false,
+    travel: number = DETAIL_MONTH_SWIPE_MOTION.travel
+): number {
+    if (reduceMotion || !Number.isFinite(dx) || !Number.isFinite(travel)) {
+        return 0;
+    }
+
+    const safeTravel = Math.max(0, travel);
+    const followedOffset = dx * DETAIL_MONTH_SWIPE_GESTURE.followRatio;
+    return Math.max(-safeTravel, Math.min(safeTravel, followedOffset));
+}
+
+export function getDetailMonthSwipeFollowOpacity(
+    offset: number,
+    travel: number = DETAIL_MONTH_SWIPE_MOTION.travel
+): number {
+    if (!Number.isFinite(offset) || !Number.isFinite(travel) || travel <= 0) {
+        return 1;
+    }
+
+    const progress = Math.min(1, Math.abs(offset) / travel);
+    return Math.max(
+        1 - DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss,
+        1 - progress * DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss
+    );
+}
+
+/**
+ * Today는 현재 월을 위로 보낸 뒤 오늘이 포함된 월을 아래에서 올린다.
+ * 상태 교체를 위한 한 프레임까지 포함해 기존 160ms 상호작용 리듬을 유지한다.
+ */
+export const CALENDAR_TODAY_FOCUS_MOTION = Object.freeze({
+    exitDurationMs: 44,
+    commitFrameBudgetMs: 16,
+    enterDurationMs: 100,
+    outgoingTravel: 10,
+    incomingTravel: 24,
+    reduceMotionExitDurationMs: 24,
+    reduceMotionEnterDurationMs: 40,
+    reduceMotionTravel: 0,
+    bezier: CALENDAR_DEPTH_BEZIER,
+});
+
+export function getDetailMonthSwipeOffsets(
+    direction: DetailMonthSwipeDirection,
+    travel: number = DETAIL_MONTH_SWIPE_MOTION.travel
+) {
+    const normalizedDirection = direction < 0 ? -1 : 1;
+    const safeTravel = Number.isFinite(travel) ? Math.max(0, travel) : 0;
+    if (safeTravel === 0) {
+        return { outgoing: 0, incoming: 0 };
+    }
+
+    return {
+        outgoing: -normalizedDirection * safeTravel,
+        incoming: normalizedDirection * safeTravel,
+    };
+}
 
 export const CALENDAR_PILL_MOTION = Object.freeze({
     bloomScaleX: 1.035,
     bloomScaleY: 1.018,
     contentTravel: 9,
+    yearHiddenTranslateX: -10,
+    yearHiddenScale: 0.94,
 });
+
+export type CalendarPrimaryPillDepth = "year" | "month" | "day";
+
+export type CalendarPrimaryPillLayout = {
+    visible: boolean;
+    width: number;
+};
+
+export const CALENDAR_PRIMARY_PILL_LAYOUT = Object.freeze({
+    chromeWidth: 48,
+    estimatedCharacterWidth: 18,
+    monthMinWidth: 132,
+    dayMinWidth: 84,
+    viewportReservedWidth: 172,
+    minimumSafeWidth: 44,
+});
+
+/**
+ * 날짜 pill의 시각 폭을 라벨 내용에 맞춰 계산한다.
+ * 연 화면은 역방향 전환을 위해 컴포넌트만 유지하고 시각·입력에서는 숨긴다.
+ */
+export function resolveCalendarPrimaryPillLayout(
+    depth: CalendarPrimaryPillDepth,
+    label: string,
+    viewportWidth: number
+): CalendarPrimaryPillLayout {
+    if (depth === "year") {
+        return { visible: false, width: 0 };
+    }
+
+    const characterCount = Array.from(label.trim()).length;
+    const contentWidth = Math.ceil(
+        characterCount * CALENDAR_PRIMARY_PILL_LAYOUT.estimatedCharacterWidth
+    ) + CALENDAR_PRIMARY_PILL_LAYOUT.chromeWidth;
+    const minimumWidth = depth === "day"
+        ? CALENDAR_PRIMARY_PILL_LAYOUT.dayMinWidth
+        : CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
+    const desiredWidth = Math.max(minimumWidth, contentWidth);
+    const maximumWidth = Number.isFinite(viewportWidth)
+        ? Math.max(
+            CALENDAR_PRIMARY_PILL_LAYOUT.minimumSafeWidth,
+            viewportWidth - CALENDAR_PRIMARY_PILL_LAYOUT.viewportReservedWidth
+        )
+        : desiredWidth;
+
+    return {
+        visible: true,
+        width: Math.min(desiredWidth, maximumWidth),
+    };
+}
 
 export type MonthAgendaPanelKind = "detail" | "list";
 export type MonthAgendaTransition = "enter" | "exit" | "swap" | "none";

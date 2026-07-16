@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 
 import type { SchedulePayload } from "../../api/schedule";
 import type { ScheduleCategory, TravelMode } from "../schedule/types";
+import { withCalendarImportTimeout } from "./calendarImportReliability";
 
 export type DeviceCalendarProvider = "APPLE_DEVICE" | "ANDROID_DEVICE" | "GOOGLE";
 
@@ -27,7 +28,7 @@ export type CalendarImportSettings = {
     category: ScheduleCategory;
     travelMode: TravelMode;
     travelMinutes: number;
-    notificationEnabled: boolean;
+    prepareDepartureAlert: boolean;
 };
 
 export type DeviceCalendarSource = {
@@ -45,6 +46,10 @@ export type DeviceCalendarImportSummary = {
 const DEFAULT_PAST_DAYS = 7;
 const DEFAULT_FUTURE_DAYS = 90;
 const UNTITLED_EVENT = "제목 없는 일정";
+const PERMISSION_STATUS_TIMEOUT_MS = 10_000;
+const PERMISSION_REQUEST_TIMEOUT_MS = 120_000;
+const CALENDAR_LIST_TIMEOUT_MS = 10_000;
+const EVENT_QUERY_TIMEOUT_MS = 20_000;
 type ExpoCalendarModule = typeof ExpoCalendar;
 type ExpoCalendarEvent = ExpoCalendar.Event;
 type ExpoCalendarCalendar = ExpoCalendar.Calendar;
@@ -77,17 +82,36 @@ export function getCalendarProviderLabel(provider = getDeviceCalendarProvider())
 
 export async function requestDeviceCalendarPermission(): Promise<boolean> {
     const calendar = requireCalendarModule();
-    const current = await calendar.getCalendarPermissionsAsync();
+    const current = await withCalendarImportTimeout(
+        calendar.getCalendarPermissionsAsync(),
+        {
+            timeoutMs: PERMISSION_STATUS_TIMEOUT_MS,
+            operationName: "캘린더 권한 확인",
+        }
+    );
     if (current.granted) return true;
 
-    const next = await calendar.requestCalendarPermissionsAsync();
+    const next = await withCalendarImportTimeout(
+        calendar.requestCalendarPermissionsAsync(),
+        {
+            timeoutMs: PERMISSION_REQUEST_TIMEOUT_MS,
+            operationName: "캘린더 권한 요청",
+        }
+    );
     return next.granted;
 }
 
 export async function hasDeviceCalendarPermission(): Promise<boolean> {
     try {
         const calendar = requireCalendarModule();
-        return (await calendar.getCalendarPermissionsAsync()).granted;
+        const permission = await withCalendarImportTimeout(
+            calendar.getCalendarPermissionsAsync(),
+            {
+                timeoutMs: PERMISSION_STATUS_TIMEOUT_MS,
+                operationName: "캘린더 권한 확인",
+            }
+        );
+        return permission.granted;
     } catch {
         return false;
     }
@@ -106,7 +130,13 @@ export async function loadDeviceCalendarImportSummary(options?: {
 }): Promise<DeviceCalendarImportSummary> {
     const calendar = requireCalendarModule();
     const provider = getDeviceCalendarProvider();
-    const calendars = await calendar.getCalendarsAsync(calendar.EntityTypes.EVENT);
+    const calendars = await withCalendarImportTimeout(
+        calendar.getCalendarsAsync(calendar.EntityTypes.EVENT),
+        {
+            timeoutMs: CALENDAR_LIST_TIMEOUT_MS,
+            operationName: "캘린더 목록 확인",
+        }
+    );
     const readableCalendars = calendars.filter((item) => isReadableEventCalendar(item, calendar));
     const calendarSources = readableCalendars.map(toCalendarSource);
 
@@ -118,10 +148,16 @@ export async function loadDeviceCalendarImportSummary(options?: {
     const start = addDays(now, -(options?.pastDays ?? DEFAULT_PAST_DAYS));
     const end = addDays(now, options?.futureDays ?? DEFAULT_FUTURE_DAYS);
     const calendarById = new Map(readableCalendars.map((sourceCalendar) => [sourceCalendar.id, sourceCalendar]));
-    const events = await calendar.getEventsAsync(
-        readableCalendars.map((sourceCalendar) => sourceCalendar.id),
-        start,
-        end
+    const events = await withCalendarImportTimeout(
+        calendar.getEventsAsync(
+            readableCalendars.map((sourceCalendar) => sourceCalendar.id),
+            start,
+            end
+        ),
+        {
+            timeoutMs: EVENT_QUERY_TIMEOUT_MS,
+            operationName: "다가오는 일정 확인",
+        }
     );
 
     return {
@@ -136,7 +172,13 @@ export async function loadDeviceCalendarImportSummary(options?: {
 
 export async function loadDeviceCalendarSources(): Promise<DeviceCalendarSource[]> {
     const calendar = requireCalendarModule();
-    const calendars = await calendar.getCalendarsAsync(calendar.EntityTypes.EVENT);
+    const calendars = await withCalendarImportTimeout(
+        calendar.getCalendarsAsync(calendar.EntityTypes.EVENT),
+        {
+            timeoutMs: CALENDAR_LIST_TIMEOUT_MS,
+            operationName: "캘린더 목록 확인",
+        }
+    );
     return calendars
         .filter((item) => isReadableEventCalendar(item, calendar))
         .map(toCalendarSource);
@@ -156,27 +198,30 @@ export function buildSchedulePayloadFromCandidate(
 ): SchedulePayload {
     const startDate = new Date(candidate.startAt);
     const endDate = new Date(candidate.endAt);
-    const shouldEnableNotification =
+    const shouldPrepareDeparture =
         !candidate.allDay &&
-        settings.notificationEnabled &&
+        settings.prepareDepartureAlert &&
         settings.travelMinutes > 0 &&
         startDate.getTime() > Date.now();
-    const departAt = shouldEnableNotification
+    const departAt = shouldPrepareDeparture
         ? new Date(startDate.getTime() - settings.travelMinutes * 60 * 1000).toISOString()
         : undefined;
 
     // 외부 캘린더는 수정하지 않고 NoLate 일정만 생성한다.
     // location 문자열은 좌표가 없으므로 destination 후보와 locationName에 동시에 넣어
     // 이후 사용자가 장소 검색/경로 선택 화면에서 보강할 수 있게 한다.
+    // 실시간 출발 알림은 출발지와 도착지 좌표가 모두 필요하다. 외부 일정에는 보통
+    // 좌표와 출발지가 없으므로 이 기본 payload에서는 예상 출발값만 저장하고 알림은 끈다.
+    // 상위 가져오기 흐름이 실제 경로까지 만든 경우에만 좌표·경로·정책값을 더해 알림을 켠다.
     return {
         title: candidate.title,
         startAt: startDate.toISOString(),
         endAt: endDate.toISOString(),
         hasEndTime: !candidate.allDay,
         allDay: candidate.allDay,
-        travelMinutes: shouldEnableNotification ? settings.travelMinutes : undefined,
+        travelMinutes: shouldPrepareDeparture ? settings.travelMinutes : undefined,
         departAt,
-        travelMode: shouldEnableNotification ? settings.travelMode : undefined,
+        travelMode: shouldPrepareDeparture ? settings.travelMode : undefined,
         locationName: candidate.locationName,
         destination: candidate.locationName
             ? {
@@ -186,9 +231,7 @@ export function buildSchedulePayloadFromCandidate(
             : undefined,
         category: settings.category,
         notes: buildImportedNotes(candidate),
-        notificationEnabled: shouldEnableNotification,
-        notificationLeadMinutes: shouldEnableNotification ? 15 : undefined,
-        notificationIntervalMinutes: shouldEnableNotification ? 5 : undefined,
+        notificationEnabled: false,
     };
 }
 

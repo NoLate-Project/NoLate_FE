@@ -491,7 +491,7 @@ private struct LiquidGlassIconButtonRootView: View {
   private var depthPillAnimation: Animation {
     accessibilityReduceMotion
       ? .easeOut(duration: 0.16)
-      : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.32)
+      : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.16)
   }
 
   private var pillContentTransition: AnyTransition {
@@ -1209,13 +1209,16 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           openMenu(.view)
         } label: {
           ZStack {
-            Image(systemName: "rectangle.grid.1x2")
-              .font(.system(size: 22, weight: .regular))
-              .symbolRenderingMode(.monochrome)
-              .foregroundStyle(collapsedGlyphColor)
+            prototypeModeGlyph(
+              for: model.selectedMode,
+              color: collapsedGlyphColor
+            )
+              .id(model.selectedMode)
+              .transition(pillButtonTransition)
           }
           .frame(width: 32, height: 25)
           .clipped()
+          .animation(depthPillAnimation, value: model.selectedMode)
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
         }
         .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1253,7 +1256,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private var depthPillAnimation: Animation {
     accessibilityReduceMotion
       ? .easeOut(duration: 0.16)
-      : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.32)
+      : .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.16)
   }
 
   private var pillButtonTransition: AnyTransition {

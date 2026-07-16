@@ -29,6 +29,7 @@ import {
 } from "../../calendarMotion";
 import type { ScheduleItem } from "../../types";
 import ScheduleAgendaCard from "./ScheduleAgendaCard";
+import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
 
 const WEEKDAY_SHORT = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -94,7 +95,18 @@ function AgendaInlineState({
 }) {
     const { colors } = useTheme();
 
-    if (!loading && !error) {
+    if (loading) {
+        return (
+            <BrandedLoadingState
+                size="section"
+                variant="schedule"
+                accessibilityLabel="일정을 불러오는 중이에요"
+                caption="일정을 불러오는 중이에요"
+            />
+        );
+    }
+
+    if (!error) {
         return (
             <View style={styles.emptyState}>
                 <Ionicons name="calendar-outline" size={22} color={colors.textSecondary} />
@@ -121,7 +133,7 @@ function AgendaInlineState({
                 color={colors.textSecondary}
             />
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                {loading ? "일정을 불러오는 중이에요" : error}
+                {error}
             </Text>
         </Pressable>
     );

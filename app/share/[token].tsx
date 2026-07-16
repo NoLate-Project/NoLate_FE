@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     Pressable,
     StyleSheet,
     Text,
@@ -13,6 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { acceptShareInvitation, type ScheduleShareInvitationAcceptResult } from "../../src/api/scheduleSharing";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import BrandedLoader from "../../src/ui/BrandedLoader";
 
 function getErrorMessage(error: unknown) {
     const message = error instanceof Error ? error.message : "초대 수락에 실패했습니다.";
@@ -135,7 +135,11 @@ export default function ShareInvitationAcceptScreen() {
             <View style={styles.footer}>
                 {isLoading ? (
                     <View style={[styles.primaryButton, { backgroundColor: accent, opacity: 0.7 }]}>
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <BrandedLoader
+                            size="button"
+                            variant="auth"
+                            accessibilityLabel="로그인 상태를 확인하고 있어요"
+                        />
                     </View>
                 ) : !isAuthenticated ? (
                     <Pressable
@@ -172,7 +176,11 @@ export default function ShareInvitationAcceptScreen() {
                         ]}
                     >
                         {accepting ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" />
+                            <BrandedLoader
+                                size="button"
+                                variant="share"
+                                accessibilityLabel="초대를 수락하고 있어요"
+                            />
                         ) : (
                             <>
                                 <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />

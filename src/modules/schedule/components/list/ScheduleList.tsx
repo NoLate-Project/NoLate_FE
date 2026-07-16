@@ -4,6 +4,7 @@ import { useTheme } from "../../../theme/ThemeContext";
 import ScheduleItemList from "./ScheduleItemList";
 import type { ScheduleItem } from "../../types";
 import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
+import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
 
 type Props = {
     selectedDay: string;
@@ -89,9 +90,12 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                         variant="card"
                         style={[styles.stateCard, { borderColor: colors.border }]}
                     >
-                        <Text style={{ color: colors.textSecondary, fontSize: 14 }}>
-                            일정을 불러오는 중이에요
-                        </Text>
+                        <BrandedLoadingState
+                            size="section"
+                            variant="schedule"
+                            accessibilityLabel="일정을 불러오는 중이에요"
+                            caption="일정을 불러오는 중이에요"
+                        />
                     </CalendarGlassSurface>
                 ) : displayError ? (
                     <CalendarGlassSurface

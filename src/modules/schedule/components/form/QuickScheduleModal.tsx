@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     AppState,
     ActionSheetIOS,
@@ -51,6 +50,7 @@ import { consumeRoutePlannerResult, setRoutePlannerInitial, type RoutePlannerPay
 import { getRouteInfoFromRoute } from "../../routeInfo";
 import LocationInputRow from "./LocationInputRow";
 import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
+import BrandedLoader from "../../../../ui/BrandedLoader";
 
 type Props = {
     visible: boolean;
@@ -67,7 +67,6 @@ type Props = {
     sourceRightOffset?: number;
     closeTargetWidth?: number;
     onMorphReady?: () => void;
-    qaAutoCloseAfterMs?: number;
     morphPresenterRef?: React.MutableRefObject<QuickScheduleMorphPresenter | null>;
 };
 
@@ -595,7 +594,6 @@ export default function QuickScheduleModal({
     sourceRightOffset = ADD_MENU_SOURCE.fallbackRightInset,
     closeTargetWidth = CLOSE_TARGET_WIDTH,
     onMorphReady,
-    qaAutoCloseAfterMs,
     morphPresenterRef,
 }: Props) {
     const router = useRouter();
@@ -870,13 +868,6 @@ export default function QuickScheduleModal({
         });
         return () => subscription.remove();
     }, [rendered, requestClose, routePlannerHidden, visible]);
-
-    useEffect(() => {
-        if (!visible || !qaAutoCloseAfterMs) return undefined;
-
-        const timer = setTimeout(requestClose, qaAutoCloseAfterMs);
-        return () => clearTimeout(timer);
-    }, [qaAutoCloseAfterMs, requestClose, visible]);
 
     const startOpenAnimation = useCallback((openCycle: number) => {
         if (
@@ -2042,7 +2033,11 @@ export default function QuickScheduleModal({
                 ]}
             >
                 {submitting ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    <BrandedLoader
+                        size="button"
+                        variant="schedule"
+                        accessibilityLabel="일정을 만들고 있어요"
+                    />
                 ) : (
                     <>
                         <Ionicons name="sparkles-outline" size={17} color="#fff" />

@@ -14,19 +14,20 @@ import Reanimated, {
 
 import { useTheme } from "../../../theme/ThemeContext";
 
-const APP_LOGO = require("../../../../../assets/icon.png");
+const CALENDAR_LOGO_DARK = require("../../../../../assets/curation/calendar-sync-3d-device-dark.png");
+const CALENDAR_LOGO_LIGHT = require("../../../../../assets/curation/calendar-sync-3d-device-light.png");
 
 const CYAN = "#67E4FF";
 const SECONDARY_PARTICLE = "#9CBFFF";
 const SECONDARY_PARTICLE_GLOW = "#78A7FF";
-const STAGE_WIDTH = 168;
-const STAGE_HEIGHT = 164;
+const STAGE_WIDTH = 194;
+const STAGE_HEIGHT = 176;
 const CENTER_X = STAGE_WIDTH / 2;
-const CENTER_Y = 78;
-const LOGO_SIZE = 74;
-const MASTER_ORBIT_DURATION_MS = 10_400;
+const CENTER_Y = 84;
+const LOGO_SIZE = 84;
+const MASTER_ORBIT_DURATION_MS = 12_800;
 
-export type LogoLoaderVariant = "schedule" | "calendar";
+export type LogoLoaderVariant = "schedule" | "calendar" | "route" | "share" | "auth";
 
 type Props = {
     accessibilityLabel: string;
@@ -42,36 +43,57 @@ type OrbitSpec = {
 };
 
 type SatelliteDefinition = {
+    id: string;
     name: ComponentProps<typeof Ionicons>["name"];
-    color: string;
+    color?: string;
+    usesDeviceColor?: boolean;
 };
 
 const HORIZONTAL_ORBIT: OrbitSpec = {
-    radiusX: 72,
-    radiusY: 27,
-    tiltDegrees: -8,
-    turns: 3,
+    radiusX: 84,
+    radiusY: 38,
+    tiltDegrees: -7,
+    turns: 2,
     phase: 0,
 };
 
 const VERTICAL_ORBIT: OrbitSpec = {
-    radiusX: 51,
-    radiusY: 66,
+    radiusX: 54,
+    radiusY: 68,
     tiltDegrees: 24,
-    turns: -2,
+    turns: -1,
     phase: Math.PI / 2,
 };
 
 const SATELLITES: Record<LogoLoaderVariant, SatelliteDefinition[]> = {
     schedule: [
-        { name: "sparkles", color: "#7DDCFF" },
-        { name: "location", color: "#78A7FF" },
-        { name: "alarm", color: "#FFD166" },
+        { id: "sparkles", name: "sparkles", color: "#7DDCFF" },
+        { id: "location", name: "location", color: "#78A7FF" },
+        { id: "alarm", name: "alarm", color: "#FFD166" },
     ],
     calendar: [
-        { name: "calendar-clear", color: "#7DDCFF" },
-        { name: "phone-portrait", color: "#78A7FF" },
-        { name: "cloud", color: "#A9CBFF" },
+        {
+            id: "device",
+            name: "phone-portrait-outline",
+            usesDeviceColor: true,
+        },
+        { id: "calendar", name: "calendar-clear-outline", color: "#67E4FF" },
+        { id: "synced-calendar", name: "cloud-done-outline", color: "#A9CBFF" },
+    ],
+    route: [
+        { id: "location", name: "location-outline", color: "#67E4FF" },
+        { id: "transit", name: "bus-outline", color: "#A9CBFF" },
+        { id: "time", name: "time-outline", color: "#FFD166" },
+    ],
+    share: [
+        { id: "person", name: "person-outline", usesDeviceColor: true },
+        { id: "link", name: "link-outline", color: "#67E4FF" },
+        { id: "accepted", name: "checkmark-circle-outline", color: "#A9CBFF" },
+    ],
+    auth: [
+        { id: "person", name: "person-outline", usesDeviceColor: true },
+        { id: "security", name: "shield-checkmark-outline", color: "#67E4FF" },
+        { id: "key", name: "key-outline", color: "#A9CBFF" },
     ],
 };
 
@@ -81,7 +103,8 @@ export function shouldAnimateLogoOrbit(reduceMotionEnabled: boolean): boolean {
 
 /**
  * 실제 완료율을 계산할 수 없는 작업에 사용하는 브랜드 궤도형 로더다.
- * 중앙 앱 로고는 고정하고, 모든 동작은 주변 궤도·입자·글라스 위성에만 적용한다.
+ * 로고와 연결 서비스는 여러 장의 반투명 레이어로 깊이를 만들고, 움직임은 느린 부유와
+ * 궤도 입자에만 제한한다. 따라서 단계 문구는 읽기 쉽고 로더는 배경처럼 차분하게 동작한다.
  */
 export default function QuickScheduleLogoLoader({
     accessibilityLabel,
@@ -93,6 +116,7 @@ export default function QuickScheduleLogoLoader({
     const isDark = mode === "dark";
     const palette = isDark ? DARK_PALETTE : LIGHT_PALETTE;
     const satellites = SATELLITES[variant];
+    const logoSource = isDark ? CALENDAR_LOGO_DARK : CALENDAR_LOGO_LIGHT;
 
     useEffect(() => {
         cancelAnimation(orbitProgress);
@@ -116,10 +140,19 @@ export default function QuickScheduleLogoLoader({
     }, [orbitProgress, reduceMotionEnabled]);
 
     const haloAnimatedStyle = useAnimatedStyle(() => {
-        const wave = (Math.sin(orbitProgress.value * Math.PI * 8) + 1) / 2;
+        const wave = (Math.sin(orbitProgress.value * Math.PI * 4) + 1) / 2;
         return {
-            opacity: 0.46 + wave * 0.3,
-            transform: [{ scale: 0.96 + wave * 0.07 }],
+            opacity: 0.38 + wave * 0.12,
+            transform: [{ scale: 0.94 + wave * 0.12 }],
+        };
+    });
+    const logoFloatAnimatedStyle = useAnimatedStyle(() => {
+        const wave = Math.sin(orbitProgress.value * Math.PI * 4);
+        return {
+            transform: [
+                { translateY: wave * 2.2 },
+                { scale: 0.995 + ((wave + 1) / 2) * 0.01 },
+            ],
         };
     });
     const horizontalParticleStyle = useOrbitalParticleStyle(orbitProgress, HORIZONTAL_ORBIT);
@@ -150,24 +183,15 @@ export default function QuickScheduleLogoLoader({
                 testID="quick-schedule-ambient-halo"
                 style={[
                     styles.ambientHalo,
-                    { backgroundColor: palette.halo, shadowColor: palette.glow },
+                    {
+                        backgroundColor: palette.glow,
+                        shadowColor: palette.glow,
+                        shadowOpacity: palette.haloShadowOpacity,
+                        shadowRadius: palette.haloShadowRadius,
+                    },
                     haloAnimatedStyle,
                 ]}
             />
-
-            <View
-                pointerEvents="none"
-                style={[styles.pedestalShadow, { backgroundColor: palette.pedestalShadow }]}
-            />
-            <View
-                pointerEvents="none"
-                style={[
-                    styles.pedestal,
-                    { backgroundColor: palette.pedestal, borderColor: palette.pedestalBorder },
-                ]}
-            >
-                <View style={[styles.pedestalSheen, { backgroundColor: palette.pedestalSheen }]} />
-            </View>
 
             <View
                 pointerEvents="none"
@@ -199,87 +223,152 @@ export default function QuickScheduleLogoLoader({
 
             {satellites.map((satellite, index) => (
                 <Reanimated.View
-                    key={`${variant}-${satellite.name}`}
+                    key={`${variant}-${satellite.id}`}
                     testID={`quick-schedule-satellite-${index}`}
                     pointerEvents="none"
                     accessible={false}
                     accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants"
                     style={[
-                        styles.satelliteTile,
+                        styles.satelliteFrame,
                         satellitePositionStyles[index],
-                        {
-                            backgroundColor: palette.tile,
-                            borderColor: palette.tileBorder,
-                            shadowColor: palette.tileShadow,
-                        },
+                        { shadowColor: palette.tileShadow },
                         satelliteMotionStyles[index],
                     ]}
                 >
-                    <View style={[styles.satelliteSheen, { backgroundColor: palette.tileSheen }]} />
-                    <Ionicons
-                        testID={`quick-schedule-satellite-icon-${index}`}
-                        name={satellite.name}
-                        size={15}
-                        color={satellite.color}
-                    />
-                </Reanimated.View>
-            ))}
-
-            <View
-                pointerEvents="none"
-                style={[styles.coreHalo, { backgroundColor: palette.coreHalo }]}
-            />
-            <View
-                testID="quick-schedule-logo-static-layer"
-                pointerEvents="none"
-                collapsable={false}
-                style={[
-                    styles.logoStaticLayer,
-                    {
-                        backgroundColor: palette.logoBase,
-                        shadowColor: palette.logoShadow,
-                        shadowOpacity: palette.logoShadowOpacity,
-                    },
-                ]}
-            >
-                <Image
-                    testID="quick-schedule-app-logo"
-                    source={APP_LOGO}
-                    resizeMode="cover"
-                    style={[styles.logoImage, { opacity: palette.logoImageOpacity }]}
-                />
-                <View
-                    testID="quick-schedule-logo-glass-treatment"
-                    pointerEvents="none"
-                    accessible={false}
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    style={styles.logoGlassTreatment}
-                >
                     <View
-                        testID="quick-schedule-logo-color-wash"
+                        pointerEvents="none"
                         style={[
-                            StyleSheet.absoluteFillObject,
-                            { backgroundColor: palette.logoWash },
+                            styles.satelliteDepth,
+                            {
+                                backgroundColor: palette.tileDepth,
+                                borderColor: palette.tileDepthBorder,
+                            },
                         ]}
                     />
                     <View
-                        testID="quick-schedule-logo-sheen"
-                        style={[styles.logoSheen, { backgroundColor: palette.logoSheen }]}
-                    />
+                        style={[
+                            styles.satelliteTile,
+                            {
+                                backgroundColor: palette.tile,
+                                borderColor: palette.tileBorder,
+                            },
+                        ]}
+                    >
+                        <View
+                            style={[
+                                styles.satelliteInnerGlow,
+                                { backgroundColor: palette.tileInnerGlow },
+                            ]}
+                        />
+                        <View
+                            style={[styles.satelliteSheen, { backgroundColor: palette.tileSheen }]}
+                        />
+                        <Ionicons
+                            testID={`quick-schedule-satellite-icon-${index}`}
+                            name={satellite.name}
+                            size={19}
+                            color={satellite.usesDeviceColor
+                                ? palette.deviceGlyph
+                                : satellite.color}
+                        />
+                        <View
+                            pointerEvents="none"
+                            style={[
+                                styles.satelliteTopEdge,
+                                { backgroundColor: palette.tileTopEdge },
+                            ]}
+                        />
+                    </View>
+                </Reanimated.View>
+            ))}
+
+            <Reanimated.View
+                testID="quick-schedule-logo-float-layer"
+                pointerEvents="none"
+                style={[styles.logoFloatLayer, logoFloatAnimatedStyle]}
+            >
+                <View
+                    testID="quick-schedule-logo-depth-far"
+                    style={[
+                        styles.logoDepthFar,
+                        {
+                            backgroundColor: palette.logoDepthFar,
+                            borderColor: palette.logoDepthBorder,
+                        },
+                    ]}
+                />
+                <View
+                    testID="quick-schedule-logo-depth-near"
+                    style={[
+                        styles.logoDepthNear,
+                        {
+                            backgroundColor: palette.logoDepthNear,
+                            borderColor: palette.logoDepthBorder,
+                        },
+                    ]}
+                />
+                <View
+                    testID="quick-schedule-logo-static-layer"
+                    pointerEvents="none"
+                    collapsable={false}
+                    style={[
+                        styles.logoStaticLayer,
+                        {
+                            backgroundColor: palette.logoBase,
+                            shadowColor: palette.logoShadow,
+                            shadowOpacity: palette.logoShadowOpacity,
+                        },
+                    ]}
+                >
+                    <View style={styles.logoImageMask}>
+                        <Image
+                            testID="quick-schedule-app-logo"
+                            source={logoSource}
+                            resizeMode="cover"
+                            fadeDuration={0}
+                            accessibilityIgnoresInvertColors
+                            style={[
+                                styles.calendarLogoImageCrop,
+                                { opacity: palette.logoImageOpacity },
+                            ]}
+                        />
+                    </View>
                     <View
-                        style={[styles.logoLowerBloom, { backgroundColor: palette.logoLowerBloom }]}
-                    />
+                        testID="quick-schedule-logo-glass-treatment"
+                        pointerEvents="none"
+                        accessible={false}
+                        accessibilityElementsHidden
+                        importantForAccessibility="no-hide-descendants"
+                        style={styles.logoGlassTreatment}
+                    >
+                        <View
+                            testID="quick-schedule-logo-color-wash"
+                            style={[
+                                StyleSheet.absoluteFillObject,
+                                { backgroundColor: palette.logoWash },
+                            ]}
+                        />
+                        <View
+                            testID="quick-schedule-logo-sheen"
+                            style={[styles.logoSheen, { backgroundColor: palette.logoSheen }]}
+                        />
+                        <View
+                            style={[
+                                styles.logoLowerBloom,
+                                { backgroundColor: palette.logoLowerBloom },
+                            ]}
+                        />
+                        <View
+                            style={[styles.logoTopEdge, { backgroundColor: palette.logoTopEdge }]}
+                        />
+                    </View>
                     <View
-                        style={[styles.logoTopEdge, { backgroundColor: palette.logoTopEdge }]}
+                        pointerEvents="none"
+                        style={[styles.logoEdge, { borderColor: palette.logoEdge }]}
                     />
                 </View>
-                <View
-                    pointerEvents="none"
-                    style={[styles.logoEdge, { borderColor: palette.logoEdge }]}
-                />
-            </View>
+            </Reanimated.View>
 
             <Reanimated.View
                 testID="quick-schedule-logo-orbit"
@@ -335,65 +424,74 @@ function useOrbitalParticleStyle(progress: SharedValue<number>, orbit: OrbitSpec
 
 function useFloatingStyle(progress: SharedValue<number>, phase: number) {
     return useAnimatedStyle(() => {
-        const wave = Math.sin((progress.value * Math.PI * 8) + phase);
+        const wave = Math.sin((progress.value * Math.PI * 4) + phase);
         return {
             transform: [
-                { translateY: wave * 2 },
-                { rotate: `${wave * 1.2}deg` },
+                { translateY: wave * 3 },
+                { rotate: `${wave * 0.7}deg` },
+                { scale: 0.99 + ((wave + 1) / 2) * 0.02 },
             ],
         };
     });
 }
 
 const DARK_PALETTE = {
-    halo: "rgba(36,107,254,0.28)",
-    glow: "#2477FF",
-    coreHalo: "rgba(36,107,254,0.12)",
-    ringStrong: "rgba(103,196,255,0.42)",
-    ringSoft: "rgba(83,139,255,0.28)",
-    ringFaint: "rgba(144,183,255,0.16)",
-    pedestal: "rgba(25,33,50,0.76)",
-    pedestalBorder: "rgba(125,175,255,0.18)",
-    pedestalSheen: "rgba(255,255,255,0.08)",
-    pedestalShadow: "rgba(0,0,0,0.42)",
-    tile: "rgba(32,40,58,0.92)",
-    tileBorder: "rgba(255,255,255,0.13)",
-    tileSheen: "rgba(255,255,255,0.13)",
+    glow: "#3B87FF",
+    haloShadowOpacity: 0.28,
+    haloShadowRadius: 38,
+    ringStrong: "rgba(126,211,255,0.30)",
+    ringSoft: "rgba(113,158,255,0.22)",
+    ringFaint: "rgba(154,190,255,0.13)",
+    tile: "rgba(218,231,255,0.16)",
+    tileDepth: "rgba(53,78,126,0.34)",
+    tileDepthBorder: "rgba(190,215,255,0.13)",
+    tileBorder: "rgba(255,255,255,0.24)",
+    tileInnerGlow: "rgba(117,169,255,0.10)",
+    tileSheen: "rgba(255,255,255,0.22)",
+    tileTopEdge: "rgba(255,255,255,0.52)",
     tileShadow: "#000000",
-    logoBase: "#4F83DD",
-    logoImageOpacity: 0.94,
-    logoWash: "rgba(255,255,255,0.09)",
-    logoSheen: "rgba(255,255,255,0.24)",
-    logoLowerBloom: "rgba(120,169,255,0.08)",
-    logoTopEdge: "rgba(255,255,255,0.34)",
-    logoEdge: "rgba(255,255,255,0.42)",
-    logoShadow: "#6D96ED",
-    logoShadowOpacity: 0.28,
+    deviceGlyph: "#F3F6FF",
+    logoDepthFar: "rgba(19,48,102,0.92)",
+    logoDepthNear: "rgba(38,94,188,0.96)",
+    logoDepthBorder: "rgba(151,190,255,0.22)",
+    logoBase: "#2E7FEF",
+    logoImageOpacity: 1,
+    logoWash: "rgba(255,255,255,0.035)",
+    logoSheen: "rgba(255,255,255,0.13)",
+    logoLowerBloom: "rgba(116,151,255,0.09)",
+    logoTopEdge: "rgba(255,255,255,0.58)",
+    logoEdge: "rgba(255,255,255,0.50)",
+    logoShadow: "#4A8DFF",
+    logoShadowOpacity: 0.34,
 };
 
 const LIGHT_PALETTE = {
-    halo: "rgba(36,107,254,0.15)",
-    glow: "#5A8FFF",
-    coreHalo: "rgba(36,107,254,0.07)",
-    ringStrong: "rgba(63,137,255,0.35)",
-    ringSoft: "rgba(83,139,255,0.23)",
-    ringFaint: "rgba(75,131,230,0.13)",
-    pedestal: "rgba(255,255,255,0.84)",
-    pedestalBorder: "rgba(72,132,230,0.14)",
-    pedestalSheen: "rgba(255,255,255,0.72)",
-    pedestalShadow: "rgba(53,91,160,0.14)",
-    tile: "rgba(255,255,255,0.94)",
-    tileBorder: "rgba(82,129,205,0.13)",
-    tileSheen: "rgba(255,255,255,0.78)",
+    glow: "#6B9EFF",
+    haloShadowOpacity: 0.18,
+    haloShadowRadius: 36,
+    ringStrong: "rgba(60,139,255,0.25)",
+    ringSoft: "rgba(75,131,230,0.18)",
+    ringFaint: "rgba(75,131,230,0.11)",
+    tile: "rgba(255,255,255,0.72)",
+    tileDepth: "rgba(179,203,242,0.36)",
+    tileDepthBorder: "rgba(103,145,211,0.13)",
+    tileBorder: "rgba(255,255,255,0.92)",
+    tileInnerGlow: "rgba(91,143,235,0.07)",
+    tileSheen: "rgba(255,255,255,0.88)",
+    tileTopEdge: "rgba(255,255,255,0.98)",
     tileShadow: "#5779AA",
-    logoBase: "#A7C8F7",
-    logoImageOpacity: 0.92,
-    logoWash: "rgba(255,255,255,0.15)",
-    logoSheen: "rgba(255,255,255,0.36)",
-    logoLowerBloom: "rgba(126,172,255,0.11)",
-    logoTopEdge: "rgba(255,255,255,0.58)",
-    logoEdge: "rgba(255,255,255,0.68)",
-    logoShadow: "#8FAEE6",
+    deviceGlyph: "#465066",
+    logoDepthFar: "rgba(112,155,226,0.62)",
+    logoDepthNear: "rgba(104,160,242,0.78)",
+    logoDepthBorder: "rgba(255,255,255,0.72)",
+    logoBase: "#74A8F1",
+    logoImageOpacity: 0.98,
+    logoWash: "rgba(255,255,255,0.07)",
+    logoSheen: "rgba(255,255,255,0.18)",
+    logoLowerBloom: "rgba(113,131,255,0.08)",
+    logoTopEdge: "rgba(255,255,255,0.78)",
+    logoEdge: "rgba(255,255,255,0.84)",
+    logoShadow: "#729BE1",
     logoShadowOpacity: 0.22,
 };
 
@@ -408,113 +506,110 @@ const styles = StyleSheet.create({
     },
     ambientHalo: {
         position: "absolute",
-        left: CENTER_X - 57,
-        top: CENTER_Y - 57,
-        width: 114,
-        height: 114,
-        borderRadius: 57,
+        left: CENTER_X - 34,
+        top: CENTER_Y - 34,
+        width: 68,
+        height: 68,
+        borderRadius: 34,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.45,
-        shadowRadius: 26,
-    },
-    coreHalo: {
-        position: "absolute",
-        left: CENTER_X - 49,
-        top: CENTER_Y - 49,
-        width: 98,
-        height: 98,
-        borderRadius: 49,
-        zIndex: 8,
     },
     orbitTrack: {
         position: "absolute",
         borderWidth: StyleSheet.hairlineWidth,
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.38,
-        shadowRadius: 5,
+        shadowOpacity: 0.28,
+        shadowRadius: 7,
     },
     horizontalOrbit: {
-        left: 4,
-        top: 47,
-        width: 160,
-        height: 62,
-        borderRadius: 80,
-        transform: [{ rotate: "-8deg" }],
+        left: 8,
+        top: 42,
+        width: 178,
+        height: 82,
+        borderRadius: 89,
+        transform: [{ rotate: "-7deg" }],
     },
     verticalOrbit: {
-        left: 32,
-        top: 4,
-        width: 104,
-        height: 148,
-        borderRadius: 74,
+        left: 38,
+        top: 6,
+        width: 118,
+        height: 154,
+        borderRadius: 77,
         transform: [{ rotate: "24deg" }],
     },
     diagonalOrbit: {
-        left: 13,
-        top: 40,
-        width: 142,
-        height: 76,
-        borderRadius: 71,
+        left: 17,
+        top: 32,
+        width: 160,
+        height: 104,
+        borderRadius: 80,
         transform: [{ rotate: "54deg" }],
     },
-    pedestalShadow: {
-        position: "absolute",
-        left: 27,
-        top: 126,
-        width: 114,
-        height: 20,
-        borderRadius: 57,
-        transform: [{ scaleX: 0.9 }],
-    },
-    pedestal: {
-        position: "absolute",
-        left: 13,
-        top: 116,
-        width: 142,
-        height: 34,
-        borderRadius: 71,
-        borderWidth: StyleSheet.hairlineWidth,
-        overflow: "hidden",
-    },
-    pedestalSheen: {
-        position: "absolute",
-        left: 18,
-        right: 18,
-        top: 5,
-        height: 8,
-        borderRadius: 12,
-        opacity: 0.7,
-    },
-    logoStaticLayer: {
+    logoFloatLayer: {
         position: "absolute",
         left: CENTER_X - LOGO_SIZE / 2,
         top: CENTER_Y - LOGO_SIZE / 2,
         width: LOGO_SIZE,
-        height: LOGO_SIZE,
-        borderRadius: 22,
+        height: LOGO_SIZE + 9,
         zIndex: 12,
-        elevation: 12,
-        shadowOffset: { width: 0, height: 6 },
-        shadowRadius: 19,
     },
-    logoImage: {
+    logoDepthFar: {
+        position: "absolute",
+        left: 2,
+        top: 7,
+        width: LOGO_SIZE - 4,
+        height: LOGO_SIZE,
+        borderRadius: 25,
+        borderWidth: StyleSheet.hairlineWidth,
+        opacity: 0.72,
+    },
+    logoDepthNear: {
+        position: "absolute",
+        left: 1,
+        top: 3.5,
+        width: LOGO_SIZE - 2,
+        height: LOGO_SIZE,
+        borderRadius: 25,
+        borderWidth: StyleSheet.hairlineWidth,
+        opacity: 0.9,
+    },
+    logoStaticLayer: {
+        position: "absolute",
+        left: 0,
+        top: 0,
         width: LOGO_SIZE,
         height: LOGO_SIZE,
-        borderRadius: 22,
+        borderRadius: 25,
+        zIndex: 3,
+        elevation: 14,
+        shadowOffset: { width: 0, height: 8 },
+        shadowRadius: 26,
+    },
+    logoImageMask: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 25,
+        overflow: "hidden",
+    },
+    // 1024px 원본에서 중앙 유리 로고 영역만 84px 프레임에 맞춰 보여준다.
+    calendarLogoImageCrop: {
+        position: "absolute",
+        left: -52,
+        top: -49,
+        width: 184,
+        height: 184,
     },
     logoGlassTreatment: {
         ...StyleSheet.absoluteFillObject,
-        borderRadius: 22,
+        borderRadius: 25,
         overflow: "hidden",
     },
     logoSheen: {
         position: "absolute",
-        left: 7,
-        top: 5,
-        width: 45,
-        height: 18,
-        borderRadius: 12,
-        transform: [{ rotate: "-8deg" }],
+        left: -12,
+        top: -12,
+        width: 76,
+        height: 38,
+        borderRadius: 24,
+        transform: [{ rotate: "-10deg" }],
     },
     logoLowerBloom: {
         position: "absolute",
@@ -526,15 +621,15 @@ const styles = StyleSheet.create({
     },
     logoTopEdge: {
         position: "absolute",
-        left: 17,
-        right: 17,
+        left: 19,
+        right: 19,
         top: 2,
-        height: StyleSheet.hairlineWidth,
+        height: 1,
         borderRadius: 1,
     },
     logoEdge: {
         ...StyleSheet.absoluteFillObject,
-        borderRadius: 22,
+        borderRadius: 25,
         borderWidth: StyleSheet.hairlineWidth,
     },
     particle: {
@@ -543,24 +638,25 @@ const styles = StyleSheet.create({
         top: CENTER_Y,
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 16,
+        // 입자는 궤도 바깥에서는 보이지만 중앙 로고를 통과할 때는 로고 뒤로 숨는다.
+        zIndex: 8,
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.95,
         shadowRadius: 8,
     },
     horizontalParticle: {
-        width: 10,
-        height: 10,
-        marginLeft: -5,
-        marginTop: -5,
-        borderRadius: 5,
+        width: 8,
+        height: 8,
+        marginLeft: -4,
+        marginTop: -4,
+        borderRadius: 4,
     },
     verticalParticle: {
-        width: 7,
-        height: 7,
-        marginLeft: -3.5,
-        marginTop: -3.5,
-        borderRadius: 3.5,
+        width: 6,
+        height: 6,
+        marginLeft: -3,
+        marginTop: -3,
+        borderRadius: 3,
     },
     particleCore: {
         width: 4,
@@ -574,39 +670,65 @@ const styles = StyleSheet.create({
         borderRadius: 1.5,
         backgroundColor: "#FFFFFF",
     },
-    satelliteTile: {
+    satelliteFrame: {
         position: "absolute",
-        width: 30,
-        height: 30,
-        borderRadius: 10,
+        width: 42,
+        height: 46,
+        zIndex: 18,
+        elevation: 10,
+        shadowOffset: { width: 0, height: 7 },
+        shadowOpacity: 0.3,
+        shadowRadius: 12,
+    },
+    satelliteDepth: {
+        position: "absolute",
+        left: 2,
+        top: 4,
+        width: 38,
+        height: 40,
+        borderRadius: 13,
+        borderWidth: StyleSheet.hairlineWidth,
+        opacity: 0.76,
+    },
+    satelliteTile: {
+        width: 40,
+        height: 40,
+        borderRadius: 13,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
-        zIndex: 18,
-        elevation: 8,
-        shadowOffset: { width: 0, height: 5 },
-        shadowOpacity: 0.2,
-        shadowRadius: 9,
         overflow: "hidden",
     },
     satelliteTopLeft: {
-        left: 8,
-        top: 35,
+        left: 5,
+        top: 38,
     },
     satelliteTopRight: {
         right: 7,
-        top: 17,
+        top: 10,
     },
     satelliteBottomRight: {
         right: 10,
-        bottom: 15,
+        bottom: 5,
+    },
+    satelliteInnerGlow: {
+        ...StyleSheet.absoluteFillObject,
     },
     satelliteSheen: {
         position: "absolute",
-        left: 4,
-        right: 4,
-        top: 3,
-        height: 7,
-        borderRadius: 5,
+        left: -6,
+        top: -7,
+        width: 42,
+        height: 20,
+        borderRadius: 13,
+        transform: [{ rotate: "-10deg" }],
+    },
+    satelliteTopEdge: {
+        position: "absolute",
+        left: 10,
+        right: 10,
+        top: 1,
+        height: StyleSheet.hairlineWidth,
+        borderRadius: 1,
     },
 });

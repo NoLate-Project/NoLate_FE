@@ -1,27 +1,206 @@
 import {
     CALENDAR_DEPTH_MOTION,
+    CALENDAR_INTERACTION_BUDGET_MS,
+    CALENDAR_PRIMARY_PILL_LAYOUT,
     CALENDAR_PILL_MOTION,
+    CALENDAR_TODAY_FOCUS_MOTION,
+    CALENDAR_TRANSITION_DURATION_MS,
     CURRENT_TIME_MOTION,
+    DETAIL_MONTH_SWIPE_GESTURE,
+    DETAIL_MONTH_SWIPE_MOTION,
     MONTH_AGENDA_GESTURE,
     MONTH_AGENDA_MOTION,
     formatCalendarCurrentTime,
+    getDetailMonthSwipeFollowOffset,
+    getDetailMonthSwipeFollowOpacity,
+    getDetailMonthSwipeGestureDirection,
+    getDetailMonthSwipeOffsets,
     getMonthAgendaGestureTarget,
     getMonthAgendaPanelKind,
     getMonthAgendaSteppedTarget,
     getMonthAgendaTransition,
     resolveMonthAgendaViewportLayout,
+    resolveCalendarPrimaryPillLayout,
+    shouldClaimDetailMonthSwipeGesture,
     shouldClaimMonthAgendaGesture,
     shouldAnimateCurrentTimeStep,
 } from "../src/modules/schedule/calendarMotion";
 
 describe("calendar depth motion", () => {
     test("연·월·일 전환이 하나의 속도와 easing을 공유한다", () => {
-        expect(CALENDAR_DEPTH_MOTION.depthSlideDurationMs).toBe(320);
-        expect(CALENDAR_DEPTH_MOTION.modeChangeDurationMs).toBe(220);
-        expect(CALENDAR_DEPTH_MOTION.reduceMotionDurationMs).toBe(160);
+        expect(CALENDAR_DEPTH_MOTION.depthSlideDurationMs)
+            .toBe(CALENDAR_TRANSITION_DURATION_MS);
+        expect(CALENDAR_DEPTH_MOTION.modeChangeDurationMs)
+            .toBe(CALENDAR_TRANSITION_DURATION_MS);
+        expect(CALENDAR_DEPTH_MOTION.reduceMotionDurationMs)
+            .toBe(CALENDAR_TRANSITION_DURATION_MS);
         expect(CALENDAR_DEPTH_MOTION.bezier).toEqual([0.25, 0.1, 0.25, 1]);
         expect(Object.isFrozen(CALENDAR_DEPTH_MOTION)).toBe(true);
         expect(Object.isFrozen(CALENDAR_DEPTH_MOTION.bezier)).toBe(true);
+    });
+
+    test("캘린더 깊이·모드 전환은 200ms 상호작용 예산 안에 끝난다", () => {
+        expect(CALENDAR_INTERACTION_BUDGET_MS).toBe(200);
+        expect(CALENDAR_TRANSITION_DURATION_MS).toBe(160);
+        expect(CALENDAR_TRANSITION_DURATION_MS)
+            .toBeLessThan(CALENDAR_INTERACTION_BUDGET_MS);
+
+        for (const durationMs of [
+            CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
+            CALENDAR_DEPTH_MOTION.modeChangeDurationMs,
+            CALENDAR_DEPTH_MOTION.reduceMotionDurationMs,
+            MONTH_AGENDA_MOTION.durationMs,
+            MONTH_AGENDA_MOTION.reduceMotionDurationMs,
+        ]) {
+            expect(durationMs).toBeLessThanOrEqual(CALENDAR_INTERACTION_BUDGET_MS);
+        }
+    });
+
+    test("상세형 월 스와이프는 commit 프레임을 포함해 160ms 안에 끝난다", () => {
+        const duration = DETAIL_MONTH_SWIPE_MOTION.exitDurationMs
+            + DETAIL_MONTH_SWIPE_MOTION.commitFrameBudgetMs
+            + DETAIL_MONTH_SWIPE_MOTION.enterDurationMs;
+        const reduceMotionDuration = DETAIL_MONTH_SWIPE_MOTION.reduceMotionExitDurationMs
+            + DETAIL_MONTH_SWIPE_MOTION.commitFrameBudgetMs
+            + DETAIL_MONTH_SWIPE_MOTION.reduceMotionEnterDurationMs;
+        const watchdogRecoveryDuration = DETAIL_MONTH_SWIPE_MOTION.exitDurationMs
+            + DETAIL_MONTH_SWIPE_MOTION.commitWatchdogMs;
+
+        expect(duration).toBe(CALENDAR_TRANSITION_DURATION_MS);
+        expect(reduceMotionDuration).toBeLessThan(duration);
+        expect(watchdogRecoveryDuration).toBeLessThanOrEqual(
+            CALENDAR_INTERACTION_BUDGET_MS
+        );
+        expect(DETAIL_MONTH_SWIPE_MOTION.reduceMotionTravel).toBe(0);
+        expect(Object.isFrozen(DETAIL_MONTH_SWIPE_MOTION)).toBe(true);
+    });
+
+    test("Today 세로 전환도 commit 프레임을 포함해 160ms 안에 끝난다", () => {
+        const duration = CALENDAR_TODAY_FOCUS_MOTION.exitDurationMs
+            + CALENDAR_TODAY_FOCUS_MOTION.commitFrameBudgetMs
+            + CALENDAR_TODAY_FOCUS_MOTION.enterDurationMs;
+        const reduceMotionDuration = CALENDAR_TODAY_FOCUS_MOTION.reduceMotionExitDurationMs
+            + CALENDAR_TODAY_FOCUS_MOTION.commitFrameBudgetMs
+            + CALENDAR_TODAY_FOCUS_MOTION.reduceMotionEnterDurationMs;
+
+        expect(duration).toBe(CALENDAR_TRANSITION_DURATION_MS);
+        expect(reduceMotionDuration).toBeLessThan(duration);
+        expect(CALENDAR_TODAY_FOCUS_MOTION.outgoingTravel).toBeLessThan(
+            CALENDAR_TODAY_FOCUS_MOTION.incomingTravel
+        );
+        expect(CALENDAR_TODAY_FOCUS_MOTION.reduceMotionTravel).toBe(0);
+        expect(Object.isFrozen(CALENDAR_TODAY_FOCUS_MOTION)).toBe(true);
+    });
+
+    test.each([
+        [1, -24, 24],
+        [-1, 24, -24],
+    ] as const)(
+        "상세형 월 이동 방향 %s는 outgoing=%s, incoming=%s이다",
+        (direction, outgoing, incoming) => {
+            expect(getDetailMonthSwipeOffsets(direction)).toEqual({
+                outgoing,
+                incoming,
+            });
+        }
+    );
+
+    test("상세형 월 스와이프는 비정상 travel을 움직임 없는 값으로 보정한다", () => {
+        expect(getDetailMonthSwipeOffsets(1, Number.NaN)).toEqual({
+            outgoing: 0,
+            incoming: 0,
+        });
+        expect(getDetailMonthSwipeOffsets(-1, -24)).toEqual({
+            outgoing: 0,
+            incoming: 0,
+        });
+    });
+
+    test("상세형 월 드래그 판정값은 짧은 상호작용 예산 안에 있다", () => {
+        expect(DETAIL_MONTH_SWIPE_GESTURE).toEqual({
+            activationDistance: 8,
+            directionDominance: 1.2,
+            distanceThreshold: 36,
+            velocityThreshold: 0.35,
+            velocityProjection: 80,
+            followRatio: 0.55,
+            cancelDurationMs: 80,
+            maxOpacityLoss: 0.08,
+        });
+        expect(DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs).toBeLessThanOrEqual(96);
+        expect(Object.isFrozen(DETAIL_MONTH_SWIPE_GESTURE)).toBe(true);
+    });
+
+    test("가로 우세 드래그만 상세형 월 스와이프로 점유한다", () => {
+        expect(shouldClaimDetailMonthSwipeGesture(8, 4)).toBe(true);
+        expect(shouldClaimDetailMonthSwipeGesture(-8, 0)).toBe(true);
+        expect(shouldClaimDetailMonthSwipeGesture(8, 8)).toBe(false);
+        expect(shouldClaimDetailMonthSwipeGesture(7.9, 0)).toBe(false);
+        expect(shouldClaimDetailMonthSwipeGesture(Number.NaN, 0)).toBe(false);
+        expect(shouldClaimDetailMonthSwipeGesture(
+            40,
+            Number.POSITIVE_INFINITY
+        )).toBe(false);
+    });
+
+    test.each([
+        [36, 0, -1],
+        [-36, 0, 1],
+        [4, 0.35, -1],
+        [-4, -0.35, 1],
+        [20, 0.2, -1],
+        [-20, -0.2, 1],
+    ] as const)(
+        "상세형 dx=%s, vx=%s 드래그를 월 이동 방향 %s로 판정한다",
+        (dx, vx, expected) => {
+            expect(getDetailMonthSwipeGestureDirection(dx, vx)).toBe(expected);
+        }
+    );
+
+    test("충분한 이동 거리는 릴리스 순간의 반대 속도보다 우선한다", () => {
+        expect(getDetailMonthSwipeGestureDirection(48, -0.8)).toBe(-1);
+        expect(getDetailMonthSwipeGestureDirection(-48, 0.8)).toBe(1);
+    });
+
+    test("짧고 느린 드래그와 비정상 값은 월을 바꾸지 않는다", () => {
+        expect(getDetailMonthSwipeGestureDirection(20, 0.1)).toBeNull();
+        expect(getDetailMonthSwipeGestureDirection(-20, -0.1)).toBeNull();
+        expect(getDetailMonthSwipeGestureDirection(Number.NaN, 0)).toBeNull();
+        expect(getDetailMonthSwipeGestureDirection(
+            0,
+            Number.NEGATIVE_INFINITY
+        )).toBeNull();
+    });
+
+    test("상세형 월은 손가락 이동을 감쇠해 travel 범위 안에서 따라간다", () => {
+        expect(getDetailMonthSwipeFollowOffset(10)).toBeCloseTo(5.5);
+        expect(getDetailMonthSwipeFollowOffset(-10)).toBeCloseTo(-5.5);
+        expect(getDetailMonthSwipeFollowOffset(100)).toBe(24);
+        expect(getDetailMonthSwipeFollowOffset(-100)).toBe(-24);
+        expect(getDetailMonthSwipeFollowOffset(100, false, 12)).toBe(12);
+    });
+
+    test("모션 줄이기와 비정상 follow 값은 이동시키지 않는다", () => {
+        expect(getDetailMonthSwipeFollowOffset(100, true)).toBe(0);
+        expect(getDetailMonthSwipeFollowOffset(Number.NaN)).toBe(0);
+        expect(getDetailMonthSwipeFollowOffset(20, false, Number.NaN)).toBe(0);
+        expect(getDetailMonthSwipeFollowOffset(20, false, -1)).toBe(0);
+    });
+
+    test("follow opacity는 이동량에 비례하되 8% 이상 흐려지지 않는다", () => {
+        expect(getDetailMonthSwipeFollowOpacity(0)).toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(12)).toBeCloseTo(0.96);
+        expect(getDetailMonthSwipeFollowOpacity(-12)).toBeCloseTo(0.96);
+        expect(getDetailMonthSwipeFollowOpacity(24)).toBeCloseTo(0.92);
+        expect(getDetailMonthSwipeFollowOpacity(240)).toBeCloseTo(0.92);
+    });
+
+    test("비정상 opacity 입력과 움직임 없는 travel은 불투명하게 유지한다", () => {
+        expect(getDetailMonthSwipeFollowOpacity(Number.NaN)).toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(12, Number.POSITIVE_INFINITY))
+            .toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(12, 0)).toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(12, -24)).toBe(1);
     });
 
     test("상단 pill 모션은 깊이 전환에 맞춘 작은 변형만 사용한다", () => {
@@ -29,10 +208,41 @@ describe("calendar depth motion", () => {
             bloomScaleX: 1.035,
             bloomScaleY: 1.018,
             contentTravel: 9,
+            yearHiddenTranslateX: -10,
+            yearHiddenScale: 0.94,
         });
         expect(CALENDAR_PILL_MOTION.bloomScaleX).toBeLessThanOrEqual(1.04);
         expect(CALENDAR_PILL_MOTION.contentTravel).toBeLessThanOrEqual(10);
         expect(Object.isFrozen(CALENDAR_PILL_MOTION)).toBe(true);
+    });
+
+    test.each([
+        ["month", "2026년", 138, true],
+        ["day", "7월", 84, true],
+        ["day", "10월", 102, true],
+        ["year", "2026년", 0, false],
+    ] as const)(
+        "%s 화면의 %s pill은 폭 %s, 표시=%s로 계산한다",
+        (depth, label, width, visible) => {
+            expect(resolveCalendarPrimaryPillLayout(depth, label, 402)).toEqual({
+                visible,
+                width,
+            });
+        }
+    );
+
+    test("일 화면 pill은 화면이 넓어져도 남는 공간을 채우지 않는다", () => {
+        for (const viewportWidth of [320, 402, 430, 1024]) {
+            expect(resolveCalendarPrimaryPillLayout("day", "7월", viewportWidth).width)
+                .toBe(CALENDAR_PRIMARY_PILL_LAYOUT.dayMinWidth);
+        }
+    });
+
+    test("아주 좁거나 비정상적인 화면 폭에서도 안전한 폭을 반환한다", () => {
+        expect(resolveCalendarPrimaryPillLayout("day", "7월", 180).width)
+            .toBe(CALENDAR_PRIMARY_PILL_LAYOUT.minimumSafeWidth);
+        expect(resolveCalendarPrimaryPillLayout("month", "2026년", Number.NaN).width)
+            .toBe(138);
     });
 
     test("앞으로 이동할 때 두 화면의 경계가 모든 프레임에서 맞닿는다", () => {

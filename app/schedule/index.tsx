@@ -50,7 +50,6 @@ import LiquidCalendarMenuPrototype, {
 import {
     CALENDAR_DAY_HEIGHTS,
     CALENDAR_VIEW_OPTIONS,
-    isContinuousMonthViewMode,
     type CalendarViewMode,
 } from "../../src/modules/schedule/components/calendar/viewMode";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
@@ -73,6 +72,7 @@ import { createSchedule, getCalendarSchedules, parseScheduleText } from "../../s
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import { getShareInbox } from "../../src/api/scheduleSharing";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
+import { shiftCalendarMonth } from "../../src/modules/schedule/calendarNavigation";
 import {
     DAY_MINUTES,
     DAY_TIMELINE_END_PADDING,
@@ -81,10 +81,10 @@ import {
 } from "../../src/modules/schedule/dayTimelineLayout";
 import {
     DAY_NAVIGATION_MOTION,
-    consumeQueuedDayNavigation,
+    DAY_NAVIGATION_RETARGET_MOTION,
     getDayNavigationRemainingDuration,
+    getDayNavigationRetargetSettleDuration,
     getDayNavigationResetDuration,
-    queueLatestDayNavigation,
 } from "../../src/modules/schedule/dayNavigationMotion";
 import {
     ADD_HANDOFF_MOTION,
@@ -93,20 +93,20 @@ import {
 } from "../../src/modules/schedule/addHandoffMotion";
 import {
     CALENDAR_DEPTH_MOTION,
+    CALENDAR_INTERACTION_BUDGET_MS,
+    CALENDAR_PRIMARY_PILL_LAYOUT,
     CALENDAR_PILL_MOTION,
+    CALENDAR_TODAY_FOCUS_MOTION,
     CURRENT_TIME_MOTION,
     MONTH_AGENDA_MOTION,
     formatCalendarCurrentTime,
     getMonthAgendaPanelKind,
     getMonthAgendaTransition,
+    resolveCalendarPrimaryPillLayout,
     resolveMonthAgendaViewportLayout,
     shouldAnimateCurrentTimeStep,
     type MonthAgendaPanelKind,
 } from "../../src/modules/schedule/calendarMotion";
-import {
-    createQaMonthScheduleItems,
-    createQaScheduleItem,
-} from "../../src/modules/schedule/qaSamples";
 import {
     buildShareAttentionSummary,
     readSeenShareAttentionKeys,
@@ -116,6 +116,7 @@ import {
     resolveQuickScheduleParseInput,
     type QuickScheduleMediaInput,
 } from "../../src/modules/schedule/quickInputExtraction";
+import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const getErrorMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -145,8 +146,6 @@ function getCalendarErrorMessage(message?: string | null) {
     return message;
 }
 
-const PRIMARY_PILL_MIN_WIDTH = 132;
-
 function sanitizeCalendarTransitionError(error?: string | null) {
     return getCalendarErrorMessage(error) ?? null;
 }
@@ -154,6 +153,10 @@ function sanitizeCalendarTransitionError(error?: string | null) {
 type ToolbarMenu = "view" | "search" | "add";
 type CalendarDepth = "year" | "month" | "day";
 type DayViewMode = "singleDay" | "multiDay";
+type TodayFocusTarget = {
+    day: string;
+    requiresMonthChange: boolean;
+};
 
 type CalendarDay = {
     dateString: string;
@@ -175,9 +178,8 @@ const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
 // The view-mode menu still needs the wider 251pt host. The add menu itself is
 // 238pt wide and stays aligned to this canvas' trailing edge.
 const LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH = 251;
-const LIQUID_TOOLBAR_QA_ACTION_DELAY_MS = 420;
 const SHARE_ATTENTION_REFRESH_MS = 45_000;
-const LIQUID_YEAR_PILL_WIDTH = PRIMARY_PILL_MIN_WIDTH;
+const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
 const DAY_WEEK_STRIP_TOP_OFFSET = LIQUID_TOOLBAR_BUTTON_SIZE + LIQUID_TOOLBAR_TOP_OFFSET + 2;
 const DAY_WEEK_STRIP_HEIGHT = 71;
@@ -342,12 +344,32 @@ function formatScheduleTime(value: string) {
     return `${meridiem} ${hour12}:${minute}`;
 }
 
+const MemoizedDayDisplay = React.memo(DayDisplay);
+const MemoizedSelectedDayAgendaPanel = React.memo(SelectedDayAgendaPanel);
+const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
+const MemoizedQuickScheduleModal = React.memo(
+    QuickScheduleModal,
+    (previous, next) => Boolean(
+        previous.prewarm &&
+        next.prewarm &&
+        !previous.visible &&
+        !next.visible
+    )
+);
+const MemoizedScheduleNewModal = React.memo(
+    ScheduleNewModal,
+    (previous, next) => Boolean(
+        previous.prewarm &&
+        next.prewarm &&
+        !previous.visible &&
+        !next.visible
+    )
+);
+
 export default function ScheduleIndex() {
     const router = useRouter();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{
-        qaSurface?: string | string[];
-        qaRun?: string | string[];
         focus?: string | string[];
         focusDay?: string | string[];
         focusRun?: string | string[];
@@ -355,27 +377,6 @@ export default function ScheduleIndex() {
     const insets = useSafeAreaInsets();
     const { width: screenWidth } = useWindowDimensions();
     const { mode, colors } = useTheme();
-    const qaSurface = Array.isArray(params.qaSurface) ? params.qaSurface[0] : params.qaSurface;
-    const qaRun = Array.isArray(params.qaRun) ? params.qaRun[0] : params.qaRun;
-    const isQuickMorphQaSurface =
-        qaSurface === "quick-add-morph" ||
-        qaSurface === "quick-add-morph-close";
-    const isManualMorphQaSurface =
-        qaSurface === "manual-add-morph" ||
-        qaSurface === "manual-add-morph-close";
-    const isDirectCreateQaSurface = __DEV__ && (
-        qaSurface === "event-create-empty" ||
-        qaSurface === "event-create-filled" ||
-        qaSurface === "event-create-keyboard"
-    );
-    const isPillCycleQaSurface = qaSurface === "pill-cycle";
-    const isMonthCalendarQaSurface = __DEV__ && (
-        qaSurface === "month-compact" || qaSurface === "month-stack"
-    );
-    const isMorphQaSurface = __DEV__ && (
-        isQuickMorphQaSurface ||
-        isManualMorphQaSurface
-    );
     const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
     const focusDayRequest = Array.isArray(params.focusDay) ? params.focusDay[0] : params.focusDay;
     const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
@@ -384,16 +385,13 @@ export default function ScheduleIndex() {
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
     const [liquidPrototypeOpen, setLiquidPrototypeOpen] = useState(false);
+    const [prototypeCloseRequest, setPrototypeCloseRequest] = useState(0);
     const [quickModalVisible, setQuickModalVisible] = useState(false);
     const [addFormsPrewarmed, setAddFormsPrewarmed] = useState(false);
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
-    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>(() => {
-        if (qaSurface === "month-compact") return "compact";
-        if (qaSurface === "month-stack") return "stack";
-        return "detail";
-    });
+    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
     const [dayViewMode, setDayViewMode] = useState<DayViewMode>("singleDay");
     const [dayLayerMounted, setDayLayerMounted] = useState(false);
@@ -406,12 +404,6 @@ export default function ScheduleIndex() {
     const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
     const [dayTodayRequest, setDayTodayRequest] = useState(0);
     const [yearTodayRequest, setYearTodayRequest] = useState(0);
-    const [prototypeTapRequest, setPrototypeTapRequest] = useState(0);
-    const [prototypeCloseRequest, setPrototypeCloseRequest] = useState(0);
-    const [prototypeAddMenuRequest, setPrototypeAddMenuRequest] = useState(0);
-    const [prototypeSearchRequest, setPrototypeSearchRequest] = useState(0);
-    const [prototypeQuickAddRequest, setPrototypeQuickAddRequest] = useState(0);
-    const [prototypeManualAddRequest, setPrototypeManualAddRequest] = useState(0);
     const [todayButtonPrimed, setTodayButtonPrimed] = useState(false);
     const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
     const [transitionMonthKey, setTransitionMonthKey] = useState<string | null>(null);
@@ -420,12 +412,22 @@ export default function ScheduleIndex() {
     const [isDayTransitionActive, setIsDayTransitionActive] = useState(false);
     const [isYearDepthTransitionActive, setIsYearDepthTransitionActive] = useState(false);
     const [isMonthViewTransitionActive, setIsMonthViewTransitionActive] = useState(false);
+    const [isTodayFocusTransitionActive, setIsTodayFocusTransitionActive] = useState(false);
+    const [todayFocusTarget, setTodayFocusTarget] = useState<TodayFocusTarget | null>(null);
+    const dayLayerMountedRef = useRef(dayLayerMounted);
+    const isDayTransitionActiveRef = useRef(isDayTransitionActive);
+    const isYearDepthTransitionActiveRef = useRef(isYearDepthTransitionActive);
+    dayLayerMountedRef.current = dayLayerMounted;
+    isDayTransitionActiveRef.current = isDayTransitionActive;
+    isYearDepthTransitionActiveRef.current = isYearDepthTransitionActive;
     const [retainedMonthAgendaPanelKind, setRetainedMonthAgendaPanelKind] =
         useState<MonthAgendaPanelKind>("detail");
     const [outgoingMonthAgendaPanelKind, setOutgoingMonthAgendaPanelKind] =
         useState<MonthAgendaPanelKind | null>(null);
     const shouldHideHandoffSurface = quickHandoffHidden && (quickModalVisible || modalVisible);
     const calendarTransition = useRef(new Animated.Value(1)).current;
+    const todayFocusOpacity = useRef(new Animated.Value(1)).current;
+    const todayFocusTranslateY = useRef(new Animated.Value(0)).current;
     const monthAgendaProgress = useRef(new Animated.Value(1)).current;
     const monthAgendaSwapProgress = useRef(new Animated.Value(1)).current;
     const monthCalendarTransitionProgress = useRef(new Animated.Value(1)).current;
@@ -447,7 +449,17 @@ export default function ScheduleIndex() {
     const monthViewTransitionGenerationRef = useRef(0);
     const monthViewTransitionFrameRef = useRef<number | null>(null);
     const monthViewCompletionAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const todayFocusAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const todayFocusWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const todayFocusAnimationGenerationRef = useRef(0);
+    const todayFocusAnimationActiveRef = useRef(false);
+    const todayFocusCommittedRef = useRef(false);
+    const todayFocusEnterStartedRef = useRef(false);
+    const todayFocusReduceMotionRef = useRef(false);
+    const detailMonthMotionCancelRef = useRef<(() => void) | null>(null);
+    const detailMonthMotionShiftRef = useRef<((direction: -1 | 1) => void) | null>(null);
     const transitionStartedRef = useRef(false);
+    const dayPageNavigationActiveRef = useRef(false);
     const dayTransitionCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const viewTransitioningRef = useRef(false);
     const quickHandoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -456,13 +468,13 @@ export default function ScheduleIndex() {
     const addHandoffPendingRef = useRef(false);
     const addHandoffClosingRef = useRef(false);
     const addHandoffNativeResetRef = useRef(false);
-    const handledQaSurfaceRef = useRef<string | null>(null);
-    const handledCalendarTransitionQaRef = useRef<string | null>(null);
     const handledFocusRequestRef = useRef<string | null>(null);
     const scheduleLoadSequenceRef = useRef(0);
 
     const [pendingSelectedDay, setPendingSelectedDay] = useState<string | null>(null);
     const selectedDay = pendingSelectedDay ?? state.selectedDay;
+    const selectedDayRef = useRef(selectedDay);
+    selectedDayRef.current = selectedDay;
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
     const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
@@ -478,15 +490,53 @@ export default function ScheduleIndex() {
     const scheduleFetchEndAt = scheduleFetchRange.endAt;
 
     useEffect(() => {
-        if (!isFocused || addFormsPrewarmed) return;
+        if (
+            !isFocused ||
+            addFormsPrewarmed ||
+            !dayLayerMounted ||
+            isDayTransitionActive ||
+            isYearDepthTransitionActive ||
+            isMonthViewTransitionActive
+        ) return;
 
         // Pay the form mount/layout cost after the calendar's initial work,
-        // not in the frame where an add-menu row is selected.
+        // not in a calendar transition or the frame where an add-menu row is selected.
         const task = InteractionManager.runAfterInteractions(() => {
             setAddFormsPrewarmed(true);
         });
         return () => task.cancel();
-    }, [addFormsPrewarmed, isFocused]);
+    }, [
+        addFormsPrewarmed,
+        dayLayerMounted,
+        isDayTransitionActive,
+        isFocused,
+        isMonthViewTransitionActive,
+        isYearDepthTransitionActive,
+    ]);
+
+    useEffect(() => {
+        if (
+            !isFocused ||
+            dayLayerMounted ||
+            calendarDepth !== "month" ||
+            isDayTransitionActive ||
+            isYearDepthTransitionActive
+        ) return;
+
+        // Build the timeline while the month screen is idle. The first tap can
+        // then start the compositor transition immediately instead of waiting
+        // for 24 hour rows and event cards to mount.
+        const task = InteractionManager.runAfterInteractions(() => {
+            setDayLayerMounted(true);
+        });
+        return () => task.cancel();
+    }, [
+        calendarDepth,
+        dayLayerMounted,
+        isDayTransitionActive,
+        isFocused,
+        isYearDepthTransitionActive,
+    ]);
 
     useEffect(() => {
         if (isYearDepthTransitionActive) return;
@@ -509,6 +559,9 @@ export default function ScheduleIndex() {
     const registerDayDisplayPrepare = useCallback((prepare: ((day: string) => void) | null) => {
         dayDisplayPrepareRef.current = prepare;
     }, []);
+    const handleDayPageNavigationActiveChange = useCallback((active: boolean) => {
+        dayPageNavigationActiveRef.current = active;
+    }, []);
     const [overviewYear, setOverviewYear] = useState(
         new Date(`${selectedDay}T00:00:00`).getFullYear()
     );
@@ -521,7 +574,19 @@ export default function ScheduleIndex() {
         yearOverviewVisible &&
         isYearDepthTransitionActive &&
         !yearOverviewClosing;
-    const monthDisplaySelectedDay = isYearToMonthTransition ? visibleMonth : selectedDay;
+    const retainedMonthLayerDayRef = useRef(selectedDay);
+    const retainedMonthLayerFocusRef = useRef(visibleMonth);
+    if (!isMonthToDayTransition && (isDayToMonthTransition || calendarDepth !== "day")) {
+        retainedMonthLayerDayRef.current = isYearToMonthTransition ? visibleMonth : selectedDay;
+        retainedMonthLayerFocusRef.current = visibleMonth;
+    }
+    const monthDisplaySelectedDay = retainedMonthLayerDayRef.current;
+    const monthDisplayFocusedMonth = retainedMonthLayerFocusRef.current;
+    const retainedDayLayerDayRef = useRef(selectedDay);
+    if (calendarDepth === "day" || isDayTransitionActive || !dayLayerMounted) {
+        retainedDayLayerDayRef.current = dayTransitionTargetDay ?? selectedDay;
+    }
+    const dayDisplaySelectedDay = retainedDayLayerDayRef.current;
     const pillTargetDepth: CalendarDepth = isYearToMonthTransition
         ? "month"
         : isMonthToYearTransition
@@ -535,16 +600,37 @@ export default function ScheduleIndex() {
     const visiblePrimaryLabel = pillTargetDepth === "day"
         ? `${new Date(`${pillDisplayDay}T00:00:00`).getMonth() + 1}월`
         : `${visibleYear}년`;
-    const visiblePrimaryLabelWidth = Math.max(
-        LIQUID_YEAR_PILL_WIDTH,
-        Math.min(
-            screenWidth - 172,
-            Math.ceil(visiblePrimaryLabel.length * 18) + 48
-        )
+    const monthPrimaryPillLayout = resolveCalendarPrimaryPillLayout(
+        "month",
+        `${visibleYear}년`,
+        screenWidth
     );
-    const primaryDatePillWidth = pillTargetDepth === "day" && dayViewMode !== "singleDay"
-        ? Math.min(224, Math.max(visiblePrimaryLabelWidth, screenWidth - LIQUID_TOOLBAR_ACTIONS_WIDTH - 56))
-        : visiblePrimaryLabelWidth;
+    const primaryPillLayout = resolveCalendarPrimaryPillLayout(
+        pillTargetDepth,
+        visiblePrimaryLabel,
+        screenWidth
+    );
+    const primaryPillVisible = primaryPillLayout.visible;
+    const primaryPillContentWidth = primaryPillVisible
+        ? primaryPillLayout.width
+        : monthPrimaryPillLayout.width;
+    const primaryPillAnimatedWidth = useSharedValue(primaryPillLayout.width);
+    useEffect(() => {
+        cancelReanimatedAnimation(primaryPillAnimatedWidth);
+        primaryPillAnimatedWidth.value = withTiming(primaryPillLayout.width, {
+            duration: reduceMotionEnabled
+                ? CALENDAR_DEPTH_MOTION.reduceMotionDurationMs
+                : CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
+            easing: reduceMotionEnabled
+                ? ReanimatedEasing.out(ReanimatedEasing.cubic)
+                : ReanimatedEasing.bezier(...CALENDAR_DEPTH_MOTION.bezier),
+            reduceMotion: ReduceMotion.Never,
+        });
+        return () => cancelReanimatedAnimation(primaryPillAnimatedWidth);
+    }, [primaryPillAnimatedWidth, primaryPillLayout.width, reduceMotionEnabled]);
+    const primaryPillAnimatedStyle = useAnimatedStyle(() => ({
+        width: primaryPillAnimatedWidth.value,
+    }));
     const selectedLiquidMode: CalendarViewMode | "day" | "multi" = pillTargetDepth === "day"
         ? dayViewMode === "singleDay"
             ? "day"
@@ -559,6 +645,14 @@ export default function ScheduleIndex() {
         inputRange: [0, 1],
         outputRange: [8, 0],
     });
+    const calendarContentTodayOpacity = Animated.multiply(
+        calendarContentOpacity,
+        todayFocusOpacity
+    );
+    const calendarContentTodayTranslateY = Animated.add(
+        calendarContentTranslateY,
+        todayFocusTranslateY
+    );
     const calendarContentScale = calendarTransition.interpolate({
         inputRange: [0, 1],
         outputRange: [0.97, 1],
@@ -662,14 +756,6 @@ export default function ScheduleIndex() {
         monthCalendarTargetHeight,
         resolveMonthCalendarHeight,
     ]);
-    const yearPillBloomScaleX = yearOverviewProgress.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [1, CALENDAR_PILL_MOTION.bloomScaleX, 1],
-    });
-    const yearPillBloomScaleY = yearOverviewProgress.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [1, CALENDAR_PILL_MOTION.bloomScaleY, 1],
-    });
     const dayPillBloomScaleX = dayTransition.interpolate({
         inputRange: [0, 0.5, 1],
         outputRange: [1, CALENDAR_PILL_MOTION.bloomScaleX, 1],
@@ -678,12 +764,31 @@ export default function ScheduleIndex() {
         inputRange: [0, 0.5, 1],
         outputRange: [1, CALENDAR_PILL_MOTION.bloomScaleY, 1],
     });
-    const primaryPillScaleX = reduceMotionEnabled
+    const primaryPillScaleX = reduceMotionEnabled ? 1 : dayPillBloomScaleX;
+    const primaryPillScaleY = reduceMotionEnabled ? 1 : dayPillBloomScaleY;
+    const primaryPillOpacity = yearOverviewProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [1, 0],
+        extrapolate: "clamp",
+    });
+    const primaryPillTodayOpacity = Animated.multiply(
+        primaryPillOpacity,
+        todayFocusOpacity
+    );
+    const primaryPillYearTranslateX = reduceMotionEnabled
+        ? 0
+        : yearOverviewProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, CALENDAR_PILL_MOTION.yearHiddenTranslateX],
+            extrapolate: "clamp",
+        });
+    const primaryPillYearScale = reduceMotionEnabled
         ? 1
-        : Animated.multiply(yearPillBloomScaleX, dayPillBloomScaleX);
-    const primaryPillScaleY = reduceMotionEnabled
-        ? 1
-        : Animated.multiply(yearPillBloomScaleY, dayPillBloomScaleY);
+        : yearOverviewProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, CALENDAR_PILL_MOTION.yearHiddenScale],
+            extrapolate: "clamp",
+        });
     const calendarContentTranslateX = yearOverviewProgress.interpolate({
         inputRange: [0, 1],
         outputRange: [0, screenWidth],
@@ -730,14 +835,18 @@ export default function ScheduleIndex() {
     const liquidPrototypeLayerWidth = isSearchToolbarOpen
         ? searchHeaderTargetWidth
         : LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH;
-    // Keep the native host pre-sized so opening the + menu never waits for a
-    // Fabric height commit. Its UIKit pointInside/hitTest implementation limits
-    // the idle hit target to the visible 44pt pill, so the transparent canvas
-    // does not block the calendar below it.
-    const liquidPrototypeLayerHeight = LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT;
+    // Keep the collapsed Fabric host as small as the visible pill. A full-height
+    // transparent native host still wins hit-testing before its UIKit child gets
+    // a chance to reject the touch, which blocks the day strip underneath it.
+    // Swift requests `onOpenChange(true)` before starting its menu morph, so the
+    // host is expanded in time for the dropdown and shrunk only after it closes.
+    const liquidPrototypeLayerHeight = liquidPrototypeOpen
+        ? LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT
+        : LIQUID_TOOLBAR_BUTTON_SIZE;
     const requestCloseLiquidPrototype = useCallback(() => {
         if (!usesLiquidViewModeControl) return;
-        // The host stays pre-sized; this request only resets SwiftUI content.
+        // Swift closes its content first and then reports `onOpenChange(false)`,
+        // which lets the JS host shrink without clipping the close morph.
         setPrototypeCloseRequest((value) => value + 1);
     }, [usesLiquidViewModeControl]);
     const clearQuickHandoffTimer = useCallback(() => {
@@ -1026,6 +1135,10 @@ export default function ScheduleIndex() {
                     extrapolate: "clamp",
                 })
                 : 1;
+    const stickyCalendarHeaderTodayOpacity = Animated.multiply(
+        stickyCalendarHeaderOpacity,
+        todayFocusOpacity
+    );
     const calendarHeaderOffset = useMemo(
         () => insets.top
             + CALENDAR_TOOLBAR_HEIGHT
@@ -1049,7 +1162,15 @@ export default function ScheduleIndex() {
     const isAnyDepthTransitionActive =
         isDayTransitionActive ||
         isYearDepthTransitionActive ||
-        isMonthViewTransitionActive;
+        isMonthViewTransitionActive ||
+        isTodayFocusTransitionActive;
+    const detailMonthNavigationEnabled =
+        calendarDepth === "month" &&
+        calendarViewMode === "detail" &&
+        !yearOverviewVisible &&
+        !isAnyDepthTransitionActive;
+    const primaryPillInteractionEnabled =
+        primaryPillVisible && !isAnyDepthTransitionActive;
 
     useEffect(() => {
         return () => {
@@ -1064,6 +1185,15 @@ export default function ScheduleIndex() {
             }
             monthViewCompletionAnimationRef.current?.stop();
             monthViewCompletionAnimationRef.current = null;
+            todayFocusAnimationGenerationRef.current += 1;
+            if (todayFocusWatchdogRef.current !== null) {
+                clearTimeout(todayFocusWatchdogRef.current);
+                todayFocusWatchdogRef.current = null;
+            }
+            todayFocusAnimationRef.current?.stop();
+            todayFocusAnimationRef.current = null;
+            todayFocusOpacity.stopAnimation();
+            todayFocusTranslateY.stopAnimation();
             cancelReanimatedAnimation(monthCalendarAnimatedHeight);
             cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
             monthAgendaProgress.stopAnimation();
@@ -1077,6 +1207,8 @@ export default function ScheduleIndex() {
         monthCalendarAnimatedDayHeight,
         monthCalendarAnimatedHeight,
         monthCalendarTransitionProgress,
+        todayFocusOpacity,
+        todayFocusTranslateY,
     ]);
 
     useEffect(() => {
@@ -1167,7 +1299,7 @@ export default function ScheduleIndex() {
             if (requestSequence !== scheduleLoadSequenceRef.current) return;
             const message = getErrorMessage(error);
             dispatch({ type: "SET_ERROR", error: message });
-            if (!__DEV__ && isFocused && !isMorphQaSurface) {
+            if (isFocused) {
                 Alert.alert("일정 조회 실패", message);
             }
         } finally {
@@ -1175,7 +1307,7 @@ export default function ScheduleIndex() {
                 dispatch({ type: "SET_LOADING", loading: false });
             }
         }
-    }, [dispatch, isFocused, isMorphQaSurface, scheduleFetchEndAt, scheduleFetchStartAt]);
+    }, [dispatch, isFocused, scheduleFetchEndAt, scheduleFetchStartAt]);
 
     useEffect(() => {
         loadSchedules();
@@ -1232,13 +1364,9 @@ export default function ScheduleIndex() {
         };
     }, [dispatch]);
 
-    const qaMonthItems = useMemo(
-        () => isMonthCalendarQaSurface ? createQaMonthScheduleItems() : null,
-        [isMonthCalendarQaSurface]
-    );
     const itemsArray = useMemo(
-        () => qaMonthItems ?? Object.values(state.itemsById),
-        [qaMonthItems, state.itemsById]
+        () => Object.values(state.itemsById),
+        [state.itemsById]
     );
     const searchResults = useMemo(() => {
         const normalized = searchQuery.trim().toLocaleLowerCase();
@@ -1367,114 +1495,6 @@ export default function ScheduleIndex() {
         closeToolbarMenu();
     }, [closeToolbarMenu]);
 
-    const qaInitialValues = useMemo<ScheduleParseResult>(() => {
-        const sample = createQaScheduleItem();
-        return {
-            title: sample.title,
-            notes: sample.notes,
-            startAt: sample.startAt,
-            endAt: sample.endAt,
-            origin: sample.origin,
-            destination: sample.destination,
-            travelMinutes: sample.travelMinutes,
-            travelMode: sample.travelMode,
-            route: sample.route,
-            notificationEnabled: sample.notificationEnabled,
-            notificationLeadMinutes: sample.notificationLeadMinutes,
-            notificationIntervalMinutes: sample.notificationIntervalMinutes,
-            originSource: "TEXT",
-            originRequired: false,
-            parseSource: "RULE",
-            aiAttempted: false,
-            needsReview: false,
-            warnings: [],
-            missingFields: [],
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!__DEV__) return;
-        if (!qaSurface) {
-            handledQaSurfaceRef.current = null;
-            return;
-        }
-
-        if (
-            isQuickMorphQaSurface ||
-            isManualMorphQaSurface ||
-            isPillCycleQaSurface
-        ) {
-            return;
-        }
-
-        const qaKey = `${qaSurface}:${qaRun ?? ""}`;
-        if (handledQaSurfaceRef.current === qaKey) return;
-        handledQaSurfaceRef.current = qaKey;
-
-        if (isMonthCalendarQaSurface) {
-            setActiveToolbarMenu(null);
-            if (usesLiquidViewModeControl) {
-                setPrototypeCloseRequest((request) => request + 1);
-            }
-            setCalendarDepth("month");
-            setDayLayerMounted(false);
-            setYearOverviewVisible(false);
-            setCalendarViewMode(qaSurface === "month-stack" ? "stack" : "compact");
-            setCalendarScrollRequest((request) => request + 1);
-            return;
-        }
-
-        if (qaSurface === "popover") {
-            if (usesLiquidViewModeControl) {
-                setPrototypeTapRequest((value) => value + 1);
-                return;
-            }
-
-            if (activeToolbarMenu !== "view") openToolbarMenu("view");
-            return;
-        }
-
-        if (qaSurface === "search") {
-            setSearchQuery("없는 일정");
-            if (activeToolbarMenu !== "search") openToolbarMenu("search");
-            return;
-        }
-
-        if (qaSurface === "add-dropdown") {
-            setActiveToolbarMenu(null);
-            if (usesLiquidViewModeControl) {
-                setPrototypeAddMenuRequest((value) => value + 1);
-                return;
-            }
-            openToolbarMenu("add");
-            return;
-        }
-
-        if (qaSurface === "event-create-empty") {
-            setActiveToolbarMenu(null);
-            setFormInitialValues(null);
-            setModalVisible(true);
-            return;
-        }
-
-        if (qaSurface === "event-create-filled" || qaSurface === "event-create-keyboard") {
-            setActiveToolbarMenu(null);
-            setFormInitialValues(qaInitialValues);
-            setModalVisible(true);
-        }
-    }, [
-        activeToolbarMenu,
-        isManualMorphQaSurface,
-        isMonthCalendarQaSurface,
-        isPillCycleQaSurface,
-        isQuickMorphQaSurface,
-        openToolbarMenu,
-        qaInitialValues,
-        qaRun,
-        qaSurface,
-        usesLiquidViewModeControl,
-    ]);
-
     const openBlankSchedule = useCallback(() => {
         prepareAddHandoff();
         if (usesLiquidViewModeControl) {
@@ -1520,132 +1540,6 @@ export default function ScheduleIndex() {
             router.push("/schedule/categories");
         });
     };
-
-    useEffect(() => {
-        if (!__DEV__) return;
-        if (
-            !isQuickMorphQaSurface &&
-            !isManualMorphQaSurface
-        ) return;
-        // Do not benchmark the handoff while the calendar is committing its
-        // initial schedule payload or while either destination is still being
-        // mounted. Those unrelated commits previously landed mid-morph.
-        if (state.loading || !addFormsPrewarmed) return;
-
-        const qaKey = `${qaSurface}:${qaRun ?? ""}`;
-        if (handledQaSurfaceRef.current === qaKey) return;
-        handledQaSurfaceRef.current = qaKey;
-
-        setQuickModalVisible(false);
-        setModalVisible(false);
-        setFormInitialValues(null);
-        setQuickHandoffHidden(false);
-        setActiveToolbarMenu(null);
-        // Quick/manual requests are edge-triggered QA pulses, not cumulative
-        // counters. Keeping their idle value at zero prevents Fabric from
-        // replaying an old selection when it recreates the native host view.
-        setPrototypeQuickAddRequest(0);
-        setPrototypeManualAddRequest(0);
-        if (usesLiquidViewModeControl) {
-            setPrototypeAddMenuRequest((value) => value + 1);
-            let actionResetTimer: ReturnType<typeof setTimeout> | null = null;
-            const timer = setTimeout(() => {
-                if (isQuickMorphQaSurface) {
-                    setPrototypeQuickAddRequest(1);
-                    actionResetTimer = setTimeout(() => {
-                        actionResetTimer = null;
-                        setPrototypeQuickAddRequest(0);
-                    }, Math.max(
-                        ADD_HANDOFF_MOTION.ownershipCrossfadeMs,
-                        ADD_HANDOFF_MOTION.quickOpenMs
-                    )
-                        + ADD_HANDOFF_MOTION.nativeResetSettleMs
-                        + 80);
-                    return;
-                }
-
-                setPrototypeManualAddRequest(1);
-                actionResetTimer = setTimeout(() => {
-                    actionResetTimer = null;
-                    setPrototypeManualAddRequest(0);
-                }, Math.max(
-                    ADD_HANDOFF_MOTION.ownershipCrossfadeMs,
-                    ADD_HANDOFF_MOTION.manualOpenMs
-                )
-                    + ADD_HANDOFF_MOTION.nativeResetSettleMs
-                    + 80);
-            }, LIQUID_TOOLBAR_QA_ACTION_DELAY_MS);
-            return () => {
-                clearTimeout(timer);
-                if (actionResetTimer !== null) {
-                    clearTimeout(actionResetTimer);
-                }
-                setPrototypeQuickAddRequest(0);
-                setPrototypeManualAddRequest(0);
-            };
-        } else {
-            openToolbarMenu("add");
-        }
-
-        const timer = setTimeout(() => {
-            if (isQuickMorphQaSurface) {
-                openQuickSchedule();
-                return;
-            }
-
-            openBlankSchedule();
-        }, LIQUID_TOOLBAR_QA_ACTION_DELAY_MS);
-
-        return () => clearTimeout(timer);
-    }, [
-        isManualMorphQaSurface,
-        isPillCycleQaSurface,
-        isQuickMorphQaSurface,
-        addFormsPrewarmed,
-        openToolbarMenu,
-        openBlankSchedule,
-        openQuickSchedule,
-        qaRun,
-        qaSurface,
-        state.loading,
-        usesLiquidViewModeControl,
-    ]);
-
-    useEffect(() => {
-        if (!__DEV__ || !isPillCycleQaSurface || !usesLiquidViewModeControl) return;
-
-        const qaKey = `${qaSurface}:${qaRun ?? ""}`;
-        if (handledQaSurfaceRef.current === qaKey) return;
-        handledQaSurfaceRef.current = qaKey;
-
-        setQuickModalVisible(false);
-        setModalVisible(false);
-        setFormInitialValues(null);
-        setQuickHandoffHidden(false);
-        setActiveToolbarMenu(null);
-        setSearchQuery("");
-
-        const timers: ReturnType<typeof setTimeout>[] = [];
-        const enqueue = (delayMs: number, action: () => void) => {
-            timers.push(setTimeout(action, delayMs));
-        };
-
-        enqueue(900, () => setPrototypeTapRequest((value) => value + 1));
-        enqueue(1700, () => setPrototypeCloseRequest((value) => value + 1));
-        enqueue(2500, () => setPrototypeSearchRequest((value) => value + 1));
-        enqueue(3300, () => setPrototypeCloseRequest((value) => value + 1));
-        enqueue(4100, () => setPrototypeAddMenuRequest((value) => value + 1));
-        enqueue(4900, () => setPrototypeCloseRequest((value) => value + 1));
-
-        return () => {
-            timers.forEach(clearTimeout);
-        };
-    }, [
-        isPillCycleQaSurface,
-        qaRun,
-        qaSurface,
-        usesLiquidViewModeControl,
-    ]);
 
     const openScheduleFromSearch = (id: string) => {
         setSearchQuery("");
@@ -1729,7 +1623,7 @@ export default function ScheduleIndex() {
             : CALENDAR_DEPTH_MOTION.depthSlideDurationMs;
         dayTransitionCleanupTimerRef.current = setTimeout(() => {
             finishTransition(true, true);
-        }, transitionDuration + 140);
+        }, CALENDAR_INTERACTION_BUDGET_MS);
 
         Animated.timing(dayTransition, {
             toValue,
@@ -1768,7 +1662,7 @@ export default function ScheduleIndex() {
             : CALENDAR_DEPTH_MOTION.depthSlideDurationMs;
         dayTransitionCleanupTimerRef.current = setTimeout(() => {
             finishTransition(true, true);
-        }, duration + 140);
+        }, CALENDAR_INTERACTION_BUDGET_MS);
 
         yearOverviewProgress.stopAnimation();
         Animated.timing(yearOverviewProgress, {
@@ -1802,23 +1696,13 @@ export default function ScheduleIndex() {
         selectCalendarDay(day);
         setDayLayerMounted(true);
         dayTransition.setValue(1);
-
-        if (dayViewMode !== "singleDay") {
-            closeToolbarMenu();
-            setDayModeTransitionFrom(dayViewMode);
-            setDayViewMode("singleDay");
-            animateDayModeTransition(() => setDayModeTransitionFrom(null));
-        }
     }, [
-        animateDayModeTransition,
-        closeToolbarMenu,
         dayTransition,
-        dayViewMode,
         selectCalendarDay,
     ]);
 
     const handleShiftDay = useCallback((offset: number) => {
-        const nextDay = addDaysToYmd(selectedDay, offset);
+        const nextDay = addDaysToYmd(selectedDayRef.current, offset);
         setDayTransitionTargetDay(null);
         selectCalendarDay(nextDay);
         setDayLayerMounted(true);
@@ -1826,7 +1710,6 @@ export default function ScheduleIndex() {
         dayTransition.setValue(1);
     }, [
         dayTransition,
-        selectedDay,
         selectCalendarDay,
     ]);
 
@@ -1838,14 +1721,22 @@ export default function ScheduleIndex() {
         dayTransition.setValue(1);
     }, [dayTransition, selectCalendarDay]);
 
+    const handleOpenScheduleFromDayDisplay = useCallback((id: string) => {
+        router.push({
+            pathname: "/schedule/[id]",
+            params: { id },
+        });
+    }, [router]);
+
     const handleOpenDay = useCallback((day: string) => {
         if (
-            isDayTransitionActive ||
-            isYearDepthTransitionActive ||
+            isDayTransitionActiveRef.current ||
+            isYearDepthTransitionActiveRef.current ||
             transitionStartedRef.current ||
             viewTransitioningRef.current
         ) return;
         transitionStartedRef.current = true;
+        const wasDayLayerMounted = dayLayerMountedRef.current;
 
         closeToolbarMenu();
         calendarTransition.stopAnimation();
@@ -1856,7 +1747,7 @@ export default function ScheduleIndex() {
         dayDisplayPrepareRef.current?.(day);
         setTodayButtonPrimed(day === todayKey);
         setTransitionMonthKey(
-            day.slice(0, 7) === selectedDay.slice(0, 7)
+            day.slice(0, 7) === selectedDayRef.current.slice(0, 7)
                 ? null
                 : day.slice(0, 7)
         );
@@ -1870,18 +1761,21 @@ export default function ScheduleIndex() {
         dayModeTransition.setValue(1);
         setDayTransitionContext("monthToDay");
         setIsDayTransitionActive(true);
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                animateDayTransition(1, () => {
-                    setPendingSelectedDay(day);
-                    dispatch({ type: "SET_SELECTED_DAY", day });
-                    setVisibleMonth(day);
-                    setCalendarDepth("day");
-                    setDayTransitionTargetDay(null);
-                    setTransitionMonthKey(null);
-                }, "monthToDay");
-            });
-        });
+        const startTransition = () => {
+            animateDayTransition(1, () => {
+                setPendingSelectedDay(day);
+                dispatch({ type: "SET_SELECTED_DAY", day });
+                setVisibleMonth(day);
+                setCalendarDepth("day");
+                setDayTransitionTargetDay(null);
+                setTransitionMonthKey(null);
+            }, "monthToDay");
+        };
+        if (wasDayLayerMounted) {
+            startTransition();
+        } else {
+            requestAnimationFrame(startTransition);
+        }
     }, [
         animateDayTransition,
         calendarTransition,
@@ -1889,16 +1783,18 @@ export default function ScheduleIndex() {
         dayTransition,
         dayModeTransition,
         dispatch,
-        isDayTransitionActive,
-        isYearDepthTransitionActive,
-        selectedDay,
         todayKey,
         yearOverviewProgress,
     ]);
 
     const closeDayDisplay = useCallback(() => {
         if (calendarDepth !== "day" && !dayLayerMounted) return;
-        if (isDayTransitionActive || isYearDepthTransitionActive || transitionStartedRef.current) return;
+        if (
+            dayPageNavigationActiveRef.current ||
+            isDayTransitionActive ||
+            isYearDepthTransitionActive ||
+            transitionStartedRef.current
+        ) return;
         transitionStartedRef.current = true;
 
         closeToolbarMenu();
@@ -1907,14 +1803,11 @@ export default function ScheduleIndex() {
         setTransitionMonthKey(null);
         setDayTransitionContext("dayToMonth");
         setIsDayTransitionActive(true);
-        requestAnimationFrame(() => {
-            animateDayTransition(0, () => {
-                setCalendarDepth("month");
-                setDayLayerMounted(false);
-                setDayTransitionTargetDay(null);
-                setTransitionMonthKey(null);
-            }, "dayToMonth");
-        });
+        animateDayTransition(0, () => {
+            setCalendarDepth("month");
+            setDayTransitionTargetDay(null);
+            setTransitionMonthKey(null);
+        }, "dayToMonth");
     }, [
         animateDayTransition,
         calendarDepth,
@@ -1929,15 +1822,211 @@ export default function ScheduleIndex() {
         closeToolbarMenu();
         setPendingSelectedDay(todayKey);
         dispatch({ type: "SET_SELECTED_DAY", day: todayKey });
-        if (!isContinuousMonthViewMode(calendarViewMode)) {
-            setVisibleMonth(todayKey);
-        }
+        setVisibleMonth(todayKey);
         setCalendarScrollRequest((request) => request + 1);
         setTodayButtonPrimed(true);
         if (options?.revealImmediately !== false) {
             calendarTransition.setValue(1);
         }
-    }, [calendarTransition, calendarViewMode, closeToolbarMenu, dispatch, todayKey]);
+    }, [calendarTransition, closeToolbarMenu, dispatch, todayKey]);
+
+    const finishTodayFocusTransition = useCallback((
+        generation: number,
+        commitIfNeeded = false
+    ) => {
+        if (generation !== todayFocusAnimationGenerationRef.current) return;
+
+        todayFocusAnimationGenerationRef.current += 1;
+        const activeAnimation = todayFocusAnimationRef.current;
+        todayFocusAnimationRef.current = null;
+
+        if (todayFocusWatchdogRef.current !== null) {
+            clearTimeout(todayFocusWatchdogRef.current);
+            todayFocusWatchdogRef.current = null;
+        }
+        activeAnimation?.stop();
+        if (commitIfNeeded && !todayFocusCommittedRef.current) {
+            todayFocusCommittedRef.current = true;
+            focusTodayOnCalendar({ revealImmediately: false });
+        }
+
+        todayFocusOpacity.stopAnimation();
+        todayFocusTranslateY.stopAnimation();
+        todayFocusOpacity.setValue(1);
+        todayFocusTranslateY.setValue(0);
+        todayFocusAnimationActiveRef.current = false;
+        todayFocusCommittedRef.current = false;
+        todayFocusEnterStartedRef.current = false;
+        transitionStartedRef.current = false;
+        setTodayFocusTarget(null);
+        setIsTodayFocusTransitionActive(false);
+    }, [focusTodayOnCalendar, todayFocusOpacity, todayFocusTranslateY]);
+
+    const startTodayFocusEnterTransition = useCallback((generation: number) => {
+        if (
+            generation !== todayFocusAnimationGenerationRef.current ||
+            !todayFocusAnimationActiveRef.current ||
+            !todayFocusCommittedRef.current ||
+            todayFocusEnterStartedRef.current
+        ) return;
+
+        todayFocusEnterStartedRef.current = true;
+        const reduceMotion = todayFocusReduceMotionRef.current;
+        const enterDuration = reduceMotion
+            ? CALENDAR_TODAY_FOCUS_MOTION.reduceMotionEnterDurationMs
+            : CALENDAR_TODAY_FOCUS_MOTION.enterDurationMs;
+        const easing = reduceMotion
+            ? Easing.out(Easing.cubic)
+            : CALENDAR_DEPTH_EASING;
+        const enterAnimation = Animated.parallel([
+            Animated.timing(todayFocusOpacity, {
+                toValue: 1,
+                duration: enterDuration,
+                easing,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+            Animated.timing(todayFocusTranslateY, {
+                toValue: 0,
+                duration: enterDuration,
+                easing,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+        ]);
+        todayFocusAnimationRef.current = enterAnimation;
+        enterAnimation.start(() => finishTodayFocusTransition(generation));
+    }, [
+        finishTodayFocusTransition,
+        todayFocusOpacity,
+        todayFocusTranslateY,
+    ]);
+
+    const handleTodayFocusReady = useCallback((day: string) => {
+        if (day !== todayKey) return;
+        startTodayFocusEnterTransition(
+            todayFocusAnimationGenerationRef.current
+        );
+    }, [startTodayFocusEnterTransition, todayKey]);
+
+    const registerDetailMonthMotionCancel = useCallback((cancel: (() => void) | null) => {
+        detailMonthMotionCancelRef.current = cancel;
+    }, []);
+
+    const registerDetailMonthMotionShift = useCallback((
+        shift: ((direction: -1 | 1) => void) | null
+    ) => {
+        detailMonthMotionShiftRef.current = shift;
+    }, []);
+
+    const startTodayFocusTransition = useCallback(() => {
+        if (
+            todayFocusAnimationActiveRef.current ||
+            isDayTransitionActiveRef.current ||
+            isYearDepthTransitionActiveRef.current ||
+            transitionStartedRef.current ||
+            viewTransitioningRef.current
+        ) return;
+
+        detailMonthMotionCancelRef.current?.();
+        const generation = todayFocusAnimationGenerationRef.current + 1;
+        todayFocusAnimationGenerationRef.current = generation;
+        todayFocusAnimationActiveRef.current = true;
+        todayFocusCommittedRef.current = false;
+        todayFocusEnterStartedRef.current = false;
+        todayFocusReduceMotionRef.current = reduceMotionEnabled;
+        transitionStartedRef.current = true;
+        setTodayFocusTarget(null);
+        setIsTodayFocusTransitionActive(true);
+        closeToolbarMenu();
+
+        const travel = reduceMotionEnabled
+            ? CALENDAR_TODAY_FOCUS_MOTION.reduceMotionTravel
+            : CALENDAR_TODAY_FOCUS_MOTION.outgoingTravel;
+        const exitDuration = reduceMotionEnabled
+            ? CALENDAR_TODAY_FOCUS_MOTION.reduceMotionExitDurationMs
+            : CALENDAR_TODAY_FOCUS_MOTION.exitDurationMs;
+        const incomingTravel = reduceMotionEnabled
+            ? CALENDAR_TODAY_FOCUS_MOTION.reduceMotionTravel
+            : CALENDAR_TODAY_FOCUS_MOTION.incomingTravel;
+        const easing = reduceMotionEnabled
+            ? Easing.out(Easing.cubic)
+            : CALENDAR_DEPTH_EASING;
+
+        todayFocusAnimationRef.current?.stop();
+        todayFocusOpacity.stopAnimation();
+        todayFocusTranslateY.stopAnimation();
+        todayFocusOpacity.setValue(1);
+        todayFocusTranslateY.setValue(0);
+
+        todayFocusWatchdogRef.current = setTimeout(() => {
+            finishTodayFocusTransition(generation, true);
+        }, CALENDAR_INTERACTION_BUDGET_MS);
+
+        const exitAnimation = Animated.parallel([
+            Animated.timing(todayFocusOpacity, {
+                toValue: 0,
+                duration: exitDuration,
+                easing,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+            Animated.timing(todayFocusTranslateY, {
+                toValue: -travel,
+                duration: exitDuration,
+                easing,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+        ]);
+        todayFocusAnimationRef.current = exitAnimation;
+        exitAnimation.start(({ finished }) => {
+            if (generation !== todayFocusAnimationGenerationRef.current) return;
+            if (!finished) {
+                finishTodayFocusTransition(generation);
+                return;
+            }
+
+            todayFocusAnimationRef.current = null;
+            todayFocusOpacity.setValue(0);
+            todayFocusTranslateY.setValue(incomingTravel);
+            todayFocusCommittedRef.current = true;
+            setTodayFocusTarget({
+                day: todayKey,
+                requiresMonthChange:
+                    visibleMonth.slice(0, 7) !== todayKey.slice(0, 7),
+            });
+            focusTodayOnCalendar({ revealImmediately: false });
+        });
+    }, [
+        closeToolbarMenu,
+        finishTodayFocusTransition,
+        focusTodayOnCalendar,
+        reduceMotionEnabled,
+        todayKey,
+        todayFocusOpacity,
+        todayFocusTranslateY,
+        visibleMonth,
+    ]);
+
+    const handleShiftDetailMonth = useCallback((offset: -1 | 1) => {
+        closeToolbarMenu();
+
+        const shiftWithMotion = detailMonthMotionShiftRef.current;
+        if (shiftWithMotion) {
+            shiftWithMotion(offset);
+            return;
+        }
+
+        const visibleMonthKey = visibleMonth.slice(0, 7);
+        const anchorDay = selectedDay.startsWith(`${visibleMonthKey}-`)
+            ? selectedDay
+            : `${visibleMonthKey}-01`;
+        const targetDay = shiftCalendarMonth(anchorDay, offset);
+
+        selectCalendarDay(targetDay);
+        setCalendarScrollRequest((request) => request + 1);
+    }, [closeToolbarMenu, selectCalendarDay, selectedDay, visibleMonth]);
 
     useEffect(() => {
         const focusKey = `${focusRequest ?? ""}:${focusDayRequest ?? ""}:${focusRun ?? ""}`;
@@ -1950,7 +2039,14 @@ export default function ScheduleIndex() {
             yearOverviewProgress.setValue(0);
             setYearOverviewVisible(false);
             setYearOverviewClosing(false);
-            focusTodayOnCalendar();
+            const isTodayAlreadyFocused =
+                selectedDay === todayKey &&
+                visibleMonth.slice(0, 7) === todayKey.slice(0, 7);
+            if (calendarDepth === "month" && !isTodayAlreadyFocused) {
+                startTodayFocusTransition();
+            } else {
+                focusTodayOnCalendar();
+            }
             return;
         }
 
@@ -1979,7 +2075,6 @@ export default function ScheduleIndex() {
             setVisibleMonth(focusDayRequest);
             setCalendarScrollRequest((request) => request + 1);
             setTodayButtonPrimed(focusDayRequest === todayKey);
-            setDayLayerMounted(false);
             setCalendarDepth("month");
             dayTransition.setValue(0);
             yearOverviewProgress.setValue(0);
@@ -1987,6 +2082,7 @@ export default function ScheduleIndex() {
         }
     }, [
         calendarTransition,
+        calendarDepth,
         closeToolbarMenu,
         dayTransition,
         dispatch,
@@ -1995,11 +2091,16 @@ export default function ScheduleIndex() {
         focusRun,
         focusTodayOnCalendar,
         handleOpenDay,
+        selectedDay,
+        startTodayFocusTransition,
         todayKey,
+        visibleMonth,
         yearOverviewProgress,
     ]);
 
     const handleGoToday = useCallback(() => {
+        if (todayFocusAnimationActiveRef.current) return;
+
         if (yearOverviewVisible) {
             closeToolbarMenu();
             selectCalendarDay(todayKey);
@@ -2024,15 +2125,15 @@ export default function ScheduleIndex() {
             return;
         }
 
-        focusTodayOnCalendar();
+        startTodayFocusTransition();
     }, [
         calendarDepth,
         closeToolbarMenu,
         dayTransition,
-        focusTodayOnCalendar,
         handleOpenDay,
         selectCalendarDay,
         selectedDay,
+        startTodayFocusTransition,
         todayButtonPrimed,
         todayKey,
         visibleMonth,
@@ -2196,7 +2297,7 @@ export default function ScheduleIndex() {
             closeToolbarMenu();
             return;
         }
-        if (isDayTransitionActive) {
+        if (dayPageNavigationActiveRef.current || isDayTransitionActive) {
             return;
         }
 
@@ -2213,10 +2314,14 @@ export default function ScheduleIndex() {
     }, [animateDayModeTransition, calendarDepth, closeToolbarMenu, dayTransition, dayViewMode, isDayTransitionActive]);
 
     const runYearToMonthTransition = useCallback((year: number, month: number) => {
-        if (isYearDepthTransitionActive || isDayTransitionActive || transitionStartedRef.current) return;
+        if (
+            isYearDepthTransitionActiveRef.current ||
+            isDayTransitionActiveRef.current ||
+            transitionStartedRef.current
+        ) return;
         transitionStartedRef.current = true;
         const monthKey = `${year}-${String(month).padStart(2, "0")}`;
-        const currentDay = Number(selectedDay.slice(8, 10)) || 1;
+        const currentDay = Number(selectedDayRef.current.slice(8, 10)) || 1;
         const targetDay = Math.min(currentDay, new Date(year, month, 0).getDate());
         const targetSelection = `${monthKey}-${String(targetDay).padStart(2, "0")}`;
         const monthTransition = `month-${monthKey}`;
@@ -2231,24 +2336,21 @@ export default function ScheduleIndex() {
         setVisibleMonth(targetSelection);
         setTransitionMonthKey(monthTransition);
         setDayModeTransitionFrom(null);
-        setDayLayerMounted(false);
         setTodayButtonPrimed(targetSelection === todayKey);
         setYearOverviewClosing(true);
         setIsYearDepthTransitionActive(true);
 
-        requestAnimationFrame(() => {
-            animateYearDepthTransition(0, () => {
-                setCalendarDepth("month");
-                yearOverviewProgress.setValue(0);
-                calendarTransition.setValue(1);
-                setOverviewYear(year);
-                setTransitionMonthKey(null);
-                setYearOverviewVisible(false);
-                setYearOverviewClosing(false);
-                setDayTransitionContext("idle");
-                setPendingSelectedDay(targetSelection);
-                dispatch({ type: "SET_SELECTED_DAY", day: targetSelection });
-            });
+        animateYearDepthTransition(0, () => {
+            setCalendarDepth("month");
+            yearOverviewProgress.setValue(0);
+            calendarTransition.setValue(1);
+            setOverviewYear(year);
+            setTransitionMonthKey(null);
+            setYearOverviewVisible(false);
+            setYearOverviewClosing(false);
+            setDayTransitionContext("idle");
+            setPendingSelectedDay(targetSelection);
+            dispatch({ type: "SET_SELECTED_DAY", day: targetSelection });
         });
     }, [
         animateYearDepthTransition,
@@ -2256,9 +2358,6 @@ export default function ScheduleIndex() {
         closeToolbarMenu,
         dayTransition,
         dispatch,
-        isDayTransitionActive,
-        isYearDepthTransitionActive,
-        selectedDay,
         todayKey,
         yearOverviewProgress,
     ]);
@@ -2299,10 +2398,8 @@ export default function ScheduleIndex() {
         yearOverviewProgress.setValue(0);
         calendarTransition.setValue(1);
 
-        requestAnimationFrame(() => {
-            animateYearDepthTransition(1, () => {
-                setCalendarDepth("year");
-            });
+        animateYearDepthTransition(1, () => {
+            setCalendarDepth("year");
         });
     }, [
         animateYearDepthTransition,
@@ -2322,59 +2419,6 @@ export default function ScheduleIndex() {
     const selectOverviewMonth = useCallback((year: number, month: number) => {
         runYearToMonthTransition(year, month);
     }, [runYearToMonthTransition]);
-
-    useEffect(() => {
-        if (!__DEV__) return;
-        if (
-            qaSurface !== "year" &&
-            qaSurface !== "year-month-transition" &&
-            qaSurface !== "month-year-transition" &&
-            qaSurface !== "day-month-transition"
-        ) {
-            return;
-        }
-
-        const qaKey = `${qaSurface}:${qaRun ?? ""}`;
-        if (handledCalendarTransitionQaRef.current === qaKey) return;
-        handledCalendarTransitionQaRef.current = qaKey;
-
-        if (qaSurface === "year" || qaSurface === "month-year-transition") {
-            const timer = setTimeout(() => openYearOverview(), 300);
-            return () => clearTimeout(timer);
-        }
-
-        if (qaSurface === "day-month-transition") {
-            const timer = setTimeout(() => closeDayDisplay(), 300);
-            return () => clearTimeout(timer);
-        }
-
-        closeToolbarMenu();
-        transitionStartedRef.current = false;
-        setIsDayTransitionActive(false);
-        setIsYearDepthTransitionActive(false);
-        setDayTransitionContext("idle");
-        setCalendarDepth("year");
-        setOverviewYear(visibleYear);
-        setYearOverviewClosing(false);
-        setYearOverviewVisible(true);
-        yearOverviewProgress.setValue(1);
-        calendarTransition.setValue(1);
-
-        const timer = setTimeout(() => {
-            selectOverviewMonth(visibleYear, 7);
-        }, 350);
-        return () => clearTimeout(timer);
-    }, [
-        calendarTransition,
-        closeToolbarMenu,
-        closeDayDisplay,
-        openYearOverview,
-        qaRun,
-        qaSurface,
-        selectOverviewMonth,
-        visibleYear,
-        yearOverviewProgress,
-    ]);
 
     const handlePrimaryDateButtonPress = useCallback(() => {
         if (calendarDepth === "day") {
@@ -2425,31 +2469,25 @@ export default function ScheduleIndex() {
 
     const renderMonthAgendaPanelContent = (panelKind: MonthAgendaPanelKind) => (
         panelKind === "detail" ? (
-            <SelectedDayAgendaPanel
+            <MemoizedSelectedDayAgendaPanel
                 selectedDay={monthDisplaySelectedDay}
                 items={itemsArray}
                 loading={state.loading}
                 error={sanitizeCalendarTransitionError(scheduleError)}
                 bottomInset={insets.bottom}
                 onPressRetry={loadSchedules}
-                onOpenSchedule={(id) => router.push({
-                    pathname: "/schedule/[id]",
-                    params: { id },
-                })}
+                onOpenSchedule={handleOpenScheduleFromDayDisplay}
                 onRequestViewMode={handleCalendarViewModeChange}
             />
         ) : (
-            <MonthAgendaList
-                visibleMonth={visibleMonth}
+            <MemoizedMonthAgendaList
+                visibleMonth={monthDisplayFocusedMonth}
                 items={itemsArray}
                 loading={state.loading}
                 error={sanitizeCalendarTransitionError(scheduleError)}
                 bottomInset={insets.bottom}
                 onPressRetry={loadSchedules}
-                onOpenSchedule={(id) => router.push({
-                    pathname: "/schedule/[id]",
-                    params: { id },
-                })}
+                onOpenSchedule={handleOpenScheduleFromDayDisplay}
                 onRequestViewMode={handleCalendarViewModeChange}
             />
         )
@@ -2495,78 +2533,95 @@ export default function ScheduleIndex() {
                         ]}
                     >
                         <View style={styles.toolbar}>
-                            <Animated.View
+                            <Reanimated.View
+                                testID="calendar-primary-pill-host"
+                                pointerEvents={primaryPillInteractionEnabled ? "box-none" : "none"}
+                                accessibilityElementsHidden={!primaryPillInteractionEnabled}
+                                importantForAccessibility={primaryPillInteractionEnabled ? "auto" : "no-hide-descendants"}
                                 style={[
-                                    styles.yearGlassMotion,
-                                    {
-                                        width: primaryDatePillWidth,
-                                        transform: [
-                                            { scaleX: primaryPillScaleX },
-                                            { scaleY: primaryPillScaleY },
-                                        ],
-                                    },
+                                    styles.primaryDatePillHost,
+                                    primaryPillAnimatedStyle,
                                 ]}
                             >
-                                {isLiquidGlassIconButtonAvailable ? (
-                                    <Pressable
-                                        onPress={handlePrimaryDateButtonPress}
-                                        accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
-                                        accessibilityRole="button"
-                                        style={({ pressed }) => [
-                                            styles.yearGlass,
-                                            {
-                                                width: primaryDatePillWidth,
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.96 : 1 }],
-                                            },
-                                        ]}
-                                    >
-                                        <LiquidGlassIconButton
-                                            pointerEvents="none"
-                                            leadingSymbolName="chevron.left"
-                                            label={visiblePrimaryLabel}
-                                            buttonWidth={primaryDatePillWidth}
-                                            buttonHeight={LIQUID_TOOLBAR_BUTTON_SIZE}
-                                            colorScheme={mode === "dark" ? "dark" : "light"}
+                                <Animated.View
+                                    testID="calendar-primary-pill-motion"
+                                    style={[
+                                        styles.yearGlassMotion,
+                                        {
+                                            opacity: primaryPillTodayOpacity,
+                                            transform: [
+                                                { translateY: todayFocusTranslateY },
+                                                { translateX: primaryPillYearTranslateX },
+                                                { scale: primaryPillYearScale },
+                                                { scaleX: primaryPillScaleX },
+                                                { scaleY: primaryPillScaleY },
+                                            ],
+                                        },
+                                    ]}
+                                >
+                                    {isLiquidGlassIconButtonAvailable ? (
+                                        <Pressable
+                                            onPress={handlePrimaryDateButtonPress}
+                                            disabled={!primaryPillInteractionEnabled}
                                             accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
-                                            style={StyleSheet.absoluteFill}
-                                        />
-                                    </Pressable>
-                                ) : (
-                                    <Pressable
-                                        onPress={handlePrimaryDateButtonPress}
-                                        accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
-                                        accessibilityRole="button"
-                                        style={({ pressed }) => [
-                                            styles.yearGlass,
-                                            {
-                                                width: primaryDatePillWidth,
-                                                opacity: pressed ? 0.68 : 1,
-                                                transform: [{ scale: pressed ? 0.96 : 1 }],
-                                            },
-                                        ]}
-                                    >
-                                        <CalendarGlassSurface
-                                            pointerEvents="none"
-                                            interactive
-                                            clear
-                                            glow
-                                            variant="bottomBar"
-                                            tone="softGlass"
-                                            style={[
-                                                styles.yearGlassSurface,
-                                                { borderColor: colors.border },
+                                            accessibilityRole="button"
+                                            style={({ pressed }) => [
+                                                styles.yearGlass,
+                                                {
+                                                    width: "100%",
+                                                    opacity: pressed ? 0.68 : 1,
+                                                    transform: [{ scale: pressed ? 0.96 : 1 }],
+                                                },
                                             ]}
-                                        />
-                                        <View pointerEvents="none" style={styles.yearButton}>
-                                            <Ionicons name="chevron-back" size={23} color={colors.textPrimary} />
-                                            <Text style={[styles.yearText, { color: colors.textPrimary }]}>
-                                                {visiblePrimaryLabel}
-                                            </Text>
-                                        </View>
-                                    </Pressable>
-                                )}
-                            </Animated.View>
+                                        >
+                                            <LiquidGlassIconButton
+                                                pointerEvents="none"
+                                                leadingSymbolName="chevron.left"
+                                                label={visiblePrimaryLabel}
+                                                buttonWidth={primaryPillContentWidth}
+                                                buttonHeight={LIQUID_TOOLBAR_BUTTON_SIZE}
+                                                colorScheme={mode === "dark" ? "dark" : "light"}
+                                                accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
+                                                style={StyleSheet.absoluteFill}
+                                            />
+                                        </Pressable>
+                                    ) : (
+                                        <Pressable
+                                            onPress={handlePrimaryDateButtonPress}
+                                            disabled={!primaryPillInteractionEnabled}
+                                            accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
+                                            accessibilityRole="button"
+                                            style={({ pressed }) => [
+                                                styles.yearGlass,
+                                                {
+                                                    width: "100%",
+                                                    opacity: pressed ? 0.68 : 1,
+                                                    transform: [{ scale: pressed ? 0.96 : 1 }],
+                                                },
+                                            ]}
+                                        >
+                                            <CalendarGlassSurface
+                                                pointerEvents="none"
+                                                interactive
+                                                clear
+                                                glow
+                                                variant="bottomBar"
+                                                tone="softGlass"
+                                                style={[
+                                                    styles.yearGlassSurface,
+                                                    { borderColor: colors.border },
+                                                ]}
+                                            />
+                                            <View pointerEvents="none" style={styles.yearButton}>
+                                                <Ionicons name="chevron-back" size={23} color={colors.textPrimary} />
+                                                <Text style={[styles.yearText, { color: colors.textPrimary }]}>
+                                                    {visiblePrimaryLabel}
+                                                </Text>
+                                            </View>
+                                        </Pressable>
+                                    )}
+                                </Animated.View>
+                            </Reanimated.View>
 
                             <View pointerEvents="none" style={styles.toolbarActionsPlaceholder} />
                         </View>
@@ -2594,12 +2649,7 @@ export default function ScheduleIndex() {
                             viewModeVariant={pillTargetDepth === "day" ? "timeline" : "calendar"}
                             showsViewModeButton={pillTargetDepth !== "year"}
                             colorScheme={mode === "dark" ? "dark" : "light"}
-                            tapRequest={prototypeTapRequest}
                             closeRequest={prototypeCloseRequest}
-                            addMenuRequest={prototypeAddMenuRequest}
-                            searchRequest={prototypeSearchRequest}
-                            quickAddRequest={prototypeQuickAddRequest}
-                            manualAddRequest={prototypeManualAddRequest}
                             searchExpandedWidth={searchHeaderTargetWidth}
                             searchQuery={searchQuery}
                             onSelect={(mode) => {
@@ -2871,13 +2921,16 @@ export default function ScheduleIndex() {
 
                 {showsStickyCalendarHeader && (
                     <Animated.View
-                        pointerEvents="none"
+                        pointerEvents={detailMonthNavigationEnabled ? "box-none" : "none"}
                         style={[
                             styles.stickyCalendarHeader,
                             stickyCalendarHeaderPosition,
                             {
-                                opacity: stickyCalendarHeaderOpacity,
-                                transform: [{ translateX: monthChromeTranslateX }],
+                                opacity: stickyCalendarHeaderTodayOpacity,
+                                transform: [
+                                    { translateX: monthChromeTranslateX },
+                                    { translateY: todayFocusTranslateY },
+                                ],
                             },
                         ]}
                     >
@@ -2909,6 +2962,42 @@ export default function ScheduleIndex() {
                             <Text style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
                                 {stickyMonthTitle}
                             </Text>
+                            {detailMonthNavigationEnabled && (
+                                <View style={styles.stickyMonthNavigationActions}>
+                                    <Pressable
+                                        onPress={() => handleShiftDetailMonth(-1)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="이전 달"
+                                        hitSlop={4}
+                                        style={({ pressed }) => [
+                                            styles.stickyMonthNavigationButton,
+                                            pressed && styles.stickyMonthNavigationButtonPressed,
+                                        ]}
+                                    >
+                                        <Ionicons
+                                            name="chevron-back"
+                                            size={25}
+                                            color={colors.arrowColor}
+                                        />
+                                    </Pressable>
+                                    <Pressable
+                                        onPress={() => handleShiftDetailMonth(1)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="다음 달"
+                                        hitSlop={4}
+                                        style={({ pressed }) => [
+                                            styles.stickyMonthNavigationButton,
+                                            pressed && styles.stickyMonthNavigationButtonPressed,
+                                        ]}
+                                    >
+                                        <Ionicons
+                                            name="chevron-forward"
+                                            size={25}
+                                            color={colors.arrowColor}
+                                        />
+                                    </Pressable>
+                                </View>
+                            )}
                         </View>
                         <View style={[styles.stickyWeekdayHeader, { borderBottomColor: stickyWeekdayBorderColor }]}>
                             {stickyWeekdayItems.map((item, index) => (
@@ -3137,10 +3226,10 @@ export default function ScheduleIndex() {
                 style={[
                     styles.calendarContent,
                     {
-                        opacity: calendarContentOpacity,
+                        opacity: calendarContentTodayOpacity,
                         transform: [
                             { translateX: calendarContentTranslateX },
-                            { translateY: calendarContentTranslateY },
+                            { translateY: calendarContentTodayTranslateY },
                             { scale: calendarContentScale },
                         ],
                     },
@@ -3198,7 +3287,7 @@ export default function ScheduleIndex() {
                                 >
                                     <CalendarWrapper
                                         selectedDay={monthDisplaySelectedDay}
-                                        focusedMonth={visibleMonth}
+                                        focusedMonth={monthDisplayFocusedMonth}
                                         items={itemsArray}
                                         onSelectDay={handleSelectDay}
                                         onOpenDay={handleOpenDay}
@@ -3209,7 +3298,15 @@ export default function ScheduleIndex() {
                                         headerOffset={calendarHeaderOffset}
                                         transitionMonthKey={transitionMonthKey ?? undefined}
                                         transitionActive={isAnyDepthTransitionActive}
-                                        transitionContext={dayTransitionContext}
+                                        reduceMotionEnabled={reduceMotionEnabled}
+                                        todayFocusTarget={todayFocusTarget}
+                                        onTodayFocusReady={handleTodayFocusReady}
+                                        onRegisterDetailMonthMotionCancel={
+                                            registerDetailMonthMotionCancel
+                                        }
+                                        onRegisterDetailMonthMotionShift={
+                                            registerDetailMonthMotionShift
+                                        }
                                         animatedDayHeight={monthCalendarAnimatedDayHeight}
                                     />
                                 </View>
@@ -3284,8 +3381,8 @@ export default function ScheduleIndex() {
                                 },
                             ]}
                         >
-                            <DayDisplay
-                                selectedDay={dayTransitionTargetDay ?? selectedDay}
+                            <MemoizedDayDisplay
+                                selectedDay={dayDisplaySelectedDay}
                                 dayViewMode={dayViewMode}
                                 todayKey={todayKey}
                                 items={itemsArray}
@@ -3299,14 +3396,12 @@ export default function ScheduleIndex() {
                                 todayRequest={dayTodayRequest}
                                 reduceMotionEnabled={reduceMotionEnabled}
                                 onPrepareDayReady={registerDayDisplayPrepare}
+                                onPageNavigationActiveChange={handleDayPageNavigationActiveChange}
                                 onSelectDay={handleSelectDayFromDayDisplay}
                                 onNavigateToday={handleNavigateTodayFromDayDisplay}
                                 onShiftDay={handleShiftDay}
                                 onPressRetry={loadSchedules}
-                                onOpenSchedule={(id) => router.push({
-                                    pathname: "/schedule/[id]",
-                                    params: { id },
-                                })}
+                                onOpenSchedule={handleOpenScheduleFromDayDisplay}
                             />
                         </Animated.View>
                     )}
@@ -3326,7 +3421,6 @@ export default function ScheduleIndex() {
                 ]}
             >
                 <CalendarYearOverviewModal
-                    visible={yearOverviewVisible}
                     year={overviewYear}
                     selectedDay={selectedDay}
                     firstDay={firstDay}
@@ -3346,7 +3440,7 @@ export default function ScheduleIndex() {
                 />
             )}
 
-            <QuickScheduleModal
+            <MemoizedQuickScheduleModal
                 visible={quickModalVisible}
                 prewarm={addFormsPrewarmed}
                 morphPresenterRef={quickMorphPresenterRef}
@@ -3364,10 +3458,9 @@ export default function ScheduleIndex() {
                     ? ADD_MENU_SOURCE.nativeRightInset
                     : ADD_MENU_SOURCE.fallbackRightInset}
                 onMorphReady={handleAddModalMorphReady}
-                qaAutoCloseAfterMs={qaSurface === "quick-add-morph-close" ? 2400 : undefined}
             />
 
-            <ScheduleNewModal
+            <MemoizedScheduleNewModal
                 visible={modalVisible}
                 prewarm={addFormsPrewarmed}
                 morphPresenterRef={manualMorphPresenterRef}
@@ -3378,8 +3471,7 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
-                autoFocusTitle={qaSurface === "event-create-keyboard"}
-                presentation={usesLiquidViewModeControl && !isDirectCreateQaSurface ? "morph" : "sheet"}
+                presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}
                 sourceHeight={LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT}
@@ -3388,7 +3480,6 @@ export default function ScheduleIndex() {
                     ? ADD_MENU_SOURCE.nativeRightInset
                     : ADD_MENU_SOURCE.fallbackRightInset}
                 onMorphReady={handleAddModalMorphReady}
-                qaAutoCloseAfterMs={qaSurface === "manual-add-morph-close" ? 2600 : undefined}
             />
 
         </View>
@@ -3412,13 +3503,6 @@ type QueuedDayNavigation = {
     options: DayNavigationOptions;
 };
 
-type StartDayNavigation = (
-    day: string,
-    fromDay?: string,
-    initialProgress?: number,
-    options?: DayNavigationOptions
-) => void;
-
 function DayDisplay({
     selectedDay: selectedDayProp,
     dayViewMode,
@@ -3434,6 +3518,7 @@ function DayDisplay({
     todayRequest,
     reduceMotionEnabled,
     onPrepareDayReady,
+    onPageNavigationActiveChange,
     onSelectDay,
     onNavigateToday,
     onShiftDay,
@@ -3454,6 +3539,7 @@ function DayDisplay({
     todayRequest: number;
     reduceMotionEnabled: boolean;
     onPrepareDayReady: (prepare: ((day: string) => void) | null) => void;
+    onPageNavigationActiveChange: (active: boolean) => void;
     onSelectDay: (day: string) => void;
     onNavigateToday: (day: string) => void;
     onShiftDay: (offset: number) => void;
@@ -3472,11 +3558,14 @@ function DayDisplay({
     const dayPagerProgress = useRef(new Animated.Value(0)).current;
     const dayPanelSnapshotRef = useRef<React.ReactNode>(null);
     const dayNavigationActiveRef = useRef(false);
+    const dayNavigationSourceRef = useRef<string | null>(null);
     const dayNavigationTargetRef = useRef<string | null>(null);
+    const dayNavigationCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const dayNavigationInterruptRef = useRef<(() => void) | null>(null);
+    const dayNavigationRetargetRef = useRef<(() => void) | null>(null);
+    const dayNavigationUnmountingRef = useRef(false);
     const queuedDayNavigationRef = useRef<QueuedDayNavigation | null>(null);
     const deferredDayNavigationRef = useRef<QueuedDayNavigation | null>(null);
-    const modeTransitionActiveRef = useRef(Boolean(modeTransitionFrom));
-    const startDayNavigationRef = useRef<StartDayNavigation | null>(null);
     const [dayNavigation, setDayNavigation] = useState<DayPanelNavigation | null>(null);
     const [timelineNow, setTimelineNow] = useState(() => new Date());
     const initialCurrentTimeY = minuteOfDay(timelineNow) / 60 * DAY_TIMELINE_HOUR_HEIGHT;
@@ -3485,14 +3574,34 @@ function DayDisplay({
     const daySwipeSettlingRef = useRef(false);
     const handledTodayRequestRef = useRef(todayRequest);
     const [preparedDay, setPreparedDay] = useState<string | null>(null);
-    const selectedDay = transitionActive
-        ? preparedDay ?? selectedDayProp
-        : selectedDayProp;
+    const selectedDay = dayNavigation?.targetDay ?? (
+        transitionActive ? preparedDay ?? selectedDayProp : selectedDayProp
+    );
 
     useEffect(() => {
         onPrepareDayReady(setPreparedDay);
         return () => onPrepareDayReady(null);
     }, [onPrepareDayReady]);
+
+    useEffect(() => {
+        dayNavigationUnmountingRef.current = false;
+        return () => {
+            dayNavigationUnmountingRef.current = true;
+            dayNavigationInterruptRef.current?.();
+            if (dayNavigationCleanupTimerRef.current) {
+                clearTimeout(dayNavigationCleanupTimerRef.current);
+                dayNavigationCleanupTimerRef.current = null;
+            }
+            dayNavigationInterruptRef.current = null;
+            dayNavigationRetargetRef.current = null;
+            dayNavigationActiveRef.current = false;
+            dayNavigationSourceRef.current = null;
+            dayNavigationTargetRef.current = null;
+            queuedDayNavigationRef.current = null;
+            dayPagerProgress.stopAnimation();
+            onPageNavigationActiveChange(false);
+        };
+    }, [dayPagerProgress, onPageNavigationActiveChange]);
 
     useEffect(() => {
         let minuteTimer: ReturnType<typeof setInterval> | null = null;
@@ -3529,12 +3638,31 @@ function DayDisplay({
 
     const weekStart = useMemo(() => startOfWeek(selectedDay), [selectedDay]);
     const weekDays = useMemo(() => createWeekDays(weekStart), [weekStart]);
+    const weekSchedulesByDay = useMemo(() => {
+        const schedulesByDay = new Map<string, ScheduleItem[]>();
+        weekDays.forEach((day) => schedulesByDay.set(day.dateString, []));
+
+        items.forEach((item) => {
+            weekDays.forEach((day) => {
+                if (isOverlappingDay(item.startAt, item.endAt, day.dateString)) {
+                    schedulesByDay.get(day.dateString)?.push(item);
+                }
+            });
+        });
+
+        return schedulesByDay;
+    }, [items, weekDays]);
+    const needsSingleDayContent =
+        dayViewMode === "singleDay" || modeTransitionFrom === "singleDay";
+    const needsMultiDayContent =
+        dayViewMode === "multiDay" || modeTransitionFrom === "multiDay";
     const multiDayDays = useMemo(() => createSequentialDays(selectedDay, 2), [selectedDay]);
     const dayItems = useMemo(() => (
-        items
+        needsSingleDayContent ? items
             .filter((item) => isOverlappingDay(item.startAt, item.endAt, selectedDay))
             .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-    ), [items, selectedDay]);
+            : []
+    ), [items, needsSingleDayContent, selectedDay]);
     const allDayItems = useMemo(() => dayItems.filter((item) => item.allDay), [dayItems]);
     const positionedEvents = useMemo(() => buildPositionedEvents(dayItems, selectedDay), [dayItems, selectedDay]);
     const currentMinute = timelineNow.getHours() * 60 + timelineNow.getMinutes() + timelineNow.getSeconds() / 60;
@@ -3546,18 +3674,20 @@ function DayDisplay({
         ? formatDayTitle(selectedDay)
         : multiDayRangeTitle;
     const inlineError = sanitizeCalendarTransitionError(error);
-    const multiDayColumns = useMemo(() => multiDayDays.map((day) => {
-        const columnItems = items
-            .filter((item) => isOverlappingDay(item.startAt, item.endAt, day.dateString))
-            .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+    const multiDayColumns = useMemo(() => (
+        needsMultiDayContent ? multiDayDays.map((day) => {
+            const columnItems = items
+                .filter((item) => isOverlappingDay(item.startAt, item.endAt, day.dateString))
+                .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
-        return {
-            day,
-            items: columnItems,
-            allDayItems: columnItems.filter((item) => item.allDay),
-            positionedEvents: buildPositionedEvents(columnItems, day.dateString, { compact: true }),
-        };
-    }), [items, multiDayDays]);
+            return {
+                day,
+                items: columnItems,
+                allDayItems: columnItems.filter((item) => item.allDay),
+                positionedEvents: buildPositionedEvents(columnItems, day.dateString, { compact: true }),
+            };
+        }) : []
+    ), [items, multiDayDays, needsMultiDayContent]);
     const showsCurrentTimeInTimeline = isSelectedToday || (
         dayViewMode === "multiDay" &&
         multiDayColumns.some((column) => column.day.dateString === todayKey)
@@ -3573,7 +3703,6 @@ function DayDisplay({
         [multiDayItems]
     );
     const isModeTransitionActive = Boolean(modeTransitionFrom);
-    modeTransitionActiveRef.current = isModeTransitionActive;
     const stripSelectionOpacity = 1;
     const stripSelectionTranslateY = 0;
     const titleSectionOpacity = 1;
@@ -3715,7 +3844,11 @@ function DayDisplay({
             useNativeDriver: true,
             isInteraction: false,
         }).start(({ finished }) => {
-            if (!finished) return;
+            if (!finished) {
+                daySwipeVisualXRef.current = 0;
+                daySwipeSettlingRef.current = dayNavigationActiveRef.current;
+                return;
+            }
             daySwipeVisualXRef.current = 0;
             daySwipeSettlingRef.current = false;
         });
@@ -3732,12 +3865,20 @@ function DayDisplay({
         const commitDay = options.commitDay ?? onSelectDay;
         const outgoingPanel = dayPanelSnapshotRef.current;
         if (reduceMotionEnabled || !outgoingPanel) {
+            if (dayNavigationCleanupTimerRef.current) {
+                clearTimeout(dayNavigationCleanupTimerRef.current);
+                dayNavigationCleanupTimerRef.current = null;
+            }
+            dayNavigationInterruptRef.current = null;
+            dayNavigationRetargetRef.current = null;
             queuedDayNavigationRef.current = null;
             dayNavigationActiveRef.current = false;
+            dayNavigationSourceRef.current = null;
             dayNavigationTargetRef.current = null;
             daySwipeSettlingRef.current = false;
             daySwipeVisualXRef.current = 0;
             daySwipeX.setValue(0);
+            onPageNavigationActiveChange(false);
             commitDay(day);
             requestAnimationFrame(() => options.prepareIncoming?.());
             return;
@@ -3749,98 +3890,232 @@ function DayDisplay({
             : -1;
 
         const clampedInitialProgress = Math.max(0, Math.min(1, initialProgress));
+        let didComplete = false;
+        let cancelRequested = false;
+        let animationGeneration = 0;
+        let currentLegTarget = day;
+        let currentLegOptions = options;
+        let preparedOptions: DayNavigationOptions | null = null;
+
+        function prepareIncoming(requestOptions: DayNavigationOptions) {
+            if (!requestOptions.prepareIncoming || preparedOptions === requestOptions) return;
+            preparedOptions = requestOptions;
+            requestOptions.prepareIncoming();
+        }
+
+        function scheduleInteractionDeadline() {
+            if (dayNavigationCleanupTimerRef.current) {
+                clearTimeout(dayNavigationCleanupTimerRef.current);
+            }
+            dayNavigationCleanupTimerRef.current = setTimeout(() => {
+                finishNavigation(true, true);
+            }, CALENDAR_INTERACTION_BUDGET_MS);
+        }
+
+        function finishNavigation(finished: boolean, forceValue = false) {
+            if (didComplete) return;
+            didComplete = true;
+            animationGeneration += 1;
+            dayNavigationInterruptRef.current = null;
+            dayNavigationRetargetRef.current = null;
+            if (dayNavigationCleanupTimerRef.current) {
+                clearTimeout(dayNavigationCleanupTimerRef.current);
+                dayNavigationCleanupTimerRef.current = null;
+            }
+            if (forceValue) {
+                dayPagerProgress.stopAnimation();
+                dayPagerProgress.setValue(1);
+            } else {
+                dayPagerProgress.setValue(cancelRequested ? 0 : finished ? 1 : 0);
+            }
+            const latestRequest = queuedDayNavigationRef.current;
+            queuedDayNavigationRef.current = null;
+            const finalDay = latestRequest?.day ?? currentLegTarget;
+            const finalOptions = latestRequest?.options ?? currentLegOptions;
+            const finalCommitDay = finalOptions.commitDay ?? onSelectDay;
+            dayNavigationActiveRef.current = false;
+            dayNavigationSourceRef.current = null;
+            dayNavigationTargetRef.current = null;
+            daySwipeSettlingRef.current = false;
+            daySwipeX.setValue(0);
+            daySwipeVisualXRef.current = 0;
+            onPageNavigationActiveChange(false);
+
+            if (cancelRequested) {
+                if (!dayNavigationUnmountingRef.current) {
+                    setDayNavigation(null);
+                }
+                return;
+            }
+
+            // Keep the expensive parent calendar and month-range fetch out of
+            // the animation frame. The DayDisplay renders its local target
+            // immediately and publishes the selection only when motion settles.
+            unstable_batchedUpdates(() => {
+                finalCommitDay(finalDay);
+                setDayNavigation(null);
+            });
+
+            if (finalOptions.prepareIncoming && preparedOptions !== finalOptions) {
+                requestAnimationFrame(() => finalOptions.prepareIncoming?.());
+            }
+        }
+
+        function runCurrentLegToEnd(durationMs: number) {
+            if (didComplete) return;
+            const generation = ++animationGeneration;
+            if (durationMs <= 0) {
+                dayPagerProgress.setValue(1);
+                completeCurrentLeg();
+                return;
+            }
+
+            Animated.timing(dayPagerProgress, {
+                toValue: 1,
+                duration: durationMs,
+                easing: DAY_NAVIGATION_EASING,
+                useNativeDriver: true,
+                isInteraction: false,
+            }).start(({ finished }) => {
+                if (
+                    didComplete ||
+                    generation !== animationGeneration ||
+                    !finished
+                ) return;
+                completeCurrentLeg();
+            });
+        }
+
+        function beginFollowUpLeg(request: QueuedDayNavigation) {
+            const sourceDay = currentLegTarget;
+            const nextOutgoingPanel = dayPanelSnapshotRef.current ?? outgoingPanel;
+            currentLegTarget = request.day;
+            currentLegOptions = request.options;
+            preparedOptions = null;
+            const nextDirection: 1 | -1 = new Date(`${request.day}T00:00:00`).getTime()
+                > new Date(`${sourceDay}T00:00:00`).getTime()
+                ? 1
+                : -1;
+
+            dayNavigationSourceRef.current = sourceDay;
+            dayNavigationTargetRef.current = request.day;
+            unstable_batchedUpdates(() => {
+                dayPagerProgress.setValue(0);
+                setDayNavigation({
+                    fromDay: sourceDay,
+                    targetDay: request.day,
+                    direction: nextDirection,
+                    outgoingPanel: nextOutgoingPanel,
+                });
+            });
+
+            const scheduledGeneration = ++animationGeneration;
+            requestAnimationFrame(() => {
+                if (didComplete || scheduledGeneration !== animationGeneration) return;
+                prepareIncoming(currentLegOptions);
+                runCurrentLegToEnd(DAY_NAVIGATION_RETARGET_MOTION.followDurationMs);
+            });
+        }
+
+        function completeCurrentLeg() {
+            if (didComplete) return;
+            dayPagerProgress.setValue(1);
+            const latestRequest = queuedDayNavigationRef.current;
+
+            if (latestRequest && latestRequest.day !== currentLegTarget) {
+                queuedDayNavigationRef.current = null;
+                beginFollowUpLeg(latestRequest);
+                return;
+            }
+
+            if (latestRequest) {
+                queuedDayNavigationRef.current = null;
+                currentLegOptions = latestRequest.options;
+            }
+            finishNavigation(true);
+        }
 
         dayNavigationActiveRef.current = true;
+        dayNavigationSourceRef.current = fromDay;
         dayNavigationTargetRef.current = day;
         daySwipeSettlingRef.current = true;
+        onPageNavigationActiveChange(true);
         dayPagerProgress.stopAnimation();
         dayPagerProgress.setValue(clampedInitialProgress);
 
-        unstable_batchedUpdates(() => {
-            setDayNavigation({
-                fromDay,
-                targetDay: day,
-                direction,
-                outgoingPanel,
+        scheduleInteractionDeadline();
+        dayNavigationInterruptRef.current = () => {
+            cancelRequested = true;
+            animationGeneration += 1;
+            dayPagerProgress.stopAnimation();
+            finishNavigation(false);
+        };
+        dayNavigationRetargetRef.current = () => {
+            if (didComplete) return;
+            scheduleInteractionDeadline();
+            const generation = ++animationGeneration;
+            dayPagerProgress.stopAnimation((value) => {
+                if (didComplete || generation !== animationGeneration) return;
+                const progress = Math.max(0, Math.min(1, value));
+                const settleDuration = getDayNavigationRetargetSettleDuration(progress);
+                runCurrentLegToEnd(settleDuration);
             });
-            // Commit the destination in the same React batch as the pager panels
-            // so the incoming day can never flash without its source.
-            commitDay(day);
+        };
+
+        setDayNavigation({
+            fromDay,
+            targetDay: day,
+            direction,
+            outgoingPanel,
         });
 
+        const scheduledGeneration = ++animationGeneration;
         requestAnimationFrame(() => {
-            options.prepareIncoming?.();
+            if (didComplete || scheduledGeneration !== animationGeneration) return;
+            prepareIncoming(currentLegOptions);
             // When a drag hands off to the pager, the outgoing panel already has
             // the same offset through dayPagerProgress. Clearing the gesture value
             // here therefore does not introduce a one-frame jump.
             daySwipeX.setValue(0);
             daySwipeVisualXRef.current = 0;
-            Animated.timing(dayPagerProgress, {
-                toValue: 1,
-                duration: getDayNavigationRemainingDuration(clampedInitialProgress),
-                easing: DAY_NAVIGATION_EASING,
-                useNativeDriver: true,
-                isInteraction: false,
-            }).start(({ finished }) => {
-                if (!finished) return;
-                dayPagerProgress.setValue(1);
-                dayNavigationActiveRef.current = false;
-                dayNavigationTargetRef.current = null;
-                daySwipeSettlingRef.current = false;
-                setDayNavigation(null);
-
-                const queuedRequest = queuedDayNavigationRef.current;
-                queuedDayNavigationRef.current = null;
-                const queuedDay = consumeQueuedDayNavigation(
-                    day,
-                    queuedRequest?.day ?? null
-                );
-                if (queuedDay && queuedRequest) {
-                    if (modeTransitionActiveRef.current) {
-                        deferredDayNavigationRef.current = {
-                            day: queuedDay,
-                            options: queuedRequest.options,
-                        };
-                    } else {
-                        startDayNavigationRef.current?.(
-                            queuedDay,
-                            day,
-                            0,
-                            queuedRequest.options
-                        );
-                    }
-                }
-            });
+            runCurrentLegToEnd(getDayNavigationRemainingDuration(clampedInitialProgress));
         });
-    }, [dayPagerProgress, daySwipeX, onSelectDay, reduceMotionEnabled, selectedDay]);
+    }, [
+        dayPagerProgress,
+        daySwipeX,
+        onPageNavigationActiveChange,
+        onSelectDay,
+        reduceMotionEnabled,
+        selectedDay,
+    ]);
 
-    startDayNavigationRef.current = startDayNavigation;
+    const retargetActiveDayNavigation = useCallback((
+        day: string,
+        options: DayNavigationOptions = {}
+    ) => {
+        const retarget = dayNavigationRetargetRef.current;
+        if (!dayNavigationActiveRef.current || !retarget) return false;
+
+        const activeTargetDay = dayNavigationTargetRef.current;
+        if (!activeTargetDay) return false;
+        const requestedTargetDay = queuedDayNavigationRef.current?.day ?? activeTargetDay;
+
+        deferredDayNavigationRef.current = null;
+        if (
+            day === requestedTargetDay &&
+            !options.commitDay &&
+            !options.prepareIncoming
+        ) {
+            return true;
+        }
+
+        queuedDayNavigationRef.current = { day, options };
+        retarget();
+        return true;
+    }, []);
 
     const navigateToDayFromWeekStrip = useCallback((day: string) => {
-        if (dayNavigationActiveRef.current) {
-            if (day === dayNavigationTargetRef.current) {
-                queuedDayNavigationRef.current = null;
-                deferredDayNavigationRef.current = null;
-                return;
-            }
-
-            if (dayViewMode !== "singleDay") {
-                queuedDayNavigationRef.current = null;
-                deferredDayNavigationRef.current = { day, options: {} };
-                return;
-            }
-
-            deferredDayNavigationRef.current = null;
-            const queuedDay = queueLatestDayNavigation(
-                dayNavigationTargetRef.current,
-                queuedDayNavigationRef.current?.day ?? null,
-                day
-            );
-            queuedDayNavigationRef.current = queuedDay
-                ? { day: queuedDay, options: {} }
-                : null;
-            return;
-        }
+        if (retargetActiveDayNavigation(day)) return;
 
         if (day === selectedDay) {
             queuedDayNavigationRef.current = null;
@@ -3854,13 +4129,13 @@ function DayDisplay({
             return;
         }
 
-        if (dayViewMode !== "singleDay") {
-            onSelectDay(day);
-            return;
-        }
-
         startDayNavigation(day, selectedDay);
-    }, [dayViewMode, isModeTransitionActive, onSelectDay, selectedDay, startDayNavigation]);
+    }, [
+        isModeTransitionActive,
+        retargetActiveDayNavigation,
+        selectedDay,
+        startDayNavigation,
+    ]);
 
     useEffect(() => {
         if (isModeTransitionActive || dayNavigationActiveRef.current) return;
@@ -3874,11 +4149,6 @@ function DayDisplay({
             return;
         }
 
-        if (dayViewMode !== "singleDay" && !deferredRequest.options.commitDay) {
-            onSelectDay(deferredRequest.day);
-            return;
-        }
-
         startDayNavigation(
             deferredRequest.day,
             selectedDay,
@@ -3887,9 +4157,7 @@ function DayDisplay({
         );
     }, [
         dayNavigation,
-        dayViewMode,
         isModeTransitionActive,
-        onSelectDay,
         selectedDay,
         startDayNavigation,
     ]);
@@ -3917,21 +4185,9 @@ function DayDisplay({
             prepareIncoming: () => scrollTimelineToNow(false),
         };
 
-        // The destination is committed at pager start, so selectedDay can
-        // already equal today while the motion is still active. Handle the
-        // active target first so a final Today press also cancels a stale queue.
-        if (dayNavigationActiveRef.current) {
-            deferredDayNavigationRef.current = null;
-            const queuedDay = queueLatestDayNavigation(
-                dayNavigationTargetRef.current,
-                queuedDayNavigationRef.current?.day ?? null,
-                todayKey
-            );
-            queuedDayNavigationRef.current = queuedDay
-                ? { day: queuedDay, options }
-                : null;
-            return;
-        }
+        // Handle the active target before the committed selection so a final
+        // Today press can replace the in-flight destination without waiting.
+        if (retargetActiveDayNavigation(todayKey, options)) return;
 
         if (selectedDay === todayKey) {
             requestAnimationFrame(() => scrollTimelineToNow(true));
@@ -3955,6 +4211,7 @@ function DayDisplay({
         isModeTransitionActive,
         onNavigateToday,
         reduceMotionEnabled,
+        retargetActiveDayNavigation,
         scrollTimelineToNow,
         selectedDay,
         startDayNavigation,
@@ -4002,10 +4259,12 @@ function DayDisplay({
         onPanResponderTerminate: () => resetDaySwipe(daySwipeVisualXRef.current),
     }), [daySwipeX, finishDaySwipe, resetDaySwipe]);
 
-    const singleDayTimeline = useMemo(() => (
+    const singleDayTimeline = useMemo(() => {
+        if (!needsSingleDayContent) return null;
+
+        return (
         <ScrollView
             ref={attachSingleDayTimelineRef}
-            key={`single-day-timeline-${selectedDay}`}
             style={[
                 styles.dayTimelineScroll,
                 { backgroundColor: colors.calendarBackground },
@@ -4035,6 +4294,13 @@ function DayDisplay({
                     onPress={inlineError ? onPressRetry : undefined}
                     style={styles.timelineInlineState}
                 >
+                    {loading ? (
+                        <BrandedLoader
+                            size="button"
+                            variant="schedule"
+                            accessibilityLabel="일정을 불러오는 중이에요"
+                        />
+                    ) : null}
                     <Text style={[styles.timelineInlineStateText, { color: colors.textSecondary }]}>
                         {loading ? "일정을 불러오는 중이에요" : inlineError}
                     </Text>
@@ -4099,7 +4365,8 @@ function DayDisplay({
                 )}
             </View>
         </ScrollView>
-    ), [
+        );
+    }, [
         colors.border,
         colors.calendarBackground,
         colors.textSecondary,
@@ -4111,15 +4378,18 @@ function DayDisplay({
         handleTimelineScroll,
         isSelectedToday,
         loading,
+        needsSingleDayContent,
         inlineError,
         initialTimelineOffset,
         onOpenSchedule,
         onPressRetry,
         positionedEvents,
-        selectedDay,
     ]);
 
-    const multiDayTimeline = useMemo(() => (
+    const multiDayTimeline = useMemo(() => {
+        if (!needsMultiDayContent) return null;
+
+        return (
         <ScrollView
             ref={attachMultiDayTimelineRef}
             style={[
@@ -4151,6 +4421,13 @@ function DayDisplay({
                     onPress={inlineError ? onPressRetry : undefined}
                     style={styles.timelineInlineState}
                 >
+                    {loading ? (
+                        <BrandedLoader
+                            size="button"
+                            variant="schedule"
+                            accessibilityLabel="일정을 불러오는 중이에요"
+                        />
+                    ) : null}
                     <Text style={[styles.timelineInlineStateText, { color: colors.textSecondary }]}>
                         {loading ? "일정을 불러오는 중이에요" : inlineError}
                     </Text>
@@ -4254,7 +4531,8 @@ function DayDisplay({
                 </View>
             </View>
         </ScrollView>
-    ), [
+        );
+    }, [
         attachMultiDayTimelineRef,
         accentColor,
         colors.border,
@@ -4270,6 +4548,7 @@ function DayDisplay({
         loading,
         mode,
         multiDayColumns,
+        needsMultiDayContent,
         onOpenSchedule,
         onPressRetry,
         todayKey,
@@ -4501,9 +4780,8 @@ function DayDisplay({
         ? singleDayPanelContent
         : nonSingleDayPanelContent;
 
-    // Keep the last committed panel as an immutable outgoing snapshot. The
-    // destination can then be committed immediately without making the source
-    // title, all-day row, or timeline disappear between animation phases.
+    // Keep the last rendered panel as an immutable outgoing snapshot so its
+    // title, all-day row, and timeline remain mounted while the target enters.
     useLayoutEffect(() => {
         if (!isModeTransitionActive) {
             dayPanelSnapshotRef.current = currentDayPanelContent;
@@ -4602,9 +4880,7 @@ function DayDisplay({
                         )
                     );
                     const isToday = day.dateString === todayKey;
-                    const daySchedules = items.filter((item) =>
-                        isOverlappingDay(item.startAt, item.endAt, day.dateString)
-                    );
+                    const daySchedules = weekSchedulesByDay.get(day.dateString) ?? [];
                     const selectedFill = isToday ? accentColor : colors.selectedDayBg;
                     const selectedText = isToday ? "#ffffff" : colors.selectedDayText;
                     const unselectedText = isToday ? accentColor : colors.textPrimary;
@@ -4780,9 +5056,12 @@ function DayDisplay({
                             {...timelineSwipeResponder.panHandlers}
                             style={styles.dayPagerViewport}
                         >
+                            {/* Matching date keys move the mounted source into
+                                the outgoing slot and preserve the destination
+                                after cleanup instead of remounting both pages. */}
                             {dayNavigation ? (
                                 <Animated.View
-                                    key={`outgoing-${dayNavigation.fromDay}-${dayNavigation.targetDay}`}
+                                    key={`day-panel-${dayNavigation.fromDay}`}
                                     pointerEvents="none"
                                     style={[
                                         styles.dayPagerPanel,
@@ -4794,7 +5073,7 @@ function DayDisplay({
                             ) : null}
 
                             <Animated.View
-                                key={`incoming-${selectedDay}`}
+                                key={`day-panel-${selectedDay}`}
                                 style={[
                                     styles.dayPagerPanel,
                                     { transform: [{ translateX: dayPagerIncomingTranslateX }] },
@@ -4979,7 +5258,9 @@ const styles = StyleSheet.create({
     stickyMonthHeader: {
         height: STICKY_MONTH_HEADER_HEIGHT,
         paddingHorizontal: 20,
-        justifyContent: "center",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
         zIndex: 2,
         elevation: 2,
     },
@@ -4988,6 +5269,21 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
         transform: [{ translateY: -1.5 }],
+    },
+    stickyMonthNavigationActions: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+    },
+    stickyMonthNavigationButton: {
+        width: 44,
+        height: 44,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: 22,
+    },
+    stickyMonthNavigationButtonPressed: {
+        opacity: 0.5,
     },
     stickyMonthTitleCurrentDark: {
         color: "#ff453a",
@@ -5100,8 +5396,14 @@ const styles = StyleSheet.create({
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
     },
     yearGlassMotion: {
+        width: "100%",
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
         borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,
+    },
+    primaryDatePillHost: {
+        height: LIQUID_TOOLBAR_BUTTON_SIZE,
+        borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,
+        overflow: "visible",
     },
     yearGlass: {
         width: LIQUID_YEAR_PILL_WIDTH,
@@ -5615,7 +5917,10 @@ const styles = StyleSheet.create({
         zIndex: 10,
         elevation: 10,
         height: 34,
-        paddingLeft: DAY_TIMELINE_GUTTER + 18,
+        paddingLeft: DAY_TIMELINE_GUTTER + 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
         justifyContent: "center",
     },
     timelineInlineStateText: {

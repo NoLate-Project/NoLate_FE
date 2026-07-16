@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     Pressable,
     RefreshControl,
     ScrollView,
@@ -26,163 +25,18 @@ import {
 import type { ScheduleSharePermission } from "../../src/modules/schedule/types";
 import { markShareInboxSeen } from "../../src/modules/share/shareAttention";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import BrandedLoader from "../../src/ui/BrandedLoader";
 
 type ShareTab = "all" | "received" | "sent" | "links";
-type MockPersona = "owner" | "receiver";
 
 type ShareInboxViewData = {
     inbox: ShareInbox;
     outbox: ShareOutbox;
 };
 
-type MockPersonaConfig = {
-    label: string;
-    memberId: number;
-    email: string;
-    defaultTab: ShareTab;
-    data: ShareInboxViewData;
-};
-
-const mockOwnerData: ShareInboxViewData = {
-    inbox: {
-        pendingInvitations: [],
-        receivedShares: [],
-    },
-    outbox: {
-        sharedResources: [
-            {
-                resourceType: "CATEGORY",
-                resourceId: "12",
-                title: "업무",
-                color: "#34C759",
-                shareCount: 2,
-                shares: [
-                    {
-                        id: "401",
-                        resourceId: "12",
-                        ownerMemberId: 101,
-                        targetMemberId: 202,
-                        targetEmail: "yuna202@nolate.test",
-                        permission: "VIEWER",
-                        status: "ACTIVE",
-                    },
-                    {
-                        id: "402",
-                        resourceId: "12",
-                        ownerMemberId: 101,
-                        targetMemberId: 203,
-                        targetEmail: "min203@nolate.test",
-                        permission: "EDITOR",
-                        status: "ACTIVE",
-                    },
-                ],
-            },
-            {
-                resourceType: "SCHEDULE",
-                resourceId: "10",
-                title: "오전 팀 싱크",
-                color: "#2F80FF",
-                shareCount: 1,
-                shares: [
-                    {
-                        id: "403",
-                        resourceId: "10",
-                        ownerMemberId: 101,
-                        targetMemberId: 202,
-                        targetEmail: "yuna202@nolate.test",
-                        permission: "COMMENTER",
-                        status: "ACTIVE",
-                    },
-                ],
-            },
-        ],
-        activeInvitations: [
-            {
-                id: "501",
-                resourceType: "CATEGORY",
-                resourceId: "12",
-                title: "업무 카테고리 초대",
-                color: "#34C759",
-                permission: "VIEWER",
-                status: "PENDING",
-                expiresAt: "2026-07-14T00:00:00Z",
-                maxAcceptCount: 5,
-                acceptedCount: 1,
-            },
-            {
-                id: "502",
-                resourceType: "SCHEDULE",
-                resourceId: "10",
-                title: "팀 싱크 초대",
-                color: "#2F80FF",
-                permission: "COMMENTER",
-                status: "PENDING",
-                expiresAt: "2026-07-12T00:00:00Z",
-                maxAcceptCount: 1,
-                acceptedCount: 0,
-            },
-        ],
-    },
-};
-
-const mockReceiverData: ShareInboxViewData = {
-    inbox: {
-        pendingInvitations: [],
-        receivedShares: [
-            {
-                shareId: "401",
-                resourceType: "CATEGORY",
-                resourceId: "12",
-                title: "업무",
-                color: "#34C759",
-                ownerMemberId: 101,
-                ownerEmail: "owner101@nolate.test",
-                permission: "VIEWER",
-                sharedAt: "2026-07-11T00:30:00Z",
-            },
-            {
-                shareId: "403",
-                resourceType: "SCHEDULE",
-                resourceId: "10",
-                title: "오전 팀 싱크",
-                color: "#2F80FF",
-                ownerMemberId: 101,
-                ownerEmail: "owner101@nolate.test",
-                permission: "COMMENTER",
-                sharedAt: "2026-07-10T08:00:00Z",
-            },
-        ],
-    },
-    outbox: {
-        sharedResources: [],
-        activeInvitations: [],
-    },
-};
-
-const mockPersonas: Record<MockPersona, MockPersonaConfig> = {
-    owner: {
-        label: "오너",
-        memberId: 101,
-        email: "owner101@nolate.test",
-        defaultTab: "all",
-        data: mockOwnerData,
-    },
-    receiver: {
-        label: "받는 계정",
-        memberId: 202,
-        email: "yuna202@nolate.test",
-        defaultTab: "all",
-        data: mockReceiverData,
-    },
-};
-
 function normalizeTab(value?: string): ShareTab | null {
     if (value === "all" || value === "received" || value === "sent" || value === "links") return value;
     return null;
-}
-
-function normalizeMockPersona(value?: string): MockPersona {
-    return value === "receiver" ? "receiver" : "owner";
 }
 
 function getErrorMessage(error: unknown) {
@@ -224,13 +78,10 @@ function formatDateLabel(value?: string | null) {
 export default function ShareInboxScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
-    const params = useLocalSearchParams<{ mock?: string; persona?: string; tab?: string }>();
+    const params = useLocalSearchParams<{ tab?: string }>();
     const { colors, mode } = useTheme();
-    const usesMockData = __DEV__ && params.mock === "1";
-    const [mockPersona, setMockPersona] = useState<MockPersona>(normalizeMockPersona(params.persona));
-    const mockConfig = mockPersonas[mockPersona];
     const [selectedTab, setSelectedTab] = useState<ShareTab>(
-        normalizeTab(params.tab) ?? (usesMockData ? mockConfig.defaultTab : "all")
+        normalizeTab(params.tab) ?? "all"
     );
     const [data, setData] = useState<ShareInboxViewData | null>(null);
     const [loading, setLoading] = useState(true);
@@ -239,14 +90,6 @@ export default function ShareInboxScreen() {
     const accent = mode === "dark" ? "#8BB7FF" : "#2F80FF";
 
     const loadShares = useCallback(async (mode: "initial" | "refresh" = "initial") => {
-        if (usesMockData) {
-            setData(mockConfig.data);
-            setError(null);
-            setLoading(false);
-            setRefreshing(false);
-            return;
-        }
-
         if (mode === "refresh") {
             setRefreshing(true);
         } else {
@@ -267,24 +110,15 @@ export default function ShareInboxScreen() {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [mockConfig.data, usesMockData]);
+    }, []);
 
     useEffect(() => {
         loadShares();
     }, [loadShares]);
 
     useEffect(() => {
-        setMockPersona(normalizeMockPersona(params.persona));
-    }, [params.persona]);
-
-    useEffect(() => {
-        setSelectedTab(normalizeTab(params.tab) ?? (usesMockData ? mockConfig.defaultTab : "all"));
-    }, [mockConfig.defaultTab, params.tab, usesMockData]);
-
-    const selectMockPersona = useCallback((persona: MockPersona) => {
-        setMockPersona(persona);
-        setSelectedTab(mockPersonas[persona].defaultTab);
-    }, []);
+        setSelectedTab(normalizeTab(params.tab) ?? "all");
+    }, [params.tab]);
 
     const summary = useMemo(() => ({
         pending: data?.inbox.pendingInvitations.length ?? 0,
@@ -367,23 +201,6 @@ export default function ShareInboxScreen() {
                     <SummaryTile label="활성 링크" value={summary.links} colors={colors} />
                 </View>
 
-                {usesMockData && (
-                    <View style={styles.mockStack}>
-                        <View style={[styles.mockBanner, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-                            <Ionicons name="flask-outline" size={17} color={accent} />
-                            <Text style={[styles.mockText, { color: colors.textSecondary }]}>
-                                {mockConfig.label} ID {mockConfig.memberId} · {mockConfig.email}
-                            </Text>
-                        </View>
-                        <MockPersonaSwitch
-                            selectedPersona={mockPersona}
-                            colors={colors}
-                            accent={accent}
-                            onSelect={selectMockPersona}
-                        />
-                    </View>
-                )}
-
                 {loading ? (
                     <StateCard colors={colors} text="공유함을 불러오는 중이에요" loading />
                 ) : error && !data ? (
@@ -447,42 +264,6 @@ function ShareTabButton({
                 {label}
             </Text>
         </Pressable>
-    );
-}
-
-function MockPersonaSwitch({
-    selectedPersona,
-    colors,
-    accent,
-    onSelect,
-}: {
-    selectedPersona: MockPersona;
-    colors: ReturnType<typeof useTheme>["colors"];
-    accent: string;
-    onSelect: (persona: MockPersona) => void;
-}) {
-    return (
-        <View style={[styles.personaSwitch, { backgroundColor: colors.surface2 }]}>
-            {(Object.keys(mockPersonas) as MockPersona[]).map((persona) => {
-                const selected = selectedPersona === persona;
-                const config = mockPersonas[persona];
-
-                return (
-                    <Pressable
-                        key={persona}
-                        onPress={() => onSelect(persona)}
-                        style={[
-                            styles.personaOption,
-                            selected && { backgroundColor: colors.surface, borderColor: `${accent}66` },
-                        ]}
-                    >
-                        <Text style={[styles.personaLabel, { color: selected ? colors.textPrimary : colors.textSecondary }]}>
-                            {config.label} {config.memberId}
-                        </Text>
-                    </Pressable>
-                );
-            })}
-        </View>
     );
 }
 
@@ -915,7 +696,13 @@ function StateCard({
 }) {
     return (
         <View style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            {loading && <ActivityIndicator size="small" color={colors.textSecondary} />}
+            {loading ? (
+                <BrandedLoader
+                    size="section"
+                    variant="share"
+                    accessibilityLabel={text}
+                />
+            ) : null}
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{text}</Text>
             {!!onRetry && (
                 <Pressable onPress={onRetry} style={[styles.retryButton, { borderColor: colors.border }]}>
@@ -994,45 +781,6 @@ const styles = StyleSheet.create({
     summaryLabel: {
         fontSize: 12,
         fontWeight: "800",
-        letterSpacing: 0,
-    },
-    mockStack: {
-        gap: 8,
-    },
-    mockBanner: {
-        minHeight: 42,
-        borderWidth: 1,
-        borderRadius: 14,
-        paddingHorizontal: 12,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-    },
-    mockText: {
-        flex: 1,
-        fontSize: 12,
-        fontWeight: "700",
-        lineHeight: 17,
-        letterSpacing: 0,
-    },
-    personaSwitch: {
-        height: 42,
-        borderRadius: 21,
-        padding: 4,
-        flexDirection: "row",
-        gap: 4,
-    },
-    personaOption: {
-        flex: 1,
-        borderWidth: 1,
-        borderColor: "transparent",
-        borderRadius: 17,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    personaLabel: {
-        fontSize: 12,
-        fontWeight: "900",
         letterSpacing: 0,
     },
     sectionStack: {

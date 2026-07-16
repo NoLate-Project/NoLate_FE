@@ -1,8 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
+    Animated,
+    Easing,
     FlatList,
+    type GestureResponderEvent,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
+    PanResponder,
+    type PanResponderGestureState,
     Pressable,
     StyleSheet,
     Text,
@@ -14,6 +26,18 @@ import type { SharedValue } from "react-native-reanimated";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { enumerateDaysBetween } from "../../../../../lib/util/data";
+import {
+    CALENDAR_INTERACTION_BUDGET_MS,
+    DETAIL_MONTH_SWIPE_GESTURE,
+    DETAIL_MONTH_SWIPE_MOTION,
+    getDetailMonthSwipeFollowOffset,
+    getDetailMonthSwipeFollowOpacity,
+    getDetailMonthSwipeGestureDirection,
+    getDetailMonthSwipeOffsets,
+    shouldClaimDetailMonthSwipeGesture,
+    type DetailMonthSwipeDirection,
+} from "../../calendarMotion";
+import { shiftCalendarMonth } from "../../calendarNavigation";
 import CustomDay from "./CustomDay";
 import {
     CALENDAR_DAY_HEIGHTS,
@@ -35,7 +59,21 @@ type Props = {
     transitionMonthKey?: string;
     transitionActive?: boolean;
     transitionContext?: "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
+    reduceMotionEnabled?: boolean;
+    todayFocusTarget?: TodayFocusTarget | null;
+    onTodayFocusReady?: (day: string) => void;
+    onRegisterDetailMonthMotionCancel?: (
+        cancel: (() => void) | null
+    ) => void;
+    onRegisterDetailMonthMotionShift?: (
+        shift: ((direction: DetailMonthSwipeDirection) => void) | null
+    ) => void;
     animatedDayHeight?: SharedValue<number>;
+};
+
+export type TodayFocusTarget = {
+    day: string;
+    requiresMonthChange: boolean;
 };
 
 type CalendarDayComponentProps = {
@@ -59,6 +97,17 @@ const CALENDAR_HEADER_SPACING =
     CALENDAR_HEADER_TOP_MARGIN + CALENDAR_HEADER_BOTTOM_MARGIN;
 const CALENDAR_CONTENT_BOTTOM_PADDING = 4;
 const TRANSITION_MONTH_PREFIX = "month-";
+const DETAIL_MONTH_SWIPE_EASING = Easing.bezier(
+    ...DETAIL_MONTH_SWIPE_MOTION.bezier
+);
+const DETAIL_MONTH_SWIPE_QUEUE_LIMIT = 6;
+
+type DetailMonthAnimationPhase = "idle" | "exit" | "awaitingCommit" | "enter";
+
+type DetailMonthAnimationOptions = {
+    preserveGestureOffset?: boolean;
+    targetDay?: string;
+};
 
 type FixedCalendarHeightOptions = {
     viewMode: CalendarViewMode;
@@ -122,6 +171,12 @@ function normalizeMonthCandidate(value: string | null | undefined): string | nul
     const candidate = trimmed.length > 7 ? trimmed.slice(0, 7) : trimmed;
 
     return /^\d{4}-\d{2}$/.test(candidate) ? candidate : null;
+}
+
+function resolveDetailMonthAnchor(selectedDay: string, visibleMonth: string): string {
+    return selectedDay.startsWith(`${visibleMonth}-`)
+        ? selectedDay
+        : `${visibleMonth}-01`;
 }
 
 function toDateString(year: number, month: number, day = 1) {
@@ -260,6 +315,11 @@ export default function ScheduleCalendar({
     headerOffset = 0,
     transitionMonthKey,
     transitionActive = false,
+    reduceMotionEnabled = false,
+    todayFocusTarget,
+    onTodayFocusReady,
+    onRegisterDetailMonthMotionCancel,
+    onRegisterDetailMonthMotionShift,
     animatedDayHeight,
 }: Props) {
     const { colors, mode } = useTheme();
@@ -277,6 +337,553 @@ export default function ScheduleCalendar({
     );
     const [activeStackMonth, setActiveStackMonth] = useState(visibleMonth);
     const activeStackMonthRef = useRef(activeStackMonth);
+    const detailMonthTranslateX = useRef(new Animated.Value(0)).current;
+    const detailMonthOpacity = useRef(new Animated.Value(1)).current;
+    const detailMonthAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const detailMonthAnimationFrameRef = useRef<number | null>(null);
+    const detailMonthCommitWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const detailMonthDeadlineWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const detailMonthAnimationActiveRef = useRef(false);
+    const detailMonthAnimationPhaseRef = useRef<DetailMonthAnimationPhase>("idle");
+    const detailMonthAnimationGenerationRef = useRef(0);
+    const detailMonthAnimationSourceDayRef = useRef<string | null>(null);
+    const detailMonthAnimationExpectedDayRef = useRef<string | null>(null);
+    const detailMonthSuppressedCommitRef = useRef<string | null>(null);
+    const detailMonthAnimationPendingDeltaRef = useRef(0);
+    const detailMonthAnimationEnterDurationRef = useRef(0);
+    const detailMonthAnimationStartedAtRef = useRef(0);
+    const detailMonthAnimationReduceMotionRef = useRef(reduceMotionEnabled);
+    const detailMonthGestureActiveRef = useRef(false);
+    const detailMonthGestureResetAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const detailMonthLatestSelectedDayRef = useRef(selectedDay);
+    const detailMonthLatestVisibleMonthRef = useRef(visibleMonth);
+    const detailMonthLatestViewModeRef = useRef(viewMode);
+    const detailMonthLatestReduceMotionRef = useRef(reduceMotionEnabled);
+    const detailMonthLatestTransitionActiveRef = useRef(transitionActive);
+    const todayFocusTargetRef = useRef(todayFocusTarget);
+    const acknowledgedTodayFocusTargetRef = useRef<TodayFocusTarget | null>(null);
+    const onTodayFocusReadyRef = useRef(onTodayFocusReady);
+    const startDetailMonthAnimationRef = useRef<(
+        direction: DetailMonthSwipeDirection
+    ) => void>(() => undefined);
+
+    detailMonthLatestSelectedDayRef.current = selectedDay;
+    detailMonthLatestVisibleMonthRef.current = visibleMonth;
+    detailMonthLatestViewModeRef.current = viewMode;
+    detailMonthLatestReduceMotionRef.current = reduceMotionEnabled;
+    detailMonthLatestTransitionActiveRef.current = transitionActive;
+    todayFocusTargetRef.current = todayFocusTarget;
+    onTodayFocusReadyRef.current = onTodayFocusReady;
+
+    const acknowledgeTodayFocusTarget = useCallback((day: string) => {
+        const target = todayFocusTargetRef.current;
+        if (
+            !target ||
+            target.day !== day ||
+            acknowledgedTodayFocusTargetRef.current === target
+        ) return;
+
+        acknowledgedTodayFocusTargetRef.current = target;
+        onTodayFocusReadyRef.current?.(target.day);
+    }, []);
+
+    const invalidateDetailMonthAnimation = useCallback((clearPending = true) => {
+        detailMonthAnimationGenerationRef.current += 1;
+        const activeAnimation = detailMonthAnimationRef.current;
+        const activeGestureResetAnimation = detailMonthGestureResetAnimationRef.current;
+        const activeFrame = detailMonthAnimationFrameRef.current;
+        const activeWatchdog = detailMonthCommitWatchdogRef.current;
+        const activeDeadlineWatchdog = detailMonthDeadlineWatchdogRef.current;
+        const expectedMonth = detailMonthAnimationExpectedDayRef.current?.slice(0, 7);
+        if (expectedMonth) detailMonthSuppressedCommitRef.current = expectedMonth;
+        detailMonthAnimationRef.current = null;
+        detailMonthAnimationFrameRef.current = null;
+        detailMonthCommitWatchdogRef.current = null;
+        detailMonthDeadlineWatchdogRef.current = null;
+        detailMonthGestureResetAnimationRef.current = null;
+        detailMonthGestureActiveRef.current = false;
+        detailMonthAnimationPhaseRef.current = "idle";
+        detailMonthAnimationSourceDayRef.current = null;
+        detailMonthAnimationExpectedDayRef.current = null;
+        detailMonthAnimationActiveRef.current = false;
+        detailMonthAnimationStartedAtRef.current = 0;
+        if (clearPending) detailMonthAnimationPendingDeltaRef.current = 0;
+
+        if (activeFrame !== null) cancelAnimationFrame(activeFrame);
+        if (activeWatchdog !== null) clearTimeout(activeWatchdog);
+        if (activeDeadlineWatchdog !== null) clearTimeout(activeDeadlineWatchdog);
+        activeAnimation?.stop();
+        activeGestureResetAnimation?.stop();
+        detailMonthTranslateX.stopAnimation();
+        detailMonthOpacity.stopAnimation();
+        detailMonthTranslateX.setValue(0);
+        detailMonthOpacity.setValue(1);
+    }, [detailMonthOpacity, detailMonthTranslateX]);
+
+    const cancelDetailMonthMotion = useCallback(() => {
+        invalidateDetailMonthAnimation(true);
+    }, [invalidateDetailMonthAnimation]);
+
+    const resetDetailMonthGesture = useCallback(() => {
+        detailMonthGestureActiveRef.current = false;
+        detailMonthGestureResetAnimationRef.current?.stop();
+        detailMonthGestureResetAnimationRef.current = null;
+
+        if (detailMonthLatestReduceMotionRef.current) {
+            detailMonthTranslateX.setValue(0);
+            detailMonthOpacity.setValue(1);
+            return;
+        }
+
+        const resetAnimation = Animated.parallel([
+            Animated.timing(detailMonthTranslateX, {
+                toValue: 0,
+                duration: DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs,
+                easing: DETAIL_MONTH_SWIPE_EASING,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+            Animated.timing(detailMonthOpacity, {
+                toValue: 1,
+                duration: DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs,
+                easing: DETAIL_MONTH_SWIPE_EASING,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+        ]);
+        detailMonthGestureResetAnimationRef.current = resetAnimation;
+        resetAnimation.start(() => {
+            if (detailMonthGestureResetAnimationRef.current === resetAnimation) {
+                detailMonthGestureResetAnimationRef.current = null;
+            }
+        });
+    }, [detailMonthOpacity, detailMonthTranslateX]);
+
+    useLayoutEffect(() => {
+        if (!onRegisterDetailMonthMotionCancel) return undefined;
+
+        onRegisterDetailMonthMotionCancel(cancelDetailMonthMotion);
+        return () => onRegisterDetailMonthMotionCancel(null);
+    }, [cancelDetailMonthMotion, onRegisterDetailMonthMotionCancel]);
+
+    useEffect(() => {
+        if (!todayFocusTarget) acknowledgedTodayFocusTargetRef.current = null;
+    }, [todayFocusTarget]);
+
+    useEffect(() => (
+        () => invalidateDetailMonthAnimation(true)
+    ), [invalidateDetailMonthAnimation]);
+
+    const completeDetailMonthAnimation = useCallback((generation: number) => {
+        if (generation !== detailMonthAnimationGenerationRef.current) return;
+
+        const pendingDelta = detailMonthAnimationPendingDeltaRef.current;
+        invalidateDetailMonthAnimation(false);
+        if (
+            pendingDelta === 0 ||
+            detailMonthLatestViewModeRef.current !== "detail"
+        ) {
+            if (detailMonthLatestViewModeRef.current !== "detail") {
+                detailMonthAnimationPendingDeltaRef.current = 0;
+            }
+            return;
+        }
+
+        const nextDirection: DetailMonthSwipeDirection = pendingDelta < 0 ? -1 : 1;
+        detailMonthAnimationPendingDeltaRef.current -= nextDirection;
+        startDetailMonthAnimationRef.current(nextDirection);
+    }, [invalidateDetailMonthAnimation]);
+
+    const startDetailMonthEnterAnimation = useCallback((generation: number) => {
+        if (
+            generation !== detailMonthAnimationGenerationRef.current ||
+            detailMonthAnimationPhaseRef.current !== "awaitingCommit"
+        ) return;
+
+        if (detailMonthCommitWatchdogRef.current !== null) {
+            clearTimeout(detailMonthCommitWatchdogRef.current);
+            detailMonthCommitWatchdogRef.current = null;
+        }
+        detailMonthAnimationPhaseRef.current = "enter";
+        detailMonthAnimationFrameRef.current = requestAnimationFrame(() => {
+            detailMonthAnimationFrameRef.current = null;
+            if (
+                generation !== detailMonthAnimationGenerationRef.current ||
+                detailMonthAnimationPhaseRef.current !== "enter"
+            ) return;
+
+            const elapsedMs = Math.max(
+                0,
+                Date.now() - detailMonthAnimationStartedAtRef.current
+            );
+            const remainingBudgetMs = Math.max(
+                0,
+                CALENDAR_INTERACTION_BUDGET_MS - elapsedMs
+                    - DETAIL_MONTH_SWIPE_MOTION.commitFrameBudgetMs / 2
+            );
+            const enterDurationMs = Math.min(
+                detailMonthAnimationEnterDurationRef.current,
+                remainingBudgetMs
+            );
+            if (enterDurationMs === 0) {
+                detailMonthTranslateX.setValue(0);
+                detailMonthOpacity.setValue(1);
+                completeDetailMonthAnimation(generation);
+                return;
+            }
+
+            const enterAnimation = Animated.parallel([
+                Animated.timing(detailMonthTranslateX, {
+                    toValue: 0,
+                    duration: enterDurationMs,
+                    easing: DETAIL_MONTH_SWIPE_EASING,
+                    useNativeDriver: true,
+                    isInteraction: false,
+                }),
+                Animated.timing(detailMonthOpacity, {
+                    toValue: 1,
+                    duration: enterDurationMs,
+                    easing: DETAIL_MONTH_SWIPE_EASING,
+                    useNativeDriver: true,
+                    isInteraction: false,
+                }),
+            ]);
+            detailMonthAnimationRef.current = enterAnimation;
+            enterAnimation.start(({ finished }) => {
+                if (detailMonthAnimationRef.current === enterAnimation) {
+                    detailMonthAnimationRef.current = null;
+                }
+                if (generation !== detailMonthAnimationGenerationRef.current) return;
+                if (!finished) {
+                    invalidateDetailMonthAnimation(true);
+                    return;
+                }
+                completeDetailMonthAnimation(generation);
+            });
+        });
+    }, [
+        completeDetailMonthAnimation,
+        detailMonthOpacity,
+        detailMonthTranslateX,
+        invalidateDetailMonthAnimation,
+    ]);
+
+    const handleDetailMonthChange = useCallback((month: DateData) => {
+        const incomingMonth = month.dateString.slice(0, 7);
+        const todayTarget = todayFocusTargetRef.current;
+        if (
+            todayTarget?.requiresMonthChange &&
+            incomingMonth === todayTarget.day.slice(0, 7)
+        ) {
+            acknowledgeTodayFocusTarget(todayTarget.day);
+        }
+        const suppressedCommit = detailMonthSuppressedCommitRef.current;
+        if (suppressedCommit) {
+            detailMonthSuppressedCommitRef.current = null;
+            if (incomingMonth === suppressedCommit) return;
+        }
+        if (detailMonthAnimationActiveRef.current) {
+            const phase = detailMonthAnimationPhaseRef.current;
+            const sourceMonth = detailMonthAnimationSourceDayRef.current?.slice(0, 7);
+            const expectedMonth = detailMonthAnimationExpectedDayRef.current?.slice(0, 7);
+
+            if (phase === "awaitingCommit" && incomingMonth === expectedMonth) {
+                startDetailMonthEnterAnimation(
+                    detailMonthAnimationGenerationRef.current
+                );
+                return;
+            }
+
+            // The controlled initialDate update can emit the source month once
+            // more while the target commit is pending. Neither source nor the
+            // expected target should be forwarded back to the parent twice.
+            if (incomingMonth === sourceMonth || incomingMonth === expectedMonth) {
+                return;
+            }
+
+            invalidateDetailMonthAnimation(true);
+        }
+
+        onVisibleMonthChange(month.dateString);
+        onSelectDay(month.dateString);
+    }, [
+        acknowledgeTodayFocusTarget,
+        invalidateDetailMonthAnimation,
+        onSelectDay,
+        onVisibleMonthChange,
+        startDetailMonthEnterAnimation,
+    ]);
+
+    const animateDetailMonthChange = useCallback((
+        direction: DetailMonthSwipeDirection,
+        options: DetailMonthAnimationOptions = {}
+    ) => {
+        if (
+            detailMonthLatestViewModeRef.current !== "detail" ||
+            detailMonthLatestTransitionActiveRef.current
+        ) {
+            resetDetailMonthGesture();
+            return;
+        }
+        const normalizedDirection: DetailMonthSwipeDirection = direction < 0 ? -1 : 1;
+        if (detailMonthAnimationActiveRef.current) {
+            detailMonthAnimationPendingDeltaRef.current = Math.max(
+                -DETAIL_MONTH_SWIPE_QUEUE_LIMIT,
+                Math.min(
+                    DETAIL_MONTH_SWIPE_QUEUE_LIMIT,
+                    detailMonthAnimationPendingDeltaRef.current + normalizedDirection
+                )
+            );
+            return;
+        }
+
+        const sourceDay = resolveDetailMonthAnchor(
+            detailMonthLatestSelectedDayRef.current,
+            detailMonthLatestVisibleMonthRef.current
+        );
+        const targetDay = options.targetDay
+            ?? shiftCalendarMonth(sourceDay, normalizedDirection);
+        const reduceMotion = detailMonthLatestReduceMotionRef.current;
+        const generation = detailMonthAnimationGenerationRef.current + 1;
+        detailMonthGestureActiveRef.current = false;
+        detailMonthGestureResetAnimationRef.current?.stop();
+        detailMonthGestureResetAnimationRef.current = null;
+        detailMonthAnimationGenerationRef.current = generation;
+        detailMonthAnimationActiveRef.current = true;
+        detailMonthAnimationPhaseRef.current = "exit";
+        detailMonthAnimationSourceDayRef.current = sourceDay;
+        detailMonthAnimationExpectedDayRef.current = null;
+        detailMonthAnimationReduceMotionRef.current = reduceMotion;
+        detailMonthAnimationStartedAtRef.current = Date.now();
+        const travel = reduceMotion
+            ? DETAIL_MONTH_SWIPE_MOTION.reduceMotionTravel
+            : DETAIL_MONTH_SWIPE_MOTION.travel;
+        const exitDuration = reduceMotion
+            ? DETAIL_MONTH_SWIPE_MOTION.reduceMotionExitDurationMs
+            : DETAIL_MONTH_SWIPE_MOTION.exitDurationMs;
+        detailMonthAnimationEnterDurationRef.current = reduceMotion
+            ? DETAIL_MONTH_SWIPE_MOTION.reduceMotionEnterDurationMs
+            : DETAIL_MONTH_SWIPE_MOTION.enterDurationMs;
+        const offsets = getDetailMonthSwipeOffsets(normalizedDirection, travel);
+
+        if (!options.preserveGestureOffset || reduceMotion) {
+            detailMonthTranslateX.setValue(0);
+            detailMonthOpacity.setValue(1);
+        }
+        detailMonthDeadlineWatchdogRef.current = setTimeout(() => {
+            detailMonthDeadlineWatchdogRef.current = null;
+            if (generation !== detailMonthAnimationGenerationRef.current) return;
+            invalidateDetailMonthAnimation(true);
+        }, CALENDAR_INTERACTION_BUDGET_MS);
+        const exitAnimation = Animated.parallel([
+            Animated.timing(detailMonthTranslateX, {
+                toValue: offsets.outgoing,
+                duration: exitDuration,
+                easing: DETAIL_MONTH_SWIPE_EASING,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+            Animated.timing(detailMonthOpacity, {
+                toValue: 0,
+                duration: exitDuration,
+                easing: DETAIL_MONTH_SWIPE_EASING,
+                useNativeDriver: true,
+                isInteraction: false,
+            }),
+        ]);
+        detailMonthAnimationRef.current = exitAnimation;
+        exitAnimation.start(({ finished }) => {
+            if (detailMonthAnimationRef.current === exitAnimation) {
+                detailMonthAnimationRef.current = null;
+            }
+            if (generation !== detailMonthAnimationGenerationRef.current) return;
+            if (!finished) {
+                invalidateDetailMonthAnimation(true);
+                return;
+            }
+
+            const currentAnchor = resolveDetailMonthAnchor(
+                detailMonthLatestSelectedDayRef.current,
+                detailMonthLatestVisibleMonthRef.current
+            );
+            if (
+                detailMonthLatestViewModeRef.current !== "detail" ||
+                detailMonthLatestReduceMotionRef.current !== reduceMotion ||
+                currentAnchor !== sourceDay
+            ) {
+                invalidateDetailMonthAnimation(true);
+                return;
+            }
+
+            detailMonthAnimationPhaseRef.current = "awaitingCommit";
+            detailMonthAnimationExpectedDayRef.current = targetDay;
+            detailMonthTranslateX.setValue(offsets.incoming);
+            detailMonthOpacity.setValue(0);
+            detailMonthCommitWatchdogRef.current = setTimeout(() => {
+                detailMonthCommitWatchdogRef.current = null;
+                if (
+                    generation !== detailMonthAnimationGenerationRef.current ||
+                    detailMonthAnimationPhaseRef.current !== "awaitingCommit"
+                ) return;
+                invalidateDetailMonthAnimation(true);
+            }, DETAIL_MONTH_SWIPE_MOTION.commitWatchdogMs);
+            onVisibleMonthChange(targetDay);
+            onSelectDay(targetDay);
+        });
+    }, [
+        detailMonthOpacity,
+        detailMonthTranslateX,
+        invalidateDetailMonthAnimation,
+        onSelectDay,
+        onVisibleMonthChange,
+        resetDetailMonthGesture,
+    ]);
+
+    startDetailMonthAnimationRef.current = animateDetailMonthChange;
+
+    useLayoutEffect(() => {
+        if (!onRegisterDetailMonthMotionShift) return undefined;
+
+        onRegisterDetailMonthMotionShift(animateDetailMonthChange);
+        return () => onRegisterDetailMonthMotionShift(null);
+    }, [animateDetailMonthChange, onRegisterDetailMonthMotionShift]);
+
+    const detailMonthPanResponder = useMemo(() => {
+        const shouldClaimGesture = (
+            event: GestureResponderEvent,
+            gestureState: PanResponderGestureState
+        ) => {
+            const touchCount = event.nativeEvent.touches?.length ?? 1;
+            return touchCount === 1
+                && detailMonthLatestViewModeRef.current === "detail"
+                && !detailMonthLatestTransitionActiveRef.current
+                && !detailMonthAnimationActiveRef.current
+                && !todayFocusTargetRef.current
+                && shouldClaimDetailMonthSwipeGesture(
+                    gestureState.dx,
+                    gestureState.dy
+                );
+        };
+
+        return PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponder: shouldClaimGesture,
+            onMoveShouldSetPanResponderCapture: shouldClaimGesture,
+            onPanResponderGrant: () => {
+                detailMonthGestureResetAnimationRef.current?.stop();
+                detailMonthGestureResetAnimationRef.current = null;
+                detailMonthGestureActiveRef.current = true;
+                detailMonthTranslateX.stopAnimation();
+                detailMonthOpacity.stopAnimation();
+            },
+            onPanResponderMove: (_event, gestureState) => {
+                if (!detailMonthGestureActiveRef.current) return;
+
+                const reduceMotion = detailMonthLatestReduceMotionRef.current;
+                const offset = getDetailMonthSwipeFollowOffset(
+                    gestureState.dx,
+                    reduceMotion
+                );
+                detailMonthTranslateX.setValue(offset);
+                detailMonthOpacity.setValue(
+                    getDetailMonthSwipeFollowOpacity(offset)
+                );
+            },
+            onPanResponderRelease: (_event, gestureState) => {
+                if (!detailMonthGestureActiveRef.current) return;
+
+                const direction = getDetailMonthSwipeGestureDirection(
+                    gestureState.dx,
+                    gestureState.vx
+                );
+                if (!direction) {
+                    resetDetailMonthGesture();
+                    return;
+                }
+
+                animateDetailMonthChange(direction, {
+                    preserveGestureOffset: true,
+                });
+            },
+            onPanResponderTerminate: resetDetailMonthGesture,
+            onPanResponderTerminationRequest: () => false,
+            onShouldBlockNativeResponder: () => true,
+        });
+    }, [
+        animateDetailMonthChange,
+        detailMonthOpacity,
+        detailMonthTranslateX,
+        resetDetailMonthGesture,
+    ]);
+
+    useLayoutEffect(() => {
+        if (!detailMonthAnimationActiveRef.current) return;
+
+        const phase = detailMonthAnimationPhaseRef.current;
+        const sourceDay = detailMonthAnimationSourceDayRef.current;
+        const expectedDay = detailMonthAnimationExpectedDayRef.current;
+        const currentAnchor = resolveDetailMonthAnchor(selectedDay, visibleMonth);
+        const matchesControlledTransition = phase === "exit"
+            ? currentAnchor === sourceDay
+            : phase === "awaitingCommit"
+                ? currentAnchor === sourceDay || currentAnchor === expectedDay
+                : phase === "enter"
+                    ? currentAnchor === expectedDay
+                    : false;
+
+        if (
+            transitionActive ||
+            viewMode !== "detail" ||
+            detailMonthAnimationReduceMotionRef.current !== reduceMotionEnabled ||
+            !matchesControlledTransition
+        ) {
+            invalidateDetailMonthAnimation(true);
+            return;
+        }
+
+        // The controlled props are the authoritative commit ACK. Starting the
+        // enter phase here avoids waiting on react-native-calendars' later
+        // onMonthChange effect and keeps the release-to-settle path under 200ms.
+        if (phase === "awaitingCommit" && currentAnchor === expectedDay) {
+            startDetailMonthEnterAnimation(
+                detailMonthAnimationGenerationRef.current
+            );
+        }
+    }, [
+        invalidateDetailMonthAnimation,
+        reduceMotionEnabled,
+        selectedDay,
+        startDetailMonthEnterAnimation,
+        transitionActive,
+        viewMode,
+        visibleMonth,
+    ]);
+
+    useEffect(() => {
+        const target = todayFocusTarget;
+        if (!target || selectedDay !== target.day) return undefined;
+
+        const targetMonth = target.day.slice(0, 7);
+        const isCommittedWeek = viewMode === "week";
+        const isCommittedSameMonthCalendar = (
+            (viewMode === "detail" || viewMode === "list") &&
+            !target.requiresMonthChange &&
+            visibleMonth === targetMonth
+        );
+        if (!isCommittedWeek && !isCommittedSameMonthCalendar) return undefined;
+
+        const readyFrame = requestAnimationFrame(() => {
+            acknowledgeTodayFocusTarget(target.day);
+        });
+        return () => cancelAnimationFrame(readyFrame);
+    }, [
+        acknowledgeTodayFocusTarget,
+        selectedDay,
+        todayFocusTarget,
+        viewMode,
+        visibleMonth,
+    ]);
 
     const markedDates = useMemo(() => {
         const dateMap: Record<string, any> = {};
@@ -361,9 +968,18 @@ export default function ScheduleCalendar({
             animatedCellHeight={animatedDayHeight}
             isSelectedDay={date?.dateString === selectedDay}
             onPress={(day) => {
+                if (detailMonthAnimationActiveRef.current) return;
                 if (viewMode === "detail") {
                     if (day.dateString === selectedDay) {
                         onOpenDay(day.dateString);
+                        return;
+                    }
+                    const targetMonth = day.dateString.slice(0, 7);
+                    if (targetMonth !== visibleMonth) {
+                        animateDetailMonthChange(
+                            targetMonth < visibleMonth ? -1 : 1,
+                            { targetDay: day.dateString }
+                        );
                         return;
                     }
                     onSelectDay(day.dateString);
@@ -375,10 +991,12 @@ export default function ScheduleCalendar({
         />
     ), [
         animatedDayHeight,
+        animateDetailMonthChange,
         onOpenDay,
         onSelectDay,
         onVisibleMonthChange,
         selectedDay,
+        visibleMonth,
         viewMode,
     ]);
 
@@ -489,28 +1107,35 @@ export default function ScheduleCalendar({
         if (!isContinuousMonthViewMode(viewMode) || stackTargetMonthIndex < 0) return;
 
         const targetMonth = stackMonths[stackTargetMonthIndex];
-        const shouldAnimate = handledStackScrollRequestRef.current !== scrollRequest;
         handledStackScrollRequestRef.current = scrollRequest;
         updateActiveStackMonth(
             targetMonth,
             !transitionActive && !normalizeMonthCandidate(transitionMonthKey)
         );
 
-        const scrollTimer = setTimeout(() => {
-            stackListRef.current?.scrollToOffset({
-                offset: Math.max(0, stackMonthLayouts[stackTargetMonthIndex].offset),
-                animated: shouldAnimate,
-            });
-        }, 80);
+        const scrollFrame = requestAnimationFrame(() => {
+            const stackList = stackListRef.current;
+            if (!stackList) return;
 
-        return () => clearTimeout(scrollTimer);
+            stackList.scrollToOffset({
+                offset: Math.max(0, stackMonthLayouts[stackTargetMonthIndex].offset),
+                animated: false,
+            });
+            if (todayFocusTarget?.day.slice(0, 7) === targetMonth.key) {
+                acknowledgeTodayFocusTarget(todayFocusTarget.day);
+            }
+        });
+
+        return () => cancelAnimationFrame(scrollFrame);
     }, [
+        acknowledgeTodayFocusTarget,
         scrollRequest,
         stackMonthLayouts,
         stackMonths,
         stackTargetMonthIndex,
         transitionActive,
         transitionMonthKey,
+        todayFocusTarget,
         updateActiveStackMonth,
         viewMode,
     ]);
@@ -706,24 +1331,45 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <Calendar
-                key={`${mode}-${firstDay}`}
-                initialDate={initialDate}
-                firstDay={firstDay}
-                enableSwipeMonths
-                hideArrows
-                hideDayNames
-                hideExtraDays={false}
-                onMonthChange={(month: DateData) => {
-                    onVisibleMonthChange(month.dateString);
-                    onSelectDay(month.dateString);
+            <Animated.View
+                {...(viewMode === "detail"
+                    ? detailMonthPanResponder.panHandlers
+                    : {})}
+                style={{
+                    opacity: detailMonthOpacity,
+                    transform: [{ translateX: detailMonthTranslateX }],
                 }}
-                markedDates={markedDates}
-                dayComponent={renderDay}
-                renderHeader={() => null}
-                style={[styles.calendar, { backgroundColor: colors.calendarBackground }]}
-                theme={calendarTheme}
-            />
+            >
+                <Calendar
+                    key={`${mode}-${firstDay}`}
+                    initialDate={initialDate}
+                    firstDay={firstDay}
+                    enableSwipeMonths={viewMode !== "detail"}
+                    hideArrows
+                    hideDayNames
+                    hideExtraDays={false}
+                    onPressArrowLeft={(subtractMonth) => {
+                        if (viewMode === "detail") {
+                            animateDetailMonthChange(-1);
+                            return;
+                        }
+                        subtractMonth();
+                    }}
+                    onPressArrowRight={(addMonth) => {
+                        if (viewMode === "detail") {
+                            animateDetailMonthChange(1);
+                            return;
+                        }
+                        addMonth();
+                    }}
+                    onMonthChange={handleDetailMonthChange}
+                    markedDates={markedDates}
+                    dayComponent={renderDay}
+                    renderHeader={() => null}
+                    style={[styles.calendar, { backgroundColor: colors.calendarBackground }]}
+                    theme={calendarTheme}
+                />
+            </Animated.View>
         </View>
     );
 }

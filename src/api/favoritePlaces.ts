@@ -1,5 +1,5 @@
-import { apiGet, apiPost } from "./api";
-import { type ApiEnvelope, unwrapApiResponse } from "./response";
+import { apiDelete, apiGet, apiPost, apiPut } from "./api";
+import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { Place } from "../modules/schedule/types";
 
 export type FavoritePlace = Place & {
@@ -61,6 +61,8 @@ type SaveFavoritePlacePayload = {
     providerPlaceId?: string;
 };
 
+type SaveDefaultOriginPayload = SaveFavoritePlacePayload;
+
 type CreateFavoritePlaceCategoryPayload = {
     name: string;
     color?: string;
@@ -102,6 +104,14 @@ function normalizeFavoritePlaceCategory(dto: FavoritePlaceCategoryDto): Favorite
 export async function getFavoritePlacesFromApi(): Promise<FavoritePlace[]> {
     const response = await apiGet<ApiEnvelope<FavoritePlaceDto[]>>("/api/favorite-places");
     return unwrapApiResponse(response).map(normalizeFavoritePlace);
+}
+
+export async function getDefaultOriginFromApi(): Promise<FavoritePlace | null> {
+    const response = await apiGet<ApiEnvelope<FavoritePlaceDto | null>>("/api/favorite-places/default-origin");
+    if (!response.success) {
+        throw new Error(response.errorMessage ?? "기본 출발지를 불러오지 못했습니다.");
+    }
+    return response.data ? normalizeFavoritePlace(response.data) : null;
 }
 
 export async function getFavoritePlaceCategoriesFromApi(): Promise<FavoritePlaceCategory[]> {
@@ -151,4 +161,31 @@ export async function saveFavoritePlaceToApi(
         payload
     );
     return normalizeFavoritePlace(unwrapApiResponse(response));
+}
+
+export async function saveDefaultOriginToApi(place: Place): Promise<FavoritePlace> {
+    if (typeof place.lat !== "number" || typeof place.lng !== "number") {
+        throw new Error("기본 출발지 저장에는 좌표가 필요합니다.");
+    }
+
+    const label = place.name?.trim() || place.address?.trim() || "기본 출발지";
+    const payload: SaveDefaultOriginPayload = {
+        label,
+        placeName: place.name?.trim() || undefined,
+        address: place.address?.trim() || undefined,
+        lat: place.lat,
+        lng: place.lng,
+        provider: place.provider?.trim() || undefined,
+        providerPlaceId: place.providerPlaceId?.trim() || undefined,
+    };
+    const response = await apiPut<ApiEnvelope<FavoritePlaceDto>, SaveDefaultOriginPayload>(
+        "/api/favorite-places/default-origin",
+        payload
+    );
+    return normalizeFavoritePlace(unwrapApiResponse(response));
+}
+
+export async function clearDefaultOriginFromApi(): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>("/api/favorite-places/default-origin");
+    assertApiSuccess(response);
 }

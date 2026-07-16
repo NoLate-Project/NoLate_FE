@@ -9,14 +9,17 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { loginMember, signUpMember } from "../../src/api/member";
+import { loginMember, signUpMember, type SignupConsentsPayload } from "../../src/api/member";
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
+import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 
 const PASSWORD_PATTERN = /^[a-zA-Z0-9!@#$%^&*]{8,16}$/;
+type SignUpStep = "details" | "agreements";
 
 export default function SignUp() {
     const router = useRouter();
@@ -28,28 +31,40 @@ export default function SignUp() {
     const [email, setEmail] = useState("");
     const [pwd, setPwd] = useState("");
     const [confirmPwd, setConfirmPwd] = useState("");
+    const [step, setStep] = useState<SignUpStep>("details");
     const [submitting, setSubmitting] = useState(false);
 
-    const onSignUp = async () => {
-        if (submitting) return;
-
+    const validateDetails = () => {
         const normalizedName = name.trim();
         const normalizedEmail = email.trim();
 
         if (!normalizedName || !normalizedEmail || !pwd || !confirmPwd) {
             Alert.alert("입력 확인", "모든 항목을 입력해 주세요.");
-            return;
+            return false;
         }
 
         if (pwd !== confirmPwd) {
             Alert.alert("입력 확인", "비밀번호가 일치하지 않습니다.");
-            return;
+            return false;
         }
 
         if (!PASSWORD_PATTERN.test(pwd)) {
             Alert.alert("입력 확인", "비밀번호는 영문, 숫자, !@#$%^&* 조합으로 8~16자여야 합니다.");
-            return;
+            return false;
         }
+
+        return true;
+    };
+
+    const onContinue = () => {
+        if (validateDetails()) setStep("agreements");
+    };
+
+    const onSignUp = async (consents: SignupConsentsPayload) => {
+        if (submitting || !validateDetails()) return;
+
+        const normalizedName = name.trim();
+        const normalizedEmail = email.trim();
 
         try {
             setSubmitting(true);
@@ -57,6 +72,7 @@ export default function SignUp() {
                 name: normalizedName,
                 email: normalizedEmail,
                 password: pwd,
+                consents,
             });
 
             const member = await loginMember({
@@ -72,14 +88,33 @@ export default function SignUp() {
             });
             router.replace("/onboarding/calendar-import");
         } catch (error) {
-            const message = error instanceof Error ? error.message : "회원가입에 실패했습니다.";
+            const presentation = getAuthErrorPresentation(error, "signup");
             await clearAuthTokens();
             await syncAuthentication();
-            Alert.alert("회원가입 실패", message);
+            Alert.alert(presentation.title, presentation.message);
         } finally {
             setSubmitting(false);
         }
     };
+
+    if (step === "agreements") {
+        return (
+            <AuthScreen
+                title="가입 전 확인"
+                subtitle="일반 계정을 만들기 전에 필요한 항목입니다."
+                onBack={() => setStep("details")}
+                density="compact"
+            >
+                <SignupAgreementPanel
+                    submitting={submitting}
+                    onConfirm={onSignUp}
+                    onOpenTerms={() => router.push("/legal/terms-of-service")}
+                    onOpenPrivacyCollection={() => router.push("/legal/privacy-collection-consent")}
+                    onOpenPrivacyPolicy={() => router.push("/legal/privacy-policy")}
+                />
+            </AuthScreen>
+        );
+    }
 
     return (
         <AuthScreen
@@ -137,8 +172,8 @@ export default function SignUp() {
 
             <AuthPrimaryButton
                 disabled={submitting}
-                onPress={onSignUp}
-                label={submitting ? "가입 처리 중" : "가입하기"}
+                onPress={onContinue}
+                label="다음"
             />
 
             <Pressable

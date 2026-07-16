@@ -7,6 +7,7 @@ import type { ComponentProps } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
     AccessibilityInfo,
+    ActivityIndicator,
     Animated,
     Alert,
     Easing,
@@ -18,12 +19,25 @@ import {
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { createSchedule } from "../../src/api/schedule";
+import { createSchedule, type SchedulePayload } from "../../src/api/schedule";
+import { completeMemberCuration } from "../../src/api/member";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
+import {
+    FREE_SUBSCRIPTION_POLICY,
+    getMySubscriptionPolicy,
+    type SubscriptionPolicy,
+} from "../../src/api/subscription";
+import {
+    getRouteAlternativeOptions,
+    searchAddressByKeyword,
+    type PlaceSearchItem,
+    type RoutePathCoord,
+} from "../../src/modules/map/routingService";
 import {
     buildSchedulePayloadFromCandidate,
     getCalendarProviderLabel,
@@ -32,9 +46,18 @@ import {
     loadDeviceCalendarImportSummary,
     requestDeviceCalendarPermission,
     type DeviceCalendarCandidate,
-    type DeviceCalendarImportSummary,
-    type DeviceCalendarProvider,
 } from "../../src/modules/onboarding/deviceCalendarImport";
+import { withCalendarImportTimeout } from "../../src/modules/onboarding/calendarImportReliability";
+import {
+    enableCalendarImportNotification,
+    enrichCalendarCandidateWithRoute,
+    extractCalendarRouteHints,
+} from "../../src/modules/onboarding/calendarImportRouteEnrichment";
+import {
+    scanSelectedCalendarProviders,
+    type CalendarProviderScanFailure,
+    type CalendarScanProgress,
+} from "../../src/modules/onboarding/calendarImportScan";
 import {
     GOOGLE_CALENDAR_CLIENT_ID,
     GOOGLE_CALENDAR_SCOPES,
@@ -46,8 +69,15 @@ import {
     recordCalendarScan,
 } from "../../src/modules/onboarding/calendarConnectionStorage";
 import QuickScheduleLogoLoader from "../../src/modules/schedule/components/form/QuickScheduleLogoLoader";
+import { useAuth } from "../../src/modules/auth/AuthContext";
+import { saveAuthCurationCompleted } from "../../src/modules/auth/authStorage";
+import {
+    getFavoriteDeparturePlaces,
+    hasFavoriteDepartureCoords,
+    saveFavoriteDeparturePlace,
+} from "../../src/modules/schedule/favoriteDeparture";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { ScheduleCategory, TravelMode } from "../../src/modules/schedule/types";
+import type { Place, ScheduleCategory, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type OnboardingStep = "intro" | "provider" | "permission" | "scanning" | "select" | "enrich" | "complete";
@@ -57,6 +87,7 @@ const STEP_MOTION_DURATION_MS = 260;
 const FOOTER_MOTION_DURATION_MS = 220;
 
 type CalendarProviderId = "device" | "google";
+type CalendarConsentId = "device_access" | "google_access" | "candidate_review" | "selected_schedule_storage";
 
 type CalendarProviderOption = {
     id: CalendarProviderId;
@@ -75,10 +106,12 @@ type CandidateSourceGroup = {
     selectedCount: number;
 };
 
-type CalendarScanResult = {
-    provider: DeviceCalendarProvider;
-    providerLabel: string;
-    summary: DeviceCalendarImportSummary;
+type CalendarConsentItem = {
+    id: CalendarConsentId;
+    title: string;
+    summary: string;
+    detail: string[];
+    required: boolean;
 };
 
 const FALLBACK_CATEGORY: ScheduleCategory = {
@@ -105,10 +138,18 @@ const SCAN_MESSAGES = [
     "장소가 있는 일정 정리 중",
 ];
 
+const GOOGLE_AUTH_TIMEOUT_MS = 120_000;
+const GOOGLE_TOKEN_EXCHANGE_TIMEOUT_MS = 20_000;
+const SECURE_STORAGE_TIMEOUT_MS = 8_000;
+const PLACE_SEARCH_TIMEOUT_MS = 15_000;
+const ROUTE_SEARCH_TIMEOUT_MS = 25_000;
+const IMPORT_BATCH_SIZE = 3;
+
 const APP_LOGO = require("../../assets/icon.png");
 
 export default function CalendarImportOnboarding() {
     const router = useRouter();
+    const { isCurationCompleted, syncAuthentication } = useAuth();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
@@ -116,6 +157,7 @@ export default function CalendarImportOnboarding() {
     const deviceProviderLabel = getCalendarProviderLabel();
     const scrollViewRef = useRef<ScrollView>(null);
     const currentStepRef = useRef<OnboardingStep>("intro");
+    const scanAttemptRef = useRef(0);
     const stepMotionDidMountRef = useRef(false);
     const stepMotion = useRef(new Animated.Value(1)).current;
     const footerMotion = useRef(new Animated.Value(1)).current;
@@ -136,17 +178,37 @@ export default function CalendarImportOnboarding() {
     const [stepTransitionDirection, setStepTransitionDirection] = useState<1 | -1>(1);
     const [reduceMotionEnabled, setReduceMotionEnabled] = useState(false);
     const [selectedProviderIds, setSelectedProviderIds] = useState<Set<CalendarProviderId>>(
-        () => new Set(["device", "google"])
+        () => new Set(["device"])
+    );
+    const [acceptedCalendarConsentIds, setAcceptedCalendarConsentIds] = useState<Set<CalendarConsentId>>(
+        () => new Set()
+    );
+    const [expandedCalendarConsentIds, setExpandedCalendarConsentIds] = useState<Set<CalendarConsentId>>(
+        () => new Set()
     );
     const [scanStage, setScanStage] = useState(0);
+    const [scanStatusMessage, setScanStatusMessage] = useState("캘린더 연결 상태를 확인하고 있어요");
     const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
     const [categoryId, setCategoryId] = useState(FALLBACK_CATEGORY.id);
     const [travelMode, setTravelMode] = useState<TravelMode>("TRANSIT");
     const [travelMinutes, setTravelMinutes] = useState(30);
-    const [notificationEnabled, setNotificationEnabled] = useState(true);
+    const [prepareDepartureAlert, setPrepareDepartureAlert] = useState(true);
+    const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
+    const [favoriteDeparturePlaces, setFavoriteDeparturePlaces] = useState<Place[]>([]);
+    const [defaultOrigin, setDefaultOrigin] = useState<Place | undefined>();
+    const [originSearchQuery, setOriginSearchQuery] = useState("");
+    const [originSearchResults, setOriginSearchResults] = useState<PlaceSearchItem[]>([]);
+    const [originSearching, setOriginSearching] = useState(false);
+    const [originSearchError, setOriginSearchError] = useState<string | null>(null);
+    const defaultOriginSaveRequestIdRef = useRef(0);
     const [importing, setImporting] = useState(false);
+    const [importProgress, setImportProgress] = useState(0);
     const [importedCount, setImportedCount] = useState(0);
+    const [preparedRouteCount, setPreparedRouteCount] = useState(0);
+    const [notificationReadyCount, setNotificationReadyCount] = useState(0);
+    const [failedImportCount, setFailedImportCount] = useState(0);
+    const [completingCuration, setCompletingCuration] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const categories = useMemo(
@@ -166,9 +228,35 @@ export default function CalendarImportOnboarding() {
         [candidates, selectedIds]
     );
     const allCandidatesSelected = candidates.length > 0 && selectedIds.size === candidates.length;
+    const routeCandidateCount = useMemo(
+        () => selectedCandidates.filter(isCalendarRouteCandidate).length,
+        [selectedCandidates]
+    );
+    const remainingNotificationQuota = Math.max(
+        0,
+        subscriptionPolicy.maxSmartSchedulesPerMonth - subscriptionPolicy.usedSmartSchedulesThisMonth
+    );
+    // 목적지 후보가 하나도 없으면 공통 출발지를 받아도 경로를 만들 수 없다.
+    // 이 경우 사용자가 불필요한 위치 선택 단계에 갇히지 않도록 일정 저장만 진행한다.
+    const routePreparationEnabled = prepareDepartureAlert &&
+        routeCandidateCount > 0 &&
+        remainingNotificationQuota > 0;
+    const defaultOriginReady = hasFavoriteDepartureCoords(defaultOrigin);
+    const canImportSelectedSchedules = !routePreparationEnabled || defaultOriginReady;
     const providerOptions = useMemo(
         () => buildCalendarProviderOptions(deviceProviderLabel),
         [deviceProviderLabel]
+    );
+    const calendarConsentItems = useMemo(
+        () => buildCalendarConsentItems(selectedProviderIds, deviceProviderLabel),
+        [deviceProviderLabel, selectedProviderIds]
+    );
+    const calendarConsentItemIds = useMemo(
+        () => calendarConsentItems.map((item) => item.id),
+        [calendarConsentItems]
+    );
+    const allCalendarConsentsAccepted = calendarConsentItems.every(
+        (item) => !item.required || acceptedCalendarConsentIds.has(item.id)
     );
     const providerCtaLabel = selectedProviderIds.size === 0
         ? "캘린더를 선택해 주세요"
@@ -183,7 +271,7 @@ export default function CalendarImportOnboarding() {
         if (labels.length === 1) return labels[0];
         return "선택한 캘린더";
     }, [deviceProviderLabel, selectedProviderIds]);
-    const canGoBack = step !== "intro" && step !== "scanning" && step !== "complete" && !importing;
+    const canGoBack = step !== "intro" && step !== "complete" && !importing;
 
     const stepMotionStyle = {
         opacity: stepMotion,
@@ -302,8 +390,79 @@ export default function CalendarImportOnboarding() {
         };
     }, [dispatch]);
 
-    const skipOnboarding = () => {
-        router.replace("/schedule");
+    useEffect(() => {
+        let cancelled = false;
+
+        getFavoriteDeparturePlaces()
+            .then((places) => {
+                if (cancelled) return;
+                const placesWithCoordinates = places.filter(hasFavoriteDepartureCoords);
+                setFavoriteDeparturePlaces(placesWithCoordinates);
+                setDefaultOrigin((current) => current ?? placesWithCoordinates[0]);
+            })
+            .catch(() => {
+                // 신규 가입자는 저장된 출발지가 없을 수 있다. 검색 입력을 그대로 제공한다.
+            });
+
+        getMySubscriptionPolicy()
+            .then((policy) => {
+                if (!cancelled) setSubscriptionPolicy(policy);
+            })
+            .catch(() => {
+                // 정책 조회 실패 시 서버의 FREE 정책보다 느슨해지지 않는 로컬 기본값을 사용한다.
+                if (!cancelled) setSubscriptionPolicy(FREE_SUBSCRIPTION_POLICY);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (remainingNotificationQuota === 0) {
+            setPrepareDepartureAlert(false);
+        }
+    }, [remainingNotificationQuota]);
+
+    useEffect(() => {
+        const availableIds = new Set(calendarConsentItemIds);
+
+        setAcceptedCalendarConsentIds((current) => {
+            const next = new Set(Array.from(current).filter((id) => availableIds.has(id)));
+            return next.size === current.size ? current : next;
+        });
+        setExpandedCalendarConsentIds((current) => {
+            const next = new Set(Array.from(current).filter((id) => availableIds.has(id)));
+            return next.size === current.size ? current : next;
+        });
+    }, [calendarConsentItemIds]);
+
+    const persistCurationCompletion = async () => {
+        if (isCurationCompleted) return;
+
+        const status = await completeMemberCuration();
+        if (!status.curationCompleted) {
+            throw new Error("큐레이션 완료 상태를 저장하지 못했습니다.");
+        }
+
+        // 서버 저장이 끝난 뒤 로컬 인증 상태를 갱신해야 보호된 일정 화면이 열린다.
+        await saveAuthCurationCompleted(true);
+        await syncAuthentication();
+    };
+
+    const finishCuration = async () => {
+        if (completingCuration || importing) return;
+
+        try {
+            setCompletingCuration(true);
+            await persistCurationCompletion();
+            scanAttemptRef.current += 1;
+            router.replace("/schedule");
+        } catch (error) {
+            Alert.alert("완료 상태 저장 실패", getErrorMessage(error, "네트워크를 확인하고 다시 시도해 주세요."));
+        } finally {
+            setCompletingCuration(false);
+        }
     };
 
     const goBackStep = () => {
@@ -315,6 +474,11 @@ export default function CalendarImportOnboarding() {
                 break;
             case "permission":
                 goToStep("provider");
+                break;
+            case "scanning":
+                scanAttemptRef.current += 1;
+                setErrorMessage("일정 확인을 중단했어요. 준비되면 다시 시도해 주세요.");
+                goToStep("permission");
                 break;
             case "select":
                 goToStep("permission");
@@ -339,48 +503,79 @@ export default function CalendarImportOnboarding() {
         });
     };
 
+    const toggleCalendarConsent = (consentId: CalendarConsentId) => {
+        setAcceptedCalendarConsentIds((current) => {
+            const next = new Set(current);
+            if (next.has(consentId)) {
+                next.delete(consentId);
+            } else {
+                next.add(consentId);
+            }
+            return next;
+        });
+    };
+
+    const toggleAllCalendarConsents = () => {
+        setAcceptedCalendarConsentIds((current) => {
+            if (allCalendarConsentsAccepted) {
+                return new Set(
+                    Array.from(current).filter((id) => !calendarConsentItemIds.includes(id))
+                );
+            }
+
+            return new Set([
+                ...Array.from(current),
+                ...calendarConsentItems.filter((item) => item.required).map((item) => item.id),
+            ]);
+        });
+    };
+
+    const toggleCalendarConsentDetail = (consentId: CalendarConsentId) => {
+        setExpandedCalendarConsentIds((current) => {
+            const next = new Set(current);
+            if (next.has(consentId)) {
+                next.delete(consentId);
+            } else {
+                next.add(consentId);
+            }
+            return next;
+        });
+    };
+
     const scanCalendars = async () => {
+        const attemptId = scanAttemptRef.current + 1;
+        scanAttemptRef.current = attemptId;
+        const isCurrentAttempt = () => scanAttemptRef.current === attemptId;
+
         setErrorMessage(null);
         goToStep("scanning");
         setScanStage(0);
+        setScanStatusMessage("캘린더 연결 상태를 확인하고 있어요");
 
         try {
-            const scans: CalendarScanResult[] = [];
-            const failures: string[] = [];
-            const wantsDeviceCalendar = selectedProviderIds.has("device");
-            const wantsGoogleCalendar = selectedProviderIds.has("google");
-            setScanStage(1);
+            const outcome = await scanSelectedCalendarProviders({
+                selectedProviderIds,
+                deviceProvider: getDeviceCalendarProvider(),
+                deviceProviderLabel,
+                requestDevicePermission: requestDeviceCalendarPermission,
+                loadDeviceSummary: loadDeviceCalendarImportSummary,
+                requestGoogleAccessToken: requestGoogleCalendarAccessToken,
+                loadGoogleSummary: loadGoogleCalendarImportSummary,
+                shouldContinue: isCurrentAttempt,
+                onProgress: (progress) => {
+                    if (!isCurrentAttempt()) return;
+                    const presentation = getScanProgressPresentation(progress, deviceProviderLabel);
+                    setScanStage((current) => Math.max(current, presentation.stage));
+                    setScanStatusMessage(presentation.message);
+                },
+            });
 
-            if (wantsDeviceCalendar) {
-                const granted = await requestDeviceCalendarPermission();
-                if (granted) {
-                    scans.push({
-                        provider: getDeviceCalendarProvider(),
-                        providerLabel: deviceProviderLabel,
-                        summary: await loadDeviceCalendarImportSummary(),
-                    });
-                } else {
-                    failures.push(`${deviceProviderLabel} 권한이 꺼져 있어요.`);
-                }
-            }
+            if (outcome.cancelled || !isCurrentAttempt()) return;
 
-            if (wantsGoogleCalendar) {
-                const accessToken = await requestGoogleCalendarAccessToken();
-                if (accessToken) {
-                    scans.push({
-                        provider: "GOOGLE",
-                        providerLabel: getCalendarProviderLabel("GOOGLE"),
-                        summary: await loadGoogleCalendarImportSummary(accessToken),
-                    });
-                } else {
-                    failures.push("Google Calendar 연결이 취소됐어요.");
-                }
-            }
-
-            if (scans.length === 0) {
+            if (outcome.scans.length === 0) {
                 setErrorMessage(
-                    failures.length > 0
-                        ? failures.join("\n")
+                    outcome.failures.length > 0
+                        ? formatCalendarScanFailures(outcome.failures)
                         : "연결된 캘린더에서 일정을 불러오지 못했습니다."
                 );
                 goToStep("permission");
@@ -388,39 +583,88 @@ export default function CalendarImportOnboarding() {
             }
 
             const loadedCandidates = mergeCalendarCandidates(
-                scans.flatMap((scan) => scan.summary.candidates)
+                outcome.scans.flatMap((scan) => scan.summary.candidates)
             );
-            await recordCalendarScan({
-                provider: scans[0].provider,
-                providerLabel: scans.map((scan) => scan.providerLabel).join(" + "),
-                providerLabels: scans.map((scan) => scan.providerLabel),
-                calendarCount: scans.reduce((total, scan) => total + scan.summary.calendarCount, 0),
-                calendarNames: scans.flatMap((scan) => scan.summary.calendarSources.map((calendar) => calendar.title)),
-                eventCandidateCount: loadedCandidates.length,
-            });
             setScanStage(2);
+            setScanStatusMessage("가져올 일정 후보를 정리하고 있어요");
+
+            try {
+                await withCalendarImportTimeout(
+                    recordCalendarScan({
+                        provider: outcome.scans[0].provider,
+                        providerLabel: outcome.scans.map((scan) => scan.providerLabel).join(" + "),
+                        providerLabels: outcome.scans.map((scan) => scan.providerLabel),
+                        calendarCount: outcome.scans.reduce(
+                            (total, scan) => total + scan.summary.calendarCount,
+                            0
+                        ),
+                        calendarNames: outcome.scans.flatMap((scan) =>
+                            scan.summary.calendarSources.map((calendar) => calendar.title)
+                        ),
+                        eventCandidateCount: loadedCandidates.length,
+                    }),
+                    {
+                        timeoutMs: SECURE_STORAGE_TIMEOUT_MS,
+                        operationName: "캘린더 연결 상태 저장",
+                    }
+                );
+            } catch (error) {
+                console.warn("[calendar-import] connection snapshot save delayed", error);
+            }
+
+            if (!isCurrentAttempt()) return;
+
+            setErrorMessage(
+                outcome.failures.length > 0
+                    ? `일부 캘린더는 연결하지 못했어요.\n${formatCalendarScanFailures(outcome.failures)}`
+                    : null
+            );
             setCandidates(loadedCandidates);
             setSelectedIds(getDefaultSelectedCandidateIds(loadedCandidates));
             goToStep("select");
         } catch (error) {
+            if (!isCurrentAttempt()) return;
             setErrorMessage(getErrorMessage(error, "캘린더 일정을 불러오지 못했습니다."));
             goToStep("permission");
         }
     };
 
     const requestGoogleCalendarAccessToken = async (): Promise<string | null> => {
+        if (!GOOGLE_CALENDAR_CLIENT_ID) {
+            throw new Error("Google Calendar Client ID가 설정되지 않았어요. EXPO_PUBLIC_GOOGLE_CALENDAR_CLIENT_ID를 확인해 주세요.");
+        }
+
         if (!googleAuthRequest) {
             throw new Error("Google Calendar 연결 준비가 아직 끝나지 않았어요. 잠시 후 다시 시도해 주세요.");
         }
 
-        const result = await promptGoogleCalendarAuth();
+        const result = await withCalendarImportTimeout(
+            promptGoogleCalendarAuth(),
+            {
+                timeoutMs: GOOGLE_AUTH_TIMEOUT_MS,
+                operationName: "Google 계정 연결",
+            }
+        );
+        if (result.type === "error") {
+            throw new Error(
+                result.error?.message ||
+                result.params?.error_description ||
+                "Google 계정 연결에 실패했어요."
+            );
+        }
         if (result.type !== "success") return null;
 
         if (result.authentication?.accessToken) {
-            await saveGoogleCalendarAccessToken({
-                accessToken: result.authentication.accessToken,
-                expiresIn: result.authentication.expiresIn,
-            });
+            await withCalendarImportTimeout(
+                saveGoogleCalendarAccessToken({
+                    accessToken: result.authentication.accessToken,
+                    expiresIn: result.authentication.expiresIn,
+                }),
+                {
+                    timeoutMs: SECURE_STORAGE_TIMEOUT_MS,
+                    operationName: "Google 연결 정보 저장",
+                }
+            );
             return result.authentication.accessToken;
         }
 
@@ -429,23 +673,35 @@ export default function CalendarImportOnboarding() {
             throw new Error("Google Calendar 인증 코드를 확인하지 못했습니다.");
         }
 
-        const tokenResponse = await AuthSession.exchangeCodeAsync(
-            {
-                clientId: GOOGLE_CALENDAR_CLIENT_ID,
-                code,
-                redirectUri: googleAuthRequest.redirectUri,
-                scopes: GOOGLE_CALENDAR_SCOPES,
-                extraParams: {
-                    code_verifier: googleAuthRequest.codeVerifier,
+        const tokenResponse = await withCalendarImportTimeout(
+            AuthSession.exchangeCodeAsync(
+                {
+                    clientId: GOOGLE_CALENDAR_CLIENT_ID,
+                    code,
+                    redirectUri: googleAuthRequest.redirectUri,
+                    scopes: GOOGLE_CALENDAR_SCOPES,
+                    extraParams: {
+                        code_verifier: googleAuthRequest.codeVerifier,
+                    },
                 },
-            },
-            GoogleAuth.discovery
+                GoogleAuth.discovery
+            ),
+            {
+                timeoutMs: GOOGLE_TOKEN_EXCHANGE_TIMEOUT_MS,
+                operationName: "Google 인증 완료",
+            }
         );
 
-        await saveGoogleCalendarAccessToken({
-            accessToken: tokenResponse.accessToken,
-            expiresIn: tokenResponse.expiresIn,
-        });
+        await withCalendarImportTimeout(
+            saveGoogleCalendarAccessToken({
+                accessToken: tokenResponse.accessToken,
+                expiresIn: tokenResponse.expiresIn,
+            }),
+            {
+                timeoutMs: SECURE_STORAGE_TIMEOUT_MS,
+                operationName: "Google 연결 정보 저장",
+            }
+        );
         return tokenResponse.accessToken;
     };
 
@@ -492,30 +748,191 @@ export default function CalendarImportOnboarding() {
         });
     };
 
+    const searchDefaultOrigin = async () => {
+        const query = originSearchQuery.trim();
+        if (!query || originSearching) return;
+
+        try {
+            setOriginSearching(true);
+            setOriginSearchError(null);
+            const results = await withCalendarImportTimeout(
+                searchAddressByKeyword(query),
+                {
+                    timeoutMs: PLACE_SEARCH_TIMEOUT_MS,
+                    operationName: "주 출발지 검색",
+                }
+            );
+            setOriginSearchResults(results.slice(0, 5));
+            if (results.length === 0) {
+                setOriginSearchError("검색 결과가 없어요. 건물명이나 도로명 주소로 다시 검색해 주세요.");
+            }
+        } catch (error) {
+            setOriginSearchResults([]);
+            setOriginSearchError(getErrorMessage(error, "출발지를 검색하지 못했습니다."));
+        } finally {
+            setOriginSearching(false);
+        }
+    };
+
+    const selectDefaultOrigin = (place: Place) => {
+        if (!hasFavoriteDepartureCoords(place)) return;
+
+        const requestId = defaultOriginSaveRequestIdRef.current + 1;
+        defaultOriginSaveRequestIdRef.current = requestId;
+        setDefaultOrigin(place);
+        setOriginSearchQuery(place.name?.trim() || place.address?.trim() || "");
+        setOriginSearchResults([]);
+        setOriginSearchError(null);
+        setFavoriteDeparturePlaces((current) => [
+            place,
+            ...current.filter((item) => !isSamePlace(item, place)),
+        ].slice(0, 5));
+
+        saveFavoriteDeparturePlace(place)
+            .then((saved) => {
+                if (requestId !== defaultOriginSaveRequestIdRef.current || !saved) return;
+                setDefaultOrigin(saved);
+                setFavoriteDeparturePlaces((current) => [
+                    saved,
+                    ...current.filter((item) => !isSamePlace(item, saved)),
+                ].slice(0, 5));
+                setOriginSearchError(null);
+            })
+            .catch((error) => {
+                if (requestId !== defaultOriginSaveRequestIdRef.current) return;
+                // 현재 가져오기는 메모리의 선택값으로 진행할 수 있지만 계정 동기화 실패는 숨기지 않는다.
+                setOriginSearchError("기본 출발지를 계정에 저장하지 못했어요. 네트워크를 확인해 주세요.");
+                console.warn("[calendar-import] default origin save failed", error);
+            });
+    };
+
     const importSelectedSchedules = async () => {
-        if (selectedCandidates.length === 0 || importing) return;
+        if (selectedCandidates.length === 0 || importing || !canImportSelectedSchedules) return;
 
         try {
             setImporting(true);
-            let successCount = 0;
+            setImportProgress(0);
+            setPreparedRouteCount(0);
+            setNotificationReadyCount(0);
+            setFailedImportCount(0);
 
-            // 순차 저장을 사용한다. 가입 직후 네트워크가 불안정할 때 일부만 실패해도
-            // 어떤 일정까지 저장됐는지 디버깅하기 쉽고, 서버 부하도 작게 유지된다.
-            for (const candidate of selectedCandidates) {
-                const item = await createSchedule(
-                    buildSchedulePayloadFromCandidate(candidate, {
-                        category: selectedCategory,
-                        travelMode,
-                        travelMinutes,
-                        notificationEnabled,
-                    })
+            let successCount = 0;
+            let routeCount = 0;
+            let enabledNotificationCount = 0;
+            let failureCount = 0;
+            let processedCount = 0;
+            let lastError: unknown;
+            const settings = {
+                category: selectedCategory,
+                travelMode,
+                travelMinutes,
+                prepareDepartureAlert: routePreparationEnabled,
+            };
+            const placeCache = new Map<string, Promise<Place | undefined>>();
+            const resolvePlace = (query: string, center?: RoutePathCoord): Promise<Place | undefined> => {
+                const key = buildPlaceSearchCacheKey(query, center);
+                const cached = placeCache.get(key);
+                if (cached) return cached;
+
+                const request = withCalendarImportTimeout(
+                    searchAddressByKeyword(query, center ? { center, radiusKm: 100 } : undefined),
+                    {
+                        timeoutMs: PLACE_SEARCH_TIMEOUT_MS,
+                        operationName: `장소 검색 (${query})`,
+                    }
+                ).then((results) => results[0]);
+                placeCache.set(key, request);
+                return request;
+            };
+            const findRoutes = (
+                origin: Place,
+                destination: Place,
+                routeSettings: typeof settings,
+                departureAt: Date
+            ) => withCalendarImportTimeout(
+                getRouteAlternativeOptions(
+                    origin,
+                    destination,
+                    routeSettings.travelMode,
+                    { departureAt, searchFutureService: true }
+                ),
+                {
+                    timeoutMs: ROUTE_SEARCH_TIMEOUT_MS,
+                    operationName: "캘린더 일정 경로 생성",
+                }
+            );
+
+            // 장소·경로 공급자 요청은 세 개씩만 병렬 처리한다. 20개 일정을 한꺼번에 조회해
+            // rate limit에 걸리는 것을 막으면서도 일정 하나씩 기다리는 지연은 줄인다.
+            for (let offset = 0; offset < selectedCandidates.length; offset += IMPORT_BATCH_SIZE) {
+                const batch = selectedCandidates.slice(offset, offset + IMPORT_BATCH_SIZE);
+                const canAttemptMoreNotifications = routePreparationEnabled &&
+                    defaultOriginReady &&
+                    enabledNotificationCount < remainingNotificationQuota;
+                const enrichedBatch = await Promise.all(
+                    batch.map((candidate) => canAttemptMoreNotifications
+                        ? enrichCalendarCandidateWithRoute(
+                            candidate,
+                            settings,
+                            defaultOrigin,
+                            { resolvePlace, findRoutes }
+                        )
+                        : Promise.resolve({
+                            payload: buildSchedulePayloadFromCandidate(candidate, settings),
+                            routePrepared: false,
+                            hints: extractCalendarRouteHints(candidate),
+                        })
+                    )
                 );
-                dispatch({ type: "ADD_ITEM", item });
-                successCount += 1;
+
+                // 일정 생성은 순차 처리해 구독 quota가 동시에 중복 소비되지 않게 한다.
+                for (const enriched of enrichedBatch) {
+                    const shouldEnableNotification = enriched.routePrepared &&
+                        enabledNotificationCount < remainingNotificationQuota;
+                    const payload = shouldEnableNotification
+                        ? enableCalendarImportNotification(
+                            enriched.payload,
+                            subscriptionPolicy.minEtaRefreshIntervalMinutes
+                        )
+                        : enriched.payload;
+
+                    try {
+                        const result = await createImportedSchedule(payload);
+                        dispatch({ type: "ADD_ITEM", item: result.item });
+                        successCount += 1;
+                        if (enriched.routePrepared) routeCount += 1;
+                        if (result.notificationEnabled) enabledNotificationCount += 1;
+                    } catch (error) {
+                        lastError = error;
+                        failureCount += 1;
+                    } finally {
+                        processedCount += 1;
+                        setImportProgress(processedCount);
+                    }
+                }
+            }
+
+            if (successCount === 0) {
+                throw lastError ?? new Error("선택한 일정을 가져오지 못했습니다.");
             }
 
             setImportedCount(successCount);
-            await recordCalendarImportCompleted(successCount);
+            setPreparedRouteCount(routeCount);
+            setNotificationReadyCount(enabledNotificationCount);
+            setFailedImportCount(failureCount);
+            try {
+                await recordCalendarImportCompleted(successCount);
+            } catch (error) {
+                // 연결 이력 저장이 실패해도 이미 생성된 일정을 다시 보내 중복시키지 않는다.
+                console.warn("[calendar-import] completion snapshot save failed", error);
+            }
+            try {
+                await persistCurationCompletion();
+            } catch (error) {
+                // 일정 생성은 이미 끝났으므로 중복 가져오기를 유도하지 않는다. 완료 화면의
+                // "내 일정 보기" 버튼이 멱등 완료 API를 다시 호출해 안전하게 복구한다.
+                console.warn("[calendar-import] account completion save failed", error);
+            }
             goToStep("complete");
         } catch (error) {
             Alert.alert("가져오기 실패", getErrorMessage(error, "선택한 일정을 가져오지 못했습니다."));
@@ -593,8 +1010,17 @@ export default function CalendarImportOnboarding() {
                         <StepIcon name={Platform.OS === "ios" ? "calendar-outline" : "phone-portrait-outline"} />
                         <Text style={styles.title}>{permissionProviderLabel}에서{"\n"}다가오는 일정을 찾아볼게요</Text>
                         <Text style={styles.subtitle}>
-                            가져올 일정은 직접 고르고, 원본 캘린더는 수정하지 않습니다.
+                            아래 필수 항목에 동의하면 캘린더 권한 요청으로 이어집니다.
                         </Text>
+                        <CalendarConsentChecklist
+                            items={calendarConsentItems}
+                            acceptedIds={acceptedCalendarConsentIds}
+                            expandedIds={expandedCalendarConsentIds}
+                            allAccepted={allCalendarConsentsAccepted}
+                            onToggleAll={toggleAllCalendarConsents}
+                            onToggleItem={toggleCalendarConsent}
+                            onToggleDetail={toggleCalendarConsentDetail}
+                        />
                         {errorMessage ? (
                             <View style={styles.inlineNotice}>
                                 <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
@@ -611,6 +1037,7 @@ export default function CalendarImportOnboarding() {
                             accessibilityLabel={`다가오는 일정을 찾고 있어요. ${SCAN_MESSAGES[Math.min(scanStage, SCAN_MESSAGES.length - 1)]}`}
                         />
                         <Text style={styles.title}>다가오는 일정을{"\n"}찾고 있어요</Text>
+                        <Text style={styles.subtitle}>{scanStatusMessage}</Text>
                         <View style={styles.scanList}>
                             {SCAN_MESSAGES.map((message, index) => (
                                 <View key={message} style={styles.scanRow}>
@@ -642,6 +1069,12 @@ export default function CalendarImportOnboarding() {
                         <Text pointerEvents="none" style={styles.subtitle}>
                             장소와 시간이 있는 일정은 기본으로 선택했고, 종일 일정도 직접 고를 수 있어요.
                         </Text>
+                        {errorMessage ? (
+                            <View style={styles.inlineNotice}>
+                                <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
+                                <Text style={styles.inlineNoticeText}>{errorMessage}</Text>
+                            </View>
+                        ) : null}
 
                         {candidates.length === 0 ? (
                             <View style={styles.emptyBox}>
@@ -702,9 +1135,9 @@ export default function CalendarImportOnboarding() {
                 {step === "enrich" && (
                     <View style={styles.stepWrap}>
                         <Text style={styles.eyebrow}>{selectedCandidates.length}개 일정 가져오기</Text>
-                        <Text style={styles.title}>출발 알림은{"\n"}이렇게 준비할게요</Text>
+                        <Text style={styles.title}>메모를 읽고{"\n"}경로까지 준비할게요</Text>
                         <Text style={styles.subtitle}>
-                            지금은 공통값만 정하고, 일정 화면에서 하나씩 수정할 수 있어요.
+                            {selectedCandidates.length}개 중 {routeCandidateCount}개 일정에서 경로 후보를 찾았어요.
                         </Text>
 
                         <SectionTitle label="카테고리" />
@@ -720,46 +1153,77 @@ export default function CalendarImportOnboarding() {
                             ))}
                         </View>
 
-                        <SectionTitle label="이동수단" />
-                        <View style={styles.chipRow}>
-                            {TRAVEL_MODES.map((option) => (
-                                <OptionChip
-                                    key={option.value}
-                                    label={option.label}
-                                    icon={option.icon}
-                                    active={travelMode === option.value}
-                                    onPress={() => setTravelMode(option.value)}
-                                />
-                            ))}
-                        </View>
-
-                        <SectionTitle label="예상 이동시간" />
-                        <View style={styles.chipRow}>
-                            {TRAVEL_MINUTES.map((minutes) => (
-                                <OptionChip
-                                    key={minutes}
-                                    label={`${minutes}분`}
-                                    active={travelMinutes === minutes}
-                                    onPress={() => setTravelMinutes(minutes)}
-                                />
-                            ))}
-                        </View>
-
                         <View style={styles.switchRow}>
                             <View style={styles.switchTextWrap}>
-                                <Text style={styles.switchTitle}>출발 알림</Text>
-                                <Text style={styles.switchHint}>일정 시작 15분 전부터 확인</Text>
+                                <Text style={styles.switchTitle}>경로와 출발 알림 자동 준비</Text>
+                                <Text style={styles.switchHint}>
+                                    {routeCandidateCount === 0
+                                        ? "경로 후보가 없어 일정만 가져와요"
+                                        : remainingNotificationQuota > 0
+                                            ? `이번 달 최대 ${remainingNotificationQuota}개 자동 설정`
+                                            : "이번 달 실시간 알림 한도를 모두 사용했어요"}
+                                </Text>
                             </View>
                             <Switch
-                                value={notificationEnabled}
-                                onValueChange={setNotificationEnabled}
+                                value={routePreparationEnabled}
+                                onValueChange={setPrepareDepartureAlert}
+                                disabled={routeCandidateCount === 0 || remainingNotificationQuota === 0}
                                 trackColor={{
                                     false: mode === "dark" ? "#34363D" : "#D7D9DF",
                                     true: colors.selectedDayBg,
                                 }}
-                                thumbColor={notificationEnabled ? colors.selectedDayText : "#FFFFFF"}
+                                thumbColor={routePreparationEnabled ? colors.selectedDayText : "#FFFFFF"}
                             />
                         </View>
+
+                        {routePreparationEnabled ? (
+                            <>
+                                <SectionTitle label="주로 출발하는 위치" />
+                                <DefaultOriginPicker
+                                    favorites={favoriteDeparturePlaces}
+                                    selected={defaultOrigin}
+                                    query={originSearchQuery}
+                                    results={originSearchResults}
+                                    searching={originSearching}
+                                    error={originSearchError}
+                                    onQueryChange={setOriginSearchQuery}
+                                    onSearch={searchDefaultOrigin}
+                                    onSelect={selectDefaultOrigin}
+                                />
+
+                                <View style={styles.routePreparationNotice}>
+                                    <Ionicons name="sparkles-outline" size={17} color={colors.textPrimary} />
+                                    <Text style={styles.routePreparationNoticeText}>
+                                        메모에 출발지가 있으면 그 장소를 우선 사용하고, 없으면 선택한 주 출발지에서 경로를 만들어요.
+                                    </Text>
+                                </View>
+
+                                <SectionTitle label="이동수단" />
+                                <View style={styles.chipRow}>
+                                    {TRAVEL_MODES.map((option) => (
+                                        <OptionChip
+                                            key={option.value}
+                                            label={option.label}
+                                            icon={option.icon}
+                                            active={travelMode === option.value}
+                                            onPress={() => setTravelMode(option.value)}
+                                        />
+                                    ))}
+                                </View>
+
+                                <SectionTitle label="경로를 못 찾았을 때 예상 이동시간" />
+                                <View style={styles.chipRow}>
+                                    {TRAVEL_MINUTES.map((minutes) => (
+                                        <OptionChip
+                                            key={minutes}
+                                            label={`${minutes}분`}
+                                            active={travelMinutes === minutes}
+                                            onPress={() => setTravelMinutes(minutes)}
+                                        />
+                                    ))}
+                                </View>
+                            </>
+                        ) : null}
                     </View>
                 )}
 
@@ -768,7 +1232,12 @@ export default function CalendarImportOnboarding() {
                         <StepIcon name="checkmark-circle-outline" />
                         <Text style={styles.title}>일정 {importedCount}개를{"\n"}NoLate에 추가했어요</Text>
                         <Text style={styles.subtitle}>
-                            장소가 있는 일정은 출발 시간을 기준으로 다시 다듬을 수 있습니다.
+                            {notificationReadyCount > 0
+                                ? `${notificationReadyCount}개 일정은 경로와 출발 알림까지 준비했어요.`
+                                : preparedRouteCount > 0
+                                    ? `${preparedRouteCount}개 일정의 경로를 준비했어요.`
+                                    : "장소가 부족한 일정은 알림을 끈 상태로 안전하게 가져왔어요."}
+                            {failedImportCount > 0 ? `\n${failedImportCount}개 일정은 저장하지 못했어요.` : ""}
                         </Text>
                     </View>
                 )}
@@ -779,7 +1248,11 @@ export default function CalendarImportOnboarding() {
                 {step === "intro" && (
                     <>
                         <PrimaryButton label="일정 불러오기" onPress={() => goToStep("provider")} />
-                        <GhostButton label="일정 없이 시작하기" onPress={skipOnboarding} />
+                        <GhostButton
+                            label={completingCuration ? "완료 상태 저장 중" : "일정 없이 시작하기"}
+                            disabled={completingCuration}
+                            onPress={finishCuration}
+                        />
                     </>
                 )}
                 {step === "provider" && (
@@ -789,16 +1262,30 @@ export default function CalendarImportOnboarding() {
                             disabled={selectedProviderIds.size === 0}
                             onPress={() => goToStep("permission")}
                         />
-                        <GhostButton label="일정 없이 시작하기" onPress={skipOnboarding} />
+                        <GhostButton
+                            label={completingCuration ? "완료 상태 저장 중" : "일정 없이 시작하기"}
+                            disabled={completingCuration}
+                            onPress={finishCuration}
+                        />
                     </>
                 )}
                 {step === "permission" && (
                     <>
-                        <PrimaryButton label="계속하기" onPress={scanCalendars} />
-                        <GhostButton label="나중에 할게요" onPress={skipOnboarding} />
+                        <PrimaryButton
+                            label={allCalendarConsentsAccepted ? "동의하고 계속하기" : "필수 항목 동의하기"}
+                            disabled={!allCalendarConsentsAccepted}
+                            onPress={scanCalendars}
+                        />
+                        <GhostButton
+                            label={completingCuration ? "완료 상태 저장 중" : "건너뛰고 시작하기"}
+                            disabled={completingCuration}
+                            onPress={finishCuration}
+                        />
                     </>
                 )}
-                {step === "scanning" && null}
+                {step === "scanning" && (
+                    <GhostButton label="이전으로 돌아가기" onPress={goBackStep} />
+                )}
                 {step === "select" && (
                     <>
                         <PrimaryButton
@@ -811,17 +1298,210 @@ export default function CalendarImportOnboarding() {
                 {step === "enrich" && (
                     <>
                         <PrimaryButton
-                            label={importing ? "가져오는 중" : "가져오기 완료"}
-                            disabled={importing}
+                            label={importing
+                                ? `${importProgress}/${selectedCandidates.length} 가져오는 중`
+                                : routePreparationEnabled && !defaultOriginReady
+                                    ? "주 출발지를 선택해 주세요"
+                                    : "가져오기 완료"}
+                            disabled={importing || !canImportSelectedSchedules}
                             onPress={importSelectedSchedules}
                         />
                         <GhostButton label="이전으로" disabled={importing} onPress={() => goToStep("select")} />
                     </>
                 )}
                 {step === "complete" && (
-                    <PrimaryButton label="내 일정 보기" onPress={skipOnboarding} />
+                    <PrimaryButton
+                        label={completingCuration ? "완료 상태 저장 중" : "내 일정 보기"}
+                        disabled={completingCuration}
+                        onPress={finishCuration}
+                    />
                 )}
             </Animated.View>
+        </View>
+    );
+}
+
+async function createImportedSchedule(payload: SchedulePayload): Promise<{
+    item: Awaited<ReturnType<typeof createSchedule>>;
+    notificationEnabled: boolean;
+}> {
+    try {
+        const item = await createSchedule(payload);
+        return { item, notificationEnabled: payload.notificationEnabled === true };
+    } catch (error) {
+        if (payload.notificationEnabled !== true || !isNotificationConfigurationError(error)) {
+            throw error;
+        }
+
+        // 구독 잔여량이 다른 기기에서 먼저 소비됐거나 서버 정책이 바뀐 경우에도
+        // 일정 자체는 잃지 않도록 같은 payload를 알림만 끈 상태로 한 번 저장한다.
+        const item = await createSchedule({
+            ...payload,
+            notificationEnabled: false,
+            notificationLeadMinutes: undefined,
+            notificationIntervalMinutes: undefined,
+        });
+        return { item, notificationEnabled: false };
+    }
+}
+
+function isNotificationConfigurationError(error: unknown): boolean {
+    const message = getErrorMessage(error, "");
+    return /(실시간 출발 알림|출발 알림|알림 일정|요금제|subscription)/i.test(message);
+}
+
+function buildPlaceSearchCacheKey(query: string, center?: RoutePathCoord): string {
+    return [
+        query.trim().toLocaleLowerCase(),
+        center ? center.lat.toFixed(4) : "",
+        center ? center.lng.toFixed(4) : "",
+    ].join(":");
+}
+
+function isSamePlace(a: Place, b: Place): boolean {
+    if (
+        typeof a.lat === "number" && typeof a.lng === "number" &&
+        typeof b.lat === "number" && typeof b.lng === "number"
+    ) {
+        return Math.abs(a.lat - b.lat) < 0.000001 && Math.abs(a.lng - b.lng) < 0.000001;
+    }
+    return `${a.name ?? ""}:${a.address ?? ""}`.trim().toLocaleLowerCase() ===
+        `${b.name ?? ""}:${b.address ?? ""}`.trim().toLocaleLowerCase();
+}
+
+function isCalendarRouteCandidate(candidate: DeviceCalendarCandidate): boolean {
+    const startAt = new Date(candidate.startAt);
+    return !candidate.allDay &&
+        Number.isFinite(startAt.getTime()) &&
+        startAt.getTime() > Date.now() &&
+        Boolean(extractCalendarRouteHints(candidate).destinationQuery);
+}
+
+function CalendarConsentChecklist({
+    items,
+    acceptedIds,
+    expandedIds,
+    allAccepted,
+    onToggleAll,
+    onToggleItem,
+    onToggleDetail,
+}: {
+    items: CalendarConsentItem[];
+    acceptedIds: Set<CalendarConsentId>;
+    expandedIds: Set<CalendarConsentId>;
+    allAccepted: boolean;
+    onToggleAll: () => void;
+    onToggleItem: (id: CalendarConsentId) => void;
+    onToggleDetail: (id: CalendarConsentId) => void;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <View style={styles.consentCard}>
+            <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: allAccepted }}
+                onPress={onToggleAll}
+                style={({ pressed }) => [
+                    styles.consentAllRow,
+                    pressed && styles.pressed,
+                ]}
+            >
+                <ConsentCheck checked={allAccepted} />
+                <View style={styles.consentCopy}>
+                    <Text style={styles.consentAllTitle}>필수 항목에 모두 동의해요</Text>
+                    <Text style={styles.consentDescription}>
+                        원본 캘린더는 수정하지 않고, 선택한 일정만 가져옵니다.
+                    </Text>
+                </View>
+            </Pressable>
+
+            <View style={styles.consentItemList}>
+                {items.map((item) => {
+                    const checked = acceptedIds.has(item.id);
+                    const expanded = expandedIds.has(item.id);
+
+                    return (
+                        <View key={item.id} style={styles.consentItem}>
+                            <View style={styles.consentItemHeader}>
+                                <Pressable
+                                    accessibilityRole="checkbox"
+                                    accessibilityState={{ checked }}
+                                    onPress={() => onToggleItem(item.id)}
+                                    style={({ pressed }) => [
+                                        styles.consentItemToggle,
+                                        pressed && styles.pressed,
+                                    ]}
+                                >
+                                    <ConsentCheck checked={checked} compact />
+                                    <View style={styles.consentCopy}>
+                                        <View style={styles.consentTitleRow}>
+                                            <Text numberOfLines={1} style={styles.consentItemTitle}>
+                                                {item.title}
+                                            </Text>
+                                            {item.required ? (
+                                                <Text style={styles.consentRequired}>(필수)</Text>
+                                            ) : null}
+                                        </View>
+                                        <Text numberOfLines={2} style={styles.consentDescription}>
+                                            {item.summary}
+                                        </Text>
+                                    </View>
+                                </Pressable>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ expanded }}
+                                    accessibilityLabel={`${item.title} 상세 ${expanded ? "접기" : "보기"}`}
+                                    hitSlop={8}
+                                    onPress={() => onToggleDetail(item.id)}
+                                    style={({ pressed }) => [
+                                        styles.consentChevron,
+                                        pressed && styles.pressed,
+                                    ]}
+                                >
+                                    <Ionicons
+                                        name={expanded ? "chevron-up" : "chevron-down"}
+                                        size={17}
+                                        color={colors.textSecondary}
+                                    />
+                                </Pressable>
+                            </View>
+
+                            {expanded ? (
+                                <View style={styles.consentDetailList}>
+                                    {item.detail.map((line) => (
+                                        <View key={line} style={styles.consentDetailRow}>
+                                            <Text style={styles.consentDetailBullet}>-</Text>
+                                            <Text style={styles.consentDetailText}>{line}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            ) : null}
+                        </View>
+                    );
+                })}
+            </View>
+        </View>
+    );
+}
+
+function ConsentCheck({ checked, compact }: { checked: boolean; compact?: boolean }) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <View style={[
+            compact ? styles.consentCheckCompact : styles.consentCheck,
+            checked && styles.consentCheckSelected,
+        ]}>
+            {checked ? (
+                <Ionicons
+                    name="checkmark"
+                    size={compact ? 13 : 15}
+                    color={colors.selectedDayText}
+                />
+            ) : null}
         </View>
     );
 }
@@ -1038,6 +1718,120 @@ function CandidateRow({
     );
 }
 
+function DefaultOriginPicker({
+    favorites,
+    selected,
+    query,
+    results,
+    searching,
+    error,
+    onQueryChange,
+    onSearch,
+    onSelect,
+}: {
+    favorites: Place[];
+    selected?: Place;
+    query: string;
+    results: PlaceSearchItem[];
+    searching: boolean;
+    error: string | null;
+    onQueryChange: (value: string) => void;
+    onSearch: () => void;
+    onSelect: (place: Place) => void;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <View style={styles.defaultOriginWrap}>
+            {favorites.length > 0 ? (
+                <View style={styles.chipRow}>
+                    {favorites.slice(0, 5).map((place) => (
+                        <OptionChip
+                            key={`${place.lat}:${place.lng}:${place.name ?? place.address ?? "place"}`}
+                            label={place.name?.trim() || place.address?.trim() || "출발지"}
+                            icon="location-outline"
+                            active={Boolean(selected && isSamePlace(selected, place))}
+                            onPress={() => onSelect(place)}
+                        />
+                    ))}
+                </View>
+            ) : null}
+
+            <View style={[styles.originSearchRow, selected && styles.originSearchRowSelected]}>
+                <Ionicons name="search" size={18} color={colors.textSecondary} />
+                <TextInput
+                    value={query}
+                    onChangeText={onQueryChange}
+                    onSubmitEditing={onSearch}
+                    editable={!searching}
+                    returnKeyType="search"
+                    autoCorrect={false}
+                    placeholder="집, 회사 또는 도로명 주소 검색"
+                    placeholderTextColor={colors.textDisabled}
+                    style={styles.originSearchInput}
+                    accessibilityLabel="주로 출발하는 위치 검색"
+                />
+                <Pressable
+                    disabled={searching || !query.trim()}
+                    accessibilityRole="button"
+                    accessibilityLabel="출발지 검색"
+                    onPress={onSearch}
+                    style={({ pressed }) => [
+                        styles.originSearchButton,
+                        (searching || !query.trim()) && styles.disabled,
+                        pressed && styles.pressed,
+                    ]}
+                >
+                    {searching ? (
+                        <ActivityIndicator size="small" color={colors.selectedDayText} />
+                    ) : (
+                        <Ionicons name="arrow-forward" size={17} color={colors.selectedDayText} />
+                    )}
+                </Pressable>
+            </View>
+
+            {selected && hasFavoriteDepartureCoords(selected) ? (
+                <View style={styles.selectedOriginRow}>
+                    <Ionicons name="checkmark-circle" size={17} color={colors.textPrimary} />
+                    <View style={styles.selectedOriginCopy}>
+                        <Text numberOfLines={1} style={styles.selectedOriginTitle}>
+                            {selected.name?.trim() || "선택한 출발지"}
+                        </Text>
+                        {selected.address ? (
+                            <Text numberOfLines={1} style={styles.selectedOriginAddress}>{selected.address}</Text>
+                        ) : null}
+                    </View>
+                </View>
+            ) : null}
+
+            {results.length > 0 ? (
+                <View style={styles.originResultList}>
+                    {results.map((place, index) => (
+                        <Pressable
+                            key={`${place.providerPlaceId ?? place.name}:${place.lat}:${place.lng}`}
+                            onPress={() => onSelect(place)}
+                            style={({ pressed }) => [
+                                styles.originResultRow,
+                                index > 0 && styles.originResultRowDivider,
+                                pressed && styles.pressed,
+                            ]}
+                        >
+                            <Ionicons name="location-outline" size={18} color={colors.textSecondary} />
+                            <View style={styles.originResultCopy}>
+                                <Text numberOfLines={1} style={styles.originResultTitle}>{place.name}</Text>
+                                <Text numberOfLines={1} style={styles.originResultAddress}>{place.address}</Text>
+                            </View>
+                        </Pressable>
+                    ))}
+                </View>
+            ) : null}
+
+            {error ? <Text style={styles.originSearchError}>{error}</Text> : null}
+        </View>
+    );
+}
+
 function OptionChip({
     label,
     active,
@@ -1160,6 +1954,28 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function getScanProgressPresentation(
+    progress: CalendarScanProgress,
+    deviceProviderLabel: string
+): { stage: 0 | 1; message: string } {
+    switch (progress) {
+        case "device-permission":
+            return { stage: 0, message: `${deviceProviderLabel} 접근 권한을 확인하고 있어요` };
+        case "device-events":
+            return { stage: 1, message: `${deviceProviderLabel}의 다가오는 일정을 확인하고 있어요` };
+        case "google-auth":
+            return { stage: 0, message: "Google 계정 연결을 기다리고 있어요" };
+        case "google-events":
+            return { stage: 1, message: "Google Calendar의 다가오는 일정을 확인하고 있어요" };
+    }
+}
+
+function formatCalendarScanFailures(failures: CalendarProviderScanFailure[]): string {
+    return failures
+        .map((failure) => `${failure.providerLabel}: ${failure.message}`)
+        .join("\n");
+}
+
 function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProviderOption[] {
     const deviceDescription = Platform.OS === "ios"
         ? "iPhone에 동기화된 캘린더"
@@ -1183,6 +1999,71 @@ function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProv
             badge: "직접 연결",
         },
     ];
+}
+
+function buildCalendarConsentItems(
+    selectedProviderIds: Set<CalendarProviderId>,
+    deviceProviderLabel: string
+): CalendarConsentItem[] {
+    const items: CalendarConsentItem[] = [];
+
+    if (selectedProviderIds.has("device")) {
+        items.push({
+            id: "device_access",
+            title: `${deviceProviderLabel} 접근`,
+            summary: "기기 캘린더 목록과 다가오는 일정 후보를 읽습니다.",
+            required: true,
+            detail: [
+                "캘린더 이름, 일정 제목, 시작/종료 시간, 장소, 메모, 종일 여부를 일정 후보로 확인합니다.",
+                "선택한 일정의 장소와 메모는 출발지·도착지 후보를 찾고 경로를 준비하는 데 사용합니다.",
+                "원본 캘린더의 일정은 수정하거나 삭제하지 않습니다.",
+                "기기 권한은 iOS/Android 설정에서 언제든 철회할 수 있습니다.",
+            ],
+        });
+    }
+
+    if (selectedProviderIds.has("google")) {
+        items.push({
+            id: "google_access",
+            title: "Google Calendar 연동",
+            summary: "Google OAuth 동의 후 읽기 전용으로 일정을 조회합니다.",
+            required: true,
+            detail: [
+                "Google Calendar API의 읽기 전용 범위로 캘린더 목록과 다가오는 일정 후보를 조회합니다.",
+                "선택한 일정의 장소와 메모는 출발지·도착지 후보를 찾고 경로를 준비하는 데 사용합니다.",
+                "접근 토큰은 기기 보안 저장소에 저장되며 현재 서버에는 저장하지 않습니다.",
+                "Google 계정 보안 설정에서 연동 권한을 철회할 수 있습니다.",
+            ],
+        });
+    }
+
+    items.push(
+        {
+            id: "candidate_review",
+            title: "일정 후보 확인",
+            summary: "가져올 일정을 사용자가 직접 고를 수 있습니다.",
+            required: true,
+            detail: [
+                "장소와 시간이 있는 일정은 기본 추천으로 표시합니다.",
+                "장소와 메모의 명시적인 이동 표현만 분석하며, 찾지 못한 위치는 임의로 확정하지 않습니다.",
+                "종일 일정이나 시간이 애매한 일정은 확인이 필요한 후보로 표시합니다.",
+                "후보 목록에서 전체 선택, 전체 해제, 캘린더별 선택을 할 수 있습니다.",
+            ],
+        },
+        {
+            id: "selected_schedule_storage",
+            title: "선택 일정 저장",
+            summary: "선택한 일정만 NoLate 일정으로 저장합니다.",
+            required: true,
+            detail: [
+                "외부 캘린더 전체 원본을 서버에 일괄 저장하지 않습니다.",
+                "사용자가 가져오기로 선택한 일정의 제목, 시간, 장소, 메모, 카테고리, 경로와 알림 설정만 저장합니다.",
+                "저장된 일정은 NoLate 일정 화면에서 수정하거나 삭제할 수 있습니다.",
+            ],
+        }
+    );
+
+    return items;
 }
 
 function mergeCalendarCandidates(candidates: DeviceCalendarCandidate[]): DeviceCalendarCandidate[] {
@@ -1435,6 +2316,137 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             lineHeight: 17,
             fontWeight: "800",
         },
+        consentCard: {
+            borderRadius: 18,
+            overflow: "hidden",
+            backgroundColor: isDark ? "#17191F" : "#FFFFFF",
+            borderWidth: 1,
+            borderColor: colors.border,
+        },
+        consentAllRow: {
+            minHeight: 70,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 11,
+            backgroundColor: isDark ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.018)",
+        },
+        consentCheck: {
+            width: 27,
+            height: 27,
+            borderRadius: 14,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: 1.5,
+            borderColor: colors.border,
+            backgroundColor: isDark ? "#14161B" : "#FFFFFF",
+        },
+        consentCheckCompact: {
+            width: 22,
+            height: 22,
+            borderRadius: 11,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: 1.4,
+            borderColor: colors.border,
+            backgroundColor: isDark ? "#14161B" : "#FFFFFF",
+        },
+        consentCheckSelected: {
+            borderColor: colors.selectedDayBg,
+            backgroundColor: colors.selectedDayBg,
+        },
+        consentCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 3,
+        },
+        consentAllTitle: {
+            color: colors.textPrimary,
+            fontSize: 15,
+            lineHeight: 20,
+            fontWeight: "900",
+        },
+        consentItemList: {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+        },
+        consentItem: {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: isDark ? "rgba(255,255,255,0.065)" : "rgba(0,0,0,0.055)",
+        },
+        consentItemHeader: {
+            minHeight: 62,
+            flexDirection: "row",
+            alignItems: "stretch",
+        },
+        consentItemToggle: {
+            flex: 1,
+            minWidth: 0,
+            paddingLeft: 14,
+            paddingRight: 6,
+            paddingVertical: 11,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+        },
+        consentTitleRow: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 5,
+            minWidth: 0,
+        },
+        consentItemTitle: {
+            flexShrink: 1,
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        consentRequired: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 15,
+            fontWeight: "900",
+        },
+        consentDescription: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "800",
+        },
+        consentChevron: {
+            width: 44,
+            alignItems: "center",
+            justifyContent: "center",
+        },
+        consentDetailList: {
+            gap: 7,
+            paddingHorizontal: 16,
+            paddingTop: 2,
+            paddingBottom: 13,
+            paddingLeft: 48,
+        },
+        consentDetailRow: {
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: 6,
+        },
+        consentDetailBullet: {
+            width: 7,
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 17,
+            fontWeight: "900",
+        },
+        consentDetailText: {
+            flex: 1,
+            minWidth: 0,
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 17,
+            fontWeight: "700",
+        },
         inlineNotice: {
             borderRadius: 16,
             padding: 14,
@@ -1663,6 +2675,128 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             color: colors.textSecondary,
             fontSize: 12,
             fontWeight: "900",
+        },
+        defaultOriginWrap: {
+            gap: 10,
+        },
+        originSearchRow: {
+            minHeight: 54,
+            borderRadius: 16,
+            paddingLeft: 14,
+            paddingRight: 8,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 9,
+            backgroundColor: colors.surface2,
+            borderWidth: 1,
+            borderColor: colors.border,
+        },
+        originSearchRowSelected: {
+            borderColor: isDark ? "rgba(255,255,255,0.32)" : "rgba(0,0,0,0.22)",
+        },
+        originSearchInput: {
+            flex: 1,
+            minWidth: 0,
+            height: 52,
+            paddingVertical: 0,
+            color: colors.textPrimary,
+            fontSize: 14,
+            fontWeight: "800",
+        },
+        originSearchButton: {
+            width: 38,
+            height: 38,
+            borderRadius: 13,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.selectedDayBg,
+        },
+        selectedOriginRow: {
+            minHeight: 48,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 9,
+            borderRadius: 14,
+            backgroundColor: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+        },
+        selectedOriginCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 2,
+        },
+        selectedOriginTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        selectedOriginAddress: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 15,
+            fontWeight: "700",
+        },
+        originResultList: {
+            overflow: "hidden",
+            borderRadius: 16,
+            backgroundColor: colors.surface2,
+            borderWidth: 1,
+            borderColor: colors.border,
+        },
+        originResultRow: {
+            minHeight: 58,
+            paddingHorizontal: 13,
+            paddingVertical: 9,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+        },
+        originResultRowDivider: {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+        },
+        originResultCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 3,
+        },
+        originResultTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        originResultAddress: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 15,
+            fontWeight: "700",
+        },
+        originSearchError: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "800",
+        },
+        routePreparationNotice: {
+            minHeight: 52,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            flexDirection: "row",
+            alignItems: "flex-start",
+            gap: 8,
+            borderRadius: 15,
+            backgroundColor: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+        },
+        routePreparationNoticeText: {
+            flex: 1,
+            minWidth: 0,
+            color: colors.textSecondary,
+            fontSize: 12,
+            lineHeight: 18,
+            fontWeight: "800",
         },
         chipRow: {
             flexDirection: "row",

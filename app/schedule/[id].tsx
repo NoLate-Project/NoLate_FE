@@ -43,8 +43,8 @@ import type { ScheduleItem, TravelMode } from "../../src/modules/schedule/types"
 import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
-import { createQaScheduleItem, QA_SCHEDULE_ID } from "../../src/modules/schedule/qaSamples";
 import { getAuthMember } from "../../src/modules/auth/authStorage";
+import BrandedLoader, { BrandedLoadingState } from "../../src/ui/BrandedLoader";
 import {
     buildDepartureParticipantPresentations,
     getDepartureOverview,
@@ -156,13 +156,7 @@ function getDepartureDisplayState(
 }
 
 export default function ScheduleRoute() {
-    const { id, mode } = useLocalSearchParams<{ id?: string; mode?: string }>();
-    const { state, dispatch } = useScheduleStore();
-
-    useEffect(() => {
-        if (id !== QA_SCHEDULE_ID || state.itemsById[QA_SCHEDULE_ID]) return;
-        dispatch({ type: "UPDATE_ITEM", item: createQaScheduleItem() });
-    }, [dispatch, id, state.itemsById]);
+    const { mode } = useLocalSearchParams<{ id?: string; mode?: string }>();
 
     if (mode === "edit") {
         return <ScheduleEditScreen />;
@@ -362,8 +356,6 @@ function ScheduleDetail() {
 
     useEffect(() => {
         if (!id) return;
-        if (id === QA_SCHEDULE_ID) return;
-
         let cancelled = false;
         setLoading(true);
         getSchedule(id)
@@ -372,7 +364,7 @@ function ScheduleDetail() {
             })
             .catch((error) => {
                 const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!__DEV__ && !cancelled && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
+                if (!cancelled && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -567,10 +559,25 @@ function ScheduleDetail() {
     }, [fitMap]);
 
     if (!item) {
+        if (loading) {
+            return (
+                <View style={[styles.loadingScreen, { backgroundColor: colors.background }]}>
+                    <BrandedLoadingState
+                        fill
+                        size="full"
+                        variant="schedule"
+                        accessibilityLabel="일정을 불러오고 있어요"
+                        title="일정을 불러오고 있어요"
+                        caption="일정과 이동 정보를 확인하고 있어요"
+                    />
+                </View>
+            );
+        }
+
         return (
             <View style={{ flex: 1, backgroundColor: colors.background, padding: 20, paddingTop: insets.top + 16 }}>
                 <Text style={{ fontSize: 16, fontWeight: "700", color: colors.textPrimary }}>
-                    {loading ? "일정을 불러오는 중이에요." : "일정을 찾을 수 없어요."}
+                    일정을 찾을 수 없어요.
                 </Text>
             </View>
         );
@@ -989,14 +996,27 @@ function ScheduleDetail() {
                                                 },
                                             ]}
                                         >
+                                        {departureActionPending ? (
+                                            <View style={styles.sheetDepartureActionLoading}>
+                                                <BrandedLoader
+                                                    size="button"
+                                                    variant="route"
+                                                    accessibilityLabel="출발 알림을 처리하고 있어요"
+                                                />
+                                                <Text style={[styles.sheetDepartureActionButtonText, { color: "#FFFFFF" }]}>
+                                                    처리 중
+                                                </Text>
+                                            </View>
+                                        ) : (
                                             <Text
                                                 style={[
                                                     styles.sheetDepartureActionButtonText,
                                                     { color: departureCompleted ? topCardAccentText : "#FFFFFF" },
                                                 ]}
                                             >
-                                                {departureCompleted ? "알림 완료" : departureActionPending ? "처리 중" : "출발 알리기"}
+                                                {departureCompleted ? "알림 완료" : "출발 알리기"}
                                             </Text>
+                                        )}
                                         </Pressable>
                                     )}
                                 </View>
@@ -1155,6 +1175,9 @@ function ScheduleDetail() {
 }
 
 const styles = StyleSheet.create({
+    loadingScreen: {
+        flex: 1,
+    },
     container: { flex: 1 },
     fullMap: { flex: 1 },
     topOverlay: {
@@ -1555,6 +1578,11 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         fontWeight: "900",
         letterSpacing: 0,
+    },
+    sheetDepartureActionLoading: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
     },
     sheetRouteSummary: {
         paddingVertical: 14,

@@ -2,7 +2,6 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     Modal,
     Pressable,
@@ -29,6 +28,7 @@ import {
 import type { ScheduleSharePermission } from "../../types";
 import { createDirectShareTarget } from "../../../share/directShareTarget";
 import { useTheme } from "../../../theme/ThemeContext";
+import BrandedLoader from "../../../../ui/BrandedLoader";
 
 type ShareInvitationSheetProps = {
     visible: boolean;
@@ -493,7 +493,13 @@ export default function ShareInvitationSheet({
                         <View style={[styles.invitationPanel, { borderColor: colors.border }]}>
                             <View style={styles.invitationHeader}>
                                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>최근 초대</Text>
-                                {loading && <ActivityIndicator size="small" color={colors.textSecondary} />}
+                                {loading ? (
+                                    <BrandedLoader
+                                        size="button"
+                                        variant="share"
+                                        accessibilityLabel="최근 초대를 불러오고 있어요"
+                                    />
+                                ) : null}
                             </View>
                             {linkError ? (
                                 <Text style={[styles.helperText, { color: colors.textSecondary }]}>
@@ -533,7 +539,11 @@ export default function ShareInvitationSheet({
                         ]}
                     >
                         {submitting ? (
-                            <ActivityIndicator size="small" color="#FFFFFF" />
+                            <BrandedLoader
+                                size="button"
+                                variant="share"
+                                accessibilityLabel="공유를 준비하고 있어요"
+                            />
                         ) : (
                             <>
                                 <Ionicons

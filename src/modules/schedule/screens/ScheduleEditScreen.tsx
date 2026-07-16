@@ -25,7 +25,7 @@ import {
     getMySubscriptionPolicy,
     type SubscriptionPolicy,
 } from "../../../api/subscription";
-import { QA_SCHEDULE_ID } from "../qaSamples";
+import { BrandedLoadingState } from "../../../ui/BrandedLoader";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const ymdText = (d: Date)   => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -131,8 +131,6 @@ export default function ScheduleEdit() {
 
     useEffect(() => {
         if (!id) return;
-        if (id === QA_SCHEDULE_ID) return;
-
         let cancelled = false;
         setDetailLoading(true);
 
@@ -144,7 +142,7 @@ export default function ScheduleEdit() {
             .catch((error) => {
                 if (cancelled) return;
                 const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!__DEV__ && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
+                if (!routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setDetailLoading(false);
@@ -357,10 +355,25 @@ export default function ScheduleEdit() {
     }, [pathname, routePlannerSessionId]);
 
     if (!item) {
+        if (detailLoading) {
+            return (
+                <View style={{ flex: 1, backgroundColor: colors.background }}>
+                    <BrandedLoadingState
+                        fill
+                        size="full"
+                        variant="schedule"
+                        accessibilityLabel="수정할 일정을 불러오고 있어요"
+                        title="일정을 불러오고 있어요"
+                        caption="수정할 일정 정보를 확인하고 있어요"
+                    />
+                </View>
+            );
+        }
+
         return (
             <View style={{ flex: 1, backgroundColor: colors.background, padding: 20, paddingTop: insets.top + 16 }}>
                 <Text style={{ fontSize: 16, fontWeight: "700", color: colors.textPrimary }}>
-                    {detailLoading ? "일정을 불러오는 중이에요." : "일정을 찾을 수 없어요."}
+                    일정을 찾을 수 없어요.
                 </Text>
             </View>
         );

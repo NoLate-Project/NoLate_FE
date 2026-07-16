@@ -6,6 +6,7 @@ import TestRenderer, {
 } from "react-test-renderer";
 
 import ScheduleCalendar from "../src/modules/schedule/components/calendar/ScheduleCalendar";
+import type { TodayFocusTarget } from "../src/modules/schedule/components/calendar/ScheduleCalendar";
 import type { CalendarViewMode } from "../src/modules/schedule/components/calendar/viewMode";
 
 jest.mock("@expo/vector-icons", () => ({
@@ -198,6 +199,40 @@ describe("ScheduleCalendar stack month navigation", () => {
             const data = list.props.data as StackMonthTestItem[];
 
             expect(data[list.props.initialScrollIndex].key).toBe("2026-08");
+        }
+    );
+
+    test.each(["compact", "stack"] as const)(
+        "%s Today target은 스크롤 RAF 직후 ACK한다",
+        async (viewMode) => {
+            const target: TodayFocusTarget = {
+                day: "2026-08-16",
+                requiresMonthChange: true,
+            };
+            const onTodayFocusReady = jest.fn();
+
+            await act(async () => {
+                renderer = TestRenderer.create(
+                    <ScheduleCalendar
+                        selectedDay={target.day}
+                        focusedMonth={target.day}
+                        items={[]}
+                        onSelectDay={jest.fn()}
+                        onOpenDay={jest.fn()}
+                        viewMode={viewMode}
+                        firstDay={0}
+                        scrollRequest={1}
+                        onVisibleMonthChange={onVisibleMonthChange}
+                        todayFocusTarget={target}
+                        onTodayFocusReady={onTodayFocusReady}
+                    />
+                );
+            });
+
+            expect(onTodayFocusReady).not.toHaveBeenCalled();
+            act(() => jest.runOnlyPendingTimers());
+            expect(onTodayFocusReady).toHaveBeenCalledTimes(1);
+            expect(onTodayFocusReady).toHaveBeenCalledWith(target.day);
         }
     );
 });

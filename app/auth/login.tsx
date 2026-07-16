@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ComponentProps } from "react";
 import { useRouter } from "expo-router";
 import {
@@ -12,12 +12,31 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
+import {
+    getSnsRegistrationStatus,
+    loginMember,
+    snsLoginMember,
+    snsSignUpMember,
+    tokenLoginMember,
+    type MemberDto,
+    type SignupConsentsPayload,
+} from "../../src/api/member";
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
+import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import { clearAuthTokens, getRefreshToken, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
-import { loginWithAppleSdk, loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
+import {
+    getAuthErrorPresentation,
+    isAuthCancellation,
+} from "../../src/modules/auth/authErrorMessage";
+import {
+    loginWithAppleSdk,
+    loginWithKakaoSdk,
+    loginWithNaverSdk,
+    type SocialSdkLoginResult,
+} from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
+import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type SocialProvider = "naver" | "kakao" | "apple";
@@ -41,6 +60,18 @@ export default function Login() {
     const [pwd, setPwd] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [socialSubmitting, setSocialSubmitting] = useState(false);
+    const [pendingSocialProfile, setPendingSocialProfile] = useState<SocialSdkLoginResult | null>(null);
+    const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
+
+    const finishAuthentication = useCallback(async (member: MemberDto) => {
+        await saveAuthTokens(member.accessToken, member.refreshToken);
+        await saveAuthMember(member);
+        await syncAuthentication();
+        await registerPushAfterLogin(member.id).catch((error) => {
+            console.warn("[push] token registration failed", error);
+        });
+        router.replace(getPostAuthRoute(member.curationCompleted));
+    }, [router, syncAuthentication]);
 
     useEffect(() => {
         let cancelled = false;
@@ -53,13 +84,7 @@ export default function Login() {
                 const member = await tokenLoginMember({ refreshToken });
                 if (cancelled) return;
 
-                await saveAuthTokens(member.accessToken, member.refreshToken);
-                await saveAuthMember(member);
-                await syncAuthentication();
-                await registerPushAfterLogin(member.id).catch((error) => {
-                    console.warn("[push] token registration failed", error);
-                });
-                router.replace("/schedule");
+                await finishAuthentication(member);
             } catch {
                 if (cancelled) return;
                 await clearAuthTokens();
@@ -72,7 +97,7 @@ export default function Login() {
         return () => {
             cancelled = true;
         };
-    }, [router, syncAuthentication]);
+    }, [finishAuthentication, syncAuthentication]);
 
     const onLogin = async () => {
         if (submitting) return;
@@ -88,18 +113,12 @@ export default function Login() {
         try {
             setSubmitting(true);
             const member = await loginMember({ email, password });
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await saveAuthMember(member);
-            await syncAuthentication();
-            await registerPushAfterLogin(member.id).catch((error) => {
-                console.warn("[push] token registration failed", error);
-            });
-            router.replace(member.isNewMember ? "/onboarding/calendar-import" : "/schedule");
+            await finishAuthentication(member);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
+            const presentation = getAuthErrorPresentation(error, "login");
             await clearAuthTokens();
             await syncAuthentication();
-            Alert.alert("로그인 실패", message);
+            Alert.alert(presentation.title, presentation.message);
         } finally {
             setSubmitting(false);
         }
@@ -118,6 +137,15 @@ export default function Login() {
                         ? await loginWithNaverSdk()
                         : await loginWithAppleSdk();
 
+            const registration = await getSnsRegistrationStatus({
+                loginType: profile.loginType,
+                snsId: profile.snsId,
+            });
+            if (!registration.registered) {
+                setPendingSocialProfile(profile);
+                return;
+            }
+
             const member = await snsLoginMember({
                 loginType: profile.loginType,
                 snsId: profile.snsId,
@@ -125,20 +153,56 @@ export default function Login() {
                 name: profile.name,
             });
 
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await saveAuthMember(member);
-            await syncAuthentication();
-            await registerPushAfterLogin(member.id).catch((error) => {
-                console.warn("[push] token registration failed", error);
-            });
-            router.replace(member.isNewMember ? "/onboarding/calendar-import" : "/schedule");
+            await finishAuthentication(member);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "SNS 로그인에 실패했습니다.";
-            Alert.alert("SNS 로그인 실패", message);
+            if (isAuthCancellation(error)) return;
+            const presentation = getAuthErrorPresentation(
+                error,
+                "social-login",
+                getSocialProviderLabel(provider),
+            );
+            Alert.alert(presentation.title, presentation.message);
         } finally {
             setSocialSubmitting(false);
         }
     };
+
+    const onSocialSignUp = async (consents: SignupConsentsPayload) => {
+        if (!pendingSocialProfile || socialSignupSubmitting) return;
+
+        try {
+            setSocialSignupSubmitting(true);
+            const member = await snsSignUpMember({
+                ...pendingSocialProfile,
+                consents,
+            });
+            await finishAuthentication(member);
+        } catch (error) {
+            const presentation = getAuthErrorPresentation(error, "social-signup");
+            Alert.alert(presentation.title, presentation.message);
+        } finally {
+            setSocialSignupSubmitting(false);
+        }
+    };
+
+    if (pendingSocialProfile) {
+        return (
+            <AuthScreen
+                title="가입 전 확인"
+                subtitle={`${getProviderLabel(pendingSocialProfile.loginType)} 계정으로 NoLate를 시작하기 전에 필요한 항목입니다.`}
+                density="compact"
+                onBack={() => setPendingSocialProfile(null)}
+            >
+                <SignupAgreementPanel
+                    submitting={socialSignupSubmitting}
+                    onConfirm={onSocialSignUp}
+                    onOpenTerms={() => router.push("/legal/terms-of-service")}
+                    onOpenPrivacyCollection={() => router.push("/legal/privacy-collection-consent")}
+                    onOpenPrivacyPolicy={() => router.push("/legal/privacy-policy")}
+                />
+            </AuthScreen>
+        );
+    }
 
     return (
         <AuthScreen
@@ -168,6 +232,7 @@ export default function Login() {
 
             <AuthPrimaryButton
                 disabled={submitting}
+                loading={submitting}
                 onPress={onLogin}
                 label={submitting ? "로그인 중" : "로그인"}
             />
@@ -214,8 +279,38 @@ export default function Login() {
                 <Text style={styles.signUpHint}>처음이신가요?</Text>
                 <Text style={styles.signUpText}>회원가입</Text>
             </Pressable>
+
+            <View style={styles.legalLinks}>
+                <Pressable
+                    accessibilityRole="link"
+                    onPress={() => router.push("/legal/terms-of-service")}
+                    hitSlop={8}
+                >
+                    <Text style={styles.legalLinkText}>이용약관</Text>
+                </Pressable>
+                <Text style={styles.legalSeparator}>·</Text>
+                <Pressable
+                    accessibilityRole="link"
+                    onPress={() => router.push("/legal/privacy-policy")}
+                    hitSlop={8}
+                >
+                    <Text style={styles.legalLinkText}>개인정보처리방침</Text>
+                </Pressable>
+            </View>
         </AuthScreen>
     );
+}
+
+function getProviderLabel(loginType: SocialSdkLoginResult["loginType"]): string {
+    if (loginType === "KAKAO") return "카카오";
+    if (loginType === "NAVER") return "네이버";
+    return "Apple";
+}
+
+function getSocialProviderLabel(provider: SocialProvider): string {
+    if (provider === "kakao") return "카카오";
+    if (provider === "naver") return "네이버";
+    return "Apple";
 }
 
 function SocialButton({
@@ -335,6 +430,26 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             color: colors.textPrimary,
             fontSize: 13,
             fontWeight: "900",
+        },
+        legalLinks: {
+            minHeight: 32,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+        },
+        legalLinkText: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "700",
+            textDecorationLine: "underline",
+        },
+        legalSeparator: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "700",
         },
     });
 }

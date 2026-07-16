@@ -1,12 +1,18 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "../src/api/api";
 import {
     changePassword,
+    completeMemberCuration,
+    getSnsRegistrationStatus,
+    getMemberCurationStatus,
     getMyProfile,
     logoutMember,
     refreshMemberToken,
+    signUpMember,
+    snsSignUpMember,
     updateMyProfile,
     withdrawMember,
 } from "../src/api/member";
+import { getSignupConsentPolicy } from "../src/api/legal";
 import {
     getCalendarSchedules,
     getDailySchedules,
@@ -21,6 +27,11 @@ import {
     getScheduleCategoriesFromApi,
     updateScheduleCategoryToApi,
 } from "../src/api/scheduleCategories";
+import {
+    clearDefaultOriginFromApi,
+    getDefaultOriginFromApi,
+    saveDefaultOriginToApi,
+} from "../src/api/favoritePlaces";
 import {
     acceptShareInvitation,
     createCategoryShareInvitation,
@@ -70,6 +81,75 @@ describe("member api wrappers", () => {
         await logoutMember({ refreshToken: "refresh" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/member/auth/logout", { refreshToken: "refresh" });
+    });
+
+    test("curation wrappers use authenticated status and completion endpoints", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: { curationCompleted: false } });
+        mockedApiPatch.mockResolvedValue({ success: true, data: { curationCompleted: true } });
+
+        await expect(getMemberCurationStatus()).resolves.toEqual({ curationCompleted: false });
+        await expect(completeMemberCuration()).resolves.toEqual({ curationCompleted: true });
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/member/curation", { timeout: 3_500 });
+        expect(mockedApiPatch).toHaveBeenCalledWith("/api/member/curation/complete");
+    });
+
+    test("signup wrappers send versioned consent for common and new social accounts", async () => {
+        const consents = {
+            termsVersion: "2026.07.16",
+            privacyCollectionVersion: "2026.07.16",
+            termsAgreed: true,
+            privacyCollectionAgreed: true,
+        };
+        mockedApiPost
+            .mockResolvedValueOnce({ success: true, data: { id: 2 } })
+            .mockResolvedValueOnce({ success: true, data: { registered: false } })
+            .mockResolvedValueOnce({ success: true, data: { id: 3, isNewMember: true } });
+
+        await signUpMember({ name: "user", email: "user@test.com", password: "password1!", consents });
+        await expect(getSnsRegistrationStatus({ loginType: "KAKAO", snsId: "kakao-1" }))
+            .resolves.toEqual({ registered: false });
+        await snsSignUpMember({
+            loginType: "KAKAO",
+            snsId: "kakao-1",
+            name: "user",
+            email: "user@test.com",
+            consents,
+        });
+
+        expect(mockedApiPost).toHaveBeenNthCalledWith(1, "/api/member/auth/sign-up", {
+            name: "user",
+            email: "user@test.com",
+            password: "password1!",
+            consents,
+        });
+        expect(mockedApiPost).toHaveBeenNthCalledWith(2, "/api/member/auth/sns-registration", {
+            loginType: "KAKAO",
+            snsId: "kakao-1",
+        });
+        expect(mockedApiPost).toHaveBeenNthCalledWith(3, "/api/member/auth/sns-sign-up", {
+            loginType: "KAKAO",
+            snsId: "kakao-1",
+            name: "user",
+            email: "user@test.com",
+            consents,
+        });
+    });
+
+    test("signup consent policy comes from the public legal endpoint", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                terms: { type: "TERMS_OF_SERVICE", version: "v1" },
+                privacyCollection: { type: "PRIVACY_COLLECTION_CONSENT", version: "v2" },
+            },
+        });
+
+        await expect(getSignupConsentPolicy()).resolves.toMatchObject({
+            terms: { version: "v1" },
+            privacyCollection: { version: "v2" },
+        });
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/legal/signup-consents");
     });
 
     test("profile wrappers use authenticated profile endpoints", async () => {
@@ -209,6 +289,64 @@ describe("schedule category api wrappers", () => {
         await expect(deleteScheduleCategoryFromApi("3")).resolves.toBeUndefined();
 
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3");
+    });
+});
+
+describe("default origin api wrappers", () => {
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test("getDefaultOriginFromApi accepts an empty successful response", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: null });
+
+        await expect(getDefaultOriginFromApi()).resolves.toBeNull();
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/favorite-places/default-origin");
+    });
+
+    test("saveDefaultOriginToApi sends normalized place data", async () => {
+        mockedApiPut.mockResolvedValue({
+            success: true,
+            data: {
+                id: 12,
+                label: "집",
+                placeName: "집",
+                address: "서울 중구 세종대로 110",
+                lat: 37.5665,
+                lng: 126.978,
+                provider: "TMAP",
+                providerPlaceId: "home-1",
+                defaultOrigin: true,
+            },
+        });
+
+        await expect(saveDefaultOriginToApi({
+            name: " 집 ",
+            address: " 서울 중구 세종대로 110 ",
+            lat: 37.5665,
+            lng: 126.978,
+            provider: " TMAP ",
+            providerPlaceId: " home-1 ",
+        })).resolves.toMatchObject({ id: "12", name: "집", defaultOrigin: true });
+
+        expect(mockedApiPut).toHaveBeenCalledWith("/api/favorite-places/default-origin", {
+            label: "집",
+            placeName: "집",
+            address: "서울 중구 세종대로 110",
+            lat: 37.5665,
+            lng: 126.978,
+            provider: "TMAP",
+            providerPlaceId: "home-1",
+        });
+    });
+
+    test("clearDefaultOriginFromApi calls the dedicated delete endpoint", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(clearDefaultOriginFromApi()).resolves.toBeUndefined();
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/favorite-places/default-origin");
     });
 });
 

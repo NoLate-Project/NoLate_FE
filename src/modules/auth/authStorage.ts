@@ -1,8 +1,40 @@
 import * as SecureStore from "../storage/secureStorage";
+import { NativeModules, Platform } from "react-native";
 
 const ACCESS_TOKEN_KEY = "nolte_access_token";
 const REFRESH_TOKEN_KEY = "nolte_refresh_token";
 const AUTH_MEMBER_KEY = "nolate_auth_member";
+const authInvalidationListeners = new Set<() => void>();
+
+export function subscribeAuthInvalidation(listener: () => void) {
+    authInvalidationListeners.add(listener);
+    return () => {
+        authInvalidationListeners.delete(listener);
+    };
+}
+
+type SharedAuthModule = {
+    getItem(key: string): Promise<string | null>;
+    setItem(key: string, value: string): Promise<boolean>;
+    deleteItem(key: string): Promise<boolean>;
+};
+
+const sharedAuth = Platform.OS === "ios"
+    ? NativeModules.NoLateShareAuth as SharedAuthModule | undefined
+    : undefined;
+
+async function saveSharedToken(key: string, value: string) {
+    await sharedAuth?.setItem(key, value).catch(() => undefined);
+}
+
+async function getAuthToken(key: string): Promise<string | null> {
+    const sharedValue = await sharedAuth?.getItem(key).catch(() => null);
+    if (sharedValue) return sharedValue;
+
+    const storedValue = await SecureStore.getItemAsync(key);
+    if (storedValue) await saveSharedToken(key, storedValue);
+    return storedValue;
+}
 
 export type StoredAuthMember = {
     id?: number;
@@ -10,6 +42,7 @@ export type StoredAuthMember = {
     email?: string;
     loginType?: string;
     snsId?: string;
+    curationCompleted?: boolean;
 };
 
 function normalizeAuthMember(member: StoredAuthMember | null | undefined): StoredAuthMember | null {
@@ -30,6 +63,9 @@ function normalizeAuthMember(member: StoredAuthMember | null | undefined): Store
     if (email) normalized.email = email;
     if (loginType) normalized.loginType = loginType;
     if (snsId) normalized.snsId = snsId;
+    if (typeof member.curationCompleted === "boolean") {
+        normalized.curationCompleted = member.curationCompleted;
+    }
 
     return Object.keys(normalized).length > 0 ? normalized : null;
 }
@@ -37,10 +73,12 @@ function normalizeAuthMember(member: StoredAuthMember | null | undefined): Store
 export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
     if (accessToken) {
         await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
+        await saveSharedToken(ACCESS_TOKEN_KEY, accessToken);
     }
 
     if (refreshToken) {
         await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+        await saveSharedToken(REFRESH_TOKEN_KEY, refreshToken);
     }
 }
 
@@ -67,16 +105,29 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
     }
 }
 
+export async function saveAuthCurationCompleted(curationCompleted: boolean): Promise<void> {
+    const current = await getAuthMember();
+    await saveAuthMember({
+        ...(current ?? {}),
+        curationCompleted,
+    });
+}
+
 export async function getAccessToken(): Promise<string | null> {
-    return SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+    return getAuthToken(ACCESS_TOKEN_KEY);
 }
 
 export async function getRefreshToken(): Promise<string | null> {
-    return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+    return getAuthToken(REFRESH_TOKEN_KEY);
 }
 
 export async function clearAuthTokens() {
     await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
     await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
     await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
+    await Promise.all([
+        sharedAuth?.deleteItem(ACCESS_TOKEN_KEY).catch(() => undefined),
+        sharedAuth?.deleteItem(REFRESH_TOKEN_KEY).catch(() => undefined),
+    ]);
+    authInvalidationListeners.forEach((listener) => listener());
 }

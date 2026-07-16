@@ -1,7 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
     Alert,
     KeyboardAvoidingView,
     Platform,
@@ -25,6 +24,7 @@ import {
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const CATEGORY_COLORS = [
     "#ff3b30",
@@ -207,7 +207,11 @@ export default function ScheduleCategoriesScreen() {
                         ]}
                     >
                         {saving ? (
-                            <ActivityIndicator size="small" color={colors.selectedDayText} />
+                            <BrandedLoader
+                                size="button"
+                                variant="schedule"
+                                accessibilityLabel="카테고리를 추가하고 있어요"
+                            />
                         ) : (
                             <Text style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
                                 추가
@@ -218,7 +222,13 @@ export default function ScheduleCategoriesScreen() {
 
                 <View style={styles.listHeader}>
                     <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>카테고리 목록</Text>
-                    {loading && <ActivityIndicator size="small" color={colors.textSecondary} />}
+                    {loading ? (
+                        <BrandedLoader
+                            size="button"
+                            variant="schedule"
+                            accessibilityLabel="카테고리를 불러오고 있어요"
+                        />
+                    ) : null}
                 </View>
 
                 {categoryList.map((category) => {

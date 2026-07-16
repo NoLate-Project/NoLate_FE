@@ -6,6 +6,11 @@ import {
     saveRecentRoutePlaceToApi,
     type RecentRoutePlace,
 } from "../../api/recentRoutePlaces";
+import {
+    clearDefaultOriginFromApi,
+    getDefaultOriginFromApi,
+    saveDefaultOriginToApi,
+} from "../../api/favoritePlaces";
 import type { Place } from "./types";
 
 const FAVORITE_DEPARTURE_PLACE_KEY = "nolate_favorite_departure_place_v1";
@@ -88,7 +93,7 @@ export function hasFavoriteDepartureCoords(place: Place | null | undefined): pla
         typeof place.lng === "number" && Number.isFinite(place.lng);
 }
 
-export async function getFavoriteDeparturePlaces(): Promise<Place[]> {
+async function getFavoriteDeparturePlacesLocal(): Promise<Place[]> {
     const listRaw = await SecureStore.getItemAsync(FAVORITE_DEPARTURE_PLACES_KEY);
     if (listRaw) {
         try {
@@ -114,6 +119,43 @@ export async function getFavoriteDeparturePlaces(): Promise<Place[]> {
     }
 }
 
+async function setFavoriteDeparturePlacesLocal(places: Place[]): Promise<Place[]> {
+    const normalized = normalizePlaces(places);
+    await SecureStore.setItemAsync(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify(normalized));
+    return normalized;
+}
+
+async function cacheDefaultOrigin(place: Place, current: Place[]): Promise<Place[]> {
+    return setFavoriteDeparturePlacesLocal([
+        place,
+        ...current.filter((item) => getPlaceKey(item) !== getPlaceKey(place)),
+    ]);
+}
+
+export async function getFavoriteDeparturePlaces(): Promise<Place[]> {
+    const localPlaces = await getFavoriteDeparturePlacesLocal();
+
+    try {
+        const remoteDefaultOrigin = await getDefaultOriginFromApi();
+        if (remoteDefaultOrigin && hasFavoriteDepartureCoords(remoteDefaultOrigin)) {
+            return cacheDefaultOrigin(remoteDefaultOrigin, localPlaces);
+        }
+
+        const legacyDefaultOrigin = localPlaces[0];
+        if (!hasFavoriteDepartureCoords(legacyDefaultOrigin)) {
+            return localPlaces;
+        }
+
+        // 기존 버전은 기본 출발지를 SecureStore에만 저장했다. 서버에 값이 없는 계정은
+        // 첫 조회에서 로컬 값을 승격해 기기 변경 후에도 같은 출발지를 사용할 수 있게 한다.
+        const migratedDefaultOrigin = await saveDefaultOriginToApi(legacyDefaultOrigin);
+        return cacheDefaultOrigin(migratedDefaultOrigin, localPlaces);
+    } catch {
+        // 배포 중 구버전 BE를 만나거나 오프라인이어도 기존 로컬 출발지는 계속 사용할 수 있다.
+        return localPlaces;
+    }
+}
+
 export async function getFavoriteDeparturePlace(): Promise<Place | null> {
     const places = await getFavoriteDeparturePlaces();
     return places[0] ?? null;
@@ -125,22 +167,25 @@ export async function saveFavoriteDeparturePlace(place: Place): Promise<Place | 
         return null;
     }
 
-    const current = await getFavoriteDeparturePlaces();
-    const next = normalizePlaces([
-        normalized,
-        ...current.filter((item) => getPlaceKey(item) !== getPlaceKey(normalized)),
-    ]);
+    const current = await getFavoriteDeparturePlacesLocal();
+    await cacheDefaultOrigin(normalized, current);
 
-    await SecureStore.setItemAsync(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify(next));
-    return normalized;
+    // 로컬 캐시는 즉시 갱신하되 호출자에게는 원격 저장 실패를 전달한다. 큐레이션은
+    // 현재 세션에서 계속 진행할 수 있고, UI는 계정 동기화 실패를 별도로 안내할 수 있다.
+    const saved = await saveDefaultOriginToApi(normalized);
+    await cacheDefaultOrigin(saved, current);
+    return saved;
 }
 
 export async function removeFavoriteDeparturePlace(place: Place): Promise<Place[]> {
     const targetKey = getPlaceKey(place);
-    const current = await getFavoriteDeparturePlaces();
+    const current = await getFavoriteDeparturePlacesLocal();
     const next = current.filter((item) => getPlaceKey(item) !== targetKey);
 
-    await SecureStore.setItemAsync(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify(next));
+    await setFavoriteDeparturePlacesLocal(next);
+    if (current[0] && getPlaceKey(current[0]) === targetKey) {
+        await clearDefaultOriginFromApi();
+    }
     return next;
 }
 

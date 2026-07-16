@@ -6,6 +6,10 @@ import type { ScheduleItem } from "../../types";
 import type { CalendarViewMode } from "./viewMode";
 
 export type DayTransitionContext = "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
+export type TodayFocusTarget = {
+    day: string;
+    requiresMonthChange: boolean;
+};
 
 type Props = {
     selectedDay: string;
@@ -20,12 +24,20 @@ type Props = {
     headerOffset?: number;
     transitionMonthKey?: string;
     transitionActive?: boolean;
-    transitionContext?: DayTransitionContext;
+    reduceMotionEnabled?: boolean;
+    todayFocusTarget?: TodayFocusTarget | null;
+    onTodayFocusReady?: (day: string) => void;
+    onRegisterDetailMonthMotionCancel?: (
+        cancel: (() => void) | null
+    ) => void;
+    onRegisterDetailMonthMotionShift?: (
+        shift: ((direction: -1 | 1) => void) | null
+    ) => void;
     animatedDayHeight?: SharedValue<number>;
 };
 
 // 일정 캘린더에 선택 날짜와 일정 목록을 연결한다.
-export default function CalendarWrapper({
+function CalendarWrapper({
     selectedDay,
     focusedMonth,
     items,
@@ -38,7 +50,11 @@ export default function CalendarWrapper({
     headerOffset,
     transitionMonthKey,
     transitionActive = false,
-    transitionContext = "idle",
+    reduceMotionEnabled = false,
+    todayFocusTarget,
+    onTodayFocusReady,
+    onRegisterDetailMonthMotionCancel,
+    onRegisterDetailMonthMotionShift,
     animatedDayHeight,
 }: Props) {
     const shouldUseCompactHeight =
@@ -59,12 +75,18 @@ export default function CalendarWrapper({
                 headerOffset={headerOffset}
                 transitionMonthKey={transitionMonthKey}
                 transitionActive={transitionActive}
-                transitionContext={transitionContext}
+                reduceMotionEnabled={reduceMotionEnabled}
+                todayFocusTarget={todayFocusTarget}
+                onTodayFocusReady={onTodayFocusReady}
+                onRegisterDetailMonthMotionCancel={onRegisterDetailMonthMotionCancel}
+                onRegisterDetailMonthMotionShift={onRegisterDetailMonthMotionShift}
                 animatedDayHeight={animatedDayHeight}
             />
         </View>
     );
 }
+
+export default React.memo(CalendarWrapper);
 
 const styles = StyleSheet.create({
     full: {

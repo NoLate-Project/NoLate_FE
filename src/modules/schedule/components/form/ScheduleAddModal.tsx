@@ -56,7 +56,6 @@ type Props = {
     defaultDay: string;
     initialValues?: ScheduleParseResult | null;
     onManageCategories?: () => void;
-    autoFocusTitle?: boolean;
     onCloseStart?: () => void;
     presentation?: "sheet" | "morph";
     sourceTopOffset?: number;
@@ -65,7 +64,6 @@ type Props = {
     sourceRightOffset?: number;
     closeTargetWidth?: number;
     onMorphReady?: () => void;
-    qaAutoCloseAfterMs?: number;
     morphPresenterRef?: React.MutableRefObject<ScheduleAddMorphPresenter | null>;
 };
 
@@ -163,7 +161,6 @@ export default function ScheduleNewModal({
     defaultDay,
     initialValues,
     onManageCategories,
-    autoFocusTitle = false,
     onCloseStart,
     presentation = "sheet",
     sourceTopOffset = 4,
@@ -172,7 +169,6 @@ export default function ScheduleNewModal({
     sourceRightOffset = 16,
     closeTargetWidth = MORPH_CLOSE_TARGET_WIDTH,
     onMorphReady,
-    qaAutoCloseAfterMs,
     morphPresenterRef,
 }: Props) {
     const router = useRouter();
@@ -219,7 +215,6 @@ export default function ScheduleNewModal({
     const [morphSheetRasterized, setMorphSheetRasterized] = useState(
         isMorphPresentation && (visible || prewarm)
     );
-    const titleInputRef = useRef<TextInput>(null);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
     const [endDay,    setEndDay]    = useState(() => new Date(`${defaultDay}T00:00:00`));
@@ -766,15 +761,6 @@ export default function ScheduleNewModal({
         prewarm,
     ]);
 
-    useEffect(() => {
-        if (!visible || !qaAutoCloseAfterMs) return undefined;
-
-        const timer = setTimeout(() => {
-            closeSheet(onClose);
-        }, qaAutoCloseAfterMs);
-        return () => clearTimeout(timer);
-    }, [closeSheet, onClose, qaAutoCloseAfterMs, visible]);
-
     useLayoutEffect(() => {
         if (!prewarm || visible) return;
 
@@ -825,12 +811,6 @@ export default function ScheduleNewModal({
 
         closeSheet();
     }, [closeSheet, isMorphPresentation, prewarm, rendered, visible]);
-
-    useEffect(() => {
-        if (!visible || !autoFocusTitle) return;
-        const timer = setTimeout(() => titleInputRef.current?.focus(), 420);
-        return () => clearTimeout(timer);
-    }, [autoFocusTitle, visible]);
 
     useEffect(() => () => {
         closeCycleRef.current += 1;
@@ -1419,7 +1399,6 @@ export default function ScheduleNewModal({
                             ]}
                         >
                             <TextInput
-                                ref={autoFocusTitle ? titleInputRef : undefined}
                                 value={title}
                                 onChangeText={setTitle}
                                 placeholder="예) 회의"

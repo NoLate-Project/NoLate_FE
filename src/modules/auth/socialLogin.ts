@@ -1,7 +1,7 @@
 import { getEnv } from "../../api/env";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as KakaoLogin from "@react-native-seoul/kakao-login";
-import * as NaverLoginModule from "@react-native-seoul/naver-login";
+import NaverLogin from "@react-native-seoul/naver-login";
 
 export type SocialSdkLoginResult = {
     loginType: "KAKAO" | "NAVER" | "APPLE";
@@ -44,10 +44,6 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
 }
 
 export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
-    const naverModule = NaverLoginModule as any;
-    const naverLogin = naverModule.NaverLogin ?? naverModule.default ?? naverModule;
-    const getProfile = naverModule.getProfile ?? naverLogin?.getProfile;
-
     const consumerKey = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_KEY") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_ID");
     const consumerSecret = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_SECRET") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_SECRET");
     const appName = getEnv("EXPO_PUBLIC_NAVER_APP_NAME") ?? "NoLate";
@@ -66,42 +62,46 @@ export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
         disableNaverAppAuthIOS: true,
     };
 
-    if (typeof naverLogin?.initialize === "function") {
-        await naverLogin.initialize(loginConfig);
-    }
+    NaverLogin.initialize(loginConfig);
 
-    const token = await loginWithNaver(naverLogin, loginConfig);
+    const token = await NaverLogin.login();
     if (token?.isSuccess === false) {
         const failureMessage = stringify(token?.failureResponse?.message);
         throw new Error(failureMessage ? `네이버 로그인 실패: ${failureMessage}` : "네이버 로그인에 실패했습니다.");
     }
 
-    const accessToken =
-        stringify(token?.accessToken) ||
-        stringify(token?.successResponse?.accessToken) ||
-        stringify(token?.response?.accessToken);
+    const accessToken = stringify(token?.successResponse?.accessToken);
 
     if (!accessToken) {
         throw new Error("네이버 AccessToken을 가져오지 못했습니다.");
     }
 
-    if (typeof getProfile !== "function") {
-        throw new Error("네이버 SDK 프로필 함수(getProfile)가 없습니다.");
-    }
-
-    const profileResult = await getProfile(accessToken);
+    const profileResult = await NaverLogin.getProfile(accessToken);
     const profile = profileResult?.response ?? profileResult;
     const snsId = stringify(profile?.id);
     if (!snsId) {
         throw new Error("네이버 사용자 ID를 가져오지 못했습니다.");
     }
 
+    const name = firstString(profile?.name);
+    if (!name) {
+        throw new Error("필수 제공 정보인 회원이름을 가져오지 못했습니다. 네이버 동의 화면에서 회원이름 제공에 동의해 주세요.");
+    }
+
     return {
         loginType: "NAVER",
         snsId,
-        name: firstString(profile?.name, profile?.nickname) || "사용자",
+        name,
         email: optionalString(profile?.email),
     };
+}
+
+export async function logoutFromNaverSdk(): Promise<void> {
+    await NaverLogin.logout();
+}
+
+export async function unlinkNaverSdk(): Promise<void> {
+    await NaverLogin.deleteToken();
 }
 
 export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
@@ -128,35 +128,6 @@ export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
         name: appleDisplayName(credential.fullName) || optionalString(credential.email) || "Apple 사용자",
         email: optionalString(credential.email),
     };
-}
-
-async function loginWithNaver(
-    naverLogin: any,
-    loginConfig: {
-        appName: string;
-        consumerKey: string;
-        consumerSecret: string;
-        serviceUrlSchemeIOS: string;
-        disableNaverAppAuthIOS: boolean;
-    }
-) {
-    if (typeof naverLogin?.login !== "function") {
-        throw new Error("네이버 SDK 로그인 함수(login)가 없습니다.");
-    }
-
-    if (naverLogin.login.length >= 2) {
-        return await new Promise((resolve, reject) => {
-            naverLogin.login(loginConfig, (err: unknown, token: unknown) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(token);
-            });
-        });
-    }
-
-    return await naverLogin.login();
 }
 
 function stringify(value: unknown): string {

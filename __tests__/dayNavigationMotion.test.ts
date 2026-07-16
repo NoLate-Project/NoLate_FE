@@ -1,20 +1,50 @@
 import {
     DAY_NAVIGATION_MOTION,
+    DAY_NAVIGATION_RETARGET_MOTION,
     clampDayNavigationProgress,
     consumeQueuedDayNavigation,
     getDayNavigationRemainingDuration,
+    getDayNavigationRetargetSettleDuration,
     getDayNavigationResetDuration,
     queueLatestDayNavigation,
 } from "../src/modules/schedule/dayNavigationMotion";
+import {
+    CALENDAR_INTERACTION_BUDGET_MS,
+    CALENDAR_TRANSITION_DURATION_MS,
+} from "../src/modules/schedule/calendarMotionBudget";
 
 describe("day navigation motion", () => {
     test("모든 일자 이동이 공유할 고정 프로필을 제공한다", () => {
         expect(DAY_NAVIGATION_MOTION).toEqual({
-            durationMs: 420,
+            durationMs: CALENDAR_TRANSITION_DURATION_MS,
             bezier: [0.25, 0.1, 0.25, 1],
         });
         expect(Object.isFrozen(DAY_NAVIGATION_MOTION)).toBe(true);
         expect(Object.isFrozen(DAY_NAVIGATION_MOTION.bezier)).toBe(true);
+    });
+
+    test("일자 탭·스와이프 정착은 200ms 상호작용 예산 안에 끝난다", () => {
+        expect(CALENDAR_INTERACTION_BUDGET_MS).toBe(200);
+        expect(DAY_NAVIGATION_MOTION.durationMs).toBe(160);
+        expect(DAY_NAVIGATION_MOTION.durationMs)
+            .toBeLessThanOrEqual(CALENDAR_INTERACTION_BUDGET_MS);
+    });
+
+    test("연속 탭은 현재 leg 정착과 후속 leg를 합쳐 160ms로 제한한다", () => {
+        expect(DAY_NAVIGATION_RETARGET_MOTION).toEqual({
+            settleDurationMs: 40,
+            followDurationMs: 120,
+        });
+        expect(
+            DAY_NAVIGATION_RETARGET_MOTION.settleDurationMs +
+            DAY_NAVIGATION_RETARGET_MOTION.followDurationMs
+        ).toBe(CALENDAR_TRANSITION_DURATION_MS);
+        expect(CALENDAR_TRANSITION_DURATION_MS)
+            .toBeLessThan(CALENDAR_INTERACTION_BUDGET_MS);
+        expect(Object.isFrozen(DAY_NAVIGATION_RETARGET_MOTION)).toBe(true);
+        expect(getDayNavigationRetargetSettleDuration(0)).toBe(40);
+        expect(getDayNavigationRetargetSettleDuration(0.5)).toBe(20);
+        expect(getDayNavigationRetargetSettleDuration(1)).toBe(1);
     });
 
     test.each([
@@ -31,10 +61,10 @@ describe("day navigation motion", () => {
     });
 
     test.each([
-        [0, 420],
-        [0.25, 315],
-        [0.5, 210],
-        [0.82, 76],
+        [0, 160],
+        [0.25, 120],
+        [0.5, 80],
+        [0.82, 29],
         [1, 0],
     ])("진행률 %p 이후 남은 시간을 %pms로 비례 계산한다", (progress, expected) => {
         expect(getDayNavigationRemainingDuration(progress)).toBe(expected);
@@ -47,10 +77,10 @@ describe("day navigation motion", () => {
 
     test.each([
         [0, 400, 0],
-        [100, 400, 105],
-        [-200, 400, 210],
-        [400, 400, 420],
-        [800, 400, 420],
+        [100, 400, 40],
+        [-200, 400, 80],
+        [400, 400, 160],
+        [800, 400, 160],
         [100, 0, 0],
     ])("%ppx 이동을 %ppx 화면에서 %pms 동안 원위치시킨다", (distance, width, expected) => {
         expect(getDayNavigationResetDuration(distance, width)).toBe(expected);

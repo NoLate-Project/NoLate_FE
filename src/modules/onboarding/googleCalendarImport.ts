@@ -1,14 +1,14 @@
 import * as SecureStore from "../storage/secureStorage";
 
+import { getEnv } from "../../api/env";
 import type {
     DeviceCalendarCandidate,
     DeviceCalendarImportSummary,
     DeviceCalendarSource,
 } from "./deviceCalendarImport";
+import { withCalendarImportTimeout } from "./calendarImportReliability";
 
-export const GOOGLE_CALENDAR_CLIENT_ID =
-    process.env.EXPO_PUBLIC_GOOGLE_CALENDAR_CLIENT_ID ??
-    "342104303432-cvojggr8trcqjgf688gfuttprprknbt2.apps.googleusercontent.com";
+export const GOOGLE_CALENDAR_CLIENT_ID = getEnv("EXPO_PUBLIC_GOOGLE_CALENDAR_CLIENT_ID")?.trim() ?? "";
 
 export const GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
@@ -19,6 +19,7 @@ const GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";
 const DEFAULT_PAST_DAYS = 7;
 const DEFAULT_FUTURE_DAYS = 90;
 const UNTITLED_EVENT = "제목 없는 일정";
+const GOOGLE_API_TIMEOUT_MS = 15_000;
 
 type GoogleTokenSnapshot = {
     accessToken: string;
@@ -168,12 +169,21 @@ async function loadGoogleEvents(
 }
 
 async function googleFetch<T>(url: string, accessToken: string): Promise<T> {
-    const response = await fetch(url, {
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-            Accept: "application/json",
-        },
-    });
+    const controller = new AbortController();
+    const response = await withCalendarImportTimeout(
+        fetch(url, {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json",
+            },
+            signal: controller.signal,
+        }),
+        {
+            timeoutMs: GOOGLE_API_TIMEOUT_MS,
+            operationName: "Google Calendar 일정 확인",
+            onTimeout: () => controller.abort(),
+        }
+    );
 
     if (!response.ok) {
         if (response.status === 401) {
@@ -183,7 +193,11 @@ async function googleFetch<T>(url: string, accessToken: string): Promise<T> {
         throw new Error(`Google Calendar 요청 실패 (${response.status})`);
     }
 
-    return response.json() as Promise<T>;
+    return withCalendarImportTimeout(response.json() as Promise<T>, {
+        timeoutMs: GOOGLE_API_TIMEOUT_MS,
+        operationName: "Google Calendar 응답 처리",
+        onTimeout: () => controller.abort(),
+    });
 }
 
 function buildGoogleApiUrl(path: string, params: Record<string, string>): string {

@@ -20,6 +20,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../theme/ThemeContext";
 import type { AppColors } from "../../theme/ThemeContext";
+import BrandedLoader from "../../../ui/BrandedLoader";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -45,6 +46,7 @@ type AuthInputProps = TextInputProps & {
 type AuthPrimaryButtonProps = {
     label: string;
     disabled?: boolean;
+    loading?: boolean;
     onPress: () => void;
 };
 
@@ -161,28 +163,41 @@ export function AuthInput({
     );
 }
 
-export function AuthPrimaryButton({ label, disabled, onPress }: AuthPrimaryButtonProps) {
+export function AuthPrimaryButton({
+    label,
+    disabled,
+    loading = false,
+    onPress,
+}: AuthPrimaryButtonProps) {
     const { colors, mode } = useTheme();
     const density = React.useContext(AuthDensityContext);
     const styles = createStyles(colors, mode, density);
 
     return (
         <Pressable
-            disabled={disabled}
+            disabled={disabled || loading}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.primaryButton,
                 {
                     backgroundColor: colors.selectedDayBg,
-                    opacity: disabled ? 0.58 : pressed ? 0.82 : 1,
-                    transform: [{ scale: pressed && !disabled ? 0.99 : 1 }],
+                    opacity: disabled || loading ? 0.58 : pressed ? 0.82 : 1,
+                    transform: [{ scale: pressed && !disabled && !loading ? 0.99 : 1 }],
                 },
             ]}
         >
             <Text style={[styles.primaryButtonText, { color: colors.selectedDayText }]}>
                 {label}
             </Text>
-            <Ionicons name="arrow-forward" size={18} color={colors.selectedDayText} />
+            {loading ? (
+                <BrandedLoader
+                    size="button"
+                    variant="auth"
+                    accessibilityLabel={label}
+                />
+            ) : (
+                <Ionicons name="arrow-forward" size={18} color={colors.selectedDayText} />
+            )}
         </Pressable>
     );
 }

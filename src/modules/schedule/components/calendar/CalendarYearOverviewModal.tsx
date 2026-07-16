@@ -1,5 +1,6 @@
 import React, { useRef } from "react";
 import {
+    type LayoutChangeEvent,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -9,9 +10,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import { getYearTodayScrollOffset } from "../../calendarNavigation";
 
 type Props = {
-    visible: boolean;
     year: number;
     selectedDay: string;
     firstDay: 0 | 1;
@@ -32,8 +33,110 @@ function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
     });
 }
 
+type YearMonthPreviewProps = {
+    year: number;
+    month: number;
+    firstDay: 0 | 1;
+    selectedDay: number | null;
+    todayDay: number | null;
+    accentColor: string;
+    textPrimary: string;
+    selectedDayBg: string;
+    selectedDayText: string;
+    onSelectMonth: (year: number, month: number) => void;
+    onLayout?: (event: LayoutChangeEvent) => void;
+    testID?: string;
+};
+
+const YearMonthPreview = React.memo(function YearMonthPreview({
+    year,
+    month,
+    firstDay,
+    selectedDay,
+    todayDay,
+    accentColor,
+    textPrimary,
+    selectedDayBg,
+    selectedDayText,
+    onSelectMonth,
+    onLayout,
+    testID,
+}: YearMonthPreviewProps) {
+    const cells = React.useMemo(
+        () => getMonthCells(year, month, firstDay),
+        [firstDay, month, year]
+    );
+    const isSelectedMonth = selectedDay !== null;
+    const isCurrentMonth = todayDay !== null;
+
+    return (
+        <Pressable
+            testID={testID}
+            onPress={() => onSelectMonth(year, month)}
+            onLayout={onLayout}
+            accessibilityRole="button"
+            accessibilityLabel={`${year}년 ${month}월 보기`}
+            style={({ pressed }) => [
+                styles.monthPreview,
+                { opacity: pressed ? 0.55 : 1 },
+            ]}
+        >
+            <Text
+                style={[
+                    styles.monthTitle,
+                    {
+                        color: isCurrentMonth
+                            ? accentColor
+                            : isSelectedMonth
+                                ? selectedDayBg
+                                : textPrimary,
+                    },
+                ]}
+            >
+                {month}월
+            </Text>
+
+            <View style={styles.daysGrid}>
+                {cells.map((day, cellIndex) => {
+                    const isSelectedDay = day !== null && day === selectedDay;
+                    const isToday = day !== null && day === todayDay;
+                    const badgeFill = isToday
+                        ? accentColor
+                        : isSelectedDay
+                            ? selectedDayBg
+                            : "transparent";
+                    const badgeTextColor = isToday
+                        ? "#ffffff"
+                        : isSelectedDay
+                            ? selectedDayText
+                            : textPrimary;
+
+                    return (
+                        <View key={cellIndex} style={styles.dayCell}>
+                            {day !== null && (
+                                <View
+                                    style={[
+                                        styles.dayBadge,
+                                        (isSelectedDay || isToday) && {
+                                            backgroundColor: badgeFill,
+                                            borderColor: "transparent",
+                                        },
+                                    ]}
+                                >
+                                    <Text style={[styles.dayText, { color: badgeTextColor }]}>
+                                        {day}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    );
+                })}
+            </View>
+        </Pressable>
+    );
+});
+
 function CalendarYearOverviewModal({
-    visible,
     year,
     selectedDay,
     firstDay,
@@ -55,40 +158,80 @@ function CalendarYearOverviewModal({
         .sort((left, right) => left - right);
     const scrollRef = useRef<ScrollView>(null);
     const yearOffsetsRef = useRef<Record<number, number>>({});
+    const todayMonthGridOffsetRef = useRef<{ year: number; offset: number } | null>(null);
+    const todayMonthOffsetRef = useRef<{ key: string; offset: number } | null>(null);
+    const pendingTodayScrollRef = useRef(false);
+    const todayScrollFrameRef = useRef<number | null>(null);
     const handledTodayRequestRef = useRef(todayRequest);
     const contentTopPadding = Math.max(topInset + 63, 103);
+    const todayMonthKey = `${todayYear}-${todayMonth}`;
+
+    const tryScrollToToday = React.useCallback(() => {
+        if (!pendingTodayScrollRef.current) return;
+
+        const yearOffset = yearOffsetsRef.current[todayYear];
+        const monthGridLayout = todayMonthGridOffsetRef.current;
+        const monthLayout = todayMonthOffsetRef.current;
+        const targetOffset = getYearTodayScrollOffset(
+            yearOffset,
+            monthGridLayout?.year === todayYear ? monthGridLayout.offset : Number.NaN,
+            monthLayout?.key === todayMonthKey ? monthLayout.offset : Number.NaN,
+            contentTopPadding
+        );
+
+        if (targetOffset === null || !scrollRef.current) return;
+
+        pendingTodayScrollRef.current = false;
+        scrollRef.current.scrollTo({
+            y: targetOffset,
+            animated: !reduceMotionEnabled,
+        });
+    }, [contentTopPadding, reduceMotionEnabled, todayMonthKey, todayYear]);
+
+    const scheduleTodayScroll = React.useCallback(() => {
+        if (!pendingTodayScrollRef.current || todayScrollFrameRef.current !== null) return;
+
+        todayScrollFrameRef.current = requestAnimationFrame(() => {
+            todayScrollFrameRef.current = null;
+            tryScrollToToday();
+        });
+    }, [tryScrollToToday]);
+
+    const handleTodayMonthGridLayout = React.useCallback((event: LayoutChangeEvent) => {
+        todayMonthGridOffsetRef.current = {
+            year: todayYear,
+            offset: event.nativeEvent.layout.y,
+        };
+        scheduleTodayScroll();
+    }, [scheduleTodayScroll, todayYear]);
+
+    const handleTodayMonthLayout = React.useCallback((event: LayoutChangeEvent) => {
+        todayMonthOffsetRef.current = {
+            key: todayMonthKey,
+            offset: event.nativeEvent.layout.y,
+        };
+        scheduleTodayScroll();
+    }, [scheduleTodayScroll, todayMonthKey]);
 
     React.useEffect(() => {
-        if (!visible || handledTodayRequestRef.current === todayRequest) return;
+        if (handledTodayRequestRef.current === todayRequest) return;
         handledTodayRequestRef.current = todayRequest;
+        pendingTodayScrollRef.current = true;
+        scheduleTodayScroll();
+    }, [scheduleTodayScroll, todayRequest]);
 
-        const scrollToToday = () => {
-            const yearOffset = yearOffsetsRef.current[todayYear];
-            if (!Number.isFinite(yearOffset)) return;
-
-            scrollRef.current?.scrollTo({
-                y: Math.max(0, yearOffset - contentTopPadding),
-                animated: !reduceMotionEnabled,
-            });
-        };
-
-        const firstFrame = requestAnimationFrame(() => {
-            requestAnimationFrame(scrollToToday);
-        });
-        return () => cancelAnimationFrame(firstFrame);
-    }, [
-        contentTopPadding,
-        reduceMotionEnabled,
-        todayRequest,
-        todayYear,
-        visible,
-    ]);
+    React.useEffect(() => () => {
+        if (todayScrollFrameRef.current !== null) {
+            cancelAnimationFrame(todayScrollFrameRef.current);
+        }
+    }, []);
 
     return (
         <View style={[styles.safeArea, { backgroundColor: colors.calendarBackground }]}>
             <ScrollView
                 ref={scrollRef}
                 showsVerticalScrollIndicator={false}
+                onContentSizeChange={scheduleTodayScroll}
                 contentContainerStyle={[
                     styles.content,
                     {
@@ -105,9 +248,13 @@ function CalendarYearOverviewModal({
                     return (
                         <View
                             key={sectionYear}
+                            testID={sectionYear === todayYear
+                                ? "calendar-year-today-section"
+                                : undefined}
                             style={styles.yearSection}
                             onLayout={(event) => {
                                 yearOffsetsRef.current[sectionYear] = event.nativeEvent.layout.y;
+                                if (sectionYear === todayYear) scheduleTodayScroll();
                             }}
                         >
                             <View style={[styles.yearHeader, { borderBottomColor: colors.border }]}>
@@ -116,11 +263,18 @@ function CalendarYearOverviewModal({
                                 </Text>
                             </View>
 
-                            <View style={styles.monthGrid}>
+                            <View
+                                testID={sectionYear === todayYear
+                                    ? "calendar-year-today-month-grid"
+                                    : undefined}
+                                style={styles.monthGrid}
+                                onLayout={sectionYear === todayYear
+                                    ? handleTodayMonthGridLayout
+                                    : undefined}
+                            >
                                 {Array.from({ length: 12 }, (_, index) => {
                                     const month = index + 1;
                                     const monthKey = `${sectionYear}-${month}`;
-                                    const cells = getMonthCells(sectionYear, month, firstDay);
                                     const isSelectedMonth =
                                         selectedDate.getFullYear() === sectionYear &&
                                         selectedDate.getMonth() + 1 === month;
@@ -129,78 +283,23 @@ function CalendarYearOverviewModal({
                                         todayMonth === month;
 
                                     return (
-                                        <Pressable
+                                        <YearMonthPreview
                                             key={monthKey}
-                                            onPress={() => onSelectMonth(sectionYear, month)}
-                                            style={({ pressed }) => [
-                                                styles.monthPreview,
-                                                { opacity: pressed ? 0.55 : 1 },
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.monthTitle,
-                                                    {
-                                                        color: isCurrentMonth
-                                                            ? accentColor
-                                                            : isSelectedMonth
-                                                                ? colors.selectedDayBg
-                                                                : colors.textPrimary,
-                                                    },
-                                                ]}
-                                            >
-                                                {month}월
-                                            </Text>
-
-                                            <View style={styles.daysGrid}>
-                                                {cells.map((day, cellIndex) => {
-                                                    const isSelectedDay =
-                                                        isSelectedMonth && day === selectedDate.getDate();
-                                                    const isToday =
-                                                        sectionYear === todayYear &&
-                                                        month === todayMonth &&
-                                                        day === todayDate;
-                                                    const badgeFill = isToday
-                                                        ? accentColor
-                                                        : isSelectedDay
-                                                            ? colors.selectedDayBg
-                                                            : "transparent";
-                                                    const badgeTextColor = isToday
-                                                        ? "#ffffff"
-                                                        : isSelectedDay
-                                                            ? colors.selectedDayText
-                                                            : colors.textPrimary;
-                                                    return (
-                                                        <View key={cellIndex} style={styles.dayCell}>
-                                                            {day !== null && (
-                                                                <View
-                                                                    style={[
-                                                                        styles.dayBadge,
-                                                                        (isSelectedDay || isToday) && {
-                                                                            backgroundColor: badgeFill,
-                                                                            borderColor: "transparent",
-                                                                        },
-                                                                    ]}
-                                                                >
-                                                                    <Text
-                                                                        style={[
-                                                                            styles.dayText,
-                                                                            {
-                                                                                color: isSelectedDay || isToday
-                                                                                    ? badgeTextColor
-                                                                                    : colors.textPrimary,
-                                                                            },
-                                                                        ]}
-                                                                    >
-                                                                        {day}
-                                                                    </Text>
-                                                                </View>
-                                                            )}
-                                                        </View>
-                                                    );
-                                                })}
-                                            </View>
-                                        </Pressable>
+                                            year={sectionYear}
+                                            month={month}
+                                            firstDay={firstDay}
+                                            selectedDay={isSelectedMonth ? selectedDate.getDate() : null}
+                                            todayDay={isCurrentMonth ? todayDate : null}
+                                            accentColor={accentColor}
+                                            textPrimary={colors.textPrimary}
+                                            selectedDayBg={colors.selectedDayBg}
+                                            selectedDayText={colors.selectedDayText}
+                                            onSelectMonth={onSelectMonth}
+                                            onLayout={isCurrentMonth ? handleTodayMonthLayout : undefined}
+                                            testID={isCurrentMonth
+                                                ? "calendar-year-today-month"
+                                                : undefined}
+                                        />
                                     );
                                 })}
                             </View>
