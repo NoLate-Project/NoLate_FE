@@ -227,17 +227,28 @@ private final class PlaceInputView: UIStackView {
   init(title: String) {
     super.init(frame: .zero)
     axis = .vertical
-    spacing = 6
+    spacing = 8
     titleLabel.text = title
-    titleLabel.font = .preferredFont(forTextStyle: .caption1)
+    titleLabel.font = .preferredFont(forTextStyle: .subheadline)
     titleLabel.textColor = .secondaryLabel
     let row = UIStackView(arrangedSubviews: [textField, searchButton])
-    row.spacing = 8
-    textField.borderStyle = .roundedRect
+    row.spacing = 0
+    row.backgroundColor = .tertiarySystemFill
+    row.layer.cornerRadius = 12
+    row.isLayoutMarginsRelativeArrangement = true
+    row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 14, bottom: 0, trailing: 6)
+    row.heightAnchor.constraint(equalToConstant: 48).isActive = true
+    textField.borderStyle = .none
     textField.placeholder = "장소를 입력하세요"
     textField.clearButtonMode = .whileEditing
-    searchButton.setTitle("검색", for: .normal)
-    searchButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
+    textField.font = .preferredFont(forTextStyle: .body)
+    textField.returnKeyType = .search
+    var searchConfiguration = UIButton.Configuration.plain()
+    searchConfiguration.image = UIImage(systemName: "magnifyingglass")
+    searchConfiguration.baseForegroundColor = ShareViewController.brandColor
+    searchConfiguration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+    searchButton.configuration = searchConfiguration
+    searchButton.accessibilityLabel = "\(title) 검색"
     searchButton.setContentHuggingPriority(.required, for: .horizontal)
     addArrangedSubview(titleLabel)
     addArrangedSubview(row)
@@ -247,9 +258,12 @@ private final class PlaceInputView: UIStackView {
 }
 
 final class ShareViewController: UIViewController {
+  fileprivate static let brandColor = UIColor(red: 0.11, green: 0.43, blue: 1, alpha: 1)
+
   private let api = ShareAPIClient()
   private let scrollView = UIScrollView()
   private let contentStack = UIStackView()
+  private let bottomBar = UIView()
   private let statusLabel = UILabel()
   private let titleField = UITextField()
   private let datePicker = UIDatePicker()
@@ -276,65 +290,167 @@ final class ShareViewController: UIViewController {
   }
 
   private func configureUI() {
-    view.backgroundColor = .systemBackground
-    navigationItem.title = "NoLate 빠른 일정"
-    navigationItem.leftBarButtonItem = UIBarButtonItem(title: "취소", style: .plain, target: self, action: #selector(cancel))
+    view.backgroundColor = .systemGroupedBackground
+    view.tintColor = Self.brandColor
 
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     contentStack.translatesAutoresizingMaskIntoConstraints = false
     contentStack.axis = .vertical
-    contentStack.spacing = 16
+    contentStack.spacing = 20
+    bottomBar.translatesAutoresizingMaskIntoConstraints = false
+    bottomBar.backgroundColor = .systemGroupedBackground
+    bottomBar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+    saveButton.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(scrollView)
+    view.addSubview(bottomBar)
     scrollView.addSubview(contentStack)
+    bottomBar.addSubview(saveButton)
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
       scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-      contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 18),
+      scrollView.bottomAnchor.constraint(equalTo: bottomBar.topAnchor),
+      contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 20),
       contentStack.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 20),
       contentStack.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -20),
-      contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+      contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -20),
+      bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+      saveButton.topAnchor.constraint(equalTo: bottomBar.layoutMarginsGuide.topAnchor),
+      saveButton.leadingAnchor.constraint(equalTo: bottomBar.layoutMarginsGuide.leadingAnchor),
+      saveButton.trailingAnchor.constraint(equalTo: bottomBar.layoutMarginsGuide.trailingAnchor),
+      saveButton.bottomAnchor.constraint(equalTo: bottomBar.layoutMarginsGuide.bottomAnchor),
+      saveButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 54),
     ])
 
+    let heroIcon = UIImageView(image: UIImage(systemName: "calendar.badge.plus"))
+    heroIcon.tintColor = Self.brandColor
+    heroIcon.contentMode = .scaleAspectFit
+    heroIcon.backgroundColor = Self.brandColor.withAlphaComponent(0.12)
+    heroIcon.layer.cornerRadius = 14
+    heroIcon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 23, weight: .semibold)
+    heroIcon.widthAnchor.constraint(equalToConstant: 52).isActive = true
+    heroIcon.heightAnchor.constraint(equalToConstant: 52).isActive = true
     let header = UILabel()
-    header.text = "공유한 문장에서 일정을 만들어요"
+    header.text = "일정으로 정리했어요"
     header.font = .preferredFont(forTextStyle: .title2)
     header.numberOfLines = 0
+    let headerSubtitle = UILabel()
+    headerSubtitle.text = "내용을 확인하고 이동 경로만 선택해 주세요."
+    headerSubtitle.font = .preferredFont(forTextStyle: .subheadline)
+    headerSubtitle.textColor = .secondaryLabel
+    headerSubtitle.numberOfLines = 0
+    let headerCopy = UIStackView(arrangedSubviews: [header, headerSubtitle])
+    headerCopy.axis = .vertical
+    headerCopy.spacing = 4
     let cancelButton = UIButton(type: .system)
-    cancelButton.setTitle("취소", for: .normal)
+    var cancelConfiguration = UIButton.Configuration.plain()
+    cancelConfiguration.image = UIImage(systemName: "xmark.circle.fill")
+    cancelConfiguration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22)
+    cancelConfiguration.baseForegroundColor = .tertiaryLabel
+    cancelConfiguration.contentInsets = .zero
+    cancelButton.configuration = cancelConfiguration
+    cancelButton.accessibilityLabel = "취소"
     cancelButton.addTarget(self, action: #selector(cancel), for: .touchUpInside)
     cancelButton.setContentHuggingPriority(.required, for: .horizontal)
-    let headerRow = UIStackView(arrangedSubviews: [header, cancelButton])
-    headerRow.alignment = .top
+    let headerRow = UIStackView(arrangedSubviews: [heroIcon, headerCopy, cancelButton])
+    headerRow.alignment = .center
     headerRow.spacing = 12
     statusLabel.font = .preferredFont(forTextStyle: .subheadline)
     statusLabel.textColor = .secondaryLabel
     statusLabel.numberOfLines = 0
-    titleField.borderStyle = .roundedRect
+    let statusIcon = UIImageView(image: UIImage(systemName: "sparkles"))
+    statusIcon.tintColor = Self.brandColor
+    statusIcon.setContentHuggingPriority(.required, for: .horizontal)
+    let statusRow = UIStackView(arrangedSubviews: [statusIcon, statusLabel, spinner])
+    statusRow.alignment = .center
+    statusRow.spacing = 9
+    statusRow.backgroundColor = Self.brandColor.withAlphaComponent(0.09)
+    statusRow.layer.cornerRadius = 12
+    statusRow.isLayoutMarginsRelativeArrangement = true
+    statusRow.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 11, leading: 13, bottom: 11, trailing: 13)
+    titleField.borderStyle = .none
     titleField.placeholder = "일정 제목"
+    titleField.font = .preferredFont(forTextStyle: .body)
+    styleField(titleField)
     datePicker.datePickerMode = .dateAndTime
     datePicker.preferredDatePickerStyle = .compact
     datePicker.locale = Locale(identifier: "ko_KR")
+    datePicker.tintColor = Self.brandColor
     modeControl.selectedSegmentIndex = 1
+    modeControl.selectedSegmentTintColor = Self.brandColor
+    modeControl.setTitleTextAttributes([.foregroundColor: UIColor.white], for: .selected)
+    modeControl.heightAnchor.constraint(equalToConstant: 42).isActive = true
     modeControl.addTarget(self, action: #selector(modeChanged), for: .valueChanged)
     originInput.searchButton.addTarget(self, action: #selector(searchOrigin), for: .touchUpInside)
     destinationInput.searchButton.addTarget(self, action: #selector(searchDestination), for: .touchUpInside)
 
-    configurePrimaryButton(findRouteButton, title: "경로 찾기")
+    configurePrimaryButton(findRouteButton, title: "추천 경로 찾기", image: "arrow.triangle.turn.up.right.diamond.fill")
     findRouteButton.addTarget(self, action: #selector(findRoutes), for: .touchUpInside)
     routesStack.axis = .vertical
     routesStack.spacing = 8
-    configurePrimaryButton(saveButton, title: "선택한 경로로 일정 저장")
+    configurePrimaryButton(saveButton, title: "경로를 선택해 주세요", image: "checkmark")
     saveButton.addTarget(self, action: #selector(saveSchedule), for: .touchUpInside)
     saveButton.isEnabled = false
 
-    let categoryRow = labeledRow(title: "카테고리", view: categoryButton)
-    let dateRow = labeledRow(title: "날짜 및 시간", view: datePicker)
-    [headerRow, statusLabel, labeledField(title: "제목", field: titleField), dateRow, categoryRow,
-     originInput, destinationInput, labeledRow(title: "이동수단", view: modeControl),
-     findRouteButton, routesStack, saveButton, spinner].forEach(contentStack.addArrangedSubview)
+    configureCategoryButton()
+    let scheduleCard = sectionCard(
+      title: "일정 정보",
+      icon: "calendar",
+      views: [labeledField(title: "제목", field: titleField), labeledRow(title: "날짜 및 시간", view: datePicker), labeledRow(title: "카테고리", view: categoryButton)]
+    )
+    let routeCard = sectionCard(
+      title: "이동 정보",
+      icon: "location.fill",
+      views: [originInput, destinationInput, labeledRow(title: "이동수단", view: modeControl), findRouteButton, routesStack]
+    )
+    [headerRow, statusRow, scheduleCard, routeCard].forEach(contentStack.addArrangedSubview)
     spinner.hidesWhenStopped = true
+  }
+
+  private func styleField(_ field: UITextField) {
+    field.backgroundColor = .tertiarySystemFill
+    field.layer.cornerRadius = 12
+    field.heightAnchor.constraint(equalToConstant: 48).isActive = true
+    let inset = UIView(frame: CGRect(x: 0, y: 0, width: 14, height: 1))
+    field.leftView = inset
+    field.leftViewMode = .always
+  }
+
+  private func configureCategoryButton() {
+    var configuration = UIButton.Configuration.gray()
+    configuration.title = "카테고리 선택"
+    configuration.image = UIImage(systemName: "chevron.down")
+    configuration.imagePlacement = .trailing
+    configuration.imagePadding = 8
+    configuration.cornerStyle = .medium
+    configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
+    categoryButton.configuration = configuration
+    categoryButton.contentHorizontalAlignment = .leading
+    categoryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
+  }
+
+  private func sectionCard(title: String, icon: String, views: [UIView]) -> UIView {
+    let iconView = UIImageView(image: UIImage(systemName: icon))
+    iconView.tintColor = Self.brandColor
+    iconView.setContentHuggingPriority(.required, for: .horizontal)
+    let titleLabel = UILabel()
+    titleLabel.text = title
+    titleLabel.font = .preferredFont(forTextStyle: .headline)
+    let titleRow = UIStackView(arrangedSubviews: [iconView, titleLabel])
+    titleRow.alignment = .center
+    titleRow.spacing = 8
+
+    let stack = UIStackView(arrangedSubviews: ([titleRow] as [UIView]) + views)
+    stack.axis = .vertical
+    stack.spacing = 16
+    stack.isLayoutMarginsRelativeArrangement = true
+    stack.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 18, leading: 16, bottom: 18, trailing: 16)
+    stack.backgroundColor = .secondarySystemGroupedBackground
+    stack.layer.cornerRadius = 18
+    stack.layer.cornerCurve = .continuous
+    return stack
   }
 
   private func labeledField(title: String, field: UIView) -> UIView { labeledRow(title: title, view: field) }
@@ -350,11 +466,13 @@ final class ShareViewController: UIViewController {
     return stack
   }
 
-  private func configurePrimaryButton(_ button: UIButton, title: String) {
+  private func configurePrimaryButton(_ button: UIButton, title: String, image: String? = nil) {
     var configuration = UIButton.Configuration.filled()
     configuration.title = title
+    configuration.image = image.flatMap { UIImage(systemName: $0) }
+    configuration.imagePadding = 8
     configuration.cornerStyle = .large
-    configuration.baseBackgroundColor = UIColor(red: 0.14, green: 0.42, blue: 1, alpha: 1)
+    configuration.baseBackgroundColor = Self.brandColor
     configuration.contentInsets = NSDirectionalEdgeInsets(top: 13, leading: 16, bottom: 13, trailing: 16)
     button.configuration = configuration
   }
@@ -497,22 +615,25 @@ final class ShareViewController: UIViewController {
     routesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
     for (index, option) in routeOptions.enumerated() {
       let button = UIButton(type: .system)
-      var configuration = UIButton.Configuration.gray()
+      let isSelected = selectedRoute?.id == option.id
+      var configuration = isSelected ? UIButton.Configuration.tinted() : UIButton.Configuration.gray()
       configuration.title = "\(option.summary) · \(option.minutes)분"
       var details: [String] = []
       if let distance = option.distanceMeters { details.append(String(format: "%.1fkm", Double(distance) / 1000)) }
       if let fare = option.fareWon, fare > 0 { details.append("\(fare.formatted())원") }
       configuration.subtitle = details.joined(separator: " · ")
-      configuration.image = UIImage(systemName: selectedRoute?.id == option.id ? "checkmark.circle.fill" : "circle")
+      configuration.image = UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle")
       configuration.imagePadding = 10
       configuration.imagePlacement = .leading
       configuration.cornerStyle = .medium
+      configuration.baseForegroundColor = isSelected ? Self.brandColor : .label
+      configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
       button.configuration = configuration
       button.tag = index
       button.addTarget(self, action: #selector(selectRoute(_:)), for: .touchUpInside)
       routesStack.addArrangedSubview(button)
     }
-    saveButton.isEnabled = selectedRoute != nil && selectedCategory != nil
+    updateSaveButtonState()
   }
 
   @objc private func selectRoute(_ sender: UIButton) {
@@ -590,15 +711,26 @@ final class ShareViewController: UIViewController {
   }
 
   private func updateCategoryMenu() {
-    categoryButton.setTitle(selectedCategory?.title ?? "카테고리 선택", for: .normal)
+    var configuration = categoryButton.configuration
+    configuration?.title = selectedCategory?.title ?? "카테고리 선택"
+    categoryButton.configuration = configuration
     categoryButton.showsMenuAsPrimaryAction = true
     categoryButton.menu = UIMenu(children: categories.map { category in
       UIAction(title: category.title, state: category.id == selectedCategory?.id ? .on : .off) { [weak self] _ in
         self?.selectedCategory = category
         self?.updateCategoryMenu()
-        self?.saveButton.isEnabled = self?.selectedRoute != nil
+        self?.updateSaveButtonState()
       }
     })
+  }
+
+  private func updateSaveButtonState() {
+    let isReady = selectedRoute != nil && selectedCategory != nil
+    saveButton.isEnabled = isReady
+    var configuration = saveButton.configuration
+    configuration?.title = isReady ? "이 일정 저장하기" : "경로를 선택해 주세요"
+    configuration?.image = UIImage(systemName: isReady ? "checkmark.circle.fill" : "checkmark")
+    saveButton.configuration = configuration
   }
 
   private func placeJSON(_ place: SharedPlace) -> [String: Any] {
