@@ -1,6 +1,7 @@
-import React, {createContext, useContext, useMemo, useReducer} from "react";
+import React, {createContext, useContext, useEffect, useMemo, useReducer} from "react";
 import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
+import { subscribeAuthInvalidation } from "../auth/authStorage";
 
 type Action =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -11,12 +12,15 @@ type Action =
     | { type: "SET_ITEMS"; items: ScheduleItem[] }
     | { type: "SET_LOADING"; loading: boolean }
     | { type: "SET_ERROR"; error: string | null }
+    | { type: "RESET"; state: ScheduleState }
     | { type: "ADD_ITEM"; item: ScheduleItem }
     | { type: "UPDATE_ITEM"; item: ScheduleItem }
     | { type: "DELETE_ITEM"; id: string };
 
 function reducer(state: ScheduleState, action: Action): ScheduleState {
     switch (action.type) {
+        case "RESET":
+            return action.state;
         case "SET_SELECTED_DAY":
             return {...state, selectedDay: action.day};
 
@@ -97,6 +101,9 @@ export function ScheduleProvider({
     initialState: ScheduleState;
 }) {
     const [state, dispatch] = useReducer(reducer, initialState);
+    useEffect(() => subscribeAuthInvalidation(() => {
+        dispatch({ type: "RESET", state: initialState });
+    }), [initialState]);
     const value = useMemo(() => ({state, dispatch}), [state]);
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }

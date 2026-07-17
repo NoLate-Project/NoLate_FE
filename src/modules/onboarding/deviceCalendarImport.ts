@@ -1,7 +1,7 @@
 import type * as ExpoCalendar from "expo-calendar";
 import { Platform } from "react-native";
 
-import type { SchedulePayload } from "../../api/schedule";
+import type { CalendarImportSourcePayload, SchedulePayload } from "../../api/schedule";
 import type { ScheduleCategory, TravelMode } from "../schedule/types";
 import { withCalendarImportTimeout } from "./calendarImportReliability";
 
@@ -235,6 +235,27 @@ export function buildSchedulePayloadFromCandidate(
     };
 }
 
+/**
+ * 화면용 후보 id가 아니라 공급자가 발급한 원본 id 조합을 API에 전달한다.
+ * occurrenceStartAt은 같은 eventId를 공유하는 반복 일정의 각 발생 건을 구분한다.
+ */
+export function buildCalendarImportSource(
+    candidate: DeviceCalendarCandidate
+): CalendarImportSourcePayload {
+    const calendarId = candidate.calendarId.trim();
+    const eventId = candidate.eventId.trim();
+    if (!calendarId || !eventId) {
+        throw new Error("원본 캘린더 일정 식별자가 없어 가져올 수 없습니다.");
+    }
+
+    return {
+        provider: candidate.provider,
+        calendarId,
+        eventId,
+        occurrenceStartAt: new Date(candidate.startAt).toISOString(),
+    };
+}
+
 function toCandidate(
     event: ExpoCalendarEvent,
     calendarById: Map<string, ExpoCalendarCalendar>,
@@ -249,6 +270,9 @@ function toCandidate(
         ? endDate
         : new Date(startDate.getTime() + 60 * 60 * 1000);
     const calendar = calendarById.get(event.calendarId);
+    const eventId = normalizeText(event.id);
+    const calendarId = normalizeText(event.calendarId);
+    if (!eventId || !calendarId) return null;
     const title = normalizeText(event.title) || UNTITLED_EVENT;
     const locationName = normalizeText(event.location);
     const notes = normalizeText(event.notes);
@@ -261,13 +285,13 @@ function toCandidate(
     return {
         id: [
             provider,
-            event.calendarId,
-            event.id,
+            calendarId,
+            eventId,
             startDate.toISOString(),
         ].join(":"),
         provider,
-        eventId: event.id,
-        calendarId: event.calendarId,
+        eventId,
+        calendarId,
         calendarTitle: calendar?.title?.trim() || "캘린더",
         calendarColor: calendar?.color,
         title,

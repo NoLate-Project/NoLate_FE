@@ -57,11 +57,19 @@ export function isOverlappingDay(startAt: DateInput, endAt: DateInput, ymd: stri
         return false;
     }
 
-    const start = fromISO(startAt);
-    const end = fromISO(endAt);
+    const start = new Date(startAt).getTime();
+    if (!Number.isFinite(start)) return false;
+
+    const parsedEnd = new Date(endAt).getTime();
+    // 종료 시각을 사용하지 않는 일정은 startAt === endAt으로 저장된다.
+    // 특히 자정 일정은 기존 `end > dayStart` 비교에서 사라졌으므로,
+    // 유효하지 않거나 0 이하인 구간도 시작 시각의 1ms 이벤트로 취급한다.
+    const end = Number.isFinite(parsedEnd) && parsedEnd > start
+        ? parsedEnd
+        : start + 1;
 
     const dayStart = new Date(year, month - 1, day, 0, 0, 0, 0);
     const dayEnd = new Date(year, month - 1, day + 1, 0, 0, 0, 0);
 
-    return start.getTime() < dayEnd.getTime() && end.getTime() > dayStart.getTime();
+    return start < dayEnd.getTime() && end > dayStart.getTime();
 }

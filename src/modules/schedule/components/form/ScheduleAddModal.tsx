@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+    Alert,
+    BackHandler,
     Pressable,
     ScrollView,
+    Switch,
     Text,
     TextInput,
     View,
@@ -27,14 +30,21 @@ import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
+import { getWritableScheduleCategories } from "../../categoryPermissions";
 import { searchAddressByKeyword } from "../../../map/tmapApi";
 import { useTheme } from "../../../theme/ThemeContext";
 import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
-import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
+import {
+    buildRoutePlannerPlace,
+    buildScheduleRoutePlannerInitial,
+    consumeRoutePlannerResult,
+    setRoutePlannerInitial,
+} from "../../routePlannerSession";
 import { getRouteInfoFromRoute } from "../../routeInfo";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
 import NotificationSettingsCard from "./NotificationSettingsCard";
+import CategoryLoadErrorBanner from "./CategoryLoadErrorBanner";
 import {
     ADD_HANDOFF_MOTION,
     ADD_MENU_SOURCE,
@@ -46,6 +56,19 @@ import {
     getMySubscriptionPolicy,
     type SubscriptionPolicy,
 } from "../../../../api/subscription";
+import {
+    formatScheduleFormDate,
+    getDefaultScheduleFormStart,
+    getDefaultScheduleStartTime,
+    getScheduleCalendarDateKey,
+    normalizeScheduleFormRange,
+    startOfLocalScheduleDay,
+} from "../../scheduleFormDate";
+import { getScheduleAddCloseAction } from "../../scheduleAddCloseGuard";
+import {
+    buildScheduleFormLocationName,
+    buildScheduleFormPlace,
+} from "../../scheduleFormPlace";
 
 type Props = {
     visible: boolean;
@@ -55,6 +78,9 @@ type Props = {
     categories: ScheduleCategory[];
     defaultDay: string;
     initialValues?: ScheduleParseResult | null;
+    categoryError?: string | null;
+    categoryLoading?: boolean;
+    onRetryCategories?: () => void;
     onManageCategories?: () => void;
     onCloseStart?: () => void;
     presentation?: "sheet" | "morph";
@@ -92,12 +118,9 @@ function mergeDateTime(datePart: Date, timePart: Date) {
     return d;
 }
 
-function ymdText(d: Date) {
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
 function hhmmText(d: Date) {
-    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const hour = d.getHours();
+    return `${hour < 12 ? "오전" : "오후"} ${hour % 12 || 12}:${pad2(d.getMinutes())}`;
 }
 
 const SHEET_HIDDEN_Y = 900;
@@ -160,6 +183,9 @@ export default function ScheduleNewModal({
     categories,
     defaultDay,
     initialValues,
+    categoryError,
+    categoryLoading = false,
+    onRetryCategories,
     onManageCategories,
     onCloseStart,
     presentation = "sheet",
@@ -177,17 +203,13 @@ export default function ScheduleNewModal({
     const insets = useSafeAreaInsets();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const isMorphPresentation = presentation === "morph";
-    const now = useMemo(() => new Date(), []);
-    const initialStartTime = useMemo(() => {
-        const d = new Date(now);
-        d.setSeconds(0, 0);
-        d.setMinutes(d.getMinutes() + 30);
-        return d;
-    }, [now]);
-
+    const writableCategories = useMemo(
+        () => getWritableScheduleCategories(categories),
+        [categories]
+    );
     const [title, setTitle]                           = useState("");
     const [notes, setNotes]                           = useState("");
-    const [selectedCategoryId, setSelectedCategoryId] = useState(categories[0]?.id ?? "1");
+    const [selectedCategoryId, setSelectedCategoryId] = useState(writableCategories[0]?.id ?? "");
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
     const [originText, setOriginText]                 = useState("");
     const [destinationText, setDestinationText]       = useState("");
@@ -200,6 +222,7 @@ export default function ScheduleNewModal({
     const [travelMode, setTravelMode]                 = useState<TravelMode>("CAR");
     const [travelMinutes, setTravelMinutes]           = useState<number | undefined>();
     const [route, setRoute]                           = useState<unknown>();
+    const [allDay, setAllDay]                         = useState(false);
     const [hasEndTime, setHasEndTime]                 = useState(false);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(60);
@@ -207,6 +230,7 @@ export default function ScheduleNewModal({
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [submitting, setSubmitting]                 = useState(false);
+    const [formError, setFormError]                   = useState<string | null>(null);
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
     const [rendered, setRendered] = useState(visible || prewarm);
     const [morphContentMounted, setMorphContentMounted] = useState(
@@ -215,17 +239,32 @@ export default function ScheduleNewModal({
     const [morphSheetRasterized, setMorphSheetRasterized] = useState(
         isMorphPresentation && (visible || prewarm)
     );
+    const formDirtyRef = useRef(false);
+    const closePromptVisibleRef = useRef(false);
+    const submitInFlightRef = useRef(false);
+
+    const markFormDirty = useCallback(() => {
+        formDirtyRef.current = true;
+    }, []);
+
+    const discardDraft = useCallback(() => {
+        formDirtyRef.current = false;
+        closePromptVisibleRef.current = false;
+    }, []);
 
     const [startDay,  setStartDay]  = useState(() => new Date(`${defaultDay}T00:00:00`));
     const [endDay,    setEndDay]    = useState(() => new Date(`${defaultDay}T00:00:00`));
-    const [startTime, setStartTime] = useState(() => new Date(initialStartTime));
-    const [endTime, setEndTime] = useState(() => new Date(initialStartTime));
+    const [startTime, setStartTime] = useState(() => getDefaultScheduleStartTime());
+    const [endTime, setEndTime] = useState(() => getDefaultScheduleStartTime());
+    const wasVisibleRef = useRef(false);
+    const destinationResolutionSequenceRef = useRef(0);
 
     const resetFormForNewSchedule = useCallback(() => {
-        const defaultDate = new Date(`${defaultDay}T00:00:00`);
+        discardDraft();
+        const defaultStart = getDefaultScheduleFormStart(defaultDay);
         setTitle("");
         setNotes("");
-        setSelectedCategoryId(categories[0]?.id ?? "1");
+        setSelectedCategoryId(writableCategories[0]?.id ?? "");
         setCategoryPickerOpen(false);
         setOriginText("");
         setDestinationText("");
@@ -238,20 +277,23 @@ export default function ScheduleNewModal({
         setTravelMode("CAR");
         setTravelMinutes(undefined);
         setRoute(undefined);
+        setAllDay(false);
         setHasEndTime(false);
         setNotificationEnabled(false);
         setNotificationLeadMinutes(60);
         setNotificationIntervalMinutes(30);
         setRoutePlannerSessionId(undefined);
         setSubmitting(false);
+        submitInFlightRef.current = false;
+        setFormError(null);
         setRoutePlannerHidden(false);
         setPicker(null);
         setDisplayPicker(null);
-        setStartDay(defaultDate);
-        setEndDay(defaultDate);
-        setStartTime(new Date(initialStartTime));
-        setEndTime(new Date(initialStartTime));
-    }, [categories, defaultDay, initialStartTime]);
+        setStartDay(defaultStart.startDay);
+        setEndDay(new Date(defaultStart.startDay));
+        setStartTime(defaultStart.startTime);
+        setEndTime(new Date(defaultStart.startTime));
+    }, [defaultDay, discardDraft, writableCategories]);
 
     // 실제 선택값과 화면 표시값을 분리해 피커 전환 애니메이션을 안정화한다.
     const [picker,        setPicker]        = useState<PickerType | null>(null);
@@ -263,25 +305,58 @@ export default function ScheduleNewModal({
     }, [defaultDay]);
 
     useEffect(() => {
-        if (categories.length === 0) return;
+        if (writableCategories.length === 0) return;
         setSelectedCategoryId((current) =>
-            categories.some((categoryItem) => categoryItem.id === current)
+            writableCategories.some((categoryItem) => categoryItem.id === current)
                 ? current
-                : categories[0].id
+                : writableCategories[0].id
         );
-    }, [categories]);
+    }, [writableCategories]);
 
     useEffect(() => {
-        if (hasEndTime) return;
+        if (hasEndTime || allDay) return;
         setEndDay(new Date(startDay));
         setEndTime(new Date(startTime));
-    }, [hasEndTime, startDay, startTime]);
+    }, [allDay, hasEndTime, startDay, startTime]);
+
+    const handleEndTimeEnabledChange = useCallback((enabled: boolean) => {
+        markFormDirty();
+        setHasEndTime(enabled);
+
+        if (!enabled) {
+            setPicker((current) => (
+                current === "endDate" || current === "endTime" ? null : current
+            ));
+            setEndDay(new Date(startDay));
+            setEndTime(new Date(startTime));
+            return;
+        }
+
+        const nextEnd = mergeDateTime(startDay, startTime);
+        nextEnd.setMinutes(nextEnd.getMinutes() + 60);
+        setEndDay(nextEnd);
+        setEndTime(nextEnd);
+    }, [markFormDirty, startDay, startTime]);
+
+    const handleAllDayChange = useCallback((enabled: boolean) => {
+        markFormDirty();
+        setAllDay(enabled);
+        setHasEndTime(false);
+        setPicker((current) => (
+            current === "startTime" || current === "endTime" ? null : current
+        ));
+        setEndDay(new Date(startDay));
+        setEndTime(new Date(startTime));
+    }, [markFormDirty, startDay, startTime]);
 
     useEffect(() => {
-        if (!visible) {
+        const opening = visible && !wasVisibleRef.current;
+        wasVisibleRef.current = visible;
+
+        if (!visible || (opening && !initialValues)) {
             resetFormForNewSchedule();
         }
-    }, [resetFormForNewSchedule, visible]);
+    }, [initialValues, resetFormForNewSchedule, visible]);
 
     useEffect(() => {
         if (!visible) return;
@@ -290,6 +365,8 @@ export default function ScheduleNewModal({
             return;
         }
 
+        markFormDirty();
+        setAllDay(false);
         setTitle(initialValues.title ?? "");
         setNotes(initialValues.notes ?? "");
 
@@ -323,15 +400,18 @@ export default function ScheduleNewModal({
         if (parsedEnd && !Number.isNaN(parsedEnd.getTime())) {
             setEndDay(parsedEnd);
             setEndTime(parsedEnd);
-            setHasEndTime(
-                Boolean(parsedStart) && parsedEnd.getTime() !== parsedStart?.getTime()
-            );
+            // Parse API v1 generated endAt from the default duration even when the
+            // user never entered an end. Missing explicit-end metadata is therefore
+            // a backward-compatible false, not something inferred from timestamps.
+            setHasEndTime(Boolean(initialValues.hasExplicitEndTime));
         } else {
             setHasEndTime(false);
         }
-    }, [initialValues, visible]);
+    }, [initialValues, markFormDirty, visible]);
 
     useEffect(() => {
+        const resolutionSequence = destinationResolutionSequenceRef.current + 1;
+        destinationResolutionSequenceRef.current = resolutionSequence;
         if (!visible || !initialValues?.destination || hasPlaceCoords(initialValues.destination)) return;
 
         const parsedDestinationName = cleanOptionalText(initialValues.destination.name);
@@ -343,7 +423,7 @@ export default function ScheduleNewModal({
         const resolveDestination = async () => {
             for (const query of queries) {
                 const items = await searchAddressByKeyword(query).catch(() => []);
-                if (cancelled) return;
+                if (cancelled || destinationResolutionSequenceRef.current !== resolutionSequence) return;
 
                 const match = items[0];
                 if (!match) continue;
@@ -362,6 +442,9 @@ export default function ScheduleNewModal({
 
         return () => {
             cancelled = true;
+            if (destinationResolutionSequenceRef.current === resolutionSequence) {
+                destinationResolutionSequenceRef.current += 1;
+            }
         };
     }, [
         initialValues?.destination,
@@ -394,8 +477,8 @@ export default function ScheduleNewModal({
     }, []);
 
     const category = useMemo(
-        () => categories.find((c) => c.id === selectedCategoryId) ?? categories[0],
-        [categories, selectedCategoryId]
+        () => writableCategories.find((c) => c.id === selectedCategoryId) ?? writableCategories[0],
+        [selectedCategoryId, writableCategories]
     );
     const routeInfo = useMemo(() => getRouteInfoFromRoute(route, {
         origin: originText.trim() || originAddress || typeof originLat === "number"
@@ -761,6 +844,68 @@ export default function ScheduleNewModal({
         prewarm,
     ]);
 
+    const restoreSheetPosition = useCallback(() => {
+        if (isMorphPresentation) return;
+        Animated.spring(posY, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 24,
+            stiffness: 230,
+            mass: 0.9,
+            restDisplacementThreshold: 0.35,
+            restSpeedThreshold: 0.35,
+        }).start();
+    }, [isMorphPresentation, posY]);
+
+    const closeWithoutPrompt = useCallback(() => {
+        discardDraft();
+        closeSheet(onClose);
+    }, [closeSheet, discardDraft, onClose]);
+
+    const requestClose = useCallback((restoreBeforePrompt = false) => {
+        const action = getScheduleAddCloseAction({
+            dirty: formDirtyRef.current,
+            submitting: submitting || submitInFlightRef.current,
+        });
+        if (action === "ignore") return;
+        if (action === "close") {
+            closeWithoutPrompt();
+            return;
+        }
+
+        if (restoreBeforePrompt) restoreSheetPosition();
+        if (closePromptVisibleRef.current) return;
+        closePromptVisibleRef.current = true;
+
+        const keepEditing = () => {
+            closePromptVisibleRef.current = false;
+        };
+        Alert.alert(
+            "작성 중인 일정을 닫을까요?",
+            "입력한 내용은 저장되지 않고 사라집니다.",
+            [
+                { text: "계속 작성", style: "cancel", onPress: keepEditing },
+                { text: "버리기", style: "destructive", onPress: closeWithoutPrompt },
+            ],
+            { cancelable: true, onDismiss: keepEditing }
+        );
+    }, [closeWithoutPrompt, restoreSheetPosition, submitting]);
+
+    useEffect(() => {
+        if (
+            Platform.OS !== "android" ||
+            !visible ||
+            !rendered ||
+            routePlannerHidden
+        ) return undefined;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            requestClose();
+            return true;
+        });
+        return () => subscription.remove();
+    }, [rendered, requestClose, routePlannerHidden, visible]);
+
     useLayoutEffect(() => {
         if (!prewarm || visible) return;
 
@@ -838,6 +983,7 @@ export default function ScheduleNewModal({
             pathname === "/schedule/route-planner"
         ) return;
         const result = consumeRoutePlannerResult(routePlannerSessionId);
+        setRoutePlannerSessionId(undefined);
         if (!result) {
             setRoutePlannerHidden(false);
             setRendered(true);
@@ -865,7 +1011,7 @@ export default function ScheduleNewModal({
         setTravelMode(result.travelMode);
         setTravelMinutes(result.travelMinutes);
         setRoute(result.route);
-        setRoutePlannerSessionId(undefined);
+        markFormDirty();
         setRoutePlannerHidden(false);
         setRendered(true);
         if (isMorphPresentation) {
@@ -887,30 +1033,42 @@ export default function ScheduleNewModal({
         resetCloseLifecycle,
         routePlannerSessionId,
         visible,
+        markFormDirty,
     ]);
 
-    // 출발지는 경로 선택 화면에서 직접 고르게 두고, 도착지만 초기값으로 전달한다.
+    // 현재 입력한 장소와 일정 시작 시각을 경로 선택 화면에 그대로 전달한다.
     const openRoutePlanner = useCallback(() => {
-        const normalizedDestinationName = destinationText.trim();
-        const normalizedDestinationAddress = cleanOptionalText(destinationAddress);
-        const nextDestination = normalizedDestinationName || normalizedDestinationAddress
-            ? {
-                name: normalizedDestinationName || normalizedDestinationAddress,
-                address: normalizedDestinationAddress,
-                lat: destinationLat,
-                lng: destinationLng,
-            }
-            : undefined;
+        if (submitInFlightRef.current) return;
+        // 파서 목적지를 좌표로 보강하던 느린 응답이 사용자가 경로 화면에서
+        // 직접 고른 장소를 뒤늦게 덮지 못하도록 먼저 무효화한다.
+        destinationResolutionSequenceRef.current += 1;
+        const nextOrigin = buildRoutePlannerPlace({
+            name: originText,
+            address: originAddress,
+            lat: originLat,
+            lng: originLng,
+        }, "출발지");
+        const nextDestination = buildRoutePlannerPlace({
+            name: destinationText,
+            address: destinationAddress,
+            lat: destinationLat,
+            lng: destinationLng,
+        }, "도착지");
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-        setRoutePlannerInitial(sessionId, {
-            origin: undefined,
+        setRoutePlannerInitial(sessionId, buildScheduleRoutePlannerInitial({
+            origin: nextOrigin,
             destination: nextDestination,
             travelMode,
             travelMinutes,
             route,
-            locationName: nextDestination?.name || undefined,
-        });
+            locationName: nextOrigin?.name && nextDestination?.name
+                ? `${nextOrigin.name} → ${nextDestination.name}`
+                : nextDestination?.name ?? nextOrigin?.name,
+            targetArrivalAt: allDay
+                ? startOfLocalScheduleDay(startDay)
+                : mergeDateTime(startDay, startTime),
+        }));
 
         setPicker(null);
         setRoutePlannerSessionId(sessionId);
@@ -919,17 +1077,26 @@ export default function ScheduleNewModal({
         router.push({ pathname: "/schedule/route-select", params: { sessionId } });
     }, [
         closeSheet,
+        allDay,
         destinationAddress,
         destinationLat,
         destinationLng,
         destinationText,
+        originAddress,
+        originLat,
+        originLng,
+        originText,
         router,
+        startDay,
+        startTime,
         travelMinutes,
         travelMode,
         route,
     ]);
 
     const clearRoute = useCallback(() => {
+        destinationResolutionSequenceRef.current += 1;
+        markFormDirty();
         setOriginText("");
         setDestinationText("");
         setOriginAddress(undefined);
@@ -941,7 +1108,7 @@ export default function ScheduleNewModal({
         setTravelMinutes(undefined);
         setRoute(undefined);
         setNotificationEnabled(false);
-    }, []);
+    }, [markFormDirty]);
 
     // 핸들바 드래그로 바텀시트를 닫거나 원위치한다.
     const panResponder = useMemo(() =>
@@ -954,7 +1121,7 @@ export default function ScheduleNewModal({
             onPanResponderRelease: (_, g) => {
                 const projectedY = clampSheetY(g.dy + (g.vy * SHEET_VELOCITY_PROJECTION));
                 if (projectedY > SHEET_CLOSE_DISTANCE || g.vy > SHEET_CLOSE_VELOCITY) {
-                    closeSheet(onClose);
+                    requestClose(true);
                 } else {
                     Animated.spring(posY, {
                         toValue: 0,
@@ -978,51 +1145,53 @@ export default function ScheduleNewModal({
                     restSpeedThreshold: 0.35,
                 }).start();
             },
-        }), [closeSheet, onClose, posY]);
+        }), [posY, requestClose]);
 
     // 입력값을 일정 저장 payload로 변환해 상위 화면에 전달한다.
     const submit = async () => {
         const t = title.trim();
-        if (!t || !category || submitting) return;
-
-        const s = mergeDateTime(startDay, startTime);
-        let e = hasEndTime ? mergeDateTime(endDay, endTime) : new Date(s);
-        if (hasEndTime && e.getTime() < s.getTime()) {
-            e = new Date(s);
-            e.setMinutes(e.getMinutes() + 30);
+        if (!t) {
+            setFormError("일정 제목을 입력해 주세요.");
+            return;
         }
-        const hasDistinctEndTime = e.getTime() !== s.getTime();
-        const normalizedOriginName = originText.trim();
-        const normalizedDestinationName = destinationText.trim();
-        const normalizedOriginAddress = cleanOptionalText(originAddress);
-        const normalizedDestinationAddress = cleanOptionalText(destinationAddress);
-        const nextOrigin = normalizedOriginName || normalizedOriginAddress
-            ? {
-                name: normalizedOriginName || normalizedOriginAddress,
-                address: normalizedOriginAddress,
-                lat: originLat,
-                lng: originLng,
-            }
-            : undefined;
-        const nextDestination = normalizedDestinationName || normalizedDestinationAddress
-            ? {
-                name: normalizedDestinationName || normalizedDestinationAddress,
-                address: normalizedDestinationAddress,
-                lat: destinationLat,
-                lng: destinationLng,
-            }
-            : undefined;
-        const locationName = nextOrigin?.name && nextDestination?.name
-            ? `${nextOrigin.name} → ${nextDestination.name}`
-            : nextDestination?.name || nextOrigin?.name || undefined;
+        if (!category) {
+            setFormError("일정을 저장할 카테고리를 먼저 만들어 주세요.");
+            return;
+        }
+        if (submitting || submitInFlightRef.current) return;
+
+        const normalizedRange = normalizeScheduleFormRange({
+            startDay,
+            startTime,
+            endDay,
+            endTime,
+            allDay,
+            hasEndTime,
+        });
+        const nextOrigin = buildScheduleFormPlace({
+            name: originText,
+            address: originAddress,
+            lat: originLat,
+            lng: originLng,
+        });
+        const nextDestination = buildScheduleFormPlace({
+            name: destinationText,
+            address: destinationAddress,
+            lat: destinationLat,
+            lng: destinationLng,
+        });
+        const locationName = buildScheduleFormLocationName(nextOrigin, nextDestination);
 
         try {
+            submitInFlightRef.current = true;
             setSubmitting(true);
+            setFormError(null);
             await onSubmit({
                 title: t,
-                startAt: s.toISOString(),
-                endAt: e.toISOString(),
-                hasEndTime: hasDistinctEndTime,
+                startAt: normalizedRange.startAt.toISOString(),
+                endAt: normalizedRange.endAt.toISOString(),
+                hasEndTime: normalizedRange.hasEndTime,
+                allDay: normalizedRange.allDay,
                 category,
                 travelMode,
                 travelMinutes,
@@ -1035,8 +1204,11 @@ export default function ScheduleNewModal({
                 destination: nextDestination,
                 notes: notes.trim() || undefined,
             });
-            closeSheet(onClose);
+            closeWithoutPrompt();
+        } catch (error) {
+            setFormError(error instanceof Error ? error.message : "일정을 저장하지 못했습니다. 다시 시도해 주세요.");
         } finally {
+            submitInFlightRef.current = false;
             setSubmitting(false);
         }
     };
@@ -1044,19 +1216,22 @@ export default function ScheduleNewModal({
     // 캘린더에서 선택한 날짜를 시작/종료 날짜에 반영한다.
     const onDayPress = useCallback((day: { dateString: string }) => {
         const selected = new Date(`${day.dateString}T00:00:00`);
+        markFormDirty();
         if (picker === "startDate") {
             setStartDay(selected);
+            if (allDay && selected.getTime() > endDay.getTime()) setEndDay(selected);
         } else if (picker === "endDate") {
-            setHasEndTime(true);
+            if (!allDay) setHasEndTime(true);
             setEndDay(selected);
             if (selected.getTime() < startDay.getTime()) setStartDay(selected);
         }
-    }, [picker, startDay]);
+    }, [allDay, endDay, markFormDirty, picker, startDay]);
 
     // 시간 피커에서 선택한 시간을 시작/종료 시간에 반영한다.
     const onTimeChange = (event: DateTimePickerEvent, selected?: Date) => {
         if (Platform.OS === "android" && event.type === "dismissed") { setPicker(null); return; }
         if (!selected) return;
+        markFormDirty();
         if (picker === "startTime") setStartTime(selected);
         else if (picker === "endTime") {
             setHasEndTime(true);
@@ -1083,7 +1258,8 @@ export default function ScheduleNewModal({
     const isDisplayDate = displayPicker === "startDate" || displayPicker === "endDate";
     const isDisplayTime = displayPicker === "startTime" || displayPicker === "endTime";
     const calendarSelected = isDisplayDate
-        ? ymdText(displayPicker === "startDate" ? startDay : endDay) : "";
+        ? getScheduleCalendarDateKey(displayPicker === "startDate" ? startDay : endDay)
+        : "";
     const fieldStyle = (type: PickerType) => [
         styles.fieldBase,
         {
@@ -1290,6 +1466,7 @@ export default function ScheduleNewModal({
 
     return (
         <Reanimated.View
+            accessibilityViewIsModal={!isPrewarmOnly}
             accessibilityElementsHidden={isPrewarmOnly}
             importantForAccessibility={isPrewarmOnly ? "no-hide-descendants" : "auto"}
             style={[
@@ -1305,8 +1482,9 @@ export default function ScheduleNewModal({
                 style={[styles.dim, isMorphPresentation && morphDimStyle]}
             >
                 <Pressable
+                    accessible={false}
                     style={StyleSheet.absoluteFill}
-                    onPress={() => closeSheet(onClose)}
+                    onPress={() => requestClose()}
                 />
             </Reanimated.View>
 
@@ -1352,6 +1530,7 @@ export default function ScheduleNewModal({
                         isMorphPresentation ? styles.morphInnerContent : styles.sheetInnerContent,
                     ]}>
                     <View
+                        testID="schedule-add-drag-handle"
                         {...(!isMorphPresentation ? panResponder.panHandlers : {})}
                         style={styles.handleWrap}
                     >
@@ -1366,12 +1545,15 @@ export default function ScheduleNewModal({
                     >
                         <View style={styles.headerRow}>
                             <View style={styles.headerTitleGroup}>
-                                <Ionicons name="create-outline" size={17} color={colors.textPrimary} />
+                                <Ionicons accessible={false} name="create-outline" size={17} color={colors.textPrimary} />
                                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 생성</Text>
                             </View>
                             <View>
                                 <Pressable
-                                    onPress={() => closeSheet(onClose)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="일정 생성 닫기"
+                                    accessibilityHint="작성 중인 내용이 있으면 확인 후 닫습니다"
+                                    onPress={() => requestClose()}
                                     style={[
                                         styles.closeBtn,
                                         {
@@ -1387,6 +1569,14 @@ export default function ScheduleNewModal({
                             </View>
                         </View>
 
+                        {categoryError && onRetryCategories ? (
+                            <CategoryLoadErrorBanner
+                                compact
+                                retrying={categoryLoading}
+                                onRetry={onRetryCategories}
+                            />
+                        ) : null}
+
                         <View style={isMorphPresentation ? styles.morphBodyContent : undefined}>
                         <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
                         <View
@@ -1400,14 +1590,23 @@ export default function ScheduleNewModal({
                         >
                             <TextInput
                                 value={title}
-                                onChangeText={setTitle}
+                                onChangeText={(value) => {
+                                    markFormDirty();
+                                    setTitle(value);
+                                    if (value.trim()) setFormError(null);
+                                }}
+                                accessibilityLabel="일정 제목"
+                                maxLength={120}
                                 placeholder="예) 회의"
                                 placeholderTextColor={colors.inputPlaceholder}
                                 style={[styles.titleInput, { color: colors.textPrimary }]}
                             />
                             <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={`카테고리 선택, 현재 ${category?.title ?? "없음"}`}
+                                accessibilityState={{ expanded: categoryPickerOpen, disabled: writableCategories.length === 0 }}
                                 onPress={() => setCategoryPickerOpen((current) => !current)}
-                                disabled={categories.length === 0}
+                                disabled={writableCategories.length === 0}
                                 style={[styles.categoryInlineChip, { borderColor: colors.border }]}
                             >
                                 <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
@@ -1417,11 +1616,26 @@ export default function ScheduleNewModal({
                             </Pressable>
                         </View>
 
+                        <Text
+                            accessibilityLiveRegion="polite"
+                            style={[
+                                styles.formHint,
+                                { color: formError ? "#D70015" : colors.textSecondary },
+                            ]}
+                        >
+                            {formError ?? (!title.trim()
+                                ? "제목을 입력하면 저장할 수 있어요."
+                                : !category
+                                    ? "카테고리를 만든 뒤 저장할 수 있어요."
+                                    : " ")}
+                        </Text>
+
                         {categoryPickerOpen && (
                             <CategoryPickerRow
-                                categories={categories}
+                                categories={writableCategories}
                                 value={selectedCategoryId}
                                 onChange={(nextCategoryId) => {
+                                    markFormDirty();
                                     setSelectedCategoryId(nextCategoryId);
                                     setCategoryPickerOpen(false);
                                 }}
@@ -1446,43 +1660,130 @@ export default function ScheduleNewModal({
                                 leadMinutes={notificationLeadMinutes}
                                 intervalMinutes={notificationIntervalMinutes}
                                 routeInfo={routeInfo}
-                                startAt={mergeDateTime(startDay, startTime)}
+                                startAt={allDay
+                                    ? startOfLocalScheduleDay(startDay)
+                                    : mergeDateTime(startDay, startTime)}
                                 policy={subscriptionPolicy}
-                                onEnabledChange={setNotificationEnabled}
-                                onLeadMinutesChange={setNotificationLeadMinutes}
-                                onIntervalMinutesChange={setNotificationIntervalMinutes}
+                                onEnabledChange={(value) => {
+                                    markFormDirty();
+                                    setNotificationEnabled(value);
+                                }}
+                                onLeadMinutesChange={(value) => {
+                                    markFormDirty();
+                                    setNotificationLeadMinutes(value);
+                                }}
+                                onIntervalMinutesChange={(value) => {
+                                    markFormDirty();
+                                    setNotificationIntervalMinutes(value);
+                                }}
                             />
                         )}
+
+                        <View
+                            style={[
+                                styles.endTimeToggleRow,
+                                {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
+                                },
+                            ]}
+                        >
+                            <View style={styles.endTimeToggleCopy}>
+                                <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종일</Text>
+                                <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>시간 없이 날짜로만 일정을 표시해요.</Text>
+                            </View>
+                            <Switch
+                                accessibilityLabel="종일 일정"
+                                value={allDay}
+                                onValueChange={handleAllDayChange}
+                                trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                                thumbColor="#FFFFFF"
+                            />
+                        </View>
 
                         <View style={styles.twoColRow}>
                             <View style={styles.col}>
                                 <Text style={[styles.label, { color: colors.textSecondary }]}>시작 날짜</Text>
-                                <Pressable onPress={() => togglePicker("startDate")} style={fieldStyle("startDate")}>
-                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{ymdText(startDay)}</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
+                                    accessibilityState={{ expanded: picker === "startDate" }}
+                                    onPress={() => togglePicker("startDate")}
+                                    style={fieldStyle("startDate")}
+                                >
+                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(startDay)}</Text>
                                 </Pressable>
                             </View>
                             <View style={styles.col}>
-                                <Text style={[styles.label, { color: colors.textSecondary }]}>시작 시간</Text>
-                                <Pressable onPress={() => togglePicker("startTime")} style={fieldStyle("startTime")}>
-                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(startTime)}</Text>
+                                <Text style={[styles.label, { color: colors.textSecondary }]}>
+                                    {allDay ? "마지막 날" : "시작 시간"}
+                                </Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={allDay
+                                        ? `마지막 날 ${formatScheduleFormDate(endDay)}`
+                                        : `시작 시간 ${hhmmText(startTime)}`}
+                                    accessibilityState={{ expanded: picker === (allDay ? "endDate" : "startTime") }}
+                                    onPress={() => togglePicker(allDay ? "endDate" : "startTime")}
+                                    style={fieldStyle(allDay ? "endDate" : "startTime")}
+                                >
+                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>
+                                        {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
+                                    </Text>
                                 </Pressable>
                             </View>
                         </View>
 
-                        <View style={styles.twoColRow}>
-                            <View style={styles.col}>
-                                <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
-                                <Pressable onPress={() => togglePicker("endDate")} style={fieldStyle("endDate")}>
-                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{ymdText(endDay)}</Text>
-                                </Pressable>
+                        {!allDay ? <View
+                            style={[
+                                styles.endTimeToggleRow,
+                                {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
+                                },
+                            ]}
+                        >
+                            <View style={styles.endTimeToggleCopy}>
+                                <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종료 시각 설정</Text>
+                                <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>끄면 시작 시각만 일정에 표시돼요.</Text>
                             </View>
-                            <View style={styles.col}>
-                                <Text style={[styles.label, { color: colors.textSecondary }]}>종료 시간</Text>
-                                <Pressable onPress={() => togglePicker("endTime")} style={fieldStyle("endTime")}>
-                                    <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
-                                </Pressable>
+                            <Switch
+                                accessibilityLabel="종료 시각 설정"
+                                value={hasEndTime}
+                                onValueChange={handleEndTimeEnabledChange}
+                                trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                                thumbColor="#FFFFFF"
+                            />
+                        </View> : null}
+
+                        {!allDay && hasEndTime ? (
+                            <View style={styles.twoColRow}>
+                                <View style={styles.col}>
+                                    <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
+                                        accessibilityState={{ expanded: picker === "endDate" }}
+                                        onPress={() => togglePicker("endDate")}
+                                        style={fieldStyle("endDate")}
+                                    >
+                                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(endDay)}</Text>
+                                    </Pressable>
+                                </View>
+                                <View style={styles.col}>
+                                    <Text style={[styles.label, { color: colors.textSecondary }]}>종료 시간</Text>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`종료 시간 ${hhmmText(endTime)}`}
+                                        accessibilityState={{ expanded: picker === "endTime" }}
+                                        onPress={() => togglePicker("endTime")}
+                                        style={fieldStyle("endTime")}
+                                    >
+                                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
+                                    </Pressable>
+                                </View>
                             </View>
-                        </View>
+                        ) : null}
 
                         <Animated.View style={[styles.pickerContainer, {
                             borderColor:  colors.inputBorder,
@@ -1523,8 +1824,13 @@ export default function ScheduleNewModal({
                         <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
                         <TextInput
                             value={notes}
-                            onChangeText={setNotes}
+                            onChangeText={(value) => {
+                                markFormDirty();
+                                setNotes(value);
+                            }}
                             multiline
+                            maxLength={2000}
+                            accessibilityLabel="일정 메모"
                             placeholder="추가로 기억할 내용을 입력하세요"
                             placeholderTextColor={colors.inputPlaceholder}
                             style={[
@@ -1539,7 +1845,10 @@ export default function ScheduleNewModal({
                         />
 
                         <Pressable
-                            disabled={submitting}
+                            accessibilityRole="button"
+                            accessibilityLabel="일정 저장"
+                            accessibilityState={{ disabled: submitting || !title.trim() || !category, busy: submitting }}
+                            disabled={submitting || !title.trim() || !category}
                             onPress={submit}
                             style={[
                                 styles.saveBtn,
@@ -1548,7 +1857,7 @@ export default function ScheduleNewModal({
                                         ? "#1E68FF"
                                         : "#2979FF",
                                     borderColor: mode === "dark" ? "#4B9DFF" : "#1E68FF",
-                                    opacity: submitting ? 0.6 : 1,
+                                    opacity: submitting || !title.trim() || !category ? 0.42 : 1,
                                 },
                             ]}
                         >
@@ -1712,6 +2021,13 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     label:        { marginBottom: 7, fontSize: 12, fontWeight: "700" },
+    formHint: {
+        minHeight: 18,
+        marginTop: -7,
+        marginBottom: 8,
+        fontSize: 12,
+        fontWeight: "600",
+    },
     input: {
         borderWidth: 1, borderRadius: 12, padding: 11, marginBottom: 10,
     },
@@ -1756,6 +2072,31 @@ const styles = StyleSheet.create({
     notesInput: { minHeight: 62, textAlignVertical: "top" },
     twoColRow: { flexDirection: "row", gap: 10, marginBottom: 10 },
     col:       { flex: 1 },
+    endTimeToggleRow: {
+        minHeight: 54,
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        marginBottom: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    endTimeToggleCopy: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: 9,
+    },
+    endTimeToggleTitle: {
+        fontSize: 13,
+        fontWeight: "800",
+    },
+    endTimeToggleHint: {
+        marginTop: 2,
+        fontSize: 11,
+        fontWeight: "600",
+    },
     fieldBase: {
         borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12,
     },

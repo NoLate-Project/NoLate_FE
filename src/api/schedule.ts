@@ -1,8 +1,21 @@
 import { apiDelete, apiGet, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
+import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 
 export type SchedulePayload = Omit<ScheduleItem, "id" | "updatedAt">;
+
+export type CalendarImportSourcePayload = {
+    provider: "APPLE_DEVICE" | "ANDROID_DEVICE" | "GOOGLE";
+    calendarId: string;
+    eventId: string;
+    occurrenceStartAt: string;
+};
+
+export type CalendarImportResult = {
+    item: ScheduleItem;
+    created: boolean;
+};
 
 export type ParseScheduleInputType =
     | "TEXT"
@@ -22,6 +35,11 @@ type ScheduleDto = Omit<ScheduleItem, "id"> & {
     id?: number | string | null;
 };
 
+type CalendarImportResultDto = {
+    schedule: ScheduleDto;
+    created: boolean;
+};
+
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
         throw new Error("일정 id가 응답에 없습니다.");
@@ -35,14 +53,14 @@ function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
 
 export async function getSchedules(): Promise<ScheduleItem[]> {
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
 export async function getCalendarSchedules(startAt: string, endAt: string): Promise<ScheduleItem[]> {
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/calendar", {
         params: { startAt, endAt },
     });
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
 export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
@@ -85,6 +103,24 @@ export async function createSchedule(payload: SchedulePayload): Promise<Schedule
     const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload);
     const item = normalizeSchedule(unwrapApiResponse(response));
     return { ...item, route: item.route ?? payload.route };
+}
+
+export async function importCalendarSchedule(
+    payload: SchedulePayload,
+    source: CalendarImportSourcePayload
+): Promise<CalendarImportResult> {
+    const response = await apiPost<
+        ApiEnvelope<CalendarImportResultDto>,
+        { schedule: SchedulePayload; source: CalendarImportSourcePayload }
+    >("/api/schedules/import", { schedule: payload, source });
+    const result = unwrapApiResponse(response);
+    const item = normalizeSchedule(result.schedule);
+
+    return {
+        // 기존 일정을 반환받은 경우에는 이번 시도에서 계산한 경로를 저장된 값처럼 섞지 않는다.
+        item: { ...item, route: item.route ?? (result.created ? payload.route : undefined) },
+        created: result.created,
+    };
 }
 
 export async function parseScheduleText(payload: ParseScheduleTextPayload): Promise<ScheduleParseResult> {

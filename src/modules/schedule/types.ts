@@ -26,6 +26,11 @@ export type ScheduleParseResult = {
     time?: string;
     startAt?: string;
     endAt?: string;
+    /**
+     * True only when the parser found an explicit end-time expression in the source text.
+     * Older API versions omit this field, so consumers must treat undefined as false.
+     */
+    hasExplicitEndTime?: boolean;
     origin?: Place;
     originSource: "TEXT" | "FAVORITE_DEFAULT" | "REQUIRED";
     originRequired: boolean;
@@ -82,6 +87,8 @@ export type ScheduleItem = {
     category: ScheduleCategory;
 
     notes?: string;
+    /** 공유 확장에서 빠르게 저장되어 앱에서 이동 경로를 마저 설정해야 하는 일정 */
+    routeSetupRequired?: boolean;
     route?: unknown;
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;

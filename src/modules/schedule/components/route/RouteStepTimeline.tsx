@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
@@ -25,6 +25,10 @@ import {
     type TransitArrivalLoadState,
 } from "./transitArrivalPresentation";
 
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
+
 type Props = {
     routeInfo: RouteInfo;
     selectedStepId?: string;
@@ -33,6 +37,7 @@ type Props = {
         stopIndex: number;
     };
     onStepPress?: (step: RouteStep) => void;
+    allowEndpointPress?: boolean;
     forceDark?: boolean;
     primaryTextColor?: string;
     secondaryTextColor?: string;
@@ -323,6 +328,7 @@ export default function RouteStepTimeline({
     selectedStepId,
     selectedPassStop,
     onStepPress,
+    allowEndpointPress = false,
     forceDark,
     primaryTextColor,
     secondaryTextColor,
@@ -480,6 +486,8 @@ export default function RouteStepTimeline({
                 const isLast = index === routeInfo.steps.length - 1;
                 const stepColor = getRouteStepColor(step);
                 const selected = selectedStepId === step.id;
+                const isEndpointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
+                const stepPressEnabled = !!onStepPress && (allowEndpointPress || !isEndpointStep);
                 const hasBadge = step.type === "SUBWAY" || step.type === "BUS";
                 const pointLabel = getPointLabel(step.type);
                 const expandable = hasBadge && Array.isArray(step.passStops) && step.passStops.length > 0;
@@ -815,11 +823,29 @@ export default function RouteStepTimeline({
                         backgroundColor: "transparent",
                         borderColor: "transparent",
                     };
+                const stepAccessibilityLabel = isEndpointStep
+                    ? `${pointLabel}, ${buildStepTitle(step)}`
+                    : [
+                        step.badgeText ?? step.lineName,
+                        buildStepTitle(step),
+                        hasBadge ? rideDescription : step.description,
+                    ].filter(Boolean).join(", ");
 
                 return (
                     <Pressable
                         key={step.id}
-                        disabled={!onStepPress || step.type === "ORIGIN" || step.type === "DESTINATION"}
+                        disabled={!stepPressEnabled}
+                        accessibilityRole={stepPressEnabled ? "button" : undefined}
+                        accessibilityLabel={stepPressEnabled ? stepAccessibilityLabel : undefined}
+                        accessibilityState={stepPressEnabled ? {
+                            selected,
+                            expanded: expandable ? expanded : undefined,
+                        } : undefined}
+                        accessibilityHint={stepPressEnabled
+                            ? expandable
+                                ? "지도에서 이 구간을 표시하고 경유지 목록을 열거나 닫습니다"
+                                : "지도에서 이 지점을 표시합니다"
+                            : undefined}
                         onPress={() => toggleStep(step)}
                         style={[
                             styles.item,

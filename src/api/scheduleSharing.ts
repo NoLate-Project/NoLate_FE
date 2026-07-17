@@ -1,5 +1,5 @@
-import { apiGet, apiPost } from "./api";
-import { type ApiEnvelope, unwrapApiResponse } from "./response";
+import { apiDelete, apiGet, apiPost } from "./api";
+import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { ScheduleSharePermission } from "../modules/schedule/types";
 
 export type ShareResourceType = "SCHEDULE" | "CATEGORY";
@@ -139,6 +139,20 @@ export async function createCategoryShare(
     return unwrapApiResponse(response);
 }
 
+export async function revokeScheduleShare(scheduleId: string, shareId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(
+        `/api/schedules/${scheduleId}/shares/${shareId}`
+    );
+    assertApiSuccess(response);
+}
+
+export async function revokeCategoryShare(categoryId: string, shareId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(
+        `/api/schedule-categories/${categoryId}/shares/${shareId}`
+    );
+    assertApiSuccess(response);
+}
+
 export async function getScheduleShareInvitations(scheduleId: string): Promise<ScheduleShareInvitation[]> {
     const response = await apiGet<ApiEnvelope<ScheduleShareInvitation[]>>(
         `/api/schedules/${scheduleId}/shares/invitations`
@@ -173,6 +187,20 @@ export async function createCategoryShareInvitation(
         payload
     );
     return unwrapApiResponse(response);
+}
+
+export async function revokeScheduleShareInvitation(scheduleId: string, invitationId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(
+        `/api/schedules/${scheduleId}/shares/invitations/${invitationId}`
+    );
+    assertApiSuccess(response);
+}
+
+export async function revokeCategoryShareInvitation(categoryId: string, invitationId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(
+        `/api/schedule-categories/${categoryId}/shares/invitations/${invitationId}`
+    );
+    assertApiSuccess(response);
 }
 
 export async function acceptShareInvitation(token: string): Promise<ScheduleShareInvitationAcceptResult> {

@@ -1,11 +1,14 @@
 {
   "name": "NoLate_FE",
-  "version": "0.0.1",
+  "version": "1.2.0",
   "private": true,
   "scripts": {
     "android": "expo run:android",
     "ios": "expo run:ios",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "verify:release-config": "node scripts/verify-release-config.mjs",
+    "verify": "npm run verify:release-config && npm run typecheck && npm run lint && npm test -- --runInBand --no-watchman",
     "postinstall": "patch-package",
     "start": "react-native start",
     "test": "jest"

@@ -19,6 +19,14 @@ const RECENT_ROUTE_PLACES_KEY = "nolate_recent_route_places_v1";
 const MAX_FAVORITE_DEPARTURE_PLACES = 8;
 const MAX_RECENT_ROUTE_PLACES = 12;
 
+export async function clearLocalRoutePlaceCaches(): Promise<void> {
+    await Promise.all([
+        SecureStore.deleteItemAsync(FAVORITE_DEPARTURE_PLACE_KEY),
+        SecureStore.deleteItemAsync(FAVORITE_DEPARTURE_PLACES_KEY),
+        SecureStore.deleteItemAsync(RECENT_ROUTE_PLACES_KEY),
+    ]);
+}
+
 function finiteNumber(value: unknown): number | undefined {
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

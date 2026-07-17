@@ -150,6 +150,8 @@ export default function GlobalFloatingActionBar({
     return (
         <Animated.View
             pointerEvents={hidden || disabled ? "none" : "box-none"}
+            accessibilityElementsHidden={hidden || disabled}
+            importantForAccessibility={hidden || disabled ? "no-hide-descendants" : "auto"}
             style={[
                 styles.host,
                 {
@@ -205,6 +207,7 @@ function ActionBadge({
 
     return (
         <View
+            accessible={false}
             pointerEvents="none"
             style={[
                 styles.badge,
@@ -270,6 +273,7 @@ function ActionButton({
             {!!action.icon && (
                 <View style={styles.iconHost}>
                     <Ionicons
+                        accessible={false}
                         name={action.icon}
                         size={24}
                         color={colors.textPrimary}

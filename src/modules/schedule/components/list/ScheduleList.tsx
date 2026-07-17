@@ -106,32 +106,38 @@ export default function ScheduleList({ selectedDay, items, loading = false, erro
                         <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: "center" }}>
                             {displayError}
                         </Text>
-                        <CalendarGlassSurface
-                            interactive
-                            clear
-                            glow
-                            variant="bottomBar"
-                            tone="softGlass"
-                            style={[
-                                styles.retryGlass,
-                                { borderColor: colors.border },
-                            ]}
-                        >
-                            <Pressable
-                                onPress={onPressRetry}
-                                style={({ pressed }) => [
-                                    styles.retryButton,
-                                    {
-                                        opacity: pressed ? 0.74 : 1,
-                                        transform: [{ scale: pressed ? 0.94 : 1 }],
-                                    },
+                        {onPressRetry ? (
+                            <CalendarGlassSurface
+                                interactive
+                                clear
+                                glow
+                                variant="bottomBar"
+                                tone="softGlass"
+                                style={[
+                                    styles.retryGlass,
+                                    { borderColor: colors.border },
                                 ]}
                             >
-                                <Text style={[styles.retryText, { color: colors.textPrimary }]}>
-                                    다시 조회
-                                </Text>
-                            </Pressable>
-                        </CalendarGlassSurface>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="일정 다시 조회"
+                                    onPress={onPressRetry}
+                                    style={({ pressed }) => [
+                                        styles.retryButton,
+                                        {
+                                            opacity: pressed ? 0.74 : 1,
+                                            transform: [{ scale: pressed ? 0.94 : 1 }],
+                                        },
+                                    ]}
+                                >
+                                    <Text
+                                        style={[styles.retryText, { color: colors.textPrimary }]}
+                                    >
+                                        다시 조회
+                                    </Text>
+                                </Pressable>
+                            </CalendarGlassSurface>
+                        ) : null}
                     </CalendarGlassSurface>
                 ) : (
                     items.length === 0 ? (

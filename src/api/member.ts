@@ -4,6 +4,7 @@ import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./respons
 const CURATION_STATUS_BOOTSTRAP_TIMEOUT_MS = 3_500;
 
 export type LoginType = "COMMON" | "KAKAO" | "GOOGLE" | "APPLE" | "NAVER";
+export type SocialLoginType = "KAKAO" | "APPLE" | "NAVER";
 
 export type MemberDto = {
     id?: number;
@@ -41,13 +42,13 @@ type LoginPayload = {
 };
 
 export type SnsLoginPayload = {
-    loginType: Exclude<LoginType, "COMMON">;
-    snsId: string;
-    email?: string;
-    name: string;
+    loginType: SocialLoginType;
+    providerToken: string;
+    authorizationCode?: string;
+    nonce?: string;
 };
 
-type SnsRegistrationPayload = Pick<SnsLoginPayload, "loginType" | "snsId">;
+type SnsRegistrationPayload = SnsLoginPayload;
 
 type SnsRegistrationStatusDto = {
     registered: boolean;

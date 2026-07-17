@@ -3,7 +3,15 @@ import { Platform } from "react-native";
 import { resolveApiBaseUrl } from "./apiBaseUrl";
 import { getEnv } from "./env";
 import { createSingleFlightRunner } from "./singleFlight";
-import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from "../modules/auth/authStorage";
+import {
+    clearAuthTokens,
+    configureSharedAuthApiBaseUrl,
+    getAccessToken,
+    getRefreshToken,
+    saveAuthTokens,
+} from "../modules/auth/authStorage";
+import { isDefinitiveRefreshStatus } from "../modules/auth/refreshPolicy";
+import { ApiResponseError } from "./response";
 
 // 운영 URL이 .env에 들어 있어도 개발 빌드는 로컬 BE를 기본 사용한다. 이전 구현은
 // EXPO_PUBLIC_LOCAL_API_BASE_URL이 없으면 개발용 시뮬레이터까지 운영 서버를 호출해,
@@ -14,6 +22,9 @@ export const API_BASE_URL = resolveApiBaseUrl({
     isDevelopment: __DEV__,
     platform: Platform.OS,
 });
+
+// 공유 확장이 토큰을 발급한 서버와 정확히 같은 환경을 사용하도록 함께 보관한다.
+configureSharedAuthApiBaseUrl(API_BASE_URL);
 
 export const apiClient: AxiosInstance = axios.create({
     baseURL: API_BASE_URL,
@@ -65,10 +76,20 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
         };
         await saveAuthTokens(refreshedTokens.accessToken, refreshedTokens.refreshToken);
         return refreshedTokens;
-    } catch {
-        await clearAuthTokens();
+    } catch (error) {
+        // A connection loss, timeout, rate limit, or server outage does not mean the
+        // refresh token is invalid. Keep the local session so the user can retry when
+        // connectivity recovers; clear it only when the auth server definitively rejects it.
+        if (isDefinitiveRefreshRejection(error)) {
+            await clearAuthTokens();
+        }
         return null;
     }
+}
+
+function isDefinitiveRefreshRejection(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) return false;
+    return isDefinitiveRefreshStatus(error.response?.status);
 }
 
 function getRequestAuthorization(config: RetryableRequestConfig): string | null {
@@ -108,7 +129,11 @@ apiClient.interceptors.request.use(
 
 apiClient.interceptors.response.use(
     (response: AxiosResponse) => response,
-    async (error: AxiosError<{ errorMessage?: string | null; message?: string | null }>) => {
+    async (error: AxiosError<{
+        errorMessage?: string | null;
+        errorCode?: string | null;
+        message?: string | null;
+    }>) => {
         const originalRequest = error.config as RetryableRequestConfig | undefined;
         const requestUrl = originalRequest?.url ?? "";
 
@@ -143,7 +168,11 @@ apiClient.interceptors.response.use(
             error.response?.data?.message ??
             error.message;
 
-        return Promise.reject(new Error(message));
+        return Promise.reject(new ApiResponseError(message, {
+            errorCode: error.response?.data?.errorCode ?? error.code,
+            status: error.response?.status,
+            cause: error,
+        }));
     }
 );
 

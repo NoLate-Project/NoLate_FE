@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
     Alert,
     AppState,
@@ -13,6 +13,7 @@ import {
     Pressable,
     ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TextInput,
     useWindowDimensions,
@@ -45,22 +46,41 @@ import {
 } from "../../addHandoffMotion";
 import type { QuickScheduleMediaInput } from "../../quickInputExtraction";
 import { finalizeQuickScheduleRecording } from "../../quickInputRecording";
-import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
-import { consumeRoutePlannerResult, setRoutePlannerInitial, type RoutePlannerPayload } from "../../routePlannerSession";
-import { getRouteInfoFromRoute } from "../../routeInfo";
-import LocationInputRow from "./LocationInputRow";
+import type { ScheduleCategory, ScheduleItem, ScheduleParseResult } from "../../types";
+import { canWriteScheduleCategory } from "../../categoryPermissions";
+import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
+import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
+import {
+    applyQuickScheduleRouteResult as applyRouteResultToPreviewDraft,
+    buildQuickSchedulePayload,
+    buildQuickSchedulePreviewDraft as buildPreviewDraft,
+    getQuickSchedulePreviewRouteInfo,
+    getQuickScheduleBlockingReviewField,
+    isQuickScheduleRouteReady as canUseRouteNotification,
+    quickSchedulePlaceFromLocation as placeFromDraftLocation,
+    updateQuickSchedulePreviewDraft,
+    type QuickSchedulePreviewDraft as PreviewDraft,
+    type QuickSchedulePreviewField as PreviewField,
+} from "../../quickScheduleDraft";
 import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
 import BrandedLoader from "../../../../ui/BrandedLoader";
+import CategoryLoadErrorBanner from "./CategoryLoadErrorBanner";
 
 type Props = {
     visible: boolean;
     prewarm?: boolean;
+    initialText?: string;
+    initialRequestId?: string;
+    initialInputType?: QuickScheduleMediaInput["inputTypeOverride"];
     onClose: () => void;
     onCloseStart?: () => void;
     onAnalyze: (text: string, media?: QuickScheduleMediaInput) => Promise<ScheduleParseResult>;
     onSave: (payload: Omit<ScheduleItem, "id">) => void | Promise<void>;
     defaultDay: string;
     defaultCategory?: ScheduleCategory;
+    categoryError?: string | null;
+    categoryLoading?: boolean;
+    onRetryCategories?: () => void;
     sourceTopOffset?: number;
     sourceWidth?: number;
     sourceHeight?: number;
@@ -74,28 +94,11 @@ export type QuickScheduleMorphPresenter = () => boolean;
 
 type InputMode = "text" | "photo" | "voice";
 type FlowStep = "input" | "analyzing" | "analysisError" | "preview" | "edit" | "saving" | "saved";
-type PreviewField = "title" | "date" | "time" | "location" | "notification" | "memo";
 type TimeEditMode = "picker" | "manual";
 type TabLayout = {
     x: number;
     width: number;
 };
-type PreviewDraft = {
-    title: string;
-    date: string;
-    time: string;
-    location: string;
-    origin?: Place;
-    destination?: Place;
-    travelMode?: TravelMode;
-    travelMinutes?: number;
-    route?: unknown;
-    notificationLeadMinutes?: number;
-    memo: string;
-    badges: Partial<Record<PreviewField, string>>;
-    parsed?: ScheduleParseResult;
-};
-
 const QUICK_TEXT_LIMIT = 300;
 const BLUE = "#246BFE";
 const OPEN_START_PROGRESS = 0;
@@ -145,19 +148,15 @@ const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     saving: 368,
     saved: 368,
 };
-const FALLBACK_CATEGORY: ScheduleCategory = {
-    id: "1",
-    title: "업무",
-    color: "#FF3B30",
-};
 const INPUT_MODES: Array<{
     key: InputMode;
     label: string;
+    accessibilityLabel: string;
     icon: keyof typeof Ionicons.glyphMap;
 }> = [
-    { key: "text", label: "텍스트", icon: "text-outline" },
-    { key: "photo", label: "사진", icon: "image-outline" },
-    { key: "voice", label: "음성", icon: "mic-outline" },
+    { key: "text", label: "텍스트", accessibilityLabel: "텍스트로 빠른 일정 만들기", icon: "text-outline" },
+    { key: "photo", label: "사진", accessibilityLabel: "사진으로 빠른 일정 만들기", icon: "image-outline" },
+    { key: "voice", label: "음성", accessibilityLabel: "음성으로 빠른 일정 만들기", icon: "mic-outline" },
 ];
 
 function normalizeVoiceMetering(metering?: number | null) {
@@ -303,10 +302,9 @@ const FIELD_LABEL: Record<PreviewField, string> = PREVIEW_FIELDS.reduce((acc, it
     return acc;
 }, {} as Record<PreviewField, string>);
 const NOTIFICATION_OPTIONS = [
-    { label: "미설정", value: "none" },
-    { label: "10분 전", value: "10" },
-    { label: "30분 전", value: "30" },
-    { label: "1시간 전", value: "60" },
+    { label: "10분", value: "10" },
+    { label: "30분", value: "30" },
+    { label: "1시간", value: "60" },
 ];
 
 function runAfterInteraction(task: () => void) {
@@ -394,163 +392,10 @@ function formatKoreanTime(hm: string) {
 }
 
 function formatNotification(minutes?: number) {
-    if (minutes === undefined) return "미설정";
+    if (minutes === undefined) return "사용 안 함";
     if (minutes < 60) return `${minutes}분 전`;
     if (minutes % 60 === 0) return `${minutes / 60}시간 전`;
     return `${minutes}분 전`;
-}
-
-function includesAny(values: string[], needles: string[]) {
-    const normalized = values.join(" ").toLowerCase();
-    return needles.some((needle) => normalized.includes(needle.toLowerCase()));
-}
-
-function displayPlaceName(place?: { name?: string; address?: string }) {
-    return place?.name?.trim() || place?.address?.trim() || "";
-}
-
-function getPreviewDraftRouteInfo(draft: PreviewDraft | null | undefined) {
-    if (!draft) return undefined;
-    const destination = draft.destination ?? placeFromDraftLocation(draft.location);
-    return getRouteInfoFromRoute(draft.route, {
-        origin: draft.origin,
-        destination,
-        travelMode: draft.travelMode,
-        travelMinutes: draft.travelMinutes,
-    });
-}
-
-function canUseRouteNotification(draft: PreviewDraft | null | undefined) {
-    return !!getPreviewDraftRouteInfo(draft);
-}
-
-function buildPreviewDraft(
-    parsed: ScheduleParseResult,
-    fallbackText: string,
-    referenceDay: string
-): PreviewDraft {
-    const startDate = parsed.startAt ? new Date(parsed.startAt) : null;
-    const parsedDate = parsed.date?.trim();
-    const parsedTime = parsed.time?.trim();
-    const missingFields = parsed.missingFields ?? [];
-    const warnings = parsed.warnings ?? [];
-    const hasDateReviewWarning = includesAny(warnings, [
-        "서로 다른 요일",
-        "서로 다른 날짜",
-        "날짜와 요일이 일치하지 않아",
-    ]);
-    const hasTimeReviewWarning = includesAny(warnings, ["서로 다른 시간"]);
-    const destinationText = displayPlaceName(parsed.destination);
-    const routeInfo = getRouteInfoFromRoute(parsed.route, {
-        origin: parsed.origin,
-        destination: parsed.destination,
-        travelMode: parsed.travelMode,
-        travelMinutes: parsed.travelMinutes,
-    });
-    const routeNotificationReady = !!routeInfo;
-    const badges: PreviewDraft["badges"] = {};
-    const date = startDate && !Number.isNaN(startDate.getTime())
-        ? toYmd(startDate)
-        : parsedDate && /^\d{4}-\d{2}-\d{2}$/.test(parsedDate)
-            ? parsedDate
-            : referenceDay;
-    const time = startDate && !Number.isNaN(startDate.getTime())
-        ? toHm(startDate)
-        : parsedTime && /^\d{1,2}:\d{2}$/.test(parsedTime)
-            ? parsedTime.padStart(5, "0")
-            : "19:00";
-
-    if (hasDateReviewWarning) {
-        // OCR이 취소선과 수정된 요일을 동시에 읽은 경우 값이 채워져 있어도 자동 확정하면 안 된다.
-        // 사용자가 날짜 편집 화면을 열어 확인하면 updatePreviewField가 이 배지를 제거한다.
-        badges.date = "날짜 확인 필요";
-    }
-    if (hasTimeReviewWarning) {
-        badges.time = "시간 확인 필요";
-    } else if ((!parsedTime && !parsed.startAt) || includesAny([...missingFields, ...warnings], ["time", "시간"])) {
-        badges.time = "시간 미확정";
-    }
-    if (!destinationText || includesAny([...missingFields, ...warnings], ["place", "location", "destination", "장소", "위치"])) {
-        badges.location = "장소 확인 필요";
-    }
-    if (!routeNotificationReady) {
-        badges.notification = "경로 등록 필요";
-    } else if (!parsed.notificationEnabled) {
-        badges.notification = "알림 미설정";
-    }
-
-    return {
-        title: parsed.title?.trim() || fallbackText.split(/\n|,/)[0]?.trim() || "새 일정",
-        date,
-        time,
-        location: destinationText || "장소 미정",
-        origin: parsed.origin,
-        destination: parsed.destination,
-        travelMode: parsed.travelMode,
-        travelMinutes: parsed.travelMinutes,
-        route: parsed.route,
-        notificationLeadMinutes: routeNotificationReady && parsed.notificationEnabled ? parsed.notificationLeadMinutes ?? 30 : undefined,
-        memo: parsed.notes?.trim() || fallbackText.trim() || "메모 없음",
-        badges,
-        parsed,
-    };
-}
-
-function placeFromDraftLocation(location: string): Place | undefined {
-    const normalized = location.trim();
-    if (!normalized || normalized === "장소 미정") return undefined;
-    return { name: normalized };
-}
-
-function applyRouteResultToPreviewDraft(
-    draft: PreviewDraft,
-    result: RoutePlannerPayload
-): PreviewDraft {
-    const destinationName = displayPlaceName(result.destination) || result.locationName?.split("→").pop()?.trim() || draft.location;
-    const nextBadges = { ...draft.badges };
-    const hasRoute = !!getRouteInfoFromRoute(result.route, {
-        origin: result.origin,
-        destination: result.destination,
-        travelMode: result.travelMode,
-        travelMinutes: result.travelMinutes,
-    });
-    const nextNotificationLeadMinutes = hasRoute
-        ? draft.notificationLeadMinutes ?? (draft.parsed?.notificationEnabled ? draft.parsed.notificationLeadMinutes ?? 30 : undefined)
-        : undefined;
-    if (destinationName && destinationName !== "장소 미정") {
-        delete nextBadges.location;
-    }
-    if (hasRoute) {
-        if (nextNotificationLeadMinutes !== undefined) {
-            delete nextBadges.notification;
-        } else {
-            nextBadges.notification = "알림 미설정";
-        }
-    } else {
-        nextBadges.notification = "경로 등록 필요";
-    }
-
-    return {
-        ...draft,
-        location: destinationName || "장소 미정",
-        origin: result.origin,
-        destination: result.destination,
-        travelMode: result.travelMode,
-        travelMinutes: result.travelMinutes,
-        route: result.route,
-        notificationLeadMinutes: nextNotificationLeadMinutes,
-        badges: nextBadges,
-        parsed: draft.parsed
-            ? {
-                ...draft.parsed,
-                origin: result.origin,
-                destination: result.destination,
-                travelMode: result.travelMode,
-                travelMinutes: result.travelMinutes,
-                route: result.route,
-            }
-            : draft.parsed,
-    };
 }
 
 function waitForAudioForegroundReady() {
@@ -582,12 +427,18 @@ function waitForAudioForegroundReady() {
 export default function QuickScheduleModal({
     visible,
     prewarm = false,
+    initialText,
+    initialRequestId,
+    initialInputType,
     onClose,
     onCloseStart,
     onAnalyze,
     onSave,
     defaultDay,
-    defaultCategory = FALLBACK_CATEGORY,
+    defaultCategory,
+    categoryError,
+    categoryLoading = false,
+    onRetryCategories,
     sourceTopOffset = 4,
     sourceWidth = ADD_MENU_SOURCE.fallbackWidth,
     sourceHeight = ADD_MENU_SOURCE.nativeHeight,
@@ -651,7 +502,12 @@ export default function QuickScheduleModal({
     const closeFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const closeFinishedRef = useRef(false);
     const routePlannerAwayRef = useRef(false);
-    const routePlannerFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const routePlannerReturnFieldRef = useRef<PreviewField | null>(null);
+    const initialRequestHandledRef = useRef<string | null>(null);
+    const analysisSequenceRef = useRef(0);
+    const analysisPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const analysisInFlightRef = useRef(false);
+    const saveInFlightRef = useRef(false);
     if (
         visible ||
         (!openStartedRef.current && openHandoffFrameRef.current === null)
@@ -680,8 +536,7 @@ export default function QuickScheduleModal({
     const openSourceRadius = Math.min(openSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
     const closeSourceRadius = Math.min(closeSourceHeight / 2, ADD_MENU_SOURCE.nativeRadius);
 
-    const previewRouteInfo = useMemo(() => getPreviewDraftRouteInfo(previewDraft), [previewDraft]);
-    const notificationRouteReady = !!previewRouteInfo;
+    const notificationRouteReady = canUseRouteNotification(previewDraft);
 
     const handleModeLayout = useCallback((key: InputMode) => (event: LayoutChangeEvent) => {
         const { x, width: measuredWidth } = event.nativeEvent.layout;
@@ -758,6 +613,15 @@ export default function QuickScheduleModal({
         }
     }, [clearVoiceTimer]);
 
+    const invalidatePendingAnalysis = useCallback(() => {
+        analysisSequenceRef.current += 1;
+        analysisInFlightRef.current = false;
+        if (analysisPreviewTimerRef.current) {
+            clearTimeout(analysisPreviewTimerRef.current);
+            analysisPreviewTimerRef.current = null;
+        }
+    }, []);
+
     const finishClose = useCallback((shouldNotifyClose: boolean) => {
         if (closeFinishedRef.current) return;
         closeFinishedRef.current = true;
@@ -786,18 +650,17 @@ export default function QuickScheduleModal({
         setTimeEditMode("picker");
         setRoutePlannerSessionId(undefined);
         setRoutePlannerHidden(false);
+        saveInFlightRef.current = false;
+        invalidatePendingAnalysis();
         routePlannerAwayRef.current = false;
+        routePlannerReturnFieldRef.current = null;
         openStartedRef.current = false;
         presentationOpacity.value = PREWARM_PRESENTATION_OPACITY;
-        if (routePlannerFallbackTimerRef.current) {
-            clearTimeout(routePlannerFallbackTimerRef.current);
-            routePlannerFallbackTimerRef.current = null;
-        }
         closingRef.current = false;
         if (shouldNotifyClose) {
             onClose();
         }
-    }, [onClose, presentationOpacity, prewarm]);
+    }, [invalidatePendingAnalysis, onClose, presentationOpacity, prewarm]);
 
     const runCloseAnimation = useCallback((shouldNotifyClose = false) => {
         Keyboard.dismiss();
@@ -850,24 +713,17 @@ export default function QuickScheduleModal({
     ]);
 
     const requestClose = useCallback(() => {
-        if (submitting || closingRef.current) return;
+        if ((submitting && flowStep !== "analyzing") || closingRef.current) return;
+
+        if (flowStep === "analyzing") {
+            invalidatePendingAnalysis();
+            setSubmitting(false);
+        }
 
         closingRef.current = true;
         onCloseStart?.();
         runCloseAnimation(true);
-    }, [onCloseStart, runCloseAnimation, submitting]);
-
-    useEffect(() => {
-        if (Platform.OS !== "android" || routePlannerHidden || (!visible && !rendered)) {
-            return undefined;
-        }
-
-        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-            requestClose();
-            return true;
-        });
-        return () => subscription.remove();
-    }, [rendered, requestClose, routePlannerHidden, visible]);
+    }, [flowStep, invalidatePendingAnalysis, onCloseStart, runCloseAnimation, submitting]);
 
     const startOpenAnimation = useCallback((openCycle: number) => {
         if (
@@ -1057,21 +913,32 @@ export default function QuickScheduleModal({
         runCloseAnimation(true);
     }, [onCloseStart, prewarm, rendered, runCloseAnimation, visible]);
 
-    const startAnalysis = async () => {
-        const normalized = text.trim();
-        const hasCurrentInput = inputMode === "text"
+    const startAnalysis = useCallback(async (
+        textOverride?: string,
+        inputTypeOverride?: QuickScheduleMediaInput["inputTypeOverride"],
+    ) => {
+        const normalized = (textOverride ?? text).trim();
+        const analysisInputMode: InputMode = inputTypeOverride ? "text" : inputMode;
+        const hasCurrentInput = analysisInputMode === "text"
             ? normalized.length > 0
-            : inputMode === "photo"
+            : analysisInputMode === "photo"
                 ? Boolean(selectedPhoto?.uri)
                 : Boolean(voiceUri);
-        if (!hasCurrentInput || submitting || recorderState.isRecording) return;
+        if (!hasCurrentInput || submitting || analysisInFlightRef.current || isVoiceRecording) return;
 
-        const fallbackText = inputMode === "photo"
+        const fallbackText = analysisInputMode === "photo"
             ? "사진으로 입력한 일정"
-            : inputMode === "voice"
+            : analysisInputMode === "voice"
                 ? "음성으로 입력한 일정"
                 : "";
         const sourceText = normalized || fallbackText;
+        const analysisSequence = analysisSequenceRef.current + 1;
+        analysisSequenceRef.current = analysisSequence;
+        analysisInFlightRef.current = true;
+        if (analysisPreviewTimerRef.current) {
+            clearTimeout(analysisPreviewTimerRef.current);
+            analysisPreviewTimerRef.current = null;
+        }
 
         try {
             setSubmitting(true);
@@ -1079,47 +946,64 @@ export default function QuickScheduleModal({
             setFlowStep("analyzing");
 
             const parsed = await onAnalyze(sourceText, {
-                inputMode,
-                photoUri: inputMode === "photo" ? selectedPhoto?.uri : undefined,
-                voiceUri: inputMode === "voice" ? voiceUri ?? undefined : undefined,
-                voiceDurationMillis: inputMode === "voice" && voiceUri ? voiceDurationMillis : undefined,
+                inputMode: analysisInputMode,
+                inputTypeOverride,
+                photoUri: analysisInputMode === "photo" ? selectedPhoto?.uri : undefined,
+                voiceUri: analysisInputMode === "voice" ? voiceUri ?? undefined : undefined,
+                voiceDurationMillis: analysisInputMode === "voice" && voiceUri ? voiceDurationMillis : undefined,
             });
-            setTimeout(() => {
+            if (analysisSequenceRef.current !== analysisSequence || !visibleRef.current) return;
+
+            analysisPreviewTimerRef.current = setTimeout(() => {
+                analysisPreviewTimerRef.current = null;
+                if (analysisSequenceRef.current !== analysisSequence || !visibleRef.current) return;
                 setPreviewDraft(buildPreviewDraft(parsed, sourceText, defaultDay));
                 setFlowStep("preview");
                 setSubmitting(false);
+                analysisInFlightRef.current = false;
             }, 220);
         } catch (error) {
+            if (analysisSequenceRef.current !== analysisSequence || !visibleRef.current) return;
             setAnalysisError(error instanceof Error ? error.message : "일정 정보를 분석하지 못했어요");
             setFlowStep("analysisError");
             setSubmitting(false);
+            analysisInFlightRef.current = false;
         }
+    }, [
+        defaultDay,
+        inputMode,
+        isVoiceRecording,
+        onAnalyze,
+        selectedPhoto?.uri,
+        submitting,
+        text,
+        voiceDurationMillis,
+        voiceUri,
+    ]);
+
+    const submit = () => {
+        void startAnalysis();
     };
 
-    const submit = startAnalysis;
+    useEffect(() => {
+        const requestId = initialRequestId?.trim();
+        const seedText = initialText?.trim();
+        if (!visible || !requestId || !seedText || initialRequestHandledRef.current === requestId) return;
+
+        initialRequestHandledRef.current = requestId;
+        setInputMode("text");
+        setText(seedText);
+        setSelectedPhoto(null);
+        setVoiceUri(null);
+        setAnalysisError("");
+        setFlowStep("input");
+        void startAnalysis(seedText, initialInputType);
+    }, [initialInputType, initialRequestId, initialText, startAnalysis, visible]);
 
     const updatePreviewField = useCallback((field: PreviewField, value: string) => {
-        setPreviewDraft((current) => {
-            if (!current) return current;
-            const nextBadges = { ...current.badges };
-            delete nextBadges[field];
-
-            if (field === "notification") {
-                const minutes = value === "none" ? undefined : Number(value);
-                return {
-                    ...current,
-                    notificationLeadMinutes: Number.isFinite(minutes) ? minutes : undefined,
-                    badges: nextBadges,
-                };
-            }
-
-            return {
-                ...current,
-                [field]: value,
-                ...(field === "location" ? { destination: placeFromDraftLocation(value) } : {}),
-                badges: nextBadges,
-            };
-        });
+        setPreviewDraft((current) => current
+            ? updateQuickSchedulePreviewDraft(current, field, value)
+            : current);
     }, []);
 
     const openEditField = useCallback((field: PreviewField) => {
@@ -1140,7 +1024,13 @@ export default function QuickScheduleModal({
 
         const nextValue = editingField === "time"
             ? normalizeTimeInput(editingValue, previewDraft?.time ?? "09:00")
-            : editingValue.trim() || (editingField === "notification" ? "none" : "");
+            : editingValue.trim() || (editingField === "notification"
+                ? "none"
+                : editingField === "location"
+                    ? "장소 미정"
+                    : editingField === "title"
+                        ? "새 일정"
+                        : editingField === "memo" ? "메모 없음" : "");
         updatePreviewField(editingField, nextValue);
         setEditingField(null);
         setEditingValue("");
@@ -1155,16 +1045,48 @@ export default function QuickScheduleModal({
         setFlowStep("preview");
     }, []);
 
+    useEffect(() => {
+        if (Platform.OS !== "android" || routePlannerHidden || (!visible && !rendered)) {
+            return undefined;
+        }
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            if (flowStep === "edit") {
+                cancelEditField();
+                return true;
+            }
+            if (flowStep === "preview" || flowStep === "analysisError") {
+                setFlowStep("input");
+                return true;
+            }
+            if (flowStep === "analyzing") {
+                invalidatePendingAnalysis();
+                setSubmitting(false);
+                setFlowStep("input");
+                return true;
+            }
+            if (flowStep === "saving") return true;
+
+            requestClose();
+            return true;
+        });
+        return () => subscription.remove();
+    }, [
+        cancelEditField,
+        flowStep,
+        invalidatePendingAnalysis,
+        rendered,
+        requestClose,
+        routePlannerHidden,
+        visible,
+    ]);
+
     const openRoutePlannerFromPreview = useCallback(() => {
         if (!previewDraft || submitting) return;
 
         const destination = previewDraft.destination ?? placeFromDraftLocation(previewDraft.location);
         const sessionId = `quick-route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         routePlannerAwayRef.current = false;
-        if (routePlannerFallbackTimerRef.current) {
-            clearTimeout(routePlannerFallbackTimerRef.current);
-            routePlannerFallbackTimerRef.current = null;
-        }
 
         setRoutePlannerInitial(sessionId, {
             origin: previewDraft.origin,
@@ -1172,31 +1094,37 @@ export default function QuickScheduleModal({
             travelMode: previewDraft.travelMode ?? previewDraft.parsed?.travelMode ?? "TRANSIT",
             travelMinutes: previewDraft.travelMinutes ?? previewDraft.parsed?.travelMinutes,
             locationName: destination?.name || destination?.address || undefined,
+            targetArrivalAt: dateFromDraftTime(previewDraft.date, previewDraft.time).toISOString(),
+            departureAt: previewDraft.departAt,
             route: previewDraft.route ?? previewDraft.parsed?.route,
         });
 
         Keyboard.dismiss();
         setRoutePlannerSessionId(sessionId);
         setRoutePlannerHidden(true);
+        routePlannerReturnFieldRef.current = editingField;
         setEditingField(null);
         setEditingValue("");
         setTimeEditMode("picker");
         setFlowStep("preview");
         setRendered(false);
-        router.push({ pathname: "/schedule/route-select", params: { sessionId } });
-
-        routePlannerFallbackTimerRef.current = setTimeout(() => {
-            routePlannerFallbackTimerRef.current = null;
-            if (routePlannerAwayRef.current) return;
+        try {
+            router.push({ pathname: "/schedule/route-select", params: { sessionId } });
+        } catch {
             setRoutePlannerSessionId(undefined);
             setRoutePlannerHidden(false);
             setRendered(true);
             setContentMounted(true);
             progress.value = 1;
-            setEditingField("location");
-            setFlowStep("edit");
-        }, 1400);
-    }, [previewDraft, progress, router, submitting]);
+            const returnField = routePlannerReturnFieldRef.current;
+            setEditingField(returnField);
+            setEditingValue(returnField === "notification"
+                ? String(previewDraft.notificationLeadMinutes ?? "none")
+                : returnField ? String(previewDraft[returnField] ?? "") : "");
+            setFlowStep(returnField ? "edit" : "preview");
+            routePlannerReturnFieldRef.current = null;
+        }
+    }, [editingField, previewDraft, progress, router, submitting]);
 
     useEffect(() => {
         if (
@@ -1206,16 +1134,13 @@ export default function QuickScheduleModal({
 
         if (pathname === "/schedule/route-select" || pathname === "/schedule/route-planner") {
             routePlannerAwayRef.current = true;
-            if (routePlannerFallbackTimerRef.current) {
-                clearTimeout(routePlannerFallbackTimerRef.current);
-                routePlannerFallbackTimerRef.current = null;
-            }
             return;
         }
 
         if (!routePlannerAwayRef.current) return;
 
         const result = consumeRoutePlannerResult(routePlannerSessionId);
+        const returnField = routePlannerReturnFieldRef.current;
         routePlannerAwayRef.current = false;
         setRoutePlannerSessionId(undefined);
         setRoutePlannerHidden(false);
@@ -1229,51 +1154,56 @@ export default function QuickScheduleModal({
         setTimeEditMode("picker");
         setFlowStep("preview");
 
-        if (result) {
-            setPreviewDraft((current) => current ? applyRouteResultToPreviewDraft(current, result) : current);
+        if (result && previewDraft) {
+            const nextDraft = applyRouteResultToPreviewDraft(previewDraft, result);
+            setPreviewDraft(nextDraft);
+            if (returnField === "notification") {
+                setEditingField("notification");
+                setEditingValue(String(nextDraft.notificationLeadMinutes ?? "none"));
+                setFlowStep("edit");
+            }
+        } else if (returnField && previewDraft) {
+            // 경로 화면에서 뒤로가거나 취소해도 사용자가 떠났던 편집 문맥으로 돌아간다.
+            // 경로 결과가 없으므로 기존 초안과 편집값을 그대로 보존한다.
+            setEditingField(returnField);
+            setEditingValue(returnField === "notification"
+                ? String(previewDraft.notificationLeadMinutes ?? "none")
+                : String(previewDraft[returnField] ?? ""));
+            setFlowStep("edit");
         }
-    }, [pathname, progress, routePlannerSessionId, visible]);
+        routePlannerReturnFieldRef.current = null;
+    }, [pathname, previewDraft, progress, routePlannerSessionId, visible]);
 
     const savePreview = async () => {
-        if (!previewDraft || submitting) return;
+        if (!previewDraft || submitting || saveInFlightRef.current) return;
 
-        const startAtDate = dateFromDraftTime(previewDraft.date, previewDraft.time);
-        const endAtDate = new Date(startAtDate.getTime() + 60 * 60 * 1000);
-        const routeInfoForNotification = getPreviewDraftRouteInfo(previewDraft);
-        const hasNotification = previewDraft.notificationLeadMinutes !== undefined && !!routeInfoForNotification;
-        const destination = previewDraft.destination
-            ?? placeFromDraftLocation(previewDraft.location)
-            ?? previewDraft.parsed?.destination;
-        const destinationName = displayPlaceName(destination);
+        if (!defaultCategory || !canWriteScheduleCategory(defaultCategory)) {
+            Alert.alert(
+                "카테고리가 필요해요",
+                categoryError
+                    ? "카테고리를 다시 불러온 뒤 일정을 저장해 주세요."
+                    : "카테고리를 만든 뒤 일정을 저장해 주세요."
+            );
+            return;
+        }
+
+        const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
+        if (blockingReviewField) {
+            openEditField(blockingReviewField);
+            return;
+        }
 
         try {
+            saveInFlightRef.current = true;
             setSubmitting(true);
             setFlowStep("saving");
-            await onSave({
-                title: previewDraft.title.trim() || "새 일정",
-                startAt: startAtDate.toISOString(),
-                endAt: endAtDate.toISOString(),
-                hasEndTime: false,
-                allDay: false,
-                category: defaultCategory,
-                locationName: destinationName || undefined,
-                destination,
-                origin: previewDraft.origin ?? previewDraft.parsed?.origin,
-                notes: previewDraft.memo.trim() && previewDraft.memo !== "메모 없음"
-                    ? previewDraft.memo.trim()
-                    : undefined,
-                travelMinutes: previewDraft.travelMinutes ?? previewDraft.parsed?.travelMinutes,
-                travelMode: previewDraft.travelMode ?? previewDraft.parsed?.travelMode,
-                route: previewDraft.route ?? previewDraft.parsed?.route,
-                notificationEnabled: hasNotification,
-                notificationLeadMinutes: hasNotification ? previewDraft.notificationLeadMinutes : undefined,
-                notificationIntervalMinutes: hasNotification ? previewDraft.parsed?.notificationIntervalMinutes ?? 20 : undefined,
-            });
+            await onSave(buildQuickSchedulePayload(previewDraft, defaultCategory));
             setFlowStep("saved");
         } catch (error) {
             Alert.alert("일정 저장 실패", error instanceof Error ? error.message : "일정을 저장하지 못했습니다.");
             setFlowStep("preview");
         } finally {
+            saveInFlightRef.current = false;
             setSubmitting(false);
         }
     };
@@ -1459,7 +1389,7 @@ export default function QuickScheduleModal({
                 playsInSilentModeIOS: true,
             }).catch(() => undefined);
             console.warn("[QuickSchedule] Voice recording failed to start.", error);
-            Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해주세요.");
+            Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
     }, [clearVoiceTimer, isVoiceFinalizing, isVoiceRecording, submitting]);
 
@@ -1473,7 +1403,7 @@ export default function QuickScheduleModal({
             setVoiceUri(null);
             Alert.alert(
                 "녹음 저장 실패",
-                error instanceof Error ? error.message : "녹음 파일을 저장하지 못했습니다. 다시 녹음해주세요."
+                error instanceof Error ? error.message : "녹음 파일을 저장하지 못했습니다. 다시 녹음해 주세요."
             );
         } finally {
             setIsVoiceFinalizing(false);
@@ -1504,17 +1434,14 @@ export default function QuickScheduleModal({
 
     useEffect(() => {
         return () => {
+            invalidatePendingAnalysis();
             void stopActiveRecording();
-            if (routePlannerFallbackTimerRef.current) {
-                clearTimeout(routePlannerFallbackTimerRef.current);
-                routePlannerFallbackTimerRef.current = null;
-            }
             if (closeFinishTimerRef.current) {
                 clearTimeout(closeFinishTimerRef.current);
                 closeFinishTimerRef.current = null;
             }
         };
-    }, [stopActiveRecording]);
+    }, [invalidatePendingAnalysis, stopActiveRecording]);
 
     useEffect(() => {
         const selectedLayout = modeLayouts[inputMode];
@@ -1740,7 +1667,11 @@ export default function QuickScheduleModal({
                     : flowStep === "saved"
                         ? "일정 저장 완료"
                         : flowStep === "edit" && editingField
-                            ? editingField === "location" ? "이동 경로 설정" : `${FIELD_LABEL[editingField]} 수정`
+                            ? editingField === "location"
+                                ? "장소 수정"
+                                : editingField === "notification"
+                                    ? "출발 알림"
+                                    : `${FIELD_LABEL[editingField]} 수정`
                             : "일정 미리보기";
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
@@ -1753,9 +1684,17 @@ export default function QuickScheduleModal({
             case "date":
                 return formatKoreanDate(draft.date);
             case "time":
+                if (draft.hasExplicitEndTime) {
+                    const startAt = dateFromDraftTime(draft.date, draft.time);
+                    const endAt = new Date(startAt.getTime() + draft.durationMinutes * 60_000);
+                    const endTime = formatKoreanTime(toHm(endAt));
+                    return toYmd(startAt) === toYmd(endAt)
+                        ? `${formatKoreanTime(draft.time)} ~ ${endTime}`
+                        : `${formatKoreanTime(draft.time)} ~ ${formatKoreanDate(toYmd(endAt))} ${endTime}`;
+                }
                 return formatKoreanTime(draft.time);
             case "notification":
-                if (!canUseRouteNotification(draft)) return "경로 등록 후 사용";
+                if (!canUseRouteNotification(draft)) return "사용 안 함 · 나중에 설정 가능";
                 return formatNotification(draft.notificationLeadMinutes);
             case "location":
                 return draft.location;
@@ -1790,7 +1729,7 @@ export default function QuickScheduleModal({
             >
                 <View style={styles.modeIndicatorUnderline} />
             </Reanimated.View>
-            {INPUT_MODES.map((item) => {
+            {(Platform.OS === "ios" ? INPUT_MODES : INPUT_MODES.filter((item) => item.key === "text")).map((item) => {
                 const selected = item.key === inputMode;
 
                 return (
@@ -1799,6 +1738,12 @@ export default function QuickScheduleModal({
                         onLayout={handleModeLayout(item.key)}
                         onPress={() => handleModePress(item.key)}
                         disabled={submitting || isVoiceFinalizing || flowStep !== "input"}
+                        accessibilityRole="tab"
+                        accessibilityLabel={item.accessibilityLabel}
+                        accessibilityState={{
+                            selected,
+                            disabled: submitting || isVoiceFinalizing || flowStep !== "input",
+                        }}
                         style={({ pressed }) => [
                             styles.modeButton,
                             item.label.length > 2
@@ -1808,7 +1753,8 @@ export default function QuickScheduleModal({
                             { opacity: pressed ? 0.7 : submitting ? 0.48 : 1 },
                         ]}
                     >
-                        <Ionicons
+	                        <Ionicons
+	                            accessible={false}
 	                            name={item.icon}
 	                            size={21}
 	                            color={selected ? BLUE : colors.textSecondary}
@@ -1845,6 +1791,7 @@ export default function QuickScheduleModal({
                 >
                     <TextInput
                         ref={inputRef}
+                        accessibilityLabel="빠른 일정 문장"
                         editable={!submitting}
                         multiline
                         maxLength={QUICK_TEXT_LIMIT}
@@ -1872,6 +1819,9 @@ export default function QuickScheduleModal({
 
             {inputMode === "photo" && (
                 <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={selectedPhoto ? "선택한 사진 변경" : "사진 선택"}
+                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
                     disabled={submitting || isVoiceFinalizing}
                     onPress={openPhotoActionSheet}
                     style={[
@@ -1893,7 +1843,7 @@ export default function QuickScheduleModal({
                                 },
                             ]}
                         >
-                            <Ionicons name="image-outline" size={36} color={BLUE} />
+                            <Ionicons accessible={false} name="image-outline" size={36} color={BLUE} />
                         </View>
                     )}
                     <Text style={[styles.mediaPanelTitle, { color: colors.textPrimary }]}>
@@ -1909,6 +1859,7 @@ export default function QuickScheduleModal({
                     )}
                     {selectedPhoto && (
                         <Pressable
+                            accessibilityRole="button"
                             accessibilityLabel="선택한 사진 제거"
                             onPress={(event) => {
                                 event.stopPropagation();
@@ -1919,7 +1870,7 @@ export default function QuickScheduleModal({
                                 { opacity: pressed ? 0.72 : 1 },
                             ]}
                         >
-                            <Ionicons name="close" size={16} color="#fff" />
+                            <Ionicons accessible={false} name="close" size={16} color="#fff" />
                         </Pressable>
                     )}
                 </Pressable>
@@ -1927,6 +1878,9 @@ export default function QuickScheduleModal({
 
             {inputMode === "voice" && (
                 <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={recorderState.isRecording ? "음성 녹음 중지" : voiceUri ? "음성 다시 녹음" : "음성 녹음 시작"}
+                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
                     onPress={() => {
                         if (recorderState.isRecording) {
                             void stopVoiceRecording();
@@ -1993,6 +1947,7 @@ export default function QuickScheduleModal({
                             ]}
                         >
                             <Ionicons
+                                accessible={false}
                                 name={
                                     recorderState.isRecording
                                         ? "stop"
@@ -2023,6 +1978,9 @@ export default function QuickScheduleModal({
             )}
 
             <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="빠른 일정 문장 분석"
+                accessibilityState={{ disabled: !canSubmit, busy: submitting }}
                 disabled={!canSubmit}
                 onPress={submit}
                 style={({ pressed }) => [
@@ -2040,7 +1998,7 @@ export default function QuickScheduleModal({
                     />
                 ) : (
                     <>
-                        <Ionicons name="sparkles-outline" size={17} color="#fff" />
+                        <Ionicons accessible={false} name="sparkles-outline" size={17} color="#fff" />
                         <Text style={styles.submitText}>일정 만들기</Text>
                     </>
                 )}
@@ -2077,7 +2035,7 @@ export default function QuickScheduleModal({
     const renderErrorStep = () => (
         <View style={styles.centerFlow}>
             <View style={[styles.statusIconWrap, { backgroundColor: warningBackground }]}>
-                <Ionicons name="warning-outline" size={42} color={warningTextColor} />
+                <Ionicons accessible={false} name="warning-outline" size={42} color={warningTextColor} />
             </View>
             <Text style={[styles.flowHeadline, { color: colors.textPrimary }]}>
                 일정 정보를 분석하지 못했어요
@@ -2085,21 +2043,44 @@ export default function QuickScheduleModal({
             <Text numberOfLines={2} style={[styles.flowCaption, { color: colors.textSecondary }]}>
                 {analysisError || "입력 내용을 확인한 뒤 다시 시도해 주세요"}
             </Text>
-            <Pressable
-                onPress={submit}
-                disabled={submitting}
-                style={({ pressed }) => [
-                    styles.submitButton,
-                    { alignSelf: "stretch", opacity: pressed ? 0.78 : 1 },
-                ]}
-            >
-                <Text style={styles.submitText}>다시 시도</Text>
-            </Pressable>
+            <View style={styles.savedButtonStack}>
+                <Pressable
+                    onPress={() => setFlowStep("input")}
+                    disabled={submitting}
+                    accessibilityRole="button"
+                    accessibilityLabel="빠른 일정 입력 수정"
+                    style={({ pressed }) => [
+                        styles.secondaryButton,
+                        {
+                            flex: 0,
+                            alignSelf: "stretch",
+                            backgroundColor: inputBackground,
+                            borderColor: cardBorderColor,
+                            opacity: pressed ? 0.72 : 1,
+                        },
+                    ]}
+                >
+                    <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>입력 수정</Text>
+                </Pressable>
+                <Pressable
+                    onPress={submit}
+                    disabled={submitting}
+                    accessibilityRole="button"
+                    accessibilityLabel="빠른 일정 분석 다시 시도"
+                    style={({ pressed }) => [
+                        styles.submitButton,
+                        { alignSelf: "stretch", opacity: pressed ? 0.78 : 1 },
+                    ]}
+                >
+                    <Text style={styles.submitText}>다시 시도</Text>
+                </Pressable>
+            </View>
         </View>
     );
 
     const renderPreviewStep = () => {
         if (!previewDraft) return null;
+        const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
 
         return (
             <View style={styles.previewStep}>
@@ -2110,13 +2091,15 @@ export default function QuickScheduleModal({
                 >
                     {PREVIEW_FIELDS.map((field) => {
                         const badge = field.key === "notification" && !canUseRouteNotification(previewDraft)
-                            ? "경로 등록 필요"
+                            ? "선택 설정"
                             : previewDraft.badges[field.key];
                         return (
                             <Pressable
                                 key={field.key}
                                 onPress={() => openEditField(field.key)}
                                 disabled={submitting}
+	                            accessibilityRole="button"
+	                            accessibilityLabel={`${field.label} 수정`}
 	                                style={[
 	                                    styles.previewRow,
 	                                    {
@@ -2126,7 +2109,7 @@ export default function QuickScheduleModal({
 	                                ]}
 	                            >
 	                                <View style={styles.previewIcon}>
-	                                    <Ionicons name={field.icon} size={17} color={previewIconColor} />
+	                                    <Ionicons accessible={false} name={field.icon} size={17} color={previewIconColor} />
 	                                </View>
                                 <View style={styles.previewTextWrap}>
                                     <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>
@@ -2148,7 +2131,7 @@ export default function QuickScheduleModal({
                                         )}
                                     </View>
                                 </View>
-                                <Ionicons name="create-outline" size={17} color={colors.textSecondary} />
+                                <Ionicons accessible={false} name="create-outline" size={17} color={colors.textSecondary} />
                             </Pressable>
                         );
                     })}
@@ -2167,10 +2150,12 @@ export default function QuickScheduleModal({
                             },
                         ]}
                     >
-                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>수정하기</Text>
+                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>원문 수정</Text>
                     </Pressable>
 	                    <Pressable
-	                        onPress={savePreview}
+	                        onPress={blockingReviewField
+                                ? () => openEditField(blockingReviewField)
+                                : savePreview}
                             accessibilityRole="button"
                         disabled={submitting}
                         style={({ pressed }) => [
@@ -2178,7 +2163,11 @@ export default function QuickScheduleModal({
                             { opacity: pressed ? 0.78 : 1 },
                         ]}
                     >
-                        <Text style={styles.primaryButtonText}>일정 저장하기</Text>
+                        <Text style={styles.primaryButtonText}>
+                            {blockingReviewField
+                                ? `${FIELD_LABEL[blockingReviewField]} 확인하기`
+                                : "일정 저장하기"}
+                        </Text>
                     </Pressable>
                 </View>
             </View>
@@ -2191,12 +2180,13 @@ export default function QuickScheduleModal({
         const isLocationEdit = editingField === "location";
         const isNotificationEdit = editingField === "notification";
         const notificationNeedsRoute = isNotificationEdit && !notificationRouteReady;
+        const notificationEnabled = isNotificationEdit && editingValue !== "none";
+        const notificationRouteInfo = isNotificationEdit
+            ? getQuickSchedulePreviewRouteInfo(previewDraft)
+            : undefined;
         const pickerDateValue = editingField === "date"
             ? dateFromYmd(editingValue || previewDraft.date)
             : dateFromDraftTime(previewDraft.date, editingValue || previewDraft.time);
-        const originValue = previewDraft.origin?.name ?? previewDraft.origin?.address ?? "";
-        const destination = previewDraft.destination ?? placeFromDraftLocation(previewDraft.location);
-        const destinationValue = destination?.name ?? destination?.address ?? previewDraft.location;
         const handlePickerChange = (_event: DateTimePickerEvent, selectedDate?: Date) => {
             if (!selectedDate) return;
             setEditingValue(editingField === "date" ? toYmd(selectedDate) : toHm(selectedDate));
@@ -2226,18 +2216,28 @@ export default function QuickScheduleModal({
                 )}
                 {isLocationEdit && (
                     <View style={styles.routeEditPanel}>
-                        <LocationInputRow
-                            originValue={originValue}
-                            destinationValue={destinationValue === "장소 미정" ? "" : destinationValue}
-                            travelMode={previewDraft.travelMode ?? previewDraft.parsed?.travelMode}
-                            travelMinutes={previewDraft.travelMinutes ?? previewDraft.parsed?.travelMinutes}
-                            routeInfo={previewRouteInfo}
-                            onPress={openRoutePlannerFromPreview}
+                        <TextInput
+                            accessibilityLabel="빠른 일정 목적지"
+                            value={editingValue === "장소 미정" ? "" : editingValue}
+                            onChangeText={setEditingValue}
+                            autoFocus
+                            placeholder="목적지 입력"
+                            placeholderTextColor={colors.inputPlaceholder}
+                            selectionColor={BLUE}
+                            style={[
+                                styles.editInput,
+                                styles.locationEditInput,
+                                {
+                                    color: colors.textPrimary,
+                                    backgroundColor: inputBackground,
+                                    borderColor: cardBorderColor,
+                                },
+                            ]}
                         />
                         <View style={[styles.routeEditNotice, { backgroundColor: inputBackground, borderColor: cardBorderColor }]}>
-                            <Ionicons name="navigate-outline" size={17} color={BLUE} />
+                            <Ionicons accessible={false} name="location-outline" size={17} color={BLUE} />
                             <Text style={[styles.routeEditNoticeText, { color: colors.textSecondary }]}>
-                                일정 등록과 같은 경로 설정 화면에서 출발지와 도착지를 선택해 주세요.
+                                여기서는 목적지만 수정합니다. 이동 경로와 출발 알림은 알림 항목에서 별도로 설정할 수 있어요.
                             </Text>
                         </View>
                     </View>
@@ -2250,6 +2250,9 @@ export default function QuickScheduleModal({
                                 <Pressable
                                     key={item}
                                     onPress={() => setTimeEditMode(item)}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel={item === "picker" ? "시간 선택" : "직접 입력"}
+                                    accessibilityState={{ selected }}
                                     style={[
                                         styles.editSegment,
                                         selected && {
@@ -2280,7 +2283,7 @@ export default function QuickScheduleModal({
                         />
                         {editingField === "time" && (
                             <View style={[styles.aiHint, { backgroundColor: warningBackground }]}>
-                                <Ionicons name="information-circle-outline" size={15} color={warningTextColor} />
+                                <Ionicons accessible={false} name="information-circle-outline" size={15} color={warningTextColor} />
                                 <Text style={[styles.aiHintText, { color: warningTextColor }]}>
                                     AI가 추정한 시간: {formatKoreanTime(previewDraft.time)} 전후
                                 </Text>
@@ -2309,41 +2312,211 @@ export default function QuickScheduleModal({
                 {notificationNeedsRoute && (
                     <View style={styles.notificationRouteRequired}>
                         <View style={[styles.notificationRouteIcon, { backgroundColor: selectedModeBackground }]}>
-                            <Ionicons name="navigate-outline" size={28} color={BLUE} />
+                            <Ionicons accessible={false} name="navigate-outline" size={26} color={BLUE} />
                         </View>
                         <Text style={[styles.notificationRouteTitle, { color: colors.textPrimary }]}>
-                            경로 등록이 필요해요
+                            경로를 설정하면 출발 시각을 알려드려요
                         </Text>
                         <Text style={[styles.notificationRouteBody, { color: colors.textSecondary }]}>
-                            NoLate 알림은 이동 경로와 교통 상황을 기준으로 출발 시간을 알려주는 푸시 알림입니다.
+                            실시간 교통 상황을 확인하려면 출발지와 이동 경로가 필요해요.
                         </Text>
+                        <View style={[styles.notificationFeatureList, { backgroundColor: inputBackground, borderColor: cardBorderColor }]}>
+                            <View style={styles.notificationFeatureRow}>
+                                <Ionicons accessible={false} name="pulse-outline" size={17} color={BLUE} />
+                                <Text style={[styles.notificationFeatureText, { color: colors.textPrimary }]}>
+                                    교통 변화에 맞춰 추천 출발 시각 계산
+                                </Text>
+                            </View>
+                            <View style={[styles.notificationFeatureDivider, { backgroundColor: cardBorderColor }]} />
+                            <View style={styles.notificationFeatureRow}>
+                                <Ionicons accessible={false} name="notifications-outline" size={17} color={BLUE} />
+                                <Text style={[styles.notificationFeatureText, { color: colors.textPrimary }]}>
+                                    출발 준비부터 지금 출발할 때까지 안내
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.notificationOptionalNotice}>
+                            <Ionicons accessible={false} name="checkmark-circle" size={16} color={successColor} />
+                            <Text style={[styles.notificationOptionalText, { color: colors.textSecondary }]}>
+                                일정은 경로 없이도 저장할 수 있어요
+                            </Text>
+                        </View>
                     </View>
                 )}
                 {isNotificationEdit && notificationRouteReady && (
-                    <View style={styles.notificationOptions}>
-                        {NOTIFICATION_OPTIONS.map((option) => {
-                            const selected = editingValue === option.value;
-                            return (
-                                <Pressable
-                                    key={option.value}
-                                    onPress={() => setEditingValue(option.value)}
+                    <View style={styles.notificationEditor}>
+                        <View
+                            style={[
+                                styles.notificationHero,
+                                {
+                                    backgroundColor: selectedModeBackground,
+                                    borderColor: "rgba(36,107,254,0.21)",
+                                },
+                            ]}
+                        >
+                            <View style={styles.notificationHeroHeader}>
+                                <View
                                     style={[
-                                        styles.notificationChip,
+                                        styles.notificationHeroIcon,
                                         {
-                                            backgroundColor: selected ? selectedModeBackground : inputBackground,
-                                            borderColor: selected ? BLUE : cardBorderColor,
+                                            backgroundColor: mode === "dark"
+                                                ? "rgba(36,107,254,0.22)"
+                                                : "rgba(255,255,255,0.76)",
                                         },
                                     ]}
                                 >
-                                    <Text style={[
-                                        styles.notificationChipText,
-                                        { color: selected ? BLUE : colors.textPrimary },
-                                    ]}>
-                                        {option.label}
+                                    <Ionicons accessible={false} name="navigate" size={20} color={BLUE} />
+                                </View>
+                                <View style={styles.notificationHeroText}>
+                                    <Text style={[styles.notificationHeroTitle, { color: colors.textPrimary }]}>
+                                        실시간 교통을 반영해요
                                     </Text>
-                                </Pressable>
-                            );
-                        })}
+                                    <Text style={[styles.notificationHeroBody, { color: colors.textSecondary }]}>
+                                        이동 시간이 바뀌면 출발 시각을 다시 계산해 알려드려요.
+                                    </Text>
+                                </View>
+                            </View>
+                            <View
+                                style={[
+                                    styles.notificationRouteSummary,
+                                    { borderTopColor: "rgba(36,107,254,0.16)" },
+                                ]}
+                            >
+                                <View style={styles.notificationRouteMetric}>
+                                    <Text style={[styles.notificationRouteMetricLabel, { color: colors.textSecondary }]}>
+                                        추천 출발
+                                    </Text>
+                                    <Text style={[styles.notificationRouteMetricValue, { color: colors.textPrimary }]}>
+                                        {formatRouteClock(notificationRouteInfo?.departureTime)}
+                                    </Text>
+                                </View>
+                                <View style={[styles.notificationRouteMetricDivider, { backgroundColor: "rgba(36,107,254,0.16)" }]} />
+                                <View style={styles.notificationRouteMetric}>
+                                    <Text style={[styles.notificationRouteMetricLabel, { color: colors.textSecondary }]}>
+                                        도착 예정
+                                    </Text>
+                                    <Text style={[styles.notificationRouteMetricValue, { color: colors.textPrimary }]}>
+                                        {formatRouteClock(notificationRouteInfo?.arrivalTime)}
+                                    </Text>
+                                </View>
+                                <View style={[styles.notificationRouteMetricDivider, { backgroundColor: "rgba(36,107,254,0.16)" }]} />
+                                <View style={styles.notificationRouteMetric}>
+                                    <Text style={[styles.notificationRouteMetricLabel, { color: colors.textSecondary }]}>
+                                        예상 이동
+                                    </Text>
+                                    <Text style={[styles.notificationRouteMetricValue, { color: colors.textPrimary }]}>
+                                        {formatRouteDuration(notificationRouteInfo?.totalDurationMinutes)}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+
+                        <View
+                            style={[
+                                styles.notificationControlCard,
+                                { backgroundColor: inputBackground, borderColor: cardBorderColor },
+                            ]}
+                        >
+                            <View style={styles.notificationToggleRow}>
+                                <View style={styles.notificationToggleText}>
+                                    <Text style={[styles.notificationToggleTitle, { color: colors.textPrimary }]}>
+                                        출발 알림 받기
+                                    </Text>
+                                    <Text style={[styles.notificationToggleBody, { color: colors.textSecondary }]}>
+                                        교통 확인과 출발 안내를 켭니다
+                                    </Text>
+                                </View>
+                                <Switch
+                                    accessibilityLabel="출발 알림 받기"
+                                    accessibilityHint="실시간 교통 기반 출발 알림을 켜거나 끕니다"
+                                    value={notificationEnabled}
+                                    onValueChange={(enabled) => setEditingValue(
+                                        enabled
+                                            ? String(previewDraft.notificationLeadMinutes ?? 60)
+                                            : "none"
+                                    )}
+                                    trackColor={{ false: colors.border, true: BLUE }}
+                                    ios_backgroundColor={colors.border}
+                                    thumbColor="#FFFFFF"
+                                />
+                            </View>
+
+                            {notificationEnabled ? (
+                                <View
+                                    style={[
+                                        styles.notificationLeadSection,
+                                        { borderTopColor: cardBorderColor },
+                                    ]}
+                                >
+                                    <View style={styles.notificationLeadHeading}>
+                                        <Text style={[styles.notificationLeadTitle, { color: colors.textPrimary }]}>
+                                            교통 확인 시작
+                                        </Text>
+                                        <Text style={[styles.notificationLeadCaption, { color: colors.textSecondary }]}>
+                                            추천 출발 시각 기준
+                                        </Text>
+                                    </View>
+                                    <View accessibilityRole="radiogroup" style={styles.notificationOptions}>
+                                        {NOTIFICATION_OPTIONS.map((option) => {
+                                            const selected = editingValue === option.value;
+                                            return (
+                                                <Pressable
+                                                    key={option.value}
+                                                    accessibilityRole="radio"
+                                                    accessibilityLabel={"출발 " + option.label + " 전부터 교통 확인"}
+                                                    accessibilityState={{ selected }}
+                                                    onPress={() => setEditingValue(option.value)}
+                                                    style={({ pressed }) => [
+                                                        styles.notificationChip,
+                                                        {
+                                                            backgroundColor: selected ? selectedModeBackground : "transparent",
+                                                            borderColor: selected ? BLUE : cardBorderColor,
+                                                            opacity: pressed ? 0.72 : 1,
+                                                        },
+                                                    ]}
+                                                >
+                                                    {selected && (
+                                                        <Ionicons accessible={false} name="checkmark-circle" size={15} color={BLUE} />
+                                                    )}
+                                                    <Text
+                                                        style={[
+                                                            styles.notificationChipText,
+                                                            { color: selected ? BLUE : colors.textPrimary },
+                                                        ]}
+                                                    >
+                                                        {option.label}
+                                                    </Text>
+                                                </Pressable>
+                                            );
+                                        })}
+                                    </View>
+                                </View>
+                            ) : (
+                                <View
+                                    style={[
+                                        styles.notificationOffState,
+                                        { borderTopColor: cardBorderColor },
+                                    ]}
+                                >
+                                    <Ionicons accessible={false} name="notifications-off-outline" size={17} color={colors.textSecondary} />
+                                    <Text style={[styles.notificationOffText, { color: colors.textSecondary }]}>
+                                        일정은 저장하고 출발 알림만 사용하지 않아요.
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+
+                        {notificationEnabled && (
+                            <View style={styles.notificationBehaviorNote}>
+                                <Ionicons accessible={false} name="information-circle-outline" size={17} color={BLUE} />
+                                <Text style={[styles.notificationBehaviorText, { color: colors.textSecondary }]}>
+                                    <Text style={[styles.notificationBehaviorStrong, { color: colors.textPrimary }]}>
+                                        {formatNotification(Number(editingValue))}부터 확인해요.{" "}
+                                    </Text>
+                                    교통이 느려지면 바로, 출발 시간이 가까워지면 준비 알림을 보내드려요.
+                                </Text>
+                            </View>
+                        )}
                     </View>
                 )}
                 <View style={styles.editButtons}>
@@ -2359,18 +2532,21 @@ export default function QuickScheduleModal({
                             },
                         ]}
                     >
-                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>취소</Text>
+                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>
+                            {notificationNeedsRoute ? "지금은 안 함" : "취소"}
+                        </Text>
                     </Pressable>
 	                    <Pressable
-	                        onPress={isLocationEdit || notificationNeedsRoute ? openRoutePlannerFromPreview : confirmEditField}
+	                        onPress={notificationNeedsRoute ? openRoutePlannerFromPreview : confirmEditField}
                             accessibilityRole="button"
+                            accessibilityLabel={notificationNeedsRoute ? "빠른 일정 경로 설정" : "수정 확인"}
                         style={({ pressed }) => [
                             styles.primaryButton,
                             { opacity: pressed ? 0.78 : 1 },
                         ]}
                     >
                         <Text style={styles.primaryButtonText}>
-                            {isLocationEdit ? "경로 등록 열기" : notificationNeedsRoute ? "경로 등록하기" : "확인"}
+                            {notificationNeedsRoute ? "경로 설정하기" : "적용"}
                         </Text>
                     </Pressable>
                 </View>
@@ -2381,30 +2557,12 @@ export default function QuickScheduleModal({
     const renderSavedStep = () => (
         <View style={styles.centerFlow}>
             <View style={[styles.statusIconWrap, { backgroundColor: "rgba(34,197,94,0.15)" }]}>
-                <Ionicons name="checkmark" size={46} color={successColor} />
+                <Ionicons accessible={false} name="checkmark" size={46} color={successColor} />
             </View>
             <Text style={[styles.flowHeadline, { color: colors.textPrimary }]}>
-                일정이 저장되었습니다!
+                일정이 저장됐어요
             </Text>
             <View style={styles.savedButtonStack}>
-                <Pressable
-                    onPress={requestClose}
-                    accessibilityRole="button"
-                    style={({ pressed }) => [
-                        styles.secondaryButton,
-                        {
-                            alignSelf: "stretch",
-                            flex: 0,
-                            backgroundColor: inputBackground,
-                            borderColor: cardBorderColor,
-                            opacity: pressed ? 0.72 : 1,
-                        },
-                    ]}
-                >
-                    <Text style={[styles.secondaryButtonText, { color: colors.textSecondary }]}>
-                        캘린더에서 보기
-                    </Text>
-                </Pressable>
                 <Pressable
                     onPress={requestClose}
                     accessibilityRole="button"
@@ -2413,7 +2571,9 @@ export default function QuickScheduleModal({
                         { alignSelf: "stretch", opacity: pressed ? 0.78 : 1 },
                     ]}
                 >
-                    <Text style={styles.submitText}>확인</Text>
+                    <Text style={styles.submitText}>
+                        {previewDraft ? `${formatKoreanDate(previewDraft.date)} 일정 보기` : "캘린더에서 보기"}
+                    </Text>
                 </Pressable>
             </View>
         </View>
@@ -2476,7 +2636,11 @@ export default function QuickScheduleModal({
                         },
                     ]}
                 />
-                <Pressable style={StyleSheet.absoluteFill} onPress={requestClose} />
+                <Pressable
+                    accessible={false}
+                    style={StyleSheet.absoluteFill}
+                    onPress={requestClose}
+                />
 
                 <Reanimated.View
                     collapsable={false}
@@ -2567,8 +2731,13 @@ export default function QuickScheduleModal({
                                     <>
                                         <View style={styles.closeButton}>
                                             <Pressable
+                                                accessibilityRole="button"
                                                 accessibilityLabel="빠른 일정 등록 닫기"
-                                                disabled={submitting}
+                                                accessibilityState={{
+                                                    disabled: submitting && flowStep !== "analyzing",
+                                                    busy: submitting,
+                                                }}
+                                                disabled={submitting && flowStep !== "analyzing"}
                                                 onPress={requestClose}
                                                 hitSlop={10}
                                                 style={({ pressed }) => [
@@ -2576,13 +2745,14 @@ export default function QuickScheduleModal({
                                                     { opacity: pressed ? 0.58 : 1 },
                                                 ]}
                                             >
-                                                <Ionicons name="close" size={22} color={colors.textSecondary} />
+                                                <Ionicons accessible={false} name="close" size={22} color={colors.textSecondary} />
                                             </Pressable>
                                         </View>
 
                                         <View style={styles.header}>
                                             {flowStep === "edit" && (
                                                 <Pressable
+                                                    accessibilityRole="button"
                                                     accessibilityLabel="일정 미리보기로 돌아가기"
                                                     onPress={cancelEditField}
                                                     hitSlop={10}
@@ -2591,11 +2761,19 @@ export default function QuickScheduleModal({
                                                         { opacity: pressed ? 0.58 : 1 },
                                                     ]}
                                                 >
-                                                    <Ionicons name="chevron-back" size={22} color={colors.textSecondary} />
+                                                    <Ionicons accessible={false} name="chevron-back" size={22} color={colors.textSecondary} />
                                                 </Pressable>
                                             )}
                                             <Text style={[styles.title, { color: colors.textPrimary }]}>{flowTitle}</Text>
                                         </View>
+
+                                        {categoryError && onRetryCategories ? (
+                                            <CategoryLoadErrorBanner
+                                                compact
+                                                retrying={categoryLoading}
+                                                onRetry={onRetryCategories}
+                                            />
+                                        ) : null}
 
                                         <View style={styles.handoffBody}>
                                             {renderCurrentStep()}
@@ -3183,6 +3361,10 @@ const styles = StyleSheet.create({
     editInputMemo: {
         minHeight: 150,
     },
+    locationEditInput: {
+        minHeight: 56,
+        textAlignVertical: "center",
+    },
     routeEditPanel: {
         flex: 1,
         justifyContent: "flex-start",
@@ -3245,48 +3427,228 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         fontWeight: "800",
     },
-    notificationOptions: {
-        flexDirection: "row",
-        flexWrap: "wrap",
+    notificationEditor: {
+        flex: 1,
         gap: 9,
     },
-    notificationChip: {
-        minHeight: 42,
-        borderRadius: 15,
+    notificationHero: {
         borderWidth: 1,
-        paddingHorizontal: 14,
+        borderRadius: 18,
+        padding: 12,
+    },
+    notificationHeroHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    notificationHeroIcon: {
+        width: 40,
+        height: 40,
+        borderRadius: 14,
         alignItems: "center",
         justifyContent: "center",
     },
+    notificationHeroText: {
+        flex: 1,
+        minWidth: 0,
+    },
+    notificationHeroTitle: {
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "900",
+    },
+    notificationHeroBody: {
+        marginTop: 2,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    notificationRouteSummary: {
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    notificationRouteMetric: {
+        flex: 1,
+        alignItems: "center",
+    },
+    notificationRouteMetricLabel: {
+        fontSize: 9.5,
+        lineHeight: 13,
+        fontWeight: "700",
+    },
+    notificationRouteMetricValue: {
+        marginTop: 2,
+        fontSize: 12.5,
+        lineHeight: 17,
+        fontWeight: "900",
+    },
+    notificationRouteMetricDivider: {
+        width: StyleSheet.hairlineWidth,
+        height: 28,
+    },
+    notificationControlCard: {
+        borderWidth: 1,
+        borderRadius: 17,
+        padding: 12,
+    },
+    notificationToggleRow: {
+        minHeight: 38,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    notificationToggleText: {
+        flex: 1,
+        minWidth: 0,
+    },
+    notificationToggleTitle: {
+        fontSize: 13.5,
+        lineHeight: 18,
+        fontWeight: "900",
+    },
+    notificationToggleBody: {
+        marginTop: 2,
+        fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "600",
+    },
+    notificationLeadSection: {
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    notificationLeadHeading: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    notificationLeadTitle: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+    },
+    notificationLeadCaption: {
+        fontSize: 9.5,
+        lineHeight: 13,
+        fontWeight: "700",
+    },
+    notificationOptions: {
+        marginTop: 8,
+        flexDirection: "row",
+        gap: 7,
+    },
+    notificationChip: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 40,
+        borderRadius: 12,
+        borderWidth: 1,
+        flexDirection: "row",
+        gap: 4,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 6,
+    },
     notificationChipText: {
-        fontSize: 13,
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    notificationOffState: {
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        minHeight: 34,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    notificationOffText: {
+        flex: 1,
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    notificationBehaviorNote: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 7,
+        paddingHorizontal: 4,
+    },
+    notificationBehaviorText: {
+        flex: 1,
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    notificationBehaviorStrong: {
         fontWeight: "900",
     },
     notificationRouteRequired: {
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 22,
-        gap: 10,
+        paddingHorizontal: 8,
+        gap: 8,
     },
     notificationRouteIcon: {
-        width: 70,
-        height: 70,
-        borderRadius: 35,
+        width: 58,
+        height: 58,
+        borderRadius: 20,
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 4,
+        marginBottom: 2,
     },
     notificationRouteTitle: {
-        fontSize: 17,
+        fontSize: 16,
+        lineHeight: 22,
         fontWeight: "900",
         textAlign: "center",
     },
     notificationRouteBody: {
-        fontSize: 12.5,
-        lineHeight: 18,
+        maxWidth: 270,
+        fontSize: 11.5,
+        lineHeight: 17,
         fontWeight: "700",
         textAlign: "center",
+    },
+    notificationFeatureList: {
+        alignSelf: "stretch",
+        marginTop: 5,
+        borderWidth: 1,
+        borderRadius: 15,
+        paddingHorizontal: 12,
+    },
+    notificationFeatureRow: {
+        minHeight: 37,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+    },
+    notificationFeatureDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginLeft: 26,
+    },
+    notificationFeatureText: {
+        flex: 1,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    notificationOptionalNotice: {
+        minHeight: 22,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    notificationOptionalText: {
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "700",
     },
     editButtons: {
         flexDirection: "row",

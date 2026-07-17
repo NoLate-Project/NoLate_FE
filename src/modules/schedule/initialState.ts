@@ -19,11 +19,9 @@ export type ScheduleState = {
 export function createScheduleInitialState(now = new Date()) {
     const today = toYmd(now);
 
-    const categories: ScheduleCategory[] = [
-        { id: "1", title: "업무", color: "#f44336" },
-        { id: "2", title: "개인", color: "#2196f3" },
-        { id: "3", title: "기타", color: "#4caf50" },
-    ];
+    // 운영 카테고리는 계정별 서버 데이터다. 임시 ID를 넣으면 조회 실패가
+    // 정상 빈 목록처럼 보이고 존재하지 않는 카테고리로 저장을 시도할 수 있다.
+    const categories: ScheduleCategory[] = [];
 
     const itemsById: Record<string, ScheduleItem> = {};
 

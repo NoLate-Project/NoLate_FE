@@ -1,9 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
+    Animated,
+    Easing,
+    KeyboardAvoidingView,
     Modal,
+    Platform,
     Pressable,
     ScrollView,
     Share,
@@ -11,7 +15,13 @@ import {
     Text,
     TextInput,
     View,
+    type LayoutChangeEvent,
 } from "react-native";
+import Reanimated, {
+    LinearTransition,
+    ReduceMotion,
+    useReducedMotion,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -21,11 +31,14 @@ import {
     createScheduleShareInvitation,
     getCategoryShareInvitations,
     getScheduleShareInvitations,
+    revokeCategoryShareInvitation,
+    revokeScheduleShareInvitation,
     type CreateDirectSharePayload,
     type CreateShareInvitationPayload,
     type ScheduleShareInvitation,
 } from "../../../../api/scheduleSharing";
 import type { ScheduleSharePermission } from "../../types";
+import { isCurrentScheduleShareRequest } from "../../shareRequestGuard";
 import { createDirectShareTarget } from "../../../share/directShareTarget";
 import { useTheme } from "../../../theme/ThemeContext";
 import BrandedLoader from "../../../../ui/BrandedLoader";
@@ -36,7 +49,6 @@ type ShareInvitationSheetProps = {
     resourceId?: string | null;
     title: string;
     subtitle?: string;
-    accentColor?: string;
     onClose: () => void;
 };
 
@@ -62,6 +74,16 @@ const ACCEPT_COUNT_OPTIONS = [
     { value: 5, label: "5명" },
     { value: 10, label: "10명" },
 ];
+
+const MODE_TRANSITION_DURATION_MS = 240;
+const MODE_CONTENT_TRAVEL = 14;
+const SHEET_LAYOUT_TRANSITION = LinearTransition
+    .springify()
+    .damping(20)
+    .stiffness(180)
+    .mass(0.75)
+    .overshootClamping(1)
+    .reduceMotion(ReduceMotion.System);
 
 function getErrorMessage(error: unknown) {
     const message = error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -117,12 +139,13 @@ export default function ShareInvitationSheet({
     resourceId,
     title,
     subtitle,
-    accentColor,
     onClose,
 }: ShareInvitationSheetProps) {
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
+    const reduceMotionEnabled = useReducedMotion();
     const [shareMode, setShareMode] = useState<ShareMode>("direct");
+    const [modeSegmentWidth, setModeSegmentWidth] = useState(0);
     const [permission, setPermission] = useState<Exclude<ScheduleSharePermission, "OWNER">>("VIEWER");
     const [targetQuery, setTargetQuery] = useState("");
     const [sharingDirect, setSharingDirect] = useState(false);
@@ -135,18 +158,35 @@ export default function ShareInvitationSheet({
     const [generatedLink, setGeneratedLink] = useState<string | null>(null);
     const [directError, setDirectError] = useState<string | null>(null);
     const [linkError, setLinkError] = useState<string | null>(null);
-    const highlight = accentColor ?? colors.selectedDayBg;
+    const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null);
+    const invitationLoadSequenceRef = useRef(0);
+    const directShareSequenceRef = useRef(0);
+    const invitationCreateSequenceRef = useRef(0);
+    const invitationRevokeSequenceRef = useRef(0);
+    const modePosition = useRef(new Animated.Value(0)).current;
+    const modeContentEntrance = useRef(new Animated.Value(1)).current;
+    const modeTransitionDirection = useRef<1 | -1>(1);
     const isDark = mode === "dark";
+    // 카테고리 색은 일정 구분에만 사용하고, 공유 행동은 앱의 브랜드 파랑으로 통일한다.
+    const highlight = isDark ? "#8BB7FF" : "#2F80FF";
 
     const resourceLabel = resourceType === "schedule" ? "일정" : "카테고리";
     const canRequest = Boolean(resourceId);
+    const resourceRequestKey = visible && resourceId
+        ? `${resourceType}:${resourceId}`
+        : null;
+    const activeResourceKeyRef = useRef<string | null>(resourceRequestKey);
+    activeResourceKeyRef.current = resourceRequestKey;
     const latestInvitation = useMemo(
         () => invitations.find((invitation) => invitation.status === "PENDING") ?? invitations[0],
         [invitations]
     );
 
     const loadInvitations = useCallback(async () => {
-        if (!visible || !resourceId) return;
+        const requestKey = resourceRequestKey;
+        if (!requestKey || !resourceId) return;
+        const requestSequence = invitationLoadSequenceRef.current + 1;
+        invitationLoadSequenceRef.current = requestSequence;
 
         setLoading(true);
         setLinkError(null);
@@ -154,26 +194,63 @@ export default function ShareInvitationSheet({
             const nextInvitations = resourceType === "schedule"
                 ? await getScheduleShareInvitations(resourceId)
                 : await getCategoryShareInvitations(resourceId);
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationLoadSequenceRef.current,
+                requestSequence,
+            )) return;
             setInvitations(nextInvitations);
         } catch (loadError) {
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationLoadSequenceRef.current,
+                requestSequence,
+            )) return;
             setLinkError(getErrorMessage(loadError));
         } finally {
-            setLoading(false);
+            if (isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationLoadSequenceRef.current,
+                requestSequence,
+            )) {
+                setLoading(false);
+            }
         }
-    }, [resourceId, resourceType, visible]);
+    }, [resourceId, resourceRequestKey, resourceType]);
 
     useEffect(() => {
-        if (!visible) {
-            setGeneratedLink(null);
-            setTargetQuery("");
-            setLastDirectShareLabel(null);
-            setDirectError(null);
-            setLinkError(null);
-            return;
+        invitationLoadSequenceRef.current += 1;
+        directShareSequenceRef.current += 1;
+        invitationCreateSequenceRef.current += 1;
+        invitationRevokeSequenceRef.current += 1;
+        setLoading(false);
+        setSharingDirect(false);
+        setCreating(false);
+        setRevokingInvitationId(null);
+        setInvitations([]);
+        setGeneratedLink(null);
+        setTargetQuery("");
+        setLastDirectShareLabel(null);
+        setDirectError(null);
+        setLinkError(null);
+
+        if (resourceRequestKey) {
+            loadInvitations().catch(() => undefined);
         }
 
-        loadInvitations();
-    }, [loadInvitations, visible]);
+        return () => {
+            invitationLoadSequenceRef.current += 1;
+            directShareSequenceRef.current += 1;
+            invitationCreateSequenceRef.current += 1;
+            invitationRevokeSequenceRef.current += 1;
+            if (activeResourceKeyRef.current === resourceRequestKey) {
+                activeResourceKeyRef.current = null;
+            }
+        };
+    }, [loadInvitations, resourceRequestKey]);
 
     const shareGeneratedLink = useCallback(async (link: string) => {
         await Share.share({
@@ -184,7 +261,10 @@ export default function ShareInvitationSheet({
     }, [resourceLabel, title]);
 
     const createInvitation = useCallback(async () => {
-        if (!resourceId || creating) return;
+        const requestKey = resourceRequestKey;
+        if (!requestKey || !resourceId || creating) return;
+        const requestSequence = invitationCreateSequenceRef.current + 1;
+        invitationCreateSequenceRef.current = requestSequence;
 
         const payload: CreateShareInvitationPayload = {
             permission,
@@ -198,6 +278,12 @@ export default function ShareInvitationSheet({
             const invitation = resourceType === "schedule"
                 ? await createScheduleShareInvitation(resourceId, payload)
                 : await createCategoryShareInvitation(resourceId, payload);
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationCreateSequenceRef.current,
+                requestSequence,
+            )) return;
 
             setInvitations((current) => [invitation, ...current.filter((item) => item.id !== invitation.id)]);
 
@@ -211,14 +297,30 @@ export default function ShareInvitationSheet({
             setGeneratedLink(link);
             await shareGeneratedLink(link);
         } catch (createError) {
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationCreateSequenceRef.current,
+                requestSequence,
+            )) return;
             setLinkError(getErrorMessage(createError));
         } finally {
-            setCreating(false);
+            if (isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                invitationCreateSequenceRef.current,
+                requestSequence,
+            )) {
+                setCreating(false);
+            }
         }
-    }, [creating, maxAcceptCount, permission, resourceId, resourceType, shareGeneratedLink, ttlHours]);
+    }, [creating, maxAcceptCount, permission, resourceId, resourceRequestKey, resourceType, shareGeneratedLink, ttlHours]);
 
     const createDirectShare = useCallback(async () => {
-        if (!resourceId || sharingDirect) return;
+        const requestKey = resourceRequestKey;
+        if (!requestKey || !resourceId || sharingDirect) return;
+        const requestSequence = directShareSequenceRef.current + 1;
+        directShareSequenceRef.current = requestSequence;
 
         let target: Pick<CreateDirectSharePayload, "targetEmail" | "targetAppId">;
         try {
@@ -235,33 +337,176 @@ export default function ShareInvitationSheet({
             await (resourceType === "schedule"
                 ? createScheduleShare(resourceId, payload)
                 : createCategoryShare(resourceId, payload));
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                directShareSequenceRef.current,
+                requestSequence,
+            )) return;
 
             setLastDirectShareLabel(target.targetEmail ?? `회원 #${target.targetAppId}`);
             setTargetQuery("");
         } catch (shareError) {
+            if (!isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                directShareSequenceRef.current,
+                requestSequence,
+            )) return;
             setDirectError(getErrorMessage(shareError));
         } finally {
-            setSharingDirect(false);
+            if (isCurrentScheduleShareRequest(
+                activeResourceKeyRef.current,
+                requestKey,
+                directShareSequenceRef.current,
+                requestSequence,
+            )) {
+                setSharingDirect(false);
+            }
         }
-    }, [permission, resourceId, resourceType, sharingDirect, targetQuery]);
+    }, [permission, resourceId, resourceRequestKey, resourceType, sharingDirect, targetQuery]);
+
+    const revokeInvitation = useCallback((invitation: ScheduleShareInvitation) => {
+        const requestKey = resourceRequestKey;
+        if (!requestKey || !resourceId || revokingInvitationId) return;
+
+        Alert.alert("공유 링크 해제", "이 링크는 더 이상 사용할 수 없게 됩니다.", [
+            { text: "취소", style: "cancel" },
+            {
+                text: "링크 해제",
+                style: "destructive",
+                onPress: async () => {
+                    if (activeResourceKeyRef.current !== requestKey) return;
+                    const requestSequence = invitationRevokeSequenceRef.current + 1;
+                    invitationRevokeSequenceRef.current = requestSequence;
+                    setRevokingInvitationId(invitation.id);
+                    setLinkError(null);
+                    try {
+                        await (resourceType === "schedule"
+                            ? revokeScheduleShareInvitation(resourceId, invitation.id)
+                            : revokeCategoryShareInvitation(resourceId, invitation.id));
+                        if (!isCurrentScheduleShareRequest(
+                            activeResourceKeyRef.current,
+                            requestKey,
+                            invitationRevokeSequenceRef.current,
+                            requestSequence,
+                        )) return;
+                        setInvitations((current) => current.map((item) => (
+                            item.id === invitation.id ? { ...item, status: "REVOKED" } : item
+                        )));
+                        setGeneratedLink(null);
+                    } catch (error) {
+                        if (!isCurrentScheduleShareRequest(
+                            activeResourceKeyRef.current,
+                            requestKey,
+                            invitationRevokeSequenceRef.current,
+                            requestSequence,
+                        )) return;
+                        setLinkError(getErrorMessage(error));
+                    } finally {
+                        if (isCurrentScheduleShareRequest(
+                            activeResourceKeyRef.current,
+                            requestKey,
+                            invitationRevokeSequenceRef.current,
+                            requestSequence,
+                        )) {
+                            setRevokingInvitationId(null);
+                        }
+                    }
+                },
+            },
+        ]);
+    }, [resourceId, resourceRequestKey, resourceType, revokingInvitationId]);
 
     const submitting = shareMode === "direct" ? sharingDirect : creating;
     const submitDisabled = !canRequest || submitting || (shareMode === "direct" && !targetQuery.trim());
+    const modeIndicatorWidth = Math.max(0, (modeSegmentWidth - 9) / 2);
+    const modeIndicatorTravel = Math.max(0, (modeSegmentWidth - 3) / 2);
+    const modeIndicatorTranslateX = modePosition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, modeIndicatorTravel],
+    });
+    const modeContentTranslateX = modeContentEntrance.interpolate({
+        inputRange: [0, 1],
+        outputRange: [modeTransitionDirection.current * MODE_CONTENT_TRAVEL, 0],
+    });
+    const modeContentAnimatedStyle = {
+        opacity: modeContentEntrance,
+        transform: [{ translateX: modeContentTranslateX }],
+    };
+
+    const handleModeSegmentLayout = useCallback((event: LayoutChangeEvent) => {
+        const nextWidth = Math.round(event.nativeEvent.layout.width);
+        setModeSegmentWidth((currentWidth) => currentWidth === nextWidth ? currentWidth : nextWidth);
+    }, []);
+
+    const switchShareMode = useCallback((nextMode: ShareMode) => {
+        if (nextMode === shareMode) return;
+
+        const nextPosition = nextMode === "link" ? 1 : 0;
+        modeTransitionDirection.current = nextMode === "link" ? 1 : -1;
+        modePosition.stopAnimation();
+        modeContentEntrance.stopAnimation();
+
+        if (nextMode === "direct") setDirectError(null);
+        else setLinkError(null);
+
+        if (reduceMotionEnabled) {
+            modePosition.setValue(nextPosition);
+            modeContentEntrance.setValue(1);
+            setShareMode(nextMode);
+            return;
+        }
+
+        modeContentEntrance.setValue(0);
+        setShareMode(nextMode);
+        Animated.parallel([
+            Animated.timing(modePosition, {
+                toValue: nextPosition,
+                duration: MODE_TRANSITION_DURATION_MS,
+                easing: Easing.bezier(0.22, 1, 0.36, 1),
+                useNativeDriver: true,
+            }),
+            Animated.timing(modeContentEntrance, {
+                toValue: 1,
+                duration: MODE_TRANSITION_DURATION_MS,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+        ]).start();
+    }, [modeContentEntrance, modePosition, reduceMotionEnabled, shareMode]);
 
     return (
-        <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <Modal
+            visible={visible}
+            animationType="slide"
+            transparent
+            onRequestClose={onClose}
+            accessibilityViewIsModal
+        >
             <View style={styles.backdrop}>
-                <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-                <View
-                    style={[
-                        styles.sheet,
-                        {
-                            backgroundColor: colors.surface,
-                            borderColor: colors.border,
-                            paddingBottom: Math.max(insets.bottom, 14) + 10,
-                        },
-                    ]}
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="공유 닫기"
+                    style={StyleSheet.absoluteFill}
+                    onPress={onClose}
+                />
+                <KeyboardAvoidingView
+                    behavior={Platform.OS === "ios" ? "padding" : undefined}
+                    pointerEvents="box-none"
+                    style={styles.keyboardAvoidingView}
                 >
+                    <Reanimated.View
+                        layout={SHEET_LAYOUT_TRANSITION}
+                        style={[
+                            styles.sheet,
+                            {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.border,
+                                paddingBottom: Math.max(insets.bottom, 14) + 10,
+                            },
+                        ]}
+                    >
                     <View style={styles.handleRow}>
                         <View style={[styles.handle, { backgroundColor: colors.border }]} />
                     </View>
@@ -287,6 +532,7 @@ export default function ShareInvitationSheet({
                         </View>
                         <Pressable
                             onPress={onClose}
+                            accessibilityRole="button"
                             accessibilityLabel="공유 닫기"
                             style={({ pressed }) => [
                                 styles.closeButton,
@@ -297,7 +543,24 @@ export default function ShareInvitationSheet({
                         </Pressable>
                     </View>
 
-                    <View style={[styles.modeSegment, { backgroundColor: colors.surface2 }]}>
+                    <View
+                        onLayout={handleModeSegmentLayout}
+                        style={[styles.modeSegment, { backgroundColor: colors.surface2 }]}
+                    >
+                        {modeIndicatorWidth > 0 ? (
+                            <Animated.View
+                                pointerEvents="none"
+                                style={[
+                                    styles.modeIndicator,
+                                    {
+                                        width: modeIndicatorWidth,
+                                        backgroundColor: colors.surface,
+                                        borderColor: colors.border,
+                                        transform: [{ translateX: modeIndicatorTranslateX }],
+                                    },
+                                ]}
+                            />
+                        ) : null}
                         {([
                             { value: "direct" as const, label: "직접 공유", icon: "person-add-outline" as const },
                             { value: "link" as const, label: "링크 초대", icon: "link-outline" as const },
@@ -306,18 +569,10 @@ export default function ShareInvitationSheet({
                             return (
                                 <Pressable
                                     key={option.value}
-                                    onPress={() => {
-                                        setShareMode(option.value);
-                                        if (option.value === "direct") setDirectError(null);
-                                        else setLinkError(null);
-                                    }}
-                                    style={[
-                                        styles.modeOption,
-                                        selected && {
-                                            backgroundColor: colors.surface,
-                                            borderColor: colors.border,
-                                        },
-                                    ]}
+                                    onPress={() => switchShareMode(option.value)}
+                                    accessibilityRole="tab"
+                                    accessibilityState={{ selected }}
+                                    style={styles.modeOption}
                                 >
                                     <Ionicons
                                         name={option.icon}
@@ -345,7 +600,10 @@ export default function ShareInvitationSheet({
                                 return (
                                     <Pressable
                                         key={option.value}
-                                        onPress={() => setPermission(option.value)}
+                                    onPress={() => setPermission(option.value)}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel={`${option.label} 권한, ${option.description}`}
+                                    accessibilityState={{ selected }}
                                         style={({ pressed }) => [
                                             styles.permissionOption,
                                             {
@@ -374,8 +632,9 @@ export default function ShareInvitationSheet({
                             })}
                         </View>
 
-                        {shareMode === "direct" ? (
-                            <View style={styles.directTargetBlock}>
+                        <Animated.View style={[styles.modeContent, modeContentAnimatedStyle]}>
+                            {shareMode === "direct" ? (
+                                <View style={styles.directTargetBlock}>
                                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>공유 대상</Text>
                                 <View
                                     style={[
@@ -388,6 +647,7 @@ export default function ShareInvitationSheet({
                                 >
                                     <Ionicons name="search-outline" size={19} color={colors.textSecondary} />
                                     <TextInput
+                                        accessibilityLabel="공유 대상 회원 번호 또는 이메일"
                                         value={targetQuery}
                                         onChangeText={(value) => {
                                             setTargetQuery(value);
@@ -401,12 +661,13 @@ export default function ShareInvitationSheet({
                                         placeholderTextColor={colors.textSecondary}
                                         returnKeyType="send"
                                         onSubmitEditing={() => {
-                                            if (!submitDisabled) void createDirectShare();
+                                            if (!submitDisabled) createDirectShare().catch(() => undefined);
                                         }}
                                         style={[styles.targetInput, { color: colors.textPrimary }]}
                                     />
                                     {!!targetQuery && (
                                         <Pressable
+                                            accessibilityRole="button"
                                             accessibilityLabel="공유 대상 입력 지우기"
                                             onPress={() => setTargetQuery("")}
                                             hitSlop={8}
@@ -419,7 +680,10 @@ export default function ShareInvitationSheet({
                                     프로필의 회원 번호나 전체 이메일로 바로 공유합니다.
                                 </Text>
                                 {!!lastDirectShareLabel && (
-                                    <View style={[styles.directSuccess, { backgroundColor: `${highlight}18` }]}>
+                                    <View
+                                        accessibilityLiveRegion="polite"
+                                        style={[styles.directSuccess, { backgroundColor: `${highlight}18` }]}
+                                    >
                                         <Ionicons name="checkmark-circle" size={19} color={highlight} />
                                         <Text style={[styles.directSuccessText, { color: colors.textPrimary }]} numberOfLines={1}>
                                             {lastDirectShareLabel}에게 공유했습니다
@@ -427,11 +691,16 @@ export default function ShareInvitationSheet({
                                     </View>
                                 )}
                                 {!!directError && (
-                                    <Text style={[styles.errorText, { color: "#FF453A" }]}>{directError}</Text>
+                                    <Text
+                                        accessibilityLiveRegion="polite"
+                                        style={[styles.errorText, { color: "#FF453A" }]}
+                                    >
+                                        {directError}
+                                    </Text>
                                 )}
-                            </View>
-                        ) : (
-                            <>
+                                </View>
+                            ) : (
+                                <>
                         <View style={styles.optionGrid}>
                             <View style={styles.optionBlock}>
                                 <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>만료</Text>
@@ -472,6 +741,8 @@ export default function ShareInvitationSheet({
 
                         {!!generatedLink && (
                             <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="생성한 공유 링크 다시 공유"
                                 onPress={() => shareGeneratedLink(generatedLink).catch(() => undefined)}
                                 style={({ pressed }) => [
                                     styles.generatedLink,
@@ -502,9 +773,22 @@ export default function ShareInvitationSheet({
                                 ) : null}
                             </View>
                             {linkError ? (
-                                <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-                                    {linkError}
-                                </Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`${linkError}. 최근 공유 초대 다시 불러오기`}
+                                    accessibilityState={{ disabled: loading, busy: loading }}
+                                    disabled={loading}
+                                    onPress={() => loadInvitations().catch(() => undefined)}
+                                    style={({ pressed }) => [
+                                        styles.invitationRetry,
+                                        { opacity: pressed ? 0.62 : 1 },
+                                    ]}
+                                >
+                                    <Ionicons name="refresh-outline" size={18} color={colors.textSecondary} />
+                                    <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+                                        {linkError} · 다시 시도
+                                    </Text>
+                                </Pressable>
                             ) : latestInvitation ? (
                                 <View style={styles.invitationSummary}>
                                     <View style={[styles.statusDot, { backgroundColor: highlight }]} />
@@ -516,6 +800,22 @@ export default function ShareInvitationSheet({
                                             {latestInvitation.acceptedCount}/{latestInvitation.maxAcceptCount}명 수락 · {formatExpiresAt(latestInvitation.expiresAt)} 만료
                                         </Text>
                                     </View>
+                                    {latestInvitation.status === "PENDING" ? (
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            accessibilityLabel="공유 링크 해제"
+                                            disabled={Boolean(revokingInvitationId)}
+                                            accessibilityState={{ disabled: Boolean(revokingInvitationId) }}
+                                            onPress={() => revokeInvitation(latestInvitation)}
+                                            style={({ pressed }) => [styles.revokeButton, { opacity: pressed ? 0.6 : 1 }]}
+                                        >
+                                            {revokingInvitationId === latestInvitation.id ? (
+                                                <BrandedLoader size="button" variant="share" accessibilityLabel="공유 링크를 해제하고 있어요" />
+                                            ) : (
+                                                <Text style={styles.revokeButtonText}>링크 해제</Text>
+                                            )}
+                                        </Pressable>
+                                    ) : null}
                                 </View>
                             ) : (
                                 <Text style={[styles.helperText, { color: colors.textSecondary }]}>
@@ -523,12 +823,16 @@ export default function ShareInvitationSheet({
                                 </Text>
                             )}
                         </View>
-                            </>
-                        )}
+                                </>
+                            )}
+                        </Animated.View>
                     </ScrollView>
 
                     <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={shareMode === "direct" ? "이 대상에게 공유" : "링크 만들고 공유"}
                         disabled={submitDisabled}
+                        accessibilityState={{ disabled: submitDisabled, busy: submitting }}
                         onPress={shareMode === "direct" ? createDirectShare : createInvitation}
                         style={({ pressed }) => [
                             styles.primaryButton,
@@ -557,7 +861,8 @@ export default function ShareInvitationSheet({
                             </>
                         )}
                     </Pressable>
-                </View>
+                    </Reanimated.View>
+                </KeyboardAvoidingView>
             </View>
         </Modal>
     );
@@ -582,6 +887,9 @@ function OptionChip({
 }) {
     return (
         <Pressable
+            accessibilityRole="radio"
+            accessibilityLabel={label}
+            accessibilityState={{ selected }}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.chip,
@@ -602,8 +910,11 @@ function OptionChip({
 const styles = StyleSheet.create({
     backdrop: {
         flex: 1,
-        justifyContent: "flex-end",
         backgroundColor: "rgba(0,0,0,0.34)",
+    },
+    keyboardAvoidingView: {
+        flex: 1,
+        justifyContent: "flex-end",
     },
     sheet: {
         maxHeight: "88%",
@@ -642,9 +953,18 @@ const styles = StyleSheet.create({
         gap: 3,
         marginBottom: 14,
     },
+    modeIndicator: {
+        position: "absolute",
+        top: 3,
+        bottom: 3,
+        left: 3,
+        borderRadius: 8,
+        borderWidth: 1,
+    },
     modeOption: {
         flex: 1,
         minWidth: 0,
+        zIndex: 1,
         borderRadius: 8,
         borderWidth: 1,
         borderColor: "transparent",
@@ -700,6 +1020,9 @@ const styles = StyleSheet.create({
     contentScroll: {
         flexShrink: 1,
         minHeight: 0,
+    },
+    modeContent: {
+        gap: 14,
     },
     sectionTitle: {
         fontSize: 14,
@@ -828,6 +1151,12 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
     },
+    invitationRetry: {
+        minHeight: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
     invitationSummary: {
         flexDirection: "row",
         alignItems: "center",
@@ -841,6 +1170,17 @@ const styles = StyleSheet.create({
     invitationSummaryText: {
         flex: 1,
         minWidth: 0,
+    },
+    revokeButton: {
+        minHeight: 38,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    revokeButtonText: {
+        color: "#DC2626",
+        fontSize: 12,
+        fontWeight: "900",
     },
     invitationTitle: {
         fontSize: 14,

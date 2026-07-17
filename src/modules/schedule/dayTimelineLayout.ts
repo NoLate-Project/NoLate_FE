@@ -78,7 +78,7 @@ export function getDayTimelineEventMetadata(item: ScheduleItem): DayTimelineEven
     const routeInfo = getRouteInfoFromRoute(item.route);
     const travelMinutes = validPositiveMinutes(item.travelMinutes)
         ?? validPositiveMinutes(routeInfo?.totalDurationMinutes);
-    let departureAt = validDateString(item.departAt) ?? validDateString(persistedRouteInfo?.departureTime);
+    let departureAt = validDateString(item.departAt);
 
     if (!departureAt && travelMinutes) {
         const startAt = new Date(item.startAt);
@@ -86,6 +86,9 @@ export function getDayTimelineEventMetadata(item: ScheduleItem): DayTimelineEven
             departureAt = new Date(startAt.getTime() - travelMinutes * 60_000).toISOString();
         }
     }
+
+    // 이전 버전이 현재 시각으로 저장한 nested routeInfo보다 일정 시각 기반 계산을 우선한다.
+    departureAt ??= validDateString(persistedRouteInfo?.departureTime);
 
     const locationCandidate = firstNonEmpty(
         item.destination?.name,
@@ -147,6 +150,7 @@ export function buildPositionedEvents(
             if (!Number.isFinite(rawStart)) return [];
 
             const safeRawEnd = Number.isFinite(rawEnd) ? Math.max(rawEnd, rawStart + 60_000) : rawStart + 60_000;
+            if (safeRawEnd <= dayStart || rawStart >= nextDay) return [];
             const clippedStart = new Date(Math.max(rawStart, dayStart));
             const clippedEnd = new Date(Math.min(safeRawEnd, nextDay));
             const startMinute = rawStart < dayStart ? 0 : minuteOfDay(clippedStart);

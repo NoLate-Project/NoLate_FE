@@ -36,7 +36,7 @@ export default function CalendarViewModeGlyph({
     };
 
     if (toolbar) {
-        return <Ionicons name="albums-outline" size={size} color={color} />;
+        return <Ionicons accessible={false} name="albums-outline" size={size} color={color} />;
     }
 
     if (mode === "compact") {
@@ -52,7 +52,7 @@ export default function CalendarViewModeGlyph({
     }
 
     if (mode === "stack") {
-        return <Ionicons name="calendar-clear-outline" size={size} color={color} />;
+        return <Ionicons accessible={false} name="calendar-clear-outline" size={size} color={color} />;
     }
 
     if (mode === "detail") {
@@ -88,7 +88,7 @@ export default function CalendarViewModeGlyph({
         );
     }
 
-    return <Ionicons name={FALLBACK_ICON_BY_MODE[mode]} size={size} color={color} />;
+    return <Ionicons accessible={false} name={FALLBACK_ICON_BY_MODE[mode]} size={size} color={color} />;
 }
 
 const styles = StyleSheet.create({

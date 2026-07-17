@@ -34,8 +34,13 @@ describe("TransitRouteSummaryRow", () => {
         });
 
         expect(renderer!.root.findAllByType(Text).map((node) => node.props.children)).toEqual(["이동 경로"]);
-        expect(renderer!.root.findAllByProps({ name: "walk-outline" })).toHaveLength(1);
-        expect(renderer!.root.findAllByProps({ name: "location" })).toHaveLength(1);
+        const decorativeIcons = renderer!.root.findAllByType("Ionicons" as never);
+        expect(decorativeIcons.filter((icon) => icon.props.name === "walk-outline")).toHaveLength(1);
+        expect(decorativeIcons.filter((icon) => icon.props.name === "location")).toHaveLength(1);
+        decorativeIcons.forEach((icon) => {
+            expect(icon.props.accessible).toBe(false);
+            expect(icon.props.importantForAccessibility).toBe("no");
+        });
         expect(renderer!.root.findByProps({
             accessibilityLabel: "이동 경로, 도보 3분, 4호선 16분, 2호선 8분, 도보 4분",
         })).toBeTruthy();

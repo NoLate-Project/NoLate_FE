@@ -1,0 +1,61 @@
+name: NoLate FE CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fe-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+
+  android-native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+      - run: npm ci
+      - run: chmod +x android/gradlew
+      - working-directory: android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+  ios-native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - working-directory: ios
+        run: pod install
+      - run: >-
+          xcodebuild test
+          -workspace ios/NoLateFE.xcworkspace
+          -scheme NoLateFE
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16 Pro'

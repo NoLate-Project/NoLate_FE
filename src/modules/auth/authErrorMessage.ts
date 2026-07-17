@@ -35,8 +35,15 @@ export function getAuthErrorPresentation(
         };
     }
 
+    if (/M007|ACCOUNT_LINK_REQUIRED|같은 이메일의 기존 계정/i.test(text)) {
+        return {
+            title: "기존 계정으로 로그인해 주세요",
+            message: "같은 이메일로 가입된 계정이 있어요. 기존 로그인 방식을 이용해 주세요.",
+        };
+    }
+
     if (context === "signup") {
-        const duplicateEmail = /duplicate|already.{0,20}(email|member|register)|email.{0,20}(exist|used)|이미.{0,12}(가입|사용)|이메일.{0,12}(중복|존재)/i.test(text);
+        const duplicateEmail = /M002|M008|M009|duplicate|already.{0,20}(email|member|register)|email.{0,20}(exist|used)|이미.{0,12}(가입|사용)|이메일.{0,12}(중복|존재)/i.test(text);
         return {
             title: "회원가입을 확인해 주세요",
             message: duplicateEmail
@@ -59,8 +66,22 @@ export function getAuthErrorPresentation(
 
 function getErrorSearchText(error: unknown): string {
     if (error instanceof Error) {
+        const record = error as Error & {
+            errorCode?: unknown;
+            code?: unknown;
+            status?: unknown;
+            cause?: unknown;
+        };
         const cause = "cause" in error ? getErrorSearchText(error.cause) : "";
-        return `${error.name} ${error.message} ${cause}`;
+        return [
+            error.name,
+            error.message,
+            record.errorCode,
+            record.code,
+            record.status,
+            cause,
+        ].map((value) => typeof value === "string" || typeof value === "number" ? String(value) : "")
+            .join(" ");
     }
     if (typeof error === "string" || typeof error === "number") return String(error);
     if (!error || typeof error !== "object") return "";

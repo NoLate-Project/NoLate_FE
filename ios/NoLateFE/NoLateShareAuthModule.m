@@ -3,6 +3,9 @@
 
 @interface NoLateShareAuth : NSObject <RCTBridgeModule>
 @end
+
+static NSString * const NoLateSharedKeychainAccessGroup = @"457QQLB6H6.com.anonymous.nolatefe";
+
 @implementation NoLateShareAuth
 
 RCT_EXPORT_MODULE();
@@ -20,7 +23,19 @@ RCT_EXPORT_MODULE();
     (__bridge id)kSecAttrService: @"app:no-auth",
     (__bridge id)kSecAttrAccount: encodedKey,
     (__bridge id)kSecAttrGeneric: encodedKey,
+    (__bridge id)kSecAttrAccessGroup: NoLateSharedKeychainAccessGroup,
   } mutableCopy];
+}
+
+- (NSError *)keychainErrorWithStatus:(OSStatus)status operation:(NSString *)operation
+{
+  NSString *message = [NSString stringWithFormat:@"공유 Keychain %@ 실패 (OSStatus: %d)", operation, (int)status];
+#if DEBUG
+  NSLog(@"[NoLateShareAuth] %@", message);
+#endif
+  return [NSError errorWithDomain:NSOSStatusErrorDomain
+                             code:status
+                         userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
 RCT_REMAP_METHOD(getItem,
@@ -38,7 +53,8 @@ RCT_REMAP_METHOD(getItem,
     return;
   }
   if (status != errSecSuccess) {
-    reject(@"shared_keychain_read_failed", @"공유 인증 정보를 읽지 못했습니다.", nil);
+    NSError *error = [self keychainErrorWithStatus:status operation:@"조회"];
+    reject(@"shared_keychain_read_failed", error.localizedDescription, error);
     return;
   }
   NSData *data = CFBridgingRelease(result);
@@ -61,7 +77,8 @@ RCT_REMAP_METHOD(setItem,
     status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
   }
   if (status != errSecSuccess) {
-    reject(@"shared_keychain_write_failed", @"공유 인증 정보를 저장하지 못했습니다.", nil);
+    NSError *error = [self keychainErrorWithStatus:status operation:@"저장"];
+    reject(@"shared_keychain_write_failed", error.localizedDescription, error);
     return;
   }
   resolve(@YES);
@@ -74,7 +91,8 @@ RCT_REMAP_METHOD(deleteItem,
 {
   OSStatus status = SecItemDelete((__bridge CFDictionaryRef)[self queryForKey:key]);
   if (status != errSecSuccess && status != errSecItemNotFound) {
-    reject(@"shared_keychain_delete_failed", @"공유 인증 정보를 삭제하지 못했습니다.", nil);
+    NSError *error = [self keychainErrorWithStatus:status operation:@"삭제"];
+    reject(@"shared_keychain_delete_failed", error.localizedDescription, error);
     return;
   }
   resolve(@YES);

@@ -51,6 +51,8 @@ export default function NotificationSettingsCard({
                     </Text>
                 </View>
                 <Switch
+                    accessibilityLabel="출발 알림"
+                    accessibilityHint={canEnable || enabled ? undefined : "경로 선택 또는 이용 한도 확인이 필요합니다"}
                     value={enabled}
                     disabled={!canEnable && !enabled}
                     onValueChange={onEnabledChange}
@@ -86,13 +88,15 @@ export default function NotificationSettingsCard({
                             예상 이동시간 {formatRouteDuration(routeMinutes)} · {leadMinutes}분 전부터 확인
                         </Text>
                         <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="추천 알림 설정 적용"
                             onPress={() => {
                                 onLeadMinutesChange(Math.min(60, policy.maxNotificationLeadMinutes));
                                 onIntervalMinutesChange(Math.max(intervalMinutes, policy.minEtaRefreshIntervalMinutes));
                             }}
                             style={[styles.useButton, { borderColor: accentBlue }]}
                         >
-                            <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 시간 사용</Text>
+                            <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 설정 적용</Text>
                         </Pressable>
                     </View>
                 </View>

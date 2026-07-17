@@ -1,28 +1,45 @@
-import { useState } from "react";
-import { useRouter } from "expo-router";
+import { useEffect, useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
     Alert,
+    BackHandler,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 
 import { loginMember, signUpMember, type SignupConsentsPayload } from "../../src/api/member";
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
+import {
+    isValidSignupEmail,
+    isValidSignupName,
+    MAX_EMAIL_LENGTH,
+    MAX_SIGNUP_NAME_LENGTH,
+    normalizeSignupEmail,
+} from "../../src/modules/auth/signupValidation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
+import {
+    handleSignupAgreementHardwareBack,
+    shouldHandleSignupAgreementHardwareBack,
+} from "../../src/modules/auth/signupNavigation";
 
-const PASSWORD_PATTERN = /^[a-zA-Z0-9!@#$%^&*]{8,16}$/;
+const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[a-zA-Z\d!@#$%^&*]{8,16}$/;
 type SignUpStep = "details" | "agreements";
 
 export default function SignUp() {
     const router = useRouter();
+    const isFocused = useIsFocused();
+    const { shareToken } = useLocalSearchParams<{ shareToken?: string | string[] }>();
     const { syncAuthentication } = useAuth();
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
@@ -33,13 +50,46 @@ export default function SignUp() {
     const [confirmPwd, setConfirmPwd] = useState("");
     const [step, setStep] = useState<SignUpStep>("details");
     const [submitting, setSubmitting] = useState(false);
+    const pendingShareToken = normalizeShareToken(shareToken);
+    const loginRoute = pendingShareToken
+        ? { pathname: "/auth/login" as const, params: { shareToken: pendingShareToken } }
+        : "/auth/login" as const;
+
+    useEffect(() => {
+        if (!shouldHandleSignupAgreementHardwareBack({
+            platform: Platform.OS,
+            isFocused,
+            isAgreementStep: step === "agreements",
+        })) return;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            // Keep the in-flight signup on the current step, but consume the
+            // system back so it cannot pop the whole signup route.
+            return handleSignupAgreementHardwareBack({
+                submitting,
+                returnToDetails: () => setStep("details"),
+            });
+        });
+
+        return () => subscription.remove();
+    }, [isFocused, step, submitting]);
 
     const validateDetails = () => {
         const normalizedName = name.trim();
-        const normalizedEmail = email.trim();
+        const normalizedEmail = normalizeSignupEmail(email);
 
         if (!normalizedName || !normalizedEmail || !pwd || !confirmPwd) {
             Alert.alert("입력 확인", "모든 항목을 입력해 주세요.");
+            return false;
+        }
+
+        if (!isValidSignupName(normalizedName)) {
+            Alert.alert("입력 확인", `이름은 ${MAX_SIGNUP_NAME_LENGTH}자 이하로 입력해 주세요.`);
+            return false;
+        }
+
+        if (!isValidSignupEmail(normalizedEmail)) {
+            Alert.alert("입력 확인", "올바른 이메일 주소를 입력해 주세요.");
             return false;
         }
 
@@ -64,7 +114,8 @@ export default function SignUp() {
         if (submitting || !validateDetails()) return;
 
         const normalizedName = name.trim();
-        const normalizedEmail = email.trim();
+        const normalizedEmail = normalizeSignupEmail(email);
+        let accountCreated = false;
 
         try {
             setSubmitting(true);
@@ -74,20 +125,51 @@ export default function SignUp() {
                 password: pwd,
                 consents,
             });
+            accountCreated = true;
 
-            const member = await loginMember({
+            const member = requireAuthenticatedMember(await loginMember({
                 email: normalizedEmail,
                 password: pwd,
-            });
+            }));
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
             await saveAuthMember(member);
-            await syncAuthentication();
-            await registerPushAfterLogin(member.id).catch((error) => {
+            const authenticated = await syncAuthentication();
+            if (!authenticated) {
+                throw new Error("로그인 상태를 저장하지 못했어요. 로그인 화면에서 다시 시도해 주세요.");
+            }
+            registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);
             });
-            router.replace("/onboarding/calendar-import");
+            if (pendingShareToken) {
+                router.replace({
+                    pathname: "/share/[token]",
+                    params: { token: pendingShareToken, autoAccept: "1" },
+                });
+            } else {
+                router.replace("/onboarding/calendar-import");
+            }
         } catch (error) {
+            if (accountCreated) {
+                // The account already exists at this point. Keeping the user on
+                // the agreement step would make the next tap submit sign-up
+                // again and incorrectly surface a duplicate-email error.
+                await clearAuthTokens().catch(() => undefined);
+                await syncAuthentication().catch(() => false);
+                Alert.alert(
+                    "가입은 완료됐어요",
+                    "자동 로그인만 완료하지 못했어요. 로그인 화면에서 방금 만든 계정으로 다시 로그인해 주세요.",
+                    [
+                        {
+                            text: "로그인 화면으로",
+                            onPress: () => router.replace(loginRoute),
+                        },
+                    ],
+                    { cancelable: false },
+                );
+                return;
+            }
+
             const presentation = getAuthErrorPresentation(error, "signup");
             await clearAuthTokens();
             await syncAuthentication();
@@ -103,6 +185,7 @@ export default function SignUp() {
                 title="가입 전 확인"
                 subtitle="일반 계정을 만들기 전에 필요한 항목입니다."
                 onBack={() => setStep("details")}
+                backDisabled={submitting}
                 density="compact"
             >
                 <SignupAgreementPanel
@@ -119,7 +202,7 @@ export default function SignUp() {
     return (
         <AuthScreen
             subtitle="새 계정으로 오늘의 이동을 준비하세요."
-            onBack={() => router.replace("/auth/login")}
+            onBack={() => router.replace(loginRoute)}
             density="compact"
         >
             <AuthInput
@@ -127,6 +210,7 @@ export default function SignUp() {
                 icon="person-outline"
                 value={name}
                 onChangeText={setName}
+                maxLength={MAX_SIGNUP_NAME_LENGTH}
                 placeholder="홍길동"
                 autoComplete="name"
                 textContentType="name"
@@ -136,6 +220,7 @@ export default function SignUp() {
                 icon="mail-outline"
                 value={email}
                 onChangeText={setEmail}
+                maxLength={MAX_EMAIL_LENGTH}
                 placeholder="you@example.com"
                 autoCapitalize="none"
                 keyboardType="email-address"
@@ -164,7 +249,12 @@ export default function SignUp() {
             />
 
             <View style={styles.passwordRule}>
-                <Ionicons name="information-circle-outline" size={17} color={colors.textSecondary} />
+                <View
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                >
+                    <Ionicons name="information-circle-outline" size={17} color={colors.textSecondary} />
+                </View>
                 <Text style={styles.passwordRuleText}>
                     영문, 숫자, !@#$%^&* 조합으로 8~16자
                 </Text>
@@ -177,7 +267,8 @@ export default function SignUp() {
             />
 
             <Pressable
-                onPress={() => router.replace("/auth/login")}
+                accessibilityRole="button"
+                onPress={() => router.replace(loginRoute)}
                 style={({ pressed }) => [
                     styles.loginLink,
                     {
@@ -192,6 +283,11 @@ export default function SignUp() {
             </Pressable>
         </AuthScreen>
     );
+}
+
+function normalizeShareToken(value?: string | string[]): string | null {
+    const token = (Array.isArray(value) ? value[0] : value)?.trim();
+    return token && /^[A-Za-z0-9_-]{16,512}$/.test(token) ? token : null;
 }
 
 function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark" | "light") {

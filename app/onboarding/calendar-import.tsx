@@ -1,17 +1,20 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as AuthSession from "expo-auth-session";
 import * as GoogleAuth from "expo-auth-session/providers/google";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import type { ComponentProps } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     AccessibilityInfo,
     ActivityIndicator,
     Animated,
     Alert,
+    BackHandler,
     Easing,
     Image,
+    Keyboard,
+    KeyboardAvoidingView,
     Platform,
     Pressable,
     ScrollView,
@@ -24,7 +27,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { createSchedule, type SchedulePayload } from "../../src/api/schedule";
+import { importCalendarSchedule, type SchedulePayload } from "../../src/api/schedule";
 import { completeMemberCuration } from "../../src/api/member";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import {
@@ -40,6 +43,7 @@ import {
 } from "../../src/modules/map/routingService";
 import {
     buildSchedulePayloadFromCandidate,
+    buildCalendarImportSource,
     getCalendarProviderLabel,
     getDefaultSelectedCandidateIds,
     getDeviceCalendarProvider,
@@ -48,6 +52,14 @@ import {
     type DeviceCalendarCandidate,
 } from "../../src/modules/onboarding/deviceCalendarImport";
 import { withCalendarImportTimeout } from "../../src/modules/onboarding/calendarImportReliability";
+import {
+    isCalendarImportManagementEntry,
+    shouldConsumeCalendarImportHardwareBack,
+} from "../../src/modules/onboarding/calendarImportNavigation";
+import {
+    getWritableCalendarImportCategories,
+    resolveCalendarImportCategory,
+} from "../../src/modules/onboarding/calendarImportCategory";
 import {
     enableCalendarImportNotification,
     enrichCalendarCandidateWithRoute,
@@ -77,7 +89,7 @@ import {
     saveFavoriteDeparturePlace,
 } from "../../src/modules/schedule/favoriteDeparture";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { Place, ScheduleCategory, TravelMode } from "../../src/modules/schedule/types";
+import type { Place, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type OnboardingStep = "intro" | "provider" | "permission" | "scanning" | "select" | "enrich" | "complete";
@@ -114,12 +126,6 @@ type CalendarConsentItem = {
     required: boolean;
 };
 
-const FALLBACK_CATEGORY: ScheduleCategory = {
-    id: "1",
-    title: "개인",
-    color: "#2196f3",
-};
-
 const TRAVEL_MODES: Array<{
     value: TravelMode;
     label: string;
@@ -144,11 +150,13 @@ const SECURE_STORAGE_TIMEOUT_MS = 8_000;
 const PLACE_SEARCH_TIMEOUT_MS = 15_000;
 const ROUTE_SEARCH_TIMEOUT_MS = 25_000;
 const IMPORT_BATCH_SIZE = 3;
+const CANDIDATE_PAGE_SIZE = 20;
 
 const APP_LOGO = require("../../assets/icon.png");
 
 export default function CalendarImportOnboarding() {
     const router = useRouter();
+    const { source } = useLocalSearchParams<{ source?: string | string[] }>();
     const { isCurationCompleted, syncAuthentication } = useAuth();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
@@ -161,6 +169,7 @@ export default function CalendarImportOnboarding() {
     const stepMotionDidMountRef = useRef(false);
     const stepMotion = useRef(new Animated.Value(1)).current;
     const footerMotion = useRef(new Animated.Value(1)).current;
+    const goBackStepRef = useRef<() => void>(() => undefined);
 
     const [googleAuthRequest, , promptGoogleCalendarAuth] = GoogleAuth.useAuthRequest(
         {
@@ -190,7 +199,12 @@ export default function CalendarImportOnboarding() {
     const [scanStatusMessage, setScanStatusMessage] = useState("캘린더 연결 상태를 확인하고 있어요");
     const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-    const [categoryId, setCategoryId] = useState(FALLBACK_CATEGORY.id);
+    const [visibleCandidateCount, setVisibleCandidateCount] = useState(CANDIDATE_PAGE_SIZE);
+    const [categoryId, setCategoryId] = useState("");
+    const [categoryLoading, setCategoryLoading] = useState(true);
+    const [categoryError, setCategoryError] = useState<string | null>(null);
+    const categoryLoadSequenceRef = useRef(0);
+    const originSearchSequenceRef = useRef(0);
     const [travelMode, setTravelMode] = useState<TravelMode>("TRANSIT");
     const [travelMinutes, setTravelMinutes] = useState(30);
     const [prepareDepartureAlert, setPrepareDepartureAlert] = useState(true);
@@ -205,6 +219,7 @@ export default function CalendarImportOnboarding() {
     const [importing, setImporting] = useState(false);
     const [importProgress, setImportProgress] = useState(0);
     const [importedCount, setImportedCount] = useState(0);
+    const [alreadyImportedCount, setAlreadyImportedCount] = useState(0);
     const [preparedRouteCount, setPreparedRouteCount] = useState(0);
     const [notificationReadyCount, setNotificationReadyCount] = useState(0);
     const [failedImportCount, setFailedImportCount] = useState(0);
@@ -212,11 +227,11 @@ export default function CalendarImportOnboarding() {
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const categories = useMemo(
-        () => (state.categories.length > 0 ? state.categories : [FALLBACK_CATEGORY]),
+        () => getWritableCalendarImportCategories(state.categories),
         [state.categories]
     );
     const selectedCategory = useMemo(
-        () => categories.find((category) => category.id === categoryId) ?? categories[0] ?? FALLBACK_CATEGORY,
+        () => resolveCalendarImportCategory(categories, categoryId),
         [categories, categoryId]
     );
     const selectedCandidates = useMemo(
@@ -271,7 +286,19 @@ export default function CalendarImportOnboarding() {
         if (labels.length === 1) return labels[0];
         return "선택한 캘린더";
     }, [deviceProviderLabel, selectedProviderIds]);
-    const canGoBack = step !== "intro" && step !== "complete" && !importing;
+    const isManagementEntry = isCalendarImportManagementEntry({
+        source,
+        isCurationCompleted,
+    });
+    const exitWithoutImportLabel = completingCuration
+        ? "처리 중"
+        : isManagementEntry
+            ? "변경 없이 프로필로 돌아가기"
+            : "일정 없이 시작하기";
+    const navigationBusy = importing || completingCuration;
+    const canGoBack = !navigationBusy &&
+        step !== "complete" &&
+        (step !== "intro" || isManagementEntry);
 
     const stepMotionStyle = {
         opacity: stepMotion,
@@ -370,25 +397,47 @@ export default function CalendarImportOnboarding() {
         ]).start();
     }, [footerMotion, reduceMotionEnabled, step, stepMotion]);
 
-    useEffect(() => {
-        let cancelled = false;
+    const loadCategories = useCallback(async () => {
+        const sequence = categoryLoadSequenceRef.current + 1;
+        categoryLoadSequenceRef.current = sequence;
+        setCategoryLoading(true);
+        setCategoryError(null);
 
-        getScheduleCategoriesFromApi()
-            .then((nextCategories) => {
-                if (cancelled || nextCategories.length === 0) return;
-                dispatch({ type: "SET_CATEGORIES", categories: nextCategories });
-                setCategoryId(nextCategories[0].id);
-            })
-            .catch(() => {
-                // 온보딩은 가입 직후 첫 경험이므로 카테고리 조회 실패만으로 멈추지 않는다.
-                // 일정 저장 payload에는 snapshot 형태의 category가 들어가므로 fallback으로도 진행 가능하다.
-                setCategoryId(FALLBACK_CATEGORY.id);
-            });
+        try {
+            const nextCategories = await getScheduleCategoriesFromApi();
+            if (sequence !== categoryLoadSequenceRef.current) return;
 
-        return () => {
-            cancelled = true;
-        };
+            const writableCategories = getWritableCalendarImportCategories(nextCategories);
+            if (writableCategories.length === 0) {
+                throw new Error("일정을 저장할 수 있는 카테고리가 없습니다.");
+            }
+
+            dispatch({ type: "SET_CATEGORIES", categories: nextCategories });
+            setCategoryId((current) => (
+                writableCategories.some((category) => category.id === current)
+                    ? current
+                    : writableCategories[0].id
+            ));
+        } catch {
+            if (sequence !== categoryLoadSequenceRef.current) return;
+            setCategoryError("카테고리를 불러오지 못했어요. 다시 확인해 주세요.");
+        } finally {
+            if (sequence === categoryLoadSequenceRef.current) setCategoryLoading(false);
+        }
     }, [dispatch]);
+
+    useEffect(() => {
+        loadCategories().catch(() => undefined);
+        return () => {
+            categoryLoadSequenceRef.current += 1;
+        };
+    }, [loadCategories]);
+
+    useEffect(() => () => {
+        scanAttemptRef.current += 1;
+        originSearchSequenceRef.current += 1;
+        defaultOriginSaveRequestIdRef.current += 1;
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -447,11 +496,21 @@ export default function CalendarImportOnboarding() {
 
         // 서버 저장이 끝난 뒤 로컬 인증 상태를 갱신해야 보호된 일정 화면이 열린다.
         await saveAuthCurationCompleted(true);
-        await syncAuthentication();
+        const authenticated = await syncAuthentication();
+        if (!authenticated) {
+            throw new Error("로그인 상태를 확인하지 못했어요. 다시 로그인해 주세요.");
+        }
     };
 
     const finishCuration = async () => {
         if (completingCuration || importing) return;
+
+        if (isManagementEntry && step !== "complete") {
+            scanAttemptRef.current += 1;
+            if (router.canGoBack()) router.back();
+            else router.replace("/profile");
+            return;
+        }
 
         try {
             setCompletingCuration(true);
@@ -469,6 +528,12 @@ export default function CalendarImportOnboarding() {
         if (!canGoBack) return;
 
         switch (step) {
+            case "intro":
+                if (isManagementEntry) {
+                    if (router.canGoBack()) router.back();
+                    else router.replace("/profile");
+                }
+                break;
             case "provider":
                 goToStep("intro");
                 break;
@@ -490,8 +555,26 @@ export default function CalendarImportOnboarding() {
                 break;
         }
     };
+    goBackStepRef.current = goBackStep;
+
+    useEffect(() => {
+        if (Platform.OS !== "android") return;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            if (!shouldConsumeCalendarImportHardwareBack({
+                busy: navigationBusy,
+                canGoBack,
+            })) return false;
+            if (navigationBusy) return true;
+            goBackStepRef.current();
+            return true;
+        });
+
+        return () => subscription.remove();
+    }, [canGoBack, navigationBusy]);
 
     const toggleProvider = (providerId: CalendarProviderId) => {
+        setErrorMessage(null);
         setSelectedProviderIds((current) => {
             const next = new Set(current);
             if (next.has(providerId)) {
@@ -621,6 +704,7 @@ export default function CalendarImportOnboarding() {
             );
             setCandidates(loadedCandidates);
             setSelectedIds(getDefaultSelectedCandidateIds(loadedCandidates));
+            setVisibleCandidateCount(CANDIDATE_PAGE_SIZE);
             goToStep("select");
         } catch (error) {
             if (!isCurrentAttempt()) return;
@@ -631,7 +715,7 @@ export default function CalendarImportOnboarding() {
 
     const requestGoogleCalendarAccessToken = async (): Promise<string | null> => {
         if (!GOOGLE_CALENDAR_CLIENT_ID) {
-            throw new Error("Google Calendar Client ID가 설정되지 않았어요. EXPO_PUBLIC_GOOGLE_CALENDAR_CLIENT_ID를 확인해 주세요.");
+            throw new Error("Google Calendar 연결을 지금 사용할 수 없어요. 기기 캘린더를 선택하거나 잠시 후 다시 시도해 주세요.");
         }
 
         if (!googleAuthRequest) {
@@ -751,6 +835,8 @@ export default function CalendarImportOnboarding() {
     const searchDefaultOrigin = async () => {
         const query = originSearchQuery.trim();
         if (!query || originSearching) return;
+        const sequence = originSearchSequenceRef.current + 1;
+        originSearchSequenceRef.current = sequence;
 
         try {
             setOriginSearching(true);
@@ -762,21 +848,32 @@ export default function CalendarImportOnboarding() {
                     operationName: "주 출발지 검색",
                 }
             );
+            if (sequence !== originSearchSequenceRef.current) return;
             setOriginSearchResults(results.slice(0, 5));
             if (results.length === 0) {
                 setOriginSearchError("검색 결과가 없어요. 건물명이나 도로명 주소로 다시 검색해 주세요.");
             }
         } catch (error) {
+            if (sequence !== originSearchSequenceRef.current) return;
             setOriginSearchResults([]);
             setOriginSearchError(getErrorMessage(error, "출발지를 검색하지 못했습니다."));
         } finally {
-            setOriginSearching(false);
+            if (sequence === originSearchSequenceRef.current) setOriginSearching(false);
         }
+    };
+
+    const changeOriginSearchQuery = (value: string) => {
+        originSearchSequenceRef.current += 1;
+        setOriginSearchQuery(value);
+        setOriginSearching(false);
+        setOriginSearchResults([]);
+        setOriginSearchError(null);
     };
 
     const selectDefaultOrigin = (place: Place) => {
         if (!hasFavoriteDepartureCoords(place)) return;
 
+        Keyboard.dismiss();
         const requestId = defaultOriginSaveRequestIdRef.current + 1;
         defaultOriginSaveRequestIdRef.current = requestId;
         setDefaultOrigin(place);
@@ -807,23 +904,31 @@ export default function CalendarImportOnboarding() {
     };
 
     const importSelectedSchedules = async () => {
-        if (selectedCandidates.length === 0 || importing || !canImportSelectedSchedules) return;
+        const importCategory = selectedCategory;
+        if (
+            selectedCandidates.length === 0 ||
+            importing ||
+            !canImportSelectedSchedules ||
+            !importCategory
+        ) return;
 
         try {
             setImporting(true);
             setImportProgress(0);
+            setAlreadyImportedCount(0);
             setPreparedRouteCount(0);
             setNotificationReadyCount(0);
             setFailedImportCount(0);
 
             let successCount = 0;
+            let skippedCount = 0;
             let routeCount = 0;
             let enabledNotificationCount = 0;
             let failureCount = 0;
             let processedCount = 0;
             let lastError: unknown;
             const settings = {
-                category: selectedCategory,
+                category: importCategory,
                 travelMode,
                 travelMinutes,
                 prepareDepartureAlert: routePreparationEnabled,
@@ -869,21 +974,22 @@ export default function CalendarImportOnboarding() {
                 const canAttemptMoreNotifications = routePreparationEnabled &&
                     defaultOriginReady &&
                     enabledNotificationCount < remainingNotificationQuota;
-                const enrichedBatch = await Promise.all(
-                    batch.map((candidate) => canAttemptMoreNotifications
-                        ? enrichCalendarCandidateWithRoute(
+                const enrichedBatch = await Promise.all(batch.map(async (candidate) => {
+                    const enrichment = canAttemptMoreNotifications
+                        ? await enrichCalendarCandidateWithRoute(
                             candidate,
                             settings,
                             defaultOrigin,
                             { resolvePlace, findRoutes }
                         )
-                        : Promise.resolve({
+                        : {
                             payload: buildSchedulePayloadFromCandidate(candidate, settings),
                             routePrepared: false,
                             hints: extractCalendarRouteHints(candidate),
-                        })
-                    )
-                );
+                        };
+
+                    return { candidate, ...enrichment };
+                }));
 
                 // 일정 생성은 순차 처리해 구독 quota가 동시에 중복 소비되지 않게 한다.
                 for (const enriched of enrichedBatch) {
@@ -897,11 +1003,15 @@ export default function CalendarImportOnboarding() {
                         : enriched.payload;
 
                     try {
-                        const result = await createImportedSchedule(payload);
+                        const result = await createImportedSchedule(enriched.candidate, payload);
                         dispatch({ type: "ADD_ITEM", item: result.item });
-                        successCount += 1;
-                        if (enriched.routePrepared) routeCount += 1;
-                        if (result.notificationEnabled) enabledNotificationCount += 1;
+                        if (result.created) {
+                            successCount += 1;
+                            if (enriched.routePrepared) routeCount += 1;
+                            if (result.notificationEnabled) enabledNotificationCount += 1;
+                        } else {
+                            skippedCount += 1;
+                        }
                     } catch (error) {
                         lastError = error;
                         failureCount += 1;
@@ -912,11 +1022,12 @@ export default function CalendarImportOnboarding() {
                 }
             }
 
-            if (successCount === 0) {
+            if (successCount === 0 && skippedCount === 0) {
                 throw lastError ?? new Error("선택한 일정을 가져오지 못했습니다.");
             }
 
             setImportedCount(successCount);
+            setAlreadyImportedCount(skippedCount);
             setPreparedRouteCount(routeCount);
             setNotificationReadyCount(enabledNotificationCount);
             setFailedImportCount(failureCount);
@@ -942,7 +1053,10 @@ export default function CalendarImportOnboarding() {
     };
 
     return (
-        <View style={[styles.root, { paddingTop: insets.top + 12, paddingBottom: Math.max(insets.bottom, 18) }]}>
+        <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            style={[styles.root, { paddingTop: insets.top + 12, paddingBottom: Math.max(insets.bottom, 18) }]}
+        >
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
             <View style={styles.topRow}>
                 <Pressable
@@ -950,6 +1064,9 @@ export default function CalendarImportOnboarding() {
                     hitSlop={10}
                     accessibilityRole="button"
                     accessibilityLabel="이전 단계로 돌아가기"
+                    accessibilityState={{ disabled: !canGoBack }}
+                    accessibilityElementsHidden={!canGoBack}
+                    importantForAccessibility={canGoBack ? "auto" : "no-hide-descendants"}
                     onPress={goBackStep}
                     style={({ pressed }) => [
                         styles.backButton,
@@ -963,6 +1080,8 @@ export default function CalendarImportOnboarding() {
 
             <ScrollView
                 ref={scrollViewRef}
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.content}
             >
@@ -1022,7 +1141,7 @@ export default function CalendarImportOnboarding() {
                             onToggleDetail={toggleCalendarConsentDetail}
                         />
                         {errorMessage ? (
-                            <View style={styles.inlineNotice}>
+                            <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
                                 <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
                                 <Text style={styles.inlineNoticeText}>{errorMessage}</Text>
                             </View>
@@ -1042,7 +1161,11 @@ export default function CalendarImportOnboarding() {
                             {SCAN_MESSAGES.map((message, index) => (
                                 <View key={message} style={styles.scanRow}>
                                     <Ionicons
-                                        name={scanStage >= index ? "checkmark-circle" : "ellipse-outline"}
+                                        name={scanStage > index
+                                            ? "checkmark-circle"
+                                            : scanStage === index
+                                                ? "time-outline"
+                                                : "ellipse-outline"}
                                         size={19}
                                         color={scanStage >= index ? colors.textPrimary : colors.textDisabled}
                                     />
@@ -1064,13 +1187,15 @@ export default function CalendarImportOnboarding() {
                     <View style={styles.stepWrap}>
                         <Text pointerEvents="none" style={styles.eyebrow}>{candidates.length}개의 일정 후보</Text>
                         <Text pointerEvents="none" style={styles.title}>
-                            가져오면 좋은 일정{selectedIds.size > 0 ? ` ${selectedIds.size}개` : ""}를 골랐어요
+                            {selectedIds.size > 0
+                                ? `가져올 일정 ${selectedIds.size}개를 골랐어요`
+                                : "가져올 일정을 골라 주세요"}
                         </Text>
                         <Text pointerEvents="none" style={styles.subtitle}>
                             장소와 시간이 있는 일정은 기본으로 선택했고, 종일 일정도 직접 고를 수 있어요.
                         </Text>
                         {errorMessage ? (
-                            <View style={styles.inlineNotice}>
+                            <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
                                 <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
                                 <Text style={styles.inlineNoticeText}>{errorMessage}</Text>
                             </View>
@@ -1118,7 +1243,7 @@ export default function CalendarImportOnboarding() {
                                 ) : null}
 
                                 <View style={styles.candidateList}>
-                                    {candidates.slice(0, 20).map((candidate) => (
+                                    {candidates.slice(0, visibleCandidateCount).map((candidate) => (
                                         <CandidateRow
                                             key={candidate.id}
                                             candidate={candidate}
@@ -1127,6 +1252,12 @@ export default function CalendarImportOnboarding() {
                                         />
                                     ))}
                                 </View>
+                                {visibleCandidateCount < candidates.length ? (
+                                    <GhostButton
+                                        label={`일정 더 보기 (${candidates.length - visibleCandidateCount}개 남음)`}
+                                        onPress={() => setVisibleCandidateCount((count) => Math.min(count + CANDIDATE_PAGE_SIZE, candidates.length))}
+                                    />
+                                ) : null}
                             </>
                         )}
                     </View>
@@ -1141,17 +1272,66 @@ export default function CalendarImportOnboarding() {
                         </Text>
 
                         <SectionTitle label="카테고리" />
-                        <View style={styles.chipRow}>
-                            {categories.map((category) => (
-                                <OptionChip
-                                    key={category.id}
-                                    label={category.title}
-                                    active={category.id === selectedCategory.id}
-                                    color={category.color}
-                                    onPress={() => setCategoryId(category.id)}
-                                />
-                            ))}
-                        </View>
+                        {categoryLoading && categories.length === 0 ? (
+                            <View
+                                accessibilityLiveRegion="polite"
+                                style={styles.categoryStatus}
+                            >
+                                <ActivityIndicator size="small" color={colors.textSecondary} />
+                                <Text style={styles.categoryStatusText}>카테고리를 불러오는 중이에요</Text>
+                            </View>
+                        ) : categories.length > 0 ? (
+                            <>
+                                <View style={styles.chipRow}>
+                                    {categories.map((category) => (
+                                        <OptionChip
+                                            key={category.id}
+                                            label={category.title}
+                                            active={category.id === selectedCategory?.id}
+                                            color={category.color}
+                                            onPress={() => setCategoryId(category.id)}
+                                        />
+                                    ))}
+                                </View>
+                                {categoryError ? (
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="카테고리 목록 다시 불러오기"
+                                        accessibilityState={{ busy: categoryLoading }}
+                                        disabled={categoryLoading}
+                                        onPress={() => loadCategories().catch(() => undefined)}
+                                        style={({ pressed }) => [
+                                            styles.categoryStatus,
+                                            (pressed || categoryLoading) && styles.pressed,
+                                        ]}
+                                    >
+                                        <Ionicons name="refresh-outline" size={17} color={colors.textSecondary} />
+                                        <Text style={styles.categoryStatusText}>
+                                            최신 목록을 확인하지 못했어요 · 다시 시도
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
+                            </>
+                        ) : (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="카테고리 다시 불러오기"
+                                accessibilityState={{ busy: categoryLoading }}
+                                disabled={categoryLoading}
+                                onPress={() => loadCategories().catch(() => undefined)}
+                                style={({ pressed }) => [
+                                    styles.categoryStatus,
+                                    styles.categoryStatusError,
+                                    (pressed || categoryLoading) && styles.pressed,
+                                ]}
+                            >
+                                <Ionicons name="alert-circle-outline" size={18} color={colors.textSecondary} />
+                                <View style={styles.categoryStatusCopy}>
+                                    <Text style={styles.categoryStatusTitle}>{categoryError}</Text>
+                                    <Text style={styles.categoryStatusText}>탭해서 다시 시도</Text>
+                                </View>
+                            </Pressable>
+                        )}
 
                         <View style={styles.switchRow}>
                             <View style={styles.switchTextWrap}>
@@ -1165,6 +1345,7 @@ export default function CalendarImportOnboarding() {
                                 </Text>
                             </View>
                             <Switch
+                                accessibilityLabel="경로와 출발 알림 자동 준비"
                                 value={routePreparationEnabled}
                                 onValueChange={setPrepareDepartureAlert}
                                 disabled={routeCandidateCount === 0 || remainingNotificationQuota === 0}
@@ -1186,7 +1367,7 @@ export default function CalendarImportOnboarding() {
                                     results={originSearchResults}
                                     searching={originSearching}
                                     error={originSearchError}
-                                    onQueryChange={setOriginSearchQuery}
+                                    onQueryChange={changeOriginSearchQuery}
                                     onSearch={searchDefaultOrigin}
                                     onSelect={selectDefaultOrigin}
                                 />
@@ -1230,13 +1411,24 @@ export default function CalendarImportOnboarding() {
                 {step === "complete" && (
                     <View style={styles.stepWrap}>
                         <StepIcon name="checkmark-circle-outline" />
-                        <Text style={styles.title}>일정 {importedCount}개를{"\n"}NoLate에 추가했어요</Text>
+                        <Text style={styles.title}>
+                            {importedCount > 0
+                                ? `일정 ${importedCount}개를\nNoLate에 추가했어요`
+                                : "선택한 일정은\n이미 추가되어 있어요"}
+                        </Text>
                         <Text style={styles.subtitle}>
-                            {notificationReadyCount > 0
+                            {importedCount === 0
+                                ? "중복 저장하지 않고 기존 일정을 유지했어요."
+                                : notificationReadyCount > 0
                                 ? `${notificationReadyCount}개 일정은 경로와 출발 알림까지 준비했어요.`
                                 : preparedRouteCount > 0
                                     ? `${preparedRouteCount}개 일정의 경로를 준비했어요.`
-                                    : "장소가 부족한 일정은 알림을 끈 상태로 안전하게 가져왔어요."}
+                                    : routePreparationEnabled
+                                        ? "경로를 준비하지 못한 일정은 알림을 끈 상태로 추가했어요."
+                                        : "선택한 일정을 NoLate 캘린더에 추가했어요."}
+                            {alreadyImportedCount > 0 && importedCount > 0
+                                ? `\n이미 가져온 ${alreadyImportedCount}개 일정은 건너뛰었어요.`
+                                : ""}
                             {failedImportCount > 0 ? `\n${failedImportCount}개 일정은 저장하지 못했어요.` : ""}
                         </Text>
                     </View>
@@ -1249,7 +1441,7 @@ export default function CalendarImportOnboarding() {
                     <>
                         <PrimaryButton label="일정 불러오기" onPress={() => goToStep("provider")} />
                         <GhostButton
-                            label={completingCuration ? "완료 상태 저장 중" : "일정 없이 시작하기"}
+                            label={exitWithoutImportLabel}
                             disabled={completingCuration}
                             onPress={finishCuration}
                         />
@@ -1263,7 +1455,7 @@ export default function CalendarImportOnboarding() {
                             onPress={() => goToStep("permission")}
                         />
                         <GhostButton
-                            label={completingCuration ? "완료 상태 저장 중" : "일정 없이 시작하기"}
+                            label={exitWithoutImportLabel}
                             disabled={completingCuration}
                             onPress={finishCuration}
                         />
@@ -1277,7 +1469,7 @@ export default function CalendarImportOnboarding() {
                             onPress={scanCalendars}
                         />
                         <GhostButton
-                            label={completingCuration ? "완료 상태 저장 중" : "건너뛰고 시작하기"}
+                            label={exitWithoutImportLabel}
                             disabled={completingCuration}
                             onPress={finishCuration}
                         />
@@ -1288,11 +1480,19 @@ export default function CalendarImportOnboarding() {
                 )}
                 {step === "select" && (
                     <>
-                        <PrimaryButton
-                            label={selectedIds.size > 0 ? `선택한 일정 ${selectedIds.size}개 가져오기` : "전체 일정 선택하기"}
-                            onPress={selectedIds.size > 0 ? () => goToStep("enrich") : selectAllCandidates}
-                        />
-                        <GhostButton label="이전으로" onPress={goBackStep} />
+                        {candidates.length === 0 ? (
+                            <PrimaryButton
+                                label={exitWithoutImportLabel}
+                                disabled={completingCuration}
+                                onPress={finishCuration}
+                            />
+                        ) : (
+                            <PrimaryButton
+                                label={selectedIds.size > 0 ? `선택한 일정 ${selectedIds.size}개 가져오기` : "전체 일정 선택하기"}
+                                onPress={selectedIds.size > 0 ? () => goToStep("enrich") : selectAllCandidates}
+                            />
+                        )}
+                        <GhostButton label={candidates.length === 0 ? "캘린더 다시 선택" : "이전으로"} onPress={goBackStep} />
                     </>
                 )}
                 {step === "enrich" && (
@@ -1300,10 +1500,14 @@ export default function CalendarImportOnboarding() {
                         <PrimaryButton
                             label={importing
                                 ? `${importProgress}/${selectedCandidates.length} 가져오는 중`
-                                : routePreparationEnabled && !defaultOriginReady
-                                    ? "주 출발지를 선택해 주세요"
-                                    : "가져오기 완료"}
-                            disabled={importing || !canImportSelectedSchedules}
+                                : categoryLoading && !selectedCategory
+                                    ? "카테고리를 불러오는 중"
+                                    : !selectedCategory
+                                        ? "카테고리를 다시 불러와 주세요"
+                                        : routePreparationEnabled && !defaultOriginReady
+                                            ? "주 출발지를 선택해 주세요"
+                                            : `선택한 일정 ${selectedCandidates.length}개 가져오기`}
+                            disabled={importing || !canImportSelectedSchedules || !selectedCategory}
                             onPress={importSelectedSchedules}
                         />
                         <GhostButton label="이전으로" disabled={importing} onPress={() => goToStep("select")} />
@@ -1317,17 +1521,25 @@ export default function CalendarImportOnboarding() {
                     />
                 )}
             </Animated.View>
-        </View>
+        </KeyboardAvoidingView>
     );
 }
 
-async function createImportedSchedule(payload: SchedulePayload): Promise<{
-    item: Awaited<ReturnType<typeof createSchedule>>;
+async function createImportedSchedule(
+    candidate: DeviceCalendarCandidate,
+    payload: SchedulePayload
+): Promise<{
+    item: Awaited<ReturnType<typeof importCalendarSchedule>>["item"];
+    created: boolean;
     notificationEnabled: boolean;
 }> {
+    const source = buildCalendarImportSource(candidate);
     try {
-        const item = await createSchedule(payload);
-        return { item, notificationEnabled: payload.notificationEnabled === true };
+        const result = await importCalendarSchedule(payload, source);
+        return {
+            ...result,
+            notificationEnabled: result.created && payload.notificationEnabled === true,
+        };
     } catch (error) {
         if (payload.notificationEnabled !== true || !isNotificationConfigurationError(error)) {
             throw error;
@@ -1335,13 +1547,13 @@ async function createImportedSchedule(payload: SchedulePayload): Promise<{
 
         // 구독 잔여량이 다른 기기에서 먼저 소비됐거나 서버 정책이 바뀐 경우에도
         // 일정 자체는 잃지 않도록 같은 payload를 알림만 끈 상태로 한 번 저장한다.
-        const item = await createSchedule({
+        const result = await importCalendarSchedule({
             ...payload,
             notificationEnabled: false,
             notificationLeadMinutes: undefined,
             notificationIntervalMinutes: undefined,
-        });
-        return { item, notificationEnabled: false };
+        }, source);
+        return { ...result, notificationEnabled: false };
     }
 }
 
@@ -1402,6 +1614,7 @@ function CalendarConsentChecklist({
             <Pressable
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: allAccepted }}
+                accessibilityLabel="필수 캘린더 연동 항목 모두 동의"
                 onPress={onToggleAll}
                 style={({ pressed }) => [
                     styles.consentAllRow,
@@ -1428,6 +1641,7 @@ function CalendarConsentChecklist({
                                 <Pressable
                                     accessibilityRole="checkbox"
                                     accessibilityState={{ checked }}
+                                    accessibilityLabel={`${item.title} ${item.required ? "필수" : "선택"} 동의`}
                                     onPress={() => onToggleItem(item.id)}
                                     style={({ pressed }) => [
                                         styles.consentItemToggle,
@@ -1543,6 +1757,10 @@ function ProviderOptionRow({
 
     return (
         <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: selected, disabled: !provider.available }}
+            accessibilityLabel={`${provider.title}, ${provider.description}`}
+            disabled={!provider.available}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.providerRow,
@@ -1596,14 +1814,15 @@ function SelectionControlRow({
     const styles = createStyles(colors, mode);
 
     return (
-        <View
-            accessible
+        <Pressable
             accessibilityRole="button"
-            onStartShouldSetResponder={() => true}
-            onResponderRelease={onPress}
-            style={[
+            accessibilityLabel={`${title}, ${description}`}
+            accessibilityState={{ selected: active }}
+            onPress={onPress}
+            style={({ pressed }) => [
                 styles.selectionControlRow,
                 active && styles.selectionControlRowActive,
+                pressed && styles.pressed,
             ]}
         >
             <View style={[styles.selectionControlIcon, active && styles.selectionControlIconActive]}>
@@ -1615,9 +1834,9 @@ function SelectionControlRow({
             </View>
             <View style={styles.selectionControlCopy}>
                 <Text style={styles.selectionControlTitle}>{title}</Text>
-            <Text style={styles.selectionControlDescription}>{description}</Text>
+                <Text style={styles.selectionControlDescription}>{description}</Text>
             </View>
-        </View>
+        </Pressable>
     );
 }
 
@@ -1634,14 +1853,21 @@ function CandidateSourceRow({
     const styles = createStyles(colors, mode);
 
     return (
-        <View
-            accessible
-            accessibilityRole="button"
-            onStartShouldSetResponder={() => true}
-            onResponderRelease={onPress}
-            style={[
+        <Pressable
+            accessibilityRole="checkbox"
+            accessibilityLabel={`${group.title}, ${group.selectedCount}/${group.totalCount}개 선택`}
+            accessibilityState={{
+                checked: active
+                    ? true
+                    : group.selectedCount > 0
+                        ? "mixed"
+                        : false,
+            }}
+            onPress={onPress}
+            style={({ pressed }) => [
                 styles.sourceGroupButton,
                 active && styles.sourceGroupButtonActive,
+                pressed && styles.pressed,
             ]}
         >
             <View style={[styles.checkCircle, active && styles.checkCircleSelected]}>
@@ -1656,7 +1882,7 @@ function CandidateSourceRow({
                     {group.selectedCount}/{group.totalCount}개 선택
                 </Text>
             </View>
-        </View>
+        </Pressable>
     );
 }
 
@@ -1680,6 +1906,9 @@ function CandidateRow({
 
     return (
         <Pressable
+            accessibilityRole="checkbox"
+            accessibilityLabel={`${candidate.title}, ${formatCandidateDate(candidate)}${candidate.locationName ? `, ${candidate.locationName}` : ""}`}
+            accessibilityState={{ checked: selected }}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.candidateRow,
@@ -1809,6 +2038,8 @@ function DefaultOriginPicker({
                 <View style={styles.originResultList}>
                     {results.map((place, index) => (
                         <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`${place.name || "장소"}, ${place.address || "주소 정보 없음"} 선택`}
                             key={`${place.providerPlaceId ?? place.name}:${place.lat}:${place.lng}`}
                             onPress={() => onSelect(place)}
                             style={({ pressed }) => [
@@ -1850,6 +2081,9 @@ function OptionChip({
 
     return (
         <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityState={{ selected: active }}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.optionChip,
@@ -1887,6 +2121,9 @@ function PrimaryButton({
 
     return (
         <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityState={{ disabled: Boolean(disabled) }}
             disabled={disabled}
             onPress={onPress}
             style={({ pressed }) => [
@@ -1914,7 +2151,14 @@ function GhostButton({
     const styles = createStyles(colors, mode);
 
     return (
-        <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [pressed && styles.pressed]}>
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityState={{ disabled: Boolean(disabled) }}
+            disabled={disabled}
+            onPress={onPress}
+            style={({ pressed }) => [styles.ghostButton, pressed && !disabled && styles.pressed]}
+        >
             <Text style={[styles.ghostButtonText, disabled && styles.disabledText]}>{label}</Text>
         </Pressable>
     );
@@ -2676,6 +2920,39 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontSize: 12,
             fontWeight: "900",
         },
+        categoryStatus: {
+            minHeight: 52,
+            borderRadius: 15,
+            paddingHorizontal: 13,
+            paddingVertical: 10,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 9,
+            backgroundColor: colors.surface2,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border,
+        },
+        categoryStatusError: {
+            alignItems: "flex-start",
+        },
+        categoryStatusCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 2,
+        },
+        categoryStatusTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        categoryStatusText: {
+            flexShrink: 1,
+            color: colors.textSecondary,
+            fontSize: 12,
+            lineHeight: 17,
+            fontWeight: "800",
+        },
         defaultOriginWrap: {
             gap: 10,
         },
@@ -2861,6 +3138,11 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         },
         footer: {
             gap: 12,
+        },
+        ghostButton: {
+            minHeight: 44,
+            alignItems: "center",
+            justifyContent: "center",
         },
         primaryButton: {
             minHeight: 56,

@@ -1,8 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { TransitRouteProgressSegment } from "../../transitRouteProgress";
+
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
 
 type Props = {
     segments: TransitRouteProgressSegment[];

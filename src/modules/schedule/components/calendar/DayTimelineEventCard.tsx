@@ -89,6 +89,7 @@ export default function DayTimelineEventCard({
                 <View style={styles.titleRow}>
                     {metadata.isTravel ? (
                         <Ionicons
+                            accessible={false}
                             name={travelIconName(metadata.travelMode)}
                             size={14}
                             color={categoryColor}
@@ -96,7 +97,7 @@ export default function DayTimelineEventCard({
                         />
                     ) : null}
                     <Text
-                        maxFontSizeMultiplier={1.1}
+                        maxFontSizeMultiplier={1.5}
                         numberOfLines={1}
                         style={[styles.title, { color: colors.textPrimary }]}
                     >
@@ -106,7 +107,7 @@ export default function DayTimelineEventCard({
 
                 <View style={styles.metaRow}>
                     <Text
-                        maxFontSizeMultiplier={1.1}
+                        maxFontSizeMultiplier={1.5}
                         numberOfLines={1}
                         style={[styles.time, { color: colors.textSecondary }]}
                     >
@@ -114,7 +115,7 @@ export default function DayTimelineEventCard({
                     </Text>
                     {showsLocation ? (
                         <Text
-                            maxFontSizeMultiplier={1.1}
+                            maxFontSizeMultiplier={1.5}
                             numberOfLines={1}
                             style={[styles.location, { color: colors.textSecondary }]}
                         >
@@ -126,12 +127,13 @@ export default function DayTimelineEventCard({
                 {showsTravelRow && travelText ? (
                     <View style={styles.travelRow}>
                         <Ionicons
+                            accessible={false}
                             name={travelIconName(metadata.travelMode)}
                             size={12}
                             color={categoryColor}
                         />
                         <Text
-                            maxFontSizeMultiplier={1.1}
+                            maxFontSizeMultiplier={1.5}
                             numberOfLines={1}
                             style={[styles.travelText, { color: categoryColor }]}
                         >
@@ -142,6 +144,7 @@ export default function DayTimelineEventCard({
             </View>
             {showsTravelRow ? (
                 <Ionicons
+                    accessible={false}
                     name="chevron-forward"
                     size={13}
                     color={colors.textSecondary}

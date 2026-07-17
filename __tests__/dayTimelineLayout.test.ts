@@ -35,6 +35,21 @@ function makeItem(
 }
 
 describe("day timeline layout", () => {
+    test("선택한 날짜와 겹치지 않는 일정은 타임라인에 배치하지 않는다", () => {
+        const previousDay = makeItem(
+            "previous",
+            "2026-07-09T09:00:00",
+            "2026-07-09T10:00:00"
+        );
+        const nextDay = makeItem(
+            "next",
+            "2026-07-11T09:00:00",
+            "2026-07-11T10:00:00"
+        );
+
+        expect(buildPositionedEvents([previousDay, nextDay], "2026-07-10")).toEqual([]);
+    });
+
     test("짧은 일정도 제목과 시간 두 줄이 잘리지 않는 최소 높이를 가진다", () => {
         const item = makeItem(
             "short",
@@ -127,6 +142,31 @@ describe("day timeline layout", () => {
                     mode: "CAR",
                     minutes: 20,
                     source: "fallback",
+                },
+            }
+        );
+
+        expect(formatDayTimelineDeparture(getDayTimelineEventMetadata(item).departureAt)).toBe("오전 8:40");
+    });
+
+    test("nested routeInfo가 오래된 현재 시각이어도 일정 기준 출발 시각을 사용한다", () => {
+        const item = makeItem(
+            "stale-nested-route",
+            "2026-07-10T09:00:00",
+            "2026-07-10T10:00:00",
+            {
+                travelMinutes: 20,
+                route: {
+                    routeInfo: {
+                        id: "stale-nested-route-info",
+                        originName: "서울역",
+                        destinationName: "금천구청역",
+                        totalDurationMinutes: 20,
+                        departureTime: "2026-07-09T01:20:00.000Z",
+                        arrivalTime: "2026-07-09T01:40:00.000Z",
+                        timeBasis: "estimated",
+                        steps: [],
+                    },
                 },
             }
         );

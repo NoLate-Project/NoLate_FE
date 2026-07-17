@@ -13,6 +13,7 @@ import {
 } from "./googleCalendarImport";
 
 const CALENDAR_CONNECTION_KEY = "nolate_calendar_connection_snapshot";
+let calendarConnectionGeneration = 0;
 
 export type CalendarConnectionSnapshot = {
     provider: DeviceCalendarProvider;
@@ -43,6 +44,14 @@ export async function saveCalendarConnectionSnapshot(snapshot: CalendarConnectio
     await SecureStore.setItemAsync(CALENDAR_CONNECTION_KEY, JSON.stringify(snapshot));
 }
 
+export async function clearCalendarConnectionSnapshot(): Promise<void> {
+    // Profile refresh and onboarding scans can still be resolving provider APIs
+    // while logout clears account-owned storage. Invalidate those refreshes so
+    // they cannot write the previous member's calendar metadata back afterwards.
+    calendarConnectionGeneration += 1;
+    await SecureStore.deleteItemAsync(CALENDAR_CONNECTION_KEY);
+}
+
 export async function recordCalendarScan(snapshot: {
     provider: DeviceCalendarProvider;
     providerLabel: string;
@@ -50,8 +59,10 @@ export async function recordCalendarScan(snapshot: {
     calendarCount: number;
     calendarNames: string[];
     eventCandidateCount: number;
-}): Promise<void> {
+}, expectedGeneration?: number): Promise<void> {
+    if (expectedGeneration !== undefined && expectedGeneration !== calendarConnectionGeneration) return;
     const current = await getCalendarConnectionSnapshot();
+    if (expectedGeneration !== undefined && expectedGeneration !== calendarConnectionGeneration) return;
 
     // 캘린더 permission과 스캔 성공은 "연동됨"의 최소 단위다.
     // import를 건너뛰어도 프로필에서 사용자가 연결 상태를 확인할 수 있어야 한다.
@@ -81,7 +92,9 @@ export async function recordCalendarImportCompleted(importedCount: number): Prom
 }
 
 export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<CalendarConnectionSnapshot | null> {
+    const refreshGeneration = calendarConnectionGeneration;
     const current = await getCalendarConnectionSnapshot();
+    if (refreshGeneration !== calendarConnectionGeneration) return null;
     const scans: Array<{
         provider: DeviceCalendarProvider;
         providerLabel: string;
@@ -89,9 +102,12 @@ export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<Cal
         calendarNames: string[];
         eventCandidateCount: number;
     }> = [];
+    let googleRefreshFailed = false;
 
     if (await hasDeviceCalendarPermission()) {
+        if (refreshGeneration !== calendarConnectionGeneration) return null;
         const summary = await loadDeviceCalendarImportSummary();
+        if (refreshGeneration !== calendarConnectionGeneration) return null;
         scans.push({
             provider: getDeviceCalendarProvider(),
             providerLabel: getCalendarProviderLabel(),
@@ -102,9 +118,11 @@ export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<Cal
     }
 
     const googleAccessToken = await getStoredGoogleCalendarAccessToken();
+    if (refreshGeneration !== calendarConnectionGeneration) return null;
     if (googleAccessToken) {
         try {
             const summary = await loadGoogleCalendarImportSummary(googleAccessToken);
+            if (refreshGeneration !== calendarConnectionGeneration) return null;
             scans.push({
                 provider: "GOOGLE",
                 providerLabel: getCalendarProviderLabel("GOOGLE"),
@@ -113,13 +131,20 @@ export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<Cal
                 eventCandidateCount: summary.candidates.length,
             });
         } catch {
-            // Google access token은 만료/철회될 수 있다. 프로필 진입을 막지 않고
-            // 기존 기기 캘린더 상태만 유지한다.
+            // 네트워크 단절과 토큰 철회를 여기서 확정할 수 없으므로 기존 스냅샷을
+            // 연동됨으로 오인해 표시하지 않고, 호출 화면이 재시도를 안내하게 한다.
+            googleRefreshFailed = true;
         }
     }
 
     if (scans.length === 0) {
-        return current;
+        if (refreshGeneration !== calendarConnectionGeneration) return null;
+        if (googleAccessToken && googleRefreshFailed) {
+            throw new Error("Google Calendar 연결 상태를 확인하지 못했어요.");
+        }
+
+        if (current) await clearCalendarConnectionSnapshot();
+        return null;
     }
 
     await recordCalendarScan({
@@ -129,7 +154,9 @@ export async function refreshCalendarConnectionSnapshotFromDevice(): Promise<Cal
         calendarCount: scans.reduce((total, scan) => total + scan.calendarCount, 0),
         calendarNames: scans.flatMap((scan) => scan.calendarNames),
         eventCandidateCount: scans.reduce((total, scan) => total + scan.eventCandidateCount, 0),
-    });
+    }, refreshGeneration);
+
+    if (refreshGeneration !== calendarConnectionGeneration) return null;
 
     return getCalendarConnectionSnapshot();
 }

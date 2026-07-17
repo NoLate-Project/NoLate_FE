@@ -1,11 +1,15 @@
 import { getEnv } from "../../api/env";
 import * as AppleAuthentication from "expo-apple-authentication";
+import * as Crypto from "expo-crypto";
 import * as KakaoLogin from "@react-native-seoul/kakao-login";
 import NaverLogin from "@react-native-seoul/naver-login";
 
 export type SocialSdkLoginResult = {
     loginType: "KAKAO" | "NAVER" | "APPLE";
-    snsId: string;
+    /** Provider proof that the server must verify before resolving an account. */
+    providerToken: string;
+    authorizationCode?: string;
+    nonce?: string;
     name: string;
     email?: string;
 };
@@ -13,11 +17,12 @@ export type SocialSdkLoginResult = {
 export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
     const kakao = KakaoLogin as any;
 
+    let loginToken: unknown;
     try {
         if (typeof kakao.loginWithKakaoAccount === "function") {
-            await kakao.loginWithKakaoAccount();
+            loginToken = await kakao.loginWithKakaoAccount();
         } else if (typeof kakao.login === "function") {
-            await kakao.login();
+            loginToken = await kakao.login();
         } else {
             throw new Error("카카오 SDK 로그인 함수(login)가 없습니다.");
         }
@@ -25,19 +30,19 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
         throw new Error(`카카오 로그인 실패: ${formatSdkError(error)}`);
     }
 
+    const providerToken = stringify((loginToken as { accessToken?: unknown } | null)?.accessToken);
+    if (!providerToken) {
+        throw new Error("카카오 인증 토큰을 가져오지 못했습니다.");
+    }
+
     if (typeof kakao.getProfile !== "function") {
         throw new Error("카카오 SDK 프로필 함수(getProfile)가 없습니다.");
     }
 
     const profile = await kakao.getProfile();
-    const snsId = stringify(profile?.id);
-    if (!snsId) {
-        throw new Error("카카오 사용자 ID를 가져오지 못했습니다.");
-    }
-
     return {
         loginType: "KAKAO",
-        snsId,
+        providerToken,
         name: firstString(profile?.nickname, profile?.name, profile?.properties?.nickname) || "사용자",
         email: optionalString(profile?.email, profile?.kakaoAccount?.email),
     };
@@ -78,19 +83,14 @@ export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
 
     const profileResult = await NaverLogin.getProfile(accessToken);
     const profile = profileResult?.response ?? profileResult;
-    const snsId = stringify(profile?.id);
-    if (!snsId) {
-        throw new Error("네이버 사용자 ID를 가져오지 못했습니다.");
-    }
-
-    const name = firstString(profile?.name);
-    if (!name) {
-        throw new Error("필수 제공 정보인 회원이름을 가져오지 못했습니다. 네이버 동의 화면에서 회원이름 제공에 동의해 주세요.");
-    }
+    // The server verifies the access token and reads the authoritative profile.
+    // Do not block an otherwise valid login just because the optional display
+    // name scope was not granted on the device.
+    const name = firstString(profile?.name, profile?.nickname, profile?.email) || "사용자";
 
     return {
         loginType: "NAVER",
-        snsId,
+        providerToken: accessToken,
         name,
         email: optionalString(profile?.email),
     };
@@ -104,27 +104,39 @@ export async function unlinkNaverSdk(): Promise<void> {
     await NaverLogin.deleteToken();
 }
 
+export async function logoutFromKakaoSdk(): Promise<void> {
+    await KakaoLogin.logout();
+}
+
+export async function unlinkKakaoSdk(): Promise<void> {
+    await KakaoLogin.unlink();
+}
+
 export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
     const available = await AppleAuthentication.isAvailableAsync();
     if (!available) {
         throw new Error("Apple 로그인은 iOS 13 이상 기기에서만 사용할 수 있습니다.");
     }
 
+    const nonce = Crypto.randomUUID();
     const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
             AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
             AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+        nonce,
     });
 
-    const snsId = stringify(credential.user);
-    if (!snsId) {
-        throw new Error("Apple 사용자 ID를 가져오지 못했습니다.");
+    const providerToken = stringify(credential.identityToken);
+    if (!providerToken) {
+        throw new Error("Apple 인증 토큰을 가져오지 못했습니다.");
     }
 
     return {
         loginType: "APPLE",
-        snsId,
+        providerToken,
+        authorizationCode: optionalString(credential.authorizationCode),
+        nonce,
         name: appleDisplayName(credential.fullName) || optionalString(credential.email) || "Apple 사용자",
         email: optionalString(credential.email),
     };

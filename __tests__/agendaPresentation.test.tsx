@@ -86,6 +86,61 @@ describe("schedule agenda presentation", () => {
         jest.restoreAllMocks();
     });
 
+    test("공유로 빠르게 저장한 일정은 경로 미설정 상태를 표시한다", async () => {
+        const item = {
+            ...schedule("shared-quick", 14, 19, "저녁 약속"),
+            routeSetupRequired: true,
+        };
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <ScheduleAgendaCard item={item} onPress={jest.fn()} />
+                </ThemeProvider>
+            );
+        });
+
+        expect(renderedText(renderer!)).toContain("경로 미설정");
+        const card = renderer!.root.find((node) => (
+            typeof node.props.accessibilityLabel === "string" &&
+            node.props.accessibilityLabel.includes("저녁 약속")
+        ));
+        expect(card.props.accessibilityLabel).toContain("경로 미설정");
+    });
+
+    test("경로 미설정 안내는 캘린더를 덮지 않고 일정 목록 안에서 열린다", async () => {
+        const onOpenRouteSetup = jest.fn();
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <SelectedDayAgendaPanel
+                        selectedDay="2026-07-14"
+                        items={[schedule("meeting", 14, 10, "회의")]}
+                        loading={false}
+                        error={null}
+                        bottomInset={0}
+                        onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()}
+                        routeSetupRequiredCount={2}
+                        onOpenRouteSetup={onOpenRouteSetup}
+                        onRequestViewMode={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        expect(renderedText(renderer!)).toContain("경로 미설정 2개");
+        const scroll = renderer!.root.findByType(ScrollView);
+        const notice = scroll.find((node) => (
+            node.props.accessibilityLabel ===
+            "경로 설정이 필요한 일정 2개. 가장 가까운 일정의 경로 설정 열기"
+        ));
+
+        await act(async () => notice.props.onPress());
+        expect(onOpenRouteSetup).toHaveBeenCalledTimes(1);
+    });
+
     test("상세형 핸들을 위·아래로 놓으면 목록형·스택형을 요청한다", async () => {
         let panResponderConfig: Parameters<typeof PanResponder.create>[0] | undefined;
         jest.spyOn(PanResponder, "create").mockImplementation((config) => {

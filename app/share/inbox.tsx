@@ -1,10 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    ActivityIndicator,
+    Alert,
     Pressable,
     RefreshControl,
     ScrollView,
+    StatusBar,
     StyleSheet,
     Text,
     View,
@@ -14,6 +17,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
     getShareInbox,
     getShareOutbox,
+    revokeCategoryShare,
+    revokeCategoryShareInvitation,
+    revokeScheduleShare,
+    revokeScheduleShareInvitation,
     type ShareInbox,
     type ShareInboxItem,
     type ShareInvitationSummary,
@@ -21,8 +28,14 @@ import {
     type ShareOutboxResource,
     type SharePendingInvitation,
     type ShareResourceType,
+    type ScheduleShare,
 } from "../../src/api/scheduleSharing";
 import type { ScheduleSharePermission } from "../../src/modules/schedule/types";
+import { createLatestAsyncRequestGuard } from "../../src/modules/share/latestAsyncRequest";
+import {
+    ShareInboxButton,
+    ShareInboxDecoration,
+} from "../../src/modules/share/ShareInboxAccessibility";
 import { markShareInboxSeen } from "../../src/modules/share/shareAttention";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
@@ -75,6 +88,11 @@ function formatDateLabel(value?: string | null) {
     return `${month}.${day}`;
 }
 
+function formatExpirationBadge(value?: string | null) {
+    const date = formatDateLabel(value);
+    return date ? `${date}까지` : "만료일 확인";
+}
+
 export default function ShareInboxScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -86,11 +104,30 @@ export default function ShareInboxScreen() {
     const [data, setData] = useState<ShareInboxViewData | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [revokingInvitationId, setRevokingInvitationId] = useState<string | null>(null);
+    const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const loadRequestGuardRef = useRef(createLatestAsyncRequestGuard("share-inbox"));
+    const revokingInvitationRef = useRef<string | null>(null);
+    const revokingShareRef = useRef<string | null>(null);
+    const mountedRef = useRef(true);
     const accent = mode === "dark" ? "#8BB7FF" : "#2F80FF";
+    const goBack = useCallback(() => {
+        if (router.canGoBack()) router.back();
+        else router.replace("/schedule");
+    }, [router]);
+    const openSharedResource = useCallback((type: ShareResourceType, id: string) => {
+        if (type === "SCHEDULE") {
+            router.push({ pathname: "/schedule/[id]", params: { id } });
+        } else {
+            router.push("/schedule/categories");
+        }
+    }, [router]);
 
-    const loadShares = useCallback(async (mode: "initial" | "refresh" = "initial") => {
-        if (mode === "refresh") {
+    const loadShares = useCallback(async (loadMode: "initial" | "refresh" = "initial") => {
+        if (!mountedRef.current) return;
+        const ticket = loadRequestGuardRef.current.begin();
+        if (loadMode === "refresh") {
             setRefreshing(true);
         } else {
             setLoading(true);
@@ -102,23 +139,131 @@ export default function ShareInboxScreen() {
                 getShareInbox(),
                 getShareOutbox(),
             ]);
+            if (!mountedRef.current || !loadRequestGuardRef.current.isCurrent(ticket)) return;
             setData({ inbox, outbox });
             markShareInboxSeen(inbox).catch(() => undefined);
         } catch (loadError) {
+            if (!mountedRef.current || !loadRequestGuardRef.current.isCurrent(ticket)) return;
             setError(getErrorMessage(loadError));
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (mountedRef.current && loadRequestGuardRef.current.isCurrent(ticket)) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
     }, []);
 
     useEffect(() => {
+        const loadRequestGuard = loadRequestGuardRef.current;
+        mountedRef.current = true;
         loadShares();
+        return () => {
+            mountedRef.current = false;
+            loadRequestGuard.invalidate();
+        };
     }, [loadShares]);
 
     useEffect(() => {
         setSelectedTab(normalizeTab(params.tab) ?? "all");
     }, [params.tab]);
+
+    const revokeInvitation = useCallback((invitation: ShareInvitationSummary) => {
+        if (revokingInvitationId) return;
+
+        Alert.alert(
+            "공유 링크 비활성화",
+            "이 링크로는 더 이상 공유를 수락할 수 없어요. 비활성화할까요?",
+            [
+                { text: "취소", style: "cancel" },
+                {
+                    text: "비활성화",
+                    style: "destructive",
+                    onPress: async () => {
+                        if (revokingInvitationRef.current) return;
+                        revokingInvitationRef.current = invitation.id;
+                        setRevokingInvitationId(invitation.id);
+                        setError(null);
+                        try {
+                            if (invitation.resourceType === "SCHEDULE") {
+                                await revokeScheduleShareInvitation(invitation.resourceId, invitation.id);
+                            } else {
+                                await revokeCategoryShareInvitation(invitation.resourceId, invitation.id);
+                            }
+                            if (mountedRef.current) {
+                                setData((current) => current ? {
+                                    ...current,
+                                    outbox: {
+                                        ...current.outbox,
+                                        activeInvitations: current.outbox.activeInvitations.filter(
+                                            (item) => item.id !== invitation.id,
+                                        ),
+                                    },
+                                } : current);
+                            }
+                            await loadShares("refresh");
+                        } catch (revokeError) {
+                            if (mountedRef.current) setError(getErrorMessage(revokeError));
+                        } finally {
+                            revokingInvitationRef.current = null;
+                            if (mountedRef.current) setRevokingInvitationId(null);
+                        }
+                    },
+                },
+            ],
+        );
+    }, [loadShares, revokingInvitationId]);
+
+    const revokeDirectShare = useCallback((resource: ShareOutboxResource, share: ScheduleShare) => {
+        if (revokingShareId) return;
+
+        const target = share.targetEmail?.trim() || `NoLate ID #${share.targetMemberId}`;
+        Alert.alert(
+            "공유 해제",
+            `${target}님의 ${resourceLabel(resource.resourceType)} 공유를 해제할까요?`,
+            [
+                { text: "취소", style: "cancel" },
+                {
+                    text: "공유 해제",
+                    style: "destructive",
+                    onPress: async () => {
+                        if (revokingShareRef.current) return;
+                        revokingShareRef.current = share.id;
+                        setRevokingShareId(share.id);
+                        setError(null);
+                        try {
+                            if (resource.resourceType === "SCHEDULE") {
+                                await revokeScheduleShare(resource.resourceId, share.id);
+                            } else {
+                                await revokeCategoryShare(resource.resourceId, share.id);
+                            }
+                            if (mountedRef.current) {
+                                setData((current) => current ? {
+                                    ...current,
+                                    outbox: {
+                                        ...current.outbox,
+                                        sharedResources: current.outbox.sharedResources.map((item) => {
+                                            if (
+                                                item.resourceType !== resource.resourceType ||
+                                                item.resourceId !== resource.resourceId
+                                            ) return item;
+                                            const shares = item.shares.filter((itemShare) => itemShare.id !== share.id);
+                                            return { ...item, shares, shareCount: shares.length };
+                                        }),
+                                    },
+                                } : current);
+                            }
+                            await loadShares("refresh");
+                        } catch (revokeError) {
+                            if (mountedRef.current) setError(getErrorMessage(revokeError));
+                        } finally {
+                            revokingShareRef.current = null;
+                            if (mountedRef.current) setRevokingShareId(null);
+                        }
+                    },
+                },
+            ],
+        );
+    }, [loadShares, revokingShareId]);
 
     const summary = useMemo(() => ({
         pending: data?.inbox.pendingInvitations.length ?? 0,
@@ -136,9 +281,11 @@ export default function ShareInboxScreen() {
                 },
             ]}
         >
+            <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
             <View style={styles.header}>
                 <Pressable
-                    onPress={() => router.back()}
+                    accessibilityRole="button"
+                    onPress={goBack}
                     accessibilityLabel="뒤로 가기"
                     style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
@@ -146,11 +293,21 @@ export default function ShareInboxScreen() {
                 </Pressable>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>공유함</Text>
                 <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{
+                        disabled: loading || refreshing || Boolean(revokingInvitationId) || Boolean(revokingShareId),
+                        busy: refreshing,
+                    }}
+                    disabled={loading || refreshing || Boolean(revokingInvitationId) || Boolean(revokingShareId)}
                     onPress={() => loadShares("refresh")}
                     accessibilityLabel="공유함 새로고침"
                     style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
-                    <Ionicons name="refresh" size={20} color={colors.textPrimary} />
+                    {refreshing ? (
+                        <ActivityIndicator size="small" color={colors.textPrimary} />
+                    ) : (
+                        <Ionicons name="refresh" size={20} color={colors.textPrimary} />
+                    )}
                 </Pressable>
             </View>
 
@@ -201,6 +358,10 @@ export default function ShareInboxScreen() {
                     <SummaryTile label="활성 링크" value={summary.links} colors={colors} />
                 </View>
 
+                {error && data ? (
+                    <InlineErrorCard colors={colors} text={error} onRetry={() => loadShares("refresh")} />
+                ) : null}
+
                 {loading ? (
                     <StateCard colors={colors} text="공유함을 불러오는 중이에요" loading />
                 ) : error && !data ? (
@@ -212,7 +373,9 @@ export default function ShareInboxScreen() {
                         sentResources={data?.outbox.sharedResources ?? []}
                         colors={colors}
                         accent={accent}
-                        onOpenSchedule={(id) => router.push({ pathname: "/schedule/[id]", params: { id } })}
+                        revokingShareId={revokingShareId}
+                        onOpenResource={openSharedResource}
+                        onRevokeShare={revokeDirectShare}
                     />
                 ) : selectedTab === "received" ? (
                     <ReceivedShareList
@@ -220,20 +383,24 @@ export default function ShareInboxScreen() {
                         receivedShares={data?.inbox.receivedShares ?? []}
                         colors={colors}
                         accent={accent}
-                        onOpenSchedule={(id) => router.push({ pathname: "/schedule/[id]", params: { id } })}
+                        onOpenResource={openSharedResource}
                     />
                 ) : selectedTab === "sent" ? (
                     <SentShareList
                         resources={data?.outbox.sharedResources ?? []}
                         colors={colors}
                         accent={accent}
-                        onOpenSchedule={(id) => router.push({ pathname: "/schedule/[id]", params: { id } })}
+                        revokingShareId={revokingShareId}
+                        onOpenResource={openSharedResource}
+                        onRevokeShare={revokeDirectShare}
                     />
                 ) : (
                     <ActiveLinkList
                         invitations={data?.outbox.activeInvitations ?? []}
                         colors={colors}
                         accent={accent}
+                        revokingInvitationId={revokingInvitationId}
+                        onRevoke={revokeInvitation}
                     />
                 )}
             </ScrollView>
@@ -254,6 +421,8 @@ function ShareTabButton({
 }) {
     return (
         <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
             onPress={onPress}
             style={[
                 styles.segment,
@@ -290,14 +459,18 @@ function AllShareList({
     sentResources,
     colors,
     accent,
-    onOpenSchedule,
+    revokingShareId,
+    onOpenResource,
+    onRevokeShare,
 }: {
     pendingInvitations: SharePendingInvitation[];
     receivedShares: ShareInboxItem[];
     sentResources: ShareOutboxResource[];
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
-    onOpenSchedule: (id: string) => void;
+    revokingShareId: string | null;
+    onOpenResource: (type: ShareResourceType, id: string) => void;
+    onRevokeShare: (resource: ShareOutboxResource, share: ScheduleShare) => void;
 }) {
     const hasReceived = pendingInvitations.length > 0 || receivedShares.length > 0;
     const hasSent = sentResources.length > 0;
@@ -331,7 +504,7 @@ function AllShareList({
                             share={share}
                             colors={colors}
                             onPress={() => {
-                                if (share.resourceType === "SCHEDULE") onOpenSchedule(share.resourceId);
+                                onOpenResource(share.resourceType, share.resourceId);
                             }}
                         />
                     ))}
@@ -347,9 +520,11 @@ function AllShareList({
                             resource={resource}
                             colors={colors}
                             accent={accent}
+                            revokingShareId={revokingShareId}
                             onPress={() => {
-                                if (resource.resourceType === "SCHEDULE") onOpenSchedule(resource.resourceId);
+                                onOpenResource(resource.resourceType, resource.resourceId);
                             }}
+                            onRevokeShare={(share) => onRevokeShare(resource, share)}
                         />
                     ))}
                 </>
@@ -363,13 +538,13 @@ function ReceivedShareList({
     receivedShares,
     colors,
     accent,
-    onOpenSchedule,
+    onOpenResource,
 }: {
     pendingInvitations: SharePendingInvitation[];
     receivedShares: ShareInboxItem[];
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
-    onOpenSchedule: (id: string) => void;
+    onOpenResource: (type: ShareResourceType, id: string) => void;
 }) {
     return (
         <View style={styles.sectionStack}>
@@ -399,7 +574,7 @@ function ReceivedShareList({
                         share={share}
                         colors={colors}
                         onPress={() => {
-                            if (share.resourceType === "SCHEDULE") onOpenSchedule(share.resourceId);
+                            onOpenResource(share.resourceType, share.resourceId);
                         }}
                     />
                 ))
@@ -418,12 +593,16 @@ function SentShareList({
     resources,
     colors,
     accent,
-    onOpenSchedule,
+    revokingShareId,
+    onOpenResource,
+    onRevokeShare,
 }: {
     resources: ShareOutboxResource[];
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
-    onOpenSchedule: (id: string) => void;
+    revokingShareId: string | null;
+    onOpenResource: (type: ShareResourceType, id: string) => void;
+    onRevokeShare: (resource: ShareOutboxResource, share: ScheduleShare) => void;
 }) {
     if (resources.length === 0) {
         return (
@@ -444,9 +623,11 @@ function SentShareList({
                     resource={resource}
                     colors={colors}
                     accent={accent}
+                    revokingShareId={revokingShareId}
                     onPress={() => {
-                        if (resource.resourceType === "SCHEDULE") onOpenSchedule(resource.resourceId);
+                        onOpenResource(resource.resourceType, resource.resourceId);
                     }}
+                    onRevokeShare={(share) => onRevokeShare(resource, share)}
                 />
             ))}
         </View>
@@ -457,10 +638,14 @@ function ActiveLinkList({
     invitations,
     colors,
     accent,
+    revokingInvitationId,
+    onRevoke,
 }: {
     invitations: ShareInvitationSummary[];
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
+    revokingInvitationId: string | null;
+    onRevoke: (invitation: ShareInvitationSummary) => void;
 }) {
     if (invitations.length === 0) {
         return (
@@ -481,6 +666,9 @@ function ActiveLinkList({
                     invitation={invitation}
                     colors={colors}
                     accent={accent}
+                    revoking={revokingInvitationId === invitation.id}
+                    disabled={Boolean(revokingInvitationId)}
+                    onRevoke={() => onRevoke(invitation)}
                 />
             ))}
         </View>
@@ -503,16 +691,12 @@ function PendingInvitationCard({
                 title={invitation.title}
                 meta={`${invitation.ownerEmail ?? `ID ${invitation.ownerMemberId}`} · ${permissionLabel(invitation.permission)}`}
                 color={invitation.color ?? accent}
-                badge={`~${formatDateLabel(invitation.expiresAt)}`}
+                badge={formatExpirationBadge(invitation.expiresAt)}
                 colors={colors}
             />
-            <View style={styles.pendingActions}>
-                <View style={[styles.secondaryAction, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                    <Text style={[styles.secondaryActionText, { color: colors.textPrimary }]}>나중에</Text>
-                </View>
-                <View style={[styles.primaryAction, { backgroundColor: accent }]}>
-                    <Text style={styles.primaryActionText}>링크 열기</Text>
-                </View>
+            <View style={styles.pendingHint}>
+                <Ionicons name="information-circle-outline" size={16} color={colors.textSecondary} />
+                <Text style={[styles.pendingHintText, { color: colors.textSecondary }]}>받은 초대 링크를 열어 수락할 수 있어요.</Text>
             </View>
         </View>
     );
@@ -528,7 +712,8 @@ function ReceivedShareCard({
     onPress: () => void;
 }) {
     return (
-        <Pressable
+        <ShareInboxButton
+            accessibilityLabel={`${share.title}, ${resourceLabel(share.resourceType)}, ${permissionLabel(share.permission)} 권한, 열기`}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.rowCard,
@@ -539,15 +724,17 @@ function ReceivedShareCard({
                 },
             ]}
         >
-            <ShareResourceHeader
-                type={share.resourceType}
-                title={share.title}
-                meta={`${resourceLabel(share.resourceType)} · ${share.ownerEmail ?? `ID ${share.ownerMemberId}`}`}
-                color={share.color ?? "#2F80FF"}
-                badge={permissionLabel(share.permission)}
-                colors={colors}
-            />
-        </Pressable>
+            <ShareInboxDecoration>
+                <ShareResourceHeader
+                    type={share.resourceType}
+                    title={share.title}
+                    meta={`${resourceLabel(share.resourceType)} · ${share.ownerEmail ?? `ID ${share.ownerMemberId}`}`}
+                    color={share.color ?? "#2F80FF"}
+                    badge={permissionLabel(share.permission)}
+                    colors={colors}
+                />
+            </ShareInboxDecoration>
+        </ShareInboxButton>
     );
 }
 
@@ -555,52 +742,134 @@ function SentResourceCard({
     resource,
     colors,
     accent,
+    revokingShareId,
     onPress,
+    onRevokeShare,
 }: {
     resource: ShareOutboxResource;
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
+    revokingShareId: string | null;
     onPress: () => void;
+    onRevokeShare: (share: ScheduleShare) => void;
 }) {
+    const [expanded, setExpanded] = useState(false);
+
     return (
-        <Pressable
-            onPress={onPress}
-            style={({ pressed }) => [
+        <View
+            style={[
                 styles.rowCard,
-                {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
-                    opacity: pressed ? 0.72 : 1,
-                },
+                { backgroundColor: colors.surface, borderColor: colors.border },
             ]}
         >
-            <ShareResourceHeader
-                type={resource.resourceType}
-                title={resource.title}
-                meta={`${resourceLabel(resource.resourceType)} · ${resource.shareCount}명 참여`}
-                color={resource.color ?? accent}
-                badge={`${resource.shareCount}명`}
-                colors={colors}
-            />
-            <View style={styles.memberPreviewRow}>
-                {resource.shares.slice(0, 4).map((share, index) => (
-                    <View
-                        key={share.id}
-                        style={[
-                            styles.memberBubble,
-                            {
-                                backgroundColor: resource.color ?? accent,
-                                marginLeft: index === 0 ? 0 : -7,
-                            },
+            <ShareInboxButton
+                accessibilityLabel={`${resource.title} ${resourceLabel(resource.resourceType)} 열기`}
+                onPress={onPress}
+                style={({ pressed }) => [styles.resourceOpenButton, pressed && styles.pressed]}
+            >
+                <ShareInboxDecoration>
+                    <ShareResourceHeader
+                        type={resource.resourceType}
+                        title={resource.title}
+                        meta={`${resourceLabel(resource.resourceType)} · ${resource.shareCount}명 참여`}
+                        color={resource.color ?? accent}
+                        badge={`${resource.shareCount}명`}
+                        colors={colors}
+                    />
+                </ShareInboxDecoration>
+            </ShareInboxButton>
+
+            {resource.shares.length > 0 ? (
+                <>
+                    <ShareInboxButton
+                        accessibilityLabel={`${resource.title} 공유 대상 ${expanded ? "접기" : "관리"}`}
+                        accessibilityState={{ expanded }}
+                        onPress={() => setExpanded((current) => !current)}
+                        style={({ pressed }) => [
+                            styles.memberManageToggle,
+                            { borderTopColor: colors.border, opacity: pressed ? 0.68 : 1 },
                         ]}
                     >
-                        <Text style={styles.memberBubbleText}>
-                            {share.targetEmail?.slice(0, 1).toUpperCase() ?? String(share.targetMemberId).slice(-1)}
-                        </Text>
-                    </View>
-                ))}
-            </View>
-        </Pressable>
+                        <ShareInboxDecoration style={styles.memberManageContent}>
+                            <View style={styles.memberPreviewRow}>
+                                {resource.shares.slice(0, 4).map((share, index) => (
+                                    <View
+                                        key={share.id}
+                                        style={[
+                                            styles.memberBubble,
+                                            index > 0 && styles.memberBubbleOverlap,
+                                            { backgroundColor: resource.color ?? accent },
+                                        ]}
+                                    >
+                                        <Text style={styles.memberBubbleText}>
+                                            {share.targetEmail?.slice(0, 1).toUpperCase() ?? String(share.targetMemberId).slice(-1)}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                            <Text style={[styles.memberManageText, { color: colors.textSecondary }]}>공유 대상 관리</Text>
+                            <Ionicons
+                                name={expanded ? "chevron-up" : "chevron-down"}
+                                size={18}
+                                color={colors.textSecondary}
+                            />
+                        </ShareInboxDecoration>
+                    </ShareInboxButton>
+
+                    {expanded ? (
+                        <View style={[styles.participantList, { borderTopColor: colors.border }]}>
+                            {resource.shares.map((share) => {
+                                const target = share.targetEmail?.trim() || `NoLate ID #${share.targetMemberId}`;
+                                const revoking = revokingShareId === share.id;
+                                return (
+                                    <View key={share.id} style={styles.participantRow}>
+                                        <View
+                                            style={[
+                                                styles.participantAvatar,
+                                                { backgroundColor: `${resource.color ?? accent}1F` },
+                                            ]}
+                                            importantForAccessibility="no-hide-descendants"
+                                        >
+                                            <Text style={[styles.participantAvatarText, { color: resource.color ?? accent }]}>
+                                                {share.targetEmail?.slice(0, 1).toUpperCase() ?? String(share.targetMemberId).slice(-1)}
+                                            </Text>
+                                        </View>
+                                        <View style={styles.participantCopy}>
+                                            <Text style={[styles.participantName, { color: colors.textPrimary }]} numberOfLines={1}>
+                                                {target}
+                                            </Text>
+                                            <Text style={[styles.participantPermission, { color: colors.textSecondary }]}>
+                                                {permissionLabel(share.permission)} 권한
+                                            </Text>
+                                        </View>
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${target} 공유 해제`}
+                                            accessibilityState={{ disabled: Boolean(revokingShareId), busy: revoking }}
+                                            disabled={Boolean(revokingShareId)}
+                                            onPress={() => onRevokeShare(share)}
+                                            style={({ pressed }) => [
+                                                styles.participantRevokeButton,
+                                                {
+                                                    borderColor: colors.border,
+                                                    opacity: revokingShareId || pressed ? 0.58 : 1,
+                                                },
+                                            ]}
+                                        >
+                                            {revoking ? (
+                                                <ActivityIndicator size="small" color={colors.textSecondary} />
+                                            ) : (
+                                                <Text style={[styles.participantRevokeText, { color: colors.textSecondary }]}>해제</Text>
+                                            )}
+                                        </Pressable>
+                                    </View>
+                                );
+                            })}
+                        </View>
+                    ) : null}
+                </>
+            ) : null}
+        </View>
     );
 }
 
@@ -608,10 +877,16 @@ function LinkSummaryCard({
     invitation,
     colors,
     accent,
+    revoking,
+    disabled,
+    onRevoke,
 }: {
     invitation: ShareInvitationSummary;
     colors: ReturnType<typeof useTheme>["colors"];
     accent: string;
+    revoking: boolean;
+    disabled: boolean;
+    onRevoke: () => void;
 }) {
     return (
         <View style={[styles.rowCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -620,9 +895,59 @@ function LinkSummaryCard({
                 title={invitation.title}
                 meta={`${permissionLabel(invitation.permission)} · ${invitation.acceptedCount}/${invitation.maxAcceptCount}명 수락`}
                 color={invitation.color ?? accent}
-                badge={`~${formatDateLabel(invitation.expiresAt)}`}
+                badge={formatExpirationBadge(invitation.expiresAt)}
                 colors={colors}
             />
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${invitation.title} 공유 링크 비활성화`}
+                accessibilityState={{ disabled, busy: revoking }}
+                disabled={disabled}
+                onPress={onRevoke}
+                style={({ pressed }) => [
+                    styles.revokeButton,
+                    { borderColor: colors.border, opacity: disabled || pressed ? 0.58 : 1 },
+                ]}
+            >
+                {revoking ? (
+                    <ActivityIndicator size="small" color={colors.textSecondary} />
+                ) : (
+                    <Ionicons name="link-outline" size={15} color={colors.textSecondary} />
+                )}
+                <Text
+                    style={[styles.revokeButtonText, { color: colors.textSecondary }]}
+                >
+                    {revoking ? "비활성화 중" : "링크 비활성화"}
+                </Text>
+            </Pressable>
+        </View>
+    );
+}
+
+function InlineErrorCard({
+    colors,
+    text,
+    onRetry,
+}: {
+    colors: ReturnType<typeof useTheme>["colors"];
+    text: string;
+    onRetry: () => void;
+}) {
+    return (
+        <View
+            accessibilityLiveRegion="polite"
+            style={[styles.inlineErrorCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        >
+            <Ionicons name="alert-circle-outline" size={18} color="#D97706" />
+            <Text numberOfLines={2} style={[styles.inlineErrorText, { color: colors.textSecondary }]}>{text}</Text>
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="공유함 다시 조회"
+                onPress={onRetry}
+                hitSlop={8}
+            >
+                <Text style={[styles.inlineErrorRetry, { color: colors.textPrimary }]}>다시 시도</Text>
+            </Pressable>
         </View>
     );
 }
@@ -677,7 +1002,9 @@ function EmptyInlineCard({
 }) {
     return (
         <View style={[styles.emptyCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Ionicons name={icon} size={20} color={colors.textSecondary} />
+            <ShareInboxDecoration>
+                <Ionicons name={icon} size={20} color={colors.textSecondary} />
+            </ShareInboxDecoration>
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{text}</Text>
         </View>
     );
@@ -694,18 +1021,44 @@ function StateCard({
     loading?: boolean;
     onRetry?: () => void;
 }) {
+    if (loading) {
+        return (
+            <View
+                accessible
+                accessibilityRole="progressbar"
+                accessibilityLabel={text}
+                accessibilityLiveRegion="polite"
+                style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            >
+                <View
+                    accessibilityElementsHidden
+                    importantForAccessibility="no-hide-descendants"
+                    style={styles.stateCardContent}
+                >
+                    <BrandedLoader
+                        size="section"
+                        variant="share"
+                        accessibilityLabel={text}
+                    />
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{text}</Text>
+                </View>
+            </View>
+        );
+    }
+
     return (
-        <View style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            {loading ? (
-                <BrandedLoader
-                    size="section"
-                    variant="share"
-                    accessibilityLabel={text}
-                />
-            ) : null}
+        <View
+            accessibilityLiveRegion="polite"
+            style={[styles.stateCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        >
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{text}</Text>
             {!!onRetry && (
-                <Pressable onPress={onRetry} style={[styles.retryButton, { borderColor: colors.border }]}>
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="공유함 다시 조회"
+                    onPress={onRetry}
+                    style={[styles.retryButton, { borderColor: colors.border }]}
+                >
                     <Text style={[styles.retryText, { color: colors.textPrimary }]}>다시 조회</Text>
                 </Pressable>
             )}
@@ -798,41 +1151,30 @@ const styles = StyleSheet.create({
         padding: 14,
         gap: 12,
     },
-    pendingActions: {
+    pendingHint: {
+        minHeight: 38,
         flexDirection: "row",
-        gap: 8,
-    },
-    primaryAction: {
-        flex: 1,
-        height: 42,
-        borderRadius: 14,
         alignItems: "center",
-        justifyContent: "center",
+        gap: 7,
     },
-    primaryActionText: {
-        color: "#FFFFFF",
-        fontSize: 14,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    secondaryAction: {
+    pendingHintText: {
         flex: 1,
-        height: 42,
-        borderWidth: 1,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    secondaryActionText: {
-        fontSize: 14,
-        fontWeight: "900",
-        letterSpacing: 0,
+        fontSize: 12,
+        fontWeight: "700",
+        lineHeight: 17,
     },
     rowCard: {
         borderWidth: 1,
         borderRadius: 18,
         padding: 13,
         gap: 10,
+    },
+    resourceOpenButton: {
+        minHeight: 44,
+        justifyContent: "center",
+    },
+    pressed: {
+        opacity: 0.68,
     },
     resourceHeader: {
         flexDirection: "row",
@@ -878,7 +1220,7 @@ const styles = StyleSheet.create({
     memberPreviewRow: {
         flexDirection: "row",
         alignItems: "center",
-        paddingLeft: 53,
+        minWidth: 32,
     },
     memberBubble: {
         width: 27,
@@ -894,6 +1236,112 @@ const styles = StyleSheet.create({
         fontSize: 10,
         fontWeight: "900",
         letterSpacing: 0,
+    },
+    memberBubbleOverlap: {
+        marginLeft: -7,
+    },
+    memberManageToggle: {
+        minHeight: 44,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 10,
+        justifyContent: "center",
+    },
+    memberManageContent: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    memberManageText: {
+        flex: 1,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "800",
+    },
+    participantList: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        paddingTop: 6,
+    },
+    participantRow: {
+        minHeight: 54,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    participantAvatar: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    participantAvatarText: {
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    participantCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    participantName: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    participantPermission: {
+        marginTop: 1,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    participantRevokeButton: {
+        minWidth: 54,
+        minHeight: 36,
+        borderWidth: 1,
+        borderRadius: 18,
+        paddingHorizontal: 11,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    participantRevokeText: {
+        fontSize: 12,
+        fontWeight: "900",
+    },
+    revokeButton: {
+        alignSelf: "flex-end",
+        minHeight: 36,
+        borderWidth: 1,
+        borderRadius: 18,
+        paddingHorizontal: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+    },
+    revokeButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+    },
+    inlineErrorCard: {
+        minHeight: 56,
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingHorizontal: 13,
+        paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 9,
+    },
+    inlineErrorText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "700",
+    },
+    inlineErrorRetry: {
+        fontSize: 12,
+        fontWeight: "900",
     },
     emptyCard: {
         minHeight: 76,
@@ -918,6 +1366,10 @@ const styles = StyleSheet.create({
         padding: 18,
         alignItems: "center",
         justifyContent: "center",
+        gap: 10,
+    },
+    stateCardContent: {
+        alignItems: "center",
         gap: 10,
     },
     retryButton: {

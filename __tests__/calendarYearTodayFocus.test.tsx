@@ -1,5 +1,5 @@
 import React from "react";
-import { ScrollView } from "react-native";
+import { ScrollView, StyleSheet } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import CalendarYearOverviewModal from "../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
@@ -17,8 +17,10 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
     }),
 }));
 
+let mockSafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
+
 jest.mock("react-native-safe-area-context", () => ({
-    useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+    useSafeAreaInsets: () => mockSafeAreaInsets,
 }));
 
 describe("CalendarYearOverviewModal Today focus", () => {
@@ -35,6 +37,7 @@ describe("CalendarYearOverviewModal Today focus", () => {
     beforeEach(() => {
         jest.useFakeTimers();
         jest.setSystemTime(new Date(2026, 6, 15, 12, 0, 0));
+        mockSafeAreaInsets = { top: 0, right: 0, bottom: 0, left: 0 };
     });
 
     afterEach(async () => {
@@ -44,13 +47,18 @@ describe("CalendarYearOverviewModal Today focus", () => {
         jest.useRealTimers();
     });
 
-    function calendar(todayRequest: number, reduceMotionEnabled = false) {
+    function calendar(
+        todayRequest: number,
+        reduceMotionEnabled = false,
+        presentationRequest = 0
+    ) {
         return (
             <CalendarYearOverviewModal
                 year={2026}
                 selectedDay="2025-12-31"
                 firstDay={0}
                 topInset={20}
+                presentationRequest={presentationRequest}
                 todayRequest={todayRequest}
                 reduceMotionEnabled={reduceMotionEnabled}
                 onSelectMonth={jest.fn()}
@@ -87,7 +95,7 @@ describe("CalendarYearOverviewModal Today focus", () => {
             jest.runOnlyPendingTimers();
         });
 
-        expect(scrollTo).toHaveBeenLastCalledWith({ y: 356, animated: true });
+        expect(scrollTo).toHaveBeenLastCalledWith({ y: 459, animated: true });
     });
 
     test("동작 줄이기에서는 Today 이동을 즉시 포커싱한다", async () => {
@@ -118,6 +126,55 @@ describe("CalendarYearOverviewModal Today focus", () => {
             jest.runOnlyPendingTimers();
         });
 
-        expect(scrollTo).toHaveBeenLastCalledWith({ y: 356, animated: false });
+        expect(scrollTo).toHaveBeenLastCalledWith({ y: 459, animated: false });
+    });
+
+    test("상단 Safe Area와 캘린더 툴바 아래부터 스크롤 영역을 시작한다", async () => {
+        mockSafeAreaInsets = { top: 59, right: 0, bottom: 34, left: 0 };
+
+        await act(async () => {
+            renderer = TestRenderer.create(calendar(0));
+        });
+
+        const safeArea = renderer!.root.findByProps({
+            testID: "calendar-year-overview-safe-area",
+        });
+        const safeAreaStyle = StyleSheet.flatten(safeArea.props.style);
+        expect(safeAreaStyle.paddingTop).toBe(122);
+
+        const scrollView = renderer!.root.findByProps({
+            testID: "calendar-year-overview-scroll",
+        });
+        expect(scrollView.props.contentInsetAdjustmentBehavior).toBe("never");
+    });
+
+    test("같은 연도를 다시 열어도 해당 연도 상단으로 스크롤 위치를 복원한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(calendar(0, false, 0));
+        });
+
+        const scrollInstance = renderer!.root.findByType(ScrollView).instance as {
+            scrollTo: (options: { y: number; animated: boolean }) => void;
+        };
+        const scrollTo = jest.spyOn(scrollInstance, "scrollTo");
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "calendar-year-today-section" }).props.onLayout({
+                nativeEvent: { layout: { y: 640 } },
+            });
+            jest.runOnlyPendingTimers();
+        });
+        expect(scrollTo).toHaveBeenLastCalledWith({ y: 640, animated: false });
+
+        scrollTo.mockClear();
+        await act(async () => {
+            renderer!.update(calendar(0, false, 1));
+        });
+        await act(async () => {
+            jest.runOnlyPendingTimers();
+        });
+
+        expect(scrollTo).toHaveBeenCalledTimes(1);
+        expect(scrollTo).toHaveBeenLastCalledWith({ y: 640, animated: false });
     });
 });

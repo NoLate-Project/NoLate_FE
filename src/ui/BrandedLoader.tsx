@@ -105,22 +105,36 @@ export function BrandedLoadingState({
     const { colors } = useTheme();
 
     return (
-        <View style={[styles.state, fill && styles.stateFill, style]}>
-            <BrandedLoader
-                accessibilityLabel={accessibilityLabel}
-                variant={variant}
-                size={size}
-            />
-            {title ? (
-                <Text style={[styles.title, { color: colors.textPrimary }]}>
-                    {title}
-                </Text>
-            ) : null}
-            {caption ? (
-                <Text style={[styles.caption, { color: colors.textSecondary }]}>
-                    {caption}
-                </Text>
-            ) : null}
+        <View
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel={accessibilityLabel}
+            accessibilityLiveRegion="polite"
+            testID="branded-loading-state"
+            style={[styles.state, fill && styles.stateFill, style]}
+        >
+            <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                testID="branded-loading-state-content"
+                style={styles.stateContent}
+            >
+                <BrandedLoader
+                    accessibilityLabel={accessibilityLabel}
+                    variant={variant}
+                    size={size}
+                />
+                {title ? (
+                    <Text style={[styles.title, { color: colors.textPrimary }]}>
+                        {title}
+                    </Text>
+                ) : null}
+                {caption ? (
+                    <Text style={[styles.caption, { color: colors.textSecondary }]}>
+                        {caption}
+                    </Text>
+                ) : null}
+            </View>
         </View>
     );
 }
@@ -236,6 +250,10 @@ const styles = StyleSheet.create({
     stateFill: {
         flex: 1,
         alignSelf: "stretch",
+    },
+    stateContent: {
+        alignItems: "center",
+        gap: 8,
     },
     title: {
         fontSize: 17,

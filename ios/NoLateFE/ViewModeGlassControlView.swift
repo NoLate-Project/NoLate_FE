@@ -987,8 +987,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     .contentShape(liquidShape)
     .animation(depthPillAnimation, value: model.showsViewModeButton)
     .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: shadowYOffset)
-    .accessibilityLabel(phase == .collapsed ? "View mode" : "View mode menu")
-    .accessibilityHint(phase == .collapsed ? "Opens the view mode menu" : "Choose a view mode")
   }
 
   @available(iOS 26.0, *)
@@ -1222,7 +1220,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
         }
         .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
-        .accessibilityLabel("보기 방식")
+        .disabled(model.disabled)
+        .accessibilityLabel("보기 방식, 현재 \(selectedViewModeLabel)")
         .accessibilityHint("보기 방식 메뉴 열기")
         .transition(pillButtonTransition)
       }
@@ -1236,7 +1235,9 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
+      .disabled(model.disabled)
       .accessibilityLabel("일정 검색")
+      .accessibilityHint("일정 제목이나 장소를 검색합니다")
 
       Button {
         openMenu(.add)
@@ -1246,7 +1247,9 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
+      .disabled(model.disabled)
       .accessibilityLabel("일정 추가")
+      .accessibilityHint("빠른 일정 생성, 직접 입력 또는 카테고리 관리 메뉴를 엽니다")
     }
     .foregroundStyle(collapsedGlyphColor)
     .frame(width: collapsedWidth, height: collapsedHeight)
@@ -1452,6 +1455,8 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       .font(.system(size: 16, weight: .semibold))
       .foregroundStyle(collapsedGlyphColor)
       .tint(collapsedGlyphColor)
+      .accessibilityLabel("일정 검색어")
+      .accessibilityHint("검색할 일정 제목이나 장소를 입력하세요")
 
       if !model.searchQuery.isEmpty {
         Button {
@@ -1491,13 +1496,15 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       addActionRow(
         icon: "bolt",
         title: "빠른 일정 생성",
+        accessibilityHint: "문장, 사진 또는 음성으로 일정을 빠르게 만듭니다",
         action: triggerQuickAddAction,
         closesAfterAction: false
       )
 
       addActionRow(
         icon: "square.and.pencil",
-        title: "일정 생성",
+        title: "직접 입력",
+        accessibilityHint: "일정 내용을 직접 입력합니다",
         action: triggerManualAddAction,
         closesAfterAction: false
       )
@@ -1505,6 +1512,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       addActionRow(
         icon: "tag",
         title: "카테고리 관리",
+        accessibilityHint: "카테고리를 추가하거나 편집합니다",
         action: model.handleManageCategories
       )
     }
@@ -1515,6 +1523,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private func addActionRow(
     icon: String,
     title: String,
+    accessibilityHint: String,
     action: @escaping () -> Void,
     closesAfterAction: Bool = true
   ) -> some View {
@@ -1544,6 +1553,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel(title)
+    .accessibilityHint(accessibilityHint)
+  }
+
+  private var selectedViewModeLabel: String {
+    options.first(where: { $0.id == model.selectedMode })?.label ?? "미지정"
   }
 
   private var surfaceWidth: CGFloat {

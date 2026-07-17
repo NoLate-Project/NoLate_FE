@@ -41,7 +41,7 @@ function getCompactSectionLabels(dateKey: string) {
 
     const weekday = WEEKDAY_SHORT[date.getDay()];
     return {
-        dateLabel: `${date.getMonth() + 1}월 ${date.getDate()}일 (${weekday})`,
+        dateLabel: `${date.getMonth() + 1}월 ${date.getDate()}일`,
         weekdayLabel: `${weekday}요일`,
     };
 }
@@ -70,6 +70,8 @@ type AgendaStateProps = {
     bottomInset: number;
     onPressRetry: () => void;
     onOpenSchedule: (id: string) => void;
+    routeSetupRequiredCount?: number;
+    onOpenRouteSetup?: () => void;
 };
 
 type SelectedDayAgendaPanelProps = AgendaStateProps & {
@@ -109,7 +111,7 @@ function AgendaInlineState({
     if (!error) {
         return (
             <View style={styles.emptyState}>
-                <Ionicons name="calendar-outline" size={22} color={colors.textSecondary} />
+                <Ionicons accessible={false} name="calendar-outline" size={22} color={colors.textSecondary} />
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     {emptyText}
                 </Text>
@@ -120,6 +122,7 @@ function AgendaInlineState({
     return (
         <Pressable
             accessibilityRole={error ? "button" : undefined}
+            accessibilityLabel={error ? `${error}. 다시 조회` : undefined}
             disabled={!error}
             onPress={error ? onPressRetry : undefined}
             style={({ pressed }) => [
@@ -128,6 +131,7 @@ function AgendaInlineState({
             ]}
         >
             <Ionicons
+                accessible={false}
                 name={error ? "refresh-outline" : "calendar-outline"}
                 size={22}
                 color={colors.textSecondary}
@@ -135,6 +139,61 @@ function AgendaInlineState({
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 {error}
             </Text>
+        </Pressable>
+    );
+}
+
+function RouteSetupInlineNotice({
+    count,
+    onPress,
+}: {
+    count: number;
+    onPress?: () => void;
+}) {
+    const { colors, mode } = useTheme();
+
+    if (count <= 0 || !onPress) return null;
+
+    return (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`경로 설정이 필요한 일정 ${count}개. 가장 가까운 일정의 경로 설정 열기`}
+            accessibilityHint="일정 상세에서 경로를 설정합니다"
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.routeSetupNotice,
+                {
+                    backgroundColor: mode === "dark"
+                        ? "rgba(255,159,10,0.10)"
+                        : "rgba(255,159,10,0.075)",
+                    borderColor: mode === "dark"
+                        ? "rgba(255,159,10,0.32)"
+                        : "rgba(210,126,0,0.20)",
+                    opacity: pressed ? 0.62 : 1,
+                },
+            ]}
+        >
+            <View style={styles.routeSetupNoticeIcon}>
+                <Ionicons
+                    accessible={false}
+                    name="navigate-outline"
+                    size={14}
+                    color="#FF9F0A"
+                />
+            </View>
+            <Text
+                numberOfLines={1}
+                style={[styles.routeSetupNoticeTitle, { color: colors.textPrimary }]}
+            >
+                {`경로 미설정 ${count}개`}
+            </Text>
+            <Text style={styles.routeSetupNoticeAction}>설정</Text>
+            <Ionicons
+                accessible={false}
+                name="chevron-forward"
+                size={13}
+                color="#FF9F0A"
+            />
         </Pressable>
     );
 }
@@ -257,6 +316,8 @@ export function SelectedDayAgendaPanel({
     bottomInset,
     onPressRetry,
     onOpenSchedule,
+    routeSetupRequiredCount = 0,
+    onOpenRouteSetup,
     onRequestViewMode,
 }: SelectedDayAgendaPanelProps) {
     const { colors } = useTheme();
@@ -300,6 +361,10 @@ export function SelectedDayAgendaPanel({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
+                <RouteSetupInlineNotice
+                    count={routeSetupRequiredCount}
+                    onPress={onOpenRouteSetup}
+                />
                 {loading || error || selectedItems.length === 0 ? (
                     <AgendaInlineState
                         loading={loading}
@@ -330,6 +395,8 @@ export function MonthAgendaList({
     bottomInset,
     onPressRetry,
     onOpenSchedule,
+    routeSetupRequiredCount = 0,
+    onOpenRouteSetup,
     onRequestViewMode,
 }: MonthAgendaListProps) {
     const { colors, mode } = useTheme();
@@ -437,6 +504,8 @@ export function MonthAgendaList({
                     accessibilityRole="button"
                     accessibilityLabel={`일정 필터, ${selectedCategoryTitle}`}
                     accessibilityHint="표시할 일정 카테고리를 선택합니다"
+                    accessibilityState={{ disabled: categoryOptions.length === 0 }}
+                    disabled={categoryOptions.length === 0}
                     onPress={openCategoryFilter}
                     style={({ pressed }) => [
                         styles.agendaFilterPill,
@@ -445,7 +514,7 @@ export function MonthAgendaList({
                             : styles.agendaFilterPillLight,
                         {
                             borderColor: colors.border,
-                            opacity: pressed ? 0.62 : 1,
+                            opacity: categoryOptions.length === 0 ? 0.42 : pressed ? 0.62 : 1,
                         },
                     ]}
                 >
@@ -459,6 +528,7 @@ export function MonthAgendaList({
                         {selectedCategoryTitle}
                     </Text>
                     <Ionicons
+                        accessible={false}
                         name="chevron-down"
                         size={11}
                         color={colors.textSecondary}
@@ -475,6 +545,10 @@ export function MonthAgendaList({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
+                <RouteSetupInlineNotice
+                    count={routeSetupRequiredCount}
+                    onPress={onOpenRouteSetup}
+                />
                 {loading || error || sections.length === 0 ? (
                     <AgendaInlineState
                         loading={loading}
@@ -640,6 +714,39 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14,
         paddingTop: 7,
         gap: 13,
+    },
+    routeSetupNotice: {
+        minHeight: 38,
+        paddingHorizontal: 9,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    routeSetupNoticeIcon: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(255,159,10,0.14)",
+    },
+    routeSetupNoticeTitle: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12.5,
+        lineHeight: 17,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    routeSetupNoticeAction: {
+        flexShrink: 0,
+        fontSize: 11.5,
+        lineHeight: 16,
+        fontWeight: "800",
+        letterSpacing: 0,
+        color: "#FF9F0A",
     },
     section: {
         gap: 4,

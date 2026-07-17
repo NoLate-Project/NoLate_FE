@@ -17,6 +17,12 @@ import {
     getScheduleIdFromNotificationData,
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "./pushNavigation";
+import {
+    createPushActionFailureGate,
+    type PushActionFailure,
+} from "./pushActionFailureGate";
+
+export type { PushActionFailure } from "./pushActionFailureGate";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
@@ -25,6 +31,19 @@ const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
 type ExpoNotificationsModule = typeof import("expo-notifications");
 
 let notificationsModule: ExpoNotificationsModule | null | undefined;
+
+function logPushDevelopment(
+    level: "info" | "warn",
+    message: string,
+    detail?: unknown,
+): void {
+    if (!__DEV__) return;
+    if (detail === undefined) {
+        console[level](message);
+        return;
+    }
+    console[level](message, detail);
+}
 
 type LocalPushNotification = {
     title: string;
@@ -64,7 +83,7 @@ async function getNotifications(): Promise<ExpoNotificationsModule | null> {
 
         notificationsModule = Notifications;
     } catch (error) {
-        console.warn("[push] expo-notifications is unavailable in this build", error);
+        logPushDevelopment("warn", "[push] expo-notifications is unavailable in this build", error);
         notificationsModule = null;
     }
 
@@ -86,12 +105,17 @@ export async function configureForegroundPush(): Promise<() => void> {
 export async function configurePushNavigation(
     openSchedule: (scheduleId: string) => void,
     openShareInbox: () => void,
+    onActionFailure?: (failure: PushActionFailure) => void,
 ): Promise<() => void> {
     const Notifications = await getNotifications();
     const messaging = getMessaging();
     let lastOpenedMessageId: string | undefined;
     let lastDepartNowActionKey: string | undefined;
     let lastSnoozeActionKey: string | undefined;
+    const actionFailureGate = createPushActionFailureGate(
+        onActionFailure,
+        AppState.currentState === "active",
+    );
 
     if (Notifications) {
         await ensureNotificationPresentation(Notifications);
@@ -106,18 +130,18 @@ export async function configurePushNavigation(
 
         const target = getPushNavigationTargetFromNotificationData(data);
         if (!target) {
-            console.info("[push] notification has no navigation target", data);
+            logPushDevelopment("info", "[push] notification has no navigation target", data);
             return;
         }
 
         lastOpenedMessageId = messageId;
         if (target.kind === "scheduleDetail") {
-            console.info("[push] opening schedule from notification", target.scheduleId);
+            logPushDevelopment("info", "[push] opening schedule from notification", target.scheduleId);
             openSchedule(target.scheduleId);
             return;
         }
 
-        console.info("[push] opening share inbox from notification");
+        logPushDevelopment("info", "[push] opening share inbox from notification");
         openShareInbox();
     };
 
@@ -128,7 +152,11 @@ export async function configurePushNavigation(
         const scheduleId = getScheduleIdFromNotificationData(data);
 
         if (!scheduleId) {
-            console.warn("[push] depart-now action has no schedule target", data);
+            logPushDevelopment("warn", "[push] depart-now action has no schedule target", data);
+            actionFailureGate.report({
+                action: "departNow",
+                message: "알림의 일정 정보를 확인하지 못했어요. 앱에서 일정을 열어 출발 상태를 변경해 주세요.",
+            });
             return;
         }
 
@@ -139,9 +167,14 @@ export async function configurePushNavigation(
 
         try {
             await markScheduleDeparted(scheduleId);
-            console.info("[push] schedule marked as departed from notification action", scheduleId);
+            logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
         } catch (error) {
-            console.warn("[push] depart-now action failed", error);
+            logPushDevelopment("warn", "[push] depart-now action failed", error);
+            actionFailureGate.report({
+                action: "departNow",
+                scheduleId,
+                message: "출발 상태를 변경하지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
+            });
         }
     };
 
@@ -152,7 +185,11 @@ export async function configurePushNavigation(
         const scheduleId = getScheduleIdFromNotificationData(data);
 
         if (!scheduleId) {
-            console.warn("[push] snooze action has no schedule target", data);
+            logPushDevelopment("warn", "[push] snooze action has no schedule target", data);
+            actionFailureGate.report({
+                action: "snooze",
+                message: "알림의 일정 정보를 확인하지 못했어요. 앱에서 일정을 열어 알림을 다시 설정해 주세요.",
+            });
             return;
         }
 
@@ -163,9 +200,14 @@ export async function configurePushNavigation(
 
         try {
             await snoozeScheduleDepartureReminder(scheduleId);
-            console.info("[push] schedule departure reminder snoozed from notification action", scheduleId);
+            logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
         } catch (error) {
-            console.warn("[push] snooze action failed", error);
+            logPushDevelopment("warn", "[push] snooze action failed", error);
+            actionFailureGate.report({
+                action: "snooze",
+                scheduleId,
+                message: "알림을 미루지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
+            });
         }
     };
 
@@ -173,12 +215,12 @@ export async function configurePushNavigation(
         const request = response.notification.request;
 
         if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
-            void markDepartedFromData(request.content.data, request.identifier);
+            markDepartedFromData(request.content.data, request.identifier).catch(() => undefined);
             return;
         }
 
         if (response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER) {
-            void snoozeFromData(request.content.data, request.identifier);
+            snoozeFromData(request.content.data, request.identifier).catch(() => undefined);
             return;
         }
 
@@ -188,6 +230,7 @@ export async function configurePushNavigation(
     const expoSubscription = Notifications?.addNotificationResponseReceivedListener(handleNotificationResponse);
     const appStateSubscription = Notifications
         ? AppState.addEventListener("change", (state) => {
+            actionFailureGate.onAppStateChange(state);
             if (state !== "active") return;
 
             // foreground 전환 시점에 놓친 iOS notification response를 한 번 더 확인한다.
@@ -214,6 +257,7 @@ export async function configurePushNavigation(
     }
 
     return () => {
+        actionFailureGate.dispose();
         expoSubscription?.remove();
         appStateSubscription?.remove();
         firebaseUnsubscribe();
@@ -294,6 +338,6 @@ async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): 
             },
         );
     } catch (error) {
-        console.warn("[push] notification action category setup failed", error);
+        logPushDevelopment("warn", "[push] notification action category setup failed", error);
     }
 }

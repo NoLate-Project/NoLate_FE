@@ -1,7 +1,9 @@
-import React, { createContext, useCallback, useContext, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useColorScheme, type ColorSchemeName } from "react-native";
 
 export type ColorMode = "dark" | "light";
+export type ThemePreference = "system" | ColorMode;
 
 export type AppColors = {
     background: string;
@@ -29,6 +31,7 @@ export type AppColors = {
 };
 
 export const SYSTEM_SWITCH_ACTIVE_COLOR = "#34C759";
+export const THEME_PREFERENCE_STORAGE_KEY = "nolate_theme_preference";
 
 const dark: AppColors = {
     background: "#000",
@@ -81,6 +84,8 @@ export function resolveSystemColorMode(systemScheme: ColorSchemeName): ColorMode
 type ThemeContextValue = {
     mode: ColorMode;
     colors: AppColors;
+    preference: ThemePreference;
+    setPreference: (preference: ThemePreference) => void;
     toggleMode: () => void;
 };
 
@@ -89,22 +94,52 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const systemScheme = useColorScheme();
     const systemMode = resolveSystemColorMode(systemScheme);
-    const [overrideMode, setOverrideMode] = useState<ColorMode | null>(null);
-    const mode = overrideMode ?? systemMode;
+    const [preference, setPreferenceState] = useState<ThemePreference>("system");
+    const userChangedPreferenceRef = useRef(false);
+    const mode = preference === "system" ? systemMode : preference;
+
+    useEffect(() => {
+        let active = true;
+
+        AsyncStorage.getItem(THEME_PREFERENCE_STORAGE_KEY)
+            .then((storedPreference) => {
+                if (!active || userChangedPreferenceRef.current) return;
+                if (isThemePreference(storedPreference)) {
+                    setPreferenceState(storedPreference);
+                }
+            })
+            .catch((error) => {
+                console.warn("[theme] preference load failed", error);
+            });
+
+        return () => {
+            active = false;
+        };
+    }, []);
+
+    const setPreference = useCallback((nextPreference: ThemePreference) => {
+        userChangedPreferenceRef.current = true;
+        setPreferenceState(nextPreference);
+        AsyncStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, nextPreference).catch((error) => {
+            // 테마 저장 실패는 현재 앱의 선택을 되돌리거나 사용을 막지 않는다.
+            console.warn("[theme] preference save failed", error);
+        });
+    }, []);
 
     const toggleMode = useCallback(() => {
-        setOverrideMode((currentOverride) => {
-            const currentMode = currentOverride ?? systemMode;
-            return currentMode === "dark" ? "light" : "dark";
-        });
-    }, [systemMode]);
+        setPreference(mode === "dark" ? "light" : "dark");
+    }, [mode, setPreference]);
     const colors = mode === "dark" ? dark : light;
 
     return (
-        <ThemeContext.Provider value={{ mode, colors, toggleMode }}>
+        <ThemeContext.Provider value={{ mode, colors, preference, setPreference, toggleMode }}>
             {children}
         </ThemeContext.Provider>
     );
+}
+
+export function isThemePreference(value: unknown): value is ThemePreference {
+    return value === "system" || value === "light" || value === "dark";
 }
 
 export function useTheme() {

@@ -65,7 +65,12 @@ export default function ScheduleAgendaCard({
     return (
         <Pressable
             accessibilityRole="button"
-            accessibilityLabel={[item.title, timeText, metadata.location].filter(Boolean).join(", ")}
+            accessibilityLabel={[
+                item.title,
+                timeText,
+                metadata.location,
+                item.routeSetupRequired ? "경로 미설정" : undefined,
+            ].filter(Boolean).join(", ")}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.card,
@@ -96,6 +101,7 @@ export default function ScheduleAgendaCard({
                 <View style={[styles.titleRow, compact && styles.titleRowCompact]}>
                     {metadata.isTravel ? (
                         <Ionicons
+                            accessible={false}
                             name={iconName}
                             size={compact ? 14 : 16}
                             color={categoryColor}
@@ -103,7 +109,7 @@ export default function ScheduleAgendaCard({
                         />
                     ) : null}
                     <Text
-                        maxFontSizeMultiplier={1.1}
+                        maxFontSizeMultiplier={1.5}
                         numberOfLines={1}
                         style={[
                             styles.title,
@@ -113,13 +119,19 @@ export default function ScheduleAgendaCard({
                     >
                         {item.title}
                     </Text>
+                    {item.routeSetupRequired ? (
+                        <View style={[styles.routeBadge, { borderColor: colorWithOpacity(categoryColor, 0.38) }]}>
+                            <Ionicons accessible={false} name="navigate-outline" size={11} color={categoryColor} />
+                            <Text style={[styles.routeBadgeText, { color: categoryColor }]}>경로 미설정</Text>
+                        </View>
+                    ) : null}
                 </View>
 
                 {(timeText || metadata.location) ? (
                     <View style={[styles.metaRow, compact && styles.metaRowCompact]}>
                         {timeText ? (
                             <Text
-                                maxFontSizeMultiplier={1.1}
+                                maxFontSizeMultiplier={1.5}
                                 numberOfLines={1}
                                 style={[
                                     styles.time,
@@ -132,7 +144,7 @@ export default function ScheduleAgendaCard({
                         ) : null}
                         {metadata.location ? (
                             <Text
-                                maxFontSizeMultiplier={1.1}
+                                maxFontSizeMultiplier={1.5}
                                 numberOfLines={1}
                                 style={[
                                     styles.location,
@@ -148,9 +160,9 @@ export default function ScheduleAgendaCard({
 
                 {metadata.isTravel && travelText ? (
                     <View style={[styles.travelRow, compact && styles.travelRowCompact]}>
-                        <Ionicons name={iconName} size={compact ? 12 : 13} color={categoryColor} />
+                        <Ionicons accessible={false} name={iconName} size={compact ? 12 : 13} color={categoryColor} />
                         <Text
-                            maxFontSizeMultiplier={1.1}
+                            maxFontSizeMultiplier={1.5}
                             numberOfLines={1}
                             style={[
                                 styles.travelText,
@@ -166,6 +178,7 @@ export default function ScheduleAgendaCard({
 
             <View style={[styles.chevronColumn, compact && styles.chevronColumnCompact]}>
                 <Ionicons
+                    accessible={false}
                     name="chevron-forward"
                     size={compact ? 14 : 16}
                     color={colors.textSecondary}
@@ -221,6 +234,21 @@ const styles = StyleSheet.create({
     },
     titleIcon: {
         flexShrink: 0,
+    },
+    routeBadge: {
+        height: 21,
+        flexShrink: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 3,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 11,
+        paddingHorizontal: 6,
+    },
+    routeBadgeText: {
+        fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "800",
     },
     title: {
         flex: 1,

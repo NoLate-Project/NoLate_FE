@@ -251,16 +251,18 @@ function toCandidate(
     const locationName = normalizeText(event.location);
     const notes = normalizeText(event.description);
     const requiresTimeReview = start.allDay;
+    const eventId = normalizeText(event.id);
+    if (!eventId) return null;
 
     return {
         id: [
             "GOOGLE",
             calendar.id,
-            normalizeText(event.id) || "event",
+            eventId,
             start.date.toISOString(),
         ].join(":"),
         provider: "GOOGLE",
-        eventId: normalizeText(event.id) || "",
+        eventId,
         calendarId: getProviderScopedCalendarId(calendar.id),
         calendarTitle: `Google · ${calendar.title}`,
         calendarColor: calendar.color,

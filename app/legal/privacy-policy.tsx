@@ -17,6 +17,8 @@ import {
     type LegalDocument,
 } from "../../src/api/legal";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import { useAuth } from "../../src/modules/auth/AuthContext";
+import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
@@ -24,13 +26,17 @@ export default function PrivacyPolicyScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
+    const { isAuthenticated, isCurationCompleted } = useAuth();
     const [document, setDocument] = useState<LegalDocument>(PRIVACY_POLICY_FALLBACK);
     const [loading, setLoading] = useState(true);
     const [usingFallback, setUsingFallback] = useState(false);
+    const [reloadKey, setReloadKey] = useState(0);
     const [expandedSectionTitles, setExpandedSectionTitles] = useState<Set<string>>(() => new Set());
 
     useEffect(() => {
         let cancelled = false;
+        setLoading(true);
+        setUsingFallback(false);
 
         getPrivacyPolicy()
             .then((nextDocument) => {
@@ -50,7 +56,7 @@ export default function PrivacyPolicyScreen() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [reloadKey]);
 
     const goBack = () => {
         if (router.canGoBack()) {
@@ -58,7 +64,7 @@ export default function PrivacyPolicyScreen() {
             return;
         }
 
-        router.replace("/auth/login");
+        router.replace(isAuthenticated ? getPostAuthRoute(isCurationCompleted) : "/auth/login");
     };
 
     const toggleSection = (title: string) => {
@@ -121,33 +127,58 @@ export default function PrivacyPolicyScreen() {
                 </View>
 
                 {loading ? (
-                    <View style={[styles.loadingBox, { borderColor: colors.border }]}>
-                        <BrandedLoader
-                            size="button"
-                            variant="auth"
-                            accessibilityLabel="최신 개인정보처리방침을 확인하고 있어요"
-                        />
-                        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-                            최신 방침을 확인하는 중
-                        </Text>
+                    <View
+                        accessible
+                        accessibilityRole="progressbar"
+                        accessibilityLabel="최신 개인정보처리방침을 확인하고 있어요"
+                        accessibilityLiveRegion="polite"
+                        style={[styles.loadingBox, { borderColor: colors.border }]}
+                    >
+                        <View
+                            accessibilityElementsHidden
+                            importantForAccessibility="no-hide-descendants"
+                            style={styles.loadingContent}
+                        >
+                            <BrandedLoader
+                                size="button"
+                                variant="auth"
+                                accessibilityLabel="최신 개인정보처리방침을 확인하고 있어요"
+                            />
+                            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                                최신 방침을 확인하는 중
+                            </Text>
+                        </View>
                     </View>
                 ) : null}
 
                 {usingFallback ? (
-                    <View style={[styles.notice, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="최신 개인정보처리방침 다시 불러오기"
+                        accessibilityLiveRegion="polite"
+                        onPress={() => setReloadKey((current) => current + 1)}
+                        style={({ pressed }) => [
+                            styles.notice,
+                            {
+                                backgroundColor: colors.surface2,
+                                borderColor: colors.border,
+                                opacity: pressed ? 0.62 : 1,
+                            },
+                        ]}
+                    >
                         <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
                         <Text style={[styles.noticeText, { color: colors.textSecondary }]}>
-                            서버에서 최신 문서를 불러오지 못해 앱에 포함된 방침을 표시합니다.
+                            서버에서 최신 문서를 불러오지 못해 앱에 포함된 방침을 표시합니다. 탭해서 다시 확인할 수 있어요.
                         </Text>
-                    </View>
+                    </Pressable>
                 ) : null}
 
-                {document.sections.map((section) => {
+                {document.sections.map((section, sectionIndex) => {
                     const expanded = expandedSectionTitles.has(section.title);
 
                     return (
                         <CalendarGlassSurface
-                            key={section.title}
+                            key={`${section.title}-${sectionIndex}`}
                             variant="card"
                             tone="solidCard"
                             style={[styles.sectionCard, { borderColor: colors.border }]}
@@ -181,8 +212,8 @@ export default function PrivacyPolicyScreen() {
 
                             {expanded ? (
                                 <View style={styles.paragraphList}>
-                                    {section.body.map((paragraph) => (
-                                        <View key={paragraph} style={styles.paragraphRow}>
+                                    {section.body.map((paragraph, paragraphIndex) => (
+                                        <View key={`${paragraphIndex}-${paragraph}`} style={styles.paragraphRow}>
                                             <Text style={[styles.bullet, { color: colors.textSecondary }]}>-</Text>
                                             <Text style={[styles.paragraphText, { color: colors.textSecondary }]}>
                                                 {paragraph}
@@ -195,8 +226,10 @@ export default function PrivacyPolicyScreen() {
                     );
                 })}
 
-                <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-                    버전 {document.version}. 최신 방침은 앱과 웹에서 동일하게 제공합니다.
+                <Text
+                    style={[styles.footerText, { color: colors.textSecondary }]}
+                >
+                    문서 버전 {document.version}
                 </Text>
             </ScrollView>
         </View>
@@ -266,6 +299,10 @@ const styles = StyleSheet.create({
         minHeight: 48,
         borderRadius: 16,
         borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    loadingContent: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",

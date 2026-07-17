@@ -3,6 +3,7 @@ import type { ParseScheduleInputType } from "../../api/schedule";
 
 export type QuickScheduleMediaInput = {
     inputMode: "text" | "photo" | "voice";
+    inputTypeOverride?: ParseScheduleInputType;
     photoUri?: string;
     voiceUri?: string;
     voiceDurationMillis?: number;
@@ -51,7 +52,7 @@ export async function resolveQuickScheduleParseInput(
     media?: QuickScheduleMediaInput
 ): Promise<{ text: string; inputType: ParseScheduleInputType }> {
     const inputMode = media?.inputMode ?? "text";
-    const inputType = inputTypeForMode(inputMode);
+    const inputType = media?.inputTypeOverride ?? inputTypeForMode(inputMode);
 
     if (inputMode === "text") {
         return {
@@ -66,7 +67,7 @@ export async function resolveQuickScheduleParseInput(
 
     if (inputMode === "photo") {
         if (!media?.photoUri) {
-            throw new Error("분석할 사진을 먼저 선택해주세요.");
+            throw new Error("분석할 사진을 먼저 선택해 주세요.");
         }
 
         const extractedText = normalizeExtractedText(
@@ -83,7 +84,7 @@ export async function resolveQuickScheduleParseInput(
     }
 
     if (!media?.voiceUri) {
-        throw new Error("분석할 음성을 먼저 녹음해주세요.");
+        throw new Error("분석할 음성을 먼저 녹음해 주세요.");
     }
 
     const extractedText = normalizeExtractedText(

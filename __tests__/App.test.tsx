@@ -3,8 +3,14 @@ import * as SecureStore from "expo-secure-store";
 import { Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
-import { getMemberCurationStatus, logoutMember } from "../src/api/member";
+import {
+    getMemberCurationStatus,
+    logoutMember,
+    tokenLoginMember,
+} from "../src/api/member";
 import { AuthProvider, useAuth } from "../src/modules/auth/AuthContext";
+import { clearAuthTokens } from "../src/modules/auth/authStorage";
+import { clearAccountScopedLocalData } from "../src/modules/auth/accountCleanup";
 
 jest.mock("expo-secure-store", () => ({
     deleteItemAsync: jest.fn(),
@@ -15,12 +21,19 @@ jest.mock("expo-secure-store", () => ({
 jest.mock("../src/api/member", () => ({
     getMemberCurationStatus: jest.fn(),
     logoutMember: jest.fn(),
+    tokenLoginMember: jest.fn(),
+}));
+
+jest.mock("../src/modules/auth/accountCleanup", () => ({
+    clearAccountScopedLocalData: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mockedGetItemAsync = jest.mocked(SecureStore.getItemAsync);
 const mockedDeleteItemAsync = jest.mocked(SecureStore.deleteItemAsync);
 const mockedGetMemberCurationStatus = jest.mocked(getMemberCurationStatus);
 const mockedLogoutMember = jest.mocked(logoutMember);
+const mockedTokenLoginMember = jest.mocked(tokenLoginMember);
+const mockedClearAccountScopedLocalData = jest.mocked(clearAccountScopedLocalData);
 
 function mockStoredSession(curationCompleted = false) {
     mockedGetItemAsync.mockImplementation(async (key) => {
@@ -103,6 +116,32 @@ describe("AuthProvider", () => {
         expect(renderer?.root.findByType(Text).props.children).toBe("authenticated-incomplete");
     });
 
+    it("restores a valid refresh session when cached member metadata is missing", async () => {
+        mockedGetItemAsync.mockImplementation(async (key) => {
+            if (key === "nolte_refresh_token") return "refresh-token";
+            return null;
+        });
+        mockedTokenLoginMember.mockResolvedValue({
+            id: 1,
+            name: "복구 사용자",
+            accessToken: "restored-access",
+            refreshToken: "restored-refresh",
+            curationCompleted: true,
+        });
+        mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: true });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                </AuthProvider>
+            );
+        });
+
+        expect(mockedTokenLoginMember).toHaveBeenCalledWith({ refreshToken: "refresh-token" });
+        expect(renderer?.root.findByType(Text).props.children).toBe("authenticated-complete");
+    });
+
     it("uses the server curation state after authentication", async () => {
         mockStoredSession(false);
         mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: true });
@@ -164,18 +203,116 @@ describe("AuthProvider", () => {
         expect(mockedLogoutMember).toHaveBeenCalledWith({ refreshToken: "refresh-token" });
         expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
         expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
+        expect(mockedClearAccountScopedLocalData).toHaveBeenCalled();
+    });
+
+    it("인증 인터셉터가 세션을 무효화해도 계정별 캐시를 정리한다", async () => {
+        mockStoredSession(true);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                </AuthProvider>
+            );
+        });
+        mockedClearAccountScopedLocalData.mockClear();
+
+        await act(async () => {
+            await clearAuthTokens();
+        });
+
+        expect(renderer?.root.findByType(Text).props.children).toBe("unauthenticated");
+        expect(mockedClearAccountScopedLocalData).toHaveBeenCalledTimes(1);
+    });
+
+    it("로그아웃 뒤 늦게 끝난 이전 인증 조회가 세션을 다시 켜지 않는다", async () => {
+        mockStoredSession(true);
+        let resolveCurationStatus: ((value: { curationCompleted: boolean }) => void) | undefined;
+        mockedGetMemberCurationStatus.mockImplementation(() => new Promise((resolve) => {
+            resolveCurationStatus = resolve;
+        }));
+
+        act(() => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                    <SignOutButton />
+                </AuthProvider>
+            );
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mockedGetMemberCurationStatus).toHaveBeenCalledTimes(1);
+
+        const signOut = renderer?.root.findAllByType(Text).find(
+            (node) => node.props.children === "sign-out",
+        );
+        await act(async () => {
+            await signOut?.props.onPress();
+        });
+        await act(async () => {
+            resolveCurationStatus?.({ curationCompleted: true });
+            await Promise.resolve();
+        });
+
+        const state = renderer?.root.findAllByType(Text).find(
+            (node) => node.props.children === "unauthenticated",
+        );
+        expect(state).toBeDefined();
     });
 });
 import {
+    createPendingPushNavigationQueue,
     createScheduleDetailRoute,
     getNotificationActionCategoryFromData,
     getScheduleDetailRouteFromNotificationData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
+    isPushNavigationReady,
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "../src/modules/notification/pushNavigation";
 
 describe("schedule push navigation payload", () => {
+    test("인증과 온보딩이 끝날 때까지 알림 목적지를 보존한 뒤 한 번만 꺼낸다", () => {
+        const queue = createPendingPushNavigationQueue();
+        const target = { kind: "scheduleDetail" as const, scheduleId: "42" };
+        queue.defer(target);
+
+        expect(queue.consumeIfReady({
+            isLoading: true,
+            isAuthenticated: false,
+            isCurationCompleted: false,
+        })).toBeUndefined();
+        expect(queue.peek()).toEqual(target);
+        expect(queue.consumeIfReady({
+            isLoading: false,
+            isAuthenticated: true,
+            isCurationCompleted: false,
+        })).toBeUndefined();
+        expect(queue.consumeIfReady({
+            isLoading: false,
+            isAuthenticated: true,
+            isCurationCompleted: true,
+        })).toEqual(target);
+        expect(queue.peek()).toBeUndefined();
+    });
+
+    test("보호된 화면은 인증·온보딩 완료 상태에서만 푸시 이동 준비가 된다", () => {
+        expect(isPushNavigationReady({
+            isLoading: false,
+            isAuthenticated: true,
+            isCurationCompleted: true,
+        })).toBe(true);
+        expect(isPushNavigationReady({
+            isLoading: false,
+            isAuthenticated: false,
+            isCurationCompleted: true,
+        })).toBe(false);
+    });
+
     test("Android와 iOS가 공유하는 문자열 scheduleId를 반환한다", () => {
         expect(getScheduleIdFromNotificationData({ scheduleId: "42" })).toBe("42");
     });

@@ -323,7 +323,9 @@ export default function ScheduleCalendar({
     animatedDayHeight,
 }: Props) {
     const { colors, mode } = useTheme();
-    const todayDateString = useMemo(getTodayDateString, []);
+    // 상위 화면은 분 단위로 다시 렌더링된다. 값을 mount 시점에 고정하면
+    // 자정을 지난 뒤 주간 보기의 '오늘' 표시가 전날에 남는다.
+    const todayDateString = getTodayDateString();
     const visibleMonth = normalizeMonthCandidate(transitionMonthKey)
         ?? normalizeMonthCandidate(focusedMonth)
         ?? selectedDay.slice(0, 7);
@@ -1276,9 +1278,10 @@ export default function ScheduleCalendar({
                             onVisibleMonthChange(nextDay);
                         }}
                         accessibilityLabel="이전 주"
+                        accessibilityRole="button"
                         style={styles.monthArrow}
                     >
-                        <Ionicons name="chevron-back" size={27} color={colors.arrowColor} />
+                        <Ionicons accessible={false} name="chevron-back" size={27} color={colors.arrowColor} />
                     </Pressable>
                     <Text style={[styles.listMonthTitle, { color: colors.monthTextColor }]}>
                         {selectedWeekTitle}
@@ -1290,9 +1293,10 @@ export default function ScheduleCalendar({
                             onVisibleMonthChange(nextDay);
                         }}
                         accessibilityLabel="다음 주"
+                        accessibilityRole="button"
                         style={styles.monthArrow}
                     >
-                        <Ionicons name="chevron-forward" size={27} color={colors.arrowColor} />
+                        <Ionicons accessible={false} name="chevron-forward" size={27} color={colors.arrowColor} />
                     </Pressable>
                 </View>
                 {weekdayHeader}

@@ -8,7 +8,7 @@ import QuickScheduleLogoLoader, {
     shouldAnimateLogoOrbit,
 } from "../src/modules/schedule/components/form/QuickScheduleLogoLoader";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
-import BrandedLoader from "../src/ui/BrandedLoader";
+import BrandedLoader, { BrandedLoadingState } from "../src/ui/BrandedLoader";
 
 jest.mock("@expo/vector-icons", () => ({
     Ionicons: "Ionicons",
@@ -255,6 +255,30 @@ describe("quick schedule logo loader", () => {
         expect(mark.props.accessibilityLabel).toBe("로그인 중");
         expect(renderer!.root.findByProps({ testID: "branded-loader-button-logo" })).toBeDefined();
         expect(withRepeat).toHaveBeenCalled();
+    });
+
+    test("문구가 있는 로딩 상태는 스크린리더에 하나의 진행 상태로만 노출한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <BrandedLoadingState
+                        accessibilityLabel="일정을 불러오고 있어요"
+                        title="일정을 불러오고 있어요"
+                        caption="잠시만 기다려 주세요"
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        const state = renderer!.root.findByProps({ testID: "branded-loading-state" });
+        expect(state.props.accessible).toBe(true);
+        expect(state.props.accessibilityRole).toBe("progressbar");
+        expect(state.props.accessibilityLabel).toBe("일정을 불러오고 있어요");
+        expect(state.props.accessibilityLiveRegion).toBe("polite");
+
+        const content = renderer!.root.findByProps({ testID: "branded-loading-state-content" });
+        expect(content.props.accessibilityElementsHidden).toBe(true);
+        expect(content.props.importantForAccessibility).toBe("no-hide-descendants");
     });
 
     async function renderLoader(variant: LogoLoaderVariant = "schedule") {

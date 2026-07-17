@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Pressable, Text, TextInput, View,
-    Alert, Platform, ScrollView, StyleSheet, Animated,
+    Alert, Platform, ScrollView, StyleSheet, Animated, Switch,
 } from "react-native";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { Calendar } from "react-native-calendars";
+import { useNavigation, usePreventRemove } from "@react-navigation/native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -12,11 +13,22 @@ import { useScheduleStore } from "../store";
 import { useTheme } from "../../theme/ThemeContext";
 import { fromISO } from "../../../../lib/util/data";
 import type { ScheduleCategory, TravelMode } from "../types";
-import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../routePlannerSession";
+import {
+    canWriteScheduleCategory,
+    getWritableScheduleCategories,
+    resolveWritableScheduleCategoryId,
+} from "../categoryPermissions";
+import {
+    buildRoutePlannerPlace,
+    buildScheduleRoutePlannerInitial,
+    consumeRoutePlannerResult,
+    setRoutePlannerInitial,
+} from "../routePlannerSession";
 import { getRouteInfoFromRoute } from "../routeInfo";
 import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
+import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
 import CalendarGlassSurface from "../components/calendar/CalendarGlassSurface";
 import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedule";
 import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
@@ -26,10 +38,21 @@ import {
     type SubscriptionPolicy,
 } from "../../../api/subscription";
 import { BrandedLoadingState } from "../../../ui/BrandedLoader";
+import {
+    formatScheduleFormDate,
+    getScheduleAllDayFormEndDay,
+    getScheduleCalendarDateKey,
+    normalizeScheduleFormRange,
+    startOfLocalScheduleDay,
+} from "../scheduleFormDate";
+import { getScheduleAddCloseAction } from "../scheduleAddCloseGuard";
+import {
+    buildScheduleFormLocationName,
+    buildScheduleFormPlace,
+} from "../scheduleFormPlace";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
-const ymdText = (d: Date)   => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const hhmmText = (d: Date)  => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
 
 // 날짜 객체와 시간 객체를 하나의 일정 시각으로 합친다.
 function mergeDateTime(datePart: Date, timePart: Date) {
@@ -53,6 +76,7 @@ export default function ScheduleEdit() {
     const { id }     = useLocalSearchParams<{ id: string }>();
     const pathname = usePathname();
     const router     = useRouter();
+    const navigation = useNavigation();
     const insets     = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
@@ -60,7 +84,10 @@ export default function ScheduleEdit() {
     const item = id ? state.itemsById[id] : undefined;
 
     const [title,           setTitle]           = useState(item?.title ?? "");
-    const [categoryId,      setCategoryId]      = useState(item?.category?.id ?? state.categories[0]?.id ?? "1");
+    const [notes,           setNotes]           = useState(item?.notes ?? "");
+    const [categoryId,      setCategoryId]      = useState(
+        resolveWritableScheduleCategoryId(item?.category, state.categories)
+    );
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
@@ -73,6 +100,7 @@ export default function ScheduleEdit() {
     const [travelMode, setTravelMode]           = useState<TravelMode>(item?.travelMode ?? "CAR");
     const [travelMinutes, setTravelMinutes]     = useState<number | undefined>(item?.travelMinutes);
     const [route, setRoute]                     = useState<unknown>(item?.route);
+    const [allDay, setAllDay]                   = useState(item?.allDay ?? false);
     const [hasEndTime, setHasEndTime]           = useState(item?.hasEndTime ?? true);
     const [notificationEnabled, setNotificationEnabled] = useState(item?.notificationEnabled ?? false);
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(item?.notificationLeadMinutes ?? 60);
@@ -80,12 +108,87 @@ export default function ScheduleEdit() {
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [detailLoading, setDetailLoading] = useState(false);
+    const [mutationPending, setMutationPending] = useState(false);
+    const [detailError, setDetailError] = useState<string | null>(null);
+    const [retryKey, setRetryKey] = useState(0);
+    const [categoryLoading, setCategoryLoading] = useState(false);
+    const [categoryError, setCategoryError] = useState<string | null>(null);
+    const [categoryRetryKey, setCategoryRetryKey] = useState(0);
+    const [formDirty, setFormDirty] = useState(false);
+    const formDirtyRef = useRef(false);
+    const allowNavigationRef = useRef(false);
+    const mutationPendingRef = useRef(false);
+    const markFormDirty = useCallback(() => {
+        formDirtyRef.current = true;
+        setFormDirty(true);
+    }, []);
+
+    const discardChanges = useCallback(() => {
+        formDirtyRef.current = false;
+        setFormDirty(false);
+    }, []);
+
+    const closeEditScreen = useCallback(() => {
+        discardChanges();
+        router.setParams({ mode: undefined });
+    }, [discardChanges, router]);
+
+    const requestCloseEditScreen = useCallback(() => {
+        const action = getScheduleAddCloseAction({
+            dirty: formDirtyRef.current,
+            submitting: mutationPending || mutationPendingRef.current,
+        });
+        if (action === "ignore") {
+            Alert.alert("처리 중이에요", "일정 저장 또는 삭제가 끝난 뒤 다시 시도해 주세요.");
+            return;
+        }
+        if (action === "close") {
+            closeEditScreen();
+            return;
+        }
+
+        Alert.alert("변경사항을 버릴까요?", "저장하지 않은 일정 수정 내용이 사라집니다.", [
+            { text: "계속 수정", style: "cancel" },
+            { text: "버리기", style: "destructive", onPress: closeEditScreen },
+        ]);
+    }, [closeEditScreen, mutationPending]);
+
+    usePreventRemove(formDirty || mutationPending, ({ data }) => {
+        if (allowNavigationRef.current) {
+            navigation.dispatch(data.action);
+            return;
+        }
+        if (mutationPending || mutationPendingRef.current) {
+            Alert.alert("처리 중이에요", "일정 저장 또는 삭제가 끝날 때까지 기다려 주세요.");
+            return;
+        }
+        if (!formDirtyRef.current) {
+            navigation.dispatch(data.action);
+            return;
+        }
+
+        Alert.alert("변경사항을 버릴까요?", "저장하지 않은 일정 수정 내용이 사라집니다.", [
+            { text: "계속 수정", style: "cancel" },
+            {
+                text: "버리기",
+                style: "destructive",
+                onPress: () => {
+                    discardChanges();
+                    navigation.dispatch(data.action);
+                },
+            },
+        ]);
+    });
 
     const [startDay,  setStartDay]  = useState(() =>
-        item ? new Date(fromISO(item.startAt).toISOString().slice(0, 10) + "T00:00:00") : new Date()
+        item ? startOfLocalScheduleDay(fromISO(item.startAt)) : startOfLocalScheduleDay(new Date())
     );
     const [endDay,    setEndDay]    = useState(() =>
-        item ? new Date(fromISO(item.endAt).toISOString().slice(0, 10)   + "T00:00:00") : new Date()
+        item
+            ? item.allDay
+                ? getScheduleAllDayFormEndDay(fromISO(item.startAt), fromISO(item.endAt))
+                : startOfLocalScheduleDay(fromISO(item.endAt))
+            : startOfLocalScheduleDay(new Date())
     );
     const [startTime, setStartTime] = useState(() => item ? fromISO(item.startAt) : new Date());
     const [endTime,   setEndTime]   = useState(() => item ? fromISO(item.endAt)   : new Date());
@@ -95,10 +198,15 @@ export default function ScheduleEdit() {
     const [displayPicker, setDisplayPicker] = useState<PickerType | null>(null);
 
     const categoryOptions = useMemo(() => {
-        if (!item?.category || state.categories.some((categoryItem) => categoryItem.id === item.category.id)) {
-            return state.categories;
+        const writableCategories = getWritableScheduleCategories(state.categories);
+        if (
+            !item?.category
+            || !canWriteScheduleCategory(item.category)
+            || writableCategories.some((categoryItem) => categoryItem.id === item.category.id)
+        ) {
+            return writableCategories;
         }
-        return [item.category, ...state.categories];
+        return [item.category, ...writableCategories];
     }, [item?.category, state.categories]);
 
     const category = useMemo<ScheduleCategory | undefined>(
@@ -133,6 +241,7 @@ export default function ScheduleEdit() {
         if (!id) return;
         let cancelled = false;
         setDetailLoading(true);
+        setDetailError(null);
 
         getSchedule(id)
             .then((detail) => {
@@ -142,7 +251,7 @@ export default function ScheduleEdit() {
             .catch((error) => {
                 if (cancelled) return;
                 const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
+                if (!routeFlowActive) setDetailError(getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setDetailLoading(false);
@@ -151,23 +260,33 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id, pathname]);
+    }, [dispatch, id, pathname, retryKey]);
 
     useEffect(() => {
         let cancelled = false;
+        setCategoryLoading(true);
 
         getScheduleCategoriesFromApi()
             .then((categories) => {
-                if (!cancelled && categories.length > 0) {
-                    dispatch({ type: "SET_CATEGORIES", categories });
-                }
+                if (cancelled) return;
+                dispatch({ type: "SET_CATEGORIES", categories });
+                setCategoryError(null);
             })
-            .catch(() => undefined);
+            .catch(() => {
+                if (!cancelled) setCategoryError("카테고리를 불러오지 못했어요.");
+            })
+            .finally(() => {
+                if (!cancelled) setCategoryLoading(false);
+            });
 
         return () => {
             cancelled = true;
         };
-    }, [dispatch]);
+    }, [categoryRetryKey, dispatch]);
+
+    const retryCategoryLoad = useCallback(() => {
+        setCategoryRetryKey((value) => value + 1);
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -194,9 +313,11 @@ export default function ScheduleEdit() {
 
     useEffect(() => {
         if (!item) return;
+        if (formDirtyRef.current) return;
 
         setTitle(item.title);
-        setCategoryId(item.category?.id ?? state.categories[0]?.id ?? "1");
+        setNotes(item.notes ?? "");
+        setCategoryId(resolveWritableScheduleCategoryId(item.category, state.categories));
         setOriginText(item.origin?.name ?? "");
         setDestinationText(item.destination?.name ?? "");
         setOriginAddress(item.origin?.address);
@@ -208,21 +329,60 @@ export default function ScheduleEdit() {
         setTravelMode(item.travelMode ?? "CAR");
         setTravelMinutes(item.travelMinutes);
         setRoute(item.route);
+        setAllDay(item.allDay ?? false);
         setHasEndTime(item.hasEndTime ?? fromISO(item.endAt).getTime() > fromISO(item.startAt).getTime());
         setNotificationEnabled(item.notificationEnabled ?? false);
         setNotificationLeadMinutes(item.notificationLeadMinutes ?? 60);
         setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? 20);
-        setStartDay(new Date(fromISO(item.startAt).toISOString().slice(0, 10) + "T00:00:00"));
-        setEndDay(new Date(fromISO(item.endAt).toISOString().slice(0, 10) + "T00:00:00"));
+        setStartDay(startOfLocalScheduleDay(fromISO(item.startAt)));
+        setEndDay(item.allDay
+            ? getScheduleAllDayFormEndDay(fromISO(item.startAt), fromISO(item.endAt))
+            : startOfLocalScheduleDay(fromISO(item.endAt)));
         setStartTime(fromISO(item.startAt));
         setEndTime(fromISO(item.endAt));
     }, [item, state.categories]);
 
     useEffect(() => {
-        if (hasEndTime) return;
+        if (hasEndTime || allDay) return;
         setEndDay(new Date(startDay));
         setEndTime(new Date(startTime));
-    }, [hasEndTime, startDay, startTime]);
+    }, [allDay, hasEndTime, startDay, startTime]);
+
+    const handleEndTimeEnabledChange = useCallback((enabled: boolean) => {
+        markFormDirty();
+        setHasEndTime(enabled);
+
+        if (!enabled) {
+            setPicker((current) => (
+                current === "endDate" || current === "endTime" ? null : current
+            ));
+            setEndDay(new Date(startDay));
+            setEndTime(new Date(startTime));
+            return;
+        }
+
+        const nextEnd = mergeDateTime(startDay, startTime);
+        nextEnd.setMinutes(nextEnd.getMinutes() + 60);
+        setEndDay(nextEnd);
+        setEndTime(nextEnd);
+    }, [markFormDirty, startDay, startTime]);
+
+    const handleAllDayChange = useCallback((enabled: boolean) => {
+        markFormDirty();
+        setAllDay(enabled);
+        setHasEndTime(false);
+        setPicker((current) => (
+            current === "startTime" || current === "endTime" ? null : current
+        ));
+
+        if (enabled) {
+            if (endDay.getTime() < startDay.getTime()) setEndDay(new Date(startDay));
+            return;
+        }
+
+        setEndDay(new Date(startDay));
+        setEndTime(new Date(startTime));
+    }, [endDay, markFormDirty, startDay, startTime]);
 
     // 날짜/시간 필드를 열거나 같은 필드를 다시 눌러 닫는다.
     const togglePicker = useCallback((type: PickerType) => {
@@ -288,21 +448,35 @@ export default function ScheduleEdit() {
         }
     }, [picker, contentFade, heightAnim, outerOpacity]);
 
-    // 출발지는 경로 선택 화면에서 직접 고르게 두고, 도착지만 초기값으로 전달한다.
+    // 현재 입력한 장소와 일정 시작 시각을 경로 선택 화면에 그대로 전달한다.
     const openRoutePlanner = useCallback(() => {
-        const normalizedDestinationName = destinationText.trim();
+        const nextOrigin = buildRoutePlannerPlace({
+            name: originText,
+            address: originAddress,
+            lat: originLat,
+            lng: originLng,
+        }, "출발지");
+        const nextDestination = buildRoutePlannerPlace({
+            name: destinationText,
+            address: destinationAddress,
+            lat: destinationLat,
+            lng: destinationLng,
+        }, "도착지");
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
-        setRoutePlannerInitial(sessionId, {
-            origin: undefined,
-            destination: normalizedDestinationName
-                ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                : undefined,
+        setRoutePlannerInitial(sessionId, buildScheduleRoutePlannerInitial({
+            origin: nextOrigin,
+            destination: nextDestination,
             travelMode,
             travelMinutes,
             route,
-            locationName: normalizedDestinationName || undefined,
-        });
+            locationName: nextOrigin?.name && nextDestination?.name
+                ? `${nextOrigin.name} → ${nextDestination.name}`
+                : nextDestination?.name ?? nextOrigin?.name,
+            targetArrivalAt: allDay
+                ? startOfLocalScheduleDay(startDay)
+                : mergeDateTime(startDay, startTime),
+        }));
 
         setRoutePlannerSessionId(sessionId);
         router.push({ pathname: "/schedule/route-select", params: { sessionId } });
@@ -311,13 +485,21 @@ export default function ScheduleEdit() {
         destinationLat,
         destinationLng,
         destinationText,
+        allDay,
+        originAddress,
+        originLat,
+        originLng,
+        originText,
         router,
+        startDay,
+        startTime,
         travelMinutes,
         travelMode,
         route,
     ]);
 
     const clearRoute = useCallback(() => {
+        markFormDirty();
         setOriginText("");
         setDestinationText("");
         setOriginAddress(undefined);
@@ -329,7 +511,7 @@ export default function ScheduleEdit() {
         setTravelMinutes(undefined);
         setRoute(undefined);
         setNotificationEnabled(false);
-    }, []);
+    }, [markFormDirty]);
 
     useEffect(() => {
         if (
@@ -338,8 +520,10 @@ export default function ScheduleEdit() {
             pathname === "/schedule/route-planner"
         ) return;
         const result = consumeRoutePlannerResult(routePlannerSessionId);
+        setRoutePlannerSessionId(undefined);
         if (!result) return;
 
+        markFormDirty();
         setOriginText(result.origin?.name ?? "");
         setOriginAddress(result.origin?.address);
         setOriginLat(result.origin?.lat);
@@ -351,8 +535,7 @@ export default function ScheduleEdit() {
         setTravelMode(result.travelMode);
         setTravelMinutes(result.travelMinutes);
         setRoute(result.route);
-        setRoutePlannerSessionId(undefined);
-    }, [pathname, routePlannerSessionId]);
+    }, [markFormDirty, pathname, routePlannerSessionId]);
 
     if (!item) {
         if (detailLoading) {
@@ -373,19 +556,29 @@ export default function ScheduleEdit() {
         return (
             <View style={{ flex: 1, backgroundColor: colors.background, padding: 20, paddingTop: insets.top + 16 }}>
                 <Text style={{ fontSize: 16, fontWeight: "700", color: colors.textPrimary }}>
-                    일정을 찾을 수 없어요.
+                    {detailError ?? "일정을 찾을 수 없어요."}
                 </Text>
+                <View style={{ flexDirection: "row", gap: 16, marginTop: 16 }}>
+                    <Pressable accessibilityRole="button" onPress={requestCloseEditScreen}>
+                        <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>돌아가기</Text>
+                    </Pressable>
+                    <Pressable accessibilityRole="button" onPress={() => setRetryKey((value) => value + 1)}>
+                        <Text style={{ color: colors.selectedDayBg, fontWeight: "900" }}>다시 시도</Text>
+                    </Pressable>
+                </View>
             </View>
         );
     }
 
     // 캘린더에서 선택한 날짜를 시작/종료 날짜에 반영한다.
     const onDayPress = (day: { dateString: string }) => {
+        markFormDirty();
         const selected = new Date(`${day.dateString}T00:00:00`);
         if (picker === "startDate") {
             setStartDay(selected);
+            if (selected.getTime() > endDay.getTime()) setEndDay(selected);
         } else if (picker === "endDate") {
-            setHasEndTime(true);
+            if (!allDay) setHasEndTime(true);
             setEndDay(selected);
             if (selected.getTime() < startDay.getTime()) setStartDay(selected);
         }
@@ -395,6 +588,7 @@ export default function ScheduleEdit() {
     const onTimeChange = (event: DateTimePickerEvent, selected?: Date) => {
         if (Platform.OS === "android" && event.type === "dismissed") { setPicker(null); return; }
         if (!selected) return;
+        markFormDirty();
         if (picker === "startTime") setStartTime(selected);
         else if (picker === "endTime") {
             setHasEndTime(true);
@@ -406,56 +600,64 @@ export default function ScheduleEdit() {
     // 수정된 입력값을 백엔드에 저장한 뒤 일정 저장소에 반영한다.
     const save = async () => {
         const t = title.trim();
-        if (!t || !category) return;
+        if (!t || !category || mutationPending || mutationPendingRef.current) return;
 
-        const s = mergeDateTime(startDay, startTime);
-        let e = hasEndTime ? mergeDateTime(endDay, endTime) : new Date(s);
-        if (hasEndTime && e.getTime() < s.getTime()) {
-            e = new Date(s);
-            e.setMinutes(e.getMinutes() + 30);
-        }
-        const hasDistinctEndTime = e.getTime() !== s.getTime();
-        const normalizedOriginName = originText.trim();
-        const normalizedDestinationName = destinationText.trim();
-        const locationName = normalizedOriginName && normalizedDestinationName
-            ? `${normalizedOriginName} → ${normalizedDestinationName}`
-            : normalizedDestinationName || normalizedOriginName || undefined;
+        const normalizedRange = normalizeScheduleFormRange({
+            startDay,
+            startTime,
+            endDay,
+            endTime,
+            allDay,
+            hasEndTime,
+        });
+        const nextOrigin = buildScheduleFormPlace({
+            name: originText,
+            address: originAddress,
+            lat: originLat,
+            lng: originLng,
+        });
+        const nextDestination = buildScheduleFormPlace({
+            name: destinationText,
+            address: destinationAddress,
+            lat: destinationLat,
+            lng: destinationLng,
+        });
+        const locationName = buildScheduleFormLocationName(nextOrigin, nextDestination);
 
         try {
-            setDetailLoading(true);
+            mutationPendingRef.current = true;
+            setMutationPending(true);
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
-                startAt: s.toISOString(),
-                endAt: e.toISOString(),
-                hasEndTime: hasDistinctEndTime,
+                startAt: normalizedRange.startAt.toISOString(),
+                endAt: normalizedRange.endAt.toISOString(),
+                hasEndTime: normalizedRange.hasEndTime,
                 travelMode,
                 travelMinutes,
                 locationName,
-                destination: normalizedDestinationName
-                    ? { name: normalizedDestinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng }
-                    : undefined,
-                origin: normalizedOriginName
-                    ? { name: normalizedOriginName, address: originAddress, lat: originLat, lng: originLng }
-                    : undefined,
-                notes: item.notes,
-                allDay: item.allDay,
+                destination: nextDestination,
+                origin: nextOrigin,
+                notes: notes.trim() || undefined,
+                allDay: normalizedRange.allDay,
                 route,
                 notificationEnabled,
                 notificationLeadMinutes: notificationEnabled ? notificationLeadMinutes : undefined,
                 notificationIntervalMinutes: notificationEnabled ? notificationIntervalMinutes : undefined,
             });
             dispatch({ type: "UPDATE_ITEM", item: updated });
-            router.setParams({ mode: undefined });
+            closeEditScreen();
         } catch (error) {
             Alert.alert("일정 수정 실패", getErrorMessage(error));
         } finally {
-            setDetailLoading(false);
+            mutationPendingRef.current = false;
+            setMutationPending(false);
         }
     };
 
     // 현재 일정을 삭제하고 이전 화면으로 돌아간다.
     const remove = () => {
+        if (mutationPending || mutationPendingRef.current) return;
         Alert.alert("삭제", "이 일정을 삭제할까요?", [
             { text: "취소", style: "cancel" },
             {
@@ -463,8 +665,12 @@ export default function ScheduleEdit() {
                 style: "destructive",
                 onPress: async () => {
                     try {
-                        setDetailLoading(true);
+                        if (mutationPendingRef.current) return;
+                        mutationPendingRef.current = true;
+                        setMutationPending(true);
                         await deleteSchedule(item.id);
+                        discardChanges();
+                        allowNavigationRef.current = true;
                         router.replace("/schedule");
                         setTimeout(() => {
                             dispatch({ type: "DELETE_ITEM", id: item.id });
@@ -472,7 +678,8 @@ export default function ScheduleEdit() {
                     } catch (error) {
                         Alert.alert("일정 삭제 실패", getErrorMessage(error));
                     } finally {
-                        setDetailLoading(false);
+                        mutationPendingRef.current = false;
+                        setMutationPending(false);
                     }
                 },
             },
@@ -497,7 +704,8 @@ export default function ScheduleEdit() {
     const isDisplayDate = displayPicker === "startDate" || displayPicker === "endDate";
     const isDisplayTime = displayPicker === "startTime" || displayPicker === "endTime";
     const calendarSelected = isDisplayDate
-        ? ymdText(displayPicker === "startDate" ? startDay : endDay) : "";
+        ? getScheduleCalendarDateKey(displayPicker === "startDate" ? startDay : endDay)
+        : "";
     const fieldStyle = (type: PickerType) => ({
         borderWidth: 1,
         borderRadius: 16,
@@ -522,7 +730,9 @@ export default function ScheduleEdit() {
             <View style={styles.headerRow}>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 수정</Text>
                 <Pressable
-                    onPress={() => router.setParams({ mode: undefined })}
+                    accessibilityRole="button"
+                    accessibilityLabel="일정 수정 닫기"
+                    onPress={requestCloseEditScreen}
                     style={[
                         styles.closeBtn,
                         {
@@ -537,6 +747,13 @@ export default function ScheduleEdit() {
                 </Pressable>
             </View>
 
+            {categoryError ? (
+                <CategoryLoadErrorBanner
+                    retrying={categoryLoading}
+                    onRetry={retryCategoryLoad}
+                />
+            ) : null}
+
             <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
             <View
                 style={[
@@ -549,12 +766,20 @@ export default function ScheduleEdit() {
             >
                 <TextInput
                     value={title}
-                    onChangeText={setTitle}
+                    onChangeText={(value) => {
+                        markFormDirty();
+                        setTitle(value);
+                    }}
+                    accessibilityLabel="일정 제목"
+                    maxLength={120}
                     placeholder="예) 회의"
                     placeholderTextColor={colors.inputPlaceholder}
                     style={[styles.titleInput, { color: colors.textPrimary }]}
                 />
                 <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`카테고리 선택, 현재 ${category?.title ?? "없음"}`}
+                    accessibilityState={{ expanded: categoryPickerOpen, disabled: categoryOptions.length === 0 }}
                     onPress={() => setCategoryPickerOpen((current) => !current)}
                     disabled={categoryOptions.length === 0}
                     style={[styles.categoryInlineChip, { borderColor: colors.border }]}
@@ -571,6 +796,7 @@ export default function ScheduleEdit() {
                     categories={categoryOptions}
                     value={categoryId}
                     onChange={(nextCategoryId) => {
+                        markFormDirty();
                         setCategoryId(nextCategoryId);
                         setCategoryPickerOpen(false);
                     }}
@@ -595,43 +821,123 @@ export default function ScheduleEdit() {
                     leadMinutes={notificationLeadMinutes}
                     intervalMinutes={notificationIntervalMinutes}
                     routeInfo={routeInfo}
-                    startAt={mergeDateTime(startDay, startTime)}
+                    startAt={allDay
+                        ? startOfLocalScheduleDay(startDay)
+                        : mergeDateTime(startDay, startTime)}
                     policy={subscriptionPolicy}
-                    onEnabledChange={setNotificationEnabled}
-                    onLeadMinutesChange={setNotificationLeadMinutes}
-                    onIntervalMinutesChange={setNotificationIntervalMinutes}
+                    onEnabledChange={(value) => { markFormDirty(); setNotificationEnabled(value); }}
+                    onLeadMinutesChange={(value) => { markFormDirty(); setNotificationLeadMinutes(value); }}
+                    onIntervalMinutesChange={(value) => { markFormDirty(); setNotificationIntervalMinutes(value); }}
                 />
             )}
+
+            <View
+                style={[
+                    styles.endTimeToggleRow,
+                    {
+                        borderColor: colors.inputBorder,
+                        backgroundColor: colors.inputBackground,
+                    },
+                ]}
+            >
+                <View style={styles.endTimeToggleCopy}>
+                    <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종일</Text>
+                    <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>시간 없이 날짜로만 일정을 표시해요.</Text>
+                </View>
+                <Switch
+                    accessibilityLabel="종일 일정"
+                    value={allDay}
+                    onValueChange={handleAllDayChange}
+                    trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                    thumbColor="#FFFFFF"
+                />
+            </View>
 
             <View style={styles.twoColRow}>
                 <View style={styles.col}>
                     <Text style={[styles.label, { color: colors.textSecondary }]}>시작 날짜</Text>
-                    <Pressable onPress={() => togglePicker("startDate")} style={fieldStyle("startDate")}>
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{ymdText(startDay)}</Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
+                        accessibilityState={{ expanded: picker === "startDate" }}
+                        onPress={() => togglePicker("startDate")}
+                        style={fieldStyle("startDate")}
+                    >
+                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(startDay)}</Text>
                     </Pressable>
                 </View>
                 <View style={styles.col}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>시작 시간</Text>
-                    <Pressable onPress={() => togglePicker("startTime")} style={fieldStyle("startTime")}>
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(startTime)}</Text>
+                    <Text style={[styles.label, { color: colors.textSecondary }]}>
+                        {allDay ? "마지막 날" : "시작 시간"}
+                    </Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={allDay
+                            ? `마지막 날 ${formatScheduleFormDate(endDay)}`
+                            : `시작 시간 ${hhmmText(startTime)}`}
+                        accessibilityState={{ expanded: picker === (allDay ? "endDate" : "startTime") }}
+                        onPress={() => togglePicker(allDay ? "endDate" : "startTime")}
+                        style={fieldStyle(allDay ? "endDate" : "startTime")}
+                    >
+                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>
+                            {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
+                        </Text>
                     </Pressable>
                 </View>
             </View>
 
-            <View style={styles.twoColRow}>
-                <View style={styles.col}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
-                    <Pressable onPress={() => togglePicker("endDate")} style={fieldStyle("endDate")}>
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{ymdText(endDay)}</Text>
-                    </Pressable>
+            {!allDay ? (
+                <View
+                    style={[
+                        styles.endTimeToggleRow,
+                        {
+                            borderColor: colors.inputBorder,
+                            backgroundColor: colors.inputBackground,
+                        },
+                    ]}
+                >
+                    <View style={styles.endTimeToggleCopy}>
+                        <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종료 시각 설정</Text>
+                        <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>끄면 시작 시각만 일정에 표시돼요.</Text>
+                    </View>
+                    <Switch
+                        accessibilityLabel="종료 시각 설정"
+                        value={hasEndTime}
+                        onValueChange={handleEndTimeEnabledChange}
+                        trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                        thumbColor="#FFFFFF"
+                    />
                 </View>
-                <View style={styles.col}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>종료 시간</Text>
-                    <Pressable onPress={() => togglePicker("endTime")} style={fieldStyle("endTime")}>
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
-                    </Pressable>
+            ) : null}
+
+            {!allDay && hasEndTime ? (
+                <View style={styles.twoColRow}>
+                    <View style={styles.col}>
+                        <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
+                            accessibilityState={{ expanded: picker === "endDate" }}
+                            onPress={() => togglePicker("endDate")}
+                            style={fieldStyle("endDate")}
+                        >
+                            <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(endDay)}</Text>
+                        </Pressable>
+                    </View>
+                    <View style={styles.col}>
+                        <Text style={[styles.label, { color: colors.textSecondary }]}>종료 시간</Text>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`종료 시간 ${hhmmText(endTime)}`}
+                            accessibilityState={{ expanded: picker === "endTime" }}
+                            onPress={() => togglePicker("endTime")}
+                            style={fieldStyle("endTime")}
+                        >
+                            <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
+                        </Pressable>
+                    </View>
                 </View>
-            </View>
+            ) : null}
 
             <Animated.View style={[styles.pickerContainer, {
                 borderColor:  colors.inputBorder,
@@ -669,9 +975,35 @@ export default function ScheduleEdit() {
                 </Animated.View>
             </Animated.View>
 
+            <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
+            <TextInput
+                value={notes}
+                onChangeText={(value) => {
+                    markFormDirty();
+                    setNotes(value);
+                }}
+                accessibilityLabel="일정 메모"
+                multiline
+                maxLength={2000}
+                placeholder="추가로 기억할 내용을 입력하세요"
+                placeholderTextColor={colors.inputPlaceholder}
+                style={[
+                    styles.input,
+                    styles.notesInput,
+                    {
+                        borderColor: colors.inputBorder,
+                        backgroundColor: colors.inputBackground,
+                        color: colors.textPrimary,
+                    },
+                ]}
+            />
+
             <View style={styles.composerActionRow}>
                 <Pressable
-                    disabled={detailLoading}
+                    accessibilityRole="button"
+                    accessibilityLabel="일정 수정 저장"
+                    accessibilityState={{ disabled: detailLoading || mutationPending || !title.trim() || !category, busy: mutationPending }}
+                    disabled={detailLoading || mutationPending || !title.trim() || !category}
                     onPress={save}
                     style={[
                             styles.saveBtn,
@@ -680,16 +1012,20 @@ export default function ScheduleEdit() {
                                     ? "#1E68FF"
                                     : "#2979FF",
                                 borderColor: mode === "dark" ? "#4B9DFF" : "#1E68FF",
-                                opacity: detailLoading ? 0.6 : 1,
+                                opacity: detailLoading || mutationPending || !title.trim() || !category ? 0.45 : 1,
                             },
                         ]}
                     >
                     <Text style={[styles.saveBtnText, { color: "#FFFFFF" }]}>
-                        {detailLoading ? "저장 중" : "저장"}
+                        {mutationPending ? "저장 중" : "저장"}
                     </Text>
                 </Pressable>
 
                 <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="일정 삭제"
+                    accessibilityState={{ disabled: detailLoading || mutationPending, busy: mutationPending }}
+                    disabled={detailLoading || mutationPending}
                     onPress={remove}
                     style={[
                         styles.deleteBtn,
@@ -782,8 +1118,37 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     label:        { marginBottom: 6, fontSize: 13 },
+    endTimeToggleRow: {
+        minHeight: 58,
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingHorizontal: 13,
+        marginBottom: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    endTimeToggleCopy: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: 9,
+    },
+    endTimeToggleTitle: {
+        fontSize: 13,
+        fontWeight: "800",
+    },
+    endTimeToggleHint: {
+        marginTop: 2,
+        fontSize: 11,
+        fontWeight: "600",
+    },
     input: {
         borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 14,
+    },
+    notesInput: {
+        minHeight: 88,
+        textAlignVertical: "top",
     },
     titleInputWrap: {
         minHeight: 44,

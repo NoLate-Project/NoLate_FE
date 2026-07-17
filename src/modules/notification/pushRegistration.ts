@@ -16,11 +16,25 @@ import {
 } from "@react-native-firebase/messaging";
 
 import { registerPushToken } from "../../api/notification";
+import {
+    cancelPendingPushRegistration,
+    isPushRegistrationGenerationCurrent,
+    runPushRegistration,
+} from "./pushRegistrationCoordinator";
 
 const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
 const APNS_TOKEN_RETRY_COUNT = 30;
 const APNS_TOKEN_RETRY_DELAY_MS = 500;
+
+function logPushDevelopment(message: string, error?: unknown): void {
+    if (!__DEV__) return;
+    if (error === undefined) {
+        console.info(message);
+        return;
+    }
+    console.warn(message, error);
+}
 
 async function getOrCreateDeviceId(): Promise<string> {
     const existing = await SecureStore.getItemAsync(PUSH_DEVICE_ID_KEY);
@@ -88,13 +102,20 @@ async function refreshFcmTokenIfNativeContextChanged(
 
     try {
         await deleteToken(messaging);
-        console.info("[push] refreshed cached FCM token for native push context");
+        logPushDevelopment("[push] refreshed cached FCM token for native push context");
     } catch (error) {
-        console.warn("[push] cached FCM token refresh failed; continuing with current token", error);
+        logPushDevelopment("[push] cached FCM token refresh failed; continuing with current token", error);
     }
 }
 
-export async function registerPushAfterLogin(memberId?: number): Promise<void> {
+export function registerPushAfterLogin(memberId?: number): Promise<void> {
+    if (!memberId) return Promise.resolve();
+    return runPushRegistration(memberId, (generation) => (
+        performPushRegistration(memberId, generation)
+    ));
+}
+
+async function performPushRegistration(memberId: number, generation: number): Promise<void> {
     if (!memberId) return;
     if (Platform.OS === "ios" && !Constants.isDevice) return;
 
@@ -116,10 +137,12 @@ export async function registerPushAfterLogin(memberId?: number): Promise<void> {
     }
 
     if (!allowed) return;
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
 
     if (!isDeviceRegisteredForRemoteMessages(messaging)) {
         await registerDeviceForRemoteMessages(messaging);
     }
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
 
     if (Platform.OS === "ios") {
         // FCM iOS 토큰은 APNs 토큰과 연결된 뒤에만 서버에서 실제 발송할 수 있다.
@@ -127,11 +150,16 @@ export async function registerPushAfterLogin(memberId?: number): Promise<void> {
         apnsTokenType = getApnsTokenType();
         await setAPNSToken(messaging, apnsToken, apnsTokenType);
     }
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
 
     const nativeContext = createNativePushContext(apnsToken, apnsTokenType);
     await refreshFcmTokenIfNativeContextChanged(messaging, nativeContext);
 
-    await registerToken(memberId, await getToken(messaging));
+    const token = await getToken(messaging);
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
+
+    await registerToken(memberId, token);
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
     await SecureStore.setItemAsync(PUSH_NATIVE_CONTEXT_KEY, nativeContext);
 }
 
@@ -140,7 +168,21 @@ export function subscribePushTokenRefresh(memberId?: number): () => void {
 
     return onTokenRefresh(getMessaging(), (token) => {
         registerToken(memberId, token).catch((error) => {
-            console.warn("[push] refreshed token registration failed", error);
+            logPushDevelopment("[push] refreshed token registration failed", error);
         });
     });
+}
+
+export async function clearPushRegistrationAfterLogout(): Promise<void> {
+    cancelPendingPushRegistration();
+    await SecureStore.deleteItemAsync(PUSH_NATIVE_CONTEXT_KEY);
+    if (Platform.OS === "ios" && !Constants.isDevice) return;
+
+    try {
+        await deleteToken(getMessaging());
+    } catch (error) {
+        // Server-side logout revokes the member's registered devices. Local token
+        // deletion is defense in depth and must never prevent local account cleanup.
+        logPushDevelopment("[push] local token cleanup failed", error);
+    }
 }

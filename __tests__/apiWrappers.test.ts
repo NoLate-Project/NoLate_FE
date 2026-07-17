@@ -18,6 +18,7 @@ import {
     getDailySchedules,
     getDepartureReadySchedules,
     getUpcomingSchedules,
+    importCalendarSchedule,
     markScheduleDeparted,
     searchSchedules,
 } from "../src/api/schedule";
@@ -42,6 +43,10 @@ import {
     getShareOutbox,
     getCategoryShareInvitations,
     getScheduleShareInvitations,
+    revokeCategoryShare,
+    revokeCategoryShareInvitation,
+    revokeScheduleShare,
+    revokeScheduleShareInvitation,
 } from "../src/api/scheduleSharing";
 
 jest.mock("../src/api/api", () => ({
@@ -107,13 +112,11 @@ describe("member api wrappers", () => {
             .mockResolvedValueOnce({ success: true, data: { id: 3, isNewMember: true } });
 
         await signUpMember({ name: "user", email: "user@test.com", password: "password1!", consents });
-        await expect(getSnsRegistrationStatus({ loginType: "KAKAO", snsId: "kakao-1" }))
+        await expect(getSnsRegistrationStatus({ loginType: "KAKAO", providerToken: "kakao-proof" }))
             .resolves.toEqual({ registered: false });
         await snsSignUpMember({
             loginType: "KAKAO",
-            snsId: "kakao-1",
-            name: "user",
-            email: "user@test.com",
+            providerToken: "kakao-proof",
             consents,
         });
 
@@ -125,13 +128,11 @@ describe("member api wrappers", () => {
         });
         expect(mockedApiPost).toHaveBeenNthCalledWith(2, "/api/member/auth/sns-registration", {
             loginType: "KAKAO",
-            snsId: "kakao-1",
+            providerToken: "kakao-proof",
         });
         expect(mockedApiPost).toHaveBeenNthCalledWith(3, "/api/member/auth/sns-sign-up", {
             loginType: "KAKAO",
-            snsId: "kakao-1",
-            name: "user",
-            email: "user@test.com",
+            providerToken: "kakao-proof",
             consents,
         });
     });
@@ -227,6 +228,59 @@ describe("schedule query api wrappers", () => {
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
     });
+
+    test("calendar import posts the external occurrence identity and returns created state", async () => {
+        const payload = {
+            title: "Team sync",
+            startAt: "2026-07-01T01:00:00Z",
+            endAt: "2026-07-01T02:00:00Z",
+            category: { id: "1", title: "Work", color: "#f44336" },
+            route: { id: "route-calculated-for-retry" },
+        };
+        const source = {
+            provider: "GOOGLE" as const,
+            calendarId: "google:primary",
+            eventId: "event-10",
+            occurrenceStartAt: "2026-07-01T01:00:00Z",
+        };
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: { schedule: scheduleDto, created: false },
+        });
+
+        const result = await importCalendarSchedule(payload, source);
+        expect(result).toMatchObject({
+            item: { id: "10" },
+            created: false,
+        });
+        expect(result.item.route).toBeUndefined();
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/import", {
+            schedule: payload,
+            source,
+        });
+    });
+
+    test("keeps member-specific share permission metadata from schedule responses", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: [{
+                ...scheduleDto,
+                sharePermission: "EDITOR",
+                category: {
+                    ...scheduleDto.category,
+                    shared: true,
+                    sharePermission: "EDITOR",
+                },
+            }],
+        });
+
+        await expect(getDailySchedules("2026-07-01")).resolves.toMatchObject([{
+            id: "10",
+            sharePermission: "EDITOR",
+            category: { shared: true, sharePermission: "EDITOR" },
+        }]);
+    });
 });
 
 describe("schedule category api wrappers", () => {
@@ -281,6 +335,21 @@ describe("schedule category api wrappers", () => {
             title: "운동 수정",
             sortOrder: 1,
         });
+    });
+
+    test("keeps VIEWER and EDITOR metadata for received categories", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: [
+                { id: 7, title: "보기 공유", color: "#007aff", shared: true, sharePermission: "VIEWER" },
+                { id: 8, title: "편집 공유", color: "#34c759", shared: true, sharePermission: "EDITOR" },
+            ],
+        });
+
+        await expect(getScheduleCategoriesFromApi()).resolves.toMatchObject([
+            { id: "7", shared: true, sharePermission: "VIEWER" },
+            { id: "8", shared: true, sharePermission: "EDITOR" },
+        ]);
     });
 
     test("delete wrapper accepts an empty success envelope", async () => {
@@ -470,5 +539,25 @@ describe("schedule sharing api wrappers", () => {
         });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/share-invitations/token%2Fwith%20space/accept");
+    });
+
+    test("invitation revoke wrappers call their resource endpoints", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(revokeScheduleShareInvitation("10", "50")).resolves.toBeUndefined();
+        await expect(revokeCategoryShareInvitation("3", "51")).resolves.toBeUndefined();
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedules/10/shares/invitations/50");
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations/51");
+    });
+
+    test("direct share revoke wrappers call their resource endpoints", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(revokeScheduleShare("10", "60")).resolves.toBeUndefined();
+        await expect(revokeCategoryShare("3", "61")).resolves.toBeUndefined();
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedules/10/shares/60");
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3/shares/61");
     });
 });

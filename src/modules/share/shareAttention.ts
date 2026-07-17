@@ -130,3 +130,7 @@ export async function markShareInboxSeen(inbox: ShareInbox): Promise<void> {
 
     await SecureStore.setItemAsync(SHARE_ATTENTION_SEEN_KEY, JSON.stringify(nextKeys));
 }
+
+export async function clearSeenShareAttention(): Promise<void> {
+    await SecureStore.deleteItemAsync(SHARE_ATTENTION_SEEN_KEY);
+}

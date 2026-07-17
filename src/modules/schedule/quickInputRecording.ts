@@ -14,7 +14,7 @@ export async function finalizeQuickScheduleRecording(
 
     const uri = recording.getURI()?.trim();
     if (!uri) {
-        throw new Error("녹음 파일을 저장하지 못했습니다. 다시 녹음해주세요.");
+        throw new Error("녹음 파일을 저장하지 못했습니다. 다시 녹음해 주세요.");
     }
 
     return uri;

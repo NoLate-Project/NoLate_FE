@@ -1,8 +1,9 @@
 {
   "name": "NoLate",
   "icon": "./assets/icon.png",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "scheme": "nolate",
+  "orientation": "portrait",
   "userInterfaceStyle": "automatic",
   "plugins": [
     "expo-router",
@@ -34,7 +35,7 @@
       "expo-build-properties",
       {
         "android": {
-          "usesCleartextTraffic": true,
+          "usesCleartextTraffic": false,
           "extraMavenRepos": [
             "https://devrepo.kakao.com/nexus/content/groups/public/"
           ]
@@ -54,17 +55,19 @@
   "android": {
     "package": "com.anonymous.nolate_fe",
     "googleServicesFile": "./google-services.json",
-    "permissions": [
-      "ACCESS_COARSE_LOCATION",
-      "ACCESS_FINE_LOCATION",
-      "READ_CALENDAR",
-      "WRITE_CALENDAR",
-      "RECORD_AUDIO"
-    ]
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "READ_CALENDAR"
+      ],
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "37",
+    "buildNumber": "38",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)",
@@ -78,8 +81,8 @@
       "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",
       "NSCalendarsUsageDescription": "NoLate에서 캘린더 일정을 가져와 출발 알림을 준비하기 위해 캘린더 접근 권한이 필요합니다.",
       "NSCalendarsFullAccessUsageDescription": "NoLate에서 선택한 캘린더 일정을 가져와 출발 알림을 준비하기 위해 전체 캘린더 접근 권한이 필요합니다.",
-      "NSRemindersUsageDescription": "NoLate에서 리마인더 일정을 확인해 출발 알림 후보를 준비하기 위해 리마인더 접근 권한이 필요합니다.",
-      "NSRemindersFullAccessUsageDescription": "NoLate에서 리마인더 일정을 확인해 출발 알림 후보를 준비하기 위해 전체 리마인더 접근 권한이 필요합니다.",
+      "NSRemindersUsageDescription": "NoLate의 캘린더 연동 기능을 제공하기 위해 미리 알림 접근 권한 설명이 필요합니다.",
+      "NSRemindersFullAccessUsageDescription": "NoLate의 캘린더 연동 기능을 제공하기 위해 미리 알림 전체 접근 권한 설명이 필요합니다.",
       "NSCameraUsageDescription": "NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.",
       "NSPhotoLibraryUsageDescription": "NoLate에서 사진 속 일정 정보를 불러오기 위해 사진 보관함 권한이 필요합니다.",
       "NSMicrophoneUsageDescription": "NoLate에서 음성으로 빠른 일정을 만들기 위해 마이크 권한이 필요합니다.",
@@ -95,9 +98,7 @@
         "remote-notification"
       ],
       "NSAppTransportSecurity": {
-        "NSAllowsArbitraryLoads": true,
-        "NSAllowsLocalNetworking": true,
-        "NSAllowsArbitraryLoadsInWebContent": true
+        "NSAllowsLocalNetworking": true
       }
     }
   }

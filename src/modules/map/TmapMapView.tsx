@@ -7,8 +7,20 @@ import React, {
     useRef,
     useState,
 } from "react";
-import { StyleProp, StyleSheet, Text, View, ViewStyle } from "react-native";
+import {
+    ActivityIndicator,
+    Pressable,
+    StyleProp,
+    StyleSheet,
+    Text,
+    View,
+    ViewStyle,
+} from "react-native";
 import { getEnv } from "../../api/env";
+import {
+    expandNativeDashPathOverlays,
+    type NativeDashViewport,
+} from "./nativeDashPathPresentation";
 import { ROUTE_MAP_TILE_FILTERS } from "./routeMapPresentation";
 
 export type TmapLatLng = {
@@ -132,6 +144,11 @@ export type TmapCameraState = {
 
 type TmapMapViewProps = {
     style?: StyleProp<ViewStyle>;
+    /**
+     * 전체 화면 지도처럼 하단 시트가 지도를 가리는 화면에서 오류 카드를
+     * 안전한 위치로 올릴 때 사용한다. 미리보기 지도는 기본 하단 여백을 쓴다.
+     */
+    errorOverlayTop?: number;
     camera: {
         latitude: number;
         longitude: number;
@@ -139,6 +156,7 @@ type TmapMapViewProps = {
     };
     markers?: TmapMarker[];
     pathOverlays?: TmapPathOverlay[];
+    pathOverlayZoom?: number;
     pathCoords?: TmapLatLng[];
     pathColor?: string;
     pathWidth?: number;
@@ -170,15 +188,235 @@ const tmapWebviewModule = (() => {
 })();
 
 const WebView = tmapWebviewModule?.WebView as any;
+const MAP_INITIALIZATION_TIMEOUT_MS = 15_000;
+const MAP_LOAD_ERROR_MESSAGE = "지도를 불러오지 못했습니다. 네트워크 연결을 확인하고 다시 시도해 주세요.";
+
+/**
+ * 지도 SDK가 준비되기 전 경로 state가 여러 번 바뀌면 오래된 setData 명령을 전부
+ * 재생할 필요가 없다. 마지막 화면 데이터만 남겨 초기화 직후의 긴 멈춤과 깜빡임을 막는다.
+ * fitBounds/zoom 같은 사용자 카메라 명령은 순서가 의미 있으므로 그대로 보존한다.
+ */
+export function enqueueTmapCommand(
+    queue: string[],
+    command: Record<string, unknown>
+): string[] {
+    const serialized = JSON.stringify(command);
+    if (command.type !== "setData") return [...queue, serialized];
+
+    return [
+        ...queue.filter((queued) => !queued.startsWith('{"type":"setData"')),
+        serialized,
+    ];
+}
 
 function safeNumber(value: unknown): number | undefined {
     const numberValue = typeof value === "string" ? Number(value) : (value as number);
     return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
+/**
+ * TMAP SDK가 native direction을 지원하지 않는 실행 환경에서도 방향 정보가 사라지지 않게
+ * 기존 화면 좌표 arrow renderer에 화살표 전용 overlay를 넘긴다. 본선은 native Polyline이
+ * 계속 소유하고, fallback은 drawLine=false라 동일 선을 두 번 그리지 않는다.
+ */
+export function addNativeDirectionScreenFallbacks(
+    overlays: TmapPathOverlay[],
+    nativeDirectionUsable: boolean | undefined
+): TmapPathOverlay[] {
+    if (nativeDirectionUsable !== false) return overlays;
+
+    const fallbacks = overlays
+        .filter((overlay) => (
+            overlay.renderMode !== "screen" &&
+            overlay.nativeDirection === true &&
+            (overlay.strokeStyle ?? "solid") === "solid" &&
+            overlay.coords.length >= 2
+        ))
+        .map<TmapPathOverlay>((overlay) => ({
+            id: `${overlay.id}--screen-direction-fallback`,
+            coords: overlay.coords,
+            renderMode: "screen",
+            shape: "solid",
+            drawLine: false,
+            showDirection: true,
+            nativeDirection: false,
+            directionColor: overlay.nativeDirectionColor ?? "#FFFFFF",
+            directionOpacity: overlay.nativeDirectionOpacity ?? 0.9,
+            directionSpacingPx: overlay.directionSpacingPx ?? 26,
+            directionSizePx: overlay.directionSizePx ?? 6.4,
+            directionInsetPx: overlay.directionInsetPx ?? 13,
+            directionMaxCount: overlay.directionMaxCount ?? 120,
+            zIndex: (overlay.zIndex ?? 0) + 2,
+        }));
+
+    return fallbacks.length > 0 ? [...overlays, ...fallbacks] : overlays;
+}
+
+// SDK 기능 판정은 Release에서도 RN에 전달해야 screen-space 방향표시 fallback을 선택할 수 있다.
+// 실제 WebView에 삽입하는 동일한 조각을 테스트에서 실행해 개발 모드 조건이 다시 섞이지 않게 한다.
+export const TMAP_NATIVE_DIRECTION_REPORT_SCRIPT = String.raw`
+        post("tmapNativeDirectionReport", nativeDirectionReport);
+`;
+
+export type TmapNativeDirectionCapability = {
+    confirmed: boolean;
+    supportsDirection: boolean;
+    supportsDirectionColor: boolean;
+    supportsDirectionOpacity: boolean;
+};
+
+type TmapNativeDirectionProbeLine = {
+    _shape_data?: {
+        drawInfo?: {
+            direction?: unknown;
+            directionColor?: unknown;
+            directionOpacity?: unknown;
+        };
+    };
+};
+
+/** WebView probe와 동일한 fail-closed 판정을 테스트와 네이티브 코드에서 공유한다. */
+export function readTmapNativeDirectionCapability(
+    line: unknown
+): TmapNativeDirectionCapability {
+    const drawInfo = (line as TmapNativeDirectionProbeLine | null)?._shape_data?.drawInfo;
+    if (!drawInfo) {
+        return {
+            confirmed: false,
+            supportsDirection: false,
+            supportsDirectionColor: false,
+            supportsDirectionOpacity: false,
+        };
+    }
+    return {
+        confirmed: true,
+        supportsDirection: drawInfo.direction === true,
+        supportsDirectionColor: String(drawInfo.directionColor ?? "").toUpperCase() === "#FFFFFF",
+        supportsDirectionOpacity: Math.abs(Number(drawInfo.directionOpacity) - 0.001) < 0.000001,
+    };
+}
+
+// 실제 WebView에서 생성된 Polyline의 drawInfo가 옵션을 반영했는지 확인한다. SDK 내부 구조를
+// 읽을 수 없으면 지원된다고 추측하지 않고 screen-space fallback을 선택한다.
+export const TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT = String.raw`
+    function readTmapNativeDirectionCapability(line) {
+      var drawInfo = line && line._shape_data && line._shape_data.drawInfo;
+      if (!drawInfo) {
+        return {
+          confirmed: false,
+          supportsDirection: false,
+          supportsDirectionColor: false,
+          supportsDirectionOpacity: false,
+        };
+      }
+      return {
+        confirmed: true,
+        supportsDirection: drawInfo.direction === true,
+        supportsDirectionColor: String(drawInfo.directionColor || "").toUpperCase() === "#FFFFFF",
+        supportsDirectionOpacity: Math.abs(Number(drawInfo.directionOpacity) - 0.001) < 0.000001,
+      };
+    }
+`;
+
+// TMAP Polyline은 RGB hex와 별도 opacity를 받으므로 CSS 색상의 alpha를 분리한다.
+// 실제 WebView에 삽입되는 스크립트 자체를 테스트해 네이티브 렌더링과 테스트의 구현이 갈라지지 않게 한다.
+export const TMAP_NATIVE_STROKE_COLOR_SCRIPT = String.raw`
+    function normalizeNativeStrokeColor(value, fallback) {
+      function parseColor(input) {
+        if (input === undefined || input === null) return null;
+        var raw = String(input).trim();
+        if (!raw) return null;
+
+        if (raw.toLowerCase() === "transparent") {
+            return { color: "#000000", alpha: 0 };
+        }
+
+        var shortAlphaHexMatch = raw.match(/^#([0-9a-fA-F]{4})$/);
+        if (shortAlphaHexMatch) {
+            var shortAlphaHex = shortAlphaHexMatch[1];
+            return {
+                color: "#" + shortAlphaHex.charAt(0) + shortAlphaHex.charAt(0) +
+                    shortAlphaHex.charAt(1) + shortAlphaHex.charAt(1) +
+                    shortAlphaHex.charAt(2) + shortAlphaHex.charAt(2),
+                alpha: parseInt(shortAlphaHex.charAt(3) + shortAlphaHex.charAt(3), 16) / 255,
+            };
+        }
+
+        var alphaHexMatch = raw.match(/^#([0-9a-fA-F]{8})$/);
+        if (alphaHexMatch) {
+            var alphaHex = alphaHexMatch[1];
+            return {
+                color: "#" + alphaHex.slice(0, 6),
+                alpha: parseInt(alphaHex.slice(6, 8), 16) / 255,
+            };
+        }
+
+        if (/^#[0-9a-fA-F]{6}$/.test(raw)) return { color: raw, alpha: 1 };
+        if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
+            return {
+                color: "#" + raw.charAt(1) + raw.charAt(1) +
+                    raw.charAt(2) + raw.charAt(2) +
+                    raw.charAt(3) + raw.charAt(3),
+                alpha: 1,
+            };
+        }
+
+        var rgbMatch = raw.match(/^rgba?\(([^)]+)\)$/i);
+        if (rgbMatch) {
+            var parts = rgbMatch[1].split(",").map(function (part) { return String(part).trim(); });
+            if (parts.length === 3 || parts.length === 4) {
+                var channels = parts.slice(0, 3).map(function (part) { return Number(part); });
+                var alpha = 1;
+                if (parts.length === 4) {
+                    alpha = parts[3].slice(-1) === "%"
+                        ? Number(parts[3].slice(0, -1)) / 100
+                        : Number(parts[3]);
+                }
+                if (
+                    isFinite(channels[0]) &&
+                    isFinite(channels[1]) &&
+                    isFinite(channels[2]) &&
+                    isFinite(alpha)
+                ) {
+                    return {
+                        color: "#" + channels.map(function (channel) {
+                            var clamped = Math.max(0, Math.min(255, Math.round(channel)));
+                            return clamped.toString(16).padStart(2, "0");
+                        }).join(""),
+                        alpha: Math.max(0, Math.min(1, alpha)),
+                    };
+                }
+            }
+        }
+
+        return null;
+      }
+
+      return parseColor(value) || parseColor(fallback) || { color: "#1D72FF", alpha: 1 };
+    }
+
+    function resolveNativeStrokePaint(value, fallback, opacity, fallbackOpacity) {
+      var normalized = normalizeNativeStrokeColor(value, fallback);
+      var normalizedFallbackOpacity = Number(fallbackOpacity);
+      if (!isFinite(normalizedFallbackOpacity)) normalizedFallbackOpacity = 1;
+      normalizedFallbackOpacity = Math.max(0, Math.min(1, normalizedFallbackOpacity));
+
+      var requestedOpacity = Number(opacity);
+      if (!isFinite(requestedOpacity)) requestedOpacity = normalizedFallbackOpacity;
+      requestedOpacity = Math.max(0, Math.min(1, requestedOpacity));
+
+      return {
+        color: normalized.color,
+        alpha: normalized.alpha,
+        requestedOpacity: requestedOpacity,
+        opacity: requestedOpacity * normalized.alpha,
+      };
+    }
+`;
+
 const DEFAULT_FALLBACK_BACKGROUND = "#E5E7EB";
 const DEFAULT_FALLBACK_TEXT = "#6B7280";
-const TMAP_WEBVIEW_HTML_VERSION = "route-native-first-v38-transit-stop-labels";
+const TMAP_WEBVIEW_HTML_VERSION = "route-native-first-v40-direction-fallback";
 // WebView 내부 SVG <image>에서 안정적으로 렌더되도록 아이콘을 data URI로 고정한다.
 const BUS_BADGE_GLYPH_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAMAAADDpiTIAAAAA3NCSVQICAjb4U/gAAAACXBIWXMAAJv3AACb9wGlhj2oAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAAwBQTFRF////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACyO34QAAAP90Uk5TAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+6wjZNQAAE1pJREFUeNrtnQtwVdW5gFeSQx6QhEdCSE5AghUhvIwUTABBBKUCQrAqPqDVCldBW2tVBNSptLeW6nXaYltaqdXeojCO0gYIWAERBAIFawHBRJB3EiDhEQiPvE/Do06HMXD2e629vi/DwDBn7b3X/3/nX//e2WefCOE3ohPP0zIxISYqEAg0/Seqrqb6q5//+udXP5UVFXXC70Qofvwx51J9MeMXiLVz85UVxy/8XPjrNALIQGTbYDA9GAymtUpMjHZ1z7X/MeGcEkcO1iCAm7Q5n/VGUgNyHFCorKS4uLjxT8lpBHCMhItZDwZj5D3IigsiFJccRwDbSM7smtn1G8F4pcJ5pvhiUSgLIYDpJb5j13O5T1Z6aa3dX9hIUQUCGCG2c2Zj6q+N80+PfbBRgsLCUgS4YoN3/k3fKdKf59onis6Vgz31CPA1RPXMvj6za4rwP9U7zmmwowoBvqJDdnb2N5sLrWjYW1j46br92guQ0Kcx+WlCV0oKCgr+VaurAImDhg7pESl05+ymgoL1R3QTILb/0CF9AgIusmNdQUFhSBMBAn2GDukfS9Iv5fiGgnUbT/tdgIQRdwxPJNlNUb+loMCT1tAdAVJG3zE0hixfsTX8+5Llp/wnQKcxdwyg5QuTmtX5+bv9JEDaA/dkkVZjFOXnr6vzhQCB2ycMjyKhJqj4+ztLa1QXoMuE77YjlebPDd59e01IXQFajJ0wgCRaZP+8t7arKUDSEz9oSf7sYMtb80uUE6DdU5PjSZ1tVwgWzVqtlADpUx6OI232loFZ86tUESBj6ve44mM/5XNml6ogQMyz06LJliPUvverTdILcNNrXciUcyx4dof9G7XxGm3r1z8i/05y5/bZ9l9Yse9C3b1LBkaQJEeJ7Dsp5hObLxDalbPEt0aRIDco+8mcOgkFyMjvTm5cYtO4ndItAf1WZpAYt0h/qPxTyZrA+z9qS17co8WcvGSpBJjxNtd+3CX3s+ESLQEvzCAjbhM/rtlKWQTI/T1nfx4wqNUHcgiQuZT67wk5Ke/LIECrlWnkwhv6pi8JeS5A5IJsMuEVvTstDnktwINPkwfvuK7B+q0i1hq4ZjsySIOH1OZYviRk7TrABPLvKc3+33IHbmkJiHmPT/t5S0r0Ci8rwKT2pMBjnu7vYQ/QfDcf/PCcnd1rPasA95B/7+k83rsKsOZGO2cydYcmKUv/ra2b+6Jbg1fuhWwlR5f3bFd74xa606sl4HvUXymY5pEAUd8l9lLQ5xZvBBiWTuzlYLo3ArACyMKQG7wQIDGXyMvCRC8EuJUPAUrDXdEeCDCCuEtD69vcFyBiOHGXh/vdFyCLO8EkYlS86wKwAshE8zEIwBrgqgBtuBdUKm5NdlmAb/EAUKkI3OW2AMRcLka4LABPAZWMwQFXBWh3DSGXi4QcVwXoT8SlawNdFYAVAAFALm5o6aIAsb0JuGxE3eyiAH34VbBv1gBTArACIADIRueO7gnQj3BLyEDXBEhPJtoSku2aAD0ItpQnggigN1kxCKA10VkIwBrghgAR3Yi1f7pAEwJ0ak6sta4ArACS0rkNAuhNXxNjAtIIMChVkzQ597H67A9UFuAl3sFeVADjD4kKnOaXwZKyL8ONHuBa8i8rHRPcEIAeUF66uyEAXxCouQBUAHnpgQBUAKfPAmJP8blQaTkYdL4CZJJ/eUlr47wArAD+WgMQQPMuEAGoAFwG0LkCGD0LSDhJlCWmPMXpCsCTIaSmbQunBbiKIEtNBgIgAAIgAALoSiejA4zeEmb4M8g/KiIrJrn6dy5UgIDTFWDDBjJpkiwJl4DoVPKidQ/QPoIYS01SgrMCdCTEPisBBgXgJAABAAHAPxcC6AGoAFQABAibDkRYawGSeTiI7LRu6aQArAC+KwHGBKAH1FwAKgACgL8uBCAAFYAeAAGoAAgQDjEpxFd6WrZ2ToAO3A7iuxJgSABaAM0FoAXwnwDh3xWclp09mugqwJO9t2zdesjmjfb6/f6QOXLIiFmyQubZ+zMbP8YbPW6t+SNBAE8EaGTtBJue6Tpin5XDQACvBAiFim6xoQlsO28JvZ+idFn+TrpVAe4ovI9AqsvYotutCfDwe0lEUWXi8yZaEWD6a5HEUG2i/viC+cEzQ9ahCfSuCbzIL8xWgPumkQQ/MPVOcwJcO4fY+YM3rzUjQNy78YTOHyQsaG5CgP/tReT8Qo/njQuQ9hhx8w+PpxgWYGosYfMPLaYbFSDtEaLmJya3NyjA4xQAXxHzfYMC5BIzfzHKmACdMgmZv+iWYUiAEUTMb4xEAL0ZYUiALALmN7obESCSjwD5jrQIAwIkBwiY34hOMiBAGvHyH0EDAvBMcD+uAQYEiCNc/iPOyFkA6AICIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIABIJECIwPiPkAEBKgmX/zhpQIBywuU/ygwIUEa4/MdhAwIcoQnwHfVHDQhQ/wUB8xs7jTSB4mMC5jdWCwTQmlUIgADhC3AAA3zG+kOGBBCzCZm/mCWMCfDXg8TMTxQvMChA7W8Imp+YXWdQAPHLL4maf9jT1ArQtADVjxM2/zDpjGEBxPsLiJtfmLtMGBdATOR6sE/48glhRoCKUceJnR84MvyYKQHEzruqiZ76nB19uX7+svcErvxWBfFTnZNj1guzAojVA4uJoNrsylkmzAsgtuUsJ4Yqs+KGQmFFAFEybALLgLIcfmDYMetbCb5eHTJPDmkwS1bIGtW/SrTpSNJfqUQA1QTYPS3FxmN5FAEUE+ChiPB2EuZHwwKkQzG2hBBAa6IEAmhNwF4BmhFRKgAgAOgqAEuA5j0AFYAlAFgCgAoA9ADAEgAsAYAAwBIANIHAEgAsAUAFAHoAYAkAlgBAAPBZD8ASQAUABADOAoDrAMASACwBQAUAegBgCQANBIjgO6b1FoAVQPMegBWACgAIANoKwBKgeQ9ABfBtBQg4LUDnKpJhki7yCGBhCfgLiaQJBHoA4CwAWAIAAUDFHoAlgAoACACcBQDXAYAlAFgCgAoA9ADAEgA6CMDHAjQXoIGA6t0DhAgoFQA0FoAKQAUAKgAoRIgKgAAIgAAsAQhABUAAKgACUAEQgAqAAFQABEAABGAJQAAqAAJQARCACoAAVAAEoAIgAAIgAEsAAlABEIAK4BcaqABUACoAAlABEAABEIAlAAGoAAhABUAAKgACUAEQgAqAAFQABKACIAACIABLAAJQARCACoAAVAAEoAIgABUAARDAF9h7TyBLABUAaAKBCgBUAKACAAIASwBQAYAKADoIUE9AVcPeS8HVBNSvhCkAa4DeS4CoIaJ6C1BFRPUWgCbArwIE5KkAZ0rLk4LxPs/L2dKy1ukJ6gngbAX4cuHW0tKSE+f+mRgMpncb3c2Hqd+7cHNpSenxc/+MD6YHu466TgoBIsJ72daejh3oJ3l5n1/6n51zc/tH+in7ny7M23rp/2Xk5g4MOLbHNYNs3dymkDMcmZLexB7bPloS8gnHp3doYpJtJu5xaqerbPbJkYM88/OWl9ln3PQKP6S/6pU2l5lkzJNHndntR/YKsMKBQ6z7Y/AKe036ZbXq6W+Y2/EKk2z10lkndrzCXgHy7T/CjZlh7Ddjudr535oVxiQ7LHVgz8tkvw7w9qDCcFrn215Vuff7W//NYbzqwO0v2b/rensFsPs6QMO08eFtsv6HE5W9DB366Z2nwozGuLOSC2BzBTg5Onzn/zS0TM38n777hbB/hzZvYLFOFaC83xIDr17bd7eK+T82YIGBV/+z73Z9KkDNtz839Pr9oyvVy3/9PVsMvf5Q7jF7F1mJK8Bjaw0O2D5evZsSnzJ6HrZrbJ0mS8Crrxsesuh51fL/5izDQz58So8lYMWTJgbNnK9W/tdPMvPOeEOHCnBorKk7TB8qUin/Fd82de46easGFWDGcVPDqqapJMDMQ+a642f83wR+8SeTAxeuVSf/+81evvzgQ99XgGmmW91n1BHgOdPvl2dCkgpgVwVYl2e+r/qrKvn/9G3zQ+f7vAJYeRtPr1NEgCkW3sbP2fWbDzl7gE0FFgbveF+N/G9baWHw3oW+rgALPRztGoukmKScPYC12S1u0ECAJXU+rgC7tlkaXrZehfwf2mhpeMVqH1eAhR6Pd4X8kBSTbJCxAmghwCI5JiljBahZZ3EDO0oUEMDq/dj7d/m2Bzhk+UEjCghQccrqFg74tgIclGALjlMqwRYcEKAGARQTwOYmMFSNAG6tUiUyVgBbmgBZ3hwsASYEqKIC6C2AHRUgUoItOE6EBFuQtQKkSbAFx0mXYAsONIG2VAAtBAhKsAUqAAJI2QOwBLi4BFABqADSVYBUy8/E6iC/AIkt5Zhkg4QVoNlNFjfQPVV+AcQtFsdf3cm3FUCM8Xi8K1g9yNFCSgFseYRJrsfjXWFkQIpJ2i3ACTsOqkNva+1xHxUEaG3tEZ2tb5RTgAoJymNuhAoCWJzkSJueHtsgYwWwGBslWgCrntq1zMlZAXoOszA46xY1BLjqbguDr5FVAHsqgHgpwpuxrvJiM2/GKlABRNb9pocOHaZI/sU1D5se2udu4e8KIH4WbXJgxMtCGX5s+ntPXratyjXIWQFExmMmB97bWx0BUqaYHDj8ZuF2BQjXuDZHbTqwo90PmxmWsKWTOgKI0933mRkWu6mHbYfQf729FcCuJUAk/S3GxKjIeSrlX7RYZGoReN2+/NveA9SfsuvI+s0xMWjm7UIpes01sZhPHyfcFyBsDtj3XQbGV8jvqPdVES8anmRug537v95uAbbZd2z1Iw3uO6dKwS8Luc/oRbJKW3ffy+YlwL4moHGf8/sben2PvBihHm/cauziwWJ7vzPT7h7AtvPA8y39ygcMvHpUQTsF8y9il37fwKuH/KOjkFuAE3YeXcyf/y/sHU/NSxBKEvjNH8K+rvvoB21s3nuDzBWgkacXJYanytxfqPsVoo8sSwpPldm/s/0rROWuAI2MXJ8dzvK/erxQmMEbw7kNsvOyyfbvul7yCiBEtw3vdr7CS9q/sSVbKM3Vq/KvdHGn3ezPbxbeCRA2kxw4U6qdfbn2zqGv1HSb+jcvd593/IxKZ3YbtFuAex05zFMvNvVN8Vc/e8wvXx599pWmvin+qqcPO7XTcO+gD/uK5fClDlXJnXl5Gy5tWb85Jren8BN78/LWXlqUs3Jzr3dujynlNgvQr8C5gz2cv7W0tORgjRDNUoPpwcxRHYT/OJq/ubSktLS6sek/N8muozo6urukYzYL0G270xEKHS1PahshfM7RstYpbpzYtjphswDBEgEKkRDmr289uw4AzmL7lcDTdQRVJWy/EEQJ0F2ACoJKBQBVCIUQgB6QJYAVgAqAAFQABKACIAAVgCaQCkAFsCLASaKqtwCniKreApwmqlQA0LgJRADNK0AlUdVbgLKzhFVrAUK7CKvWAogvCavWTSAC6F4BthFWvQX4kLDqLUBxEXHVWgCxgrhq3QSKhcRV7wrwIecByrDfCQFCrxFYVdgQ7gsNfRw7aU8CoVWDXp85UAHE0R8TWTVY8ZkjFUBEfZJFcBUgdNMaJ3qAxt7yQe4LUiH/k8LOv0EBxJbxIeIrPT808JUMUQa3XbRvWDMiLDdTfm3gxcYfypQ5/zpiLDGrf7rSyMuNP7CqMHsWy4C0LB802FD+hanHsmXdNzaDWEtHydo1qww/zM/sc/myB6emtqk4dOhrbhTs+ISlafxIj2zd3d/K6I3zz/8Vk5ycHN+YwjMHD5aWbt4rydRyrD3kVpO36x8sBenPth1HpACtQQAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABABdBaizNLpek8DXeTjaYQGKPRytDrJEyQEBDldZGb1XEwH2Cjmi5IAAIUtHt0cTAfYIOaIUKZvcVADlK4D43LPBCnH4qIXBJ6XuAcRfLIw9vliX86+5FsbOk/xcaaP5B+C9qs0JeHcLjwnsLfnc/sf81HpqI4BYZzpI/5R9agmVZqe2QZ/8iwdNCzBJ+rk9a3JmDUM1EiDmM5NRKoqTfm5RBeamNkvoxHXVpoJU21eBuX3jlJmpFcZpJYCYZkqAGUrM7REzavfRK/8icq2JKG0MqDG5OcYbgIlCNzrsMhylfZ0UmVvErw3OrO47Qj+ChQajtPMqdSb3c0Mzq7lL6EjbzYaitD1Npck91xD+zM6MFHrSeoORK0DJak3uph3hzmzlNUJXmj1fFW6R/Em0apOLnVkbzsyOTxA603VNWPlf313FyWX948rd/zupQm8iJh+7YpQqHlf1/t1BC+ouN7HK33YR0HzS9stf/X0sXuHZdXy5ScF3P9mS7F/g1sVN9cwN798W4Vz1cWVycQMGDsq+9DrvsXUff/xJA5n/ivTBAwdlXvqfX3y8ZtUBJ5cf16YX3WdA+7bJjT+15UeOlB/ZtWYbX0H8NdcFbuyd0hik5FYnyxuDVPavNWUO7/Dfjwn7WNHa2IYAAAAASUVORK5CYII=";
 const SUBWAY_BADGE_GLYPH_URI = "data:image/png;base64,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";
@@ -186,9 +424,11 @@ const SUBWAY_BADGE_GLYPH_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAg
 const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function TmapMapView(
     {
         style,
+        errorOverlayTop,
         camera,
         markers = [],
         pathOverlays = [],
+        pathOverlayZoom,
         pathCoords = [],
         pathColor = "#1D72FF",
         pathWidth = 10,
@@ -218,17 +458,70 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     // isReady=true 이후에만 postMessage를 즉시 보낸다.
     const [isReady, setIsReady] = useState(false);
     const [runtimeErrorMessage, setRuntimeErrorMessage] = useState<string | undefined>(undefined);
+    const [webViewReloadRevision, setWebViewReloadRevision] = useState(0);
+    const [nativeDirectionUsable, setNativeDirectionUsable] = useState<boolean | undefined>();
+    const [nativeDashViewport, setNativeDashViewport] = useState<NativeDashViewport & { zoom: number }>(() => ({
+        center: { latitude: camera.latitude, longitude: camera.longitude },
+        widthPx: 0,
+        heightPx: 0,
+        zoom: camera.zoom ?? pathOverlayZoom ?? 15,
+    }));
     const routeOverlayScopeToken = routeOverlayScope?.trim() || "default";
     const webViewKey = useMemo(
         () => `${TMAP_WEBVIEW_HTML_VERSION}:${routeOverlayScopeToken}`,
         [routeOverlayScopeToken]
     );
+    const activeWebViewKey = [
+        webViewKey,
+        String(webViewReloadRevision),
+        nightModeEnabled ? "dark" : "light",
+        routeFocusMode ? "route" : "default",
+        showLocationButton ? "location" : "no-location",
+        showZoomControls ? "zoom" : "no-zoom",
+    ].join(":");
     const readyWebViewKeyRef = useRef<string | null>(null);
+    const htmlBootstrapScope = activeWebViewKey;
+    const htmlInitialCameraRef = useRef({
+        scope: htmlBootstrapScope,
+        latitude: camera.latitude,
+        longitude: camera.longitude,
+        zoom: camera.zoom,
+    });
+    if (htmlInitialCameraRef.current.scope !== htmlBootstrapScope) {
+        htmlInitialCameraRef.current = {
+            scope: htmlBootstrapScope,
+            latitude: camera.latitude,
+            longitude: camera.longitude,
+            zoom: camera.zoom,
+        };
+    }
 
     const appKey = getEnv("EXPO_PUBLIC_TMAP_APP_KEY") ?? getEnv("EXPO_PUBLIC_TMAP_API_KEY");
 
     const hasWebView = !!WebView;
     const canRender = hasWebView && !!appKey;
+    const nativePathOverlays = useMemo(
+        () => expandNativeDashPathOverlays(
+            pathOverlays,
+            nativeDashViewport.zoom ?? pathOverlayZoom ?? camera.zoom ?? 15,
+            nativeDashViewport.widthPx > 0 && nativeDashViewport.heightPx > 0
+                ? nativeDashViewport
+                : undefined
+        ),
+        [camera.zoom, nativeDashViewport, pathOverlayZoom, pathOverlays]
+    );
+    const renderedPathOverlays = useMemo(
+        () => addNativeDirectionScreenFallbacks(nativePathOverlays, nativeDirectionUsable),
+        [nativeDirectionUsable, nativePathOverlays]
+    );
+
+    useEffect(() => {
+        setNativeDashViewport((current) => ({
+            ...current,
+            center: { latitude: camera.latitude, longitude: camera.longitude },
+            zoom: camera.zoom ?? current.zoom,
+        }));
+    }, [camera.latitude, camera.longitude, camera.zoom, webViewKey]);
 
     useEffect(() => {
         if (!canRender) {
@@ -241,19 +534,44 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     // WebView 준비 전에는 명령을 큐에 쌓아 초기화 직후 순차 전송한다.
     const postCommand = useCallback((command: Record<string, unknown>) => {
         const json = JSON.stringify(command);
-        if (!isReady || readyWebViewKeyRef.current !== webViewKey || !webViewRef.current) {
-            commandQueueRef.current.push(json);
+        if (!isReady || readyWebViewKeyRef.current !== activeWebViewKey || !webViewRef.current) {
+            commandQueueRef.current = enqueueTmapCommand(commandQueueRef.current, command);
             return;
         }
         webViewRef.current.postMessage(json);
-    }, [isReady, webViewKey]);
+    }, [activeWebViewKey, isReady]);
 
     useEffect(() => {
         readyWebViewKeyRef.current = null;
         commandQueueRef.current = [];
         setIsReady(false);
         setRuntimeErrorMessage(undefined);
-    }, [webViewKey]);
+        setNativeDirectionUsable(undefined);
+    }, [activeWebViewKey]);
+
+    useEffect(() => {
+        if (!canRender || isReady || runtimeErrorMessage) return;
+        const timeoutId = setTimeout(() => {
+            setRuntimeErrorMessage(MAP_LOAD_ERROR_MESSAGE);
+        }, MAP_INITIALIZATION_TIMEOUT_MS);
+        return () => clearTimeout(timeoutId);
+    }, [activeWebViewKey, canRender, isReady, runtimeErrorMessage]);
+
+    const retryMapLoad = useCallback(() => {
+        commandQueueRef.current = [];
+        readyWebViewKeyRef.current = null;
+        setIsReady(false);
+        setRuntimeErrorMessage(undefined);
+        setWebViewReloadRevision((current) => current + 1);
+    }, []);
+
+    const handleNativeWebViewError = useCallback((event: any) => {
+        if (typeof __DEV__ === "boolean" && __DEV__) {
+            console.warn("[tmap] WebView load failed", event?.nativeEvent);
+        }
+        setIsReady(false);
+        setRuntimeErrorMessage(MAP_LOAD_ERROR_MESSAGE);
+    }, []);
 
     useImperativeHandle(ref, () => ({
         animateCameraTo(nextCamera) {
@@ -284,6 +602,11 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         const width = Math.round(event?.nativeEvent?.layout?.width ?? 0);
         const height = Math.round(event?.nativeEvent?.layout?.height ?? 0);
         if (width <= 0 || height <= 0) return;
+        setNativeDashViewport((current) => (
+            current.widthPx === width && current.heightPx === height
+                ? current
+                : { ...current, widthPx: width, heightPx: height }
+        ));
         onMapLayoutReport?.({
             reason: "RN_CONTAINER_LAYOUT",
             mapContainerWidth: width,
@@ -309,7 +632,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             type: "setData",
             payload: {
                 markers,
-                pathOverlays,
+                pathOverlays: renderedPathOverlays,
                 pathCoords,
                 pathColor,
                 pathWidth,
@@ -325,7 +648,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     }, [
         canRender,
         markers,
-        pathOverlays,
+        renderedPathOverlays,
         pathCoords,
         pathColor,
         pathWidth,
@@ -339,6 +662,20 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         postCommand,
     ]);
 
+    // camera prop 변경은 HTML 자체를 다시 만들지 않고 준비된 지도에 명령으로 반영한다.
+    // 위치 선택처럼 탭할 때마다 camera가 바뀌는 화면에서 WebView 전체 재로딩을 막는다.
+    useEffect(() => {
+        if (!canRender) return;
+        postCommand({
+            type: "animateCamera",
+            payload: {
+                latitude: camera.latitude,
+                longitude: camera.longitude,
+                zoom: camera.zoom,
+            },
+        });
+    }, [camera.latitude, camera.longitude, camera.zoom, canRender, postCommand]);
+
     // WebView -> React Native 메시지를 파싱해 탭/줌/초기화 이벤트로 분기한다.
     const onWebViewMessage = useCallback((event: any) => {
         const data = event?.nativeEvent?.data;
@@ -349,7 +686,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             const type = message?.type;
 
             if (type === "initialized") {
-                readyWebViewKeyRef.current = webViewKey;
+                readyWebViewKeyRef.current = activeWebViewKey;
                 setIsReady(true);
                 setRuntimeErrorMessage(undefined);
                 if (webViewRef.current && commandQueueRef.current.length > 0) {
@@ -363,15 +700,29 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             }
 
             if (type === "layout") {
+                const width = safeNumber(
+                    message?.payload?.webViewWidth ?? message?.payload?.mapContainerWidth
+                );
+                const height = safeNumber(
+                    message?.payload?.webViewHeight ?? message?.payload?.mapContainerHeight
+                );
+                if (typeof width === "number" && width > 0 && typeof height === "number" && height > 0) {
+                    setNativeDashViewport((current) => (
+                        current.widthPx === width && current.heightPx === height
+                            ? current
+                            : { ...current, widthPx: width, heightPx: height }
+                    ));
+                }
                 onMapLayoutReport?.(message?.payload ?? {});
                 return;
             }
 
             if (type === "error") {
-                const errorMessage = typeof message?.payload?.message === "string"
-                    ? message.payload.message
-                    : "지도 초기화 중 오류가 발생했습니다.";
-                setRuntimeErrorMessage(errorMessage);
+                if (typeof __DEV__ === "boolean" && __DEV__) {
+                    console.warn("[tmap] runtime initialization failed", message?.payload?.message);
+                }
+                setIsReady(false);
+                setRuntimeErrorMessage(MAP_LOAD_ERROR_MESSAGE);
                 return;
             }
 
@@ -400,6 +751,20 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
                     const latitude = safeNumber(message?.payload?.latitude);
                     const longitude = safeNumber(message?.payload?.longitude);
                     if (typeof latitude === "number" && typeof longitude === "number") {
+                        setNativeDashViewport((current) => {
+                            if (
+                                Math.abs(current.center.latitude - latitude) < 1e-7 &&
+                                Math.abs(current.center.longitude - longitude) < 1e-7 &&
+                                Math.abs(current.zoom - zoom) < 1e-3
+                            ) {
+                                return current;
+                            }
+                            return {
+                                ...current,
+                                center: { latitude, longitude },
+                                zoom,
+                            };
+                        });
                         const metersPerPixel = safeNumber(message?.payload?.metersPerPixel);
                         onCameraChanged?.({ latitude, longitude, zoom, metersPerPixel });
                     }
@@ -426,6 +791,10 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             }
 
             if (type === "tmapNativeDirectionReport") {
+                const firstRow = Array.isArray(message?.payload?.rows)
+                    ? message.payload.rows[0]
+                    : undefined;
+                setNativeDirectionUsable(firstRow?.usableForRouteLine === true);
                 if (typeof __DEV__ !== "undefined" && __DEV__) {
                     console.log("[tmap-sdk] native direction report:", message?.payload ?? {});
                     if (Array.isArray(message?.payload?.rows)) {
@@ -447,14 +816,16 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         } catch {
             // ignore malformed message
         }
-    }, [onCameraChanged, onInitialized, onMapLayoutReport, onMarkerPress, onTapMap, onZoomChanged, webViewKey]);
+    }, [activeWebViewKey, onCameraChanged, onInitialized, onMapLayoutReport, onMarkerPress, onTapMap, onZoomChanged]);
 
     // Tmap SDK를 포함한 WebView HTML을 생성한다.
     const html = useMemo(() => {
-        if (!appKey) return "";
-        const initialZoom = Math.max(6, Math.min(18, Math.round(camera.zoom ?? 12)));
-        const initialLat = camera.latitude;
-        const initialLng = camera.longitude;
+        if (!appKey || !htmlBootstrapScope) return "";
+        const initialCamera = htmlInitialCameraRef.current;
+        const initialZoom = Math.max(6, Math.min(18, Math.round(initialCamera.zoom ?? 12)));
+        const initialLat = initialCamera.latitude;
+        const initialLng = initialCamera.longitude;
+        const isDevelopmentFlag = typeof __DEV__ === "boolean" && __DEV__ ? "true" : "false";
         const showZoomControlFlag = showZoomControls ? "true" : "false";
         const showLocationControlFlag = showLocationButton ? "true" : "false";
         const darkFlag = nightModeEnabled ? "true" : "false";
@@ -536,7 +907,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
   <div id="map"></div>
   <div id="mapTone"></div>
   <canvas id="routeOverlay"></canvas>
-  <button id="locationBtn" class="${showLocationControlFlag === "true" ? "" : "hidden"}">◎</button>
+  <button
+    id="locationBtn"
+    type="button"
+    aria-label="지도에서 내 현재 위치 보기"
+    title="현재 위치"
+    class="${showLocationControlFlag === "true" ? "" : "hidden"}"
+  ><span aria-hidden="true">◎</span></button>
   <script>
     (function () {
       var map = null;
@@ -562,6 +939,22 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       var pendingData = null;
       var initRetry = 0;
       var isDarkTheme = ${darkFlag};
+      var isDevelopment = ${isDevelopmentFlag};
+      function debugLog() {
+        if (isDevelopment && window.console && typeof window.console.log === "function") {
+          window.console.log.apply(window.console, arguments);
+        }
+      }
+      function debugWarn() {
+        if (isDevelopment && window.console && typeof window.console.warn === "function") {
+          window.console.warn.apply(window.console, arguments);
+        }
+      }
+      function debugTable(value) {
+        if (isDevelopment && window.console && typeof window.console.table === "function") {
+          window.console.table(value);
+        }
+      }
       var isRouteFocusMode = ${routeFocusFlag};
       var nativeDarkMapTypeApplied = false;
       var nativeMapTypeCandidates = null;
@@ -645,26 +1038,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         return new Tmapv2.LatLng(point.latitude, point.longitude);
       }
 
-      function normalizeStrokeColor(value, fallback) {
-        var raw = String(value || fallback || "#1D72FF").trim();
-        if (/^#[0-9a-fA-F]{6}$/.test(raw)) return raw;
-        if (/^#[0-9a-fA-F]{3}$/.test(raw)) {
-          return "#" + raw.charAt(1) + raw.charAt(1) + raw.charAt(2) + raw.charAt(2) + raw.charAt(3) + raw.charAt(3);
-        }
-
-        var rgbMatch = raw.match(/^rgba?\\(([^)]+)\\)$/);
-        if (rgbMatch) {
-          var parts = rgbMatch[1].split(",").map(function (part) { return Number(String(part).trim()); });
-          if (parts.length >= 3 && isFinite(parts[0]) && isFinite(parts[1]) && isFinite(parts[2])) {
-            return "#" + [parts[0], parts[1], parts[2]].map(function (part) {
-              var clamped = Math.max(0, Math.min(255, Math.round(part)));
-              return clamped.toString(16).padStart(2, "0");
-            }).join("");
-          }
-        }
-
-        return fallback || "#1D72FF";
-      }
+      ${TMAP_NATIVE_STROKE_COLOR_SCRIPT}
+      ${TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT}
 
       function probeTmapNativeDirectionSupport() {
         var sdkReport = {
@@ -674,17 +1049,17 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           polylineV3: !!(window.Tmapv3 && Tmapv3.Polyline),
           scriptVersion: window.__TMAP_SCRIPT_VERSION__,
         };
-	        var row = {
-	          sdk: sdkReport.polylineV3 ? "Tmapv3" : (sdkReport.polylineV2 ? "Tmapv2" : "unknown"),
-	          supportsDirection: false,
-	          supportsDirectionColor: false,
-	          supportsDirectionOpacity: false,
-	          supportsDashStroke: false,
-	          pathOrderControlsDirection: false,
-	          arrowMovesWithPolyline: false,
-	          usableForRouteLine: false,
-	          reasonNativeDirectionDisabled: "native direction support not probed yet",
-	        };
+        var row = {
+          sdk: sdkReport.polylineV3 ? "Tmapv3" : (sdkReport.polylineV2 ? "Tmapv2" : "unknown"),
+          supportsDirection: false,
+          supportsDirectionColor: false,
+          supportsDirectionOpacity: false,
+          supportsDashStroke: false,
+          pathOrderControlsDirection: false,
+          arrowMovesWithPolyline: false,
+          usableForRouteLine: false,
+          reasonNativeDirectionDisabled: "native direction support not probed yet",
+        };
         var testLine = null;
         var testDashLine = null;
         try {
@@ -725,35 +1100,33 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             });
 
             // 현재 로드된 SDK가 옵션을 실제 drawInfo에 반영하는지 확인한다.
-            var directionDrawInfo = testLine && testLine._shape_data && testLine._shape_data.drawInfo;
+            var directionCapability = readTmapNativeDirectionCapability(testLine);
             var dashDrawInfo = testDashLine && testDashLine._shape_data && testDashLine._shape_data.drawInfo;
-            row.supportsDirection = directionDrawInfo ? directionDrawInfo.direction === true : true;
-	            row.supportsDirectionColor = directionDrawInfo
-	              ? String(directionDrawInfo.directionColor || "").toUpperCase() === "#FFFFFF"
-	              : true;
-	            row.supportsDirectionOpacity = directionDrawInfo
-	              ? Math.abs(Number(directionDrawInfo.directionOpacity) - 0.001) < 0.000001
-	              : true;
-	            row.supportsDashStroke = dashDrawInfo ? dashDrawInfo.strokeStyle === "dash" : true;
-	            row.pathOrderControlsDirection = row.supportsDirection;
-	            row.arrowMovesWithPolyline = row.supportsDirection;
-	            row.usableForRouteLine = row.supportsDirection &&
-	              row.supportsDirectionColor &&
-	              row.supportsDirectionOpacity;
-	            row.reasonNativeDirectionDisabled = row.usableForRouteLine
-	              ? null
-	              : "Tmap Polyline direction options were not reflected by the loaded SDK.";
-	          }
-	        } catch (error) {
-	          row.supportsDirection = false;
-	          row.supportsDirectionColor = false;
-	          row.supportsDirectionOpacity = false;
-	          row.pathOrderControlsDirection = false;
-	          row.arrowMovesWithPolyline = false;
-	          row.usableForRouteLine = false;
-	          row.reasonNativeDirectionDisabled = error && error.message ? String(error.message) : "Polyline direction option rejected";
-	          row.reason = row.reasonNativeDirectionDisabled;
-	        } finally {
+            row.supportsDirection = directionCapability.supportsDirection;
+            row.supportsDirectionColor = directionCapability.supportsDirectionColor;
+            row.supportsDirectionOpacity = directionCapability.supportsDirectionOpacity;
+            row.supportsDashStroke = !!dashDrawInfo && dashDrawInfo.strokeStyle === "dash";
+            row.pathOrderControlsDirection = row.supportsDirection;
+            row.arrowMovesWithPolyline = row.supportsDirection;
+            row.usableForRouteLine = row.supportsDirection &&
+              row.supportsDirectionColor &&
+              row.supportsDirectionOpacity;
+            row.reasonNativeDirectionDisabled = row.usableForRouteLine
+              ? null
+              : directionCapability.confirmed
+              ? "Tmap Polyline direction options were not reflected by the loaded SDK."
+              : "Tmap Polyline direction support could not be confirmed by the loaded SDK.";
+          }
+        } catch (error) {
+          row.supportsDirection = false;
+          row.supportsDirectionColor = false;
+          row.supportsDirectionOpacity = false;
+          row.pathOrderControlsDirection = false;
+          row.arrowMovesWithPolyline = false;
+          row.usableForRouteLine = false;
+          row.reasonNativeDirectionDisabled = error && error.message ? String(error.message) : "Polyline direction option rejected";
+          row.reason = row.reasonNativeDirectionDisabled;
+        } finally {
           if (testLine && testLine.setMap) {
             setTimeout(function () {
               try {
@@ -774,8 +1147,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 	          sdk: sdkReport,
 	          rows: [row],
 	        };
-	        console.log("[tmap-sdk]", sdkReport);
-	        console.table([{
+		        debugLog("[tmap-sdk]", sdkReport);
+		        debugTable([{
 	          sdk: row.sdk,
 	          supportsDirection: row.supportsDirection,
 	          supportsDirectionColor: row.supportsDirectionColor,
@@ -786,9 +1159,9 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 	          usableForRouteLine: row.usableForRouteLine,
 	          reasonNativeDirectionDisabled: row.reasonNativeDirectionDisabled,
 	        }]);
-        post("tmapNativeDirectionReport", nativeDirectionReport);
-        return nativeDirectionReport;
-      }
+${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
+	        return nativeDirectionReport;
+	      }
 
       function escapeXml(value) {
         return String(value || "")
@@ -1339,7 +1712,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var endLimit = Math.max(nextDistance, total - Math.min(spacing * 0.24, total * 0.12));
         var traveled = 0;
         var dotRadius = dotSize / 2;
-        var maxDots = Math.min(90, Math.max(2, Math.floor(total / Math.max(5, spacing)) + 1));
+        var maxDots = Math.min(600, Math.max(2, Math.floor(total / Math.max(5, spacing)) + 1));
         var drawn = 0;
         appendDotCircle(points[0]);
         drawn += 1;
@@ -1626,7 +1999,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var nextDistance = Math.min(spacing * 0.82, total * 0.28);
         var endLimit = Math.max(nextDistance, total - Math.min(spacing * 0.24, total * 0.12));
         var traveled = 0;
-        var maxDots = Math.min(120, Math.max(2, Math.floor(total / Math.max(5, spacing)) + 1));
+        var maxDots = Math.min(600, Math.max(2, Math.floor(total / Math.max(5, spacing)) + 1));
         var drawn = 0;
         if (drawDot(points[0])) drawn += 1;
         for (var segmentIndex = 1; segmentIndex < points.length && drawn < maxDots; segmentIndex += 1) {
@@ -2749,6 +3122,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       }
 
       function logRouteVisibility(reason) {
+        if (!isDevelopment) return;
         var rows = getRouteOverlayRegistryRows();
         var expectedMainLines = rows.filter(function (row) { return row.layerType === "TRANSIT_MAIN"; }).length;
         var visibleMainLines = rows.filter(function (row) { return row.layerType === "TRANSIT_MAIN" && row.visible; }).length;
@@ -2775,8 +3149,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var signature = JSON.stringify({ payload: payload, rows: rows });
         if (signature === lastRouteVisibilitySignature) return;
         lastRouteVisibilitySignature = signature;
-        console.log("[route-visibility]", payload);
-        console.table(rows);
+        debugLog("[route-visibility]", payload);
+        debugTable(rows);
         post("routeVisibility", {
           summary: payload,
           rows: rows,
@@ -2788,7 +3162,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var expected = rows.length;
         var attached = rows.filter(function (row) { return row.attachedToMap; }).length;
         var missing = expected - attached;
-        console.log("[route-overlay-verify]", {
+        debugLog("[route-overlay-verify]", {
           reason: reason || "UNKNOWN",
           expected: expected,
           attached: attached,
@@ -2834,8 +3208,15 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         if (!Array.isArray(pathCoords) || pathCoords.length < 2) return;
 
         var path = pathCoords.map(function (point) { return toLatLng(point); });
-        var strokeColor = normalizeStrokeColor(color, "#1D72FF");
-        var strokeOutlineColor = normalizeStrokeColor(outlineColor, "#FFFFFF");
+        var strokePaint = resolveNativeStrokePaint(color, "#1D72FF", opacity, 1);
+        var outlinePaint = resolveNativeStrokePaint(
+          outlineColor,
+          "#FFFFFF",
+          outlineOpacity,
+          strokePaint.requestedOpacity
+        );
+        var strokeColor = strokePaint.color;
+        var strokeOutlineColor = outlinePaint.color;
         var normalizedStrokeStyle = strokeStyle === "dash" || strokeStyle === "dot" || strokeStyle === "solid"
           ? strokeStyle
           : (Array.isArray(dashPattern) && dashPattern.length > 0 ? "dash" : "solid");
@@ -2844,12 +3225,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var normalizedOutlineStrokeStyle = outlineStrokeStyle === "dash" || outlineStrokeStyle === "dot" || outlineStrokeStyle === "solid"
           ? outlineStrokeStyle
           : "solid";
-        var strokeOpacity = Number(opacity);
-        if (!isFinite(strokeOpacity)) strokeOpacity = 1;
-        strokeOpacity = Math.max(0, Math.min(1, strokeOpacity));
-        var strokeOutlineOpacity = Number(outlineOpacity);
-        if (!isFinite(strokeOutlineOpacity)) strokeOutlineOpacity = strokeOpacity;
-        strokeOutlineOpacity = Math.max(0, Math.min(1, strokeOutlineOpacity));
+        var strokeOpacity = strokePaint.opacity;
+        var strokeOutlineOpacity = outlinePaint.opacity;
         var zIndexValue = Number(zIndex);
         var nativeDirectionUsable = !!(
           nativeDirectionReport &&
@@ -2861,20 +3238,24 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var useNativeDirection = nativeDirection === true && normalizedStrokeStyle === "solid" && nativeDirectionUsable;
         if (nativeDirection === true && !useNativeDirection && !nativeDirectionUnavailableWarned) {
           nativeDirectionUnavailableWarned = true;
-          console.warn("[route-direction] native Tmap direction unavailable, drawing route line without arrows", {
+          debugWarn("[route-direction] native Tmap direction unavailable, drawing route line without arrows", {
             sdk: nativeDirectionReport && nativeDirectionReport.rows ? nativeDirectionReport.rows[0].sdk : "unknown",
             reason: normalizedStrokeStyle !== "solid"
               ? "Tmap native direction requires a solid Polyline stroke."
               : nativeDirectionReport && nativeDirectionReport.rows
               ? (nativeDirectionReport.rows[0].reasonNativeDirectionDisabled || nativeDirectionReport.rows[0].reason)
               : "native direction probe not usable",
-            fallback: "disabled",
+            fallback: "screen-overlay",
           });
         }
-        var nativeDirectionStrokeColor = normalizeStrokeColor(nativeDirectionColor, "#FFFFFF");
-        var nativeDirectionStrokeOpacity = Number(nativeDirectionOpacity);
-        if (!isFinite(nativeDirectionStrokeOpacity)) nativeDirectionStrokeOpacity = 0.9;
-        nativeDirectionStrokeOpacity = Math.max(0, Math.min(1, nativeDirectionStrokeOpacity));
+        var nativeDirectionPaint = resolveNativeStrokePaint(
+          nativeDirectionColor,
+          "#FFFFFF",
+          nativeDirectionOpacity,
+          0.9
+        );
+        var nativeDirectionStrokeColor = nativeDirectionPaint.color;
+        var nativeDirectionStrokeOpacity = nativeDirectionPaint.opacity;
         var registryId = overlayId ? String(overlayId) : ["route-path", pathCoords.length, strokeColor, width].join(":");
         var signature = pathConfigSignature(
           pathCoords,
@@ -3522,7 +3903,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       window.addEventListener("error", function (event) {
         var message = (event && event.message) ? String(event.message) : "스크립트 오류";
         if (map && message === "Script error.") {
-          console.warn("[tmap-sdk] ignored generic cross-origin script error after map init");
+          debugWarn("[tmap-sdk] ignored generic cross-origin script error after map init");
           return;
         }
         post("error", { message: message });
@@ -3535,9 +3916,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 </html>`;
     }, [
         appKey,
-        camera.latitude,
-        camera.longitude,
-        camera.zoom,
+        htmlBootstrapScope,
         nightModeEnabled,
         routeFocusMode,
         showLocationButton,
@@ -3546,10 +3925,15 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 
     if (!canRender) {
         const missingReason = !hasWebView
-            ? "Tmap 지도를 렌더링하려면 react-native-webview가 필요합니다."
-            : "Tmap API 키가 없습니다. EXPO_PUBLIC_TMAP_APP_KEY를 설정해 주세요.";
+            ? "이 기기에서는 지도를 표시할 수 없습니다."
+            : "지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요.";
         return (
-            <View style={[styles.fallback, { backgroundColor: fallbackBackgroundColor }, style]}>
+            <View
+                accessible
+                accessibilityRole="alert"
+                accessibilityLabel={missingReason}
+                style={[styles.fallback, { backgroundColor: fallbackBackgroundColor }, style]}
+            >
                 <Text style={[styles.fallbackText, { color: fallbackTextColor }]}>
                     {missingReason}
                 </Text>
@@ -3563,22 +3947,55 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             onLayout={handleContainerLayout}
         >
             <WebView
-                key={webViewKey}
+                key={activeWebViewKey}
                 ref={webViewRef}
+                accessibilityLabel="지도"
+                accessibilityElementsHidden={!!runtimeErrorMessage}
+                importantForAccessibility={runtimeErrorMessage ? "no-hide-descendants" : "auto"}
                 originWhitelist={["*"]}
                 source={{ html }}
                 onMessage={onWebViewMessage}
+                onError={handleNativeWebViewError}
+                onHttpError={handleNativeWebViewError}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
                 allowFileAccess={true}
                 setSupportMultipleWindows={false}
-                mixedContentMode="always"
+                mixedContentMode="never"
                 style={[styles.webview, { backgroundColor: fallbackBackgroundColor }]}
             />
+            {!isReady && !runtimeErrorMessage && (
+                <View
+                    pointerEvents="none"
+                    accessibilityLiveRegion="polite"
+                    style={[styles.loadingOverlay, { backgroundColor: fallbackBackgroundColor }]}
+                >
+                    <ActivityIndicator color="#2979FF" />
+                    <Text style={[styles.loadingText, { color: fallbackTextColor }]}>지도를 불러오는 중…</Text>
+                </View>
+            )}
             {!!runtimeErrorMessage && (
-                <View style={styles.errorOverlay}>
-                    <Text style={styles.errorOverlayTitle}>지도 로딩 실패</Text>
-                    <Text style={styles.errorOverlayText}>{runtimeErrorMessage}</Text>
+                <View
+                    accessibilityLiveRegion="assertive"
+                    style={[
+                        styles.errorOverlay,
+                        typeof errorOverlayTop === "number"
+                            ? { top: errorOverlayTop, bottom: undefined }
+                            : null,
+                    ]}
+                >
+                    <View style={styles.errorOverlayCopy}>
+                        <Text style={styles.errorOverlayTitle}>지도 로딩 실패</Text>
+                        <Text style={styles.errorOverlayText}>{runtimeErrorMessage}</Text>
+                    </View>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="지도 다시 불러오기"
+                        onPress={retryMapLoad}
+                        style={styles.errorRetryButton}
+                    >
+                        <Text style={styles.errorRetryText}>다시 시도</Text>
+                    </Pressable>
                 </View>
             )}
         </View>
@@ -3604,6 +4021,17 @@ const styles = StyleSheet.create({
         fontSize: 12,
         lineHeight: 18,
     },
+    loadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+    },
+    loadingText: {
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: "700",
+    },
     errorOverlay: {
         position: "absolute",
         left: 12,
@@ -3613,6 +4041,13 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingVertical: 10,
         backgroundColor: "rgba(17, 24, 39, 0.86)",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    errorOverlayCopy: {
+        flex: 1,
+        minWidth: 0,
     },
     errorOverlayTitle: {
         color: "#FFFFFF",
@@ -3624,6 +4059,20 @@ const styles = StyleSheet.create({
         color: "rgba(255, 255, 255, 0.88)",
         fontSize: 11,
         lineHeight: 15,
+    },
+    errorRetryButton: {
+        minHeight: 36,
+        borderRadius: 9,
+        paddingHorizontal: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#2979FF",
+    },
+    errorRetryText: {
+        color: "#FFFFFF",
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "800",
     },
 });
 

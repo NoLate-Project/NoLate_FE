@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
     Alert,
     Animated,
+    BackHandler,
     Easing,
     Keyboard,
     LayoutAnimation,
@@ -20,7 +21,7 @@ import {
 } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { GestureResponderEvent } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -30,7 +31,8 @@ import {
     saveFavoritePlaceToApi,
     type FavoritePlaceCategory,
 } from "../../src/api/favoritePlaces";
-import { getCurrentLocation } from "../../src/modules/map/currentLocation";
+import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
+import { createLatestRequestGuard } from "../../src/modules/map/routeAsyncGuard";
 import TmapMapView, { type TmapMarker } from "../../src/modules/map/TmapMapView";
 import {
     getRouteAlternativeOptions,
@@ -41,7 +43,12 @@ import {
     type PlaceSearchItem,
     type RouteAlternativeOption,
 } from "../../src/modules/map/routingService";
-import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
+import {
+    getRoutePlannerInitial,
+    setRoutePlannerInitial,
+    setRoutePlannerResult,
+    type RoutePlannerPayload,
+} from "../../src/modules/schedule/routePlannerSession";
 import {
     getFavoriteDeparturePlace,
     getRecentRoutePlaces,
@@ -50,6 +57,17 @@ import {
 } from "../../src/modules/schedule/favoriteDeparture";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
+import {
+    resolveScheduleRouteDepartureContext,
+    resolveSelectedRouteTiming,
+} from "../../src/modules/schedule/scheduleRouteTiming";
+import {
+    resolveDefaultOriginUiUpdate,
+    resolveInitialRoutePointTarget,
+    resolveNextMissingRoutePointTarget,
+    shouldShowRoutePointSearchResults,
+    type RoutePointTarget,
+} from "../../src/modules/schedule/routePointSelection";
 import {
     buildRouteInfoFromAlternative,
     compactTransitLineLabel as compactSharedTransitLineLabel,
@@ -69,12 +87,39 @@ import CalendarGlassSurface from "../../src/modules/schedule/components/calendar
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
+
 const SELECTABLE_TRAVEL_MODES: TravelMode[] = ["CAR", "TRANSIT", "WALK", "BIKE"];
 const MAP_PICKER_FALLBACK_LAT = 37.5665;
 const MAP_PICKER_FALLBACK_LNG = 126.978;
 const MAP_PICKER_DEFAULT_ZOOM = 14;
 
-type RoutePointTarget = "origin" | "destination";
+async function openDeviceLocationSettings(preferServiceSettings = false) {
+    try {
+        if (preferServiceSettings && Platform.OS === "android") {
+            await Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS");
+            return;
+        }
+        await Linking.openSettings();
+    } catch {
+        Alert.alert("설정을 열 수 없어요", "기기 설정에서 NoLate의 위치 권한을 확인해 주세요.");
+    }
+}
+
+function showLocationSettingsAlert(title: string, message: string, preferServiceSettings = false) {
+    Alert.alert(title, message, [
+        { text: "취소", style: "cancel" },
+        {
+            text: "설정 열기",
+            onPress: () => {
+                openDeviceLocationSettings(preferServiceSettings).catch(() => undefined);
+            },
+        },
+    ]);
+}
+
 type TransitRouteFilter = "ALL" | "SUBWAY" | "BUS" | "MIXED";
 type RouteSelectTransitLeg = NonNullable<RouteAlternativeOption["transitLegs"]>[number];
 type RouteProgressSegment = {
@@ -196,6 +241,7 @@ function AnimatedTravelModeButton({
             onPress={onPress}
             accessibilityRole="button"
             accessibilityLabel={label}
+            accessibilityState={{ selected }}
             style={[styles.modeButtonShell, selected && styles.modeButtonShellSelected]}
         >
             <Animated.View
@@ -233,6 +279,9 @@ function AnimatedTransitFilterButton({
         <Pressable
             onPress={onPress}
             disabled={disabled}
+            accessibilityRole="button"
+            accessibilityLabel={`${label} 경로 필터`}
+            accessibilityState={{ selected, disabled }}
             style={[
                 styles.transitFilterTab,
                 {
@@ -347,6 +396,10 @@ function formatCurrentRouteNoticeTime(date: Date): string {
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
     return `${hours}:${minutes}`;
+}
+
+function formatScheduleRouteNoticeTime(date: Date): string {
+    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${formatRouteClock(date)}`;
 }
 
 // 경로 카드의 출발-도착 시간과 요금을 한 줄로 만든다.
@@ -826,7 +879,7 @@ export default function RouteSelectScreen() {
         ? editTargetParam
         : undefined;
     const sessionInitial = sessionId ? getRoutePlannerInitial(sessionId) : undefined;
-    const paramInitial = useMemo(() => {
+    const paramInitial = useMemo<RoutePlannerPayload | undefined>(() => {
         const paramTravelMode = readTravelModeParam(params.travelMode);
         const paramOrigin = buildPlace(
             readParam(params.originName) ?? "",
@@ -865,11 +918,18 @@ export default function RouteSelectScreen() {
     const initialTravelMode = SELECTABLE_TRAVEL_MODES.includes(initial?.travelMode as TravelMode)
         ? initial?.travelMode as TravelMode
         : "TRANSIT";
-    const initialHasRouteCoords =
+    const initialHasOriginCoords =
         typeof initial?.origin?.lat === "number" &&
-        typeof initial.origin.lng === "number" &&
-        typeof initial.destination?.lat === "number" &&
-        typeof initial.destination.lng === "number";
+        typeof initial?.origin?.lng === "number";
+    const initialHasDestinationCoords =
+        typeof initial?.destination?.lat === "number" &&
+        typeof initial?.destination?.lng === "number";
+    const initialHasRouteCoords = initialHasOriginCoords && initialHasDestinationCoords;
+    const initialRoutePointTarget = resolveInitialRoutePointTarget(
+        initial?.origin,
+        initial?.destination,
+        forcedEditTarget
+    );
 
     const [originText, setOriginText] = useState(initial?.origin?.name ?? "");
     const [originAddress, setOriginAddress] = useState(initial?.origin?.address);
@@ -880,7 +940,7 @@ export default function RouteSelectScreen() {
     const [destinationLat, setDestinationLat] = useState<number | undefined>(initial?.destination?.lat);
     const [destinationLng, setDestinationLng] = useState<number | undefined>(initial?.destination?.lng);
     const [travelMode, setTravelMode] = useState<TravelMode>(initialTravelMode);
-    const [activeTarget, setActiveTarget] = useState<RoutePointTarget>(forcedEditTarget ?? "origin");
+    const [activeTarget, setActiveTarget] = useState<RoutePointTarget>(initialRoutePointTarget);
     const [isEditingRoutePoint, setIsEditingRoutePoint] = useState(Boolean(forcedEditTarget) || !initialHasRouteCoords);
     const [originUsesDefault, setOriginUsesDefault] = useState(false);
     const [recentPlaces, setRecentPlaces] = useState<Place[]>([]);
@@ -897,23 +957,42 @@ export default function RouteSelectScreen() {
     const [mapPickerVisible, setMapPickerVisible] = useState(false);
     const [mapPickerTarget, setMapPickerTarget] = useState<RoutePointTarget>("origin");
     const [mapPickerCoord, setMapPickerCoord] = useState<{ latitude: number; longitude: number }>();
+    const [mapPickerHasSelection, setMapPickerHasSelection] = useState(false);
     const [mapPickerAddress, setMapPickerAddress] = useState<string>();
     const [mapPickerResolving, setMapPickerResolving] = useState(false);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
+    const [searchError, setSearchError] = useState<string>();
     const [hasTypedSearchQuery, setHasTypedSearchQuery] = useState(false);
+    const [hasSearchAttempt, setHasSearchAttempt] = useState(false);
     const [searching, setSearching] = useState(false);
+    const [currentLocationPending, setCurrentLocationPending] = useState(false);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>([]);
     const [selectedRouteId, setSelectedRouteId] = useState<string | undefined>();
     const [transitRouteFilter, setTransitRouteFilter] = useState<TransitRouteFilter>("ALL");
     const [routeLoading, setRouteLoading] = useState(false);
     const [routeError, setRouteError] = useState<string | undefined>();
     const [routeRequestVersion, setRouteRequestVersion] = useState(0);
+    const [routeSubmitPending, setRouteSubmitPending] = useState(false);
+    const routeSubmitPendingRef = useRef(false);
+    const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchRequestIdRef = useRef(0);
+    const automaticSearchKeyRef = useRef("");
     const mapPickerRequestIdRef = useRef(0);
+    const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
     const recentPlacesLoadedRef = useRef(false);
     const originTouchedRef = useRef(Boolean(initial?.origin));
-    const [routeDepartureAt, setRouteDepartureAt] = useState(() => new Date());
+    const routePointUiRevisionRef = useRef(0);
+    const destinationHasCoordinatesRef = useRef(initialHasDestinationCoords);
+    destinationHasCoordinatesRef.current =
+        typeof destinationLat === "number" && typeof destinationLng === "number";
+    const [routeDepartureContext, setRouteDepartureContext] = useState(() => (
+        resolveScheduleRouteDepartureContext(initial?.targetArrivalAt, initial?.travelMinutes)
+    ));
+    const routeDepartureAt = routeDepartureContext.departureAt;
+    const routeScheduleBased = routeDepartureContext.scheduleBased;
+    const routeTargetArrivalAt = routeDepartureContext.targetArrivalAt;
+    const scheduleTimingRefinedRef = useRef(false);
     const routeContentAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
@@ -937,11 +1016,13 @@ export default function RouteSelectScreen() {
         typeof originLng === "number" &&
         typeof destinationLat === "number" &&
         typeof destinationLng === "number";
-    const showingSearchResults = isEditingRoutePoint && (
-        searching ||
-        hasTypedSearchQuery ||
-        searchResults.length > 0
-    );
+    const showingSearchResults = shouldShowRoutePointSearchResults({
+        isEditingRoutePoint,
+        searching,
+        hasTypedSearchQuery,
+        hasSearchAttempt,
+        resultCount: searchResults.length,
+    });
     const shouldShowRouteResults = hasRouteCoords && !isEditingRoutePoint;
     const selectedRouteIndex = useMemo(
         () => routeAlternatives.findIndex((option) => option.id === selectedRouteId),
@@ -1011,6 +1092,8 @@ export default function RouteSelectScreen() {
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name || nextOrigin?.name,
+            targetArrivalAt: initial?.targetArrivalAt,
+            departureAt: routeDepartureAt.toISOString(),
             route: routeToStore,
         });
     }, [
@@ -1018,10 +1101,12 @@ export default function RouteSelectScreen() {
         destinationLat,
         destinationLng,
         destinationText,
+        initial?.targetArrivalAt,
         originAddress,
         originLat,
         originLng,
         originText,
+        routeDepartureAt,
         sessionId,
         travelMode,
     ]);
@@ -1041,13 +1126,19 @@ export default function RouteSelectScreen() {
 
     const clearSearch = useCallback(() => {
         searchRequestIdRef.current += 1;
+        automaticSearchKeyRef.current = "";
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         setSearchResults([]);
+        setSearchError(undefined);
         setHasTypedSearchQuery(false);
+        setHasSearchAttempt(false);
         setSearching(false);
     }, []);
 
     const openRoutePointEditor = useCallback((target: RoutePointTarget = "origin") => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
         Keyboard.dismiss();
         setActiveTarget(target);
         clearSearch();
@@ -1055,6 +1146,8 @@ export default function RouteSelectScreen() {
     }, [clearSearch]);
 
     useEffect(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
         setOriginText(initial?.origin?.name ?? "");
         setOriginAddress(initial?.origin?.address);
         setOriginLat(initial?.origin?.lat);
@@ -1064,7 +1157,7 @@ export default function RouteSelectScreen() {
         setDestinationLat(initial?.destination?.lat);
         setDestinationLng(initial?.destination?.lng);
         setTravelMode(initialTravelMode);
-        setActiveTarget(forcedEditTarget ?? "origin");
+        setActiveTarget(initialRoutePointTarget);
         setIsEditingRoutePoint(Boolean(forcedEditTarget) || !initialHasRouteCoords);
         setOriginUsesDefault(false);
         originTouchedRef.current = Boolean(
@@ -1086,6 +1179,7 @@ export default function RouteSelectScreen() {
         initial?.origin?.name,
         initialTravelMode,
         initialHasRouteCoords,
+        initialRoutePointTarget,
         forcedEditTarget,
         sessionId,
     ]);
@@ -1108,23 +1202,29 @@ export default function RouteSelectScreen() {
         if (hasExplicitOrigin || forcedEditTarget === "origin") return;
 
         let cancelled = false;
+        const requestUiRevision = routePointUiRevisionRef.current;
         getFavoriteDeparturePlace()
             .then((place) => {
                 // URL/session 값과 사용자의 직접 입력이 기본값보다 항상 우선한다.
                 if (cancelled || originTouchedRef.current || !placeHasCoords(place)) return;
+
+                const uiUpdate = resolveDefaultOriginUiUpdate({
+                    requestUiRevision,
+                    currentUiRevision: routePointUiRevisionRef.current,
+                    destinationHasCoordinates: destinationHasCoordinatesRef.current,
+                    forcedTarget: forcedEditTarget,
+                });
 
                 setOriginText(getPlaceDisplayText(place));
                 setOriginAddress(place.address);
                 setOriginLat(place.lat);
                 setOriginLng(place.lng);
                 setOriginUsesDefault(true);
-                setActiveTarget("destination");
-                clearSearch();
-
-                const hasDestinationCoords =
-                    typeof initial?.destination?.lat === "number" &&
-                    typeof initial?.destination?.lng === "number";
-                setIsEditingRoutePoint(forcedEditTarget === "destination" || !hasDestinationCoords);
+                if (uiUpdate) {
+                    setActiveTarget(uiUpdate.activeTarget);
+                    setIsEditingRoutePoint(uiUpdate.isEditingRoutePoint);
+                    clearSearch();
+                }
             })
             .catch(() => {
                 // 저장된 기본 출발지가 없거나 조회가 실패하면 기존 빈 입력 흐름을 유지한다.
@@ -1136,8 +1236,6 @@ export default function RouteSelectScreen() {
     }, [
         clearSearch,
         forcedEditTarget,
-        initial?.destination?.lat,
-        initial?.destination?.lng,
         initial?.origin?.address,
         initial?.origin?.lat,
         initial?.origin?.lng,
@@ -1146,6 +1244,14 @@ export default function RouteSelectScreen() {
     ]);
 
     const applyPlaceToTarget = useCallback((target: RoutePointTarget, place: Place) => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
+        const nextTarget = resolveNextMissingRoutePointTarget(
+            target,
+            target === "origin" || (typeof originLat === "number" && typeof originLng === "number"),
+            target === "destination" || (typeof destinationLat === "number" && typeof destinationLng === "number")
+        );
         if (target === "origin") {
             originTouchedRef.current = true;
             setOriginUsesDefault(false);
@@ -1153,17 +1259,17 @@ export default function RouteSelectScreen() {
             setOriginAddress(place.address);
             setOriginLat(place.lat);
             setOriginLng(place.lng);
-            setActiveTarget("origin");
+            setActiveTarget(nextTarget ?? "origin");
         } else {
             setDestinationText(getPlaceDisplayText(place));
             setDestinationAddress(place.address);
             setDestinationLat(place.lat);
             setDestinationLng(place.lng);
-            setActiveTarget("destination");
+            setActiveTarget(nextTarget ?? "destination");
         }
-        setIsEditingRoutePoint(false);
+        setIsEditingRoutePoint(nextTarget !== null);
         clearSearch();
-    }, [clearSearch]);
+    }, [clearSearch, destinationLat, destinationLng, originLat, originLng]);
 
     const removeRecentPlace = useCallback((place: Place) => {
         removeRecentRoutePlace(place)
@@ -1197,12 +1303,72 @@ export default function RouteSelectScreen() {
         };
     }, []);
 
-    const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
+    useEffect(() => {
+        if (!isEditingRoutePoint || hasTypedSearchQuery) return;
+
+        const query = activeTarget === "origin" ? originText.trim() : destinationText.trim();
+        const hasCoordinates = activeTarget === "origin"
+            ? typeof originLat === "number" && typeof originLng === "number"
+            : typeof destinationLat === "number" && typeof destinationLng === "number";
+        if (!query || hasCoordinates) return;
+
+        const searchKey = `${activeTarget}:${query}`;
+        if (automaticSearchKeyRef.current === searchKey) return;
+        automaticSearchKeyRef.current = searchKey;
+
         const requestId = searchRequestIdRef.current + 1;
         searchRequestIdRef.current = requestId;
+        const oppositePoint = activeTarget === "origin"
+            ? (typeof destinationLat === "number" && typeof destinationLng === "number"
+                ? { lat: destinationLat, lng: destinationLng }
+                : undefined)
+            : (typeof originLat === "number" && typeof originLng === "number"
+                ? { lat: originLat, lng: originLng }
+                : undefined);
+
+        setSearching(true);
+        setHasSearchAttempt(true);
+        setSearchError(undefined);
+        searchAddressByKeyword(query, { center: oppositePoint, radiusKm: 33 })
+            .then((items) => {
+                if (searchRequestIdRef.current !== requestId) return;
+                setSearchResults(items);
+            })
+            .catch((error) => {
+                if (searchRequestIdRef.current !== requestId) return;
+                const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
+                setSearchResults([]);
+                setSearchError(message);
+            })
+            .finally(() => {
+                if (searchRequestIdRef.current === requestId) setSearching(false);
+            });
+    }, [
+        activeTarget,
+        destinationLat,
+        destinationLng,
+        destinationText,
+        hasTypedSearchQuery,
+        isEditingRoutePoint,
+        originLat,
+        originLng,
+        originText,
+    ]);
+
+    const handleSearchChange = useCallback((target: RoutePointTarget, text: string) => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        const requestId = searchRequestIdRef.current + 1;
+        searchRequestIdRef.current = requestId;
+        routePointUiRevisionRef.current += 1;
+        const hasQuery = text.trim().length > 0;
         setActiveTarget(target);
         setIsEditingRoutePoint(true);
-        setHasTypedSearchQuery(text.trim().length > 0);
+        setHasTypedSearchQuery(hasQuery);
+        setHasSearchAttempt(hasQuery);
+        setSearchResults([]);
+        setSearchError(undefined);
+        setSearching(hasQuery);
         if (target === "origin") {
             originTouchedRef.current = true;
             setOriginUsesDefault(false);
@@ -1218,11 +1384,7 @@ export default function RouteSelectScreen() {
         }
 
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-        if (!text.trim()) {
-            setSearchResults([]);
-            setSearching(false);
-            return;
-        }
+        if (!hasQuery) return;
 
         searchDebounceRef.current = setTimeout(async () => {
             try {
@@ -1243,7 +1405,8 @@ export default function RouteSelectScreen() {
             } catch (error) {
                 if (searchRequestIdRef.current !== requestId) return;
                 const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
-                Alert.alert("검색 실패", message);
+                setSearchResults([]);
+                setSearchError(message);
             } finally {
                 if (searchRequestIdRef.current === requestId) setSearching(false);
             }
@@ -1260,11 +1423,35 @@ export default function RouteSelectScreen() {
     }, [applyPlaceToTarget, rememberRecentPlace]);
 
     const applyCurrentLocationToTarget = useCallback(async (target: RoutePointTarget) => {
+        const guard = currentLocationRequestGuardRef.current;
+        const requestId = guard.begin();
+        setCurrentLocationPending(true);
         try {
+            const permissionState = await getCurrentLocationPermissionState();
+            if (!guard.isCurrent(requestId)) return;
+            if (!permissionState.servicesEnabled) {
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "현재 위치를 사용하려면 기기 위치 서비스를 켜 주세요.",
+                    true
+                );
+                return;
+            }
+            if (!permissionState.granted && !permissionState.canAskAgain) {
+                showLocationSettingsAlert(
+                    "위치 권한이 필요해요",
+                    "현재 위치를 사용하려면 설정에서 NoLate의 위치 권한을 허용해 주세요."
+                );
+                return;
+            }
+
             setSearching(true);
             const location = await getCurrentLocation();
             const address = await reverseGeocodeToAddress(location.latitude, location.longitude)
                 .catch(() => undefined);
+            if (!guard.isCurrent(requestId)) return;
+            // applyPlaceToTarget이 현재 요청을 invalidate하기 전에 로딩 상태를 먼저 정리한다.
+            setSearching(false);
             applyPlaceToTarget(
                 target,
                 {
@@ -1275,14 +1462,36 @@ export default function RouteSelectScreen() {
                 }
             );
         } catch (error) {
+            if (!guard.isCurrent(requestId)) return;
+            const permissionState = await getCurrentLocationPermissionState().catch(() => undefined);
+            if (!guard.isCurrent(requestId)) return;
+            if (permissionState && !permissionState.servicesEnabled) {
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "현재 위치를 사용하려면 기기 위치 서비스를 켜 주세요.",
+                    true
+                );
+                return;
+            }
+            if (permissionState && !permissionState.granted && !permissionState.canAskAgain) {
+                showLocationSettingsAlert(
+                    "위치 권한이 필요해요",
+                    "현재 위치를 사용하려면 설정에서 NoLate의 위치 권한을 허용해 주세요."
+                );
+                return;
+            }
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
             Alert.alert("현재 위치 실패", message);
         } finally {
-            setSearching(false);
+            if (guard.isCurrent(requestId)) {
+                setSearching(false);
+                setCurrentLocationPending(false);
+            }
         }
     }, [applyPlaceToTarget]);
 
     const applyCurrentLocationToActiveTarget = useCallback(() => {
+        routePointUiRevisionRef.current += 1;
         applyCurrentLocationToTarget(activeTarget);
     }, [activeTarget, applyCurrentLocationToTarget]);
 
@@ -1307,11 +1516,15 @@ export default function RouteSelectScreen() {
     }, [destinationLat, destinationLng, originLat, originLng]);
 
     const openMapForPointSelection = useCallback(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
         Keyboard.dismiss();
         const target = activeTarget;
         const initialCoord = getMapPickerInitialCoord(target);
         setMapPickerTarget(target);
         setMapPickerCoord(initialCoord);
+        setMapPickerHasSelection(false);
         setMapPickerAddress(undefined);
         setMapPickerVisible(true);
     }, [activeTarget, getMapPickerInitialCoord]);
@@ -1319,6 +1532,7 @@ export default function RouteSelectScreen() {
     const closeMapPicker = useCallback(() => {
         mapPickerRequestIdRef.current += 1;
         setMapPickerVisible(false);
+        setMapPickerHasSelection(false);
         setMapPickerResolving(false);
     }, []);
 
@@ -1326,6 +1540,7 @@ export default function RouteSelectScreen() {
         const requestId = mapPickerRequestIdRef.current + 1;
         mapPickerRequestIdRef.current = requestId;
         setMapPickerCoord({ latitude, longitude });
+        setMapPickerHasSelection(true);
         setMapPickerAddress(undefined);
         setMapPickerResolving(true);
         try {
@@ -1341,7 +1556,7 @@ export default function RouteSelectScreen() {
     }, []);
 
     const confirmMapPickerSelection = useCallback(() => {
-        if (!mapPickerCoord) {
+        if (!mapPickerCoord || !mapPickerHasSelection) {
             Alert.alert("위치 선택 필요", "지도에서 위치를 선택해 주세요.");
             return;
         }
@@ -1357,7 +1572,7 @@ export default function RouteSelectScreen() {
         rememberRecentPlace(place);
         applyPlaceToTarget(mapPickerTarget, place);
         setMapPickerVisible(false);
-    }, [applyPlaceToTarget, mapPickerAddress, mapPickerCoord, mapPickerTarget, rememberRecentPlace]);
+    }, [applyPlaceToTarget, mapPickerAddress, mapPickerCoord, mapPickerHasSelection, mapPickerTarget, rememberRecentPlace]);
 
     const loadFavoriteCategories = useCallback(async () => {
         setFavoriteCategoryLoading(true);
@@ -1384,7 +1599,7 @@ export default function RouteSelectScreen() {
         setShowNewCategoryForm(false);
         setNewCategoryName("");
         setNewCategoryColor(FAVORITE_CATEGORY_COLORS[0]);
-        void loadFavoriteCategories();
+        loadFavoriteCategories().catch(() => undefined);
     }, [loadFavoriteCategories]);
 
     const closeFavoriteSaveSheet = useCallback(() => {
@@ -1445,10 +1660,13 @@ export default function RouteSelectScreen() {
 
     const saveFavoriteSheetPlace = useCallback(() => {
         if (!favoriteSheetPlace) return;
-        void savePlaceAsFavorite(favoriteSheetPlace, selectedFavoriteCategoryId);
+        savePlaceAsFavorite(favoriteSheetPlace, selectedFavoriteCategoryId).catch(() => undefined);
     }, [favoriteSheetPlace, savePlaceAsFavorite, selectedFavoriteCategoryId]);
 
     const swapPlaces = useCallback(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
         const prevOrigin = { text: originText, address: originAddress, lat: originLat, lng: originLng };
         originTouchedRef.current = true;
         setOriginUsesDefault(false);
@@ -1480,6 +1698,8 @@ export default function RouteSelectScreen() {
 
     useEffect(() => () => {
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        if (routeSubmitResetTimerRef.current) clearTimeout(routeSubmitResetTimerRef.current);
+        currentLocationRequestGuardRef.current.invalidate();
     }, []);
 
     useEffect(() => {
@@ -1501,8 +1721,13 @@ export default function RouteSelectScreen() {
 
     const retryRouteSearch = useCallback(() => {
         invalidateRouteSearch(origin, destination, travelMode);
+        scheduleTimingRefinedRef.current = false;
+        setRouteDepartureContext(resolveScheduleRouteDepartureContext(
+            initial?.targetArrivalAt,
+            initial?.travelMinutes
+        ));
         setRouteRequestVersion((current) => current + 1);
-    }, [destination, origin, travelMode]);
+    }, [destination, initial?.targetArrivalAt, initial?.travelMinutes, origin, travelMode]);
 
     const openRouteAttribution = useCallback((option: RouteAlternativeOption) => {
         if (!option.attributionUrl) return;
@@ -1517,11 +1742,18 @@ export default function RouteSelectScreen() {
         setRouteAlternatives([]);
         setRouteError(undefined);
 
-        if (!hasRouteCoords) return;
+        if (!hasRouteCoords) {
+            setRouteLoading(false);
+            return;
+        }
 
-        setRouteDepartureAt(new Date());
         setRouteLoading(true);
-        getRouteAlternativeOptions(origin, destination, travelMode)
+        getRouteAlternativeOptions(
+            origin,
+            destination,
+            travelMode,
+            travelMode === "TRANSIT" ? { departureAt: routeDepartureAt } : undefined
+        )
             .then((items) => {
                 if (cancelled) return;
                 const displayItems = sortRouteAlternativesForDisplay(items, travelMode, "ALL");
@@ -1529,6 +1761,26 @@ export default function RouteSelectScreen() {
                 setRouteAlternatives(items);
                 setSelectedRouteId(firstDisplayRouteId);
                 setRouteError(items.length ? undefined : "표시할 경로가 없습니다.");
+
+                const firstRoute = displayItems[0];
+                if (
+                    travelMode === "TRANSIT" &&
+                    initial?.targetArrivalAt &&
+                    firstRoute &&
+                    !scheduleTimingRefinedRef.current
+                ) {
+                    scheduleTimingRefinedRef.current = true;
+                    const refined = resolveScheduleRouteDepartureContext(
+                        initial.targetArrivalAt,
+                        firstRoute.minutes
+                    );
+                    const adjustmentMinutes = Math.abs(
+                        refined.departureAt.getTime() - routeDepartureAt.getTime()
+                    ) / 60_000;
+                    if (refined.scheduleBased && adjustmentMinutes >= 5) {
+                        setRouteDepartureContext(refined);
+                    }
+                }
             })
             .catch((error) => {
                 if (cancelled) return;
@@ -1542,7 +1794,15 @@ export default function RouteSelectScreen() {
         return () => {
             cancelled = true;
         };
-    }, [destination, hasRouteCoords, origin, routeRequestVersion, travelMode]);
+    }, [
+        destination,
+        hasRouteCoords,
+        initial?.targetArrivalAt,
+        origin,
+        routeDepartureAt,
+        routeRequestVersion,
+        travelMode,
+    ]);
 
     useEffect(() => {
         if (!visibleRouteAlternatives.length) return;
@@ -1573,41 +1833,71 @@ export default function RouteSelectScreen() {
     }, [persistInitial, routeAlternatives, router, selectedRoute, selectedRouteIndex, sessionId]);
 
     const saveRouteOption = useCallback((routeOption: RouteAlternativeOption, routeIndex: number) => {
+        if (routeSubmitPendingRef.current) return;
         if (!sessionId) {
-            close();
+            Alert.alert("저장할 일정이 없어요", "일정 화면에서 이동 경로를 다시 열어 주세요.");
             return;
         }
 
         const nextOrigin = buildPlace(originText, originAddress, originLat, originLng);
         const nextDestination = buildPlace(destinationText, destinationAddress, destinationLat, destinationLng);
-        const routeInfo = buildRouteInfoFromAlternative(
+        const candidateRouteInfo = buildRouteInfoFromAlternative(
             routeOption,
             nextOrigin,
             nextDestination,
             routeDepartureAt,
             routeIndex
         );
-
-        setRoutePlannerResult(sessionId, {
-            origin: nextOrigin,
-            destination: nextDestination,
-            travelMode,
-            travelMinutes: routeInfo.totalDurationMinutes,
-            locationName: nextOrigin?.name && nextDestination?.name
-                ? `${nextOrigin.name} → ${nextDestination.name}`
-                : nextDestination?.name || nextOrigin?.name,
-            route: {
-                ...routeOption,
-                routeInfo,
-            },
+        const selectedTiming = resolveSelectedRouteTiming({
+            targetArrivalAt: initial?.targetArrivalAt,
+            routeInfo: candidateRouteInfo,
+            fallbackDepartureAt: routeDepartureAt,
         });
-        close();
+        const routeInfo = {
+            ...candidateRouteInfo,
+            departureTime: selectedTiming.departureAt.toISOString(),
+            arrivalTime: selectedTiming.arrivalAt.toISOString(),
+        };
+
+        routeSubmitPendingRef.current = true;
+        setRouteSubmitPending(true);
+        try {
+            setRoutePlannerResult(sessionId, {
+                origin: nextOrigin,
+                destination: nextDestination,
+                travelMode,
+                travelMinutes: routeInfo.totalDurationMinutes,
+                locationName: nextOrigin?.name && nextDestination?.name
+                    ? `${nextOrigin.name} → ${nextDestination.name}`
+                    : nextDestination?.name || nextOrigin?.name,
+                targetArrivalAt: initial?.targetArrivalAt,
+                departureAt: routeInfo.departureTime,
+                route: {
+                    ...routeOption,
+                    routeInfo,
+                },
+            });
+            close();
+        } catch {
+            routeSubmitPendingRef.current = false;
+            setRouteSubmitPending(false);
+            Alert.alert("경로 저장 실패", "잠시 후 다시 시도해 주세요.");
+            return;
+        }
+
+        // 화면 전환 애니메이션 중 연속 탭만 막고, 전환이 중단된 경우에는 다시 시도할 수 있게 한다.
+        routeSubmitResetTimerRef.current = setTimeout(() => {
+            routeSubmitPendingRef.current = false;
+            setRouteSubmitPending(false);
+            routeSubmitResetTimerRef.current = null;
+        }, 800);
     }, [
         close,
         destinationAddress,
         destinationLat,
         destinationLng,
         destinationText,
+        initial?.targetArrivalAt,
         originAddress,
         originLat,
         originLng,
@@ -1618,11 +1908,27 @@ export default function RouteSelectScreen() {
     ]);
 
     const exitSearchMode = useCallback(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
         clearSearch();
         setIsEditingRoutePoint(false);
     }, [clearSearch]);
 
+    useEffect(() => {
+        if (Platform.OS !== "android" || !isEditingRoutePoint) return;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            exitSearchMode();
+            return true;
+        });
+        return () => subscription.remove();
+    }, [exitSearchMode, isEditingRoutePoint]);
+
     const editDefaultOrigin = useCallback(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        setCurrentLocationPending(false);
+        routePointUiRevisionRef.current += 1;
         originTouchedRef.current = true;
         setActiveTarget("origin");
         setIsEditingRoutePoint(true);
@@ -1694,10 +2000,12 @@ export default function RouteSelectScreen() {
             animationType="fade"
             onRequestClose={closeFavoriteSaveSheet}
         >
-            <View style={styles.favoriteModalRoot}>
+            <View accessibilityViewIsModal style={styles.favoriteModalRoot}>
                 <Pressable
                     onPress={closeFavoriteSaveSheet}
                     disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                    accessibilityRole="button"
+                    accessibilityLabel="즐겨찾기 저장 창 닫기"
                     style={styles.favoriteModalBackdrop}
                 />
                 <CalendarGlassSurface
@@ -1724,12 +2032,22 @@ export default function RouteSelectScreen() {
                         <Pressable
                             onPress={closeFavoriteSaveSheet}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                            accessibilityRole="button"
+                            accessibilityLabel="즐겨찾기 저장 창 닫기"
                             style={[styles.favoriteSheetCloseButton, { backgroundColor: routeUi.surface2 }]}
                         >
                             <Text style={[styles.favoriteSheetCloseText, { color: routeUi.textSecondary }]}>×</Text>
                         </Pressable>
                     </View>
 
+                    <ScrollView
+                        style={styles.favoriteSheetScroll}
+                        contentContainerStyle={styles.favoriteSheetScrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                        automaticallyAdjustKeyboardInsets
+                        showsVerticalScrollIndicator={false}
+                    >
                     <View style={[styles.favoritePlaceBox, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}>
                         <Ionicons name="star" size={18} color={routeUi.accentBlue} />
                         <View style={styles.favoritePlaceTextWrap}>
@@ -1758,6 +2076,9 @@ export default function RouteSelectScreen() {
                         <Pressable
                             onPress={() => setSelectedFavoriteCategoryId(undefined)}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                            accessibilityRole="button"
+                            accessibilityLabel="카테고리 없음"
+                            accessibilityState={{ selected: !selectedFavoriteCategoryId }}
                             style={[
                                 styles.favoriteCategoryChip,
                                 {
@@ -1783,6 +2104,12 @@ export default function RouteSelectScreen() {
                                     key={category.id ?? `${category.name}:${categoryColor}`}
                                     onPress={() => setSelectedFavoriteCategoryId(category.id)}
                                     disabled={!category.id || favoriteSheetSaving || creatingFavoriteCategory}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`${category.name} 카테고리`}
+                                    accessibilityState={{
+                                        selected,
+                                        disabled: !category.id || favoriteSheetSaving || creatingFavoriteCategory,
+                                    }}
                                     style={[
                                         styles.favoriteCategoryChip,
                                         {
@@ -1813,6 +2140,9 @@ export default function RouteSelectScreen() {
                         <Pressable
                             onPress={() => setShowNewCategoryForm((current) => !current)}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                            accessibilityRole="button"
+                            accessibilityLabel="새 카테고리 입력"
+                            accessibilityState={{ expanded: showNewCategoryForm }}
                             style={[
                                 styles.favoriteCategoryChip,
                                 { backgroundColor: routeUi.surface2, borderColor: routeUi.border },
@@ -1847,13 +2177,16 @@ export default function RouteSelectScreen() {
                                 ]}
                             />
                             <View style={styles.favoriteColorRow}>
-                                {FAVORITE_CATEGORY_COLORS.map((color) => {
+                                {FAVORITE_CATEGORY_COLORS.map((color, colorIndex) => {
                                     const selected = newCategoryColor === color;
                                     return (
                                         <Pressable
                                             key={color}
                                             onPress={() => setNewCategoryColor(color)}
                                             disabled={creatingFavoriteCategory || favoriteSheetSaving}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`카테고리 색상 ${colorIndex + 1}`}
+                                            accessibilityState={{ selected }}
                                             style={[
                                                 styles.favoriteColorButton,
                                                 {
@@ -1869,6 +2202,8 @@ export default function RouteSelectScreen() {
                             <Pressable
                                 onPress={createFavoriteCategory}
                                 disabled={creatingFavoriteCategory || favoriteSheetSaving}
+                                accessibilityRole="button"
+                                accessibilityLabel="카테고리 추가"
                                 style={[
                                     styles.favoriteCreateCategoryButton,
                                     { backgroundColor: routeUi.textPrimary },
@@ -1892,6 +2227,8 @@ export default function RouteSelectScreen() {
                     <Pressable
                         onPress={saveFavoriteSheetPlace}
                         disabled={!favoriteSheetPlace || favoriteSheetSaving || creatingFavoriteCategory}
+                        accessibilityRole="button"
+                        accessibilityLabel="즐겨찾기 저장"
                         style={[
                             styles.favoriteSaveButton,
                             {
@@ -1912,6 +2249,7 @@ export default function RouteSelectScreen() {
                             </Text>
                         )}
                     </Pressable>
+                    </ScrollView>
                 </CalendarGlassSurface>
             </View>
         </Modal>
@@ -1945,7 +2283,7 @@ export default function RouteSelectScreen() {
                 zIndex: 20,
             });
         }
-        if (mapPickerCoord) {
+        if (mapPickerCoord && mapPickerHasSelection) {
             markers.push({
                 id: "map-picker-selected",
                 latitude: mapPickerCoord.latitude,
@@ -1957,17 +2295,23 @@ export default function RouteSelectScreen() {
             });
         }
         return markers;
-    }, [destination, mapPickerCoord, mapPickerTarget, origin]);
+    }, [destination, mapPickerCoord, mapPickerHasSelection, mapPickerTarget, origin]);
     const mapPickerTitle = mapPickerTarget === "origin" ? "출발지 지도 선택" : "도착지 지도 선택";
+    const mapPickerSelectionLabel = !mapPickerHasSelection
+        ? "아직 선택한 위치가 없습니다"
+        : mapPickerAddress ?? (mapPickerCoord
+            ? `${mapPickerCoord.latitude.toFixed(5)}, ${mapPickerCoord.longitude.toFixed(5)}`
+            : "아직 선택한 위치가 없습니다");
     const mapPickerSheet = (
         <Modal
             visible={mapPickerVisible}
             animationType="slide"
             onRequestClose={closeMapPicker}
         >
-            <View style={[styles.mapPickerRoot, { backgroundColor: routeUi.background }]}>
+            <View accessibilityViewIsModal style={[styles.mapPickerRoot, { backgroundColor: routeUi.background }]}>
                 <TmapMapView
                     style={styles.mapPickerMap}
+                    errorOverlayTop={Math.max(insets.top + 72, 104)}
                     camera={mapPickerCamera}
                     markers={mapPickerMarkers}
                     nightModeEnabled={isDark}
@@ -1978,7 +2322,12 @@ export default function RouteSelectScreen() {
                     fallbackTextColor={routeUi.textSecondary}
                 />
                 <View style={[styles.mapPickerHeader, { paddingTop: insets.top + 8 }]}>
-                    <Pressable onPress={closeMapPicker} style={[styles.mapPickerIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
+                    <Pressable
+                        onPress={closeMapPicker}
+                        accessibilityRole="button"
+                        accessibilityLabel="지도 선택 닫기"
+                        style={[styles.mapPickerIconButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
+                    >
                         <Text style={[styles.mapPickerBackText, { color: routeUi.textPrimary }]}>‹</Text>
                     </Pressable>
                     <View style={[styles.mapPickerTitleBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
@@ -2012,23 +2361,31 @@ export default function RouteSelectScreen() {
                             <Ionicons name="location" size={17} color={routeUi.accentBlue} />
                         )}
                         <Text numberOfLines={2} style={[styles.mapPickerAddressText, { color: routeUi.textSecondary }]}>
-                            {mapPickerAddress || (
-                                mapPickerCoord
-                                    ? `${mapPickerCoord.latitude.toFixed(5)}, ${mapPickerCoord.longitude.toFixed(5)}`
-                                    : "아직 선택한 위치가 없습니다"
-                            )}
+                            {mapPickerSelectionLabel}
                         </Text>
                     </View>
                     <View style={styles.mapPickerActionRow}>
                         <Pressable
                             onPress={closeMapPicker}
+                            accessibilityRole="button"
+                            accessibilityLabel="지도 선택 취소"
                             style={[styles.mapPickerSecondaryButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
                         >
                             <Text style={[styles.mapPickerSecondaryText, { color: routeUi.textPrimary }]}>취소</Text>
                         </Pressable>
                         <Pressable
                             onPress={confirmMapPickerSelection}
-                            style={[styles.mapPickerPrimaryButton, { backgroundColor: routeUi.accentBlue }]}
+                            disabled={!mapPickerCoord || !mapPickerHasSelection || mapPickerResolving}
+                            accessibilityRole="button"
+                            accessibilityLabel="선택한 위치 사용"
+                            accessibilityState={{ disabled: !mapPickerCoord || !mapPickerHasSelection || mapPickerResolving }}
+                            style={[
+                                styles.mapPickerPrimaryButton,
+                                {
+                                    backgroundColor: routeUi.accentBlue,
+                                    opacity: !mapPickerCoord || !mapPickerHasSelection || mapPickerResolving ? 0.5 : 1,
+                                },
+                            ]}
                         >
                             <Text style={styles.mapPickerPrimaryText}>이 위치 사용</Text>
                         </Pressable>
@@ -2045,7 +2402,12 @@ export default function RouteSelectScreen() {
                 {favoriteSaveSheet}
                 {mapPickerSheet}
                 <View style={styles.searchModeHeader}>
-                    <Pressable onPress={exitSearchMode} style={styles.searchModeBackButton}>
+                    <Pressable
+                        onPress={exitSearchMode}
+                        accessibilityRole="button"
+                        accessibilityLabel="장소 검색 닫기"
+                        style={styles.searchModeBackButton}
+                    >
                         <Text style={[styles.searchModeBackText, { color: routeUi.textPrimary }]}>‹</Text>
                     </Pressable>
                     <View style={[styles.searchModeSearchBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
@@ -2053,15 +2415,22 @@ export default function RouteSelectScreen() {
                             autoFocus
                             value={activeSearchText}
                             onChangeText={(text) => handleSearchChange(activeTarget, text)}
+                            accessibilityLabel={`${activeTargetLabel} 검색`}
+                            accessibilityHint="장소 이름이나 주소를 입력하세요"
                             placeholder={`${activeTargetLabel}를 입력하세요`}
                             placeholderTextColor={routeUi.inputPlaceholder}
                             selectionColor={routeUi.accentBlue}
                             returnKeyType="search"
+                            textContentType="none"
+                            autoComplete="off"
+                            secureTextEntry={false}
                             style={[styles.searchModeInput, { color: routeUi.textPrimary }]}
                         />
                         {!!activeSearchText.trim() && (
                             <Pressable
                                 onPress={() => handleSearchChange(activeTarget, "")}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${activeTargetLabel} 검색어 지우기`}
                                 style={[styles.searchModeClearButton, { backgroundColor: routeUi.clearButtonBg }]}
                             >
                                 <Text style={[styles.searchModeClearText, { color: routeUi.clearButtonText }]}>×</Text>
@@ -2102,13 +2471,30 @@ export default function RouteSelectScreen() {
                 <View style={styles.searchModeActionRow}>
                     <Pressable
                         onPress={applyCurrentLocationToActiveTarget}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${activeTargetLabel}를 현재 위치로 설정`}
+                        accessibilityState={{
+                            busy: currentLocationPending,
+                            disabled: currentLocationPending,
+                        }}
+                        disabled={currentLocationPending}
                         style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
                     >
-                        <Ionicons name="navigate-outline" size={22} color={routeUi.accentBlue} />
+                        {currentLocationPending ? (
+                            <BrandedLoader
+                                size="button"
+                                variant="route"
+                                accessibilityLabel="현재 위치를 확인하고 있어요"
+                            />
+                        ) : (
+                            <Ionicons name="navigate-outline" size={22} color={routeUi.accentBlue} />
+                        )}
                         <Text style={[styles.searchModeActionText, { color: routeUi.accentBlue }]}>내 위치</Text>
                     </Pressable>
                     <Pressable
                         onPress={openMapForPointSelection}
+                        accessibilityRole="button"
+                        accessibilityLabel={`${activeTargetLabel}를 지도에서 선택`}
                         style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
                     >
                         <Ionicons name="map-outline" size={23} color={routeUi.textSecondary} />
@@ -2137,7 +2523,23 @@ export default function RouteSelectScreen() {
                                     <Text style={[styles.searchingText, { color: routeUi.textSecondary }]}>주소 검색 중...</Text>
                                 </View>
                             )}
-                            {!searching && searchResults.length === 0 && (
+                            {!searching && searchError && (
+                                <View style={styles.searchModeEmptyRow}>
+                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
+                                        주소 검색에 실패했습니다. 네트워크를 확인해 주세요.
+                                    </Text>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="주소 다시 검색"
+                                        onPress={() => handleSearchChange(activeTarget, activeSearchText)}
+                                        style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
+                                    >
+                                        <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                                        <Text style={styles.emptyRetryText}>다시 검색</Text>
+                                    </Pressable>
+                                </View>
+                            )}
+                            {!searching && !searchError && searchResults.length === 0 && (
                                 <View style={styles.searchModeEmptyRow}>
                                     <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
                                         검색 결과가 없습니다.
@@ -2160,6 +2562,8 @@ export default function RouteSelectScreen() {
                                     >
                                         <Pressable
                                             onPress={() => applyPlace(activeTarget, item)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${item.name}, ${item.address || "주소 정보 없음"}`}
                                             style={styles.searchModeResultMain}
                                         >
                                             <View style={[styles.searchModeListIcon, { backgroundColor: routeUi.surface2 }]}>
@@ -2182,6 +2586,8 @@ export default function RouteSelectScreen() {
                                         <Pressable
                                             onPress={() => openFavoriteSaveSheet(resultPlace)}
                                             disabled={Boolean(favoriteSavingKey)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${item.name} 즐겨찾기에 저장`}
                                             style={styles.searchModeFavoriteButton}
                                         >
                                             {isSaving ? (
@@ -2202,7 +2608,6 @@ export default function RouteSelectScreen() {
                         <View style={styles.searchModePanel}>
                             <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
                                 <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>최근검색</Text>
-                                <Text style={[styles.searchModeEditText, { color: routeUi.textSecondary }]}>편집</Text>
                             </View>
                             {recentPlaces.length > 0 ? (
                                 recentPlaces.map((place, index) => {
@@ -2220,6 +2625,8 @@ export default function RouteSelectScreen() {
                                         >
                                             <Pressable
                                                 onPress={() => applyRecentPlaceToActiveTarget(place)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`${getPlaceDisplayText(place)}, 최근 장소 선택`}
                                                 style={styles.searchModeRecentMain}
                                             >
                                                 <View style={[styles.searchModeListIcon, { backgroundColor: routeUi.surface2 }]}>
@@ -2239,6 +2646,8 @@ export default function RouteSelectScreen() {
                                             <Pressable
                                                 onPress={() => openFavoriteSaveSheet(place)}
                                                 disabled={Boolean(favoriteSavingKey)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`${getPlaceDisplayText(place)} 즐겨찾기에 저장`}
                                                 style={styles.searchModeFavoriteButton}
                                             >
                                                 {isSaving ? (
@@ -2253,6 +2662,8 @@ export default function RouteSelectScreen() {
                                             </Pressable>
                                             <Pressable
                                                 onPress={() => removeRecentPlace(place)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`${getPlaceDisplayText(place)} 최근 검색에서 삭제`}
                                                 style={styles.searchModeRemoveButton}
                                             >
                                                 <Text style={[styles.searchModeRemoveText, { color: routeUi.textSecondary }]}>×</Text>
@@ -2289,7 +2700,12 @@ export default function RouteSelectScreen() {
             {mapPickerSheet}
             {!shouldShowRouteResults && (
                 <View style={styles.headerRow}>
-                    <Pressable onPress={close} style={[styles.headerButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}>
+                    <Pressable
+                        onPress={close}
+                        accessibilityRole="button"
+                        accessibilityLabel="이동 경로 화면 닫기"
+                        style={[styles.headerButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
+                    >
                         <Text style={[styles.headerButtonText, { color: routeUi.textPrimary }]}>‹</Text>
                     </Pressable>
                     <View style={styles.headerTitleWrap}>
@@ -2329,27 +2745,44 @@ export default function RouteSelectScreen() {
                                 <TextInput
                                     value={originText}
                                     onFocus={() => {
+                                        routePointUiRevisionRef.current += 1;
                                         setActiveTarget("origin");
                                         setIsEditingRoutePoint(true);
                                     }}
                                     onChangeText={(text) => handleSearchChange("origin", text)}
+                                    accessibilityLabel="출발지 검색"
+                                    accessibilityHint="장소 이름이나 주소를 입력하세요"
                                     placeholder="출발지를 입력하세요"
                                     placeholderTextColor={routeUi.inputPlaceholder}
+                                    textContentType="none"
+                                    autoComplete="off"
+                                    secureTextEntry={false}
                                     style={[styles.routeInput, { color: routeUi.textPrimary, borderBottomColor: routeUi.inputBorder }]}
                                 />
                                 <TextInput
                                     value={destinationText}
                                     onFocus={() => {
+                                        routePointUiRevisionRef.current += 1;
                                         setActiveTarget("destination");
                                         setIsEditingRoutePoint(true);
                                     }}
                                     onChangeText={(text) => handleSearchChange("destination", text)}
+                                    accessibilityLabel="도착지 검색"
+                                    accessibilityHint="장소 이름이나 주소를 입력하세요"
                                     placeholder="도착지를 입력하세요"
                                     placeholderTextColor={routeUi.inputPlaceholder}
+                                    textContentType="none"
+                                    autoComplete="off"
+                                    secureTextEntry={false}
                                     style={[styles.routeInput, { color: routeUi.textPrimary }]}
                                 />
                             </View>
-                            <Pressable onPress={swapPlaces} style={[styles.swapButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}>
+                            <Pressable
+                                onPress={swapPlaces}
+                                accessibilityRole="button"
+                                accessibilityLabel="출발지와 도착지 바꾸기"
+                                style={[styles.swapButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
+                            >
                                 <Text style={[styles.swapButtonText, { color: routeUi.textSecondary }]}>⇅</Text>
                             </Pressable>
                         </View>
@@ -2460,20 +2893,21 @@ export default function RouteSelectScreen() {
                     <View style={styles.currentRouteNotice}>
                         <View style={styles.currentRouteTimeGroup}>
                             <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
-                                현재 시간
+                                {routeScheduleBased ? "일정" : "현재 시간"}
                             </Text>
                             <Text style={[styles.currentRouteNoticeTimeText, { color: routeUi.accentBlue }]}>
-                                {formatCurrentRouteNoticeTime(routeDepartureAt)}
+                                {routeScheduleBased && routeTargetArrivalAt
+                                    ? `${formatScheduleRouteNoticeTime(routeTargetArrivalAt)} 도착`
+                                    : formatCurrentRouteNoticeTime(routeDepartureAt)}
                             </Text>
                             <Text style={[styles.currentRouteNoticeText, { color: routeUi.textDisabled }]}>
                                 기준
                             </Text>
                         </View>
-                        <View style={styles.currentRouteSortGroup}>
+                        <View accessibilityLabel="추천 경로순" style={styles.currentRouteSortGroup}>
                             <Text style={[styles.currentRouteSortText, { color: routeUi.textSecondary }]}>
-                                최적 경로순
+                                추천 경로순
                             </Text>
-                            <Ionicons name="chevron-down" size={14} color={routeUi.textSecondary} />
                         </View>
                     </View>
                 )}
@@ -2495,6 +2929,8 @@ export default function RouteSelectScreen() {
                             <Text style={[styles.emptyText, { color: routeUi.textSecondary }]}>{routeError}</Text>
                             <Pressable
                                 onPress={retryRouteSearch}
+                                accessibilityRole="button"
+                                accessibilityLabel="경로 다시 검색"
                                 style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
                             >
                                 <Ionicons name="refresh" size={15} color="#FFFFFF" />
@@ -2550,7 +2986,13 @@ export default function RouteSelectScreen() {
 	                                            : styles.routeOptionCardInactive,
 	                                    ]}
 	                                >
-	                                    <Pressable onPress={selectRoute} style={styles.routeOptionPressable}>
+	                                    <Pressable
+                                            onPress={selectRoute}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${formatRouteInfoDuration(routeInfo.totalDurationMinutes)} 경로`}
+                                            accessibilityState={{ selected, expanded: selected }}
+                                            style={styles.routeOptionPressable}
+                                        >
                                         <View style={styles.routeOptionHeader}>
                                             <View style={styles.routeOptionHeaderRow}>
                                                 <View style={styles.routeOptionTitleMetaRow}>
@@ -2712,6 +3154,7 @@ export default function RouteSelectScreen() {
                                     {!!option.attributionText && !!option.attributionUrl && (
                                         <Pressable
                                             accessibilityRole="link"
+                                            accessibilityLabel={`${option.attributionText} 지도 정보 열기`}
                                             onPress={() => openRouteAttribution(option)}
                                             style={[styles.routeAttributionLink, { borderTopColor: routeUi.border }]}
                                         >
@@ -2730,6 +3173,8 @@ export default function RouteSelectScreen() {
                                         >
                                             <Pressable
                                                 onPress={() => openMapForOption(option)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel="경로 상세 보기"
                                                 style={[
                                                     styles.routeCardSecondaryButton,
                                                     {
@@ -2745,11 +3190,32 @@ export default function RouteSelectScreen() {
                                             </Pressable>
                                             <Pressable
                                                 onPress={() => saveRouteOption(option, displayIndex)}
-                                                style={[styles.routeCardPrimaryButton, { backgroundColor: routeUi.accentBlue }]}
+                                                disabled={routeSubmitPending}
+                                                accessibilityRole="button"
+                                                accessibilityLabel="이 경로 저장"
+                                                accessibilityState={{
+                                                    busy: routeSubmitPending,
+                                                    disabled: routeSubmitPending,
+                                                }}
+                                                style={[
+                                                    styles.routeCardPrimaryButton,
+                                                    {
+                                                        backgroundColor: routeUi.accentBlue,
+                                                        opacity: routeSubmitPending ? 0.58 : 1,
+                                                    },
+                                                ]}
                                             >
-                                                <Text style={styles.routeCardPrimaryButtonText}>
-                                                    이 경로로 저장
-                                                </Text>
+                                                {routeSubmitPending ? (
+                                                    <BrandedLoader
+                                                        size="button"
+                                                        variant="route"
+                                                        accessibilityLabel="선택한 경로를 저장하고 있어요"
+                                                    />
+                                                ) : (
+                                                    <Text style={styles.routeCardPrimaryButtonText}>
+                                                        이 경로로 저장
+                                                    </Text>
+                                                )}
                                             </Pressable>
                                         </View>
                                     )}
@@ -3237,9 +3703,17 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         borderWidth: StyleSheet.hairlineWidth,
+        maxHeight: "92%",
         paddingHorizontal: 18,
         paddingTop: 10,
         gap: 14,
+    },
+    favoriteSheetScroll: {
+        flexShrink: 1,
+    },
+    favoriteSheetScrollContent: {
+        gap: 14,
+        paddingBottom: 4,
     },
     favoriteSheetHandle: {
         alignSelf: "center",

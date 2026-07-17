@@ -73,6 +73,7 @@ export default function CategorySelectBox({
         () => categories.find((category) => category.id === value),
         [categories, value]
     );
+    const canOpen = categories.length > 0 || Boolean(onManageCategories);
 
     return (
         <View style={styles.root}>
@@ -81,6 +82,10 @@ export default function CategorySelectBox({
             </Text>
 
             <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${label} 선택, 현재 ${selected?.title ?? "선택 안 됨"}`}
+                accessibilityState={{ expanded: open, disabled: !canOpen }}
+                disabled={!canOpen}
                 onPress={() => setOpen((current) => !current)}
                 style={[
                     styles.selector,
@@ -103,7 +108,7 @@ export default function CategorySelectBox({
                 </View>
 
                 <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
-                    <Ionicons name="chevron-down" size={17} color={colors.textSecondary} />
+                    <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
                 </Animated.View>
             </Pressable>
 
@@ -130,6 +135,9 @@ export default function CategorySelectBox({
                         return (
                             <Pressable
                                 key={category.id}
+                                accessibilityRole="radio"
+                                accessibilityState={{ selected: active }}
+                                accessibilityLabel={`${category.title} 카테고리`}
                                 onPress={() => {
                                     onChange(category.id);
                                     setOpen(false);
@@ -160,6 +168,7 @@ export default function CategorySelectBox({
                                     </Text>
                                 </View>
                                 <Ionicons
+                                    accessible={false}
                                     name="checkmark"
                                     size={18}
                                     color={active ? colors.textPrimary : "transparent"}
@@ -177,6 +186,8 @@ export default function CategorySelectBox({
                                 ]}
                             />
                             <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="카테고리 관리 열기"
                                 onPress={() => {
                                     setOpen(false);
                                     onManageCategories();
@@ -186,7 +197,7 @@ export default function CategorySelectBox({
                                     { opacity: pressed ? 0.7 : 1 },
                                 ]}
                             >
-                                <Ionicons name="folder-open-outline" size={20} color={colors.textPrimary} />
+                                <Ionicons accessible={false} name="folder-open-outline" size={20} color={colors.textPrimary} />
                                 <Text style={[styles.manageText, { color: colors.textPrimary }]}>
                                     카테고리 관리
                                 </Text>

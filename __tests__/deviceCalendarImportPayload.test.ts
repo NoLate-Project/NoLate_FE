@@ -1,4 +1,5 @@
 import {
+    buildCalendarImportSource,
     buildSchedulePayloadFromCandidate,
     type DeviceCalendarCandidate,
 } from "../src/modules/onboarding/deviceCalendarImport";
@@ -26,6 +27,20 @@ const SETTINGS = {
 };
 
 describe("calendar import schedule payload", () => {
+    test("원본 캘린더 발생 건 식별자를 반복 가져오기 API 형식으로 보존한다", () => {
+        expect(buildCalendarImportSource(CANDIDATE)).toEqual({
+            provider: "APPLE_DEVICE",
+            calendarId: "calendar",
+            eventId: "event",
+            occurrenceStartAt: "2099-01-02T12:00:00.000Z",
+        });
+    });
+
+    test("원본 event id가 없으면 중복 방지가 불가능하므로 가져오기를 중단한다", () => {
+        expect(() => buildCalendarImportSource({ ...CANDIDATE, eventId: "  " }))
+            .toThrow("원본 캘린더 일정 식별자가 없어 가져올 수 없습니다.");
+    });
+
     test("경로가 없는 외부 일정은 예상 출발값만 저장하고 실시간 알림은 끈다", () => {
         const payload = buildSchedulePayloadFromCandidate(CANDIDATE, SETTINGS);
 

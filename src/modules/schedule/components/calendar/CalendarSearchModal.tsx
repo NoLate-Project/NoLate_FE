@@ -96,7 +96,13 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
     };
 
     return (
-        <Modal visible={visible} animationType="fade" transparent onRequestClose={closeSearch}>
+        <Modal
+            visible={visible}
+            animationType="fade"
+            transparent
+            onRequestClose={closeSearch}
+            accessibilityViewIsModal
+        >
             <SafeAreaView
                 style={[
                     styles.safeArea,
@@ -130,6 +136,7 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
                             <Ionicons name="search" size={23} color={colors.textPrimary} />
                             <TextInput
                                 autoFocus
+                                accessibilityLabel="일정 검색어"
                                 value={query}
                                 onChangeText={setQuery}
                                 placeholder="검색"
@@ -140,6 +147,7 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
                             />
                             {query.length > 0 ? (
                                 <Pressable
+                                    accessibilityRole="button"
                                     onPress={() => setQuery("")}
                                     accessibilityLabel="검색어 지우기"
                                     style={({ pressed }) => [
@@ -149,12 +157,11 @@ export default function CalendarSearchModal({ visible, items, onClose }: Props) 
                                 >
                                     <Ionicons name="close-circle" size={22} color={colors.textSecondary} />
                                 </Pressable>
-                            ) : (
-                                <Ionicons name="mic-outline" size={25} color={colors.textPrimary} />
-                            )}
+                            ) : null}
                         </View>
 
                         <Pressable
+                            accessibilityRole="button"
                             onPress={closeSearch}
                             accessibilityLabel="검색 닫기"
                             style={({ pressed }) => [
@@ -235,6 +242,7 @@ function SearchResultRow({
     const previousDateTitle = index > 0 ? formatScheduleDateTitle(results[index - 1].startAt) : null;
     const shouldShowDate = dateTitle !== previousDateTitle;
     const times = formatScheduleTimes(item);
+    const location = item.locationName ?? item.destination?.name ?? item.origin?.name;
 
     return (
         <View>
@@ -244,6 +252,8 @@ function SearchResultRow({
                 </Text>
             )}
             <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={[item.title, dateTitle, times.start, location].filter(Boolean).join(", ")}
                 onPress={() => onPress(item.id)}
                 style={({ pressed }) => [
                     styles.resultItem,
@@ -271,12 +281,12 @@ function SearchResultRow({
                     >
                         {item.title}
                     </Text>
-                    {!!item.locationName && (
+                    {!!location && (
                         <Text
                             numberOfLines={1}
                             style={[styles.resultMeta, { color: colors.textSecondary }]}
                         >
-                            {item.locationName}
+                            {location}
                         </Text>
                     )}
                 </View>

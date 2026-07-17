@@ -26,7 +26,19 @@ describe("quick schedule media input extraction", () => {
             .toEqual({
                 text: "내일 오후 3시 회의",
                 inputType: "CONVERSATION",
-            });
+        });
+    });
+
+    test("공유에서 복원한 텍스트는 SHARE_TEXT 타입을 유지한다", async () => {
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative();
+
+        await expect(resolveQuickScheduleParseInput("  금요일 7시 강남역 술약속  ", {
+            inputMode: "text",
+            inputTypeOverride: "SHARE_TEXT",
+        })).resolves.toEqual({
+            text: "금요일 7시 강남역 술약속",
+            inputType: "SHARE_TEXT",
+        });
     });
 
     test("사진 입력은 iOS OCR 결과를 IMAGE_OCR 타입으로 반환한다", async () => {

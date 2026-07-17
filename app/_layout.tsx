@@ -1,6 +1,6 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
-import { InteractionManager, StyleSheet, View } from "react-native";
+import { Alert, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
@@ -8,11 +8,57 @@ import {
     configurePushNavigation,
 } from "../src/modules/notification/foregroundPush";
 import { useAuth } from "../src/modules/auth/AuthContext";
-import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
+import {
+    createPendingPushNavigationQueue,
+    createScheduleDetailRoute,
+    isPushNavigationReady,
+    type PushNavigationTarget,
+} from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 
 export default function RootLayout() {
     const router = useRouter();
+    const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    const pendingPushNavigation = useRef(createPendingPushNavigationQueue()).current;
+    const pushNavigationReadyRef = useRef(isPushNavigationReady({
+        isAuthenticated,
+        isCurationCompleted,
+        isLoading,
+    }));
+
+    const navigateToPushTarget = useCallback((target: PushNavigationTarget) => {
+        InteractionManager.runAfterInteractions(() => {
+            if (target.kind === "scheduleDetail") {
+                router.push(createScheduleDetailRoute(target.scheduleId));
+                return;
+            }
+            router.push("/share/inbox");
+        });
+    }, [router]);
+
+    const openOrDeferPushTarget = useCallback((target: PushNavigationTarget) => {
+        if (!pushNavigationReadyRef.current) {
+            pendingPushNavigation.defer(target);
+            return;
+        }
+        navigateToPushTarget(target);
+    }, [navigateToPushTarget, pendingPushNavigation]);
+
+    useEffect(() => {
+        const readiness = { isAuthenticated, isCurationCompleted, isLoading };
+        const ready = isPushNavigationReady(readiness);
+        pushNavigationReadyRef.current = ready;
+        if (!ready) return;
+
+        const pendingTarget = pendingPushNavigation.consumeIfReady(readiness);
+        if (pendingTarget) navigateToPushTarget(pendingTarget);
+    }, [
+        isAuthenticated,
+        isCurationCompleted,
+        isLoading,
+        navigateToPushTarget,
+        pendingPushNavigation,
+    ]);
 
     useEffect(() => {
         let unsubscribeForeground: (() => void) | undefined;
@@ -27,13 +73,29 @@ export default function RootLayout() {
             });
         configurePushNavigation(
             (scheduleId) => {
-                InteractionManager.runAfterInteractions(() => {
-                    router.push(createScheduleDetailRoute(scheduleId));
-                });
+                openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
             },
             () => {
+                openOrDeferPushTarget({ kind: "shareInbox" });
+            },
+            ({ scheduleId, message }) => {
                 InteractionManager.runAfterInteractions(() => {
-                    router.push("/share/inbox");
+                    Alert.alert(
+                        "알림 요청을 처리하지 못했어요",
+                        message,
+                        scheduleId
+                            ? [
+                                { text: "닫기", style: "cancel" },
+                                {
+                                    text: "일정 열기",
+                                    onPress: () => openOrDeferPushTarget({
+                                        kind: "scheduleDetail",
+                                        scheduleId,
+                                    }),
+                                },
+                            ]
+                            : [{ text: "확인" }],
+                    );
                 });
             },
         )
@@ -48,20 +110,21 @@ export default function RootLayout() {
             unsubscribeForeground?.();
             unsubscribeNavigation?.();
         };
-    }, [router]);
+    }, [openOrDeferPushTarget]);
 
     return <RootNavigator />;
 }
 
 function RootNavigator() {
     const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const segments = useSegments();
     const routeSegments = segments as string[];
 
     if (isLoading) {
         return (
             <View style={[styles.bootstrap, { backgroundColor: colors.background }]}>
+                <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
                 <BrandedLoadingState
                     fill
                     size="full"
@@ -76,7 +139,8 @@ function RootNavigator() {
 
     const isPublicRoute =
         routeSegments[0] === "auth" ||
-        routeSegments[0] === "legal";
+        routeSegments[0] === "legal" ||
+        (routeSegments[0] === "share" && routeSegments[1] !== "inbox");
 
     if (!isAuthenticated && !isPublicRoute) {
         return <Redirect href="/auth/login" />;

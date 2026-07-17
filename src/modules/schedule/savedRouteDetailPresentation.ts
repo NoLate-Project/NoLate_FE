@@ -15,6 +15,69 @@ type Input = {
     departureAt?: Date;
 };
 
+export type SavedRouteSummaryKind = "detailed" | "duration_only" | "none";
+export type SavedRouteEntryPath = "/schedule/route-planner" | "/schedule/route-select";
+export type ScheduleDetailLayout = "route" | "plain";
+export type ScheduleDetailLayoutInput = {
+    routeSummaryKind: SavedRouteSummaryKind;
+    routeSetupRequired?: boolean;
+};
+
+function hasFiniteCoordinatePair(place?: Place): boolean {
+    return typeof place?.lat === "number" &&
+        Number.isFinite(place.lat) &&
+        place.lat >= -90 &&
+        place.lat <= 90 &&
+        typeof place.lng === "number" &&
+        Number.isFinite(place.lng) &&
+        place.lng >= -180 &&
+        place.lng <= 180;
+}
+
+/** 상세 경로와 단순 이동 시간 추정치를 같은 상태로 표시하지 않는다. */
+export function getSavedRouteSummaryKind(
+    hasDetailedRoute: boolean,
+    travelMinutes?: number
+): SavedRouteSummaryKind {
+    if (hasDetailedRoute) return "detailed";
+    if (typeof travelMinutes === "number" && Number.isFinite(travelMinutes) && travelMinutes > 0) {
+        return "duration_only";
+    }
+    return "none";
+}
+
+/**
+ * 경로 설정 필요 여부는 최초 자동 진입만 결정한다.
+ * 사용자가 설정 화면을 닫았을 때 실제 저장된 경로가 없으면 일반 일정 상세를 보여준다.
+ */
+export function getScheduleDetailLayout(
+    { routeSummaryKind }: ScheduleDetailLayoutInput
+): ScheduleDetailLayout {
+    return routeSummaryKind === "none" ? "plain" : "route";
+}
+
+/** 저장된 상세 경로와 화면에 맞출 실제 좌표가 모두 있을 때만 지도 SDK를 띄운다. */
+export function shouldRenderScheduleDetailMap(
+    hasDetailedRoute: boolean,
+    mapCoordinateCount: number
+): boolean {
+    return hasDetailedRoute && Number.isFinite(mapCoordinateCount) && mapCoordinateCount >= 2;
+}
+
+/**
+ * 저장된 상세 경로와 유효한 양 끝점이 있으면 바로 지도 상세를 연다.
+ * 그 외에는 검색·후보 선택 화면에서 누락된 지점을 채우고 경로를 새로 고르게 한다.
+ */
+export function getSavedRouteEntryPath(
+    hasDetailedRoute: boolean,
+    origin?: Place,
+    destination?: Place
+): SavedRouteEntryPath {
+    return hasDetailedRoute && hasFiniteCoordinatePair(origin) && hasFiniteCoordinatePair(destination)
+        ? "/schedule/route-planner"
+        : "/schedule/route-select";
+}
+
 function isEndpointStep(step: RouteStep): boolean {
     return step.type === "ORIGIN" || step.type === "DESTINATION";
 }

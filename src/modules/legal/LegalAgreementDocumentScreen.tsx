@@ -5,6 +5,8 @@ import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from "react-
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import type { LegalDocument } from "../../api/legal";
+import { useAuth } from "../auth/AuthContext";
+import { getPostAuthRoute } from "../onboarding/curationRouting";
 import CalendarGlassSurface from "../schedule/components/calendar/CalendarGlassSurface";
 import { useTheme } from "../theme/ThemeContext";
 import BrandedLoader from "../../ui/BrandedLoader";
@@ -21,17 +23,30 @@ export default function LegalAgreementDocumentScreen({
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
+    const { isAuthenticated, isCurationCompleted } = useAuth();
     const [document, setDocument] = useState(fallback);
     const [loading, setLoading] = useState(true);
+    const [usingFallback, setUsingFallback] = useState(false);
+    const [reloadKey, setReloadKey] = useState(0);
 
     useEffect(() => {
         let cancelled = false;
+        setLoading(true);
+        setUsingFallback(false);
 
         loadDocument()
             .then((latest) => {
-                if (!cancelled) setDocument(latest);
+                if (!cancelled) {
+                    setDocument(latest);
+                    setUsingFallback(false);
+                }
             })
-            .catch(() => undefined)
+            .catch(() => {
+                if (!cancelled) {
+                    setDocument(fallback);
+                    setUsingFallback(true);
+                }
+            })
             .finally(() => {
                 if (!cancelled) setLoading(false);
             });
@@ -39,11 +54,11 @@ export default function LegalAgreementDocumentScreen({
         return () => {
             cancelled = true;
         };
-    }, [loadDocument]);
+    }, [fallback, loadDocument, reloadKey]);
 
     const goBack = () => {
         if (router.canGoBack()) router.back();
-        else router.replace("/auth/login");
+        else router.replace(isAuthenticated ? getPostAuthRoute(isCurationCompleted) : "/auth/login");
     };
 
     return (
@@ -84,17 +99,53 @@ export default function LegalAgreementDocumentScreen({
                 <Text style={[styles.summary, { color: colors.textSecondary }]}>{document.summary}</Text>
 
                 {loading ? (
-                    <View style={[styles.loading, { borderColor: colors.border }]}>
-                        <BrandedLoader size="button" variant="auth" accessibilityLabel="최신 문서 확인 중" />
-                        <Text style={[styles.loadingText, { color: colors.textSecondary }]}>최신 문서 확인 중</Text>
+                    <View
+                        accessible
+                        accessibilityRole="progressbar"
+                        accessibilityLabel={`최신 ${document.title} 확인 중`}
+                        accessibilityLiveRegion="polite"
+                        style={[styles.loading, { borderColor: colors.border }]}
+                    >
+                        <View
+                            accessibilityElementsHidden
+                            importantForAccessibility="no-hide-descendants"
+                            style={styles.loadingContent}
+                        >
+                            <BrandedLoader size="button" variant="auth" accessibilityLabel="최신 문서 확인 중" />
+                            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>최신 문서 확인 중</Text>
+                        </View>
                     </View>
                 ) : null}
 
-                {document.sections.map((section) => (
-                    <View key={section.title} style={[styles.section, { borderColor: colors.border }]}>
+                {usingFallback ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`최신 ${document.title} 다시 불러오기`}
+                        accessibilityLiveRegion="polite"
+                        onPress={() => setReloadKey((current) => current + 1)}
+                        style={({ pressed }) => [
+                            styles.notice,
+                            {
+                                backgroundColor: colors.surface2,
+                                borderColor: colors.border,
+                                opacity: pressed ? 0.62 : 1,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="information-circle-outline" size={18} color={colors.textSecondary} />
+                        <Text
+                            style={[styles.noticeText, { color: colors.textSecondary }]}
+                        >
+                            최신 문서를 불러오지 못해 앱에 포함된 문서를 표시합니다. 탭해서 다시 확인할 수 있어요.
+                        </Text>
+                    </Pressable>
+                ) : null}
+
+                {document.sections.map((section, sectionIndex) => (
+                    <View key={`${section.title}-${sectionIndex}`} style={[styles.section, { borderColor: colors.border }]}>
                         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>{section.title}</Text>
-                        {section.body.map((paragraph) => (
-                            <View key={paragraph} style={styles.paragraphRow}>
+                        {section.body.map((paragraph, paragraphIndex) => (
+                            <View key={`${paragraphIndex}-${paragraph}`} style={styles.paragraphRow}>
                                 <Text style={[styles.bullet, { color: colors.textSecondary }]}>-</Text>
                                 <Text style={[styles.paragraph, { color: colors.textSecondary }]}>{paragraph}</Text>
                             </View>
@@ -130,12 +181,25 @@ const styles = StyleSheet.create({
         minHeight: 48,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    loadingContent: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
     },
     loadingText: { fontSize: 12, fontWeight: "800" },
+    notice: {
+        borderRadius: 8,
+        borderWidth: StyleSheet.hairlineWidth,
+        padding: 13,
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 8,
+    },
+    noticeText: { flex: 1, fontSize: 12, lineHeight: 18, fontWeight: "700" },
     section: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 16, gap: 9 },
     sectionTitle: { fontSize: 16, lineHeight: 22, fontWeight: "900" },
     paragraphRow: { flexDirection: "row", alignItems: "flex-start", gap: 7 },

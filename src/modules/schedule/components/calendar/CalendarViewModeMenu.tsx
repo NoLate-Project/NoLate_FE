@@ -42,8 +42,14 @@ export default function CalendarViewModeMenu({ visible, value, onClose, onChange
     });
 
     return (
-        <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
-            <Pressable style={styles.backdrop} onPress={onClose}>
+        <Modal
+            visible={visible}
+            transparent
+            animationType="none"
+            onRequestClose={onClose}
+            accessibilityViewIsModal
+        >
+            <Pressable accessible={false} style={styles.backdrop} onPress={onClose}>
                 <Animated.View
                     style={[
                         styles.menu,
@@ -73,6 +79,7 @@ export default function CalendarViewModeMenu({ visible, value, onClose, onChange
                                     <Pressable
                                         accessibilityRole="button"
                                         accessibilityLabel={`${option.label} 보기`}
+                                        accessibilityState={{ selected }}
                                         onPress={() => {
                                             onChange(option.value);
                                             onClose();

@@ -1,8 +1,12 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import type { TransitRouteProgressSegment } from "../../transitRouteProgress";
+
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
 
 type ProgressSegment = Omit<TransitRouteProgressSegment, "kind"> & {
     kind: TransitRouteProgressSegment["kind"] | "TRANSFER";
@@ -46,7 +50,12 @@ export default function TransitRouteProgressBar({
         const iconShadowOpacity = isDark ? 0.24 : 0.12;
 
         return (
-            <View accessibilityLabel={getAccessibilityLabel(segments)} style={styles.root}>
+            <View
+                accessible
+                accessibilityRole="text"
+                accessibilityLabel={getAccessibilityLabel(segments)}
+                style={styles.root}
+            >
                 <View
                     style={[
                         styles.registrationTrack,
@@ -161,6 +170,8 @@ export default function TransitRouteProgressBar({
 
     return (
         <View
+            accessible
+            accessibilityRole="text"
             accessibilityLabel={getAccessibilityLabel(segments)}
             style={styles.root}
         >

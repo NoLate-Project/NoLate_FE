@@ -32,6 +32,45 @@ export type ScheduleDetailRoute = {
     };
 };
 
+export type PushNavigationReadiness = {
+    isLoading: boolean;
+    isAuthenticated: boolean;
+    isCurationCompleted: boolean;
+};
+
+export function isPushNavigationReady({
+    isLoading,
+    isAuthenticated,
+    isCurationCompleted,
+}: PushNavigationReadiness): boolean {
+    return !isLoading && isAuthenticated && isCurationCompleted;
+}
+
+/**
+ * Notification SDKs clear their native "last response" after it is read. Keep
+ * the most recent parsed target in JS until the protected navigator is ready,
+ * so a cold-start notification is not lost behind login or onboarding.
+ */
+export function createPendingPushNavigationQueue() {
+    let pendingTarget: PushNavigationTarget | undefined;
+
+    return {
+        defer(target: PushNavigationTarget) {
+            pendingTarget = target;
+        },
+        consumeIfReady(readiness: PushNavigationReadiness): PushNavigationTarget | undefined {
+            if (!isPushNavigationReady(readiness)) return undefined;
+
+            const target = pendingTarget;
+            pendingTarget = undefined;
+            return target;
+        },
+        peek(): PushNavigationTarget | undefined {
+            return pendingTarget;
+        },
+    };
+}
+
 /**
  * Android FCM과 iOS APNs가 전달하는 payload에서 유효한 일정 ID만 추출한다.
  * 네이티브 모듈과 분리해 두 플랫폼의 화면 이동 규칙을 동일하게 테스트할 수 있다.

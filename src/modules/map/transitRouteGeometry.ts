@@ -34,8 +34,116 @@ export type WalkPathJoinResult = {
     action: WalkPathJoinAction;
 };
 
+export type TransitWalkRequestEndpointInput = {
+    legIndex: number;
+    legCount: number;
+    origin: RoutePathCoord;
+    destination: RoutePathCoord;
+    legStart?: RoutePathCoord;
+    legEnd?: RoutePathCoord;
+    previousIsRide: boolean;
+    previousRideAlight?: RoutePathCoord;
+    nextIsRide: boolean;
+    nextRideBoard?: RoutePathCoord;
+};
+
+export type TransitWalkRequestEndpoints = {
+    from: RoutePathCoord;
+    to: RoutePathCoord;
+    snapFrom: boolean;
+    snapTo: boolean;
+};
+
+export type TransitConnectorRequestFilterInput = {
+    firstWalkRequestId?: string;
+    lastWalkRequestId?: string;
+    successfulWalkRequestIds: ReadonlySet<string>;
+    successfulWalkLegIndexes: ReadonlySet<number>;
+    legKinds: readonly string[];
+};
+
 function isFiniteRouteCoord(coord: RoutePathCoord | undefined): coord is RoutePathCoord {
     return !!coord && Number.isFinite(coord.lat) && Number.isFinite(coord.lng);
+}
+
+/**
+ * 정밀 geometry가 없는 WALK leg의 보행 API 조회 범위를 정한다.
+ * 연속 WALK를 가장 가까운 두 ride 사이 전체 구간으로 반복 조회하지 않고, 각 leg의
+ * 실제 경계만 사용한다. 실제 출발·도착 좌표 치환은 첫/마지막 leg에만 허용한다.
+ */
+export function resolveTransitWalkRequestEndpoints({
+    legIndex,
+    legCount,
+    origin,
+    destination,
+    legStart,
+    legEnd,
+    previousIsRide,
+    previousRideAlight,
+    nextIsRide,
+    nextRideBoard,
+}: TransitWalkRequestEndpointInput): TransitWalkRequestEndpoints | undefined {
+    const first = legIndex === 0;
+    const last = legIndex === legCount - 1;
+    const from = first
+        ? origin
+        : previousIsRide
+            ? (previousRideAlight ?? legStart)
+            : legStart;
+    const to = last
+        ? destination
+        : nextIsRide
+            ? (nextRideBoard ?? legEnd)
+            : legEnd;
+    if (!isFiniteRouteCoord(from) || !isFiniteRouteCoord(to)) return undefined;
+    return {
+        from,
+        to,
+        snapFrom: first,
+        snapTo: last,
+    };
+}
+
+/**
+ * 보행 상세 조회가 실제로 성공해 같은 범위를 완전히 대신할 때만 connector를 제거한다.
+ * 연속 WALK 사이 gap과 실패한 WALK의 fallback은 항상 보존한다.
+ */
+export function filterTransitConnectorRequestsForSuccessfulWalks<T extends { id: string }>(
+    requests: T[],
+    {
+        firstWalkRequestId,
+        lastWalkRequestId,
+        successfulWalkRequestIds,
+        successfulWalkLegIndexes,
+        legKinds,
+    }: TransitConnectorRequestFilterInput
+): T[] {
+    return requests.filter((request) => {
+        if (
+            firstWalkRequestId &&
+            successfulWalkRequestIds.has(firstWalkRequestId) &&
+            request.id.endsWith("-walk-boundary-start")
+        ) {
+            return false;
+        }
+        if (
+            lastWalkRequestId &&
+            successfulWalkRequestIds.has(lastWalkRequestId) &&
+            request.id.endsWith("-walk-boundary-end")
+        ) {
+            return false;
+        }
+        const gapMatch = request.id.match(/-walk-gap-(\d+)$/);
+        if (!gapMatch) return true;
+        const gapIndex = Number(gapMatch[1]);
+        if (legKinds[gapIndex] === "WALK" && legKinds[gapIndex + 1] === "WALK") {
+            return true;
+        }
+        return !(
+            successfulWalkLegIndexes.has(gapIndex) ||
+            successfulWalkLegIndexes.has(gapIndex + 1)
+        );
+    });
 }
 
 export function routeCoordDistanceMeters(from: RoutePathCoord, to: RoutePathCoord): number {

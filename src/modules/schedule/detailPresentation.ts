@@ -13,6 +13,22 @@ export type ScheduleCountdownPresentation = {
     detailValue: string;
 };
 
+export function resolveScheduleCountdownEndAt(options: {
+    startAtMs: number;
+    endAtMs?: number;
+    hasEndTime: boolean;
+    allDay?: boolean;
+}): number | undefined {
+    const { startAtMs, endAtMs, hasEndTime, allDay } = options;
+    if (!allDay) return hasEndTime ? endAtMs : undefined;
+    if (typeof endAtMs === "number" && endAtMs > startAtMs) return endAtMs;
+
+    const nextDay = new Date(startAtMs);
+    nextDay.setHours(0, 0, 0, 0);
+    nextDay.setDate(nextDay.getDate() + 1);
+    return nextDay.getTime();
+}
+
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
 function formatCountdownValues(milliseconds: number) {

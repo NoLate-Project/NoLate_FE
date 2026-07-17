@@ -14,6 +14,14 @@ import {
     odsayApiErrorMessage,
 } from "./odsayApi";
 
+function warnMapDebug(...args: unknown[]) {
+    if (typeof __DEV__ === "boolean" && __DEV__) console.warn(...args);
+}
+
+function infoMapDebug(...args: unknown[]) {
+    if (typeof __DEV__ === "boolean" && __DEV__) console.info(...args);
+}
+
 // 지도 검색/역지오코딩/대중교통/길찾기 결과를 앱 공용 형태로 맞추는 핵심 API 래퍼.
 export type PlaceSearchItem = {
     name: string;
@@ -1315,7 +1323,7 @@ export function parseLineString(lineString?: string): RoutePathCoord[] {
             typeof longitude !== "number" ||
             !isWgs84Coordinate(latitude, longitude)
         ) {
-            console.warn("[geometry] invalid linestring token", token);
+            warnMapDebug("[geometry] invalid linestring token", token);
             return;
         }
 
@@ -1947,7 +1955,7 @@ async function requestTransitRouteViaTmap(
             return parseTransitOptionsFromTmap(data);
         } catch (error) {
             if (!hasTmapAppKey()) throw error;
-            console.info("[대중교통옵션] 서버 프록시 실패, direct fallback →", tmapApiErrorMessage(error));
+            infoMapDebug("[대중교통옵션] 서버 프록시 실패, direct fallback →", tmapApiErrorMessage(error));
         }
     }
 
@@ -2008,7 +2016,7 @@ async function getTransitRouteViaTmap(
         const recovered = buildRecoveredLoopTransitOption(recoveryPlan, leftOption, rightOption);
         if (!recovered) return directOptions;
 
-        console.info("[대중교통옵션] 순환선 반대 방향 후보 복구", {
+        infoMapDebug("[대중교통옵션] 순환선 반대 방향 후보 복구", {
             line: recoveryPlan.lineToken,
             anchor: recoveryPlan.anchor.name,
             directMinutes: recoveryPlan.directOption.minutes,
@@ -2016,7 +2024,7 @@ async function getTransitRouteViaTmap(
         });
         return [recovered, ...directOptions];
     } catch (error) {
-        console.info("[대중교통옵션] 순환선 후보 복구 실패, 원본 유지 →", tmapApiErrorMessage(error));
+        infoMapDebug("[대중교통옵션] 순환선 후보 복구 실패, 원본 유지 →", tmapApiErrorMessage(error));
         return directOptions;
     }
 }
@@ -2037,7 +2045,7 @@ async function getTransitRouteViaPreferredProvider(
             if (odsayOptions.length > 0) return odsayOptions;
         } catch (error) {
             odsayFailure = error;
-            console.info("[대중교통옵션] ODsay 실패, TMAP 예비 경로 확인 →", odsayApiErrorMessage(error));
+            infoMapDebug("[대중교통옵션] ODsay 실패, TMAP 예비 경로 확인 →", odsayApiErrorMessage(error));
         }
     }
 
@@ -2078,7 +2086,7 @@ async function getDrivingAlternatives(origin: Place, destination: Place, mode: "
             } as RouteAlternativeOption;
         } catch (error) {
             failedRequestCount += 1;
-            console.info(`[대안경로] Tmap driving(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            infoMapDebug(`[대안경로] Tmap driving(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
             return null;
         }
     }));
@@ -2117,7 +2125,7 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
             } as RouteAlternativeOption;
         } catch (error) {
             failedRequestCount += 1;
-            console.info(`[대안경로] Tmap pedestrian(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
+            infoMapDebug(`[대안경로] Tmap pedestrian(${searchOption}) 실패 →`, tmapApiErrorMessage(error));
             return null;
         }
     }));
@@ -2145,14 +2153,14 @@ export async function searchAddressByKeyword(
             const poiResults = await searchViaTmapPoi(normalized, context);
             merged.push(...poiResults);
         } catch (error) {
-            console.info("[주소검색] Tmap POI 실패 →", tmapApiErrorMessage(error));
+            infoMapDebug("[주소검색] Tmap POI 실패 →", tmapApiErrorMessage(error));
         }
 
         try {
             const geocoded = await geocodeViaTmap(normalized, context);
             merged.push(...geocoded);
         } catch (error) {
-            console.info("[주소검색] Tmap FullAddrGeo 실패 →", tmapApiErrorMessage(error));
+            infoMapDebug("[주소검색] Tmap FullAddrGeo 실패 →", tmapApiErrorMessage(error));
         }
 
         const unique = dedupeSearchResults(merged);
@@ -2176,7 +2184,7 @@ export async function reverseGeocodeToAddress(lat: number, lng: number): Promise
             const address = await reverseViaTmap(lat, lng);
             if (address) return address;
         } catch (error) {
-            console.info("[역지오코딩] Tmap 실패 →", tmapApiErrorMessage(error));
+            infoMapDebug("[역지오코딩] Tmap 실패 →", tmapApiErrorMessage(error));
         }
     }
 
@@ -2210,7 +2218,7 @@ export async function getTransitRouteOptions(
             const providerOptions = await getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
             if (providerOptions.length > 0) return providerOptions;
         } catch (error) {
-            console.info("[대중교통옵션] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
+            infoMapDebug("[대중교통옵션] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
         }
     }
 
@@ -2250,7 +2258,7 @@ export async function getRouteAlternativeOptions(
                     return limitAlternativesByMode("TRANSIT", dedupeRouteAlternatives(transitAlternatives));
                 }
             } catch (error) {
-                console.info("[대안경로] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
+                infoMapDebug("[대안경로] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
                 throw error;
             }
         }
@@ -2264,7 +2272,7 @@ export async function getRouteAlternativeOptions(
                 const alternatives = await getDrivingAlternatives(origin, destination, mode);
                 if (alternatives.length > 0) return limitAlternativesByMode(mode, alternatives);
             } catch (error) {
-                console.info("[대안경로] Tmap driving 실패 →", tmapApiErrorMessage(error));
+                infoMapDebug("[대안경로] Tmap driving 실패 →", tmapApiErrorMessage(error));
                 throw error;
             }
         }
@@ -2278,7 +2286,7 @@ export async function getRouteAlternativeOptions(
                 const walkAlternatives = await getWalkingAlternatives(origin, destination);
                 if (walkAlternatives.length > 0) return limitAlternativesByMode("WALK", walkAlternatives);
             } catch (error) {
-                console.info("[대안경로] Tmap pedestrian 실패 →", tmapApiErrorMessage(error));
+                infoMapDebug("[대안경로] Tmap pedestrian 실패 →", tmapApiErrorMessage(error));
                 throw error;
             }
         }
@@ -2291,7 +2299,7 @@ export async function getRouteAlternativeOptions(
             const bicycleAlternatives = await getBicycleAlternativesViaOpenStreetMap(origin, destination);
             return limitAlternativesByMode("BIKE", dedupeRouteAlternatives(bicycleAlternatives));
         } catch (error) {
-            console.info("[대안경로] OpenStreetMap bicycle 실패 →", tmapApiErrorMessage(error));
+            infoMapDebug("[대안경로] OpenStreetMap bicycle 실패 →", tmapApiErrorMessage(error));
             throw error;
         }
     }

@@ -17,10 +17,29 @@ type Props = {
     selectedDay: string;
     firstDay: 0 | 1;
     topInset?: number;
+    presentationRequest?: number;
     todayRequest?: number;
     reduceMotionEnabled?: boolean;
     onSelectMonth: (year: number, month: number) => void;
 };
+
+const YEAR_OVERVIEW_CHROME_CLEARANCE = 63;
+const YEAR_OVERVIEW_MIN_TOP_CLEARANCE = 103;
+
+export function getYearOverviewTopClearance(
+    topInset: number,
+    safeAreaTopInset: number
+): number {
+    const resolvedTopInset = Math.max(
+        Number.isFinite(topInset) ? topInset : 0,
+        Number.isFinite(safeAreaTopInset) ? safeAreaTopInset : 0
+    );
+
+    return Math.max(
+        resolvedTopInset + YEAR_OVERVIEW_CHROME_CLEARANCE,
+        YEAR_OVERVIEW_MIN_TOP_CLEARANCE
+    );
+}
 
 function getMonthCells(year: number, month: number, firstDay: 0 | 1) {
     const daysInMonth = new Date(year, month, 0).getDate();
@@ -141,6 +160,7 @@ function CalendarYearOverviewModal({
     selectedDay,
     firstDay,
     topInset = 0,
+    presentationRequest = 0,
     todayRequest = 0,
     reduceMotionEnabled = false,
     onSelectMonth,
@@ -154,17 +174,64 @@ function CalendarYearOverviewModal({
     const todayDate = today.getDate();
     const currentYear = todayYear;
     const accentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
-    const visibleYears = Array.from(new Set([year, year + 1, year + 2, currentYear]))
+    const visibleYears = Array.from(new Set([
+        currentYear - 2,
+        currentYear - 1,
+        currentYear,
+        currentYear + 1,
+        currentYear + 2,
+        year - 1,
+        year,
+        year + 1,
+    ]))
         .sort((left, right) => left - right);
     const scrollRef = useRef<ScrollView>(null);
     const yearOffsetsRef = useRef<Record<number, number>>({});
     const todayMonthGridOffsetRef = useRef<{ year: number; offset: number } | null>(null);
     const todayMonthOffsetRef = useRef<{ key: string; offset: number } | null>(null);
+    const pendingInitialYearScrollRef = useRef(true);
+    const initialYearScrollFrameRef = useRef<number | null>(null);
+    const handledPresentationRef = useRef(`${year}:${presentationRequest}`);
+    const visibleYearsLayoutKeyRef = useRef(visibleYears.join(","));
     const pendingTodayScrollRef = useRef(false);
     const todayScrollFrameRef = useRef<number | null>(null);
     const handledTodayRequestRef = useRef(todayRequest);
-    const contentTopPadding = Math.max(topInset + 63, 103);
+    const topClearance = getYearOverviewTopClearance(topInset, insets.top);
     const todayMonthKey = `${todayYear}-${todayMonth}`;
+    const visibleYearsLayoutKey = visibleYears.join(",");
+
+    if (visibleYearsLayoutKeyRef.current !== visibleYearsLayoutKey) {
+        visibleYearsLayoutKeyRef.current = visibleYearsLayoutKey;
+        yearOffsetsRef.current = {};
+        todayMonthGridOffsetRef.current = null;
+        todayMonthOffsetRef.current = null;
+        pendingInitialYearScrollRef.current = true;
+    }
+
+    const tryScrollToInitialYear = React.useCallback(() => {
+        if (!pendingInitialYearScrollRef.current || !scrollRef.current) return;
+
+        const sectionOffset = yearOffsetsRef.current[year];
+        if (!Number.isFinite(sectionOffset)) return;
+
+        pendingInitialYearScrollRef.current = false;
+        scrollRef.current.scrollTo({
+            y: Math.max(0, sectionOffset),
+            animated: false,
+        });
+    }, [year]);
+
+    const scheduleInitialYearScroll = React.useCallback(() => {
+        if (
+            !pendingInitialYearScrollRef.current ||
+            initialYearScrollFrameRef.current !== null
+        ) return;
+
+        initialYearScrollFrameRef.current = requestAnimationFrame(() => {
+            initialYearScrollFrameRef.current = null;
+            tryScrollToInitialYear();
+        });
+    }, [tryScrollToInitialYear]);
 
     const tryScrollToToday = React.useCallback(() => {
         if (!pendingTodayScrollRef.current) return;
@@ -176,17 +243,24 @@ function CalendarYearOverviewModal({
             yearOffset,
             monthGridLayout?.year === todayYear ? monthGridLayout.offset : Number.NaN,
             monthLayout?.key === todayMonthKey ? monthLayout.offset : Number.NaN,
-            contentTopPadding
+            0
         );
 
         if (targetOffset === null || !scrollRef.current) return;
 
+        // Today 요청은 새 연도 화면의 기본 포커스보다 우선한다. 두 RAF가 같은
+        // 프레임에 준비되더라도 초기 연도 복귀가 Today 위치를 다시 덮지 않게 한다.
+        pendingInitialYearScrollRef.current = false;
+        if (initialYearScrollFrameRef.current !== null) {
+            cancelAnimationFrame(initialYearScrollFrameRef.current);
+            initialYearScrollFrameRef.current = null;
+        }
         pendingTodayScrollRef.current = false;
         scrollRef.current.scrollTo({
             y: targetOffset,
             animated: !reduceMotionEnabled,
         });
-    }, [contentTopPadding, reduceMotionEnabled, todayMonthKey, todayYear]);
+    }, [reduceMotionEnabled, todayMonthKey, todayYear]);
 
     const scheduleTodayScroll = React.useCallback(() => {
         if (!pendingTodayScrollRef.current || todayScrollFrameRef.current !== null) return;
@@ -214,6 +288,15 @@ function CalendarYearOverviewModal({
     }, [scheduleTodayScroll, todayMonthKey]);
 
     React.useEffect(() => {
+        const presentationKey = `${year}:${presentationRequest}`;
+        if (handledPresentationRef.current === presentationKey) return;
+
+        handledPresentationRef.current = presentationKey;
+        pendingInitialYearScrollRef.current = true;
+        scheduleInitialYearScroll();
+    }, [presentationRequest, scheduleInitialYearScroll, year]);
+
+    React.useEffect(() => {
         if (handledTodayRequestRef.current === todayRequest) return;
         handledTodayRequestRef.current = todayRequest;
         pendingTodayScrollRef.current = true;
@@ -221,21 +304,38 @@ function CalendarYearOverviewModal({
     }, [scheduleTodayScroll, todayRequest]);
 
     React.useEffect(() => () => {
+        if (initialYearScrollFrameRef.current !== null) {
+            cancelAnimationFrame(initialYearScrollFrameRef.current);
+        }
         if (todayScrollFrameRef.current !== null) {
             cancelAnimationFrame(todayScrollFrameRef.current);
         }
     }, []);
 
     return (
-        <View style={[styles.safeArea, { backgroundColor: colors.calendarBackground }]}>
+        <View
+            testID="calendar-year-overview-safe-area"
+            style={[
+                styles.safeArea,
+                {
+                    backgroundColor: colors.calendarBackground,
+                    paddingTop: topClearance,
+                },
+            ]}
+        >
             <ScrollView
                 ref={scrollRef}
+                testID="calendar-year-overview-scroll"
+                style={styles.scrollView}
+                contentInsetAdjustmentBehavior="never"
                 showsVerticalScrollIndicator={false}
-                onContentSizeChange={scheduleTodayScroll}
+                onContentSizeChange={() => {
+                    scheduleInitialYearScroll();
+                    scheduleTodayScroll();
+                }}
                 contentContainerStyle={[
                     styles.content,
                     {
-                        paddingTop: contentTopPadding,
                         paddingBottom: Math.max(insets.bottom + 118, 148),
                     },
                 ]}
@@ -253,7 +353,9 @@ function CalendarYearOverviewModal({
                                 : undefined}
                             style={styles.yearSection}
                             onLayout={(event) => {
-                                yearOffsetsRef.current[sectionYear] = event.nativeEvent.layout.y;
+                                const sectionOffset = event.nativeEvent.layout.y;
+                                yearOffsetsRef.current[sectionYear] = sectionOffset;
+                                if (sectionYear === year) scheduleInitialYearScroll();
                                 if (sectionYear === todayYear) scheduleTodayScroll();
                             }}
                         >
@@ -315,6 +417,9 @@ export default React.memo(CalendarYearOverviewModal);
 
 const styles = StyleSheet.create({
     safeArea: {
+        flex: 1,
+    },
+    scrollView: {
         flex: 1,
     },
     content: {

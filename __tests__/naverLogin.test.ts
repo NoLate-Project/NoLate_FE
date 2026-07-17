@@ -24,6 +24,7 @@ jest.mock("@react-native-seoul/naver-login", () => ({
 
 jest.mock("@react-native-seoul/kakao-login", () => ({}));
 jest.mock("expo-apple-authentication", () => ({}));
+jest.mock("expo-crypto", () => ({ randomUUID: jest.fn(() => "test-nonce") }));
 
 const mockedGetEnv = jest.mocked(getEnv);
 const mockedNaverLogin = NaverLogin as jest.Mocked<typeof NaverLogin>;
@@ -69,7 +70,7 @@ describe("Naver SDK login", () => {
 
         await expect(loginWithNaverSdk()).resolves.toEqual({
             loginType: "NAVER",
-            snsId: "naver-user-id",
+            providerToken: "naver-access",
             name: "네이버 회원",
             email: "naver@example.com",
         });
@@ -85,7 +86,7 @@ describe("Naver SDK login", () => {
         expect(mockedNaverLogin.getProfile).toHaveBeenCalledWith("naver-access");
     });
 
-    test("rejects a profile without the required member name", async () => {
+    test("uses an optional profile fallback without blocking a valid provider token", async () => {
         mockedNaverLogin.getProfile.mockResolvedValue({
             resultcode: "00",
             message: "success",
@@ -104,7 +105,12 @@ describe("Naver SDK login", () => {
             },
         });
 
-        await expect(loginWithNaverSdk()).rejects.toThrow("필수 제공 정보인 회원이름");
+        await expect(loginWithNaverSdk()).resolves.toEqual({
+            loginType: "NAVER",
+            providerToken: "naver-access",
+            name: "별명",
+            email: "naver@example.com",
+        });
     });
 
     test("logs out and unlinks through the native SDK", async () => {

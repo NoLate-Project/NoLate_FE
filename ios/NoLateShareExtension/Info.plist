@@ -36,7 +36,7 @@
 		<string>$(PRODUCT_MODULE_NAME).ShareViewController</string>
 	</dict>
 	<key>NoLateAPIBaseURL</key>
-	<string>https://nolate.jinuk.dev</string>
+	<string>$(NOLATE_API_BASE_URL)</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 </dict>

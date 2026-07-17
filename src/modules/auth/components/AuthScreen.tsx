@@ -16,6 +16,7 @@ import {
     ViewStyle,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../theme/ThemeContext";
@@ -33,6 +34,7 @@ type AuthScreenProps = {
     children: ReactNode;
     footer?: ReactNode;
     onBack?: () => void;
+    backDisabled?: boolean;
     density?: AuthDensity;
 };
 
@@ -60,9 +62,11 @@ export function AuthScreen({
     children,
     footer,
     onBack,
+    backDisabled = false,
     density = "regular",
 }: AuthScreenProps) {
     const insets = useSafeAreaInsets();
+    const isFocused = useIsFocused();
     const { mode, colors } = useTheme();
     const styles = createStyles(colors, mode, density);
     const isCompact = density === "compact";
@@ -71,6 +75,8 @@ export function AuthScreen({
         <AuthDensityContext.Provider value={density}>
             <KeyboardAvoidingView
                 behavior={Platform.OS === "ios" ? "padding" : undefined}
+                accessibilityElementsHidden={!isFocused}
+                importantForAccessibility={isFocused ? "auto" : "no-hide-descendants"}
                 style={styles.root}
             >
                 <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
@@ -89,11 +95,14 @@ export function AuthScreen({
                     {onBack ? (
                         <View style={styles.topBar}>
                             <Pressable
+                                accessibilityRole="button"
                                 onPress={onBack}
-                                accessibilityLabel="로그인 화면으로 돌아가기"
+                                accessibilityLabel="이전 화면으로 돌아가기"
+                                accessibilityState={{ disabled: backDisabled }}
+                                disabled={backDisabled}
                                 style={({ pressed }) => [
                                     styles.backButton,
-                                    pressed && styles.pressed,
+                                    (pressed || backDisabled) && styles.pressed,
                                 ]}
                             >
                                 <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
@@ -133,11 +142,15 @@ export function AuthInput({
     containerStyle,
     inputStyle,
     placeholderTextColor,
+    accessibilityLabel,
+    secureTextEntry,
     ...inputProps
 }: AuthInputProps) {
     const { colors, mode } = useTheme();
     const density = React.useContext(AuthDensityContext);
     const styles = createStyles(colors, mode, density);
+    const [passwordVisible, setPasswordVisible] = React.useState(false);
+    const isPasswordField = secureTextEntry === true;
 
     return (
         <View
@@ -146,19 +159,41 @@ export function AuthInput({
                 containerStyle,
             ]}
         >
-            <View style={styles.fieldIcon}>
+            <View
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+                style={styles.fieldIcon}
+            >
                 <Ionicons name={icon} size={19} color={colors.textSecondary} />
             </View>
             <View style={styles.fieldBody}>
                 <Text style={styles.fieldLabel}>{label}</Text>
                 <TextInput
                     {...inputProps}
+                    accessibilityLabel={accessibilityLabel ?? label}
                     placeholderTextColor={
                         placeholderTextColor ?? colors.inputPlaceholder
                     }
+                    secureTextEntry={isPasswordField && !passwordVisible}
                     style={[styles.fieldInput, { color: colors.textPrimary }, inputStyle]}
                 />
             </View>
+            {isPasswordField ? (
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={passwordVisible ? `${label} 숨기기` : `${label} 표시하기`}
+                    accessibilityState={{ expanded: passwordVisible }}
+                    hitSlop={6}
+                    onPress={() => setPasswordVisible((visible) => !visible)}
+                    style={({ pressed }) => [styles.fieldAction, pressed && styles.pressed]}
+                >
+                    <Ionicons
+                        name={passwordVisible ? "eye-off-outline" : "eye-outline"}
+                        size={19}
+                        color={colors.textSecondary}
+                    />
+                </Pressable>
+            ) : null}
         </View>
     );
 }
@@ -175,6 +210,9 @@ export function AuthPrimaryButton({
 
     return (
         <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={label}
+            accessibilityState={{ disabled: Boolean(disabled || loading), busy: loading }}
             disabled={disabled || loading}
             onPress={onPress}
             style={({ pressed }) => [
@@ -345,6 +383,13 @@ function createStyles(colors: AppColors, mode: "dark" | "light", density: AuthDe
             flex: 1,
             minWidth: 0,
             paddingVertical: isCompact ? 7 : 9,
+        },
+        fieldAction: {
+            width: 38,
+            height: 44,
+            marginRight: -5,
+            alignItems: "center",
+            justifyContent: "center",
         },
         fieldLabel: {
             color: colors.textSecondary,

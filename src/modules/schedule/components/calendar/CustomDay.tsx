@@ -156,12 +156,21 @@ export default function CustomDay({
         setPressedSelection(true);
         onPress?.(date);
     };
+    const accessibilityLabel = [
+        `${date.year}년 ${date.month}월 ${date.day}일`,
+        isToday ? "오늘" : undefined,
+        isSelected ? "선택됨" : undefined,
+        events.length > 0 ? `${events.length}개의 일정` : "일정 없음",
+    ].filter(Boolean).join(", ");
 
     return (
         <Reanimated.View style={[styles.animatedCell, animatedCellStyle]}>
             <Pressable
                 onPress={triggerPress}
                 disabled={isDisabled}
+                accessibilityRole="button"
+                accessibilityLabel={accessibilityLabel}
+                accessibilityState={{ selected: Boolean(isSelected), disabled: isDisabled }}
                 style={({ pressed }) => [
                     styles.cell,
                     { height: cellHeight },
@@ -176,9 +185,6 @@ export default function CustomDay({
                         borderColor: selectedBorderColor,
                     },
                 ]}
-                accessibilityLabel={isSelected
-                    ? `${date.day}일 선택됨`
-                    : `${date.day}일`}
             >
                 <Text
                     style={[
@@ -238,6 +244,7 @@ export default function CustomDay({
                         >
                             {event.travelMode ? (
                                 <Ionicons
+                                    accessible={false}
                                     name={travelIconName(event.travelMode)}
                                     size={9}
                                     color={event.color}
@@ -271,6 +278,7 @@ export default function CustomDay({
                     {events.slice(0, 3).map((event) => (
                         event.travelMode ? (
                             <Ionicons
+                                accessible={false}
                                 key={event.id}
                                 name={travelIconName(event.travelMode)}
                                 size={10}

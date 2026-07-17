@@ -31,7 +31,12 @@ describe("TransitRouteProgressBar", () => {
             );
         });
 
-        expect(renderer!.root.findAllByType("Ionicons" as never)).toHaveLength(3);
+        const decorativeIcons = renderer!.root.findAllByType("Ionicons" as never);
+        expect(decorativeIcons).toHaveLength(3);
+        decorativeIcons.forEach((icon) => {
+            expect(icon.props.accessible).toBe(false);
+            expect(icon.props.importantForAccessibility).toBe("no");
+        });
         expect(renderer!.root.findByProps({
             accessibilityLabel: "3분, 4호선 16분, 2호선 8분, 4분",
         })).toBeTruthy();

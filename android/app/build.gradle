@@ -4,6 +4,39 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+// Production signing is supplied by CI/environment or an untracked
+// android/keystore.properties file. A release task must never fall back to the
+// repository's debug keystore.
+def releaseKeystoreProperties = new Properties()
+def releaseKeystorePropertiesFile = rootProject.file('keystore.properties')
+if (releaseKeystorePropertiesFile.exists()) {
+    releaseKeystorePropertiesFile.withInputStream { releaseKeystoreProperties.load(it) }
+}
+def releaseSigningValue = { String name ->
+    def value = System.getenv(name) ?: findProperty(name) ?: releaseKeystoreProperties.getProperty(name)
+    value?.toString()?.trim()
+}
+def releaseStoreFile = releaseSigningValue('NOLATE_ANDROID_STORE_FILE')
+def releaseStorePassword = releaseSigningValue('NOLATE_ANDROID_STORE_PASSWORD')
+def releaseKeyAlias = releaseSigningValue('NOLATE_ANDROID_KEY_ALIAS')
+def releaseKeyPassword = releaseSigningValue('NOLATE_ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
+    .every { it != null && !it.isEmpty() }
+def releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.toLowerCase(Locale.ROOT).contains('release')
+}
+if (releaseTaskRequested && !hasReleaseSigning) {
+    throw new GradleException(
+        'Release signing is not configured. Set NOLATE_ANDROID_STORE_FILE, ' +
+        'NOLATE_ANDROID_STORE_PASSWORD, NOLATE_ANDROID_KEY_ALIAS and ' +
+        'NOLATE_ANDROID_KEY_PASSWORD (environment, Gradle properties, or ' +
+        'android/keystore.properties).'
+    )
+}
+if (releaseTaskRequested && !rootProject.file(releaseStoreFile).isFile()) {
+    throw new GradleException("Release keystore was not found: ${releaseStoreFile}")
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -92,8 +125,8 @@ android {
         applicationId 'com.anonymous.nolate_fe'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "0.0.1"
+        versionCode 38
+        versionName "1.2.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -104,15 +137,21 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (hasReleaseSigning) {
+                storeFile rootProject.file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
@@ -129,6 +168,9 @@ android {
     }
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+    testOptions {
+        unitTests.returnDefaultValues = true
     }
 }
 
@@ -155,6 +197,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    testImplementation 'junit:junit:4.13.2'
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

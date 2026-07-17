@@ -1,8 +1,10 @@
 import {
+    filterTransitConnectorRequestsForSuccessfulWalks,
     getTransitStopAccessLink,
     getTransitWalkAccessLink,
     joinTerminalWalkPathEndpoint,
     joinWalkPathEndpoint,
+    resolveTransitWalkRequestEndpoints,
     resolveTransitRouteNodeCoordinate,
     resolveTransitStopAccessCoordinate,
     splitWalkPathAtDiscontinuities,
@@ -156,5 +158,104 @@ describe("transit route geometry", () => {
         expect(parts).toHaveLength(2);
         expect(parts[0].at(-1)).toEqual(path[2]);
         expect(parts[1][0]).toEqual(path[3]);
+    });
+
+    it("keeps consecutive WALK requests inside each leg instead of duplicating the whole ride gap", () => {
+        const origin = { lat: 37.56, lng: 126.97 };
+        const destination = { lat: 37.5, lng: 127.03 };
+        const firstWalkEnd = { lat: 37.558, lng: 126.973 };
+        const secondWalkStart = { lat: 37.5579, lng: 126.9731 };
+        const rideBoard = { lat: 37.555, lng: 126.975 };
+
+        expect(resolveTransitWalkRequestEndpoints({
+            legIndex: 0,
+            legCount: 3,
+            origin,
+            destination,
+            legStart: origin,
+            legEnd: firstWalkEnd,
+            previousIsRide: false,
+            nextIsRide: false,
+        })).toEqual({
+            from: origin,
+            to: firstWalkEnd,
+            snapFrom: true,
+            snapTo: false,
+        });
+
+        expect(resolveTransitWalkRequestEndpoints({
+            legIndex: 1,
+            legCount: 3,
+            origin,
+            destination,
+            legStart: secondWalkStart,
+            legEnd: rideBoard,
+            previousIsRide: false,
+            nextIsRide: true,
+            nextRideBoard: rideBoard,
+        })).toEqual({
+            from: secondWalkStart,
+            to: rideBoard,
+            snapFrom: false,
+            snapTo: false,
+        });
+    });
+
+    it("uses adjacent ride anchors for an isolated middle WALK request", () => {
+        const origin = { lat: 37.56, lng: 126.97 };
+        const destination = { lat: 37.5, lng: 127.03 };
+        const alight = { lat: 37.54, lng: 126.99 };
+        const board = { lat: 37.535, lng: 127.0 };
+
+        expect(resolveTransitWalkRequestEndpoints({
+            legIndex: 1,
+            legCount: 3,
+            origin,
+            destination,
+            legStart: { lat: 0, lng: 0 },
+            legEnd: { lat: 1, lng: 1 },
+            previousIsRide: true,
+            previousRideAlight: alight,
+            nextIsRide: true,
+            nextRideBoard: board,
+        })).toEqual({
+            from: alight,
+            to: board,
+            snapFrom: false,
+            snapTo: false,
+        });
+    });
+
+    it("removes connector overlap only after its WALK request succeeds", () => {
+        const requests = [
+            { id: "route-walk-boundary-start" },
+            { id: "route-walk-gap-0" },
+            { id: "route-unrelated" },
+        ];
+        const failed = filterTransitConnectorRequestsForSuccessfulWalks(requests, {
+            firstWalkRequestId: "route-walk-leg-0",
+            successfulWalkRequestIds: new Set(),
+            successfulWalkLegIndexes: new Set(),
+            legKinds: ["WALK", "SUBWAY"],
+        });
+        const succeeded = filterTransitConnectorRequestsForSuccessfulWalks(requests, {
+            firstWalkRequestId: "route-walk-leg-0",
+            successfulWalkRequestIds: new Set(["route-walk-leg-0"]),
+            successfulWalkLegIndexes: new Set([0]),
+            legKinds: ["WALK", "SUBWAY"],
+        });
+
+        expect(failed).toEqual(requests);
+        expect(succeeded).toEqual([{ id: "route-unrelated" }]);
+    });
+
+    it("preserves a real connector gap between consecutive WALK legs", () => {
+        const requests = [{ id: "route-walk-gap-0" }];
+
+        expect(filterTransitConnectorRequestsForSuccessfulWalks(requests, {
+            successfulWalkRequestIds: new Set(["route-walk-leg-0", "route-walk-leg-1"]),
+            successfulWalkLegIndexes: new Set([0, 1]),
+            legKinds: ["WALK", "WALK", "SUBWAY"],
+        })).toEqual(requests);
     });
 });

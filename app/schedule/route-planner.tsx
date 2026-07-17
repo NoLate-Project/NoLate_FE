@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
     Alert,
     Animated,
+    BackHandler,
     Linking,
     Modal,
     PanResponder,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
+    StatusBar,
     Text,
     TextInput,
     useWindowDimensions,
@@ -15,11 +18,15 @@ import {
 } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Ionicons } from "@expo/vector-icons";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
+import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
 import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
+import {
+    canPersistResolvedRoute,
+    createLatestRequestGuard,
+} from "../../src/modules/map/routeAsyncGuard";
 import {
     getRouteQualityLabel,
     getRouteQualityNotice,
@@ -43,10 +50,16 @@ import TmapMapView, {
     type TmapPathOverlay,
 } from "../../src/modules/map/TmapMapView";
 import {
+    getStoredRouteOverlayGeometryProvenance,
+    resolveDetailedWalkGeometrySource,
+} from "../../src/modules/map/savedRouteMapPresentation";
+import {
     getTransitStopAccessLink,
     getTransitWalkAccessLink,
+    filterTransitConnectorRequestsForSuccessfulWalks,
     joinTerminalWalkPathEndpoint,
     joinWalkPathEndpoint,
+    resolveTransitWalkRequestEndpoints,
     resolveTransitRouteNodeCoordinate,
     resolveTransitStopAccessCoordinate,
     splitWalkPathAtDiscontinuities,
@@ -90,12 +103,21 @@ import {
 } from "../../src/modules/map/routeZoomStyle";
 import { getRouteEndpointMarkerPresentation } from "../../src/modules/map/routeMarkerPresentation";
 import {
+    applyTransitRouteThemeToOverlay,
     getFallbackRouteStrokePresentation,
     getTransitNativeDirectionOpacity,
     getTransitRouteLinePresentation,
-    shouldRenderTransitNativeDirection,
     TRANSIT_ROUTE_ZOOM_STYLE,
+    TRANSIT_WALK_DASH_PATTERN,
 } from "../../src/modules/map/transitRoutePresentation";
+import {
+    applyFocusedTransitRideOverlayOwnership,
+    getNormalizedFallbackRouteMode,
+    getNormalizedTransitLegMode,
+    shouldRenderNormalizedTransitDirection,
+    shouldUseRouteInfoStepOverlays,
+    type NormalizedTransitSegmentMode,
+} from "../../src/modules/map/transitRouteSegmentPolicy";
 import { selectTransitRouteLabelCoordinate } from "../../src/modules/map/transitRouteLabelPlacement";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
@@ -133,7 +155,20 @@ import {
     saveFavoriteDeparturePlace,
 } from "../../src/modules/schedule/favoriteDeparture";
 import { getRoutePlannerInitial, setRoutePlannerInitial, setRoutePlannerResult } from "../../src/modules/schedule/routePlannerSession";
+import {
+    resolveScheduleRouteDepartureContext,
+    resolveSelectedRouteTiming,
+} from "../../src/modules/schedule/scheduleRouteTiming";
+import { getMapPickedPlaceFallbackName } from "../../src/modules/schedule/routePointSelection";
 import { resolveRouteSelectionHandoff } from "../../src/modules/schedule/routeSelectionHandoff";
+import {
+    getRouteSelectionAccessibilityProps,
+    getRouteSelectionConfirmAccessibilityProps,
+} from "../../src/modules/schedule/routeSelectionAccessibility";
+
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
 
 const FALLBACK_LAT = 37.5665;
 const FALLBACK_LNG = 126.978;
@@ -142,6 +177,36 @@ const ORIGIN_COLOR = "#12A150";
 const DESTINATION_COLOR = "#F04452";
 const SELECTED_ROUTE_COLOR = "#2979FF";
 const MAP_GUIDE_ROUTE_BLUE = "#1DA7F2";
+
+function warnRouteDebug(...args: unknown[]) {
+    if (typeof __DEV__ === "boolean" && __DEV__) {
+        console.warn(...args);
+    }
+}
+
+async function openDeviceLocationSettings(preferServiceSettings = false) {
+    try {
+        if (preferServiceSettings && Platform.OS === "android") {
+            await Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS");
+            return;
+        }
+        await Linking.openSettings();
+    } catch {
+        Alert.alert("설정을 열 수 없어요", "기기 설정에서 NoLate의 위치 권한을 확인해 주세요.");
+    }
+}
+
+function showLocationSettingsAlert(title: string, message: string, preferServiceSettings = false) {
+    Alert.alert(title, message, [
+        { text: "취소", style: "cancel" },
+        {
+            text: "설정 열기",
+            onPress: () => {
+                openDeviceLocationSettings(preferServiceSettings).catch(() => undefined);
+            },
+        },
+    ]);
+}
 const MAP_BUS_ROUTE_COLORS = {
     trunk: "#1DA7F2",
     branch: "#28C76F",
@@ -195,7 +260,7 @@ const ROUTE_LINE_STYLE = {
         color: "#1A73E8",
         width: TRANSIT_ROUTE_ZOOM_STYLE.walkWidth,
         opacity: 0.94,
-        dashPattern: [8, 7.2],
+        dashPattern: [...TRANSIT_WALK_DASH_PATTERN],
         casingRatio: TRANSIT_ROUTE_ZOOM_STYLE.walkCasingRatio,
         casing: true,
         arrows: false,
@@ -205,7 +270,7 @@ const ROUTE_LINE_STYLE = {
         color: "#1A73E8",
         width: TRANSIT_ROUTE_ZOOM_STYLE.walkWidth,
         opacity: 0.92,
-        dashPattern: [8, 7.2],
+        dashPattern: [...TRANSIT_WALK_DASH_PATTERN],
         casing: true,
         arrows: false,
         zIndex: 32,
@@ -214,8 +279,8 @@ const ROUTE_LINE_STYLE = {
         mainWidth: TRANSIT_ROUTE_ZOOM_STYLE.rideWidth,
         casingRatio: TRANSIT_ROUTE_ZOOM_STYLE.rideCasingRatio,
         opacity: 1,
-        casingColor: "#0F172A",
-        casingOpacity: 0.76,
+        casingColor: "#FFFFFF",
+        casingOpacity: 0.92,
         arrows: true,
         busZIndex: 40,
         subwayZIndex: 42,
@@ -262,8 +327,6 @@ const ROUTE_LINE_STYLE = {
     },
     arrows: {
         color: "#FFFFFF",
-        // 간격은 SDK native Polyline이 맡기고 저배율 과밀감만 opacity로 광학 보정한다.
-        opacity: TRANSIT_ROUTE_ZOOM_STYLE.directionOpacity.zoom18,
     },
     markerZIndex: {
         routeBadge: 55,
@@ -276,8 +339,8 @@ const ROUTE_LINE_STYLE = {
 const ROUTE_WALK_GUIDE_COLOR = ROUTE_LINE_STYLE.walk.color;
 const ROUTE_TRANSFER_GUIDE_COLOR = ROUTE_LINE_STYLE.transfer.color;
 const ROUTE_WALK_GUIDE_OPACITY = ROUTE_LINE_STYLE.walk.opacity;
-const ROUTE_WALK_CASING_COLOR = "#0F172A";
-const ROUTE_WALK_CASING_OPACITY = 0.72;
+const ROUTE_WALK_CASING_COLOR = "#FFFFFF";
+const ROUTE_WALK_CASING_OPACITY = 0.9;
 const ROUTE_STYLE = {
     // 지도 라인 기본 두께/외곽선 설정.
     inactiveWidth: 5,
@@ -296,8 +359,8 @@ type RouteStrokeStyle = {
     casingWidth: number;
     outlineWidth: number;
 };
-type RouteMode = "WALK" | "BUS" | "SUBWAY" | "TRANSFER" | "UNKNOWN";
-type GeometrySource = TransitGeometrySource | "START_END_ONLY";
+type RouteMode = NormalizedTransitSegmentMode;
+type GeometrySource = TransitGeometrySource | "START_END_ONLY" | "WALK_API_DETAIL";
 type TransitStopAnchorSource = "NEAREST_ON_ROUTE" | "ROUTE_ENDPOINT" | "UNSNAPPED";
 type RouteGeometryQuality =
     | "HIGH_API_GEOMETRY"
@@ -500,6 +563,7 @@ function getSegmentColor(segment: RouteSegment): string {
     if (segment.mode === "SUBWAY") return getSubwayLineColor(segment.lineName);
     if (segment.mode === "WALK") return ROUTE_WALK_GUIDE_COLOR;
     if (segment.mode === "TRANSFER") return ROUTE_TRANSFER_GUIDE_COLOR;
+    if (segment.mode === "ETC") return TRANSIT_LEG_COLOR.ETC;
     return MAP_GUIDE_ROUTE_BLUE;
 }
 
@@ -548,9 +612,31 @@ function getSegmentStyle(segment: RouteSegment, zoom: number, selected: boolean)
                 outlineOpacity: ROUTE_LINE_STYLE.transit.casingOpacity,
                 zIndex: ROUTE_LINE_STYLE.transit.subwayZIndex + segment.sequence,
             };
+        case "ETC":
+            return {
+                strokeColor: TRANSIT_LEG_COLOR.ETC,
+                strokeWidth: getTransitMainWidth(zoom),
+                opacity,
+                outlineColor: ROUTE_LINE_STYLE.transit.casingColor,
+                outlineWidth: (getTransitCasingWidth(zoom) - getTransitMainWidth(zoom)) / 2,
+                outlineOpacity: ROUTE_LINE_STYLE.transit.casingOpacity,
+                zIndex: 35 + segment.sequence,
+            };
+        case "TRANSIT": {
+            const stroke = getRouteStrokeStyleForZoom(zoom);
+            return {
+                strokeColor: MAP_GUIDE_ROUTE_BLUE,
+                strokeWidth: stroke.mainWidth,
+                opacity,
+                outlineColor: ROUTE_LINE_STYLE.transit.casingColor,
+                outlineWidth: stroke.outlineWidth,
+                outlineOpacity: ROUTE_LINE_STYLE.transit.casingOpacity,
+                zIndex: 40 + segment.sequence,
+            };
+        }
         case "UNKNOWN":
         default:
-            console.warn("[route-segment] unknown mode", {
+            warnRouteDebug("[route-segment] unknown mode", {
                 id: segment.id,
                 mode: segment.mode,
                 lineName: segment.lineName,
@@ -570,12 +656,12 @@ function isTransitRideSegmentMode(mode: RouteMode): boolean {
 
 function shouldUseNativeTransitDirection(segment: RouteSegment): boolean {
     return ENABLE_NATIVE_ROUTE_DIRECTION &&
-        isTransitRideSegmentMode(segment.mode) &&
+        (isTransitRideSegmentMode(segment.mode) || segment.mode === "TRANSIT") &&
         segment.nativeDirectionEnabled !== false;
 }
 
 function shouldRenderNativeTransitDirection(segment: RouteSegment, zoom: number): boolean {
-    return shouldRenderTransitNativeDirection(
+    return shouldRenderNormalizedTransitDirection(
         segment.mode,
         zoom,
         shouldUseNativeTransitDirection(segment)
@@ -699,7 +785,7 @@ function validateSegmentPathOrder(segment: RouteSegment): boolean {
 
 function ensureTransitSegmentPathOrder(segment: RouteSegment): RouteSegment {
     if (!shouldReverseSegmentCoordinatesForAnchors(segment)) return segment;
-    console.warn("[route-path-order] reversing segment coordinates by board/alight anchors", {
+    warnRouteDebug("[route-path-order] reversing segment coordinates by board/alight anchors", {
         id: segment.id,
         mode: segment.mode,
         lineName: segment.lineName,
@@ -997,7 +1083,8 @@ function getRouteGeometryQuality(
     if (
         geometrySource === "TRANSIT_PASS_SHAPE_LINESTRING" ||
         geometrySource === "WALK_STEPS_LINESTRING" ||
-        geometrySource === "WALK_PASS_SHAPE_LINESTRING"
+        geometrySource === "WALK_PASS_SHAPE_LINESTRING" ||
+        geometrySource === "WALK_API_DETAIL"
     ) {
         if (pointCount < (mode === "WALK" || mode === "TRANSFER" ? 3 : 10)) {
             return "COARSE_API_GEOMETRY";
@@ -1485,7 +1572,15 @@ function parseFocusZoomParam(value: string | string[] | undefined): number | und
 
 function parseSheetStateParam(value: string | string[] | undefined): DebugSheetState | undefined {
     const raw = getSingleParam(value)?.trim().toLowerCase();
-    if (raw === "collapsed" || raw === "middle" || raw === "hidden" || raw === "expanded") return raw;
+    // `middle` is the only state used by the production schedule handoff. The
+    // remaining states are camera/sheet QA fixtures and must not be reachable
+    // from a user-provided deep link in a release build.
+    if (raw === "middle") return raw;
+    if (
+        typeof __DEV__ === "boolean" &&
+        __DEV__ &&
+        (raw === "collapsed" || raw === "hidden" || raw === "expanded")
+    ) return raw;
     return undefined;
 }
 
@@ -1880,7 +1975,7 @@ function connectPathEndpoint(
 ): RoutePathCoord[] {
     const result = joinWalkPathEndpoint(pathCoords, endpoint, position);
     if (result.action === "rejected") {
-        console.warn("[route-walk-anchor] connector rejected", {
+        warnRouteDebug("[route-walk-anchor] connector rejected", {
             position,
             distanceMeters: Number.isFinite(result.gapMeters) ? Math.round(result.gapMeters!) : undefined,
             reason: "missing pedestrian geometry exceeds direct connector policy",
@@ -1899,7 +1994,7 @@ function connectTerminalPathEndpoint(
 ): RoutePathCoord[] {
     const result = joinTerminalWalkPathEndpoint(pathCoords, endpoint, position);
     if (result.action === "rejected") {
-        console.warn("[route-walk-terminal] connector rejected", {
+        warnRouteDebug("[route-walk-terminal] connector rejected", {
             position,
             distanceMeters: Number.isFinite(result.gapMeters) ? Math.round(result.gapMeters!) : undefined,
             endpoint,
@@ -2328,6 +2423,28 @@ function buildTransitLegSegmentGeometry(
         }
     }
 
+    // ODsay의 기타 교통수단(셔틀·선박 등)도 공급자가 준 실제 geometry는 버리지 않는다.
+    // 교통수단을 확정할 수 없으므로 중립 실선·무화살표인 UNKNOWN으로 표시한다.
+    if (leg.kind === "ETC" && Array.isArray(leg.pathCoords) && leg.pathCoords.length >= 2) {
+        const rawCoordinates = routePathCoordsToCoordinates(leg.pathCoords);
+        const coordinates = routePathCoordsToMapCoordinates(leg.pathCoords, leg.kind);
+        if (coordinates.length >= 2) {
+            const geometrySource = legSource ?? "UNKNOWN";
+            return {
+                rawCoordinates: rawCoordinates.length >= 2 ? rawCoordinates : coordinates,
+                coordinates,
+                geometrySource,
+                geometryQuality: getRouteGeometryQuality(
+                    mode,
+                    geometrySource,
+                    coordinates.length,
+                    isManualSamplePath
+                ),
+                rawPointCount: leg.rawPathPointCount ?? leg.pathCoords.length,
+            };
+        }
+    }
+
     if (leg.kind === "WALK") {
         const baseId = routeId ? `${routeId}-walk-leg-${legIndex}` : undefined;
         const walkDetailCoords = baseId && walkOverlayById
@@ -2338,6 +2455,9 @@ function buildTransitLegSegmentGeometry(
         if (Array.isArray(walkDetailCoords) && walkDetailCoords.length >= 2) {
             const rawCoordinates = routePathCoordsToCoordinates(leg.pathCoords);
             const filteredCoords = walkDetailCoords.filter(isValidCoordinate);
+            // walkOverlayById는 공급자 정밀 linestring 또는 별도 보행 API 성공 결과만 담는다.
+            // 정규화 후 overlay id가 segment id로 바뀌어도 저장 단계에서 provenance를 남길 수 있게 한다.
+            const geometrySource = resolveDetailedWalkGeometrySource(legSource);
             const startAnchor = createWalkEndpointAnchor(
                 `${segmentId}-walk-start`,
                 "WALK_START",
@@ -2355,10 +2475,10 @@ function buildTransitLegSegmentGeometry(
             return {
                 rawCoordinates: rawCoordinates.length >= 2 ? rawCoordinates : filteredCoords,
                 coordinates: filteredCoords,
-                geometrySource: legSource ?? "UNKNOWN",
+                geometrySource,
                 geometryQuality: getRouteGeometryQuality(
                     mode,
-                    legSource ?? "UNKNOWN",
+                    geometrySource,
                     filteredCoords.length,
                     isManualSamplePath,
                     [startAnchor, endAnchor],
@@ -2451,7 +2571,7 @@ function buildTransitLegSegmentGeometry(
     if (endpointCoords.length >= 2) {
         warnRouteGeometryFallback("START_END_ONLY", leg, legIndex);
         if ((mode === "WALK" || mode === "TRANSFER") && endpointDistanceMeters > 40) {
-            console.warn("[route-geometry] hidden long direct walk fallback", {
+            warnRouteDebug("[route-geometry] hidden long direct walk fallback", {
                 legIndex,
                 mode,
                 distanceMeters: Math.round(endpointDistanceMeters),
@@ -2503,14 +2623,7 @@ function resolveRouteSegmentMode(
     index: number,
     legs: TransitLegDetail[] | undefined
 ): RouteMode {
-    if (leg.kind === "BUS") return "BUS";
-    if (leg.kind === "SUBWAY") return "SUBWAY";
-    if (leg.kind === "WALK") {
-        const hasRideBefore = Array.isArray(legs) && legs.slice(0, index).some((item) => isRideLegKind(item.kind));
-        const hasRideAfter = Array.isArray(legs) && legs.slice(index + 1).some((item) => isRideLegKind(item.kind));
-        return hasRideBefore && hasRideAfter ? "TRANSFER" : "WALK";
-    }
-    return "UNKNOWN";
+    return getNormalizedTransitLegMode(leg, index, legs);
 }
 
 function normalizeRouteAlternativeToSegments(
@@ -2582,9 +2695,10 @@ function normalizeRouteAlternativeToSegments(
             option.mode === "WALK" ? "WALK" : undefined
         );
         if (coordinates.length > 0) {
+            const fallbackMode = getNormalizedFallbackRouteMode(option.mode);
             segments.push({
                 id: `${option.id}-segment-0`,
-                mode: option.mode === "WALK" ? "WALK" : "UNKNOWN",
+                mode: fallbackMode,
                 coordinates,
                 distance: option.distanceMeters,
                 duration: option.minutes,
@@ -2592,13 +2706,13 @@ function normalizeRouteAlternativeToSegments(
                     ? "UNKNOWN"
                     : "START_END_ONLY",
                 geometryQuality: getRouteGeometryQuality(
-                    option.mode === "WALK" ? "WALK" : "UNKNOWN",
+                    fallbackMode,
                     Array.isArray(option.pathCoords) && option.pathCoords.length >= 2 ? "UNKNOWN" : "START_END_ONLY",
                     coordinates.length,
                     isManualSamplePath
                 ),
                 isManualSamplePath,
-                nativeDirectionEnabled: false,
+                nativeDirectionEnabled: fallbackMode === "TRANSIT" && ENABLE_NATIVE_ROUTE_DIRECTION,
                 rawPointCount: option.pathCoords?.length ?? coordinates.length,
                 renderedCoordinates: coordinates,
                 renderPointCount: coordinates.length,
@@ -2624,7 +2738,7 @@ function RouteSegmentLayers(
     const coordinateParts = getSegmentRenderableCoordinateParts(segment);
     if (coordinateParts.length === 0) {
         if (!(segment.mode === "TRANSFER" && (segment.distance ?? 0) <= 1)) {
-            console.warn("[route-segment] invalid coordinates", {
+            warnRouteDebug("[route-segment] invalid coordinates", {
                 id: segment.id,
                 mode: segment.mode,
                 geometrySource: segment.geometrySource,
@@ -3610,7 +3724,7 @@ function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, mapZoom: n
                 renderMode: "native",
                 nativeDirection: isBicycleOnlyRoute && ROUTE_LINE_STYLE.bike.arrows,
                 nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-                nativeDirectionOpacity: ROUTE_LINE_STYLE.arrows.opacity,
+                nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                 zIndex: isBicycleOnlyRoute ? ROUTE_LINE_STYLE.bike.zIndex : ROUTE_LINE_STYLE.walk.zIndex,
             }];
         }
@@ -3677,9 +3791,7 @@ function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, mapZoom: n
             renderMode: "native",
             nativeDirection: rendersNativeDirection,
             nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-            nativeDirectionOpacity: isTransitRide
-                ? getNativeDirectionOpacity(mapZoom)
-                : ROUTE_LINE_STYLE.arrows.opacity,
+            nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
             zIndex: (isTransitRide
                 ? ROUTE_LINE_STYLE.transit.busZIndex
                 : isDrive
@@ -3824,9 +3936,31 @@ export default function RoutePlannerScreen() {
                 : undefined
         )
     ), [sessionInitial, paramOrigin, paramDestination, paramTravelMode]);
+    const initialRouteDepartureAt = useMemo(() => {
+        const persistedDepartureAt = initial?.departureAt ? new Date(initial.departureAt) : undefined;
+        if (persistedDepartureAt && Number.isFinite(persistedDepartureAt.getTime())) {
+            return persistedDepartureAt;
+        }
+        return resolveScheduleRouteDepartureContext(
+            initial?.targetArrivalAt,
+            initial?.travelMinutes
+        ).departureAt;
+    }, [initial?.departureAt, initial?.targetArrivalAt, initial?.travelMinutes]);
     const forcedEditTarget = useMemo(() => parseRoutePointTargetParam(params.editTarget), [params.editTarget]);
-    const forcedFocusTarget = useMemo(() => parseFocusTargetParam(params.focusTarget), [params.focusTarget]);
-    const forcedFocusZoom = useMemo(() => parseFocusZoomParam(params.focusZoom), [params.focusZoom]);
+    // Forced camera focus is a visual-QA aid. Do not let production deep links
+    // override the route camera or its zoom level.
+    const forcedFocusTarget = useMemo(
+        () => typeof __DEV__ === "boolean" && __DEV__
+            ? parseFocusTargetParam(params.focusTarget)
+            : undefined,
+        [params.focusTarget]
+    );
+    const forcedFocusZoom = useMemo(
+        () => typeof __DEV__ === "boolean" && __DEV__
+            ? parseFocusZoomParam(params.focusZoom)
+            : undefined,
+        [params.focusZoom]
+    );
     const forcedSheetState = useMemo(() => parseSheetStateParam(params.sheetState), [params.sheetState]);
     const forcedRouteId = useMemo(() => getSingleParam(params.routeId)?.trim(), [params.routeId]);
     const forcedRouteIndex = useMemo(() => parseIntegerParam(params.routeIndex), [params.routeIndex]);
@@ -3834,8 +3968,14 @@ export default function RoutePlannerScreen() {
         () => resolveRouteSelectionHandoff(initial?.route, initial?.travelMode ?? "CAR", forcedRouteId),
         [forcedRouteId, initial?.route, initial?.travelMode]
     );
-    const qaCameraPresetId = parseQaCameraPresetParam(undefined);
-    const qaLayerMode = parseRouteQaLayerModeParam(undefined);
+    // QA 카메라/레이어는 운영 query와 연결하지 않는다. Release에서는 상수 분기로
+    // 제거될 수 있도록 __DEV__ 안쪽에만 두고 사용자 입력으로 활성화하지 않는다.
+    const qaCameraPresetId = typeof __DEV__ === "boolean" && __DEV__
+        ? parseQaCameraPresetParam(undefined)
+        : undefined;
+    const qaLayerMode = typeof __DEV__ === "boolean" && __DEV__
+        ? parseRouteQaLayerModeParam(undefined)
+        : "ALL";
     const isRouteQaBaseOnly = qaLayerMode === "BASE_ONLY";
     // 지도 테마는 사용자 프로필 테마를 따르고, QA용 dim 막도 기본 화면에는 얹지 않는다.
     const qaMapBaseDimOpacity = 0;
@@ -3872,21 +4012,27 @@ export default function RoutePlannerScreen() {
     const [searchQuery, setSearchQuery] = useState("");
     const [searching, setSearching] = useState(false);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
+    const [searchError, setSearchError] = useState<string>();
+    const [completedSearchQuery, setCompletedSearchQuery] = useState("");
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchRequestIdRef = useRef(0);
+    const routePointRequestGuardRef = useRef(createLatestRequestGuard());
 
     const [etaMinutes, setEtaMinutes] = useState<number | undefined>(initial?.travelMinutes);
     const [_etaDistanceMeters, setEtaDistanceMeters] = useState<number | undefined>();
     const [routePathCoords, setRoutePathCoords] = useState<RoutePathCoord[] | undefined>();
     const [etaLoading, setEtaLoading] = useState(false);
     const [alternativesError, setAlternativesError] = useState<string | undefined>();
+    const [routeSubmitPending, setRouteSubmitPending] = useState(false);
+    const routeSubmitPendingRef = useRef(false);
+    const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>(
         () => handoffRoute ? [handoffRoute] : []
     );
     const [transitRouteFilter, setTransitRouteFilter] = useState<TransitRouteFilter>("ALL");
     const [selectedAlternativeId, setSelectedAlternativeId] = useState<string | undefined>(handoffRoute?.id);
-    const [requestedTransitDepartureAt, setRequestedTransitDepartureAt] = useState(() => paramDepartureAt ?? new Date());
-    const [draftTransitDepartureAt, setDraftTransitDepartureAt] = useState(() => paramDepartureAt ?? new Date());
+    const [requestedTransitDepartureAt, setRequestedTransitDepartureAt] = useState(() => paramDepartureAt ?? initialRouteDepartureAt);
+    const [draftTransitDepartureAt, setDraftTransitDepartureAt] = useState(() => paramDepartureAt ?? initialRouteDepartureAt);
     const [isTransitDeparturePickerOpen, setIsTransitDeparturePickerOpen] = useState(false);
     const [bottomPanelHeight, setBottomPanelHeight] = useState(0);
     const [transitActionBarHeight, setTransitActionBarHeight] = useState(0);
@@ -3937,6 +4083,13 @@ export default function RoutePlannerScreen() {
     const bottomSheetTranslateY = useRef(new Animated.Value(420)).current;
     const bottomSheetAnimatedOffsetRef = useRef(420);
     const bottomSheetStartYRef = useRef(0);
+
+    useEffect(() => () => {
+        searchRequestIdRef.current += 1;
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        if (routeSubmitResetTimerRef.current) clearTimeout(routeSubmitResetTimerRef.current);
+        routePointRequestGuardRef.current.invalidate();
+    }, []);
 
     useEffect(() => {
         const paramKey = paramDepartureAt?.toISOString();
@@ -4021,8 +4174,14 @@ export default function RoutePlannerScreen() {
     );
     const bottomPanelMaxHeight = useMemo(() => {
         if (isRouteDetailMode) {
-            // 완전 확장에서도 지도 문맥을 남긴다. 단계 목록은 고정 높이 안에서 스크롤한다.
-            return Math.min(520, Math.max(440, Math.round(windowHeight * 0.56)));
+            // 작은 화면에서도 상단 경로 헤더와 지도가 가려지지 않도록 시트 높이를 제한한다.
+            const routeHeaderReserve = Math.max(insets.top + 104, 132);
+            const availableHeight = Math.max(300, windowHeight - routeHeaderReserve);
+            return Math.min(
+                520,
+                availableHeight,
+                Math.max(340, Math.round(windowHeight * 0.56))
+            );
         }
         const editModeReserve = Math.max(insets.top + 104, 140);
         return Math.min(560, Math.max(300, windowHeight - editModeReserve));
@@ -4130,6 +4289,12 @@ export default function RoutePlannerScreen() {
         [selectedAlternativeId, visibleAlternatives]
     );
     const selectedAlternative = selectedAlternativeIndex >= 0 ? routeAlternatives[selectedAlternativeIndex] : undefined;
+    const canSubmitRoute = !routeSubmitPending && canPersistResolvedRoute({
+        hasRouteReady,
+        routeLoading: etaLoading,
+        hasSelectedRoute: !!selectedAlternative,
+        routeError: alternativesError,
+    });
     const openSelectedRouteAttribution = useCallback(() => {
         const attributionUrl = selectedAlternative?.attributionUrl;
         if (!attributionUrl) return;
@@ -4204,7 +4369,7 @@ export default function RoutePlannerScreen() {
         () => selectedAlternative ? getRouteQualityNotice(selectedAlternative) : undefined,
         [selectedAlternative]
     );
-    const [selectedRouteDepartureAt, setSelectedRouteDepartureAt] = useState(() => new Date());
+    const [selectedRouteDepartureAt, setSelectedRouteDepartureAt] = useState(() => initialRouteDepartureAt);
     const selectedTransitMeta = useMemo(
         () => selectedAlternative ? buildTransitRouteTimeMeta(selectedAlternative, selectedRouteDepartureAt) : undefined,
         [selectedAlternative, selectedRouteDepartureAt]
@@ -4246,9 +4411,19 @@ export default function RoutePlannerScreen() {
             selectedRouteDepartureAt,
             selectedAlternativeIndex
         );
-        return isTransitMode
+        const candidateRouteInfo = isTransitMode
             ? buildRouteInfoFromNormalizedRoute(baseRouteInfo, selectedNormalizedRoute)
             : baseRouteInfo;
+        const selectedTiming = resolveSelectedRouteTiming({
+            targetArrivalAt: initial?.targetArrivalAt,
+            routeInfo: candidateRouteInfo,
+            fallbackDepartureAt: selectedRouteDepartureAt,
+        });
+        return {
+            ...candidateRouteInfo,
+            departureTime: selectedTiming.departureAt.toISOString(),
+            arrivalTime: selectedTiming.arrivalAt.toISOString(),
+        };
     }, [
         destinationAddress,
         destinationDisplay,
@@ -4256,6 +4431,7 @@ export default function RoutePlannerScreen() {
         destinationLng,
         hasDestinationCoords,
         hasOriginCoords,
+        initial?.targetArrivalAt,
         isTransitMode,
         originAddress,
         originDisplay,
@@ -4266,6 +4442,8 @@ export default function RoutePlannerScreen() {
         selectedNormalizedRoute,
         selectedRouteDepartureAt,
     ]);
+    const finalSelectedRouteDepartureTime = selectedRouteInfo?.departureTime
+        ?? selectedRouteDepartureAt.toISOString();
     const selectedCollapsedRouteSummary = useMemo(() => {
         if (!selectedRouteInfo) return undefined;
         const arrivalText = formatRouteClock(selectedRouteInfo.arrivalTime);
@@ -4353,10 +4531,10 @@ export default function RoutePlannerScreen() {
         setSelectedRouteDepartureAt(
             providerDepartureAt && Number.isFinite(providerDepartureAt.getTime())
                 ? providerDepartureAt
-                : new Date()
+                : initialRouteDepartureAt
         );
         setFocusedRouteStepId(undefined);
-    }, [selectedAlternative?.transitDepartureAt, selectedAlternativeId]);
+    }, [initialRouteDepartureAt, selectedAlternative?.transitDepartureAt, selectedAlternativeId]);
 
     useEffect(() => {
         const listenerId = bottomSheetTranslateY.addListener(({ value }) => {
@@ -4534,6 +4712,7 @@ export default function RoutePlannerScreen() {
     useEffect(() => {
         if (!initialSyncKey || lastAppliedInitialKeyRef.current === initialSyncKey) return;
         lastAppliedInitialKeyRef.current = initialSyncKey;
+        routePointRequestGuardRef.current.invalidate();
 
         setOriginName(initial?.origin?.name ?? "");
         setDestinationName(initial?.destination?.name ?? "");
@@ -4758,6 +4937,7 @@ export default function RoutePlannerScreen() {
             selectedAlternativeIdRef.current = undefined;
             setFocusedTransitLegIndex(undefined);
             setAlternativesError(undefined);
+            setEtaLoading(false);
             setEtaMinutes(undefined);
             setEtaDistanceMeters(undefined);
             setRoutePathCoords(undefined);
@@ -4775,12 +4955,21 @@ export default function RoutePlannerScreen() {
             return;
         }
 
+        // 새 OD/교통수단/출발 시각이 들어오면 이전 후보를 즉시 숨긴다.
+        // debounce 동안 이전 경로를 새 요청의 결과처럼 저장하는 것을 막는다.
+        setEtaLoading(true);
+        setAlternativesError(undefined);
+        setRouteAlternatives([]);
+        setSelectedAlternativeId(undefined);
+        selectedAlternativeIdRef.current = undefined;
+        setFocusedTransitLegIndex(undefined);
+        setEtaMinutes(undefined);
+        setEtaDistanceMeters(undefined);
+        setRoutePathCoords(undefined);
+
         let active = true;
         const timer = setTimeout(async () => {
             try {
-                setEtaLoading(true);
-                setAlternativesError(undefined);
-
                 const nextAlternatives = await getRouteAlternativeOptions(
                     { name: originName, address: originAddress, lat: originLat, lng: originLng },
                     { name: destinationName, address: destinationAddress, lat: destinationLat, lng: destinationLng },
@@ -5088,46 +5277,47 @@ export default function RoutePlannerScreen() {
             .map((leg, legIndex) => {
                 if (leg.kind !== "WALK") return null;
                 if (walkLegHasPrecisePath(leg)) return null;
-                let prevRideIndex = -1;
-                for (let index = legIndex - 1; index >= 0; index -= 1) {
-                    if (isRideLegKind(transitLegs[index].kind)) {
-                        prevRideIndex = index;
-                        break;
-                    }
-                }
-                let nextRideIndex = -1;
-                for (let index = legIndex + 1; index < transitLegs.length; index += 1) {
-                    if (isRideLegKind(transitLegs[index].kind)) {
-                        nextRideIndex = index;
-                        break;
-                    }
-                }
-                const from = (prevRideIndex >= 0
-                        ? getRideStopConnectorCoord(transitLegs, prevRideIndex, "ALIGHT")
-                        : undefined)
-                    ?? (prevRideIndex >= 0 ? getTransitLegAlightCoord(transitLegs[prevRideIndex]) : undefined)
-                    ?? getTransitLegBoardCoord(leg)
-                    ?? getTransitLegBoardAnchorOnPath(leg)
-                    ?? getTransitLegStartCoord(leg);
-                const to = (nextRideIndex >= 0
-                        ? getRideStopConnectorCoord(transitLegs, nextRideIndex, "BOARD")
-                        : undefined)
-                    ?? (nextRideIndex >= 0 ? getTransitLegBoardCoord(transitLegs[nextRideIndex]) : undefined)
-                    ?? getTransitLegAlightCoord(leg)
-                    ?? getTransitLegAlightAnchorOnPath(leg)
-                    ?? getTransitLegEndCoord(leg);
-                if (!from || !to) return null;
-                const walkGapMeters = distanceMeters(from, to);
+                const previousLeg = transitLegs[legIndex - 1];
+                const nextLeg = transitLegs[legIndex + 1];
+                const endpoints = resolveTransitWalkRequestEndpoints({
+                    legIndex,
+                    legCount: transitLegs.length,
+                    origin: originPoint,
+                    destination: destinationPoint,
+                    legStart: getTransitLegBoardCoord(leg)
+                        ?? getTransitLegBoardAnchorOnPath(leg)
+                        ?? getTransitLegStartCoord(leg),
+                    legEnd: getTransitLegAlightCoord(leg)
+                        ?? getTransitLegAlightAnchorOnPath(leg)
+                        ?? getTransitLegEndCoord(leg),
+                    previousIsRide: !!previousLeg && isRideLegKind(previousLeg.kind),
+                    previousRideAlight: previousLeg && isRideLegKind(previousLeg.kind)
+                        ? (getRideStopConnectorCoord(transitLegs, legIndex - 1, "ALIGHT")
+                        ?? getTransitLegAlightCoord(previousLeg))
+                        : undefined,
+                    nextIsRide: !!nextLeg && isRideLegKind(nextLeg.kind),
+                    nextRideBoard: nextLeg && isRideLegKind(nextLeg.kind)
+                        ? (getRideStopConnectorCoord(transitLegs, legIndex + 1, "BOARD")
+                        ?? getTransitLegBoardCoord(nextLeg))
+                        : undefined,
+                });
+                if (!endpoints) return null;
+                const walkGapMeters = distanceMeters(endpoints.from, endpoints.to);
                 if (!Number.isFinite(walkGapMeters) || walkGapMeters < 35) return null;
                 return {
                     id: `${selectedAlternative.id}-walk-leg-${legIndex}`,
-                    from,
-                    to,
-                    snapFrom: prevRideIndex < 0,
-                    snapTo: nextRideIndex < 0,
+                    ...endpoints,
                 };
             })
             .filter((value): value is ConnectorPathRequest => value !== null);
+
+        const firstWalkRequestId = transitLegs[0]?.kind === "WALK"
+            ? `${selectedAlternative.id}-walk-leg-0`
+            : undefined;
+        const lastWalkIndex = transitLegs.length - 1;
+        const lastWalkRequestId = transitLegs[lastWalkIndex]?.kind === "WALK"
+            ? `${selectedAlternative.id}-walk-leg-${lastWalkIndex}`
+            : undefined;
 
         if (!connectorRequests.length && !walkLegRequests.length) {
             setTransitWalkDetailOverlays(exactWalkLegOverlays);
@@ -5194,47 +5384,8 @@ export default function RoutePlannerScreen() {
         (async () => {
             const overlays: TmapPathOverlay[] = [];
             const walkDetailOverlays: TmapPathOverlay[] = [...exactWalkLegOverlays];
-
-            for (const request of connectorRequests) {
-                const rawConnectorPath = await fetchConnectorPath(
-                    request.from,
-                    request.to,
-                    request.snapFrom,
-                    request.snapTo
-                );
-                if (rawConnectorPath && !cancelled) {
-                    // WALK→BUS/SUBWAY: 경로 끝이 버스/지하철 도로 위로 진입하는 구간 제거
-                    // snapTo=false → 버스/지하철 승차지점(도로 중앙)이 목적지
-                    let connectorPath: RoutePathCoord[] = rawConnectorPath;
-                    if (!request.snapTo) {
-                        // 승차 지점에 인접한 버스/지하철 레그 경로 좌표 취득 (도로 중앙선)
-                        const adjacentRideLeg = transitLegs.find((leg) => {
-                            if (!isRideLegKind(leg.kind)) return false;
-                            const boardCoord = getTransitLegBoardCoord(leg);
-                            return boardCoord && distanceMeters(boardCoord, request.to) < 40;
-                        });
-                        const ridePath = Array.isArray(adjacentRideLeg?.pathCoords)
-                            ? (adjacentRideLeg!.pathCoords as RoutePathCoord[]).slice(0, 25)
-                            : [];
-                        connectorPath = trimWalkApproachTail(rawConnectorPath, request.to, ridePath) ?? rawConnectorPath;
-                    }
-                    const stitchedConnectorPath = stitchWalkPathToAnchors(
-                        connectorPath,
-                        request.from,
-                        request.to
-                    ) ?? connectorPath;
-                    const displayCoords = toDisplayOverlayCoords(stitchedConnectorPath, "WALK");
-                    if (displayCoords.length < 2) continue;
-                    overlays.push({
-                        id: `${request.id}-path`,
-                        coords: displayCoords,
-                        color: "rgba(0,0,0,0)",
-                        width: 0.5,
-                        outlineColor: "rgba(0,0,0,0)",
-                        outlineWidth: 0,
-                    });
-                }
-            }
+            const successfulWalkRequestIds = new Set<string>();
+            const successfulWalkLegIndexes = new Set<number>();
 
             for (const request of walkLegRequests) {
                 if (cancelled) break;
@@ -5271,6 +5422,9 @@ export default function RoutePlannerScreen() {
                     ) ?? walkPath;
                     const displayCoords = toDisplayOverlayCoords(stitchedWalkPath, "WALK");
                     if (displayCoords.length < 2) continue;
+                    successfulWalkRequestIds.add(request.id);
+                    const legIndexMatch = request.id.match(/-walk-leg-(\d+)$/);
+                    if (legIndexMatch) successfulWalkLegIndexes.add(Number(legIndexMatch[1]));
                     walkDetailOverlays.push({
                         id: request.id,
                         coords: displayCoords,
@@ -5280,6 +5434,60 @@ export default function RoutePlannerScreen() {
                         outlineWidth: 0,
                     });
                     walkDetailOverlays.push({
+                        id: `${request.id}-path`,
+                        coords: displayCoords,
+                        color: "rgba(0,0,0,0)",
+                        width: 0.5,
+                        outlineColor: "rgba(0,0,0,0)",
+                        outlineWidth: 0,
+                    });
+                }
+            }
+
+            // 상세 WALK 조회가 실제로 성공한 구간만 boundary/gap fallback을 억제한다.
+            // WALK API가 실패하면 connector를 남겨 출발·도착/승하차 접점이 끊기지 않게 한다.
+            const effectiveConnectorRequests = filterTransitConnectorRequestsForSuccessfulWalks(
+                connectorRequests,
+                {
+                    firstWalkRequestId,
+                    lastWalkRequestId,
+                    successfulWalkRequestIds,
+                    successfulWalkLegIndexes,
+                    legKinds: transitLegs.map((leg) => leg.kind),
+                }
+            );
+
+            for (const request of effectiveConnectorRequests) {
+                const rawConnectorPath = await fetchConnectorPath(
+                    request.from,
+                    request.to,
+                    request.snapFrom,
+                    request.snapTo
+                );
+                if (rawConnectorPath && !cancelled) {
+                    // WALK→BUS/SUBWAY: 경로 끝이 버스/지하철 도로 위로 진입하는 구간 제거
+                    // snapTo=false → 버스/지하철 승차지점(도로 중앙)이 목적지
+                    let connectorPath: RoutePathCoord[] = rawConnectorPath;
+                    if (!request.snapTo) {
+                        // 승차 지점에 인접한 버스/지하철 레그 경로 좌표 취득 (도로 중앙선)
+                        const adjacentRideLeg = transitLegs.find((leg) => {
+                            if (!isRideLegKind(leg.kind)) return false;
+                            const boardCoord = getTransitLegBoardCoord(leg);
+                            return boardCoord && distanceMeters(boardCoord, request.to) < 40;
+                        });
+                        const ridePath = Array.isArray(adjacentRideLeg?.pathCoords)
+                            ? (adjacentRideLeg!.pathCoords as RoutePathCoord[]).slice(0, 25)
+                            : [];
+                        connectorPath = trimWalkApproachTail(rawConnectorPath, request.to, ridePath) ?? rawConnectorPath;
+                    }
+                    const stitchedConnectorPath = stitchWalkPathToAnchors(
+                        connectorPath,
+                        request.from,
+                        request.to
+                    ) ?? connectorPath;
+                    const displayCoords = toDisplayOverlayCoords(stitchedConnectorPath, "WALK");
+                    if (displayCoords.length < 2) continue;
+                    overlays.push({
                         id: `${request.id}-path`,
                         coords: displayCoords,
                         color: "rgba(0,0,0,0)",
@@ -5436,7 +5644,7 @@ export default function RoutePlannerScreen() {
                     renderMode: "native",
                     nativeDirection: ROUTE_LINE_STYLE.drive.arrows,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-                    nativeDirectionOpacity: ROUTE_LINE_STYLE.arrows.opacity,
+                    nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                     zIndex: 35 + index,
                 } as TmapPathOverlay];
             })
@@ -5448,17 +5656,20 @@ export default function RoutePlannerScreen() {
         );
         const routeInfoStepOverlays = buildRouteInfoPathOverlays(selectedRouteInfo, mapZoom);
         const hasSelectedMainPath = Array.isArray(selectedRoute?.pathCoords) && selectedRoute.pathCoords.length >= 2;
-        const shouldUseRouteInfoStepOverlays = (
-            routeInfoStepOverlays.length > 0 &&
-            !shouldUseTransitLegOverlays &&
-            // 비대중교통의 guideSteps는 depart/arrive 형상을 생략할 수 있다.
-            // 지도 본선은 출발·도착을 모두 포함하는 공급자 전체 path를 우선한다.
-            !(travelMode !== "TRANSIT" && hasSelectedMainPath)
-        );
-        if (shouldUseRouteInfoStepOverlays) {
+        const hasRenderableNormalizedTransitRoute = travelMode === "TRANSIT" &&
+            selectedNormalizedRoute?.segments.some((segment) => (
+                getSegmentRenderableCoordinates(segment).length >= 2
+            )) === true;
+        const useRouteInfoStepOverlays = shouldUseRouteInfoStepOverlays({
+            routeMode: travelMode,
+            routeInfoOverlayCount: routeInfoStepOverlays.length,
+            hasTransitLegOverlays: !!shouldUseTransitLegOverlays,
+            hasSelectedMainPath,
+            hasRenderableNormalizedTransitRoute,
+        });
+        if (useRouteInfoStepOverlays) {
             return [...endpointAccessOverlays, ...routeInfoStepOverlays, ...trafficSectionOverlays];
         }
-        if (travelMode === "TRANSIT" && selectedRouteInfo && !shouldUseTransitLegOverlays) return routeInfoStepOverlays;
 
         if (
             travelMode === "TRANSIT" &&
@@ -5469,6 +5680,13 @@ export default function RoutePlannerScreen() {
                 .flatMap((segment) => {
                     const overlays = RouteSegmentLayers(segment, mapZoom, true);
                     if (overlays.length === 0) return [];
+                    const ownedOverlays = applyFocusedTransitRideOverlayOwnership(overlays, {
+                        mode: segment.mode,
+                        zoom: mapZoom,
+                        focused: segment.sequence === focusedTransitLegIndex,
+                        directionEnabled: shouldUseNativeTransitDirection(segment),
+                        directionColor: ROUTE_LINE_STYLE.arrows.color,
+                    });
                     if (
                         qaLayerMode === "CONNECTOR_DEBUG" &&
                         isWalkTransferSegment(segment)
@@ -5480,7 +5698,7 @@ export default function RoutePlannerScreen() {
                         const debugColor = isFallback
                             ? "#FF3B30"
                             : (isAnchorAdjusted ? "#FF9500" : ROUTE_WALK_GUIDE_COLOR);
-                        return overlays.map((item) => ({
+                        return ownedOverlays.map((item) => ({
                             ...item,
                             color: debugColor,
                             dotColor: item.renderMode === "screen" ? debugColor : item.dotColor,
@@ -5495,7 +5713,7 @@ export default function RoutePlannerScreen() {
                             zIndex: 210 + segment.sequence + (item.renderMode === "screen" ? 5 : 0),
                         } as TmapPathOverlay));
                     }
-                    return overlays;
+                    return ownedOverlays;
                 })
                 .filter((overlay): overlay is TmapPathOverlay => overlay !== null);
             const stopAccessLinkOverlays = buildTransitStopAccessLinkOverlays(
@@ -5567,7 +5785,10 @@ export default function RoutePlannerScreen() {
                     renderMode: "native",
                     strokeStyle: "solid",
                     // 정규화 fallback도 본선 하나에 SDK native direction을 직접 적용한다.
-                    nativeDirection: ENABLE_NATIVE_ROUTE_DIRECTION && mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
+                    nativeDirection: isRideLegKind(leg.kind) &&
+                        index !== focusedTransitLegIndex &&
+                        ENABLE_NATIVE_ROUTE_DIRECTION &&
+                        mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
                     nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                     zIndex: 20 + index,
@@ -5659,33 +5880,37 @@ export default function RoutePlannerScreen() {
                     walkOverlayById
                 );
                 if (focusedCoords.length < 2) return null;
-                const focusedColor = focusedLeg.kind === "WALK"
+                const focusedIsWalk = focusedLeg.kind === "WALK";
+                const focusedColor = focusedIsWalk
                     ? ROUTE_WALK_GUIDE_COLOR
                     : getMapTransitLegVisualColor(focusedLeg);
+                const focusedIsRide = isRideLegKind(focusedLeg.kind);
                 return {
                     id: `${selectedRoute.id}-focused-leg-${focusedTransitLegIndex}`,
                     coords: focusedCoords,
                     color: focusedColor,
-                    width: focusedLeg.kind === "WALK"
+                    width: focusedIsWalk
                         ? getWalkWidth(mapZoom) + 0.4
                         : getTransitMainWidth(mapZoom) + 0.4,
-                    opacity: focusedLeg.kind === "WALK" ? ROUTE_LINE_STYLE.walk.opacity : 1,
-                    outlineColor: focusedLeg.kind === "WALK"
+                    opacity: focusedIsWalk ? ROUTE_LINE_STYLE.walk.opacity : 1,
+                    outlineColor: focusedIsWalk
                         ? ROUTE_WALK_CASING_COLOR
                         : (shouldRenderTransitDetailDark ? "rgba(5,10,20,0.08)" : "rgba(255,255,255,0.18)"),
-                    outlineWidth: focusedLeg.kind === "WALK"
+                    outlineWidth: focusedIsWalk
                         ? getWalkOutlineWidth(mapZoom)
                         : (getTransitCasingWidth(mapZoom) - getTransitMainWidth(mapZoom)) / 2,
-                    outlineOpacity: focusedLeg.kind === "WALK" ? ROUTE_WALK_CASING_OPACITY : undefined,
+                    outlineOpacity: focusedIsWalk ? ROUTE_WALK_CASING_OPACITY : undefined,
                     renderMode: "native",
-                    dashPattern: focusedLeg.kind === "WALK"
+                    dashPattern: focusedIsWalk
                         ? [...ROUTE_LINE_STYLE.walk.dashPattern]
                         : undefined,
-                    strokeStyle: focusedLeg.kind === "WALK" ? "dash" : "solid",
-                    // 기본 본선 Polyline에 native direction이 있으므로 포커스 강조선에는 중복하지 않는다.
-                    nativeDirection: false,
+                    strokeStyle: focusedIsWalk ? "dash" : "solid",
+                    // 포커스 강조선이 기본 본선을 덮어도 진행 방향이 사라지지 않게 유지한다.
+                    nativeDirection: focusedIsRide &&
+                        ENABLE_NATIVE_ROUTE_DIRECTION &&
+                        mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-                    nativeDirectionOpacity: ROUTE_LINE_STYLE.arrows.opacity,
+                    nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                     zIndex: 90,
                 } as TmapPathOverlay;
             })()
@@ -5767,7 +5992,7 @@ export default function RoutePlannerScreen() {
                         ENABLE_NATIVE_ROUTE_DIRECTION
                     ),
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-                    nativeDirectionOpacity: ROUTE_LINE_STYLE.arrows.opacity,
+                    nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                 } as TmapPathOverlay;
             })()
             : null;
@@ -5833,7 +6058,7 @@ export default function RoutePlannerScreen() {
                     renderMode: "native",
                     nativeDirection: (isFallbackDrive || isFallbackBike) && ENABLE_NATIVE_ROUTE_DIRECTION,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
-                    nativeDirectionOpacity: ROUTE_LINE_STYLE.arrows.opacity,
+                    nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
                 }];
                 if (focusedTransitLegOverlay) {
                     overlays.push(focusedTransitLegOverlay);
@@ -5865,6 +6090,13 @@ export default function RoutePlannerScreen() {
         isRouteQaBaseOnly,
         qaLayerMode,
     ]);
+
+    const themedMapPathOverlays = useMemo(() => {
+        if (!shouldRenderTransitDetailDark) return mapPathOverlays;
+        return mapPathOverlays.map((overlay) => (
+            applyTransitRouteThemeToOverlay(overlay, mapZoom, "dark")
+        ));
+    }, [mapPathOverlays, mapZoom, shouldRenderTransitDetailDark]);
 
     const routeCoordinatesForLog = useMemo(() => {
         if (selectedNormalizedRoute?.segments.length) {
@@ -5936,6 +6168,7 @@ export default function RoutePlannerScreen() {
     }, [mapPathOverlays, mapZoom, selectedNormalizedRoute]);
 
     useEffect(() => {
+        if (typeof __DEV__ === "boolean" && !__DEV__) return;
         const routeCoordinates = routeCoordinatesForLog;
         const currentZoom = mapZoom;
         const firstCoordinate = routeCoordinates[0];
@@ -5956,6 +6189,7 @@ export default function RoutePlannerScreen() {
     }, [mapZoom, routeCoordinatesForLog]);
 
     useEffect(() => {
+        if (typeof __DEV__ === "boolean" && !__DEV__) return;
         if (routeAlternatives.length > 0 && !selectedNormalizedRoute) return;
         const table = selectedNormalizedRoute?.segments?.map((segment) => ({
             id: segment.id,
@@ -6766,19 +7000,21 @@ export default function RoutePlannerScreen() {
                 presetId: qaCameraPreset.id,
                 appliedAtMs: Date.now(),
             };
-            console.log("[camera-qa] applying preset:", {
-                presetId: qaCameraPreset.id,
-                requestedFocusZoom: qaZoom,
-                cameraMode: "SEGMENT_FOCUS_QA",
-                autoFitSuppressed: true,
-                center: qaCenter,
-                rawCenter: qaCameraPreset.center,
-                padding: qaPadding,
-                boundsPointCount: qaCameraPreset.boundsCoordinates?.length ?? 0,
-                dynamicOverviewFit: !!qaOverviewCamera,
-                reason: "QA_PRESET",
-                description: qaCameraPreset.description,
-            });
+            if (typeof __DEV__ === "boolean" && __DEV__) {
+                console.log("[camera-qa] applying preset:", {
+                    presetId: qaCameraPreset.id,
+                    requestedFocusZoom: qaZoom,
+                    cameraMode: "SEGMENT_FOCUS_QA",
+                    autoFitSuppressed: true,
+                    center: qaCenter,
+                    rawCenter: qaCameraPreset.center,
+                    padding: qaPadding,
+                    boundsPointCount: qaCameraPreset.boundsCoordinates?.length ?? 0,
+                    dynamicOverviewFit: !!qaOverviewCamera,
+                    reason: "QA_PRESET",
+                    description: qaCameraPreset.description,
+                });
+            }
             map.resizeMap("QA_PRESET_BEFORE_CAMERA");
             runCameraActionAfterDirectionPrewarm(
                 focusKey,
@@ -7019,21 +7255,23 @@ export default function RoutePlannerScreen() {
             );
             if (!overviewCamera) return;
 
-            console.log("[camera-fit] route overview padding:", {
-                selectedRouteId: selectedNormalizedRoute?.id,
-                cameraMode: "ROUTE_OVERVIEW",
-                reason: hasRouteReady ? "ROUTE_CHANGED" : "INITIAL_ROUTE_FIT",
-                routePointCount: routePoints.length,
-                padding: routeFitPadding,
-                visibleSheetTopY: Math.round(visibleSheetTopY),
-                routeHeaderReserveY: Math.round(routeHeaderReserveY),
-                availableRouteMapHeight: Math.round(availableRouteMapHeight),
-                usableFitWidth: Math.round(usableFitWidth),
-                usableFitHeight: Math.round(usableFitHeight),
-                rawLatDelta,
-                rawLngDelta,
-                targetCamera: overviewCamera,
-            });
+            if (typeof __DEV__ === "boolean" && __DEV__) {
+                console.log("[camera-fit] route overview padding:", {
+                    selectedRouteId: selectedNormalizedRoute?.id,
+                    cameraMode: "ROUTE_OVERVIEW",
+                    reason: hasRouteReady ? "ROUTE_CHANGED" : "INITIAL_ROUTE_FIT",
+                    routePointCount: routePoints.length,
+                    padding: routeFitPadding,
+                    visibleSheetTopY: Math.round(visibleSheetTopY),
+                    routeHeaderReserveY: Math.round(routeHeaderReserveY),
+                    availableRouteMapHeight: Math.round(availableRouteMapHeight),
+                    usableFitWidth: Math.round(usableFitWidth),
+                    usableFitHeight: Math.round(usableFitHeight),
+                    rawLatDelta,
+                    rawLngDelta,
+                    targetCamera: overviewCamera,
+                });
+            }
 
             runCameraActionAfterDirectionPrewarm(
                 fitKey,
@@ -7148,6 +7386,9 @@ export default function RoutePlannerScreen() {
     }, [originAddress, originLat, originLng, originName]);
 
     const applyPlace = (target: RoutePointTarget, place: PlaceSearchItem) => {
+        routePointRequestGuardRef.current.invalidate();
+        searchRequestIdRef.current += 1;
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         if (isRoutePointLocked || !hasActiveTarget) {
             setSearchQuery("");
             setSearchResults([]);
@@ -7179,12 +7420,18 @@ export default function RoutePlannerScreen() {
 
         setSearchQuery("");
         setSearchResults([]);
+        setSearchError(undefined);
+        setCompletedSearchQuery("");
+        setSearching(false);
     };
 
     const applyCurrentLocation = useCallback(async (target: RoutePointTarget) => {
+        const guard = routePointRequestGuardRef.current;
+        const requestId = guard.begin();
         try {
             const loc = await getCurrentLocation();
             const address = await reverseGeocodeToAddress(loc.latitude, loc.longitude).catch(() => undefined);
+            if (!guard.isCurrent(requestId)) return false;
             const placeName = address || "현재 위치";
             if (target === "origin") {
                 originTouchedRef.current = true;
@@ -7211,27 +7458,58 @@ export default function RoutePlannerScreen() {
 
             return true;
         } catch (error) {
+            if (!guard.isCurrent(requestId)) return false;
             const message = error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다.";
-            Alert.alert("위치 가져오기 실패", message);
+            const permission = await getCurrentLocationPermissionState().catch(() => undefined);
+            if (!guard.isCurrent(requestId)) return false;
+            if (permission && !permission.servicesEnabled) {
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "기기 위치 서비스를 켠 뒤 다시 시도해 주세요.",
+                    true
+                );
+            } else if (permission && !permission.granted && !permission.canAskAgain) {
+                showLocationSettingsAlert(
+                    "위치 권한이 필요해요",
+                    "기기 설정에서 NoLate의 위치 권한을 허용한 뒤 다시 시도해 주세요."
+                );
+            } else {
+                Alert.alert("위치 가져오기 실패", message);
+            }
             return false;
         }
     }, [hasDestinationCoords, hasOriginCoords]);
 
     const requestCurrentLocation = useCallback(async (target: RoutePointTarget) => {
+        const guard = routePointRequestGuardRef.current;
+        const requestId = guard.begin();
         try {
             const permission = await getCurrentLocationPermissionState();
+            if (!guard.isCurrent(requestId)) return;
             if (!permission.servicesEnabled) {
-                Alert.alert("위치 서비스 꺼짐", "기기 위치 서비스를 켠 뒤 다시 시도해 주세요.");
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "기기 위치 서비스를 켠 뒤 다시 시도해 주세요.",
+                    true
+                );
                 return;
             }
 
             if (!permission.granted) {
+                if (!permission.canAskAgain) {
+                    showLocationSettingsAlert(
+                        "위치 권한이 필요해요",
+                        "기기 설정에서 NoLate의 위치 권한을 허용한 뒤 다시 시도해 주세요."
+                    );
+                    return;
+                }
                 setLocationPromptTarget(target);
                 return;
             }
 
             await applyCurrentLocation(target);
         } catch (error) {
+            if (!guard.isCurrent(requestId)) return;
             const message = error instanceof Error ? error.message : "현재 위치 권한 상태를 확인하지 못했습니다.";
             Alert.alert("위치 확인 실패", message);
         }
@@ -7239,6 +7517,7 @@ export default function RoutePlannerScreen() {
 
     const closeLocationPrompt = useCallback(() => {
         if (locationPromptLoading) return;
+        routePointRequestGuardRef.current.invalidate();
         setLocationPromptTarget(null);
     }, [locationPromptLoading]);
 
@@ -7307,6 +7586,7 @@ export default function RoutePlannerScreen() {
     ]);
 
     const onPressOriginTarget = () => {
+        routePointRequestGuardRef.current.invalidate();
         if (activeTarget === "origin") {
             setActiveTarget(null);
             setSearchQuery("");
@@ -7326,6 +7606,7 @@ export default function RoutePlannerScreen() {
     };
 
     const onPressDestinationTarget = () => {
+        routePointRequestGuardRef.current.invalidate();
         if (activeTarget === "destination") {
             setActiveTarget(null);
             setSearchQuery("");
@@ -7341,16 +7622,24 @@ export default function RoutePlannerScreen() {
     const onTapMap = async (event: { latitude: number; longitude: number }) => {
         if (isRoutePointLocked || !hasActiveTarget) return;
         if (activeTarget !== "origin" && activeTarget !== "destination") return;
+        const requestGuard = routePointRequestGuardRef.current;
+        const requestId = requestGuard.begin();
+        searchRequestIdRef.current += 1;
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         const { latitude, longitude } = event;
         const tappedTarget = activeTarget;
 
         if (tappedTarget === "origin") {
             originTouchedRef.current = true;
             setOriginUsesDefault(false);
+            setOriginName(getMapPickedPlaceFallbackName("origin"));
+            setOriginAddress("");
             setOriginLat(latitude);
             setOriginLng(longitude);
             setActiveTarget("destination");
         } else {
+            setDestinationName(getMapPickedPlaceFallbackName("destination"));
+            setDestinationAddress("");
             setDestinationLat(latitude);
             setDestinationLng(longitude);
         }
@@ -7365,6 +7654,7 @@ export default function RoutePlannerScreen() {
 
         try {
             const address = await reverseGeocodeToAddress(latitude, longitude);
+            if (!requestGuard.isCurrent(requestId)) return;
             if (address) {
                 if (tappedTarget === "origin") {
                     setOriginName(address);
@@ -7379,8 +7669,20 @@ export default function RoutePlannerScreen() {
         }
     };
 
+    const clearPlaceSearch = () => {
+        routePointRequestGuardRef.current.invalidate();
+        searchRequestIdRef.current += 1;
+        if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+        setSearchQuery("");
+        setSearchResults([]);
+        setSearchError(undefined);
+        setCompletedSearchQuery("");
+        setSearching(false);
+    };
+
     const handleSearchChange = (text: string) => {
         if (isRoutePointLocked || !hasActiveTarget) return;
+        routePointRequestGuardRef.current.invalidate();
         if (activeTarget === "origin") {
             originTouchedRef.current = true;
             setOriginUsesDefault(false);
@@ -7388,9 +7690,12 @@ export default function RoutePlannerScreen() {
         const requestId = searchRequestIdRef.current + 1;
         searchRequestIdRef.current = requestId;
         setSearchQuery(text);
+        setSearchResults([]);
+        setSearchError(undefined);
+        setCompletedSearchQuery("");
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
         if (!text.trim()) {
-            setSearchResults([]);
+            setSearching(false);
             return;
         }
         searchDebounceRef.current = setTimeout(async () => {
@@ -7405,10 +7710,13 @@ export default function RoutePlannerScreen() {
                 });
                 if (searchRequestIdRef.current !== requestId) return;
                 setSearchResults(items);
+                setCompletedSearchQuery(text.trim());
             } catch (error) {
                 if (searchRequestIdRef.current !== requestId) return;
                 const message = error instanceof Error ? error.message : "주소 검색에 실패했습니다.";
-                Alert.alert("검색 실패", message);
+                setSearchResults([]);
+                setSearchError(message);
+                setCompletedSearchQuery(text.trim());
             } finally {
                 if (searchRequestIdRef.current === requestId) setSearching(false);
             }
@@ -7420,6 +7728,10 @@ export default function RoutePlannerScreen() {
 
         const storedPathOverlays = mapPathOverlays.flatMap((overlay) => {
             if (!Array.isArray(overlay.coords) || overlay.coords.length < 2) return [];
+            const geometryProvenance = getStoredRouteOverlayGeometryProvenance(
+                overlay.id,
+                selectedNormalizedRoute?.segments
+            );
             return [{
                 id: overlay.id,
                 coords: overlay.coords.map((coord) => ({ lat: coord.latitude, lng: coord.longitude })),
@@ -7457,6 +7769,7 @@ export default function RoutePlannerScreen() {
                 lineLabelBackgroundColor: overlay.lineLabelBackgroundColor,
                 lineLabelOffsetPx: overlay.lineLabelOffsetPx,
                 zIndex: overlay.zIndex,
+                ...(geometryProvenance ?? {}),
             }];
         });
         const overlayPathCoords = storedPathOverlays.find((overlay) => overlay.coords.length >= 2)?.coords;
@@ -7472,7 +7785,7 @@ export default function RoutePlannerScreen() {
             pathCoords: selectedPathCoords,
             storedPathOverlays,
         };
-    }, [mapPathOverlays, routePathCoords, selectedAlternative, selectedRouteInfo]);
+    }, [mapPathOverlays, routePathCoords, selectedAlternative, selectedNormalizedRoute, selectedRouteInfo]);
 
     const persistCurrentRoutePlannerInitial = useCallback((targetSessionId = sessionId) => {
         if (!targetSessionId) return;
@@ -7506,6 +7819,8 @@ export default function RoutePlannerScreen() {
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name || nextOrigin?.name,
+            targetArrivalAt: initial?.targetArrivalAt,
+            departureAt: finalSelectedRouteDepartureTime,
             route: buildPersistableSelectedRoute(),
         });
     }, [
@@ -7515,8 +7830,10 @@ export default function RoutePlannerScreen() {
         destinationLng,
         destinationName,
         etaMinutes,
+        finalSelectedRouteDepartureTime,
         hasDestinationCoords,
         hasOriginCoords,
+        initial?.targetArrivalAt,
         originAddress,
         originLat,
         originLng,
@@ -7550,21 +7867,83 @@ export default function RoutePlannerScreen() {
         router.replace("/schedule");
     }, [router]);
 
+    useEffect(() => {
+        if (Platform.OS !== "android") return;
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            if (locationPromptTarget) {
+                closeLocationPrompt();
+                return true;
+            }
+            if (isRouteDetailMode && !isBottomSheetHidden && bottomSheetSnap !== "collapsed") {
+                snapBottomSheetTo("collapsed");
+                return true;
+            }
+            return false;
+        });
+        return () => subscription.remove();
+    }, [
+        bottomSheetSnap,
+        closeLocationPrompt,
+        isBottomSheetHidden,
+        isRouteDetailMode,
+        locationPromptTarget,
+        snapBottomSheetTo,
+    ]);
+
     const openTransitDeparturePicker = useCallback(() => {
         const providerDepartureAt = selectedAlternative?.transitDepartureAt
             ? new Date(selectedAlternative.transitDepartureAt)
             : undefined;
-        setDraftTransitDepartureAt(
-            providerDepartureAt && Number.isFinite(providerDepartureAt.getTime())
-                ? providerDepartureAt
-                : requestedTransitDepartureAt
-        );
+        const initialValue = providerDepartureAt && Number.isFinite(providerDepartureAt.getTime())
+            ? providerDepartureAt
+            : requestedTransitDepartureAt;
+
+        if (Platform.OS === "android") {
+            DateTimePickerAndroid.open({
+                value: initialValue,
+                mode: "date",
+                minimumDate: new Date(Date.now() - 60_000),
+                onChange: (dateEvent, selectedDate) => {
+                    if (dateEvent.type !== "set" || !selectedDate) return;
+
+                    DateTimePickerAndroid.open({
+                        value: initialValue,
+                        mode: "time",
+                        is24Hour: false,
+                        onChange: (timeEvent, selectedTime) => {
+                            if (timeEvent.type !== "set" || !selectedTime) return;
+
+                            const nextDepartureAt = new Date(selectedDate);
+                            nextDepartureAt.setHours(
+                                selectedTime.getHours(),
+                                selectedTime.getMinutes(),
+                                0,
+                                0,
+                            );
+                            if (nextDepartureAt.getTime() < Date.now() - 60_000) {
+                                Alert.alert("출발 시각", "현재 시각 이후로 선택해 주세요.");
+                                return;
+                            }
+                            setRequestedTransitDepartureAt(nextDepartureAt);
+                            setRouteRefreshTick((current) => current + 1);
+                        },
+                    });
+                },
+            });
+            return;
+        }
+
+        setDraftTransitDepartureAt(initialValue);
         setIsTransitDeparturePickerOpen(true);
     }, [requestedTransitDepartureAt, selectedAlternative?.transitDepartureAt]);
 
     const applyTransitDepartureTime = useCallback(() => {
         const nextDepartureAt = new Date(draftTransitDepartureAt);
         nextDepartureAt.setSeconds(0, 0);
+        if (!Number.isFinite(nextDepartureAt.getTime()) || nextDepartureAt.getTime() < Date.now() - 60_000) {
+            Alert.alert("출발 시각", "현재 시각 이후로 선택해 주세요.");
+            return;
+        }
         setRequestedTransitDepartureAt(nextDepartureAt);
         setIsTransitDeparturePickerOpen(false);
         setRouteRefreshTick((current) => current + 1);
@@ -7619,27 +7998,55 @@ export default function RoutePlannerScreen() {
     ]);
 
     const submit = () => {
+        if (routeSubmitPendingRef.current) return;
         const routePlaces = buildCurrentRoutePlaces();
         if (!routePlaces) {
             Alert.alert("경로 설정 필요", "지도에서 출발지와 도착지를 모두 선택해 주세요.");
             return;
         }
 
+        if (!canSubmitRoute) {
+            Alert.alert(
+                etaLoading ? "경로 계산 중" : "경로 선택 필요",
+                etaLoading
+                    ? "새 경로 계산이 끝난 뒤 저장해 주세요."
+                    : "사용할 수 있는 경로를 다시 검색해 선택해 주세요."
+            );
+            return;
+        }
+
         if (!sessionId) {
-            closePlanner();
+            Alert.alert("저장할 일정이 없어요", "일정 화면에서 이동 경로를 다시 열어 주세요.");
             return;
         }
 
         const { nextOrigin, nextDestination } = routePlaces;
-        setRoutePlannerResult(sessionId, {
-            origin: nextOrigin,
-            destination: nextDestination,
-            travelMode,
-            travelMinutes: selectedRouteInfo?.totalDurationMinutes ?? etaMinutes,
-            locationName: `${nextOrigin.name} → ${nextDestination.name}`,
-            route: buildPersistableSelectedRoute(),
-        });
-        closePlanner();
+        routeSubmitPendingRef.current = true;
+        setRouteSubmitPending(true);
+        try {
+            setRoutePlannerResult(sessionId, {
+                origin: nextOrigin,
+                destination: nextDestination,
+                travelMode,
+                travelMinutes: selectedRouteInfo?.totalDurationMinutes ?? etaMinutes,
+                locationName: `${nextOrigin.name} → ${nextDestination.name}`,
+                targetArrivalAt: initial?.targetArrivalAt,
+                departureAt: finalSelectedRouteDepartureTime,
+                route: buildPersistableSelectedRoute(),
+            });
+            closePlanner();
+        } catch {
+            routeSubmitPendingRef.current = false;
+            setRouteSubmitPending(false);
+            Alert.alert("경로 저장 실패", "잠시 후 다시 시도해 주세요.");
+            return;
+        }
+
+        routeSubmitResetTimerRef.current = setTimeout(() => {
+            routeSubmitPendingRef.current = false;
+            setRouteSubmitPending(false);
+            routeSubmitResetTimerRef.current = null;
+        }, 800);
     };
 
     const onPressZoomIn = useCallback(() => {
@@ -7651,6 +8058,7 @@ export default function RoutePlannerScreen() {
     }, []);
 
     const onMapLayoutReport = useCallback((report: TmapMapLayoutReport) => {
+        if (typeof __DEV__ === "boolean" && !__DEV__) return;
         const cameraQaState = cameraQaStateRef.current;
         const row = {
             mapContainerWidth: Math.round(report.mapContainerWidth ?? windowWidth),
@@ -7823,14 +8231,16 @@ export default function RoutePlannerScreen() {
             reason: "SEGMENT_SELECTED",
             appliedAtMs: Date.now(),
         };
-        console.log("[camera-fit] segment focus padding:", {
-            selectedRouteId: selectedNormalizedRoute?.id,
-            legIndex,
-            segmentId: focusedSegment?.id,
-            pointCount: focusBounds.length,
-            padding: focusPadding,
-            fitRegion,
-        });
+        if (typeof __DEV__ === "boolean" && __DEV__) {
+            console.log("[camera-fit] segment focus padding:", {
+                selectedRouteId: selectedNormalizedRoute?.id,
+                legIndex,
+                segmentId: focusedSegment?.id,
+                pointCount: focusBounds.length,
+                padding: focusPadding,
+                fitRegion,
+            });
+        }
         mapRef.current?.resizeMap("SEGMENT_FOCUS_BEFORE_CAMERA");
         if (fitRegion) {
             const targetRegion = {
@@ -7987,6 +8397,7 @@ export default function RoutePlannerScreen() {
 
         return (
             <View style={styles.transitReferenceScreen}>
+                <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
                 <ScrollView
                     contentContainerStyle={[
                         styles.transitReferenceScrollContent,
@@ -8007,7 +8418,13 @@ export default function RoutePlannerScreen() {
                                     <Text numberOfLines={1} style={styles.transitReferenceAddressText}>
                                         {originDisplay}
                                     </Text>
-                                    <Pressable onPress={goBack} hitSlop={10} style={styles.transitReferenceCloseButton}>
+                                    <Pressable
+                                        onPress={goBack}
+                                        hitSlop={10}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="경로 화면 닫기"
+                                        style={styles.transitReferenceCloseButton}
+                                    >
                                         <Text style={styles.transitReferenceCloseText}>×</Text>
                                     </Pressable>
                                 </View>
@@ -8037,6 +8454,9 @@ export default function RoutePlannerScreen() {
                                 <Pressable
                                     key={`reference-mode-${travelModeItem}`}
                                     onPress={() => setTravelMode(travelModeItem)}
+                                    accessibilityRole="radio"
+                                    accessibilityLabel={`${TRAVEL_MODE_META[travelModeItem].label} 이동수단`}
+                                    accessibilityState={{ selected }}
                                     style={[
                                         styles.transitReferenceModeButton,
                                         selected ? styles.transitReferenceModeButtonSelected : null,
@@ -8065,6 +8485,9 @@ export default function RoutePlannerScreen() {
                                 <Pressable
                                     key={`reference-filter-${item.key}`}
                                     onPress={() => setTransitRouteFilter(item.key)}
+                                    accessibilityRole="tab"
+                                    accessibilityLabel={`${label} 경로 필터`}
+                                    accessibilityState={{ selected }}
                                     style={styles.transitReferenceFilterTab}
                                 >
                                     <Text
@@ -8084,17 +8507,12 @@ export default function RoutePlannerScreen() {
                     <View style={styles.transitReferenceControlRow}>
                         <Text style={styles.transitReferenceDepartureText}>
                             <Text style={styles.transitReferenceDepartureBlue}>{departureTimeText}</Text>
-                            {" 출발⌄"}
+                            {" 출발 기준"}
                         </Text>
-                        <Text style={styles.transitReferenceSortText}>최적 경로순, 계단 포함⌄</Text>
+                        <Text style={styles.transitReferenceSortText}>추천 경로순</Text>
                     </View>
 
                     <View style={styles.transitReferenceDetailPanel}>
-                        <View style={styles.transitReferenceNoticeCard}>
-                            <Text style={styles.transitReferenceNoticeText}>▭ 기후동행카드 사용가능한 경로가 있습니다.</Text>
-                            <Text style={styles.transitReferenceNoticeClose}>×</Text>
-                        </View>
-
                         {etaLoading ? (
                             <View style={styles.transitReferenceLoadingRow}>
                                 <BrandedLoader
@@ -8172,6 +8590,10 @@ export default function RoutePlannerScreen() {
                                                 <Pressable
                                                     key={`${selectedAlternative.id}-reference-timeline-${legIndex}`}
                                                     onPress={() => focusMapOnTransitLeg(legIndex)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={[timelineTitle, legMetaText, assistText].filter(Boolean).join(", ")}
+                                                    accessibilityHint="지도에서 이 이동 구간을 확대합니다"
+                                                    accessibilityState={{ selected: isFocusedLeg }}
                                                     style={[
                                                         styles.transitReferenceTimelineItem,
                                                         isFocusedLeg ? styles.transitReferenceTimelineItemFocused : null,
@@ -8206,7 +8628,14 @@ export default function RoutePlannerScreen() {
                                     </View>
                                 )}
 
-                                <Pressable onPress={submit} style={styles.transitReferenceSaveButton}>
+                                <Pressable
+                                    onPress={submit}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="선택한 경로 저장"
+                                    accessibilityState={{ disabled: !canSubmitRoute, busy: etaLoading || routeSubmitPending }}
+                                    disabled={!canSubmitRoute}
+                                    style={styles.transitReferenceSaveButton}
+                                >
                                     <Text style={styles.transitReferenceSaveText}>▣ 경로 저장</Text>
                                 </Pressable>
                             </>
@@ -8231,10 +8660,16 @@ export default function RoutePlannerScreen() {
 
         return (
             <View style={styles.routeDetailScreen}>
+                <StatusBar
+                    barStyle={isDark ? "light-content" : "dark-content"}
+                    backgroundColor="transparent"
+                    translucent
+                />
                 <View style={[styles.routeDetailMapFrame, { height: Math.max(258, Math.round(windowHeight * 0.30)) }]}>
                     <TmapMapView
                         ref={mapRef}
                         style={styles.routeDetailMapView}
+                        errorOverlayTop={96}
                         camera={INITIAL_CAMERA}
                         nightModeEnabled={isDark}
                         showLocationButton={false}
@@ -8246,7 +8681,8 @@ export default function RoutePlannerScreen() {
                         onInitialized={() => setIsMapInitialized(true)}
                         onMapLayoutReport={onMapLayoutReport}
                         markers={mapMarkers}
-                        pathOverlays={mapPathOverlays}
+                        pathOverlays={themedMapPathOverlays}
+                        pathOverlayZoom={mapZoom}
                         pathCoords={travelMode === "TRANSIT" ? undefined : pathOverlayCoords}
                         pathColor={MAP_GUIDE_ROUTE_BLUE}
                         pathWidth={routeStrokeStyle.mainWidth}
@@ -8259,23 +8695,13 @@ export default function RoutePlannerScreen() {
                         fallbackBackgroundColor={isDark ? "#0B1220" : "#EEF2F6"}
                         fallbackTextColor={colors.textSecondary}
                     />
-                    {!isMapInitialized && (
-                        <View
-                            pointerEvents="none"
-                            style={[
-                                styles.mapLoadingSurface,
-                                isDark ? styles.mapLoadingSurfaceDark : styles.mapLoadingSurfaceLight,
-                            ]}
-                        >
-                            <BrandedLoader
-                                size="section"
-                                variant="route"
-                                accessibilityLabel="지도를 준비하고 있어요"
-                            />
-                        </View>
-                    )}
                     <View pointerEvents="box-none" style={[styles.routeDetailMapHeader, { paddingTop: insets.top + 10 }]}>
-                        <Pressable onPress={goBack} style={styles.routeDetailFloatingButton}>
+                        <Pressable
+                            onPress={goBack}
+                            accessibilityRole="button"
+                            accessibilityLabel="뒤로가기"
+                            style={styles.routeDetailFloatingButton}
+                        >
                             <Ionicons name="chevron-back" size={28} color="#F5F7FA" />
                         </Pressable>
                         <View style={styles.routeDetailTitlePill}>
@@ -8284,7 +8710,14 @@ export default function RoutePlannerScreen() {
                                 {routeHeaderTitle}
                             </Text>
                         </View>
-                        <Pressable onPress={submit} style={styles.routeDetailFloatingButton}>
+                        <Pressable
+                            onPress={submit}
+                            accessibilityRole="button"
+                            accessibilityLabel="선택한 경로 저장"
+                            accessibilityState={{ disabled: !canSubmitRoute, busy: etaLoading || routeSubmitPending }}
+                            disabled={!canSubmitRoute}
+                            style={styles.routeDetailFloatingButton}
+                        >
                             <Ionicons name="bookmark-outline" size={24} color="#F5F7FA" />
                         </Pressable>
                     </View>
@@ -8373,6 +8806,8 @@ export default function RoutePlannerScreen() {
                         </View>
                         <View style={styles.routeDetailActionButtons}>
                             <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="지도에서 전체 경로 미리보기"
                                 onPress={() => {
                                     const previewCoords = pathOverlayCoords ?? [];
                                     if (previewCoords.length >= 2) {
@@ -8384,7 +8819,14 @@ export default function RoutePlannerScreen() {
                                 <Ionicons name="bus" size={18} color="#4B9DFF" />
                                 <Text style={styles.routeDetailPreviewButtonText}>미리보기</Text>
                             </Pressable>
-                            <Pressable onPress={submit} style={styles.routeDetailSaveButton}>
+                            <Pressable
+                                onPress={submit}
+                                accessibilityRole="button"
+                                accessibilityLabel="선택한 경로 저장"
+                                accessibilityState={{ disabled: !canSubmitRoute, busy: etaLoading || routeSubmitPending }}
+                                disabled={!canSubmitRoute}
+                                style={styles.routeDetailSaveButton}
+                            >
                                 <Ionicons name="checkmark" size={18} color="#111317" />
                                 <Text style={styles.routeDetailSaveButtonText}>경로 저장</Text>
                             </Pressable>
@@ -8397,12 +8839,20 @@ export default function RoutePlannerScreen() {
 
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
+            <StatusBar
+                barStyle={isDark ? "light-content" : "dark-content"}
+                backgroundColor="transparent"
+                translucent
+            />
             <TmapMapView
                 ref={mapRef}
                 style={styles.fullMap}
+                errorOverlayTop={Math.max(insets.top + 72, 104)}
                 camera={INITIAL_CAMERA}
                 nightModeEnabled={isDark}
-                showLocationButton={true}
+                // 경로 상세에서는 출발지/도착지 마커가 기준이다. WebView 자체 위치 버튼은
+                // 권한 실패를 사용자에게 설명할 수 없으므로 노출하지 않는다.
+                showLocationButton={false}
                 showZoomControls={false}
                 onTapMap={onTapMap}
                 onMarkerPress={onMapMarkerPress}
@@ -8411,7 +8861,8 @@ export default function RoutePlannerScreen() {
                 onInitialized={() => setIsMapInitialized(true)}
                 onMapLayoutReport={onMapLayoutReport}
                 markers={mapMarkers}
-                pathOverlays={mapPathOverlays}
+                pathOverlays={themedMapPathOverlays}
+                pathOverlayZoom={mapZoom}
                 pathCoords={travelMode === "TRANSIT" ? undefined : pathOverlayCoords}
                 pathColor={MAP_GUIDE_ROUTE_BLUE}
                 pathWidth={routeStrokeStyle.mainWidth}
@@ -8425,30 +8876,24 @@ export default function RoutePlannerScreen() {
                 fallbackTextColor={colors.textSecondary}
             />
 
-            {!isMapInitialized && (
-                <View
-                    pointerEvents="none"
-                    style={[
-                        styles.mapLoadingSurface,
-                        isDark ? styles.mapLoadingSurfaceDark : styles.mapLoadingSurfaceLight,
-                    ]}
-                >
-                    <BrandedLoader
-                        size="section"
-                        variant="route"
-                        accessibilityLabel="지도를 준비하고 있어요"
-                    />
-                </View>
-            )}
-
             {shouldShowZoomControls && !isRouteDetailMode && (
                 <View style={styles.zoomOverlay}>
                     <View style={[styles.zoomControlCard, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
-                        <Pressable onPress={onPressZoomIn} style={styles.zoomControlBtn}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="지도 확대"
+                            onPress={onPressZoomIn}
+                            style={styles.zoomControlBtn}
+                        >
                             <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>+</Text>
                         </Pressable>
                         <View style={[styles.zoomDivider, { backgroundColor: colors.border }]} />
-                        <Pressable onPress={onPressZoomOut} style={styles.zoomControlBtn}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="지도 축소"
+                            onPress={onPressZoomOut}
+                            style={styles.zoomControlBtn}
+                        >
                             <Text style={[styles.zoomControlText, { color: colors.textPrimary }]}>-</Text>
                         </Pressable>
                     </View>
@@ -8508,6 +8953,8 @@ export default function RoutePlannerScreen() {
                 <View style={styles.searchOverlayRow}>
                     <Pressable
                         onPress={goBack}
+                        accessibilityRole="button"
+                        accessibilityLabel="뒤로가기"
                         style={[styles.inlineCloseBtn, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}
                     >
                         <Text style={[styles.inlineCloseBtnText, { color: colors.textPrimary }]}>‹</Text>
@@ -8516,6 +8963,7 @@ export default function RoutePlannerScreen() {
                     <Pressable
                         onPress={() => openRoutePointEditorFromHeader("origin")}
                         disabled={!isRoutePointLocked}
+                        accessible={isRoutePointLocked}
                         accessibilityRole="button"
                         accessibilityLabel="출발지와 도착지 수정"
                         style={[
@@ -8526,8 +8974,15 @@ export default function RoutePlannerScreen() {
                         ]}
                     >
                         <TextInput
+                            accessible={!isRoutePointLocked}
                             value={searchQuery}
                             onChangeText={handleSearchChange}
+                            accessibilityLabel={!hasActiveTarget
+                                ? "출발지 또는 도착지 검색"
+                                : activeTarget === "destination"
+                                    ? "도착지 검색"
+                                    : "출발지 검색"}
+                            accessibilityHint="장소 이름이나 주소를 입력하세요"
                             placeholder={
                                 isRoutePointLocked
                                     ? "출/도 탭을 눌러 위치 수정"
@@ -8538,6 +8993,9 @@ export default function RoutePlannerScreen() {
                             placeholderTextColor={colors.inputPlaceholder}
                             returnKeyType="search"
                             editable={!isRoutePointLocked && hasActiveTarget}
+                            textContentType="none"
+                            autoComplete="off"
+                            secureTextEntry={false}
                             style={[styles.searchInput, { color: colors.textPrimary }]}
                         />
                         {searching
@@ -8551,7 +9009,12 @@ export default function RoutePlannerScreen() {
                                 )
                                 : searchQuery.length > 0
                                     ? (
-                                        <Pressable onPress={() => { setSearchQuery(""); setSearchResults([]); }} style={styles.searchIcon}>
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            accessibilityLabel="장소 검색어 지우기"
+                                            onPress={clearPlaceSearch}
+                                            style={styles.searchIcon}
+                                        >
                                             <Text style={{ color: colors.textDisabled, fontSize: 16 }}>✕</Text>
                                     </Pressable>
                                     ) : null
@@ -8561,6 +9024,9 @@ export default function RoutePlannerScreen() {
                     <View style={[styles.targetCompactWrap, styles.overlaySurface, { borderColor: colors.border, backgroundColor: overlayBoxBg }]}>
                         <Pressable
                             onPress={onPressOriginTarget}
+                            accessibilityRole="button"
+                            accessibilityLabel="출발지 선택"
+                            accessibilityState={{ selected: activeTarget === "origin" }}
                             style={[
                                 styles.targetCompactBtn,
                                 activeTarget === "origin" ? styles.targetCompactBtnActiveOrigin : null,
@@ -8577,6 +9043,9 @@ export default function RoutePlannerScreen() {
                         </Pressable>
                         <Pressable
                             onPress={onPressDestinationTarget}
+                            accessibilityRole="button"
+                            accessibilityLabel="도착지 선택"
+                            accessibilityState={{ selected: activeTarget === "destination" }}
                             style={[
                                 styles.targetCompactBtn,
                                 activeTarget === "destination" ? styles.targetCompactBtnActiveDestination : null,
@@ -8602,6 +9071,33 @@ export default function RoutePlannerScreen() {
                     </Pressable>
                 </View>
 
+                {!isRoutePointLocked && hasActiveTarget && !!searchQuery.trim() && !searching &&
+                    completedSearchQuery === searchQuery.trim() && (searchError || searchResults.length === 0) && (
+                    <CalendarGlassSurface
+                        prominent
+                        variant="mapCard"
+                        style={[styles.searchResultWrap, styles.overlaySurface, { borderColor: colors.border }]}
+                    >
+                        <View style={styles.searchStateRow} accessibilityLiveRegion="polite">
+                            <Text style={[styles.searchStateText, { color: colors.textSecondary }]}>
+                                {searchError
+                                    ? "장소 검색에 실패했습니다. 네트워크 연결을 확인해 주세요."
+                                    : "검색 결과가 없습니다. 다른 장소명이나 주소로 검색해 보세요."}
+                            </Text>
+                            {!!searchError && (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="장소 다시 검색"
+                                    onPress={() => handleSearchChange(searchQuery)}
+                                    style={[styles.searchStateRetryButton, { backgroundColor: colors.selectedDayBg }]}
+                                >
+                                    <Text style={[styles.searchStateRetryText, { color: colors.selectedDayText }]}>다시 검색</Text>
+                                </Pressable>
+                            )}
+                        </View>
+                    </CalendarGlassSurface>
+                )}
+
                 {!!searchResults.length && !isRoutePointLocked && hasActiveTarget && (
                     <CalendarGlassSurface
                         prominent
@@ -8611,6 +9107,8 @@ export default function RoutePlannerScreen() {
                         {searchResults.slice(0, 6).map((item, index) => (
                             <Pressable
                                 key={`${item.lat}:${item.lng}:${index}`}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${item.name}, ${item.address || "주소 정보 없음"}`}
                                 onPress={() => {
                                     if (activeTarget !== "origin" && activeTarget !== "destination") return;
                                     applyPlace(activeTarget, item);
@@ -8654,6 +9152,11 @@ export default function RoutePlannerScreen() {
                         <View style={styles.routePreviewActionRow}>
                             <Pressable
                                 onPress={saveCurrentOriginAsFavorite}
+                                accessibilityRole="button"
+                                accessibilityLabel={originUsesDefault
+                                    ? `${originDisplay}, 기본 출발지로 설정됨`
+                                    : `${originDisplay}, 기본 출발지로 설정`}
+                                accessibilityState={{ selected: originUsesDefault }}
                                 style={[styles.routePreviewActionBtn, { backgroundColor: overlayPanelBg }]}
                             >
                                 <Text style={[styles.routePreviewActionText, { color: colors.textPrimary }]}>
@@ -8717,6 +9220,11 @@ export default function RoutePlannerScreen() {
                             {SELECTABLE_TRAVEL_MODES.map((travelModeItem) => (
                                 <Pressable
                                     key={`selection-stage-${travelModeItem}`}
+                                    {...getRouteSelectionAccessibilityProps(
+                                        "radio",
+                                        `${TRAVEL_MODE_META[travelModeItem].label} 이동수단`,
+                                        travelMode === travelModeItem,
+                                    )}
                                     onPress={() => setTravelMode(travelModeItem)}
                                     style={[
                                         styles.modeChip,
@@ -8748,6 +9256,11 @@ export default function RoutePlannerScreen() {
                                         return (
                                             <Pressable
                                                 key={`stage-filter-${item.key}`}
+                                                {...getRouteSelectionAccessibilityProps(
+                                                    "tab",
+                                                    `${label} 경로 필터`,
+                                                    selected,
+                                                )}
                                                 onPress={() => setTransitRouteFilter(item.key)}
                                                 style={[
                                                     styles.transitFilterTab,
@@ -8787,6 +9300,8 @@ export default function RoutePlannerScreen() {
                                         {alternativesError}
                                     </Text>
                                     <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="경로 다시 검색"
                                         onPress={retryRouteSearch}
                                         style={[styles.alternativeRetryButton, { backgroundColor: colors.selectedDayBg }]}
                                     >
@@ -8820,6 +9335,16 @@ export default function RoutePlannerScreen() {
                                         return (
                                             <Pressable
                                                 key={`stage-${option.id}`}
+                                                {...getRouteSelectionAccessibilityProps(
+                                                    "radio",
+                                                    [
+                                                        routeLabel,
+                                                        formatDuration(option.minutes),
+                                                        summary,
+                                                        stepSummary,
+                                                    ].filter(Boolean).join(", "),
+                                                    selected,
+                                                )}
                                                 onPress={() => selectAlternativeByIndex(index, false)}
                                                 style={[
                                                     styles.routeSelectionStageCard,
@@ -8855,6 +9380,7 @@ export default function RoutePlannerScreen() {
                         </View>
 
                         <Pressable
+                            {...getRouteSelectionConfirmAccessibilityProps(canEnterRouteDetail)}
                             onPress={onEnterRouteDetailView}
                             disabled={!canEnterRouteDetail}
                             style={[
@@ -8976,6 +9502,7 @@ export default function RoutePlannerScreen() {
                                 {!!selectedAlternative?.attributionText && !!selectedAlternative.attributionUrl && !etaLoading && (
                                     <Pressable
                                         accessibilityRole="link"
+                                        accessibilityLabel={`${selectedAlternative.attributionText} 지도 정보 열기`}
                                         onPress={openSelectedRouteAttribution}
                                         style={styles.routeAttributionLink}
                                     >
@@ -9023,6 +9550,8 @@ export default function RoutePlannerScreen() {
                                             <Text style={[styles.alternativeErrorText, { color: colors.textSecondary }]}>{alternativesError}</Text>
                                             <Pressable
                                                 onPress={retryRouteSearch}
+                                                accessibilityRole="button"
+                                                accessibilityLabel="경로 다시 검색"
                                                 style={[styles.alternativeRetryButton, { backgroundColor: colors.selectedDayBg }]}
                                             >
                                                 <Ionicons name="refresh" size={15} color={colors.selectedDayText} />
@@ -9218,6 +9747,15 @@ export default function RoutePlannerScreen() {
                                                                     <Pressable
                                                                         key={`${selectedAlternative.id}-leg-${legIndex}`}
                                                                         onPress={() => focusMapOnTransitLeg(legIndex)}
+                                                                        accessibilityRole="button"
+                                                                        accessibilityLabel={[
+                                                                            leg.label,
+                                                                            fromTo,
+                                                                            legMetaText,
+                                                                            assistText,
+                                                                        ].filter(Boolean).join(", ")}
+                                                                        accessibilityHint="지도에서 이 이동 구간을 확대합니다"
+                                                                        accessibilityState={{ selected: isFocusedLeg }}
                                                                         style={[
                                                                             styles.transitLegItemCard,
                                                                             styles.selectedRouteLegItemCard,
@@ -9267,7 +9805,12 @@ export default function RoutePlannerScreen() {
                                 </View>
 
                                 {!isRouteDetailMode && (
-                                    <Pressable onPress={submit} style={[styles.confirmBtn, { backgroundColor: colors.selectedDayBg }]}>
+                                    <Pressable
+                                        onPress={submit}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="선택한 경로 저장"
+                                        style={[styles.confirmBtn, { backgroundColor: colors.selectedDayBg }]}
+                                    >
                                         <Text style={[styles.confirmText, { color: colors.selectedDayText }]}>경로 저장</Text>
                                     </Pressable>
                                 )}
@@ -9349,8 +9892,14 @@ export default function RoutePlannerScreen() {
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="선택한 경로 저장"
+                                accessibilityState={{ disabled: !canSubmitRoute, busy: etaLoading || routeSubmitPending }}
                                 onPress={submit}
-                                style={[styles.transitDetailSaveButton, { backgroundColor: transitDetailPrimaryActionBg }]}
+                                disabled={!canSubmitRoute}
+                                style={[
+                                    styles.transitDetailSaveButton,
+                                    { backgroundColor: transitDetailPrimaryActionBg },
+                                    !canSubmitRoute && styles.transitDetailSaveButtonDisabled,
+                                ]}
                             >
                                 <Ionicons name="checkmark" size={18} color={transitDetailPrimaryActionText} />
                                 <Text
@@ -9368,65 +9917,89 @@ export default function RoutePlannerScreen() {
             </View>
             )}
 
-            <Modal
-                visible={isTransitDeparturePickerOpen}
-                transparent
-                animationType="fade"
-                statusBarTranslucent
-                onRequestClose={() => setIsTransitDeparturePickerOpen(false)}
-            >
-                <View style={styles.transitDeparturePickerModal}>
-                    <Pressable
-                        accessibilityLabel="출발 시각 선택 닫기"
-                        style={styles.transitDeparturePickerBackdrop}
-                        onPress={() => setIsTransitDeparturePickerOpen(false)}
-                    />
-                    <View style={[styles.transitDeparturePickerSheet, { backgroundColor: detailPanelBg }]}>
-                        <View style={styles.transitDeparturePickerHeader}>
-                            <Pressable
-                                onPress={() => setIsTransitDeparturePickerOpen(false)}
-                                style={styles.transitDeparturePickerCommand}
-                            >
-                                <Text style={[styles.transitDeparturePickerCommandText, { color: detailSecondaryText }]}>취소</Text>
-                            </Pressable>
-                            <View style={styles.transitDeparturePickerTitleRow}>
-                                <Ionicons name="time-outline" size={18} color={detailPrimaryText} />
-                                <Text style={[styles.transitDeparturePickerTitle, { color: detailPrimaryText }]}>출발 시각</Text>
+            {Platform.OS === "ios" ? (
+                <Modal
+                    visible={isTransitDeparturePickerOpen}
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={() => setIsTransitDeparturePickerOpen(false)}
+                    accessibilityViewIsModal
+                >
+                    <View style={styles.transitDeparturePickerModal}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="출발 시각 선택 닫기"
+                            style={styles.transitDeparturePickerBackdrop}
+                            onPress={() => setIsTransitDeparturePickerOpen(false)}
+                        />
+                        <View style={[styles.transitDeparturePickerSheet, { backgroundColor: detailPanelBg }]}>
+                            <View style={styles.transitDeparturePickerHeader}>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="출발 시각 선택 취소"
+                                    onPress={() => setIsTransitDeparturePickerOpen(false)}
+                                    style={styles.transitDeparturePickerCommand}
+                                >
+                                    <Text style={[styles.transitDeparturePickerCommandText, { color: detailSecondaryText }]}>취소</Text>
+                                </Pressable>
+                                <View style={styles.transitDeparturePickerTitleRow}>
+                                    <Ionicons name="time-outline" size={18} color={detailPrimaryText} />
+                                    <Text style={[styles.transitDeparturePickerTitle, { color: detailPrimaryText }]}>출발 시각</Text>
+                                </View>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="출발 시각 적용"
+                                    onPress={applyTransitDepartureTime}
+                                    style={[styles.transitDeparturePickerCommand, styles.transitDeparturePickerApply]}
+                                >
+                                    <Text style={styles.transitDeparturePickerApplyText}>적용</Text>
+                                </Pressable>
                             </View>
+                            <DateTimePicker
+                                value={draftTransitDepartureAt}
+                                mode="datetime"
+                                display="spinner"
+                                locale="ko-KR"
+                                minuteInterval={5}
+                                minimumDate={new Date(Date.now() - 60_000)}
+                                themeVariant={isDark ? "dark" : "light"}
+                                onChange={(_event, value) => {
+                                    if (value) setDraftTransitDepartureAt(value);
+                                }}
+                            />
                             <Pressable
-                                onPress={applyTransitDepartureTime}
-                                style={[styles.transitDeparturePickerCommand, styles.transitDeparturePickerApply]}
+                                accessibilityRole="button"
+                                accessibilityLabel="현재 시각으로 설정"
+                                onPress={() => setDraftTransitDepartureAt(new Date())}
+                                style={[styles.transitDepartureNowButton, { borderColor: detailBorderColor }]}
                             >
-                                <Text style={styles.transitDeparturePickerApplyText}>적용</Text>
+                                <Ionicons name="refresh" size={16} color={detailPrimaryText} />
+                                <Text style={[styles.transitDepartureNowText, { color: detailPrimaryText }]}>현재 시각</Text>
                             </Pressable>
                         </View>
-                        <DateTimePicker
-                            value={draftTransitDepartureAt}
-                            mode="datetime"
-                            display="spinner"
-                            locale="ko-KR"
-                            minuteInterval={5}
-                            minimumDate={new Date(Date.now() - 60_000)}
-                            themeVariant={isDark ? "dark" : "light"}
-                            onChange={(_event, value) => {
-                                if (value) setDraftTransitDepartureAt(value);
-                            }}
-                        />
-                        <Pressable
-                            onPress={() => setDraftTransitDepartureAt(new Date())}
-                            style={[styles.transitDepartureNowButton, { borderColor: detailBorderColor }]}
-                        >
-                            <Ionicons name="refresh" size={16} color={detailPrimaryText} />
-                            <Text style={[styles.transitDepartureNowText, { color: detailPrimaryText }]}>현재 시각</Text>
-                        </Pressable>
                     </View>
-                </View>
-            </Modal>
+                </Modal>
+            ) : null}
 
             {locationPromptTarget && (
-                <View style={styles.permissionOverlay} pointerEvents="box-none">
+                <Modal
+                    visible
+                    transparent
+                    animationType="fade"
+                    statusBarTranslucent
+                    onRequestClose={closeLocationPrompt}
+                >
+                <View
+                    accessibilityViewIsModal
+                    style={styles.permissionOverlay}
+                    pointerEvents="box-none"
+                >
                     <Pressable
+                        accessibilityRole="button"
                         accessibilityLabel="위치 권한 안내 닫기"
+                        accessibilityState={{ disabled: locationPromptLoading }}
+                        disabled={locationPromptLoading}
                         style={styles.permissionBackdrop}
                         onPress={closeLocationPrompt}
                     />
@@ -9447,9 +10020,11 @@ export default function RoutePlannerScreen() {
                         </Text>
                         <View style={styles.permissionActions}>
                             <Pressable
+                                accessibilityRole="button"
                                 accessibilityLabel="위치 권한 안내 닫기"
                                 onPress={closeLocationPrompt}
                                 disabled={locationPromptLoading}
+                                accessibilityState={{ disabled: locationPromptLoading }}
                                 style={({ pressed }) => [
                                     styles.permissionSecondaryButton,
                                     {
@@ -9461,9 +10036,14 @@ export default function RoutePlannerScreen() {
                                 <Text style={[styles.permissionSecondaryText, { color: colors.textPrimary }]}>나중에</Text>
                             </Pressable>
                             <Pressable
+                                accessibilityRole="button"
                                 accessibilityLabel="위치 권한 요청 계속"
                                 onPress={confirmLocationPrompt}
                                 disabled={locationPromptLoading}
+                                accessibilityState={{
+                                    busy: locationPromptLoading,
+                                    disabled: locationPromptLoading,
+                                }}
                                 style={({ pressed }) => [
                                     styles.permissionPrimaryButton,
                                     {
@@ -9486,6 +10066,7 @@ export default function RoutePlannerScreen() {
                         </View>
                     </CalendarGlassSurface>
                 </View>
+                </Modal>
             )}
         </View>
     );
@@ -9686,27 +10267,6 @@ const styles = StyleSheet.create({
         paddingTop: 10,
         paddingBottom: 24,
         backgroundColor: "#1F1F1F",
-    },
-    transitReferenceNoticeCard: {
-        minHeight: 40,
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        backgroundColor: "#2C2C2E",
-    },
-    transitReferenceNoticeText: {
-        flex: 1,
-        color: "#D7D7DA",
-        fontSize: 14,
-        fontWeight: "900",
-    },
-    transitReferenceNoticeClose: {
-        color: "#C7C7CC",
-        fontSize: 24,
-        fontWeight: "300",
-        lineHeight: 26,
     },
     transitReferenceLoadingRow: {
         minHeight: 120,
@@ -10279,6 +10839,29 @@ const styles = StyleSheet.create({
     searchResultItem: {
         paddingHorizontal: 14,
         paddingVertical: 10,
+    },
+    searchStateRow: {
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        gap: 10,
+    },
+    searchStateText: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "700",
+    },
+    searchStateRetryButton: {
+        alignSelf: "flex-start",
+        minHeight: 36,
+        borderRadius: 9,
+        paddingHorizontal: 13,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    searchStateRetryText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "800",
     },
     routePreviewCard: {
         borderWidth: 1,
@@ -10942,6 +11525,9 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         flexDirection: "row",
         gap: 7,
+    },
+    transitDetailSaveButtonDisabled: {
+        opacity: 0.48,
     },
     transitDetailSaveText: {
         fontSize: 14,

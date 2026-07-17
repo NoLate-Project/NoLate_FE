@@ -5,6 +5,7 @@ import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatHHmm } from "../../../../../lib/util/data";
 import { getTravelModeLabel } from "../../travelMode";
+import { getScheduleShareBadgeLabel } from "../../../share/sharePermissionPresentation";
 
 type Props = {
     item: ScheduleItem;
@@ -42,11 +43,12 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
         : "";
     const sharePermission = item.sharePermission ?? item.category?.sharePermission;
     const isShared = item.category?.shared === true || Boolean(sharePermission);
-    const shareLabel = sharePermission === "EDITOR" ? "편집 공유" : "공유됨";
+    const shareLabel = getScheduleShareBadgeLabel(sharePermission);
     const metaText = [
         item.category?.title,
         routeText,
         travelText,
+        item.routeSetupRequired ? "경로 미설정" : undefined,
     ].filter(Boolean).join(" · ");
     const pressedBackground = mode === "dark"
         ? "rgba(255,255,255,0.06)"
@@ -59,6 +61,7 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
                 time.secondary ? `${time.primary}~${time.secondary}` : time.primary,
                 item.title,
                 metaText,
+                isShared ? shareLabel : undefined,
             ].filter(Boolean).join(", ")}
             onPress={onPress}
             style={({ pressed }) => [
@@ -103,10 +106,16 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
                     </Text>
                     {isShared && (
                         <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
-                            <Ionicons name="people-outline" size={13} color={colors.textSecondary} />
+                            <Ionicons accessible={false} name="people-outline" size={13} color={colors.textSecondary} />
                             <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
                                 {shareLabel}
                             </Text>
+                        </View>
+                    )}
+                    {item.routeSetupRequired && (
+                        <View style={[styles.routeBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                            <Ionicons accessible={false} name="navigate-outline" size={13} color={colors.textSecondary} />
+                            <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>경로 미설정</Text>
                         </View>
                     )}
                 </View>
@@ -180,6 +189,15 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     sharedBadge: {
+        height: 23,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 12,
+        paddingHorizontal: 7,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    routeBadge: {
         height: 23,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 12,

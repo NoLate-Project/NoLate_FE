@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     Animated,
+    BackHandler,
+    Linking,
     PanResponder,
+    Platform,
     Pressable,
     ScrollView,
     StatusBar,
@@ -12,21 +16,26 @@ import {
     View,
     type LayoutChangeEvent,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { getSchedule, markScheduleDeparted } from "../../src/api/schedule";
+import { getSchedule, markScheduleDeparted, updateSchedule } from "../../src/api/schedule";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
+import { getScheduleAccessibilityVisibility } from "../../src/modules/schedule/accessibilityVisibility";
 import TmapMapView, {
     type TmapMapViewHandle,
 } from "../../src/modules/map/TmapMapView";
+import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
+import { createLatestRequestGuard } from "../../src/modules/map/routeAsyncGuard";
 import type { RouteAlternativeOption } from "../../src/modules/map/tmapApi";
 import {
     buildSavedRouteMapPresentation,
     getSavedRouteFitCoords,
+    getSavedTransitLegBoardCoord,
     getSavedTransitLegCoords,
 } from "../../src/modules/map/savedRouteMapPresentation";
 import { parseTransitMapInteractionId } from "../../src/modules/map/transitMapInteraction";
@@ -35,12 +44,23 @@ import TransitRouteProgressBar from "../../src/modules/schedule/components/route
 import TransitRouteSummaryRow, {
     getTransitRouteSummaryAccessibilityLabel,
 } from "../../src/modules/schedule/components/route/TransitRouteSummaryRow";
-import { buildSavedRouteDetailInfo } from "../../src/modules/schedule/savedRouteDetailPresentation";
+import {
+    buildSavedRouteDetailInfo,
+    getScheduleDetailLayout,
+    getSavedRouteEntryPath,
+    getSavedRouteSummaryKind,
+    shouldRenderScheduleDetailMap,
+} from "../../src/modules/schedule/savedRouteDetailPresentation";
 import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import type { RouteStep } from "../../src/modules/schedule/routeInfo";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import type { ScheduleItem, TravelMode } from "../../src/modules/schedule/types";
-import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
+import {
+    buildScheduleRoutePlannerInitial,
+    consumeScheduleRouteUpdatePayload,
+    setRoutePlannerInitial,
+} from "../../src/modules/schedule/routePlannerSession";
+import { isRouteSetupEntryRequested } from "../../src/modules/schedule/routeSetupNavigation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
 import { getAuthMember } from "../../src/modules/auth/authStorage";
@@ -50,7 +70,12 @@ import {
     getDepartureOverview,
     getScheduleCountdownPresentation,
     getScheduleDetailSheetHeights,
+    resolveScheduleCountdownEndAt,
 } from "../../src/modules/schedule/detailPresentation";
+
+function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
+    return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const ymdText = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
@@ -66,6 +91,29 @@ const SHEET_HANDLE_HEIGHT = 32;
 const SHEET_COMPACT_BOTTOM_GUTTER = 20;
 const DETAIL_OVERVIEW_ZOOM_DELTA = -1;
 
+async function openDeviceLocationSettings(preferServiceSettings = false) {
+    try {
+        if (preferServiceSettings && Platform.OS === "android") {
+            await Linking.sendIntent("android.settings.LOCATION_SOURCE_SETTINGS");
+            return;
+        }
+        await Linking.openSettings();
+    } catch {
+        Alert.alert("설정을 열 수 없어요", "기기 설정에서 NoLate의 위치 권한을 확인해 주세요.");
+    }
+}
+
+function showLocationSettingsAlert(title: string, message: string, preferServiceSettings = false) {
+    Alert.alert(title, message, [
+        { text: "취소", style: "cancel" },
+        {
+            text: "설정 열기",
+            onPress: () => {
+                openDeviceLocationSettings(preferServiceSettings).catch(() => undefined);
+            },
+        },
+    ]);
+}
 type SheetSnapMode = "compact" | "expanded";
 
 type DepartureDisplayState =
@@ -85,9 +133,10 @@ function mapCoordFromUnknown(value: unknown): { latitude: number; longitude: num
     return { latitude: lat, longitude: lng };
 }
 
-function formatCompactScheduleRange(startAt: string, endAt: string, hasEndTime = true) {
+function formatCompactScheduleRange(startAt: string, endAt: string, hasEndTime = true, allDay = false) {
     const start = fromISO(startAt);
     const shortDate = `${pad2(start.getMonth() + 1)}.${pad2(start.getDate())}`;
+    if (allDay) return `${shortDate} · 종일`;
     if (!hasEndTime) return `${shortDate} · ${hhmmText(start)}`;
     const end = fromISO(endAt);
     const sameDay = ymdText(start) === ymdText(end);
@@ -165,7 +214,10 @@ export default function ScheduleRoute() {
 }
 
 function ScheduleDetail() {
-    const { id } = useLocalSearchParams<{ id: string }>();
+    const { id, openRouteSetup } = useLocalSearchParams<{
+        id: string;
+        openRouteSetup?: string | string[];
+    }>();
     const pathname = usePathname();
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -178,6 +230,8 @@ function ScheduleDetail() {
     const sheetStartOffsetRef = useRef(0);
     const sheetSnapModeRef = useRef<SheetSnapMode>("compact");
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [retryKey, setRetryKey] = useState(0);
     const {
         minHeight: sheetBaseMinHeight,
         maxHeight: sheetMaxHeight,
@@ -212,6 +266,17 @@ function ScheduleDetail() {
     const [departureActionPending, setDepartureActionPending] = useState(false);
     const [participantsExpanded, setParticipantsExpanded] = useState(false);
     const [nowMs, setNowMs] = useState(() => Date.now());
+    const [currentLocationCoord, setCurrentLocationCoord] = useState<{
+        latitude: number;
+        longitude: number;
+    }>();
+    const [currentLocationPending, setCurrentLocationPending] = useState(false);
+    const currentLocationPendingRef = useRef(false);
+    const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
+    const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string>();
+    const [routeSavePending, setRouteSavePending] = useState(false);
+    const routePlannerWasActiveRef = useRef(false);
+    const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
     const canManageSchedule = useMemo(() => {
@@ -240,9 +305,17 @@ function ScheduleDetail() {
     }, []);
 
     useEffect(() => {
+        currentLocationRequestGuardRef.current.invalidate();
+        currentLocationPendingRef.current = false;
         setParticipantsExpanded(false);
         setExpandedContentHeight(0);
+        setCurrentLocationCoord(undefined);
+        setCurrentLocationPending(false);
     }, [id]);
+
+    useEffect(() => () => {
+        currentLocationRequestGuardRef.current.invalidate();
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -311,6 +384,17 @@ function ScheduleDetail() {
         }).start();
     }, [sheetCollapsedOffset, sheetExpandedOffset, sheetTranslateY]);
 
+    useEffect(() => {
+        if (Platform.OS !== "android") return;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+            if (sheetSnapModeRef.current !== "expanded") return false;
+            snapSheet("compact");
+            return true;
+        });
+        return () => subscription.remove();
+    }, [snapSheet]);
+
     const handleExpandedContentLayout = useCallback((event: LayoutChangeEvent) => {
         const nextHeight = Math.ceil(event.nativeEvent.layout.height);
         setExpandedContentHeight((current) => Math.abs(current - nextHeight) > 1 ? nextHeight : current);
@@ -355,16 +439,17 @@ function ScheduleDetail() {
     );
 
     useEffect(() => {
-        if (!id) return;
+        if (!id || routePlannerSessionId || routeSavePending) return;
         let cancelled = false;
         setLoading(true);
+        setLoadError(null);
         getSchedule(id)
             .then((detail) => {
                 if (!cancelled) dispatch({ type: "UPDATE_ITEM", item: detail });
             })
             .catch((error) => {
                 const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!cancelled && !routeFlowActive) Alert.alert("일정 조회 실패", getErrorMessage(error));
+                if (!cancelled && !routeFlowActive) setLoadError(getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setLoading(false);
@@ -373,7 +458,7 @@ function ScheduleDetail() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id, pathname]);
+    }, [dispatch, id, pathname, retryKey, routePlannerSessionId, routeSavePending]);
 
     const displayRoute = item?.route;
     const mapPresentation = useMemo(() => buildSavedRouteMapPresentation({
@@ -390,6 +475,21 @@ function ScheduleDetail() {
         pathOverlays: displayPathOverlays,
         markers,
     } = mapPresentation;
+    const displayMarkers = useMemo(() => {
+        if (!currentLocationCoord) return markers;
+        return [
+            ...markers,
+            {
+                id: "schedule-detail-current-location",
+                ...currentLocationCoord,
+                displayType: "dot" as const,
+                tintColor: APP_ACCENT_BLUE,
+                badgeBorderColor: "#FFFFFF",
+                dotSize: 14,
+                zIndex: 1000,
+            },
+        ];
+    }, [currentLocationCoord, markers]);
     const mapCoords = useMemo(
         () => getSavedRouteFitCoords(displayRoute, item?.origin, item?.destination),
         [displayRoute, item?.destination, item?.origin]
@@ -442,6 +542,45 @@ function ScheduleDetail() {
         });
     }, [insets.top, routeLegs, sheetMinHeight, snapSheet]);
 
+    const focusRouteBoardingPoint = useCallback((legIndex: number) => {
+        const boardingCoord = getSavedTransitLegBoardCoord(routeLegs, legIndex);
+        if (!boardingCoord) {
+            focusRouteLeg(legIndex);
+            return;
+        }
+
+        setFocusedLegIndex(legIndex);
+        setSelectedTransitStop(undefined);
+        snapSheet("compact");
+        mapRef.current?.animateCameraTo({
+            ...boardingCoord,
+            zoom: 17.2,
+            duration: 520,
+            easing: "Fly",
+        });
+    }, [focusRouteLeg, routeLegs, snapSheet]);
+
+    const focusRouteEndpoint = useCallback((step: RouteStep) => {
+        const endpoint = step.type === "ORIGIN" ? item?.origin : item?.destination;
+        const routeEndpointCoord = step.type === "ORIGIN"
+            ? mapCoords[0]
+            : mapCoords[mapCoords.length - 1];
+        const endpointCoord = mapCoordFromUnknown(endpoint)
+            ?? mapCoordFromUnknown(step.coordinates?.[0])
+            ?? mapCoordFromUnknown(routeEndpointCoord);
+        if (!endpointCoord) return;
+
+        setFocusedLegIndex(undefined);
+        setSelectedTransitStop(undefined);
+        snapSheet("compact");
+        mapRef.current?.animateCameraTo({
+            ...endpointCoord,
+            zoom: 17.2,
+            duration: 520,
+            easing: "Fly",
+        });
+    }, [item?.destination, item?.origin, mapCoords, snapSheet]);
+
     const focusTransitStop = useCallback((stop: { coord?: unknown }) => {
         const coord = mapCoordFromUnknown(stop.coord);
         if (!coord) return;
@@ -473,16 +612,84 @@ function ScheduleDetail() {
     }, [focusRouteLeg, focusTransitStop, routeLegs]);
 
     const handleRouteStepPress = useCallback((step: RouteStep) => {
+        if (step.type === "ORIGIN" || step.type === "DESTINATION") {
+            focusRouteEndpoint(step);
+            return;
+        }
+
         const legIndex = routeTravelSteps.findIndex((candidate) => candidate.id === step.id);
         if (legIndex < 0) return;
-        // 타임라인 탭은 정류장 상세를 읽는 동작이므로 시트와 스크롤 위치를 유지한다.
-        setFocusedLegIndex(legIndex);
-        setSelectedTransitStop(undefined);
-    }, [routeTravelSteps]);
+        focusRouteBoardingPoint(legIndex);
+    }, [focusRouteBoardingPoint, focusRouteEndpoint, routeTravelSteps]);
 
     const handleMapZoomChanged = useCallback((zoom: number) => {
         if (!Number.isFinite(zoom)) return;
         setMapZoom((current) => Math.abs(current - zoom) < 0.04 ? current : zoom);
+    }, []);
+
+    const moveToCurrentLocation = useCallback(async () => {
+        if (currentLocationPendingRef.current) return;
+
+        const guard = currentLocationRequestGuardRef.current;
+        const requestId = guard.begin();
+        currentLocationPendingRef.current = true;
+        setCurrentLocationPending(true);
+        try {
+            const permissionState = await getCurrentLocationPermissionState();
+            if (!guard.isCurrent(requestId)) return;
+            if (!permissionState.servicesEnabled) {
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "지도에서 내 위치를 보려면 기기 위치 서비스를 켜 주세요.",
+                    true
+                );
+                return;
+            }
+            if (!permissionState.granted && !permissionState.canAskAgain) {
+                showLocationSettingsAlert(
+                    "위치 권한이 필요해요",
+                    "지도에서 내 위치를 보려면 설정에서 NoLate의 위치 권한을 허용해 주세요."
+                );
+                return;
+            }
+
+            const coord = await getCurrentLocation();
+            if (!guard.isCurrent(requestId)) return;
+            setCurrentLocationCoord(coord);
+            mapRef.current?.animateCameraTo({
+                ...coord,
+                zoom: 16,
+                duration: 420,
+            });
+        } catch (error) {
+            if (!guard.isCurrent(requestId)) return;
+            const permissionState = await getCurrentLocationPermissionState().catch(() => undefined);
+            if (!guard.isCurrent(requestId)) return;
+            if (permissionState && !permissionState.servicesEnabled) {
+                showLocationSettingsAlert(
+                    "위치 서비스가 꺼져 있어요",
+                    "지도에서 내 위치를 보려면 기기 위치 서비스를 켜 주세요.",
+                    true
+                );
+                return;
+            }
+            if (permissionState && !permissionState.granted && !permissionState.canAskAgain) {
+                showLocationSettingsAlert(
+                    "위치 권한이 필요해요",
+                    "지도에서 내 위치를 보려면 설정에서 NoLate의 위치 권한을 허용해 주세요."
+                );
+                return;
+            }
+            Alert.alert(
+                "현재 위치를 찾을 수 없어요",
+                error instanceof Error ? error.message : "현재 위치를 가져오지 못했습니다."
+            );
+        } finally {
+            if (guard.isCurrent(requestId)) {
+                currentLocationPendingRef.current = false;
+                setCurrentLocationPending(false);
+            }
+        }
     }, []);
 
     const completeDeparture = useCallback(async () => {
@@ -509,29 +716,85 @@ function ScheduleDetail() {
     }, [canManageSchedule, departureActionPending, dispatch, id, item?.departureParticipants]);
 
     const openCurrentRoutePlanner = useCallback(() => {
-        if (!item) return;
+        if (!item || routeSavePending) return;
         const targetSessionId = `schedule-detail-${item.id}-${Date.now()}`;
         const travelMode = item.travelMode ?? routeOption?.mode ?? "CAR";
-        setRoutePlannerInitial(targetSessionId, {
+        const hasDetailedRoute = Boolean(routeOption || routeDetailInfo);
+        const entryPath = getSavedRouteEntryPath(hasDetailedRoute, item.origin, item.destination);
+        setRoutePlannerInitial(targetSessionId, buildScheduleRoutePlannerInitial({
             origin: item.origin,
             destination: item.destination,
             travelMode,
             travelMinutes: item.travelMinutes,
             locationName: item.locationName,
+            targetArrivalAt: item.startAt,
+            departureAt: item.departAt,
             route: item.route,
-        });
+        }));
+        routePlannerWasActiveRef.current = false;
+        setRoutePlannerSessionId(targetSessionId);
         router.push({
-            pathname: "/schedule/route-planner",
+            pathname: entryPath,
             params: {
                 sessionId: targetSessionId,
-                routeId: routeOption?.id,
+                routeId: hasDetailedRoute ? routeOption?.id : undefined,
                 routeIndex: "0",
                 sheetState: "middle",
                 entrySource: "schedule-detail",
-                departureAt: item.departAt ?? new Date().toISOString(),
+                departureAt: item.departAt,
             },
         });
-    }, [item, routeOption?.id, routeOption?.mode, router]);
+    }, [item, routeDetailInfo, routeOption, routeSavePending, router]);
+
+    useEffect(() => {
+        if (
+            !item ||
+            item.routeSetupRequired !== true ||
+            !canManageSchedule ||
+            !isRouteSetupEntryRequested(openRouteSetup) ||
+            routePlannerSessionId ||
+            routeSavePending ||
+            autoOpenedRouteSetupItemIdRef.current === item.id
+        ) return;
+
+        // 경로 설정 요청으로 들어온 최초 1회만 선택 화면을 바로 연다.
+        // 사용자가 닫고 돌아오면 저장된 경로 유무에 맞는 상세 화면을 보여준다.
+        autoOpenedRouteSetupItemIdRef.current = item.id;
+        openCurrentRoutePlanner();
+    }, [
+        canManageSchedule,
+        item,
+        openCurrentRoutePlanner,
+        openRouteSetup,
+        routePlannerSessionId,
+        routeSavePending,
+    ]);
+
+    useEffect(() => {
+        const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
+        if (routeFlowActive) {
+            if (routePlannerSessionId) routePlannerWasActiveRef.current = true;
+            return;
+        }
+        if (!item || !routePlannerSessionId || !routePlannerWasActiveRef.current) return;
+
+        routePlannerWasActiveRef.current = false;
+        const payload = consumeScheduleRouteUpdatePayload(routePlannerSessionId, item);
+        setRoutePlannerSessionId(undefined);
+        if (!payload) return;
+
+        setRouteSavePending(true);
+        updateSchedule(item.id, payload)
+            .then((updated) => {
+                dispatch({ type: "UPDATE_ITEM", item: updated });
+            })
+            .catch((error) => {
+                Alert.alert("경로 저장 실패", getErrorMessage(error));
+            })
+            .finally(() => {
+                setRouteSavePending(false);
+            });
+    }, [dispatch, item, pathname, routePlannerSessionId]);
 
     const camera = useMemo(() => {
         if (mapCoords.length === 0) return DEFAULT_CAMERA;
@@ -575,10 +838,31 @@ function ScheduleDetail() {
         }
 
         return (
-            <View style={{ flex: 1, backgroundColor: colors.background, padding: 20, paddingTop: insets.top + 16 }}>
-                <Text style={{ fontSize: 16, fontWeight: "700", color: colors.textPrimary }}>
-                    일정을 찾을 수 없어요.
+            <View style={[styles.missingScreen, { backgroundColor: colors.background, paddingTop: insets.top + 16 }]}>
+                <Ionicons name="calendar-outline" size={36} color={colors.textSecondary} />
+                <Text style={[styles.missingTitle, { color: colors.textPrimary }]}>일정을 불러오지 못했어요</Text>
+                <Text style={[styles.missingCaption, { color: colors.textSecondary }]}>
+                    {loadError ?? "삭제되었거나 접근할 수 없는 일정이에요."}
                 </Text>
+                <View style={styles.missingActions}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="이전 화면으로 돌아가기"
+                        onPress={() => router.canGoBack() ? router.back() : router.replace("/schedule")}
+                        style={[styles.missingSecondaryButton, { borderColor: colors.border }]}
+                    >
+                        <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>돌아가기</Text>
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 다시 불러오기"
+                        onPress={() => setRetryKey((value) => value + 1)}
+                        style={styles.missingRetryButton}
+                    >
+                        <Ionicons name="refresh" size={17} color="#FFFFFF" />
+                        <Text style={styles.missingRetryText}>다시 시도</Text>
+                    </Pressable>
+                </View>
             </View>
         );
     }
@@ -609,11 +893,18 @@ function ScheduleDetail() {
     const scheduleRangeLabel = formatCompactScheduleRange(
         item.startAt,
         item.endAt,
-        item.hasEndTime !== false
+        item.hasEndTime !== false,
+        item.allDay === true,
     );
+    const scheduleCountdownEndAt = resolveScheduleCountdownEndAt({
+        startAtMs: fromISO(item.startAt).getTime(),
+        endAtMs: fromISO(item.endAt).getTime(),
+        hasEndTime: item.hasEndTime !== false,
+        allDay: item.allDay,
+    });
     const scheduleCountdown = getScheduleCountdownPresentation(
         fromISO(item.startAt).getTime(),
-        item.hasEndTime !== false ? fromISO(item.endAt).getTime() : undefined,
+        scheduleCountdownEndAt,
         nowMs
     );
     const scheduleCountdownAccent = scheduleCountdown.phase === "active"
@@ -625,16 +916,45 @@ function ScheduleDetail() {
         ? scheduleCountdown.label
         : `${scheduleCountdown.label} 남은 시간`;
     const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
+    const routeSummaryKind = getSavedRouteSummaryKind(
+        Boolean(routeOption || routeDetailInfo),
+        item.travelMinutes
+    );
+    const hasRouteSummary = routeSummaryKind !== "none";
+    const hasDetailedRoute = routeSummaryKind === "detailed";
+    const shouldRenderMap = shouldRenderScheduleDetailMap(
+        hasDetailedRoute,
+        mapCoords.length
+    );
+    const isPlainSchedule = getScheduleDetailLayout({
+        routeSummaryKind,
+        routeSetupRequired: item.routeSetupRequired,
+    }) === "plain";
+    const showTopRouteBar = !isPlainSchedule;
+    const notesText = item.notes?.trim();
     const routeDetailMeta = [
-        `${arrivalTimeLabel} 도착`,
-        typeof routeOption?.transferCount === "number" ? `환승 ${routeOption.transferCount}회` : undefined,
+        hasDetailedRoute
+            ? `${arrivalTimeLabel} 도착`
+            : routeSummaryKind === "duration_only"
+                ? "예상 이동 시간만 저장됨"
+                : "이동 경로 미설정",
+        hasDetailedRoute && typeof routeOption?.transferCount === "number"
+            ? `환승 ${routeOption.transferCount}회`
+            : undefined,
     ].filter(Boolean).join(" · ");
+    const routeSummaryTitle = hasDetailedRoute
+        ? "최적 경로"
+        : routeSummaryKind === "duration_only"
+            ? "상세 경로 미설정"
+            : "저장된 경로 없음";
     const departureCountLabel = departureOverview.totalCount > 0
         ? `${departureOverview.departedCount}/${departureOverview.totalCount}`
         : departureCompleted
             ? "완료"
             : "대기";
-    const routeDurationLabel = routeNumberText(routeOption, item.travelMinutes);
+    const routeDurationLabel = hasRouteSummary
+        ? routeNumberText(routeOption, item.travelMinutes)
+        : "미설정";
     const departureActionTitle = departureCompleted
         ? "출발 알림 완료"
         : departureStatusMuted && departureDisplayState.kind === "status"
@@ -705,24 +1025,117 @@ function ScheduleDetail() {
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
-            <TmapMapView
-                ref={mapRef}
-                camera={camera}
-                markers={markers}
-                pathOverlays={displayPathOverlays}
-                clearRouteOverlays={displayPathOverlays.length === 0}
-                routeOverlayScope={`schedule-detail-${item.id}-${routeOption?.id ?? "route"}`}
-                routeFocusMode
-                nightModeEnabled={mode === "dark"}
-                showLocationButton={false}
-                showZoomControls={false}
-                onMarkerPress={handleMapMarkerPress}
-                onZoomChanged={handleMapZoomChanged}
-                onInitialized={fitMap}
-                fallbackBackgroundColor={colors.surface2}
-                fallbackTextColor={colors.textSecondary}
-                style={styles.fullMap}
-            />
+            {shouldRenderMap ? (
+                <TmapMapView
+                    ref={mapRef}
+                    errorOverlayTop={Math.max(insets.top + 188, 236)}
+                    camera={camera}
+                    markers={displayMarkers}
+                    pathOverlays={displayPathOverlays}
+                    pathOverlayZoom={mapZoom}
+                    clearRouteOverlays={displayPathOverlays.length === 0}
+                    routeOverlayScope={`schedule-detail-${item.id}-${routeOption?.id ?? "route"}`}
+                    routeFocusMode
+                    nightModeEnabled={mode === "dark"}
+                    showLocationButton={false}
+                    showZoomControls={false}
+                    onMarkerPress={handleMapMarkerPress}
+                    onZoomChanged={handleMapZoomChanged}
+                    onInitialized={fitMap}
+                    fallbackBackgroundColor={colors.surface2}
+                    fallbackTextColor={colors.textSecondary}
+                    style={styles.fullMap}
+                />
+            ) : isPlainSchedule ? (
+                <PlainScheduleDetailView
+                    item={item}
+                    contentTopInset={insets.top + 76}
+                    contentBottomInset={Math.max(insets.bottom + 32, 48)}
+                />
+            ) : (
+                <View
+                    style={[
+                        styles.scheduleOnlySurface,
+                        {
+                            backgroundColor: colors.surface2,
+                            paddingTop: insets.top + (showTopRouteBar ? 122 : 76),
+                            paddingBottom: sheetMinHeight + 28,
+                        },
+                    ]}
+                >
+                    <View
+                        style={[
+                            styles.scheduleOnlyCard,
+                            {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.border,
+                            },
+                        ]}
+                    >
+                        <View style={styles.scheduleOnlyHeader}>
+                            <View style={styles.scheduleOnlyIcon}>
+                                <Ionicons name="calendar-clear-outline" size={20} color={topCardAccentText} />
+                            </View>
+                            <View style={styles.scheduleOnlyCopy}>
+                                <Text style={[styles.scheduleOnlyDate, { color: primaryText }]}>
+                                    {scheduleRangeLabel}
+                                </Text>
+                                <View style={styles.scheduleOnlyCategoryRow}>
+                                    <View
+                                        style={[
+                                            styles.scheduleOnlyCategoryDot,
+                                            { backgroundColor: item.category.color },
+                                        ]}
+                                    />
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[styles.scheduleOnlyCategoryText, { color: secondaryText }]}
+                                    >
+                                        {item.category.title}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+                        {notesText ? (
+                            <Text
+                                numberOfLines={4}
+                                style={[
+                                    styles.scheduleOnlyNotes,
+                                    { color: secondaryText, borderTopColor: colors.border },
+                                ]}
+                            >
+                                {notesText}
+                            </Text>
+                        ) : null}
+                    </View>
+                </View>
+            )}
+
+            {shouldRenderMap ? (
+                <Pressable
+                    onPress={moveToCurrentLocation}
+                    disabled={currentLocationPending}
+                    accessibilityRole="button"
+                    accessibilityLabel="지도에서 내 현재 위치 보기"
+                    accessibilityState={{ busy: currentLocationPending, disabled: currentLocationPending }}
+                    style={({ pressed }) => [
+                        styles.currentLocationButton,
+                        {
+                            bottom: sheetMinHeight + 16,
+                            backgroundColor: isDark ? "#20242C" : "#FFFFFF",
+                            borderColor: isDark ? "rgba(255,255,255,0.16)" : "rgba(15,23,42,0.12)",
+                            opacity: pressed || currentLocationPending ? 0.72 : 1,
+                        },
+                    ]}
+                >
+                    {currentLocationPending ? (
+                        <ActivityIndicator size="small" color={topCardAccentText} />
+                    ) : (
+                        <Ionicons name="locate" size={19} color={topCardAccentText} />
+                    )}
+                    <Text style={[styles.currentLocationButtonText, { color: primaryText }]}>내 위치</Text>
+                </Pressable>
+            ) : null}
 
             <View style={styles.topOverlay}>
                 <CalendarGlassSurface
@@ -747,6 +1160,7 @@ function ScheduleDetail() {
                     <View style={styles.topHeaderRow}>
                         <Pressable
                             onPress={() => router.replace("/schedule")}
+                            accessibilityRole="button"
                             accessibilityLabel="일정 목록으로 돌아가기"
                             style={({ pressed }) => [
                                 styles.topHeaderIconButton,
@@ -761,12 +1175,14 @@ function ScheduleDetail() {
 
                         <View style={styles.topHeaderContent}>
                             <View style={styles.topHeaderTitleRow}>
-                                <View style={styles.topHeaderKindBadge}>
-                                    <Ionicons name="calendar-clear-outline" size={13} color={topCardAccentText} />
-                                    <Text style={[styles.topHeaderKindText, { color: topCardAccentText }]}>일정</Text>
-                                </View>
+                                {!isPlainSchedule ? (
+                                    <View style={styles.topHeaderKindBadge}>
+                                        <Ionicons name="calendar-clear-outline" size={13} color={topCardAccentText} />
+                                        <Text style={[styles.topHeaderKindText, { color: topCardAccentText }]}>일정</Text>
+                                    </View>
+                                ) : null}
                                 <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
-                                    {item.title}
+                                    {isPlainSchedule ? "일정 상세" : item.title}
                                 </Text>
                             </View>
                         </View>
@@ -775,6 +1191,7 @@ function ScheduleDetail() {
                             <View style={styles.topHeaderActions}>
                                 <Pressable
                                     onPress={() => setShareSheetVisible(true)}
+                                    accessibilityRole="button"
                                     accessibilityLabel="일정 공유"
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
@@ -788,6 +1205,7 @@ function ScheduleDetail() {
                                 </Pressable>
                                 <Pressable
                                     onPress={() => router.setParams({ mode: "edit" })}
+                                    accessibilityRole="button"
                                     accessibilityLabel="일정 수정"
                                     style={({ pressed }) => [
                                         styles.topHeaderIconButton,
@@ -803,27 +1221,36 @@ function ScheduleDetail() {
                         )}
                     </View>
 
-                    <View
-                        style={[
-                            styles.topHeaderRouteBar,
-                            { borderTopColor: sheetBorder },
-                        ]}
-                    >
-                        <View style={styles.topHeaderRouteBarMain}>
-                            <Ionicons name="navigate-outline" size={13} color={topCardAccentText} />
-                            <Text style={[styles.topHeaderRouteBarText, { color: primaryText }]} numberOfLines={1}>
-                                {routeTitle}
-                            </Text>
+                    {showTopRouteBar ? (
+                        <View
+                            style={[
+                                styles.topHeaderRouteBar,
+                                { borderTopColor: sheetBorder },
+                            ]}
+                        >
+                            <View style={styles.topHeaderRouteBarMain}>
+                                <Ionicons
+                                    name={hasDetailedRoute ? "navigate-outline" : "location-outline"}
+                                    size={13}
+                                    color={topCardAccentText}
+                                />
+                                <Text style={[styles.topHeaderRouteBarText, { color: primaryText }]} numberOfLines={1}>
+                                    {routeTitle}
+                                </Text>
+                            </View>
+                            {hasRouteSummary ? (
+                                <View style={styles.topHeaderTravelPill}>
+                                    <Text style={[styles.topHeaderTravelText, { color: topCardAccentText }]} numberOfLines={1}>
+                                        {travelText}
+                                    </Text>
+                                </View>
+                            ) : null}
                         </View>
-                        <View style={styles.topHeaderTravelPill}>
-                            <Text style={[styles.topHeaderTravelText, { color: topCardAccentText }]} numberOfLines={1}>
-                                {travelText}
-                            </Text>
-                        </View>
-                    </View>
+                    ) : null}
                 </CalendarGlassSurface>
             </View>
 
+            {!isPlainSchedule ? (
             <Animated.View
                 style={[
                     styles.routeSheet,
@@ -863,7 +1290,10 @@ function ScheduleDetail() {
                         bounces={false}
                         scrollEnabled={sheetMode === "expanded"}
                     >
-                        <Animated.View style={[styles.sheetQuickSummaryClip, sheetQuickSummaryAnimatedStyle]}>
+                        <Animated.View
+                            {...getScheduleAccessibilityVisibility(sheetMode === "compact")}
+                            style={[styles.sheetQuickSummaryClip, sheetQuickSummaryAnimatedStyle]}
+                        >
                             <Pressable
                                 onPress={() => snapSheet("expanded")}
                                 accessibilityRole="button"
@@ -1077,6 +1507,8 @@ function ScheduleDetail() {
                             {participantsExpanded && renderDepartureParticipantChips()}
                         </View>
 
+                        {!isPlainSchedule ? (
+                            <>
                         <View
                             style={[
                                 styles.sheetRouteSummary,
@@ -1086,12 +1518,21 @@ function ScheduleDetail() {
                             <View style={styles.sheetRouteTopRow}>
                                 <View style={styles.sheetRouteCopy}>
                                     <View style={styles.sheetRouteKickerRow}>
-                                        <View style={[styles.sheetRouteLiveDot, { backgroundColor: "#22C55E" }]} />
+                                        <View
+                                            style={[
+                                                styles.sheetRouteLiveDot,
+                                                { backgroundColor: hasDetailedRoute ? "#22C55E" : secondaryText },
+                                            ]}
+                                        />
                                         <Text style={[styles.sheetRouteMeta, { color: secondaryText }]}>
                                             {routeDetailMeta}
                                         </Text>
                                     </View>
-                                    <Text style={[styles.sheetRouteTitle, { color: primaryText }]}>최적 경로</Text>
+                                    <Text
+                                        style={[styles.sheetRouteTitle, { color: primaryText }]}
+                                    >
+                                        {routeSummaryTitle}
+                                    </Text>
                                 </View>
                                 <View style={styles.sheetRouteActions}>
                                     <Text style={[styles.sheetRouteDuration, { color: primaryText }]}>
@@ -1099,18 +1540,30 @@ function ScheduleDetail() {
                                     </Text>
                                     <Pressable
                                         onPress={openCurrentRoutePlanner}
-                                        disabled={!item.origin || !item.destination}
+                                        disabled={routeSavePending}
                                         accessibilityRole="button"
-                                        accessibilityLabel="현재 길찾기 화면에서 전체 경로 보기"
+                                        accessibilityLabel={hasDetailedRoute
+                                            ? "현재 길찾기 화면에서 전체 경로 보기"
+                                            : "이동 경로 설정"}
+                                        accessibilityState={{
+                                            busy: routeSavePending,
+                                            disabled: routeSavePending,
+                                        }}
                                         style={({ pressed }) => [
                                             styles.sheetRouteMapButton,
                                             {
                                                 backgroundColor: pressed ? topCardControlBg : "transparent",
-                                                opacity: !item.origin || !item.destination ? 0.35 : pressed ? 0.58 : 1,
+                                                opacity: routeSavePending
+                                                    ? 0.35
+                                                    : pressed ? 0.58 : 1,
                                             },
                                         ]}
                                     >
-                                        <Ionicons name="map-outline" size={21} color={primaryText} />
+                                        {routeSavePending ? (
+                                            <ActivityIndicator size="small" color={primaryText} />
+                                        ) : (
+                                            <Ionicons name="map-outline" size={21} color={primaryText} />
+                                        )}
                                     </Pressable>
                                 </View>
                             </View>
@@ -1138,6 +1591,7 @@ function ScheduleDetail() {
                                     selectedStepId={selectedRouteStepId}
                                     selectedPassStop={selectedRoutePassStop}
                                     onStepPress={handleRouteStepPress}
+                                    allowEndpointPress
                                     forceDark={isDark}
                                     primaryTextColor={primaryText}
                                     secondaryTextColor={secondaryText}
@@ -1149,24 +1603,20 @@ function ScheduleDetail() {
                                 저장된 상세 경로가 없어요.
                             </Text>
                         )}
+                            </>
+                        ) : null}
                         </View>
                     </ScrollView>
                 </CalendarGlassSurface>
             </Animated.View>
-
-            {mapCoords.length === 0 && (
-                <View style={styles.emptyFloating}>
-                    <Text style={styles.emptyMapText}>경로를 수정하면 지도가 표시돼요.</Text>
-                </View>
-            )}
+            ) : null}
 
             <ShareInvitationSheet
                 visible={shareSheetVisible}
                 resourceType="schedule"
                 resourceId={item.id}
                 title={item.title}
-                subtitle={formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false)}
-                accentColor={item.category.color}
+                subtitle={formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false, item.allDay === true)}
                 onClose={() => setShareSheetVisible(false)}
             />
 
@@ -1175,11 +1625,126 @@ function ScheduleDetail() {
 }
 
 const styles = StyleSheet.create({
+    missingScreen: {
+        flex: 1,
+        paddingHorizontal: 28,
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 12,
+    },
+    missingTitle: { fontSize: 20, fontWeight: "900", textAlign: "center" },
+    missingCaption: { fontSize: 14, fontWeight: "600", lineHeight: 21, textAlign: "center" },
+    missingActions: { flexDirection: "row", gap: 10, marginTop: 12 },
+    missingSecondaryButton: {
+        minHeight: 46,
+        paddingHorizontal: 18,
+        borderWidth: 1,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    missingRetryButton: {
+        minHeight: 46,
+        paddingHorizontal: 18,
+        borderRadius: 14,
+        backgroundColor: APP_ACCENT_BLUE,
+        flexDirection: "row",
+        gap: 7,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    missingRetryText: { color: "#FFFFFF", fontWeight: "800" },
     loadingScreen: {
         flex: 1,
     },
     container: { flex: 1 },
     fullMap: { flex: 1 },
+    scheduleOnlySurface: {
+        flex: 1,
+        paddingHorizontal: 20,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    scheduleOnlyCard: {
+        width: "100%",
+        maxWidth: 420,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 22,
+        padding: 18,
+        gap: 14,
+    },
+    scheduleOnlyHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    scheduleOnlyIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(41,121,255,0.11)",
+    },
+    scheduleOnlyCopy: {
+        flex: 1,
+        minWidth: 0,
+        gap: 4,
+    },
+    scheduleOnlyDate: {
+        fontSize: 16,
+        lineHeight: 22,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    scheduleOnlyCategoryRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    scheduleOnlyCategoryDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+    },
+    scheduleOnlyCategoryText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "700",
+    },
+    scheduleOnlyNotes: {
+        paddingTop: 13,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        fontSize: 13,
+        lineHeight: 20,
+        fontWeight: "600",
+    },
+    currentLocationButton: {
+        position: "absolute",
+        right: 16,
+        zIndex: 20,
+        elevation: 18,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 10,
+    },
+    currentLocationButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
     topOverlay: {
         position: "absolute",
         top: 0,
@@ -1674,16 +2239,4 @@ const styles = StyleSheet.create({
         paddingVertical: 20,
         textAlign: "center",
     },
-    emptyFloating: {
-        position: "absolute",
-        left: 24,
-        right: 24,
-        bottom: 52,
-        borderRadius: 18,
-        paddingVertical: 16,
-        paddingHorizontal: 18,
-        backgroundColor: "rgba(16,17,20,0.86)",
-        alignItems: "center",
-    },
-    emptyMapText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800", textAlign: "center" },
 });
