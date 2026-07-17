@@ -3827,6 +3827,9 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           width: "100%",
           height: "100%",
           zoom: ${initialZoom},
+          // WebView의 inline HTML은 about:blank에서 실행된다. TMAP의
+          // 기본값(http)을 그대로 쓰면 iOS ATS가 모든 지도 타일을 차단한다.
+          httpsMode: true,
           zoomControl: ${showZoomControlFlag},
           scrollwheel: true,
         });
