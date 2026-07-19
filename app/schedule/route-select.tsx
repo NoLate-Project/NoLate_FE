@@ -15,12 +15,10 @@ import {
     StatusBar,
     Text,
     TextInput,
-    TouchableOpacity,
     UIManager,
     View,
 } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
-import type { GestureResponderEvent } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -62,11 +60,14 @@ import {
     resolveSelectedRouteTiming,
 } from "../../src/modules/schedule/scheduleRouteTiming";
 import {
+    createMapPickerSessionState,
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
+    selectMapPickerSessionCoordinate,
     shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
+    type MapPickerSessionState,
     type RoutePointTarget,
 } from "../../src/modules/schedule/routePointSelection";
 import {
@@ -85,6 +86,8 @@ import {
 } from "../../src/modules/schedule/routeAlternativeRanking";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import RouteEndpointReselectCard from "../../src/modules/schedule/components/route/RouteEndpointReselectCard";
+import RoutePointTargetSelector from "../../src/modules/schedule/components/route/RoutePointTargetSelector";
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
@@ -957,8 +960,12 @@ export default function RouteSelectScreen() {
     const [creatingFavoriteCategory, setCreatingFavoriteCategory] = useState(false);
     const [mapPickerVisible, setMapPickerVisible] = useState(false);
     const [mapPickerTarget, setMapPickerTarget] = useState<RoutePointTarget>("origin");
-    const [mapPickerCoord, setMapPickerCoord] = useState<{ latitude: number; longitude: number }>();
-    const [mapPickerHasSelection, setMapPickerHasSelection] = useState(false);
+    const [mapPickerSession, setMapPickerSession] = useState<MapPickerSessionState>(
+        createMapPickerSessionState
+    );
+    const mapPickerCoord = mapPickerSession.pickedCoordinate;
+    const mapPickerHasSelection = mapPickerSession.hasSelection;
+    const [mapPickerName, setMapPickerName] = useState<string>();
     const [mapPickerAddress, setMapPickerAddress] = useState<string>();
     const [mapPickerResolving, setMapPickerResolving] = useState(false);
     const [searchResults, setSearchResults] = useState<PlaceSearchItem[]>([]);
@@ -1522,26 +1529,33 @@ export default function RouteSelectScreen() {
         routePointUiRevisionRef.current += 1;
         Keyboard.dismiss();
         const target = activeTarget;
+        const targetPlace = target === "origin" ? origin : destination;
+        const targetHasCoordinates = placeHasCoords(targetPlace);
         const initialCoord = getMapPickerInitialCoord(target);
         setMapPickerTarget(target);
-        setMapPickerCoord(initialCoord);
-        setMapPickerHasSelection(false);
-        setMapPickerAddress(undefined);
+        setMapPickerSession(createMapPickerSessionState(initialCoord, targetHasCoordinates));
+        setMapPickerName(targetHasCoordinates ? targetPlace.name : undefined);
+        setMapPickerAddress(targetHasCoordinates ? targetPlace.address : undefined);
         setMapPickerVisible(true);
-    }, [activeTarget, getMapPickerInitialCoord]);
+    }, [activeTarget, destination, getMapPickerInitialCoord, origin]);
 
     const closeMapPicker = useCallback(() => {
         mapPickerRequestIdRef.current += 1;
         setMapPickerVisible(false);
-        setMapPickerHasSelection(false);
+        setMapPickerSession((current) => createMapPickerSessionState(current.cameraCoordinate));
+        setMapPickerName(undefined);
+        setMapPickerAddress(undefined);
         setMapPickerResolving(false);
     }, []);
 
     const selectMapPickerCoord = useCallback(async ({ latitude, longitude }: { latitude: number; longitude: number }) => {
         const requestId = mapPickerRequestIdRef.current + 1;
         mapPickerRequestIdRef.current = requestId;
-        setMapPickerCoord({ latitude, longitude });
-        setMapPickerHasSelection(true);
+        setMapPickerSession((current) => selectMapPickerSessionCoordinate(
+            current,
+            { latitude, longitude }
+        ));
+        setMapPickerName(undefined);
         setMapPickerAddress(undefined);
         setMapPickerResolving(true);
         try {
@@ -1564,7 +1578,7 @@ export default function RouteSelectScreen() {
 
         const label = mapPickerTarget === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
         const place: Place = {
-            name: mapPickerAddress || label,
+            name: mapPickerName || mapPickerAddress || label,
             address: mapPickerAddress,
             lat: mapPickerCoord.latitude,
             lng: mapPickerCoord.longitude,
@@ -1573,7 +1587,15 @@ export default function RouteSelectScreen() {
         rememberRecentPlace(place);
         applyPlaceToTarget(mapPickerTarget, place);
         setMapPickerVisible(false);
-    }, [applyPlaceToTarget, mapPickerAddress, mapPickerCoord, mapPickerHasSelection, mapPickerTarget, rememberRecentPlace]);
+    }, [
+        applyPlaceToTarget,
+        mapPickerAddress,
+        mapPickerCoord,
+        mapPickerHasSelection,
+        mapPickerName,
+        mapPickerTarget,
+        rememberRecentPlace,
+    ]);
 
     const loadFavoriteCategories = useCallback(async () => {
         setFavoriteCategoryLoading(true);
@@ -1691,11 +1713,6 @@ export default function RouteSelectScreen() {
         originLng,
         originText,
     ]);
-
-    const openCompactRouteEditor = useCallback((event: GestureResponderEvent) => {
-        const tapY = event.nativeEvent.locationY;
-        openRoutePointEditor(tapY > 34 ? "destination" : "origin");
-    }, [openRoutePointEditor]);
 
     useEffect(() => () => {
         if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
@@ -2256,8 +2273,8 @@ export default function RouteSelectScreen() {
         </Modal>
     );
     const mapPickerCamera = {
-        latitude: mapPickerCoord?.latitude ?? MAP_PICKER_FALLBACK_LAT,
-        longitude: mapPickerCoord?.longitude ?? MAP_PICKER_FALLBACK_LNG,
+        latitude: mapPickerSession.cameraCoordinate?.latitude ?? MAP_PICKER_FALLBACK_LAT,
+        longitude: mapPickerSession.cameraCoordinate?.longitude ?? MAP_PICKER_FALLBACK_LNG,
         zoom: MAP_PICKER_DEFAULT_ZOOM,
     };
     const mapPickerMarkers = useMemo<TmapMarker[]>(() => {
@@ -2306,7 +2323,7 @@ export default function RouteSelectScreen() {
     const mapPickerTitle = mapPickerTarget === "origin" ? "출발지 지도 선택" : "도착지 지도 선택";
     const mapPickerSelectionLabel = !mapPickerHasSelection
         ? "아직 선택한 위치가 없습니다"
-        : mapPickerAddress ?? (mapPickerCoord
+        : mapPickerName ?? mapPickerAddress ?? (mapPickerCoord
             ? `${mapPickerCoord.latitude.toFixed(5)}, ${mapPickerCoord.longitude.toFixed(5)}`
             : "아직 선택한 위치가 없습니다");
     const mapPickerSheet = (
@@ -2453,6 +2470,23 @@ export default function RouteSelectScreen() {
                         <Ionicons name="calendar-outline" size={20} color={routeUi.textPrimary} />
                     </Pressable>
                 </View>
+
+                <RoutePointTargetSelector
+                    activeTarget={activeTarget}
+                    originText={originText}
+                    destinationText={destinationText}
+                    onSelectTarget={openRoutePointEditor}
+                    colors={{
+                        surface: routeUi.surface,
+                        surface2: routeUi.surface2,
+                        border: routeUi.border,
+                        textPrimary: routeUi.textPrimary,
+                        textSecondary: routeUi.textSecondary,
+                        accentBlue: routeUi.accentBlue,
+                        accentGreen: routeUi.accentGreen,
+                        accentRed: routeUi.accentRed,
+                    }}
+                />
 
                 {originUsesDefault && activeTarget === "destination" && (
                     <Pressable
@@ -2799,43 +2833,23 @@ export default function RouteSelectScreen() {
 
                 {shouldShowRouteResults && (
                     <View style={styles.routeResultHeaderRow}>
-                    <TouchableOpacity
-                        accessibilityRole="button"
-                        accessibilityLabel="출발지와 도착지 수정"
-                        hitSlop={8}
-                        activeOpacity={0.86}
-                        onPressIn={openCompactRouteEditor}
-                        onPress={openCompactRouteEditor}
-                        style={[
-                            styles.routeCompactCard,
-                            styles.routeCompactCardInHeader,
-                            { backgroundColor: routeUi.surface, borderColor: routeUi.border },
-                        ]}
-                    >
-                        <View pointerEvents="none" style={styles.routeCompactEditArea}>
-                            <View style={styles.routeCompactRail}>
-                                <View style={[styles.routeCompactLine, { backgroundColor: routeUi.border }]} />
-                                <View style={styles.routeCompactMarkerRow}>
-                                    <View style={[styles.routeCompactDot, { borderColor: routeUi.accentGreen }]} />
-                                </View>
-                                <View style={styles.routeCompactMarkerRow}>
-                                    <View style={[styles.routeCompactDot, { borderColor: routeUi.accentRed }]} />
-                                </View>
-                            </View>
-                            <View style={styles.routeCompactTexts}>
-                                <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
-                                    {originText || "출발지"}
-                                </Text>
-                                <View style={[styles.routeCompactDivider, { backgroundColor: routeUi.border }]} />
-                                <Text numberOfLines={1} style={[styles.routeCompactText, { color: routeUi.textPrimary }]}>
-                                    {destinationText || "도착지"}
-                                </Text>
-                            </View>
-                        </View>
-                        <View pointerEvents="none" style={styles.routeCompactSwap}>
-                            <Ionicons name="swap-vertical" size={23} color={routeUi.textSecondary} />
-                        </View>
-                    </TouchableOpacity>
+                        <RouteEndpointReselectCard
+                            originText={originText}
+                            destinationText={destinationText}
+                            onEditOrigin={() => openRoutePointEditor("origin")}
+                            onEditDestination={() => openRoutePointEditor("destination")}
+                            onSwap={swapPlaces}
+                            colors={{
+                                surface: routeUi.surface,
+                                surface2: routeUi.surface2,
+                                border: routeUi.border,
+                                textPrimary: routeUi.textPrimary,
+                                textSecondary: routeUi.textSecondary,
+                                accentGreen: routeUi.accentGreen,
+                                accentRed: routeUi.accentRed,
+                            }}
+                            style={styles.routeCompactCardInHeader}
+                        />
                         <Pressable
                             onPress={goToScheduleList}
                             accessibilityRole="button"
@@ -3308,19 +3322,6 @@ const styles = StyleSheet.create({
         padding: 14,
         gap: 14,
     },
-    routeCompactCard: {
-        minHeight: 78,
-        borderWidth: 1,
-        borderRadius: 20,
-        paddingLeft: 18,
-        paddingRight: 12,
-        paddingVertical: 11,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-        position: "relative",
-        overflow: "hidden",
-    },
     routeCompactCardInHeader: {
         flex: 1,
     },
@@ -3337,71 +3338,6 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         lineHeight: 14,
         letterSpacing: 0,
-    },
-    routeCompactCardPressed: {
-        opacity: 0.86,
-    },
-    routeCompactSwap: {
-        width: 40,
-        height: 54,
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 3,
-    },
-    routeCompactTapOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        zIndex: 2,
-    },
-    routeCompactEditArea: {
-        flex: 1,
-        minWidth: 0,
-        alignSelf: "stretch",
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 12,
-    },
-    routeCompactRail: {
-        width: 20,
-        alignSelf: "stretch",
-        justifyContent: "space-between",
-        paddingVertical: 3,
-        position: "relative",
-    },
-    routeCompactMarkerRow: {
-        minHeight: 22,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    routeCompactDot: {
-        width: 10,
-        height: 10,
-        borderRadius: 999,
-        borderWidth: 2,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    routeCompactLine: {
-        position: "absolute",
-        left: 9.5,
-        top: 25,
-        bottom: 25,
-        width: StyleSheet.hairlineWidth,
-        borderRadius: 999,
-    },
-    routeCompactTexts: {
-        flex: 1,
-        minWidth: 0,
-        gap: 5,
-    },
-    routeCompactText: {
-        fontSize: 17,
-        fontWeight: "900",
-        lineHeight: 22,
-    },
-    routeCompactDivider: {
-        height: StyleSheet.hairlineWidth,
-        width: "100%",
     },
     routeInputRows: {
         flexDirection: "row",

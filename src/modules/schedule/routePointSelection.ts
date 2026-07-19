@@ -2,6 +2,17 @@ import type { Place } from "./types";
 
 export type RoutePointTarget = "origin" | "destination";
 
+export type MapPickerCoordinate = {
+    latitude: number;
+    longitude: number;
+};
+
+export type MapPickerSessionState = {
+    cameraCoordinate?: MapPickerCoordinate;
+    pickedCoordinate?: MapPickerCoordinate;
+    hasSelection: boolean;
+};
+
 export type RoutePointSearchVisibilityInput = {
     isEditingRoutePoint: boolean;
     searching: boolean;
@@ -34,6 +45,31 @@ export function shouldShowExistingMapPickerMarker(
     hasSelection: boolean
 ): boolean {
     return !hasSelection || markerTarget !== pickerTarget;
+}
+
+/** 지도 탐색 카메라와 사용자가 탭한 선택 좌표를 서로 독립적으로 유지한다. */
+export function createMapPickerSessionState(
+    initialCoordinate?: MapPickerCoordinate,
+    useInitialCoordinate = false
+): MapPickerSessionState {
+    const hasInitialSelection = Boolean(initialCoordinate && useInitialCoordinate);
+    return {
+        cameraCoordinate: initialCoordinate,
+        pickedCoordinate: hasInitialSelection ? initialCoordinate : undefined,
+        hasSelection: hasInitialSelection,
+    };
+}
+
+/** 새 핀만 옮기고 현재 카메라 중심/줌은 건드리지 않는다. */
+export function selectMapPickerSessionCoordinate(
+    session: MapPickerSessionState,
+    coordinate: MapPickerCoordinate
+): MapPickerSessionState {
+    return {
+        ...session,
+        pickedCoordinate: coordinate,
+        hasSelection: true,
+    };
 }
 
 function hasCoordinates(place?: Place): boolean {

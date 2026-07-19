@@ -1,8 +1,10 @@
 import {
+    createMapPickerSessionState,
     getMapPickedPlaceFallbackName,
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
+    selectMapPickerSessionCoordinate,
     shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
 } from "../src/modules/schedule/routePointSelection";
@@ -19,6 +21,33 @@ describe("route point selection priority", () => {
         expect(shouldShowExistingMapPickerMarker("origin", "destination", true)).toBe(true);
         expect(shouldShowExistingMapPickerMarker("origin", "origin", true)).toBe(false);
         expect(shouldShowExistingMapPickerMarker("destination", "origin", true)).toBe(true);
+    });
+
+    test("지도 선택 핀을 옮겨도 탐색 중인 카메라를 강제로 재중앙화하지 않는다", () => {
+        const initial = { latitude: 37.5547, longitude: 126.9707 };
+        const picked = { latitude: 37.4933, longitude: 126.9299 };
+        const opened = createMapPickerSessionState(initial);
+        const selected = selectMapPickerSessionCoordinate(opened, picked);
+
+        expect(selected.cameraCoordinate).toEqual(initial);
+        expect(selected.pickedCoordinate).toEqual(picked);
+        expect(selected.hasSelection).toBe(true);
+        expect(opened.hasSelection).toBe(false);
+    });
+
+    test("현재 대상에 기존 좌표가 있으면 지도 재선택 즉시 그 위치를 사용할 수 있다", () => {
+        const existing = { latitude: 37.5547, longitude: 126.9707 };
+
+        expect(createMapPickerSessionState(existing, true)).toEqual({
+            cameraCoordinate: existing,
+            pickedCoordinate: existing,
+            hasSelection: true,
+        });
+        expect(createMapPickerSessionState(existing)).toEqual({
+            cameraCoordinate: existing,
+            pickedCoordinate: undefined,
+            hasSelection: false,
+        });
     });
 
     test("빠른 일정이 목적지 이름을 넘기면 목적지를 먼저 확정한다", () => {
@@ -43,6 +72,11 @@ describe("route point selection priority", () => {
     test("목적지를 선택한 뒤 출발지가 없을 때만 출발지로 이어간다", () => {
         expect(resolveNextMissingRoutePointTarget("destination", false, true)).toBe("origin");
         expect(resolveNextMissingRoutePointTarget("destination", true, true)).toBeNull();
+    });
+
+    test("출발지를 재선택해도 기존 도착지가 있으면 결과 화면으로 돌아간다", () => {
+        expect(resolveNextMissingRoutePointTarget("origin", true, false)).toBe("destination");
+        expect(resolveNextMissingRoutePointTarget("origin", true, true)).toBeNull();
     });
 
     test.each([
