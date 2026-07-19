@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { usePreventRemove } from "@react-navigation/native";
 import * as AuthSession from "expo-auth-session";
 import * as GoogleAuth from "expo-auth-session/providers/google";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -60,6 +61,7 @@ import {
     getWritableCalendarImportCategories,
     resolveCalendarImportCategory,
 } from "../../src/modules/onboarding/calendarImportCategory";
+import CalendarImportCategoryCreator from "../../src/modules/onboarding/CalendarImportCategoryCreator";
 import {
     enableCalendarImportNotification,
     enrichCalendarCandidateWithRoute,
@@ -89,7 +91,7 @@ import {
     saveFavoriteDeparturePlace,
 } from "../../src/modules/schedule/favoriteDeparture";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { Place, TravelMode } from "../../src/modules/schedule/types";
+import type { Place, ScheduleCategory, TravelMode } from "../../src/modules/schedule/types";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 
 type OnboardingStep = "intro" | "provider" | "permission" | "scanning" | "select" | "enrich" | "complete";
@@ -203,6 +205,7 @@ export default function CalendarImportOnboarding() {
     const [categoryId, setCategoryId] = useState("");
     const [categoryLoading, setCategoryLoading] = useState(true);
     const [categoryError, setCategoryError] = useState<string | null>(null);
+    const [categoryCreating, setCategoryCreating] = useState(false);
     const categoryLoadSequenceRef = useRef(0);
     const originSearchSequenceRef = useRef(0);
     const [travelMode, setTravelMode] = useState<TravelMode>("TRANSIT");
@@ -295,10 +298,14 @@ export default function CalendarImportOnboarding() {
         : isManagementEntry
             ? "변경 없이 프로필로 돌아가기"
             : "일정 없이 시작하기";
-    const navigationBusy = importing || completingCuration;
+    const navigationBusy = importing || completingCuration || categoryCreating;
     const canGoBack = !navigationBusy &&
         step !== "complete" &&
         (step !== "intro" || isManagementEntry);
+
+    usePreventRemove(categoryCreating, () => {
+        Alert.alert("카테고리를 추가하고 있어요", "추가가 끝난 뒤 이전 화면으로 이동해 주세요.");
+    });
 
     const stepMotionStyle = {
         opacity: stepMotion,
@@ -426,6 +433,12 @@ export default function CalendarImportOnboarding() {
         }
     }, [dispatch]);
 
+    const handleCategoryCreated = useCallback((category: ScheduleCategory) => {
+        dispatch({ type: "UPSERT_CATEGORY", category });
+        setCategoryId(category.id);
+        setCategoryError(null);
+    }, [dispatch]);
+
     useEffect(() => {
         loadCategories().catch(() => undefined);
         return () => {
@@ -503,7 +516,7 @@ export default function CalendarImportOnboarding() {
     };
 
     const finishCuration = async () => {
-        if (completingCuration || importing) return;
+        if (completingCuration || importing || categoryCreating) return;
 
         if (isManagementEntry && step !== "complete") {
             scanAttemptRef.current += 1;
@@ -908,6 +921,7 @@ export default function CalendarImportOnboarding() {
         if (
             selectedCandidates.length === 0 ||
             importing ||
+            categoryCreating ||
             !canImportSelectedSchedules ||
             !importCategory
         ) return;
@@ -1297,12 +1311,12 @@ export default function CalendarImportOnboarding() {
                                     <Pressable
                                         accessibilityRole="button"
                                         accessibilityLabel="카테고리 목록 다시 불러오기"
-                                        accessibilityState={{ busy: categoryLoading }}
-                                        disabled={categoryLoading}
+                                        accessibilityState={{ busy: categoryLoading, disabled: categoryCreating }}
+                                        disabled={categoryLoading || categoryCreating}
                                         onPress={() => loadCategories().catch(() => undefined)}
                                         style={({ pressed }) => [
                                             styles.categoryStatus,
-                                            (pressed || categoryLoading) && styles.pressed,
+                                            (pressed || categoryLoading || categoryCreating) && styles.pressed,
                                         ]}
                                     >
                                         <Ionicons name="refresh-outline" size={17} color={colors.textSecondary} />
@@ -1316,13 +1330,13 @@ export default function CalendarImportOnboarding() {
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="카테고리 다시 불러오기"
-                                accessibilityState={{ busy: categoryLoading }}
-                                disabled={categoryLoading}
+                                accessibilityState={{ busy: categoryLoading, disabled: categoryCreating }}
+                                disabled={categoryLoading || categoryCreating}
                                 onPress={() => loadCategories().catch(() => undefined)}
                                 style={({ pressed }) => [
                                     styles.categoryStatus,
                                     styles.categoryStatusError,
-                                    (pressed || categoryLoading) && styles.pressed,
+                                    (pressed || categoryLoading || categoryCreating) && styles.pressed,
                                 ]}
                             >
                                 <Ionicons name="alert-circle-outline" size={18} color={colors.textSecondary} />
@@ -1332,6 +1346,13 @@ export default function CalendarImportOnboarding() {
                                 </View>
                             </Pressable>
                         )}
+
+                        <CalendarImportCategoryCreator
+                            categoryCount={categories.length}
+                            disabled={categoryLoading || importing || completingCuration}
+                            onBusyChange={setCategoryCreating}
+                            onCreated={handleCategoryCreated}
+                        />
 
                         <View style={styles.switchRow}>
                             <View style={styles.switchTextWrap}>
@@ -1498,19 +1519,25 @@ export default function CalendarImportOnboarding() {
                 {step === "enrich" && (
                     <>
                         <PrimaryButton
-                            label={importing
-                                ? `${importProgress}/${selectedCandidates.length} 가져오는 중`
-                                : categoryLoading && !selectedCategory
-                                    ? "카테고리를 불러오는 중"
-                                    : !selectedCategory
-                                        ? "카테고리를 다시 불러와 주세요"
-                                        : routePreparationEnabled && !defaultOriginReady
-                                            ? "주 출발지를 선택해 주세요"
-                                            : `선택한 일정 ${selectedCandidates.length}개 가져오기`}
-                            disabled={importing || !canImportSelectedSchedules || !selectedCategory}
+                            label={categoryCreating
+                                ? "카테고리를 추가하는 중"
+                                : importing
+                                    ? `${importProgress}/${selectedCandidates.length} 가져오는 중`
+                                    : categoryLoading && !selectedCategory
+                                        ? "카테고리를 불러오는 중"
+                                        : !selectedCategory
+                                            ? "카테고리를 다시 불러와 주세요"
+                                            : routePreparationEnabled && !defaultOriginReady
+                                                ? "주 출발지를 선택해 주세요"
+                                                : `선택한 일정 ${selectedCandidates.length}개 가져오기`}
+                            disabled={categoryCreating || importing || !canImportSelectedSchedules || !selectedCategory}
                             onPress={importSelectedSchedules}
                         />
-                        <GhostButton label="이전으로" disabled={importing} onPress={() => goToStep("select")} />
+                        <GhostButton
+                            label="이전으로"
+                            disabled={categoryCreating || importing}
+                            onPress={() => goToStep("select")}
+                        />
                     </>
                 )}
                 {step === "complete" && (

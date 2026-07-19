@@ -1,5 +1,8 @@
 import type { ScheduleDepartureParticipant } from "./types";
 
+const SCHEDULE_DETAIL_COMPACT_BOTTOM_GUTTER = 20;
+const SCHEDULE_DETAIL_COMPACT_HEIGHT_SCALE = 1.15;
+
 export type DepartureParticipantPresentation = ScheduleDepartureParticipant & {
     avatarLabel: string;
     isMe: boolean;
@@ -125,13 +128,22 @@ export function getDepartureOverview(
 }
 
 export function getScheduleDetailSheetHeights(windowHeight: number) {
-    const minHeight = Math.max(124, Math.round(windowHeight * 0.145));
+    const compactBaseHeight = Math.max(124, Math.round(windowHeight * 0.145));
     const midHeight = Math.max(340, Math.round(windowHeight * 0.42));
     const contentFitMaxHeight = Math.min(
         680,
         Math.max(460, Math.round(windowHeight * 0.72))
     );
     const maxHeight = Math.max(midHeight, contentFitMaxHeight);
+    // Keep the compact summary anchored to the bottom while lifting its top
+    // edge by 15%. The existing 20pt gutter remains part of the visible bar.
+    const minHeight = Math.min(
+        maxHeight - 1,
+        Math.round(
+            (compactBaseHeight + SCHEDULE_DETAIL_COMPACT_BOTTOM_GUTTER)
+                * SCHEDULE_DETAIL_COMPACT_HEIGHT_SCALE
+        )
+    );
 
     return { minHeight, midHeight, maxHeight };
 }

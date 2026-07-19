@@ -1,5 +1,6 @@
 import {
     getPaddedBoundsCamera,
+    getRouteOverviewFitKey,
     getZoomStyleValue,
     shouldDeferInitialRouteCamera,
 } from "../src/modules/map/routeZoomStyle";
@@ -109,6 +110,7 @@ describe("getPaddedBoundsCamera", () => {
 describe("shouldDeferInitialRouteCamera", () => {
     const ready = {
         isRouteDetailMode: true,
+        mapInitialized: true,
         hasOrigin: true,
         hasDestination: true,
         routeLoading: false,
@@ -117,12 +119,48 @@ describe("shouldDeferInitialRouteCamera", () => {
     };
 
     it("경로 또는 시트 안전영역이 준비되기 전에는 첫 카메라 이동을 보류한다", () => {
+        expect(shouldDeferInitialRouteCamera({ ...ready, mapInitialized: false })).toBe(true);
         expect(shouldDeferInitialRouteCamera({ ...ready, routeLoading: true })).toBe(true);
         expect(shouldDeferInitialRouteCamera({ ...ready, bottomSheetMeasured: false })).toBe(true);
+        expect(shouldDeferInitialRouteCamera({
+            ...ready,
+            bottomSheetVisible: false,
+            bottomSheetMeasured: false,
+        })).toBe(true);
     });
 
     it("경로와 시트가 준비되면 한 번의 전체 경로 fit을 허용한다", () => {
         expect(shouldDeferInitialRouteCamera(ready)).toBe(false);
-        expect(shouldDeferInitialRouteCamera({ ...ready, bottomSheetVisible: false, bottomSheetMeasured: false })).toBe(false);
+        expect(shouldDeferInitialRouteCamera({ ...ready, bottomSheetVisible: false })).toBe(false);
+    });
+});
+
+describe("getRouteOverviewFitKey", () => {
+    const identity = {
+        routeId: "route-a",
+        routeRevision: "0:2026-07-18T13:00:00.000Z:68:18500",
+        routeMode: "detail" as const,
+        travelMode: "TRANSIT",
+        origin: { latitude: 37.485, longitude: 126.895 },
+        destination: { latitude: 37.515, longitude: 127.105 },
+        sheetSnap: "middle",
+        sheetHidden: false,
+        bottomPanelHeight: 420,
+        animatedSheetOffset: 180,
+        visibleSheetTopY: 520,
+        padding: { top: 160, right: 64, bottom: 390, left: 64 },
+    };
+
+    it("동일 경로의 비동기 지도 형상 보강과 무관한 의미 기반 키를 만든다", () => {
+        expect(getRouteOverviewFitKey(identity)).toBe(getRouteOverviewFitKey({ ...identity }));
+    });
+
+    it("선택 경로나 시트 안전영역이 바뀌면 새 fit을 허용한다", () => {
+        const current = getRouteOverviewFitKey(identity);
+        expect(getRouteOverviewFitKey({ ...identity, routeId: "route-b" })).not.toBe(current);
+        expect(getRouteOverviewFitKey({
+            ...identity,
+            padding: { ...identity.padding, bottom: 460 },
+        })).not.toBe(current);
     });
 });

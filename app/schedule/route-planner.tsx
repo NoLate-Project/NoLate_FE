@@ -97,6 +97,7 @@ import {
 } from "../../src/modules/map/routeEndpointAccess";
 import {
     getPaddedBoundsCamera,
+    getRouteOverviewFitKey,
     getZoomStyleValue,
     shouldDeferInitialRouteCamera,
     type ZoomStyleStops,
@@ -6886,6 +6887,7 @@ export default function RoutePlannerScreen() {
         if (isTransitForcedFocusPending) return;
         if (shouldDeferInitialRouteCamera({
             isRouteDetailMode,
+            mapInitialized: isMapInitialized,
             hasOrigin,
             hasDestination: hasDest,
             routeLoading: etaLoading,
@@ -7157,10 +7159,6 @@ export default function RoutePlannerScreen() {
                     : routeInfoFitPoints.length
                         ? [originPoint, ...routeInfoFitPoints, ...transitConnectorFitPoints, destinationPoint]
                         : [originPoint, destinationPoint];
-            const firstPoint = routePoints[0];
-            const midPoint = routePoints[Math.floor(routePoints.length / 2)];
-            const lastPoint = routePoints[routePoints.length - 1];
-
             const activeSheetOffset = bottomSheetSnap === "expanded"
                 ? bottomSheetExpandedOffset
                 : bottomSheetSnap === "middle"
@@ -7188,28 +7186,26 @@ export default function RoutePlannerScreen() {
             };
             const usableFitWidth = Math.max(1, windowWidth - routeFitPadding.left - routeFitPadding.right);
             const usableFitHeight = Math.max(1, windowHeight - routeFitPadding.top - routeFitPadding.bottom);
-            const fitKey = [
-                "fit-v19-pin-headroom-native-edge-bounds",
-                selectedAlternativeId ?? "none",
-                isRouteDetailMode ? "detail" : "edit",
-                isMapInitialized ? "ready" : "pending",
-                bottomSheetSnap,
-                isBottomSheetHidden ? "hidden" : "shown",
-                Math.round(bottomPanelHeight).toString(),
-                Math.round(activeSheetOffset).toString(),
-                Math.round(visibleSheetTopY).toString(),
-                Math.round(routeFitPadding.top).toString(),
-                Math.round(routeFitPadding.bottom).toString(),
-                Math.round(routeFitPadding.left).toString(),
-                Math.round(routeFitPadding.right).toString(),
-                routePoints.length.toString(),
-                firstPoint.latitude.toFixed(4),
-                firstPoint.longitude.toFixed(4),
-                midPoint.latitude.toFixed(4),
-                midPoint.longitude.toFixed(4),
-                lastPoint.latitude.toFixed(4),
-                lastPoint.longitude.toFixed(4),
+            const routeRevision = [
+                routeRefreshTick,
+                travelMode === "TRANSIT" ? requestedTransitDepartureAt.toISOString() : "static",
+                selectedAlternative?.minutes ?? "minutes-unknown",
+                selectedAlternative?.distanceMeters ?? "distance-unknown",
             ].join(":");
+            const fitKey = getRouteOverviewFitKey({
+                routeId: selectedAlternativeId,
+                routeRevision,
+                routeMode: isRouteDetailMode ? "detail" : "edit",
+                travelMode,
+                origin: originPoint,
+                destination: destinationPoint,
+                sheetSnap: bottomSheetSnap,
+                sheetHidden: isBottomSheetHidden,
+                bottomPanelHeight,
+                animatedSheetOffset: activeSheetOffset,
+                visibleSheetTopY,
+                padding: routeFitPadding,
+            });
             if (lastCameraActionKeyRef.current === fitKey) return;
             lastCameraActionKeyRef.current = fitKey;
 
@@ -7356,6 +7352,8 @@ export default function RoutePlannerScreen() {
         etaLoading,
         hasBottomSheetMeasured,
         hasRouteReady,
+        routeRefreshTick,
+        requestedTransitDepartureAt,
         transitMapBottomOcclusionHeight,
         visibleBottomSheetHeight,
         runCameraActionAfterDirectionPrewarm,

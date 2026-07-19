@@ -23,7 +23,7 @@
 		CD4F79508BE61808975295BD /* libPods-NoLateFE.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A702A90482D4DCA6FEFBD3E /* libPods-NoLateFE.a */; };
 		E10000000000000000000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000011 /* ShareViewController.swift */; };
 		E10000000000000000000002 /* NoLateShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E10000000000000000000014 /* NoLateShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		E10000000000000000000003 /* icon.png in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000015 /* icon.png */; };
+		E10000000000000000000003 /* ../../assets/icon.png in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000015 /* ../../assets/icon.png */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
@@ -82,7 +82,7 @@
 		E10000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E10000000000000000000013 /* NoLateShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NoLateShareExtension.entitlements; sourceTree = "<group>"; };
 		E10000000000000000000014 /* NoLateShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		E10000000000000000000015 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "../../assets/icon.png"; sourceTree = "<group>"; };
+		E10000000000000000000015 /* ../../assets/icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ../../assets/icon.png; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NoLateFE/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* NoLateFE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "NoLateFE-Bridging-Header.h"; path = "NoLateFE/NoLateFE-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -227,7 +227,7 @@
 				E10000000000000000000011 /* ShareViewController.swift */,
 				E10000000000000000000012 /* Info.plist */,
 				E10000000000000000000013 /* NoLateShareExtension.entitlements */,
-				E10000000000000000000015 /* icon.png */,
+				E10000000000000000000015 /* ../../assets/icon.png */,
 			);
 			path = NoLateShareExtension;
 			sourceTree = "<group>";
@@ -371,7 +371,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E10000000000000000000003 /* icon.png in Resources */,
+				E10000000000000000000003 /* ../../assets/icon.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -592,7 +592,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -617,7 +617,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -646,7 +646,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_BITCODE = NO;
 				ENABLE_DEBUG_DYLIB = NO;
@@ -689,7 +689,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -852,7 +852,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -882,7 +882,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 41;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;

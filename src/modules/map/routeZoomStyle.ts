@@ -57,6 +57,7 @@ type PaddedBoundsCameraOptions = {
 
 type InitialRouteCameraReadiness = {
     isRouteDetailMode: boolean;
+    mapInitialized: boolean;
     hasOrigin: boolean;
     hasDestination: boolean;
     routeLoading: boolean;
@@ -64,18 +65,62 @@ type InitialRouteCameraReadiness = {
     bottomSheetMeasured: boolean;
 };
 
-/** 상세 진입 중 임시 좌표나 추정 시트 높이로 카메라를 먼저 움직이지 않게 한다. */
+export type RouteOverviewFitIdentity = {
+    routeId?: string;
+    routeRevision: string;
+    routeMode: "detail" | "edit";
+    travelMode: string;
+    origin: { latitude: number; longitude: number };
+    destination: { latitude: number; longitude: number };
+    sheetSnap: string;
+    sheetHidden: boolean;
+    bottomPanelHeight: number;
+    animatedSheetOffset: number;
+    visibleSheetTopY: number;
+    padding: MapViewportPadding;
+};
+
+/** 상세 진입 중 지도나 시트가 준비되기 전 임시 화면으로 카메라를 움직이지 않게 한다. */
 export function shouldDeferInitialRouteCamera({
     isRouteDetailMode,
+    mapInitialized,
     hasOrigin,
     hasDestination,
     routeLoading,
-    bottomSheetVisible,
     bottomSheetMeasured,
 }: InitialRouteCameraReadiness): boolean {
     if (!isRouteDetailMode || !hasOrigin || !hasDestination) return false;
+    if (!mapInitialized) return true;
     if (routeLoading) return true;
-    return bottomSheetVisible && !bottomSheetMeasured;
+    return !bottomSheetMeasured;
+}
+
+/**
+ * 같은 경로의 비동기 보행 형상 보강은 카메라 재이동 사유가 아니다.
+ * 경로/OD/시트처럼 사용자가 보는 화면 구성이 바뀐 경우만 새 overview fit을 허용한다.
+ */
+export function getRouteOverviewFitKey(identity: RouteOverviewFitIdentity): string {
+    const { padding } = identity;
+    return [
+        "fit-v20-stable-route-overview",
+        identity.routeId ?? "none",
+        identity.routeRevision,
+        identity.routeMode,
+        identity.travelMode,
+        identity.origin.latitude.toFixed(5),
+        identity.origin.longitude.toFixed(5),
+        identity.destination.latitude.toFixed(5),
+        identity.destination.longitude.toFixed(5),
+        identity.sheetSnap,
+        identity.sheetHidden ? "hidden" : "shown",
+        Math.round(identity.bottomPanelHeight).toString(),
+        Math.round(identity.animatedSheetOffset).toString(),
+        Math.round(identity.visibleSheetTopY).toString(),
+        Math.round(padding.top).toString(),
+        Math.round(padding.bottom).toString(),
+        Math.round(padding.left).toString(),
+        Math.round(padding.right).toString(),
+    ].join(":");
 }
 
 const WEB_MERCATOR_MAX_LATITUDE = 85.05112878;

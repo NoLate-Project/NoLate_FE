@@ -33,7 +33,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "38");
+assert.equal(app.ios.buildNumber, "41");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -72,7 +72,7 @@ assert.ok(app.android.blockedPermissions.includes("android.permission.RECORD_AUD
 assert.ok(rootAndroidFirebaseConfig === nativeAndroidFirebaseConfig, "Android Firebase config copies must match");
 assert.ok(rootIosFirebaseConfig === nativeIosFirebaseConfig, "iOS Firebase config copies must match");
 
-assert.match(androidGradle, /versionCode 38/);
+assert.match(androidGradle, /versionCode 41/);
 assert.match(androidGradle, /versionName "1\.2\.0"/);
 assert.match(androidGradle, /release \{\s+signingConfig signingConfigs\.release/);
 assert.match(androidGradle, /Release signing is not configured/);
@@ -107,7 +107,7 @@ for (const permission of [
   }
 }
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 38;/g) ?? []).length >= 4);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 41;/g) ?? []).length >= 4);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");

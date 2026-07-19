@@ -65,6 +65,7 @@ import {
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
+    shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
     type RoutePointTarget,
 } from "../../src/modules/schedule/routePointSelection";
@@ -2261,7 +2262,10 @@ export default function RouteSelectScreen() {
     };
     const mapPickerMarkers = useMemo<TmapMarker[]>(() => {
         const markers: TmapMarker[] = [];
-        if (placeHasCoords(origin)) {
+        if (
+            placeHasCoords(origin) &&
+            shouldShowExistingMapPickerMarker("origin", mapPickerTarget, mapPickerHasSelection)
+        ) {
             markers.push({
                 id: "map-picker-origin",
                 latitude: origin.lat,
@@ -2272,7 +2276,10 @@ export default function RouteSelectScreen() {
                 zIndex: 20,
             });
         }
-        if (placeHasCoords(destination)) {
+        if (
+            placeHasCoords(destination) &&
+            shouldShowExistingMapPickerMarker("destination", mapPickerTarget, mapPickerHasSelection)
+        ) {
             markers.push({
                 id: "map-picker-destination",
                 latitude: destination.lat,

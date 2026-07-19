@@ -3,6 +3,7 @@ import {
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
+    shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
 } from "../src/modules/schedule/routePointSelection";
 
@@ -10,6 +11,14 @@ describe("route point selection priority", () => {
     test("지도에서 새 좌표를 고르면 이전 장소명 대신 대상별 임시 이름을 쓴다", () => {
         expect(getMapPickedPlaceFallbackName("origin")).toBe("지도에서 선택한 출발지");
         expect(getMapPickedPlaceFallbackName("destination")).toBe("지도에서 선택한 도착지");
+    });
+
+    test("지도에서 새 위치를 탭하면 같은 대상의 이전 핀만 새 선택 핀으로 교체한다", () => {
+        expect(shouldShowExistingMapPickerMarker("destination", "destination", false)).toBe(true);
+        expect(shouldShowExistingMapPickerMarker("destination", "destination", true)).toBe(false);
+        expect(shouldShowExistingMapPickerMarker("origin", "destination", true)).toBe(true);
+        expect(shouldShowExistingMapPickerMarker("origin", "origin", true)).toBe(false);
+        expect(shouldShowExistingMapPickerMarker("destination", "origin", true)).toBe(true);
     });
 
     test("빠른 일정이 목적지 이름을 넘기면 목적지를 먼저 확정한다", () => {

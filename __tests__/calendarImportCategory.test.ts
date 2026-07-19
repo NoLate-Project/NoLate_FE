@@ -22,6 +22,7 @@ describe("calendar import categories", () => {
             category("owner", { shared: true, sharePermission: "OWNER" }),
             category("viewer", { shared: true, sharePermission: "VIEWER" }),
             category("commenter", { shared: true, sharePermission: "COMMENTER" }),
+            category("inconsistent-viewer", { shared: false, sharePermission: "VIEWER" }),
             category("", { shared: false }),
         ]);
 

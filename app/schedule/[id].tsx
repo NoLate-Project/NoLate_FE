@@ -88,7 +88,6 @@ const SECOND_MS = 1000;
 const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
 const APP_ACCENT_BLUE = "#2979FF";
 const SHEET_HANDLE_HEIGHT = 32;
-const SHEET_COMPACT_BOTTOM_GUTTER = 20;
 const DETAIL_OVERVIEW_ZOOM_DELTA = -1;
 
 async function openDeviceLocationSettings(preferServiceSettings = false) {
@@ -233,10 +232,9 @@ function ScheduleDetail() {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [retryKey, setRetryKey] = useState(0);
     const {
-        minHeight: sheetBaseMinHeight,
+        minHeight: sheetMinHeight,
         maxHeight: sheetMaxHeight,
     } = getScheduleDetailSheetHeights(windowHeight);
-    const sheetMinHeight = sheetBaseMinHeight + SHEET_COMPACT_BOTTOM_GUTTER;
     const sheetBottomPadding = Math.max(insets.bottom, 14);
     const [expandedContentHeight, setExpandedContentHeight] = useState(0);
     const desiredExpandedHeight = expandedContentHeight > 0

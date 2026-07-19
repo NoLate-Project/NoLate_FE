@@ -4,23 +4,25 @@ import React, {
     useLayoutEffect,
     useMemo,
     useRef,
-    useState,
 } from "react";
 import {
     Animated,
     Easing,
     FlatList,
-    type GestureResponderEvent,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
-    PanResponder,
-    type PanResponderGestureState,
     Pressable,
     StyleSheet,
     Text,
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import {
+    GestureHandlerRootView,
+    PanGestureHandler,
+    State,
+    type PanGestureHandlerStateChangeEvent,
+} from "react-native-gesture-handler";
 import { Calendar, DateData } from "react-native-calendars";
 import type { SharedValue } from "react-native-reanimated";
 import type { ScheduleItem } from "../../types";
@@ -34,7 +36,6 @@ import {
     getDetailMonthSwipeFollowOpacity,
     getDetailMonthSwipeGestureDirection,
     getDetailMonthSwipeOffsets,
-    shouldClaimDetailMonthSwipeGesture,
     type DetailMonthSwipeDirection,
 } from "../../calendarMotion";
 import { shiftCalendarMonth } from "../../calendarNavigation";
@@ -171,6 +172,16 @@ function normalizeMonthCandidate(value: string | null | undefined): string | nul
     const candidate = trimmed.length > 7 ? trimmed.slice(0, 7) : trimmed;
 
     return /^\d{4}-\d{2}$/.test(candidate) ? candidate : null;
+}
+
+function getMonthDistance(from: Date, toMonth: string): number {
+    const [yearText, monthText] = toMonth.split("-");
+    const toYear = Number(yearText);
+    const toMonthIndex = Number(monthText) - 1;
+
+    return (toYear - from.getFullYear()) * 12
+        + toMonthIndex
+        - from.getMonth();
 }
 
 function resolveDetailMonthAnchor(selectedDay: string, visibleMonth: string): string {
@@ -329,18 +340,52 @@ export default function ScheduleCalendar({
     const visibleMonth = normalizeMonthCandidate(transitionMonthKey)
         ?? normalizeMonthCandidate(focusedMonth)
         ?? selectedDay.slice(0, 7);
+    const stackTargetMonthKey = normalizeMonthCandidate(transitionMonthKey)
+        ?? normalizeMonthCandidate(focusedMonth)
+        ?? selectedDay.slice(0, 7);
     const initialDate = selectedDay.startsWith(`${visibleMonth}-`)
         ? selectedDay
         : `${visibleMonth}-01`;
     const stackListRef = useRef<FlatList<StackMonth>>(null);
     const handledStackScrollRequestRef = useRef(scrollRequest);
-    const initialStackMonthRef = useRef(
-        new Date(`${visibleMonth}-01T00:00:00`)
-    );
-    const [activeStackMonth, setActiveStackMonth] = useState(visibleMonth);
-    const activeStackMonthRef = useRef(activeStackMonth);
+    const internallyReportedStackMonthRef = useRef<string | null>(null);
+    const positionedStackListSessionRef = useRef<string | null>(null);
+    const stackListBaseKey = isContinuousMonthViewMode(viewMode)
+        ? `${mode}-${viewMode}-${firstDay}`
+        : null;
+    const stackListSessionRef = useRef({
+        key: stackListBaseKey,
+        anchorMonth: new Date(`${visibleMonth}-01T00:00:00`),
+    });
+    const stackTargetOutsideRange = stackListBaseKey !== null
+        && Math.abs(getMonthDistance(
+            stackListSessionRef.current.anchorMonth,
+            stackTargetMonthKey
+        )) > STACK_MONTH_RANGE;
+    if (
+        stackListSessionRef.current.key !== stackListBaseKey
+        || stackTargetOutsideRange
+    ) {
+        // A compact/stack list is rebuilt when its density changes. Anchor the
+        // new list to the month currently on screen, not the month that was
+        // visible when ScheduleCalendar first mounted in another mode. Also
+        // rebase when an explicit jump falls outside the finite list window.
+        stackListSessionRef.current = {
+            key: stackListBaseKey,
+            anchorMonth: new Date(`${stackTargetMonthKey}-01T00:00:00`),
+        };
+    }
+    const stackListAnchorMonth = stackListSessionRef.current.anchorMonth;
+    const stackListAnchorKey = `${stackListAnchorMonth.getFullYear()}-${String(
+        stackListAnchorMonth.getMonth() + 1
+    ).padStart(2, "0")}`;
+    const stackListSessionKey = stackListBaseKey === null
+        ? null
+        : `${stackListBaseKey}-${stackListAnchorKey}`;
+    const activeStackMonthRef = useRef(visibleMonth);
     const detailMonthTranslateX = useRef(new Animated.Value(0)).current;
     const detailMonthOpacity = useRef(new Animated.Value(1)).current;
+    const detailMonthGestureTranslationX = useRef(new Animated.Value(0)).current;
     const detailMonthAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
     const detailMonthAnimationFrameRef = useRef<number | null>(null);
     const detailMonthCommitWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -416,11 +461,17 @@ export default function ScheduleCalendar({
         if (activeDeadlineWatchdog !== null) clearTimeout(activeDeadlineWatchdog);
         activeAnimation?.stop();
         activeGestureResetAnimation?.stop();
+        detailMonthGestureTranslationX.stopAnimation();
+        detailMonthGestureTranslationX.setValue(0);
         detailMonthTranslateX.stopAnimation();
         detailMonthOpacity.stopAnimation();
         detailMonthTranslateX.setValue(0);
         detailMonthOpacity.setValue(1);
-    }, [detailMonthOpacity, detailMonthTranslateX]);
+    }, [
+        detailMonthGestureTranslationX,
+        detailMonthOpacity,
+        detailMonthTranslateX,
+    ]);
 
     const cancelDetailMonthMotion = useCallback(() => {
         invalidateDetailMonthAnimation(true);
@@ -669,6 +720,7 @@ export default function ScheduleCalendar({
         const offsets = getDetailMonthSwipeOffsets(normalizedDirection, travel);
 
         if (!options.preserveGestureOffset || reduceMotion) {
+            detailMonthGestureTranslationX.setValue(0);
             detailMonthTranslateX.setValue(0);
             detailMonthOpacity.setValue(1);
         }
@@ -734,6 +786,7 @@ export default function ScheduleCalendar({
         });
     }, [
         detailMonthOpacity,
+        detailMonthGestureTranslationX,
         detailMonthTranslateX,
         invalidateDetailMonthAnimation,
         onSelectDay,
@@ -750,74 +803,101 @@ export default function ScheduleCalendar({
         return () => onRegisterDetailMonthMotionShift(null);
     }, [animateDetailMonthChange, onRegisterDetailMonthMotionShift]);
 
-    const detailMonthPanResponder = useMemo(() => {
-        const shouldClaimGesture = (
-            event: GestureResponderEvent,
-            gestureState: PanResponderGestureState
-        ) => {
-            const touchCount = event.nativeEvent.touches?.length ?? 1;
-            return touchCount === 1
-                && detailMonthLatestViewModeRef.current === "detail"
-                && !detailMonthLatestTransitionActiveRef.current
-                && !detailMonthAnimationActiveRef.current
-                && !todayFocusTargetRef.current
-                && shouldClaimDetailMonthSwipeGesture(
-                    gestureState.dx,
-                    gestureState.dy
-                );
-        };
+    const detailMonthGestureEvent = useMemo(() => Animated.event(
+        [{ nativeEvent: { translationX: detailMonthGestureTranslationX } }],
+        { useNativeDriver: true }
+    ), [detailMonthGestureTranslationX]);
 
-        return PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
-            onStartShouldSetPanResponderCapture: () => false,
-            onMoveShouldSetPanResponder: shouldClaimGesture,
-            onMoveShouldSetPanResponderCapture: shouldClaimGesture,
-            onPanResponderGrant: () => {
-                detailMonthGestureResetAnimationRef.current?.stop();
-                detailMonthGestureResetAnimationRef.current = null;
-                detailMonthGestureActiveRef.current = true;
-                detailMonthTranslateX.stopAnimation();
-                detailMonthOpacity.stopAnimation();
-            },
-            onPanResponderMove: (_event, gestureState) => {
-                if (!detailMonthGestureActiveRef.current) return;
+    const transferDetailMonthGestureOffset = useCallback((translationX: number) => {
+        const offset = getDetailMonthSwipeFollowOffset(
+            translationX,
+            detailMonthLatestReduceMotionRef.current
+        );
+        detailMonthTranslateX.setValue(offset);
+        detailMonthOpacity.setValue(getDetailMonthSwipeFollowOpacity(offset));
+        detailMonthGestureTranslationX.setValue(0);
+    }, [
+        detailMonthGestureTranslationX,
+        detailMonthOpacity,
+        detailMonthTranslateX,
+    ]);
 
-                const reduceMotion = detailMonthLatestReduceMotionRef.current;
-                const offset = getDetailMonthSwipeFollowOffset(
-                    gestureState.dx,
-                    reduceMotion
-                );
-                detailMonthTranslateX.setValue(offset);
-                detailMonthOpacity.setValue(
-                    getDetailMonthSwipeFollowOpacity(offset)
-                );
-            },
-            onPanResponderRelease: (_event, gestureState) => {
-                if (!detailMonthGestureActiveRef.current) return;
+    const handleDetailMonthGestureStateChange = useCallback((
+        event: PanGestureHandlerStateChangeEvent
+    ) => {
+        const { state, oldState, translationX, velocityX } = event.nativeEvent;
 
-                const direction = getDetailMonthSwipeGestureDirection(
-                    gestureState.dx,
-                    gestureState.vx
-                );
-                if (!direction) {
-                    resetDetailMonthGesture();
-                    return;
-                }
+        if (state === State.BEGAN) {
+            detailMonthGestureResetAnimationRef.current?.stop();
+            detailMonthGestureResetAnimationRef.current = null;
+            detailMonthGestureActiveRef.current = true;
+            detailMonthTranslateX.stopAnimation();
+            detailMonthOpacity.stopAnimation();
+            return;
+        }
 
-                animateDetailMonthChange(direction, {
-                    preserveGestureOffset: true,
-                });
-            },
-            onPanResponderTerminate: resetDetailMonthGesture,
-            onPanResponderTerminationRequest: () => false,
-            onShouldBlockNativeResponder: () => true,
-        });
+        if (oldState === State.ACTIVE && state === State.END) {
+            if (!detailMonthGestureActiveRef.current) return;
+
+            transferDetailMonthGestureOffset(translationX);
+            const direction = getDetailMonthSwipeGestureDirection(
+                translationX,
+                velocityX / 1000
+            );
+            if (!direction) {
+                resetDetailMonthGesture();
+                return;
+            }
+
+            animateDetailMonthChange(direction, {
+                preserveGestureOffset: true,
+            });
+            return;
+        }
+
+        if (
+            detailMonthGestureActiveRef.current
+            && (state === State.CANCELLED || state === State.FAILED)
+        ) {
+            transferDetailMonthGestureOffset(translationX);
+            resetDetailMonthGesture();
+        }
     }, [
         animateDetailMonthChange,
         detailMonthOpacity,
         detailMonthTranslateX,
         resetDetailMonthGesture,
+        transferDetailMonthGestureOffset,
     ]);
+
+    const detailMonthGestureLimit = DETAIL_MONTH_SWIPE_MOTION.travel
+        / DETAIL_MONTH_SWIPE_GESTURE.followRatio;
+    const detailMonthGestureFollowX = detailMonthGestureTranslationX.interpolate({
+        inputRange: [-detailMonthGestureLimit, 0, detailMonthGestureLimit],
+        outputRange: [
+            -DETAIL_MONTH_SWIPE_MOTION.travel,
+            0,
+            DETAIL_MONTH_SWIPE_MOTION.travel,
+        ],
+        extrapolate: "clamp",
+    });
+    const detailMonthGestureFollowOpacity = detailMonthGestureTranslationX.interpolate({
+        inputRange: [-detailMonthGestureLimit, 0, detailMonthGestureLimit],
+        outputRange: [
+            1 - DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss,
+            1,
+            1 - DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss,
+        ],
+        extrapolate: "clamp",
+    });
+    const detailMonthRenderedTranslateX = Animated.add(
+        detailMonthTranslateX,
+        detailMonthGestureFollowX
+    );
+    const detailMonthRenderedOpacity = Animated.multiply(
+        detailMonthOpacity,
+        detailMonthGestureFollowOpacity
+    );
 
     useLayoutEffect(() => {
         if (!detailMonthAnimationActiveRef.current) return;
@@ -1050,7 +1130,7 @@ export default function ScheduleCalendar({
     ), [colors.border, colors.dayHeaderColor, weekdayLabels]);
 
     const stackMonths = useMemo(() => {
-        const initialMonth = initialStackMonthRef.current;
+        const initialMonth = stackListAnchorMonth;
         const initialMonthKey = `${initialMonth.getFullYear()}-${String(
             initialMonth.getMonth() + 1
         ).padStart(2, "0")}`;
@@ -1075,7 +1155,7 @@ export default function ScheduleCalendar({
                 );
             }
         );
-    }, [firstDay, viewMode]);
+    }, [firstDay, stackListAnchorMonth, viewMode]);
     const stackMonthLayouts = useMemo(() => {
         let offset = 0;
         return stackMonths.map((month, index) => {
@@ -1084,9 +1164,6 @@ export default function ScheduleCalendar({
             return layout;
         });
     }, [stackMonths]);
-    const stackTargetMonthKey = normalizeMonthCandidate(transitionMonthKey)
-        ?? normalizeMonthCandidate(focusedMonth)
-        ?? selectedDay.slice(0, 7);
     const stackTargetMonthIndex = useMemo(
         () => stackMonths.findIndex((month) => month.key === stackTargetMonthKey),
         [stackMonths, stackTargetMonthKey]
@@ -1101,15 +1178,47 @@ export default function ScheduleCalendar({
         if (activeStackMonthRef.current === month.key) return;
 
         activeStackMonthRef.current = month.key;
-        setActiveStackMonth(month.key);
-        if (notifyParent) visibleMonthChangeRef.current(month.dateString);
+        if (notifyParent) {
+            // focusedMonth is controlled by the parent. Tag this update so the
+            // echoed prop is not mistaken for a new programmatic navigation.
+            internallyReportedStackMonthRef.current = month.key;
+            visibleMonthChangeRef.current(month.dateString);
+        }
     }, []);
 
     useEffect(() => {
-        if (!isContinuousMonthViewMode(viewMode) || stackTargetMonthIndex < 0) return;
+        if (!isContinuousMonthViewMode(viewMode) || stackTargetMonthIndex < 0) {
+            positionedStackListSessionRef.current = null;
+            internallyReportedStackMonthRef.current = null;
+            return;
+        }
 
         const targetMonth = stackMonths[stackTargetMonthIndex];
+        const isNewListSession =
+            positionedStackListSessionRef.current !== stackListSessionKey;
+        const hasExplicitScrollRequest =
+            handledStackScrollRequestRef.current !== scrollRequest;
+        const hasTransitionTarget = Boolean(
+            normalizeMonthCandidate(transitionMonthKey)
+        );
+        const isControlledScrollEcho =
+            internallyReportedStackMonthRef.current === targetMonth.key
+            && !isNewListSession
+            && !hasExplicitScrollRequest
+            && !hasTransitionTarget
+            && !todayFocusTarget;
+
+        positionedStackListSessionRef.current = stackListSessionKey;
         handledStackScrollRequestRef.current = scrollRequest;
+
+        if (isControlledScrollEcho) {
+            // Natural scrolling already put the list at the correct offset.
+            // Re-scrolling here created the visible month-boundary snap.
+            internallyReportedStackMonthRef.current = null;
+            return;
+        }
+
+        internallyReportedStackMonthRef.current = null;
         updateActiveStackMonth(
             targetMonth,
             !transitionActive && !normalizeMonthCandidate(transitionMonthKey)
@@ -1120,7 +1229,14 @@ export default function ScheduleCalendar({
             if (!stackList) return;
 
             stackList.scrollToOffset({
-                offset: Math.max(0, stackMonthLayouts[stackTargetMonthIndex].offset),
+                // The sticky header already names the target month. Skip the
+                // inline section title for programmatic jumps so it is not
+                // duplicated directly beneath the sticky title.
+                offset: Math.max(
+                    0,
+                    stackMonthLayouts[stackTargetMonthIndex].offset
+                        + targetMonth.headerHeight
+                ),
                 animated: false,
             });
             if (todayFocusTarget?.day.slice(0, 7) === targetMonth.key) {
@@ -1134,6 +1250,7 @@ export default function ScheduleCalendar({
         scrollRequest,
         stackMonthLayouts,
         stackMonths,
+        stackListSessionKey,
         stackTargetMonthIndex,
         transitionActive,
         transitionMonthKey,
@@ -1200,7 +1317,6 @@ export default function ScheduleCalendar({
                             state={date?.dateString === todayDateString ? "today" : undefined}
                             marking={date ? markedDates[date.dateString] : undefined}
                             viewMode={viewMode}
-                            animatedCellHeight={animatedDayHeight}
                             isSelectedDay={date?.dateString === selectedDay}
                             onPress={(day) => onOpenDay(day.dateString)}
                         />
@@ -1209,7 +1325,6 @@ export default function ScheduleCalendar({
             </View>
         </View>
     ), [
-        animatedDayHeight,
         colors.border,
         colors.calendarBackground,
         colors.monthTextColor,
@@ -1242,9 +1357,8 @@ export default function ScheduleCalendar({
             >
                 <FlatList
                     ref={stackListRef}
-                    key={`${mode}-${viewMode}-${firstDay}`}
+                    key={stackListSessionKey ?? `${mode}-${viewMode}-${firstDay}`}
                     data={stackMonths}
-                    extraData={activeStackMonth}
                     renderItem={renderStackMonth}
                     keyExtractor={(item) => item.key}
                     initialScrollIndex={
@@ -1335,45 +1449,69 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <Animated.View
-                {...(viewMode === "detail"
-                    ? detailMonthPanResponder.panHandlers
-                    : {})}
-                style={{
-                    opacity: detailMonthOpacity,
-                    transform: [{ translateX: detailMonthTranslateX }],
-                }}
-            >
-                <Calendar
-                    key={`${mode}-${firstDay}`}
-                    initialDate={initialDate}
-                    firstDay={firstDay}
-                    enableSwipeMonths={viewMode !== "detail"}
-                    hideArrows
-                    hideDayNames
-                    hideExtraDays={false}
-                    onPressArrowLeft={(subtractMonth) => {
-                        if (viewMode === "detail") {
-                            animateDetailMonthChange(-1);
-                            return;
-                        }
-                        subtractMonth();
-                    }}
-                    onPressArrowRight={(addMonth) => {
-                        if (viewMode === "detail") {
-                            animateDetailMonthChange(1);
-                            return;
-                        }
-                        addMonth();
-                    }}
-                    onMonthChange={handleDetailMonthChange}
-                    markedDates={markedDates}
-                    dayComponent={renderDay}
-                    renderHeader={() => null}
-                    style={[styles.calendar, { backgroundColor: colors.calendarBackground }]}
-                    theme={calendarTheme}
-                />
-            </Animated.View>
+            <GestureHandlerRootView style={styles.detailMonthGestureRoot}>
+                <PanGestureHandler
+                    testID="detail-month-swipe-handler"
+                    enabled={
+                        viewMode === "detail"
+                        && !transitionActive
+                        && !todayFocusTarget
+                    }
+                    activeOffsetX={[
+                        -DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
+                        DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
+                    ]}
+                    failOffsetY={[
+                        -DETAIL_MONTH_SWIPE_GESTURE.activationDistance
+                            / DETAIL_MONTH_SWIPE_GESTURE.directionDominance,
+                        DETAIL_MONTH_SWIPE_GESTURE.activationDistance
+                            / DETAIL_MONTH_SWIPE_GESTURE.directionDominance,
+                    ]}
+                    maxPointers={1}
+                    onGestureEvent={detailMonthGestureEvent}
+                    onHandlerStateChange={handleDetailMonthGestureStateChange}
+                >
+                    <Animated.View
+                        style={{
+                            opacity: detailMonthRenderedOpacity,
+                            transform: [{ translateX: detailMonthRenderedTranslateX }],
+                        }}
+                    >
+                        <Calendar
+                            key={`${mode}-${firstDay}`}
+                            initialDate={initialDate}
+                            firstDay={firstDay}
+                            enableSwipeMonths={viewMode !== "detail"}
+                            hideArrows
+                            hideDayNames
+                            hideExtraDays={false}
+                            onPressArrowLeft={(subtractMonth) => {
+                                if (viewMode === "detail") {
+                                    animateDetailMonthChange(-1);
+                                    return;
+                                }
+                                subtractMonth();
+                            }}
+                            onPressArrowRight={(addMonth) => {
+                                if (viewMode === "detail") {
+                                    animateDetailMonthChange(1);
+                                    return;
+                                }
+                                addMonth();
+                            }}
+                            onMonthChange={handleDetailMonthChange}
+                            markedDates={markedDates}
+                            dayComponent={renderDay}
+                            renderHeader={() => null}
+                            style={[
+                                styles.calendar,
+                                { backgroundColor: colors.calendarBackground },
+                            ]}
+                            theme={calendarTheme}
+                        />
+                    </Animated.View>
+                </PanGestureHandler>
+            </GestureHandlerRootView>
         </View>
     );
 }
@@ -1412,6 +1550,9 @@ const styles = StyleSheet.create({
     monthCalendarContainer: {
         flexShrink: 0,
         overflow: "hidden",
+    },
+    detailMonthGestureRoot: {
+        width: "100%",
     },
     weekdayHeader: {
         height: WEEKDAY_HEADER_HEIGHT,

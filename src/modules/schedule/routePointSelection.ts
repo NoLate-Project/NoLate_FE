@@ -27,6 +27,15 @@ export function getMapPickedPlaceFallbackName(target: RoutePointTarget): string 
     return target === "origin" ? "지도에서 선택한 출발지" : "지도에서 선택한 도착지";
 }
 
+/** 새 위치를 탭한 뒤에는 같은 대상의 예전 핀을 새 선택 핀으로 교체한다. */
+export function shouldShowExistingMapPickerMarker(
+    markerTarget: RoutePointTarget,
+    pickerTarget: RoutePointTarget,
+    hasSelection: boolean
+): boolean {
+    return !hasSelection || markerTarget !== pickerTarget;
+}
+
 function hasCoordinates(place?: Place): boolean {
     return typeof place?.lat === "number" && typeof place?.lng === "number";
 }

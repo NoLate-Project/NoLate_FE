@@ -1,4 +1,5 @@
 import type { ScheduleCategory } from "../schedule/types";
+import { canWriteScheduleCategory } from "../schedule/categoryPermissions";
 
 /**
  * The schedule API accepts only a category owned by the member or shared with
@@ -8,11 +9,7 @@ import type { ScheduleCategory } from "../schedule/types";
 export function getWritableCalendarImportCategories(
     categories: readonly ScheduleCategory[],
 ): ScheduleCategory[] {
-    return categories.filter((category) => {
-        if (!category.id?.trim()) return false;
-        if (category.shared !== true) return true;
-        return category.sharePermission === "EDITOR" || category.sharePermission === "OWNER";
-    });
+    return categories.filter(canWriteScheduleCategory);
 }
 
 export function resolveCalendarImportCategory(

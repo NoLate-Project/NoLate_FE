@@ -1,10 +1,9 @@
 import React from "react";
+import { Animated } from "react-native";
 import {
-    Animated,
-    type GestureResponderEvent,
-    PanResponder,
-    type PanResponderGestureState,
-} from "react-native";
+    State,
+    type PanGestureHandlerProps,
+} from "react-native-gesture-handler";
 import TestRenderer, {
     act,
     type ReactTestRenderer,
@@ -35,8 +34,6 @@ type CalendarMockProps = {
         onPress: (day: MockDateData) => void;
     }>;
 };
-
-type PanResponderConfig = Parameters<typeof PanResponder.create>[0];
 
 let mockCalendarProps: CalendarMockProps | null = null;
 
@@ -84,7 +81,6 @@ describe("ScheduleCalendar detail month swipe motion", () => {
     let onTodayFocusReady: jest.Mock;
     let onRegisterDetailMonthMotionCancel: jest.Mock | undefined;
     let onRegisterDetailMonthMotionShift: jest.Mock | undefined;
-    let capturedPanResponderConfig: PanResponderConfig | null;
 
     beforeAll(() => {
         (
@@ -109,14 +105,6 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         onTodayFocusReady = jest.fn();
         onRegisterDetailMonthMotionCancel = undefined;
         onRegisterDetailMonthMotionShift = undefined;
-        capturedPanResponderConfig = null;
-
-        const originalPanResponderCreate = PanResponder.create.bind(PanResponder);
-        jest.spyOn(PanResponder, "create").mockImplementation((config) => {
-            capturedPanResponderConfig = config;
-            return originalPanResponderCreate(config);
-        });
-
         const createAnimation = (): Animated.CompositeAnimation => ({
             start: (callback) => {
                 if (callback) pendingAnimationCallbacks.push(callback);
@@ -204,45 +192,30 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         return mockCalendarProps;
     }
 
-    function getPanResponderConfig() {
-        if (!capturedPanResponderConfig) {
-            throw new Error("Detail month PanResponder was not created");
-        }
-        return capturedPanResponderConfig;
+    function getDetailMonthGestureHandlerProps(): PanGestureHandlerProps {
+        const handler = renderer?.root.findByProps({
+            testID: "detail-month-swipe-handler",
+        });
+        if (!handler) throw new Error("Detail month native gesture handler was not rendered");
+        return handler.props as PanGestureHandlerProps;
     }
 
-    function gestureEvent(touchCount = 1): GestureResponderEvent {
+    function gestureStateEvent(
+        state: number,
+        oldState: number,
+        translationX: number,
+        velocityX = 0
+    ) {
         return {
             nativeEvent: {
-                touches: Array.from({ length: touchCount }, () => ({})),
+                state,
+                oldState,
+                translationX,
+                translationY: 0,
+                velocityX,
+                velocityY: 0,
             },
-        } as unknown as GestureResponderEvent;
-    }
-
-    function gestureState(
-        dx: number,
-        dy: number,
-        vx = 0
-    ): PanResponderGestureState {
-        return {
-            stateID: 1,
-            moveX: dx,
-            moveY: dy,
-            x0: 0,
-            y0: 0,
-            dx,
-            dy,
-            vx,
-            vy: 0,
-            numberActiveTouches: 1,
-            _accountsForMovesUpTo: 0,
-        };
-    }
-
-    function getRenderedResponderNodes() {
-        return renderer?.root.findAll(
-            (node) => typeof node.props.onResponderMove === "function"
-        ) ?? [];
+        } as Parameters<NonNullable<PanGestureHandlerProps["onHandlerStateChange"]>>[0];
     }
 
     function finishNextAnimation(finished = true) {
@@ -400,28 +373,25 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         { label: "왼쪽", dx: -48, targetDay: "2026-08-15" },
         { label: "오른쪽", dx: 48, targetDay: "2026-06-15" },
     ])(
-        "상세형 $label PanResponder 드래그가 손가락을 따라간 뒤 월을 한 번만 이동한다",
+        "상세형 $label 네이티브 드래그가 월을 한 번만 이동한다",
         async ({ dx, targetDay }) => {
             await renderCalendar("2026-07-15");
             const calendar = getCalendarProps();
-            const config = getPanResponderConfig();
-            const event = gestureEvent();
-            const gesture = gestureState(dx, 3);
+            const handler = getDetailMonthGestureHandlerProps();
 
             expect(calendar.enableSwipeMonths).toBe(false);
-            expect(getRenderedResponderNodes().length).toBeGreaterThan(0);
-            expect(config.onMoveShouldSetPanResponder?.(event, gesture)).toBe(true);
+            expect(handler.enabled).toBe(true);
+            expect(
+                (handler.onGestureEvent as unknown as { __isNative?: boolean }).__isNative
+            ).toBe(true);
+            expect(handler.maxPointers).toBe(1);
 
-            act(() => config.onPanResponderGrant?.(event, gestureState(0, 0)));
-            act(() => config.onPanResponderMove?.(event, gesture));
-
-            const responderStyle = getRenderedResponderNodes()[0]?.props.style;
-            const translateX = responderStyle?.transform?.[0]?.translateX as {
-                __getValue: () => number;
-            };
-            expect(Math.sign(translateX.__getValue())).toBe(Math.sign(dx));
-
-            act(() => config.onPanResponderRelease?.(event, gesture));
+            act(() => handler.onHandlerStateChange?.(
+                gestureStateEvent(State.BEGAN, State.UNDETERMINED, 0)
+            ));
+            act(() => handler.onHandlerStateChange?.(
+                gestureStateEvent(State.END, State.ACTIVE, dx)
+            ));
             finishNextAnimation();
 
             expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
@@ -444,14 +414,14 @@ describe("ScheduleCalendar detail month swipe motion", () => {
 
     test("상세형 짧은 가로 드래그는 월을 바꾸지 않고 원위치로 스냅한다", async () => {
         await renderCalendar("2026-07-15");
-        const config = getPanResponderConfig();
-        const event = gestureEvent();
-        const gesture = gestureState(-20, 2);
+        const handler = getDetailMonthGestureHandlerProps();
 
-        expect(config.onMoveShouldSetPanResponder?.(event, gesture)).toBe(true);
-        act(() => config.onPanResponderGrant?.(event, gestureState(0, 0)));
-        act(() => config.onPanResponderMove?.(event, gesture));
-        act(() => config.onPanResponderRelease?.(event, gesture));
+        act(() => handler.onHandlerStateChange?.(
+            gestureStateEvent(State.BEGAN, State.UNDETERMINED, 0)
+        ));
+        act(() => handler.onHandlerStateChange?.(
+            gestureStateEvent(State.END, State.ACTIVE, -20, -100)
+        ));
 
         expect(Animated.timing).toHaveBeenCalledWith(
             expect.anything(),
@@ -476,18 +446,19 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(onSelectDay).not.toHaveBeenCalled();
     });
 
-    test("상세형의 세로 우세 드래그는 가로 PanResponder가 가로채지 않는다", async () => {
+    test("상세형의 세로 우세 드래그는 네이티브 가로 제스처가 가로채지 않는다", async () => {
         await renderCalendar("2026-07-15");
-        const config = getPanResponderConfig();
-        const event = gestureEvent();
-        const verticalGesture = gestureState(12, 30);
+        const handler = getDetailMonthGestureHandlerProps();
+        const failOffsetY = handler.failOffsetY as [number, number];
 
-        expect(
-            config.onMoveShouldSetPanResponder?.(event, verticalGesture)
-        ).toBe(false);
-        expect(
-            config.onMoveShouldSetPanResponderCapture?.(event, verticalGesture)
-        ).toBe(false);
+        expect(handler.activeOffsetX).toEqual([
+            -DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
+            DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
+        ]);
+        expect(failOffsetY[1]).toBeCloseTo(
+            DETAIL_MONTH_SWIPE_GESTURE.activationDistance
+                / DETAIL_MONTH_SWIPE_GESTURE.directionDominance
+        );
         expect(onVisibleMonthChange).not.toHaveBeenCalled();
         expect(onSelectDay).not.toHaveBeenCalled();
     });
@@ -608,7 +579,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         const libraryChangeMonth = jest.fn();
 
         expect(calendar.enableSwipeMonths).toBe(true);
-        expect(getRenderedResponderNodes()).toHaveLength(0);
+        expect(getDetailMonthGestureHandlerProps().enabled).toBe(false);
         act(() => calendar.onPressArrowRight(libraryChangeMonth));
 
         expect(libraryChangeMonth).toHaveBeenCalledTimes(1);

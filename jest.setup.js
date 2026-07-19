@@ -4,6 +4,23 @@ jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));
 
+jest.mock('react-native-gesture-handler', () => {
+  const { View } = require('react-native');
+
+  return {
+    GestureHandlerRootView: View,
+    PanGestureHandler: View,
+    State: {
+      UNDETERMINED: 0,
+      FAILED: 1,
+      BEGAN: 2,
+      CANCELLED: 3,
+      ACTIVE: 4,
+      END: 5,
+    },
+  };
+});
+
 jest.mock('react-native-reanimated', () => {
   const { View } = require('react-native');
   const identity = (value) => value;
