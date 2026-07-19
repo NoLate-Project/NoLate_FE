@@ -147,4 +147,40 @@ describe("PlainScheduleDetailView", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "장소 등록된 장소 없음" })).toBeTruthy();
         expect(renderer!.root.findByProps({ accessibilityLabel: "메모 등록된 메모 없음" })).toBeTruthy();
     });
+
+    test("공유 일정의 개인 이동 경로 상태와 설정 액션을 표시한다", async () => {
+        const onPress = jest.fn();
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <PlainScheduleDetailView
+                        item={makeSchedule()}
+                        contentTopInset={120}
+                        contentBottomInset={40}
+                        travelPlan={{
+                            statusLabel: "경로 미설정",
+                            actionLabel: "설정",
+                            pending: false,
+                            onPress,
+                            participantContent: <Text>참여자 이동 계획 3명</Text>,
+                        }}
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        const button = renderer!.root.findByProps({ accessibilityLabel: "내 이동 경로 설정" });
+        await act(async () => button.props.onPress());
+
+        const text = renderer!.root
+            .findAllByType(Text)
+            .map((node) => node.props.children)
+            .flat(Infinity)
+            .filter((value) => typeof value === "string")
+            .join(" ");
+        expect(text).toContain("내 이동 경로");
+        expect(text).toContain("경로 미설정");
+        expect(text).toContain("참여자 이동 계획 3명");
+        expect(onPress).toHaveBeenCalledTimes(1);
+    });
 });

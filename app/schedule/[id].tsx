@@ -21,6 +21,10 @@ import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { getSchedule, markScheduleDeparted, updateSchedule } from "../../src/api/schedule";
+import {
+    getScheduleTravelPlan,
+    upsertMyScheduleTravelPlan,
+} from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
@@ -54,7 +58,12 @@ import {
 import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import type { RouteStep } from "../../src/modules/schedule/routeInfo";
 import { useScheduleStore } from "../../src/modules/schedule/store";
-import type { ScheduleItem, TravelMode } from "../../src/modules/schedule/types";
+import type {
+    ScheduleItem,
+    ScheduleTravelPlan,
+    ScheduleTravelPlanParticipant,
+    TravelMode,
+} from "../../src/modules/schedule/types";
 import {
     buildScheduleRoutePlannerInitial,
     consumeScheduleRouteUpdatePayload,
@@ -72,6 +81,12 @@ import {
     getScheduleDetailSheetHeights,
     resolveScheduleCountdownEndAt,
 } from "../../src/modules/schedule/detailPresentation";
+import {
+    applyTravelPlanToScheduleItem,
+    buildTravelPlanPayload,
+    canOpenParticipantTravelPlan,
+    travelPlanStatusLabel,
+} from "../../src/modules/schedule/travelPlanPresentation";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -152,6 +167,13 @@ function travelModeLabel(mode?: TravelMode) {
         case "BIKE": return "자전거";
         default: return "이동";
     }
+}
+
+function travelPlanParticipantLabel(participant: ScheduleTravelPlanParticipant): string {
+    const emailName = participant.email?.split("@")[0]?.trim();
+    if (emailName) return emailName;
+    if (participant.role === "OWNER") return "오너";
+    return `참여자 ${participant.memberId}`;
 }
 
 function routeNumberText(route: RouteAlternativeOption | undefined, fallbackMinutes?: number) {
@@ -273,6 +295,8 @@ function ScheduleDetail() {
     const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string>();
     const [routeSavePending, setRouteSavePending] = useState(false);
+    const [inspectedTravelPlan, setInspectedTravelPlan] = useState<ScheduleTravelPlan>();
+    const [travelPlanDetailPendingMemberId, setTravelPlanDetailPendingMemberId] = useState<number>();
     const routePlannerWasActiveRef = useRef(false);
     const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
@@ -309,6 +333,8 @@ function ScheduleDetail() {
         setExpandedContentHeight(0);
         setCurrentLocationCoord(undefined);
         setCurrentLocationPending(false);
+        setInspectedTravelPlan(undefined);
+        setTravelPlanDetailPendingMemberId(undefined);
     }, [id]);
 
     useEffect(() => () => {
@@ -458,15 +484,22 @@ function ScheduleDetail() {
         };
     }, [dispatch, id, pathname, retryKey, routePlannerSessionId, routeSavePending]);
 
-    const displayRoute = item?.route;
+    const displayRoute = inspectedTravelPlan?.route ?? item?.route;
+    const displayOrigin = inspectedTravelPlan?.origin ?? item?.origin;
+    const displayDestination = inspectedTravelPlan?.destination ?? item?.destination;
+    const displayTravelMinutes = inspectedTravelPlan?.travelMinutes ?? item?.travelMinutes;
+    const displayTravelMode = inspectedTravelPlan?.travelMode ?? item?.travelMode;
+    const displayDepartureAt = inspectedTravelPlan?.departAt
+        ? fromISO(inspectedTravelPlan.departAt)
+        : recommendedDepartureAt;
     const mapPresentation = useMemo(() => buildSavedRouteMapPresentation({
         route: displayRoute,
-        origin: item?.origin,
-        destination: item?.destination,
+        origin: displayOrigin ?? undefined,
+        destination: displayDestination ?? undefined,
         mapZoom,
         isDark,
         focusedLegIndex,
-    }), [displayRoute, focusedLegIndex, isDark, item?.destination, item?.origin, mapZoom]);
+    }), [displayDestination, displayOrigin, displayRoute, focusedLegIndex, isDark, mapZoom]);
     const {
         routeOption,
         routeLegs,
@@ -489,16 +522,16 @@ function ScheduleDetail() {
         ];
     }, [currentLocationCoord, markers]);
     const mapCoords = useMemo(
-        () => getSavedRouteFitCoords(displayRoute, item?.origin, item?.destination),
-        [displayRoute, item?.destination, item?.origin]
+        () => getSavedRouteFitCoords(displayRoute, displayOrigin ?? undefined, displayDestination ?? undefined),
+        [displayDestination, displayOrigin, displayRoute]
     );
     const routeDetailInfo = useMemo(() => buildSavedRouteDetailInfo({
         route: displayRoute,
         routeAlternative: routeOption,
-        origin: item?.origin,
-        destination: item?.destination,
-        departureAt: recommendedDepartureAt,
-    }), [displayRoute, item?.destination, item?.origin, recommendedDepartureAt, routeOption]);
+        origin: displayOrigin ?? undefined,
+        destination: displayDestination ?? undefined,
+        departureAt: displayDepartureAt,
+    }), [displayDepartureAt, displayDestination, displayOrigin, displayRoute, routeOption]);
     const routeProgressSegments = useMemo(
         () => buildTransitRouteProgressSegments(routeLegs),
         [routeLegs]
@@ -559,7 +592,7 @@ function ScheduleDetail() {
     }, [focusRouteLeg, routeLegs, snapSheet]);
 
     const focusRouteEndpoint = useCallback((step: RouteStep) => {
-        const endpoint = step.type === "ORIGIN" ? item?.origin : item?.destination;
+        const endpoint = step.type === "ORIGIN" ? displayOrigin : displayDestination;
         const routeEndpointCoord = step.type === "ORIGIN"
             ? mapCoords[0]
             : mapCoords[mapCoords.length - 1];
@@ -577,7 +610,7 @@ function ScheduleDetail() {
             duration: 520,
             easing: "Fly",
         });
-    }, [item?.destination, item?.origin, mapCoords, snapSheet]);
+    }, [displayDestination, displayOrigin, mapCoords, snapSheet]);
 
     const focusTransitStop = useCallback((stop: { coord?: unknown }) => {
         const coord = mapCoordFromUnknown(stop.coord);
@@ -713,6 +746,30 @@ function ScheduleDetail() {
         }
     }, [canManageSchedule, departureActionPending, dispatch, id, item?.departureParticipants]);
 
+    const openParticipantTravelPlan = useCallback(async (
+        participant: ScheduleTravelPlanParticipant
+    ) => {
+        if (!id || travelPlanDetailPendingMemberId !== undefined) return;
+        if (participant.memberId === currentMemberId) {
+            setInspectedTravelPlan(undefined);
+            return;
+        }
+        if (!canOpenParticipantTravelPlan(participant, currentMemberId)) return;
+
+        setTravelPlanDetailPendingMemberId(participant.memberId);
+        try {
+            const plan = await getScheduleTravelPlan(id, participant.memberId);
+            setInspectedTravelPlan(plan);
+            setFocusedLegIndex(undefined);
+            setSelectedTransitStop(undefined);
+            snapSheet("compact");
+        } catch (error) {
+            Alert.alert("이동 계획을 불러오지 못했어요", getErrorMessage(error));
+        } finally {
+            setTravelPlanDetailPendingMemberId(undefined);
+        }
+    }, [currentMemberId, id, snapSheet, travelPlanDetailPendingMemberId]);
+
     const openCurrentRoutePlanner = useCallback(() => {
         if (!item || routeSavePending) return;
         const targetSessionId = `schedule-detail-${item.id}-${Date.now()}`;
@@ -748,7 +805,6 @@ function ScheduleDetail() {
         if (
             !item ||
             item.routeSetupRequired !== true ||
-            !canManageSchedule ||
             !isRouteSetupEntryRequested(openRouteSetup) ||
             routePlannerSessionId ||
             routeSavePending ||
@@ -760,7 +816,6 @@ function ScheduleDetail() {
         autoOpenedRouteSetupItemIdRef.current = item.id;
         openCurrentRoutePlanner();
     }, [
-        canManageSchedule,
         item,
         openCurrentRoutePlanner,
         openRouteSetup,
@@ -782,8 +837,22 @@ function ScheduleDetail() {
         if (!payload) return;
 
         setRouteSavePending(true);
-        updateSchedule(item.id, payload)
+        const saveRoute = canManageSchedule
+            ? updateSchedule(item.id, payload)
+            : upsertMyScheduleTravelPlan(item.id, buildTravelPlanPayload(payload))
+                .then(async (plan) => {
+                    // 상세 응답에는 권한별 참여자 요약도 포함된다. 저장 직후 재조회에 실패한 경우에만
+                    // 개인 계획 응답을 기존 화면 모델에 투영해 사용자의 저장 결과를 잃지 않는다.
+                    try {
+                        return await getSchedule(item.id);
+                    } catch {
+                        return applyTravelPlanToScheduleItem(item, plan);
+                    }
+                });
+
+        saveRoute
             .then((updated) => {
+                setInspectedTravelPlan(undefined);
                 dispatch({ type: "UPDATE_ITEM", item: updated });
             })
             .catch((error) => {
@@ -792,7 +861,7 @@ function ScheduleDetail() {
             .finally(() => {
                 setRouteSavePending(false);
             });
-    }, [dispatch, item, pathname, routePlannerSessionId]);
+    }, [canManageSchedule, dispatch, item, pathname, routePlannerSessionId]);
 
     const camera = useMemo(() => {
         if (mapCoords.length === 0) return DEFAULT_CAMERA;
@@ -866,13 +935,15 @@ function ScheduleDetail() {
     }
 
     const routeTitle = item.locationName
-        || (item.origin?.name && item.destination?.name ? `${item.origin.name} → ${item.destination.name}` : undefined)
-        || item.destination?.name
-        || item.origin?.name
+        || (displayOrigin?.name && displayDestination?.name
+            ? `${displayOrigin.name} → ${displayDestination.name}`
+            : undefined)
+        || displayDestination?.name
+        || displayOrigin?.name
         || "선택된 경로가 없어요";
-    const travelText = item.travelMinutes
-        ? `${travelModeLabel(item.travelMode)} ${item.travelMinutes}분`
-        : travelModeLabel(item.travelMode);
+    const travelText = displayTravelMinutes
+        ? `${travelModeLabel(displayTravelMode ?? undefined)} ${displayTravelMinutes}분`
+        : travelModeLabel(displayTravelMode ?? undefined);
     const hasDepartureInfo = Boolean(recommendedDepartureAt || currentMemberDepartedAt || typeof item.travelMinutes === "number");
     const departureCompleted = Boolean(currentMemberDepartedAt);
     const sheetBorder = isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.11)";
@@ -887,6 +958,10 @@ function ScheduleDetail() {
             ? secondaryText
             : colors.selectedDayBg;
     const participantPresentations = buildDepartureParticipantPresentations(departureParticipants, currentMemberId);
+    const travelPlanParticipants = item.travelPlanParticipants ?? [];
+    const inspectedParticipant = inspectedTravelPlan
+        ? travelPlanParticipants.find((participant) => participant.memberId === inspectedTravelPlan.memberId)
+        : undefined;
     const departureOverview = getDepartureOverview(departureParticipants, currentMemberId);
     const scheduleRangeLabel = formatCompactScheduleRange(
         item.startAt,
@@ -916,7 +991,7 @@ function ScheduleDetail() {
     const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
     const routeSummaryKind = getSavedRouteSummaryKind(
         Boolean(routeOption || routeDetailInfo),
-        item.travelMinutes
+        displayTravelMinutes ?? undefined
     );
     const hasRouteSummary = routeSummaryKind !== "none";
     const hasDetailedRoute = routeSummaryKind === "detailed";
@@ -951,7 +1026,7 @@ function ScheduleDetail() {
             ? "완료"
             : "대기";
     const routeDurationLabel = hasRouteSummary
-        ? routeNumberText(routeOption, item.travelMinutes)
+        ? routeNumberText(routeOption, displayTravelMinutes ?? undefined)
         : "미설정";
     const departureActionTitle = departureCompleted
         ? "출발 알림 완료"
@@ -1020,6 +1095,75 @@ function ScheduleDetail() {
         );
     };
 
+    const renderTravelPlanRows = () => {
+        if (travelPlanParticipants.length <= 1) return null;
+
+        return (
+            <View style={[styles.travelPlanList, { borderTopColor: sheetBorder }]}>
+                {travelPlanParticipants.map((participant) => {
+                    const canOpen = canOpenParticipantTravelPlan(participant, currentMemberId);
+                    const selected = inspectedTravelPlan?.memberId === participant.memberId ||
+                        (!inspectedTravelPlan && participant.memberId === currentMemberId);
+                    const pending = travelPlanDetailPendingMemberId === participant.memberId;
+                    const detail = participant.status === "READY" && participant.travelMinutes
+                        ? `${travelModeLabel(participant.travelMode ?? undefined)} ${participant.travelMinutes}분`
+                        : travelPlanStatusLabel(participant.status);
+
+                    return (
+                        <Pressable
+                            key={`travel-plan-${participant.memberId}`}
+                            onPress={() => openParticipantTravelPlan(participant)}
+                            disabled={!canOpen || pending}
+                            accessibilityRole={canOpen ? "button" : undefined}
+                            accessibilityLabel={`${travelPlanParticipantLabel(participant)}, ${detail}`}
+                            accessibilityState={{ selected, busy: pending, disabled: !canOpen }}
+                            style={({ pressed }) => [
+                                styles.travelPlanRow,
+                                {
+                                    backgroundColor: selected
+                                        ? (isDark ? "rgba(41,121,255,0.16)" : "rgba(41,121,255,0.08)")
+                                        : "transparent",
+                                    opacity: pressed ? 0.58 : 1,
+                                },
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.travelPlanAvatar,
+                                    {
+                                        backgroundColor: participant.status === "READY"
+                                            ? (isDark ? "rgba(41,121,255,0.24)" : "rgba(41,121,255,0.12)")
+                                            : topCardControlBg,
+                                    },
+                                ]}
+                            >
+                                <Ionicons
+                                    name={participant.status === "READY" ? "navigate" : "location-outline"}
+                                    size={14}
+                                    color={participant.status === "READY" ? topCardAccentText : secondaryText}
+                                />
+                            </View>
+                            <View style={styles.travelPlanCopy}>
+                                <Text numberOfLines={1} style={[styles.travelPlanName, { color: primaryText }]}>
+                                    {travelPlanParticipantLabel(participant)}
+                                    {participant.memberId === currentMemberId ? " · 나" : ""}
+                                </Text>
+                                <Text numberOfLines={1} style={[styles.travelPlanMeta, { color: secondaryText }]}>
+                                    {participant.originName ? `${participant.originName} · ` : ""}{detail}
+                                </Text>
+                            </View>
+                            {pending ? (
+                                <ActivityIndicator size="small" color={topCardAccentText} />
+                            ) : canOpen ? (
+                                <Ionicons name="chevron-forward" size={15} color={secondaryText} />
+                            ) : null}
+                        </Pressable>
+                    );
+                })}
+            </View>
+        );
+    };
+
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <StatusBar barStyle={isDark ? "light-content" : "dark-content"} />
@@ -1049,6 +1193,46 @@ function ScheduleDetail() {
                     item={item}
                     contentTopInset={insets.top + 76}
                     contentBottomInset={Math.max(insets.bottom + 32, 48)}
+                    travelPlan={item.routeSetupRequired === true || travelPlanParticipants.length > 1
+                        ? {
+                            statusLabel: travelPlanStatusLabel(item.travelPlanStatus ?? "NOT_CONFIGURED"),
+                            actionLabel: item.travelPlanStatus === "READY" ? "수정" : "설정",
+                            pending: routeSavePending,
+                            onPress: openCurrentRoutePlanner,
+                            participantContent: travelPlanParticipants.length > 1 ? (
+                                <View style={[styles.plainTravelPlanParticipants, { borderTopColor: sheetBorder }]}>
+                                    <Pressable
+                                        onPress={() => setParticipantsExpanded((expanded) => !expanded)}
+                                        accessibilityRole="button"
+                                        accessibilityState={{ expanded: participantsExpanded }}
+                                        accessibilityLabel={`참여자 이동 계획 ${travelPlanParticipants.length}명 ${participantsExpanded ? "접기" : "보기"}`}
+                                        style={({ pressed }) => [
+                                            styles.plainTravelPlanDisclosure,
+                                            { opacity: pressed ? 0.58 : 1 },
+                                        ]}
+                                    >
+                                        <View style={styles.plainTravelPlanDisclosureTitle}>
+                                            <Ionicons name="people-outline" size={16} color={secondaryText} />
+                                            <Text style={[styles.plainTravelPlanDisclosureText, { color: primaryText }]}>
+                                                참여자 이동 계획
+                                            </Text>
+                                        </View>
+                                        <View style={styles.plainTravelPlanDisclosureMeta}>
+                                            <Text style={[styles.plainTravelPlanCount, { color: secondaryText }]}>
+                                                {travelPlanParticipants.length}명
+                                            </Text>
+                                            <Ionicons
+                                                name={participantsExpanded ? "chevron-up" : "chevron-down"}
+                                                size={15}
+                                                color={secondaryText}
+                                            />
+                                        </View>
+                                    </Pressable>
+                                    {participantsExpanded ? renderTravelPlanRows() : null}
+                                </View>
+                            ) : undefined,
+                        }
+                        : undefined}
                 />
             ) : (
                 <View
@@ -1502,17 +1686,44 @@ function ScheduleDetail() {
                                 </Pressable>
                             )}
 
-                            {participantsExpanded && renderDepartureParticipantChips()}
+                            {participantsExpanded && (
+                                <>
+                                    {renderDepartureParticipantChips()}
+                                    {renderTravelPlanRows()}
+                                </>
+                            )}
                         </View>
 
-                        {!isPlainSchedule ? (
-                            <>
+                        <>
                         <View
                             style={[
                                 styles.sheetRouteSummary,
                                 { borderBottomColor: sheetBorder },
                             ]}
                         >
+                            {inspectedTravelPlan && (
+                                <View style={[styles.inspectedPlanBar, { borderBottomColor: sheetBorder }]}>
+                                    <View style={styles.inspectedPlanIdentity}>
+                                        <Ionicons name="person-circle-outline" size={17} color={topCardAccentText} />
+                                        <Text numberOfLines={1} style={[styles.inspectedPlanText, { color: primaryText }]}>
+                                            {inspectedParticipant
+                                                ? `${travelPlanParticipantLabel(inspectedParticipant)}의 이동 계획`
+                                                : "참여자 이동 계획"}
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        onPress={() => setInspectedTravelPlan(undefined)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="내 이동 계획으로 돌아가기"
+                                        style={({ pressed }) => [
+                                            styles.inspectedPlanClose,
+                                            { opacity: pressed ? 0.5 : 1 },
+                                        ]}
+                                    >
+                                        <Ionicons name="close" size={17} color={secondaryText} />
+                                    </Pressable>
+                                </View>
+                            )}
                             <View style={styles.sheetRouteTopRow}>
                                 <View style={styles.sheetRouteCopy}>
                                     <View style={styles.sheetRouteKickerRow}>
@@ -1536,6 +1747,7 @@ function ScheduleDetail() {
                                     <Text style={[styles.sheetRouteDuration, { color: primaryText }]}>
                                         {routeDurationLabel}
                                     </Text>
+                                    {!inspectedTravelPlan && (
                                     <Pressable
                                         onPress={openCurrentRoutePlanner}
                                         disabled={routeSavePending}
@@ -1563,6 +1775,7 @@ function ScheduleDetail() {
                                             <Ionicons name="map-outline" size={21} color={primaryText} />
                                         )}
                                     </Pressable>
+                                    )}
                                 </View>
                             </View>
                             {routeProgressSegments.length > 0 && (
@@ -1601,8 +1814,7 @@ function ScheduleDetail() {
                                 저장된 상세 경로가 없어요.
                             </Text>
                         )}
-                            </>
-                        ) : null}
+                        </>
                         </View>
                     </ScrollView>
                 </CalendarGlassSurface>
@@ -2146,6 +2358,113 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
+    },
+    travelPlanList: {
+        marginTop: 8,
+        paddingTop: 6,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        gap: 2,
+    },
+    travelPlanRow: {
+        minHeight: 52,
+        borderRadius: 6,
+        paddingHorizontal: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    travelPlanAvatar: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    travelPlanCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    travelPlanName: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    travelPlanMeta: {
+        marginTop: 2,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    inspectedPlanBar: {
+        minHeight: 34,
+        marginBottom: 10,
+        paddingBottom: 8,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    inspectedPlanIdentity: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    inspectedPlanText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    inspectedPlanClose: {
+        width: 32,
+        height: 32,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    plainTravelPlanParticipants: {
+        marginTop: 8,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    plainTravelPlanDisclosure: {
+        minHeight: 46,
+        paddingHorizontal: 4,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    plainTravelPlanDisclosureTitle: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    plainTravelPlanDisclosureText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    plainTravelPlanDisclosureMeta: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+    },
+    plainTravelPlanCount: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+        letterSpacing: 0,
     },
     sheetRouteSummary: {
         paddingVertical: 14,

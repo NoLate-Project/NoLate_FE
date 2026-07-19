@@ -60,6 +60,38 @@ export type ScheduleDepartureParticipant = {
     departedAt?: string | null;
 };
 
+export type ScheduleTravelPlanStatus = "NOT_CONFIGURED" | "READY" | "STALE";
+
+export type ScheduleTravelPlan = {
+    id?: number | null;
+    scheduleId: number;
+    memberId: number;
+    status: ScheduleTravelPlanStatus;
+    canManageSchedule?: boolean;
+    travelMinutes?: number | null;
+    departAt?: string | null;
+    travelMode?: TravelMode | null;
+    origin?: Place | null;
+    destination?: Place | null;
+    route?: unknown;
+    notificationEnabled?: boolean;
+    notificationLeadMinutes?: number | null;
+    notificationIntervalMinutes?: number | null;
+    updatedAt?: string | null;
+};
+
+export type ScheduleTravelPlanParticipant = {
+    memberId: number;
+    email?: string | null;
+    role: ScheduleDepartureParticipantRole;
+    status: ScheduleTravelPlanStatus;
+    canViewDetails: boolean;
+    originName?: string | null;
+    travelMode?: TravelMode | null;
+    travelMinutes?: number | null;
+    departAt?: string | null;
+};
+
 export type ScheduleItem = {
     id: string;
     ownerMemberId?: number;
@@ -77,6 +109,10 @@ export type ScheduleItem = {
     departedAt?: string;        // 사용자가 출발 완료 처리한 시각
     myDepartedAt?: string;      // 공유 일정에서 현재 로그인 사용자의 출발 완료 시각
     departureParticipants?: ScheduleDepartureParticipant[];
+    myTravelPlan?: ScheduleTravelPlan | null;
+    travelPlanStatus?: ScheduleTravelPlanStatus | null;
+    canViewAllTravelPlans?: boolean;
+    travelPlanParticipants?: ScheduleTravelPlanParticipant[];
     travelMode?: TravelMode;
 
     // ✅ 장소(현재/추후 확장)

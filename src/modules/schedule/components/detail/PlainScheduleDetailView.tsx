@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
 import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
@@ -18,6 +18,13 @@ type Props = {
     item: ScheduleItem;
     contentTopInset: number;
     contentBottomInset: number;
+    travelPlan?: {
+        statusLabel: string;
+        actionLabel: string;
+        pending: boolean;
+        onPress: () => void;
+        participantContent?: React.ReactNode;
+    };
 };
 
 type ReadOnlyFieldProps = {
@@ -143,6 +150,7 @@ export default function PlainScheduleDetailView({
     item,
     contentTopInset,
     contentBottomInset,
+    travelPlan,
 }: Props) {
     const { colors, mode } = useTheme();
     const presentation = useMemo(
@@ -219,6 +227,56 @@ export default function PlainScheduleDetailView({
                         {presentation.location ?? "등록된 장소 없음"}
                     </Text>
                 </View>
+
+                {travelPlan ? (
+                    <View style={styles.travelPlanSection}>
+                        <Text style={[styles.label, { color: colors.textSecondary }]}>이동 계획</Text>
+                        <View
+                            style={[
+                                styles.travelPlanRow,
+                                {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
+                                },
+                            ]}
+                        >
+                            <View style={[styles.travelPlanIcon, { backgroundColor: `${accent}1F` }]}>
+                                <Ionicons name="navigate-outline" size={18} color={accent} />
+                            </View>
+                            <View style={styles.travelPlanCopy}>
+                                <Text style={[styles.travelPlanTitle, { color: colors.textPrimary }]}>내 이동 경로</Text>
+                                <Text
+                                    numberOfLines={1}
+                                    style={[styles.travelPlanStatus, { color: colors.textSecondary }]}
+                                >
+                                    {travelPlan.statusLabel}
+                                </Text>
+                            </View>
+                            <Pressable
+                                onPress={travelPlan.onPress}
+                                disabled={travelPlan.pending}
+                                accessibilityRole="button"
+                                accessibilityLabel={`내 이동 경로 ${travelPlan.actionLabel}`}
+                                accessibilityState={{ busy: travelPlan.pending, disabled: travelPlan.pending }}
+                                style={({ pressed }) => [
+                                    styles.travelPlanButton,
+                                    {
+                                        backgroundColor: accent,
+                                        opacity: pressed || travelPlan.pending ? 0.62 : 1,
+                                    },
+                                ]}
+                            >
+                                {travelPlan.pending ? (
+                                    <ActivityIndicator size="small" color="#FFFFFF" />
+                                ) : (
+                                    <Ionicons name="map-outline" size={16} color="#FFFFFF" />
+                                )}
+                                <Text style={styles.travelPlanButtonText}>{travelPlan.actionLabel}</Text>
+                            </Pressable>
+                        </View>
+                        {travelPlan.participantContent}
+                    </View>
+                ) : null}
 
                 <SettingSummaryRow
                     title="종일"
@@ -339,6 +397,60 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 18,
         fontWeight: "700",
+    },
+    travelPlanSection: {
+        marginBottom: 14,
+    },
+    travelPlanRow: {
+        minHeight: 64,
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    travelPlanIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 8,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    travelPlanCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    travelPlanTitle: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+    travelPlanStatus: {
+        marginTop: 2,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    travelPlanButton: {
+        minWidth: 76,
+        height: 38,
+        borderRadius: 8,
+        paddingHorizontal: 11,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+    },
+    travelPlanButtonText: {
+        color: "#FFFFFF",
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "900",
+        letterSpacing: 0,
     },
     settingRow: {
         minHeight: 58,
