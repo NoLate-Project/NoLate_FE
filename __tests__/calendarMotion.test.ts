@@ -123,11 +123,12 @@ describe("calendar depth motion", () => {
             distanceThreshold: 36,
             velocityThreshold: 0.35,
             velocityProjection: 80,
-            followRatio: 0.55,
-            cancelDurationMs: 80,
-            maxOpacityLoss: 0.08,
+            followRatio: 1,
+            maxFollowTravel: 320,
+            cancelDurationMs: 110,
+            maxOpacityLoss: 0,
         });
-        expect(DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs).toBeLessThanOrEqual(96);
+        expect(DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs).toBeLessThanOrEqual(120);
         expect(Object.isFrozen(DETAIL_MONTH_SWIPE_GESTURE)).toBe(true);
     });
 
@@ -172,11 +173,13 @@ describe("calendar depth motion", () => {
         )).toBeNull();
     });
 
-    test("상세형 월은 손가락 이동을 감쇠해 travel 범위 안에서 따라간다", () => {
-        expect(getDetailMonthSwipeFollowOffset(10)).toBeCloseTo(5.5);
-        expect(getDetailMonthSwipeFollowOffset(-10)).toBeCloseTo(-5.5);
-        expect(getDetailMonthSwipeFollowOffset(100)).toBe(24);
-        expect(getDetailMonthSwipeFollowOffset(-100)).toBe(-24);
+    test("상세형 월은 손가락 이동을 page 범위 안에서 그대로 따라간다", () => {
+        expect(getDetailMonthSwipeFollowOffset(10)).toBe(10);
+        expect(getDetailMonthSwipeFollowOffset(-10)).toBe(-10);
+        expect(getDetailMonthSwipeFollowOffset(100)).toBe(100);
+        expect(getDetailMonthSwipeFollowOffset(-100)).toBe(-100);
+        expect(getDetailMonthSwipeFollowOffset(400)).toBe(320);
+        expect(getDetailMonthSwipeFollowOffset(-400)).toBe(-320);
         expect(getDetailMonthSwipeFollowOffset(100, false, 12)).toBe(12);
     });
 
@@ -187,12 +190,11 @@ describe("calendar depth motion", () => {
         expect(getDetailMonthSwipeFollowOffset(20, false, -1)).toBe(0);
     });
 
-    test("follow opacity는 이동량에 비례하되 8% 이상 흐려지지 않는다", () => {
+    test("page swipe 중에는 달력을 흐리게 만들지 않는다", () => {
         expect(getDetailMonthSwipeFollowOpacity(0)).toBe(1);
-        expect(getDetailMonthSwipeFollowOpacity(12)).toBeCloseTo(0.96);
-        expect(getDetailMonthSwipeFollowOpacity(-12)).toBeCloseTo(0.96);
-        expect(getDetailMonthSwipeFollowOpacity(24)).toBeCloseTo(0.92);
-        expect(getDetailMonthSwipeFollowOpacity(240)).toBeCloseTo(0.92);
+        expect(getDetailMonthSwipeFollowOpacity(12)).toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(-12)).toBe(1);
+        expect(getDetailMonthSwipeFollowOpacity(240)).toBe(1);
     });
 
     test("비정상 opacity 입력과 움직임 없는 travel은 불투명하게 유지한다", () => {

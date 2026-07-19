@@ -4,27 +4,35 @@ import React, {
     useLayoutEffect,
     useMemo,
     useRef,
+    useState,
 } from "react";
 import {
     Animated,
     Easing,
     FlatList,
+    type GestureResponderEvent,
     type NativeScrollEvent,
     type NativeSyntheticEvent,
+    PanResponder,
+    type PanResponderGestureState,
     Pressable,
     StyleSheet,
     Text,
+    useWindowDimensions,
     View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import {
-    GestureHandlerRootView,
-    PanGestureHandler,
-    State,
-    type PanGestureHandlerStateChangeEvent,
-} from "react-native-gesture-handler";
 import { Calendar, DateData } from "react-native-calendars";
-import type { SharedValue } from "react-native-reanimated";
+import Reanimated, {
+    cancelAnimation as cancelReanimatedAnimation,
+    Easing as ReanimatedEasing,
+    runOnJS,
+    type SharedValue,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
+} from "react-native-reanimated";
 import type { ScheduleItem } from "../../types";
 import { useTheme } from "../../../theme/ThemeContext";
 import { enumerateDaysBetween } from "../../../../../lib/util/data";
@@ -36,6 +44,7 @@ import {
     getDetailMonthSwipeFollowOpacity,
     getDetailMonthSwipeGestureDirection,
     getDetailMonthSwipeOffsets,
+    shouldClaimDetailMonthSwipeGesture,
     type DetailMonthSwipeDirection,
 } from "../../calendarMotion";
 import { shiftCalendarMonth } from "../../calendarNavigation";
@@ -106,7 +115,8 @@ const DETAIL_MONTH_SWIPE_QUEUE_LIMIT = 6;
 type DetailMonthAnimationPhase = "idle" | "exit" | "awaitingCommit" | "enter";
 
 type DetailMonthAnimationOptions = {
-    preserveGestureOffset?: boolean;
+    gestureOffset?: number;
+    gestureVelocityX?: number;
     targetDay?: string;
 };
 
@@ -346,6 +356,9 @@ export default function ScheduleCalendar({
     const initialDate = selectedDay.startsWith(`${visibleMonth}-`)
         ? selectedDay
         : `${visibleMonth}-01`;
+    const [detailMonthPagerAnchorDay, setDetailMonthPagerAnchorDay] = useState(
+        initialDate
+    );
     const stackListRef = useRef<FlatList<StackMonth>>(null);
     const handledStackScrollRequestRef = useRef(scrollRequest);
     const internallyReportedStackMonthRef = useRef<string | null>(null);
@@ -383,9 +396,17 @@ export default function ScheduleCalendar({
         ? null
         : `${stackListBaseKey}-${stackListAnchorKey}`;
     const activeStackMonthRef = useRef(visibleMonth);
+    const { width: detailMonthPageWidth } = useWindowDimensions();
     const detailMonthTranslateX = useRef(new Animated.Value(0)).current;
     const detailMonthOpacity = useRef(new Animated.Value(1)).current;
-    const detailMonthGestureTranslationX = useRef(new Animated.Value(0)).current;
+    const detailMonthGestureTranslateX = useSharedValue(0);
+    const detailMonthGestureOpacity = useSharedValue(1);
+    const detailMonthGestureAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: detailMonthGestureOpacity.value,
+        transform: [{
+            translateX: -detailMonthPageWidth + detailMonthGestureTranslateX.value,
+        }],
+    }), [detailMonthPageWidth]);
     const detailMonthAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
     const detailMonthAnimationFrameRef = useRef<number | null>(null);
     const detailMonthCommitWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -400,6 +421,7 @@ export default function ScheduleCalendar({
     const detailMonthAnimationEnterDurationRef = useRef(0);
     const detailMonthAnimationStartedAtRef = useRef(0);
     const detailMonthAnimationReduceMotionRef = useRef(reduceMotionEnabled);
+    const detailMonthAnimationUsesPagerRef = useRef(false);
     const detailMonthGestureActiveRef = useRef(false);
     const detailMonthGestureResetAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
     const detailMonthLatestSelectedDayRef = useRef(selectedDay);
@@ -453,6 +475,7 @@ export default function ScheduleCalendar({
         detailMonthAnimationSourceDayRef.current = null;
         detailMonthAnimationExpectedDayRef.current = null;
         detailMonthAnimationActiveRef.current = false;
+        detailMonthAnimationUsesPagerRef.current = false;
         detailMonthAnimationStartedAtRef.current = 0;
         if (clearPending) detailMonthAnimationPendingDeltaRef.current = 0;
 
@@ -461,15 +484,18 @@ export default function ScheduleCalendar({
         if (activeDeadlineWatchdog !== null) clearTimeout(activeDeadlineWatchdog);
         activeAnimation?.stop();
         activeGestureResetAnimation?.stop();
-        detailMonthGestureTranslationX.stopAnimation();
-        detailMonthGestureTranslationX.setValue(0);
+        cancelReanimatedAnimation(detailMonthGestureTranslateX);
+        cancelReanimatedAnimation(detailMonthGestureOpacity);
+        detailMonthGestureTranslateX.value = 0;
+        detailMonthGestureOpacity.value = 1;
         detailMonthTranslateX.stopAnimation();
         detailMonthOpacity.stopAnimation();
         detailMonthTranslateX.setValue(0);
         detailMonthOpacity.setValue(1);
     }, [
-        detailMonthGestureTranslationX,
         detailMonthOpacity,
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
         detailMonthTranslateX,
     ]);
 
@@ -481,12 +507,25 @@ export default function ScheduleCalendar({
         detailMonthGestureActiveRef.current = false;
         detailMonthGestureResetAnimationRef.current?.stop();
         detailMonthGestureResetAnimationRef.current = null;
+        cancelReanimatedAnimation(detailMonthGestureTranslateX);
+        cancelReanimatedAnimation(detailMonthGestureOpacity);
 
         if (detailMonthLatestReduceMotionRef.current) {
+            detailMonthGestureTranslateX.value = 0;
+            detailMonthGestureOpacity.value = 1;
             detailMonthTranslateX.setValue(0);
             detailMonthOpacity.setValue(1);
             return;
         }
+
+        detailMonthGestureTranslateX.value = withTiming(0, {
+            duration: DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs,
+            easing: ReanimatedEasing.bezier(...DETAIL_MONTH_SWIPE_MOTION.bezier),
+        });
+        detailMonthGestureOpacity.value = withTiming(1, {
+            duration: DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs,
+            easing: ReanimatedEasing.bezier(...DETAIL_MONTH_SWIPE_MOTION.bezier),
+        });
 
         const resetAnimation = Animated.parallel([
             Animated.timing(detailMonthTranslateX, {
@@ -510,7 +549,12 @@ export default function ScheduleCalendar({
                 detailMonthGestureResetAnimationRef.current = null;
             }
         });
-    }, [detailMonthOpacity, detailMonthTranslateX]);
+    }, [
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
+        detailMonthOpacity,
+        detailMonthTranslateX,
+    ]);
 
     useLayoutEffect(() => {
         if (!onRegisterDetailMonthMotionCancel) return undefined;
@@ -667,6 +711,30 @@ export default function ScheduleCalendar({
         startDetailMonthEnterAnimation,
     ]);
 
+    const commitDetailMonthPagerSwipe = useCallback((
+        generation: number,
+        targetDay: string
+    ) => {
+        if (
+            generation !== detailMonthAnimationGenerationRef.current
+            || detailMonthAnimationPhaseRef.current !== "exit"
+            || !detailMonthAnimationUsesPagerRef.current
+        ) return;
+
+        detailMonthAnimationPhaseRef.current = "awaitingCommit";
+        detailMonthAnimationExpectedDayRef.current = targetDay;
+        detailMonthCommitWatchdogRef.current = setTimeout(() => {
+            detailMonthCommitWatchdogRef.current = null;
+            if (
+                generation !== detailMonthAnimationGenerationRef.current
+                || detailMonthAnimationPhaseRef.current !== "awaitingCommit"
+            ) return;
+            invalidateDetailMonthAnimation(true);
+        }, DETAIL_MONTH_SWIPE_MOTION.commitWatchdogMs);
+        onVisibleMonthChange(targetDay);
+        onSelectDay(targetDay);
+    }, [invalidateDetailMonthAnimation, onSelectDay, onVisibleMonthChange]);
+
     const animateDetailMonthChange = useCallback((
         direction: DetailMonthSwipeDirection,
         options: DetailMonthAnimationOptions = {}
@@ -703,11 +771,14 @@ export default function ScheduleCalendar({
         detailMonthGestureResetAnimationRef.current = null;
         detailMonthAnimationGenerationRef.current = generation;
         detailMonthAnimationActiveRef.current = true;
+        detailMonthAnimationUsesPagerRef.current = false;
         detailMonthAnimationPhaseRef.current = "exit";
         detailMonthAnimationSourceDayRef.current = sourceDay;
         detailMonthAnimationExpectedDayRef.current = null;
         detailMonthAnimationReduceMotionRef.current = reduceMotion;
         detailMonthAnimationStartedAtRef.current = Date.now();
+        const isGestureTransition = options.gestureOffset !== undefined
+            && detailMonthPageWidth > 0;
         const travel = reduceMotion
             ? DETAIL_MONTH_SWIPE_MOTION.reduceMotionTravel
             : DETAIL_MONTH_SWIPE_MOTION.travel;
@@ -719,11 +790,46 @@ export default function ScheduleCalendar({
             : DETAIL_MONTH_SWIPE_MOTION.enterDurationMs;
         const offsets = getDetailMonthSwipeOffsets(normalizedDirection, travel);
 
-        if (!options.preserveGestureOffset || reduceMotion) {
-            detailMonthGestureTranslationX.setValue(0);
-            detailMonthTranslateX.setValue(0);
-            detailMonthOpacity.setValue(1);
+        if (isGestureTransition && !reduceMotion) {
+            detailMonthAnimationUsesPagerRef.current = true;
+            detailMonthDeadlineWatchdogRef.current = setTimeout(() => {
+                detailMonthDeadlineWatchdogRef.current = null;
+                if (generation !== detailMonthAnimationGenerationRef.current) return;
+                invalidateDetailMonthAnimation(true);
+            }, CALENDAR_INTERACTION_BUDGET_MS + 540);
+            cancelReanimatedAnimation(detailMonthGestureTranslateX);
+            cancelReanimatedAnimation(detailMonthGestureOpacity);
+            detailMonthGestureOpacity.value = 1;
+            const rawReleaseVelocity = (options.gestureVelocityX ?? 0) * 1000;
+            const releaseVelocity = Math.sign(rawReleaseVelocity)
+                === -normalizedDirection
+                ? rawReleaseVelocity
+                : 0;
+            detailMonthGestureTranslateX.value = withSpring(
+                -normalizedDirection * detailMonthPageWidth,
+                {
+                    damping: 30,
+                    stiffness: 280,
+                    mass: 0.9,
+                    velocity: releaseVelocity,
+                    overshootClamping: true,
+                    energyThreshold: 0.01,
+                },
+                (finished) => {
+                    if (finished) {
+                        runOnJS(commitDetailMonthPagerSwipe)(generation, targetDay);
+                    }
+                }
+            );
+            return;
         }
+
+        detailMonthTranslateX.setValue(0);
+        detailMonthOpacity.setValue(1);
+        cancelReanimatedAnimation(detailMonthGestureTranslateX);
+        cancelReanimatedAnimation(detailMonthGestureOpacity);
+        detailMonthGestureTranslateX.value = 0;
+        detailMonthGestureOpacity.value = 1;
         detailMonthDeadlineWatchdogRef.current = setTimeout(() => {
             detailMonthDeadlineWatchdogRef.current = null;
             if (generation !== detailMonthAnimationGenerationRef.current) return;
@@ -786,8 +892,11 @@ export default function ScheduleCalendar({
         });
     }, [
         detailMonthOpacity,
-        detailMonthGestureTranslationX,
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
         detailMonthTranslateX,
+        detailMonthPageWidth,
+        commitDetailMonthPagerSwipe,
         invalidateDetailMonthAnimation,
         onSelectDay,
         onVisibleMonthChange,
@@ -803,101 +912,88 @@ export default function ScheduleCalendar({
         return () => onRegisterDetailMonthMotionShift(null);
     }, [animateDetailMonthChange, onRegisterDetailMonthMotionShift]);
 
-    const detailMonthGestureEvent = useMemo(() => Animated.event(
-        [{ nativeEvent: { translationX: detailMonthGestureTranslationX } }],
-        { useNativeDriver: true }
-    ), [detailMonthGestureTranslationX]);
-
-    const transferDetailMonthGestureOffset = useCallback((translationX: number) => {
+    const applyDetailMonthGestureOffset = useCallback((translationX: number) => {
         const offset = getDetailMonthSwipeFollowOffset(
             translationX,
             detailMonthLatestReduceMotionRef.current
         );
-        detailMonthTranslateX.setValue(offset);
-        detailMonthOpacity.setValue(getDetailMonthSwipeFollowOpacity(offset));
-        detailMonthGestureTranslationX.setValue(0);
+        detailMonthGestureTranslateX.value = offset;
+        detailMonthGestureOpacity.value = getDetailMonthSwipeFollowOpacity(
+            offset,
+            DETAIL_MONTH_SWIPE_GESTURE.maxFollowTravel
+        );
+        return offset;
     }, [
-        detailMonthGestureTranslationX,
-        detailMonthOpacity,
-        detailMonthTranslateX,
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
     ]);
 
-    const handleDetailMonthGestureStateChange = useCallback((
-        event: PanGestureHandlerStateChangeEvent
-    ) => {
-        const { state, oldState, translationX, velocityX } = event.nativeEvent;
+    const detailMonthPanResponder = useMemo(() => {
+        const shouldClaimGesture = (
+            event: GestureResponderEvent,
+            gestureState: PanResponderGestureState
+        ) => {
+            const touchCount = event.nativeEvent.touches?.length ?? 1;
+            return touchCount === 1
+                && detailMonthLatestViewModeRef.current === "detail"
+                && !detailMonthLatestTransitionActiveRef.current
+                && !detailMonthAnimationActiveRef.current
+                && !todayFocusTargetRef.current
+                && shouldClaimDetailMonthSwipeGesture(
+                    gestureState.dx,
+                    gestureState.dy
+                );
+        };
 
-        if (state === State.BEGAN) {
-            detailMonthGestureResetAnimationRef.current?.stop();
-            detailMonthGestureResetAnimationRef.current = null;
-            detailMonthGestureActiveRef.current = true;
-            detailMonthTranslateX.stopAnimation();
-            detailMonthOpacity.stopAnimation();
-            return;
-        }
+        return PanResponder.create({
+            onStartShouldSetPanResponder: () => false,
+            onStartShouldSetPanResponderCapture: () => false,
+            onMoveShouldSetPanResponder: shouldClaimGesture,
+            onMoveShouldSetPanResponderCapture: shouldClaimGesture,
+            onPanResponderGrant: () => {
+                detailMonthGestureResetAnimationRef.current?.stop();
+                detailMonthGestureResetAnimationRef.current = null;
+                cancelReanimatedAnimation(detailMonthGestureTranslateX);
+                cancelReanimatedAnimation(detailMonthGestureOpacity);
+                detailMonthGestureActiveRef.current = true;
+                detailMonthTranslateX.stopAnimation();
+                detailMonthOpacity.stopAnimation();
+            },
+            onPanResponderMove: (_event, gestureState) => {
+                if (!detailMonthGestureActiveRef.current) return;
+                applyDetailMonthGestureOffset(gestureState.dx);
+            },
+            onPanResponderRelease: (_event, gestureState) => {
+                if (!detailMonthGestureActiveRef.current) return;
 
-        if (oldState === State.ACTIVE && state === State.END) {
-            if (!detailMonthGestureActiveRef.current) return;
+                const gestureOffset = applyDetailMonthGestureOffset(gestureState.dx);
+                const direction = getDetailMonthSwipeGestureDirection(
+                    gestureState.dx,
+                    gestureState.vx
+                );
+                if (!direction) {
+                    resetDetailMonthGesture();
+                    return;
+                }
 
-            transferDetailMonthGestureOffset(translationX);
-            const direction = getDetailMonthSwipeGestureDirection(
-                translationX,
-                velocityX / 1000
-            );
-            if (!direction) {
-                resetDetailMonthGesture();
-                return;
-            }
-
-            animateDetailMonthChange(direction, {
-                preserveGestureOffset: true,
-            });
-            return;
-        }
-
-        if (
-            detailMonthGestureActiveRef.current
-            && (state === State.CANCELLED || state === State.FAILED)
-        ) {
-            transferDetailMonthGestureOffset(translationX);
-            resetDetailMonthGesture();
-        }
+                animateDetailMonthChange(direction, {
+                    gestureOffset,
+                    gestureVelocityX: gestureState.vx,
+                });
+            },
+            onPanResponderTerminate: resetDetailMonthGesture,
+            onPanResponderTerminationRequest: () => false,
+            onShouldBlockNativeResponder: () => true,
+        });
     }, [
+        applyDetailMonthGestureOffset,
         animateDetailMonthChange,
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
         detailMonthOpacity,
         detailMonthTranslateX,
         resetDetailMonthGesture,
-        transferDetailMonthGestureOffset,
     ]);
-
-    const detailMonthGestureLimit = DETAIL_MONTH_SWIPE_MOTION.travel
-        / DETAIL_MONTH_SWIPE_GESTURE.followRatio;
-    const detailMonthGestureFollowX = detailMonthGestureTranslationX.interpolate({
-        inputRange: [-detailMonthGestureLimit, 0, detailMonthGestureLimit],
-        outputRange: [
-            -DETAIL_MONTH_SWIPE_MOTION.travel,
-            0,
-            DETAIL_MONTH_SWIPE_MOTION.travel,
-        ],
-        extrapolate: "clamp",
-    });
-    const detailMonthGestureFollowOpacity = detailMonthGestureTranslationX.interpolate({
-        inputRange: [-detailMonthGestureLimit, 0, detailMonthGestureLimit],
-        outputRange: [
-            1 - DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss,
-            1,
-            1 - DETAIL_MONTH_SWIPE_GESTURE.maxOpacityLoss,
-        ],
-        extrapolate: "clamp",
-    });
-    const detailMonthRenderedTranslateX = Animated.add(
-        detailMonthTranslateX,
-        detailMonthGestureFollowX
-    );
-    const detailMonthRenderedOpacity = Animated.multiply(
-        detailMonthOpacity,
-        detailMonthGestureFollowOpacity
-    );
 
     useLayoutEffect(() => {
         if (!detailMonthAnimationActiveRef.current) return;
@@ -928,11 +1024,24 @@ export default function ScheduleCalendar({
         // enter phase here avoids waiting on react-native-calendars' later
         // onMonthChange effect and keeps the release-to-settle path under 200ms.
         if (phase === "awaitingCommit" && currentAnchor === expectedDay) {
+            if (detailMonthAnimationUsesPagerRef.current) {
+                cancelReanimatedAnimation(detailMonthGestureTranslateX);
+                detailMonthGestureTranslateX.value = 0;
+                detailMonthGestureOpacity.value = 1;
+                setDetailMonthPagerAnchorDay(expectedDay);
+                completeDetailMonthAnimation(
+                    detailMonthAnimationGenerationRef.current
+                );
+                return;
+            }
             startDetailMonthEnterAnimation(
                 detailMonthAnimationGenerationRef.current
             );
         }
     }, [
+        completeDetailMonthAnimation,
+        detailMonthGestureOpacity,
+        detailMonthGestureTranslateX,
         invalidateDetailMonthAnimation,
         reduceMotionEnabled,
         selectedDay,
@@ -941,6 +1050,13 @@ export default function ScheduleCalendar({
         viewMode,
         visibleMonth,
     ]);
+
+    useLayoutEffect(() => {
+        if (detailMonthAnimationUsesPagerRef.current) return;
+        setDetailMonthPagerAnchorDay((current) => (
+            current === initialDate ? current : initialDate
+        ));
+    }, [initialDate]);
 
     useEffect(() => {
         const target = todayFocusTarget;
@@ -1339,6 +1455,11 @@ export default function ScheduleCalendar({
         () => createWeekDays(selectedDay, firstDay),
         [firstDay, selectedDay]
     );
+    const detailMonthPagerDays = useMemo(() => [
+        shiftCalendarMonth(detailMonthPagerAnchorDay, -1),
+        detailMonthPagerAnchorDay,
+        shiftCalendarMonth(detailMonthPagerAnchorDay, 1),
+    ], [detailMonthPagerAnchorDay]);
     const selectedWeekTitle = useMemo(
         () => formatWeekTitle(selectedWeekDays),
         [selectedWeekDays]
@@ -1449,56 +1570,84 @@ export default function ScheduleCalendar({
                 },
             ]}
         >
-            <GestureHandlerRootView style={styles.detailMonthGestureRoot}>
-                <PanGestureHandler
-                    testID="detail-month-swipe-handler"
-                    enabled={
-                        viewMode === "detail"
-                        && !transitionActive
-                        && !todayFocusTarget
-                    }
-                    activeOffsetX={[
-                        -DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
-                        DETAIL_MONTH_SWIPE_GESTURE.activationDistance,
-                    ]}
-                    failOffsetY={[
-                        -DETAIL_MONTH_SWIPE_GESTURE.activationDistance
-                            / DETAIL_MONTH_SWIPE_GESTURE.directionDominance,
-                        DETAIL_MONTH_SWIPE_GESTURE.activationDistance
-                            / DETAIL_MONTH_SWIPE_GESTURE.directionDominance,
-                    ]}
-                    maxPointers={1}
-                    onGestureEvent={detailMonthGestureEvent}
-                    onHandlerStateChange={handleDetailMonthGestureStateChange}
+            <View
+                testID="detail-month-swipe-handler"
+                {...(viewMode === "detail"
+                    ? detailMonthPanResponder.panHandlers
+                    : {})}
+                style={styles.detailMonthPagerViewport}
+            >
+                <Animated.View
+                    style={[styles.detailMonthPagerViewport, {
+                        opacity: detailMonthOpacity,
+                        transform: [{ translateX: detailMonthTranslateX }],
+                    }]}
                 >
-                    <Animated.View
-                        style={{
-                            opacity: detailMonthRenderedOpacity,
-                            transform: [{ translateX: detailMonthRenderedTranslateX }],
-                        }}
-                    >
+                    {viewMode === "detail" ? (
+                        <Reanimated.View
+                            style={[
+                                styles.detailMonthPagerRow,
+                                { width: detailMonthPageWidth * 3 },
+                                detailMonthGestureAnimatedStyle,
+                            ]}
+                        >
+                            {detailMonthPagerDays.map((pageDay, index) => (
+                                <View
+                                    key={`${mode}-${firstDay}-${pageDay.slice(0, 7)}`}
+                                    pointerEvents={index === 1 ? "auto" : "none"}
+                                    accessibilityElementsHidden={index !== 1}
+                                    importantForAccessibility={
+                                        index === 1 ? "auto" : "no-hide-descendants"
+                                    }
+                                    style={[
+                                        styles.detailMonthPagerPage,
+                                        { width: detailMonthPageWidth },
+                                    ]}
+                                >
+                                    <Calendar
+                                        testID={index === 1
+                                            ? "detail-month-current-calendar"
+                                            : undefined}
+                                        initialDate={pageDay}
+                                        firstDay={firstDay}
+                                        enableSwipeMonths={false}
+                                        hideArrows
+                                        hideDayNames
+                                        hideExtraDays={false}
+                                        onPressArrowLeft={index === 1
+                                            ? () => animateDetailMonthChange(-1)
+                                            : () => undefined}
+                                        onPressArrowRight={index === 1
+                                            ? () => animateDetailMonthChange(1)
+                                            : () => undefined}
+                                        onMonthChange={
+                                            index === 1
+                                                ? handleDetailMonthChange
+                                                : undefined
+                                        }
+                                        markedDates={markedDates}
+                                        dayComponent={renderDay}
+                                        renderHeader={() => null}
+                                        style={[
+                                            styles.calendar,
+                                            { backgroundColor: colors.calendarBackground },
+                                        ]}
+                                        theme={calendarTheme}
+                                    />
+                                </View>
+                            ))}
+                        </Reanimated.View>
+                    ) : (
                         <Calendar
                             key={`${mode}-${firstDay}`}
                             initialDate={initialDate}
                             firstDay={firstDay}
-                            enableSwipeMonths={viewMode !== "detail"}
+                            enableSwipeMonths
                             hideArrows
                             hideDayNames
                             hideExtraDays={false}
-                            onPressArrowLeft={(subtractMonth) => {
-                                if (viewMode === "detail") {
-                                    animateDetailMonthChange(-1);
-                                    return;
-                                }
-                                subtractMonth();
-                            }}
-                            onPressArrowRight={(addMonth) => {
-                                if (viewMode === "detail") {
-                                    animateDetailMonthChange(1);
-                                    return;
-                                }
-                                addMonth();
-                            }}
+                            onPressArrowLeft={(subtractMonth) => subtractMonth()}
+                            onPressArrowRight={(addMonth) => addMonth()}
                             onMonthChange={handleDetailMonthChange}
                             markedDates={markedDates}
                             dayComponent={renderDay}
@@ -1509,9 +1658,9 @@ export default function ScheduleCalendar({
                             ]}
                             theme={calendarTheme}
                         />
-                    </Animated.View>
-                </PanGestureHandler>
-            </GestureHandlerRootView>
+                    )}
+                </Animated.View>
+            </View>
         </View>
     );
 }
@@ -1547,12 +1696,19 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12,
         paddingBottom: CALENDAR_CONTENT_BOTTOM_PADDING,
     },
+    detailMonthPagerViewport: {
+        overflow: "hidden",
+        width: "100%",
+    },
+    detailMonthPagerRow: {
+        flexDirection: "row",
+    },
+    detailMonthPagerPage: {
+        flexShrink: 0,
+    },
     monthCalendarContainer: {
         flexShrink: 0,
         overflow: "hidden",
-    },
-    detailMonthGestureRoot: {
-        width: "100%",
     },
     weekdayHeader: {
         height: WEEKDAY_HEADER_HEIGHT,

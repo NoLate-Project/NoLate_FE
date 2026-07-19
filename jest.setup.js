@@ -22,6 +22,7 @@ jest.mock('react-native-gesture-handler', () => {
 });
 
 jest.mock('react-native-reanimated', () => {
+  const React = require('react');
   const { View } = require('react-native');
   const identity = (value) => value;
   const easingIdentity = (value) => value;
@@ -69,10 +70,16 @@ jest.mock('react-native-reanimated', () => {
     runOnJS: identity,
     useAnimatedStyle: (factory) => factory(),
     useReducedMotion: jest.fn(() => false),
-    useSharedValue: (initialValue) => ({ value: initialValue }),
+    useSharedValue: (initialValue) => React.useRef({ value: initialValue }).current,
     withDelay: (_delay, animation) => animation,
     withRepeat: identity,
-    withSpring: identity,
-    withTiming: identity,
+    withSpring: (value, _config, callback) => {
+      callback?.(true);
+      return value;
+    },
+    withTiming: (value, _config, callback) => {
+      callback?.(true);
+      return value;
+    },
   };
 });

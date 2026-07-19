@@ -42,9 +42,10 @@ export const DETAIL_MONTH_SWIPE_GESTURE = Object.freeze({
     distanceThreshold: 36,
     velocityThreshold: 0.35,
     velocityProjection: 80,
-    followRatio: 0.55,
-    cancelDurationMs: 80,
-    maxOpacityLoss: 0.08,
+    followRatio: 1,
+    maxFollowTravel: 320,
+    cancelDurationMs: 110,
+    maxOpacityLoss: 0,
 });
 
 export function shouldClaimDetailMonthSwipeGesture(
@@ -87,7 +88,7 @@ export function getDetailMonthSwipeGestureDirection(
 export function getDetailMonthSwipeFollowOffset(
     dx: number,
     reduceMotion = false,
-    travel: number = DETAIL_MONTH_SWIPE_MOTION.travel
+    travel: number = DETAIL_MONTH_SWIPE_GESTURE.maxFollowTravel
 ): number {
     if (reduceMotion || !Number.isFinite(dx) || !Number.isFinite(travel)) {
         return 0;
