@@ -1,11 +1,15 @@
 import {
+    clearFavoriteDeparturePlaces,
     getFavoriteDeparturePlaces,
+    saveFavoriteDepartureFavorite,
     saveFavoriteDeparturePlace,
 } from "../src/modules/schedule/favoriteDeparture";
 import * as SecureStorage from "../src/modules/storage/secureStorage";
 import {
+    clearDefaultOriginFromApi,
     getDefaultOriginFromApi,
     saveDefaultOriginToApi,
+    setFavoritePlaceAsDefaultOriginToApi,
 } from "../src/api/favoritePlaces";
 
 jest.mock("../src/modules/storage/secureStorage", () => ({
@@ -18,6 +22,7 @@ jest.mock("../src/api/favoritePlaces", () => ({
     clearDefaultOriginFromApi: jest.fn(),
     getDefaultOriginFromApi: jest.fn(),
     saveDefaultOriginToApi: jest.fn(),
+    setFavoritePlaceAsDefaultOriginToApi: jest.fn(),
 }));
 
 jest.mock("../src/api/recentRoutePlaces", () => ({
@@ -29,8 +34,11 @@ jest.mock("../src/api/recentRoutePlaces", () => ({
 const FAVORITE_DEPARTURE_PLACES_KEY = "nolate_favorite_departure_places_v1";
 const mockedGetItem = jest.mocked(SecureStorage.getItemAsync);
 const mockedSetItem = jest.mocked(SecureStorage.setItemAsync);
+const mockedDeleteItem = jest.mocked(SecureStorage.deleteItemAsync);
+const mockedClearDefaultOrigin = jest.mocked(clearDefaultOriginFromApi);
 const mockedGetDefaultOrigin = jest.mocked(getDefaultOriginFromApi);
 const mockedSaveDefaultOrigin = jest.mocked(saveDefaultOriginToApi);
+const mockedSetFavoriteAsDefaultOrigin = jest.mocked(setFavoritePlaceAsDefaultOriginToApi);
 
 describe("favorite departure synchronization", () => {
     const storage = new Map<string, string>();
@@ -41,6 +49,9 @@ describe("favorite departure synchronization", () => {
         mockedGetItem.mockImplementation(async (key) => storage.get(key) ?? null);
         mockedSetItem.mockImplementation(async (key, value) => {
             storage.set(key, value);
+        });
+        mockedDeleteItem.mockImplementation(async (key) => {
+            storage.delete(key);
         });
     });
 
@@ -91,5 +102,68 @@ describe("favorite departure synchronization", () => {
         await expect(saveFavoriteDeparturePlace(selected)).rejects.toThrow("offline");
 
         expect(JSON.parse(storage.get(FAVORITE_DEPARTURE_PLACES_KEY) ?? "[]")[0]).toMatchObject(selected);
+    });
+
+    test("marks an existing favorite as default without creating a duplicate record", async () => {
+        const selected = {
+            id: "27",
+            name: "집",
+            address: "서울 영등포구",
+            lat: 37.49,
+            lng: 126.9,
+        };
+        mockedSetFavoriteAsDefaultOrigin.mockResolvedValue({
+            ...selected,
+            categoryId: "home",
+            defaultOrigin: true,
+        });
+
+        await expect(saveFavoriteDepartureFavorite(selected)).resolves.toMatchObject({
+            id: "27",
+            categoryId: "home",
+            defaultOrigin: true,
+        });
+
+        expect(mockedSetFavoriteAsDefaultOrigin).toHaveBeenCalledWith("27");
+        expect(mockedSaveDefaultOrigin).not.toHaveBeenCalled();
+        expect(JSON.parse(storage.get(FAVORITE_DEPARTURE_PLACES_KEY) ?? "[]")[0]).toMatchObject({
+            id: "27",
+            name: "집",
+        });
+    });
+
+    test("a generic place ID is not mistaken for a favorite-place ID", async () => {
+        const selected = {
+            id: "recent-route-27",
+            name: "회사",
+            lat: 37.5,
+            lng: 127.03,
+        };
+        mockedSaveDefaultOrigin.mockResolvedValue({
+            ...selected,
+            id: "favorite-31",
+            defaultOrigin: true,
+        });
+
+        await saveFavoriteDeparturePlace(selected);
+
+        expect(mockedSaveDefaultOrigin).toHaveBeenCalledWith(expect.objectContaining({
+            id: "recent-route-27",
+            name: "회사",
+        }));
+        expect(mockedSetFavoriteAsDefaultOrigin).not.toHaveBeenCalled();
+    });
+
+    test("clears local default candidates before clearing the account default", async () => {
+        storage.set(FAVORITE_DEPARTURE_PLACES_KEY, JSON.stringify([
+            { name: "예전 집", lat: 37.1, lng: 127.1 },
+            { name: "예전 회사", lat: 37.2, lng: 127.2 },
+        ]));
+        mockedClearDefaultOrigin.mockResolvedValue();
+
+        await clearFavoriteDeparturePlaces();
+
+        expect(JSON.parse(storage.get(FAVORITE_DEPARTURE_PLACES_KEY) ?? "null")).toEqual([]);
+        expect(mockedClearDefaultOrigin).toHaveBeenCalledTimes(1);
     });
 });

@@ -10,6 +10,8 @@ import {
     clearDefaultOriginFromApi,
     getDefaultOriginFromApi,
     saveDefaultOriginToApi,
+    setFavoritePlaceAsDefaultOriginToApi,
+    type FavoritePlace,
 } from "../../api/favoritePlaces";
 import type { Place } from "./types";
 
@@ -169,7 +171,10 @@ export async function getFavoriteDeparturePlace(): Promise<Place | null> {
     return places[0] ?? null;
 }
 
-export async function saveFavoriteDeparturePlace(place: Place): Promise<Place | null> {
+async function persistFavoriteDeparturePlace(
+    place: Place,
+    favoritePlaceId?: string
+): Promise<Place | null> {
     const normalized = normalizePlace(place);
     if (!normalized) {
         return null;
@@ -180,9 +185,37 @@ export async function saveFavoriteDeparturePlace(place: Place): Promise<Place | 
 
     // 로컬 캐시는 즉시 갱신하되 호출자에게는 원격 저장 실패를 전달한다. 큐레이션은
     // 현재 세션에서 계속 진행할 수 있고, UI는 계정 동기화 실패를 별도로 안내할 수 있다.
-    const saved = await saveDefaultOriginToApi(normalized);
+    const saved = favoritePlaceId
+        ? await setFavoritePlaceAsDefaultOriginToApi(favoritePlaceId)
+        : await saveDefaultOriginToApi(normalized);
     await cacheDefaultOrigin(saved, current);
     return saved;
+}
+
+export async function saveFavoriteDeparturePlace(place: Place): Promise<Place | null> {
+    return persistFavoriteDeparturePlace(place);
+}
+
+/** 기존 즐겨찾기의 카테고리와 정렬을 보존하면서 기본주소로 전환한다. */
+export async function saveFavoriteDepartureFavorite(
+    favorite: FavoritePlace
+): Promise<Place | null> {
+    if (!favorite.id) {
+        throw new Error("즐겨찾기 ID가 없어 기본주소로 전환할 수 없습니다.");
+    }
+    return persistFavoriteDeparturePlace(favorite, favorite.id);
+}
+
+/**
+ * 계정의 기본 출발지를 명시적으로 해제한다.
+ *
+ * 과거 버전의 로컬 후보가 남아 있으면 다음 조회에서 서버 기본값으로 다시 승격될 수 있으므로,
+ * 서버 플래그뿐 아니라 현재/레거시 SecureStore 값도 함께 비운다.
+ */
+export async function clearFavoriteDeparturePlaces(): Promise<void> {
+    await setFavoriteDeparturePlacesLocal([]);
+    await SecureStore.deleteItemAsync(FAVORITE_DEPARTURE_PLACE_KEY);
+    await clearDefaultOriginFromApi();
 }
 
 export async function removeFavoriteDeparturePlace(place: Place): Promise<Place[]> {

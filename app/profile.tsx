@@ -487,6 +487,10 @@ export default function ProfileScreen() {
         });
     }, [router]);
 
+    const openPlacesSettings = useCallback(() => {
+        router.push("/settings/places");
+    }, [router]);
+
     const openPrivacyPolicy = useCallback(() => {
         router.push("/legal/privacy-policy");
     }, [router]);
@@ -1084,6 +1088,40 @@ export default function ProfileScreen() {
                     <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>앱 설정</Text>
                     <View style={styles.settingsList}>
                         <CalendarGlassSurface
+                            interactive
+                            variant="card"
+                            tone="solidCard"
+                            style={[styles.legalCard, { borderColor: colors.border }]}
+                        >
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="내 장소 관리"
+                                accessibilityHint="기본주소와 즐겨찾기 카테고리를 관리합니다"
+                                onPress={openPlacesSettings}
+                                style={({ pressed }) => [
+                                    styles.legalButton,
+                                    { opacity: pressed ? 0.62 : 1 },
+                                ]}
+                            >
+                                <View style={styles.appSettingRowContent}>
+                                    <View style={[styles.appSettingIcon, { backgroundColor: "rgba(37,99,235,0.12)" }]}>
+                                        <Ionicons name="location-outline" size={20} color="#2563EB" />
+                                    </View>
+                                    <View style={styles.settingTextWrap}>
+                                        <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>내 장소</Text>
+                                        <Text style={[styles.settingHint, { color: colors.textSecondary }]}>기본주소와 즐겨찾기 카테고리 관리</Text>
+                                    </View>
+                                </View>
+                                <View
+                                    accessibilityElementsHidden
+                                    importantForAccessibility="no-hide-descendants"
+                                >
+                                    <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
+                                </View>
+                            </Pressable>
+                        </CalendarGlassSurface>
+
+                        <CalendarGlassSurface
                             variant="card"
                             tone="solidCard"
                             style={[styles.settingsCard, { borderColor: colors.border }]}
@@ -1538,6 +1576,20 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 14,
+    },
+    appSettingRowContent: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    appSettingIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
     },
     calendarConnectionCard: {
         borderWidth: 1,

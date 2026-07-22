@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut } from "./api";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { Place } from "../modules/schedule/types";
 
@@ -69,6 +69,43 @@ type CreateFavoritePlaceCategoryPayload = {
     iconKey?: string;
 };
 
+export type FavoritePlaceCategoryUpdates = {
+    name?: string;
+    color?: string;
+    iconKey?: string;
+    sortOrder?: number;
+};
+
+export type FavoritePlaceUpdates = {
+    categoryId?: string | null;
+    clearCategory?: boolean;
+    label?: string;
+    placeName?: string;
+    address?: string;
+    lat?: number;
+    lng?: number;
+    provider?: string;
+    providerPlaceId?: string;
+    defaultOrigin?: boolean;
+    sortOrder?: number;
+};
+
+export type FavoritePlaceReorderItem = {
+    id: string;
+    sortOrder: number;
+};
+
+type UpdateFavoritePlacePayload = Omit<FavoritePlaceUpdates, "categoryId"> & {
+    categoryId?: number;
+};
+
+type FavoritePlaceReorderPayload = {
+    items: Array<{
+        id: number;
+        sortOrder: number;
+    }>;
+};
+
 type SaveFavoritePlaceOptions = {
     categoryId?: string;
 };
@@ -136,6 +173,44 @@ export async function createFavoritePlaceCategoryToApi(
     return normalizeFavoritePlaceCategory(unwrapApiResponse(response));
 }
 
+export async function updateFavoritePlaceCategoryToApi(
+    categoryId: string,
+    updates: FavoritePlaceCategoryUpdates
+): Promise<FavoritePlaceCategory> {
+    const payload: FavoritePlaceCategoryUpdates = {
+        ...(updates.name !== undefined ? { name: updates.name.trim() } : {}),
+        ...(updates.color !== undefined ? { color: updates.color.trim() } : {}),
+        ...(updates.iconKey !== undefined ? { iconKey: updates.iconKey.trim() } : {}),
+        ...(updates.sortOrder !== undefined ? { sortOrder: updates.sortOrder } : {}),
+    };
+    const response = await apiPatch<ApiEnvelope<FavoritePlaceCategoryDto>, FavoritePlaceCategoryUpdates>(
+        `/api/favorite-place-categories/${categoryId}`,
+        payload
+    );
+    return normalizeFavoritePlaceCategory(unwrapApiResponse(response));
+}
+
+export async function deleteFavoritePlaceCategoryFromApi(categoryId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(`/api/favorite-place-categories/${categoryId}`);
+    assertApiSuccess(response);
+}
+
+export async function reorderFavoritePlaceCategoriesToApi(
+    items: FavoritePlaceReorderItem[]
+): Promise<FavoritePlaceCategory[]> {
+    const payload: FavoritePlaceReorderPayload = {
+        items: items.map((item) => ({
+            id: Number(item.id),
+            sortOrder: item.sortOrder,
+        })),
+    };
+    const response = await apiPatch<ApiEnvelope<FavoritePlaceCategoryDto[]>, FavoritePlaceReorderPayload>(
+        "/api/favorite-place-categories/reorder",
+        payload
+    );
+    return unwrapApiResponse(response).map(normalizeFavoritePlaceCategory);
+}
+
 export async function saveFavoritePlaceToApi(
     place: Place,
     options: SaveFavoritePlaceOptions = {}
@@ -161,6 +236,62 @@ export async function saveFavoritePlaceToApi(
         payload
     );
     return normalizeFavoritePlace(unwrapApiResponse(response));
+}
+
+export async function updateFavoritePlaceToApi(
+    placeId: string,
+    updates: FavoritePlaceUpdates
+): Promise<FavoritePlace> {
+    const numericCategoryId = updates.categoryId === undefined || updates.categoryId === null
+        ? undefined
+        : Number(updates.categoryId);
+    const payload: UpdateFavoritePlacePayload = {
+        ...(typeof numericCategoryId === "number" && Number.isFinite(numericCategoryId)
+            ? { categoryId: numericCategoryId }
+            : {}),
+        ...(updates.categoryId === null ? { clearCategory: true } : {}),
+        ...(updates.clearCategory !== undefined ? { clearCategory: updates.clearCategory } : {}),
+        ...(updates.label !== undefined ? { label: updates.label.trim() } : {}),
+        ...(updates.placeName !== undefined ? { placeName: updates.placeName.trim() } : {}),
+        ...(updates.address !== undefined ? { address: updates.address.trim() } : {}),
+        ...(updates.lat !== undefined ? { lat: updates.lat } : {}),
+        ...(updates.lng !== undefined ? { lng: updates.lng } : {}),
+        ...(updates.provider !== undefined ? { provider: updates.provider.trim() } : {}),
+        ...(updates.providerPlaceId !== undefined ? { providerPlaceId: updates.providerPlaceId.trim() } : {}),
+        ...(updates.defaultOrigin !== undefined ? { defaultOrigin: updates.defaultOrigin } : {}),
+        ...(updates.sortOrder !== undefined ? { sortOrder: updates.sortOrder } : {}),
+    };
+    const response = await apiPatch<ApiEnvelope<FavoritePlaceDto>, UpdateFavoritePlacePayload>(
+        `/api/favorite-places/${placeId}`,
+        payload
+    );
+    return normalizeFavoritePlace(unwrapApiResponse(response));
+}
+
+export async function deleteFavoritePlaceFromApi(placeId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>(`/api/favorite-places/${placeId}`);
+    assertApiSuccess(response);
+}
+
+export async function setFavoritePlaceAsDefaultOriginToApi(placeId: string): Promise<FavoritePlace> {
+    const response = await apiPatch<ApiEnvelope<FavoritePlaceDto>>(
+        `/api/favorite-places/${placeId}/default-origin`
+    );
+    return normalizeFavoritePlace(unwrapApiResponse(response));
+}
+
+export async function reorderFavoritePlacesToApi(items: FavoritePlaceReorderItem[]): Promise<FavoritePlace[]> {
+    const payload: FavoritePlaceReorderPayload = {
+        items: items.map((item) => ({
+            id: Number(item.id),
+            sortOrder: item.sortOrder,
+        })),
+    };
+    const response = await apiPatch<ApiEnvelope<FavoritePlaceDto[]>, FavoritePlaceReorderPayload>(
+        "/api/favorite-places/reorder",
+        payload
+    );
+    return unwrapApiResponse(response).map(normalizeFavoritePlace);
 }
 
 export async function saveDefaultOriginToApi(place: Place): Promise<FavoritePlace> {
