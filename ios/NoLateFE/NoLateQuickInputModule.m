@@ -650,6 +650,20 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           return;
         }
 
+        if (@available(iOS 13.0, *)) {
+          if (!self->_speechRecognizer.supportsOnDeviceRecognition) {
+            reject(@"quick_input_on_device_speech_unavailable",
+                   @"이 기기에는 한국어 온디바이스 음성 인식이 준비되지 않았습니다. iOS 설정과 언어 다운로드 상태를 확인해주세요.",
+                   nil);
+            return;
+          }
+        } else {
+          reject(@"quick_input_on_device_speech_unavailable",
+                 @"이 iOS 버전에서는 온디바이스 음성 인식을 사용할 수 없습니다.",
+                 nil);
+          return;
+        }
+
         SFSpeechURLRecognitionRequest *request = [[SFSpeechURLRecognitionRequest alloc] initWithURL:fileURL];
         request.shouldReportPartialResults = NO;
         request.taskHint = SFSpeechRecognitionTaskHintDictation;
@@ -667,10 +681,9 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           request.addsPunctuation = YES;
         }
         if (@available(iOS 13.0, *)) {
-          // supportsOnDeviceRecognition이 YES여도 해당 언어 모델이 아직 내려받아지지 않은
-          // 시뮬레이터/기기에서는 강제 온디바이스 요청이 kLSRErrorDomain 102로 실패할 수 있다.
-          // 강제 플래그를 끄면 Speech가 설치 상태와 네트워크를 고려해 사용 가능한 경로를 고른다.
-          request.requiresOnDeviceRecognition = NO;
+          // 원본 음성을 외부 음성 인식 서버로 보내지 않는 제품 경계를 유지한다.
+          // 모델이 준비되지 않은 기기는 위에서 명시적으로 안내하고 네트워크 경로로 폴백하지 않는다.
+          request.requiresOnDeviceRecognition = YES;
           RCTLogInfo(@"[NoLateQuickInput] Speech recognizer ready. onDeviceSupported=%@ locale=%@",
                      self->_speechRecognizer.supportsOnDeviceRecognition ? @"YES" : @"NO",
                      identifier);
@@ -726,7 +739,7 @@ RCT_REMAP_METHOD(transcribeAudioFile,
         }];
         self->_speechTask = activeTask;
 
-        // 네트워크 기반 Speech 서비스가 응답하지 않거나 final result를 보내지 않는 경우에도
+        // 온디바이스 Speech가 final result를 보내지 않는 경우에도
         // 빠른 일정 화면이 분석 중 상태에 계속 머물지 않도록 명시적인 상한을 둔다.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -740,7 +753,7 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           strongSelf->_speechTask = nil;
           strongSelf->_speechRecognizer = nil;
           reject(@"quick_input_transcription_timeout",
-                 @"음성 인식 시간이 초과됐습니다. 네트워크와 마이크 입력을 확인해주세요.",
+                 @"음성 인식 시간이 초과됐습니다. 마이크 입력과 기기 음성 인식 설정을 확인해주세요.",
                  nil);
         });
       });

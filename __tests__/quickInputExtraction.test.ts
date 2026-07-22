@@ -61,6 +61,21 @@ describe("quick schedule media input extraction", () => {
         expect(recognizeTextFromImage).toHaveBeenCalledWith("file:///tmp/schedule.png");
     });
 
+    test("사용자가 확인한 사진 OCR 문장은 재인식 없이 그대로 반환한다", async () => {
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative();
+
+        await expect(resolveQuickScheduleParseInput("사진으로 입력한 일정", {
+            inputMode: "photo",
+            photoUri: "file:///tmp/schedule.png",
+            photoTranscript: "  7월 24일 오후 두 시  서울역 회의  ",
+            recognitionConfidence: 0.61,
+        })).resolves.toEqual({
+            text: "7월 24일 오후 두 시 서울역 회의",
+            inputType: "IMAGE_OCR",
+            recognitionConfidence: 0.61,
+        });
+    });
+
     test("음성 입력은 iOS 전사 결과를 VOICE_TRANSCRIPT 타입으로 반환한다", async () => {
         const transcribeAudioFile = jest.fn().mockResolvedValue({
             text: "  내일 오후 세 시 강남역 미팅  ",
@@ -84,6 +99,21 @@ describe("quick schedule media input extraction", () => {
             "ko-KR",
             expect.arrayContaining(["내일", "오후", "강남역", "미팅"])
         );
+    });
+
+    test("실시간 받아쓰기 문장은 파일 재전사 없이 그대로 반환한다", async () => {
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative();
+
+        await expect(resolveQuickScheduleParseInput("음성으로 입력한 일정", {
+            inputMode: "voice",
+            voiceTranscript: "  내일 오후 세 시  강남역 미팅  ",
+            voiceDurationMillis: 2400,
+            recognitionConfidence: 1.4,
+        })).resolves.toEqual({
+            text: "내일 오후 세 시 강남역 미팅",
+            inputType: "VOICE_TRANSCRIPT",
+            recognitionConfidence: 1,
+        });
     });
 
     test("네이티브 신뢰도는 안전한 0~1 범위로 제한한다", async () => {

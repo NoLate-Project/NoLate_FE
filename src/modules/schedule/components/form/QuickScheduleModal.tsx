@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
+    ActivityIndicator,
     Alert,
     AppState,
     ActionSheetIOS,
@@ -21,6 +22,7 @@ import {
 } from "react-native";
 import DateTimePicker, { DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { Audio } from "expo-av";
+import * as ImagePicker from "expo-image-picker";
 import type { ImagePickerAsset } from "expo-image-picker";
 import { usePathname, useRouter } from "expo-router";
 import Reanimated, {
@@ -44,8 +46,27 @@ import {
     lerpAddHandoffValue,
     resolveAddHandoffCloseDuration,
 } from "../../addHandoffMotion";
-import type { QuickScheduleMediaInput } from "../../quickInputExtraction";
+import {
+    buildScheduleSpeechContext,
+    recognizeQuickSchedulePhoto,
+    type QuickScheduleMediaInput,
+} from "../../quickInputExtraction";
 import { finalizeQuickScheduleRecording } from "../../quickInputRecording";
+import {
+    canScanDocuments,
+    discardDocumentScanPages,
+    scanDocuments,
+} from "../../documentScanner";
+import {
+    addLiveSpeechLevelListener,
+    addLiveSpeechStateListener,
+    addLiveSpeechTranscriptListener,
+    cancelLiveSpeechRecognition,
+    createLiveSpeechSessionId,
+    isLiveSpeechRecognitionAvailable,
+    startLiveSpeechRecognition,
+    stopLiveSpeechRecognition,
+} from "../../liveSpeechRecognition";
 import type { ScheduleCategory, ScheduleItem, ScheduleParseResult } from "../../types";
 import { canWriteScheduleCategory } from "../../categoryPermissions";
 import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
@@ -100,6 +121,14 @@ type TabLayout = {
     width: number;
 };
 const QUICK_TEXT_LIMIT = 300;
+
+function limitRecognizedText(value: string) {
+    return {
+        text: value.slice(0, QUICK_TEXT_LIMIT),
+        truncated: value.length > QUICK_TEXT_LIMIT,
+    };
+}
+
 const BLUE = "#246BFE";
 const OPEN_START_PROGRESS = 0;
 const PREWARM_PRESENTATION_OPACITY = 0.001;
@@ -124,9 +153,10 @@ const CARD_SIZE_SPRING = {
 };
 const CARD_HEIGHT_BY_MODE: Record<InputMode, number> = {
     text: 368,
-    photo: 410,
-    voice: 430,
+    photo: 600,
+    voice: 600,
 };
+const LOW_RECOGNITION_CONFIDENCE = 0.65;
 // 실제 음량 샘플은 반원만큼만 보관하고 화면에서는 반대편에 미러링한다.
 // 원형 파형의 무게 중심이 한쪽으로 쏠리지 않아 작은 화면에서도 안정적으로 보인다.
 const VOICE_SPECTRUM_SAMPLE_COUNT = 24;
@@ -456,8 +486,20 @@ export default function QuickScheduleModal({
     const [text, setText] = useState("");
     const [inputMode, setInputMode] = useState<InputMode>("text");
     const [selectedPhoto, setSelectedPhoto] = useState<ImagePickerAsset | null>(null);
+    const [photoTranscript, setPhotoTranscript] = useState("");
+    const [photoTranscriptTruncated, setPhotoTranscriptTruncated] = useState(false);
+    const [photoRecognitionConfidence, setPhotoRecognitionConfidence] = useState<number>();
+    const [photoRecognitionError, setPhotoRecognitionError] = useState("");
+    const [photoRecognitionAttempt, setPhotoRecognitionAttempt] = useState(0);
+    const [isPhotoRecognizing, setIsPhotoRecognizing] = useState(false);
+    const [isDocumentScanning, setIsDocumentScanning] = useState(false);
+    const [documentScannerSupported, setDocumentScannerSupported] = useState(false);
     const [voiceUri, setVoiceUri] = useState<string | null>(null);
     const [voiceDurationMillis, setVoiceDurationMillis] = useState(0);
+    const [voiceTranscript, setVoiceTranscript] = useState("");
+    const [voiceTranscriptTruncated, setVoiceTranscriptTruncated] = useState(false);
+    const [voiceRecognitionConfidence, setVoiceRecognitionConfidence] = useState<number>();
+    const [voiceStatusMessage, setVoiceStatusMessage] = useState("");
     const [isVoiceRecording, setIsVoiceRecording] = useState(false);
     const [isVoiceFinalizing, setIsVoiceFinalizing] = useState(false);
     const [voiceMeterHistory, setVoiceMeterHistory] = useState(() => (
@@ -492,6 +534,13 @@ export default function QuickScheduleModal({
     const modeIndicatorWidth = useSharedValue(0);
     const inputRef = useRef<TextInput>(null);
     const audioRecordingRef = useRef<Audio.Recording | null>(null);
+    const liveSpeechSessionIdRef = useRef<string | null>(null);
+    const liveSpeechStartingRef = useRef(false);
+    const liveSpeechOperationRef = useRef(0);
+    const liveSpeechStopInFlightRef = useRef<{
+        operation: number;
+        sessionId: string;
+    } | null>(null);
     const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const closingRef = useRef(false);
     const openHandoffFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
@@ -505,9 +554,150 @@ export default function QuickScheduleModal({
     const routePlannerReturnFieldRef = useRef<PreviewField | null>(null);
     const initialRequestHandledRef = useRef<string | null>(null);
     const analysisSequenceRef = useRef(0);
+    const photoRecognitionSequenceRef = useRef(0);
+    const documentScanOperationRef = useRef(0);
+    const ownedDocumentScanUrisRef = useRef<string[]>([]);
+    const mountedRef = useRef(false);
     const analysisPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const analysisInFlightRef = useRef(false);
     const saveInFlightRef = useRef(false);
+
+    const discardOwnedDocumentScans = useCallback(() => {
+        const uris = ownedDocumentScanUrisRef.current;
+        ownedDocumentScanUrisRef.current = [];
+        if (uris.length > 0) {
+            void discardDocumentScanPages(uris).catch(() => undefined);
+        }
+    }, []);
+
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            documentScanOperationRef.current += 1;
+            discardOwnedDocumentScans();
+        };
+    }, [discardOwnedDocumentScans]);
+
+    useEffect(() => {
+        const belongsToActiveSession = (sessionId: string) => (
+            liveSpeechSessionIdRef.current === sessionId
+        );
+
+        const transcriptSubscription = addLiveSpeechTranscriptListener((event) => {
+            if (!belongsToActiveSession(event.sessionId)) return;
+            const limited = limitRecognizedText(event.text);
+            setVoiceTranscript(limited.text);
+            setVoiceTranscriptTruncated(limited.truncated);
+            if (event.confidence !== undefined) {
+                setVoiceRecognitionConfidence(event.confidence);
+            }
+            if (event.elapsedMillis !== undefined) {
+                setVoiceDurationMillis(event.elapsedMillis);
+            }
+        });
+        const levelSubscription = addLiveSpeechLevelListener((event) => {
+            if (!belongsToActiveSession(event.sessionId)) return;
+            const level = Math.max(event.rms, event.peak * 0.72);
+            setVoiceMeterHistory((current) => appendVoiceMeterHistory(current, level));
+            setVoiceSpectrumEnergy(level);
+            if (event.elapsedMillis !== undefined) {
+                setVoiceDurationMillis(event.elapsedMillis);
+            }
+        });
+        const stateSubscription = addLiveSpeechStateListener((event) => {
+            if (!belongsToActiveSession(event.sessionId)) return;
+
+            if (event.state === "listening") {
+                setIsVoiceFinalizing(false);
+                setIsVoiceRecording(true);
+                setVoiceStatusMessage("");
+                return;
+            }
+            if (event.state === "stopping") {
+                setIsVoiceRecording(false);
+                setIsVoiceFinalizing(true);
+                setVoiceStatusMessage("마지막 문장을 정리하고 있어요.");
+                return;
+            }
+            if (event.state === "finished" || event.state === "cancelled" || event.state === "failed") {
+                liveSpeechSessionIdRef.current = null;
+                liveSpeechStartingRef.current = false;
+                setIsVoiceRecording(false);
+                setIsVoiceFinalizing(false);
+                setVoiceMeterHistory(createVoiceMeterHistory());
+                setVoiceSpectrumEnergy(0);
+                setVoiceStatusMessage(event.state === "failed"
+                    ? event.message ?? "음성을 인식하지 못했습니다. 다시 말해 주세요."
+                    : "");
+            }
+        });
+
+        return () => {
+            transcriptSubscription?.remove();
+            levelSubscription?.remove();
+            stateSubscription?.remove();
+        };
+    }, []);
+
+    useEffect(() => {
+        if (Platform.OS !== "ios" || !visible) return undefined;
+
+        let cancelled = false;
+        void canScanDocuments().then((supported) => {
+            if (!cancelled) setDocumentScannerSupported(supported);
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [visible]);
+
+    useEffect(() => {
+        const photoUri = selectedPhoto?.uri;
+        const sequence = photoRecognitionSequenceRef.current + 1;
+        photoRecognitionSequenceRef.current = sequence;
+
+        if (!photoUri) {
+            setPhotoTranscript("");
+            setPhotoTranscriptTruncated(false);
+            setPhotoRecognitionConfidence(undefined);
+            setPhotoRecognitionError("");
+            setIsPhotoRecognizing(false);
+            return undefined;
+        }
+
+        setPhotoTranscript("");
+        setPhotoTranscriptTruncated(false);
+        setPhotoRecognitionConfidence(undefined);
+        setPhotoRecognitionError("");
+        setIsPhotoRecognizing(true);
+        void recognizeQuickSchedulePhoto(photoUri)
+            .then((recognition) => {
+                if (photoRecognitionSequenceRef.current !== sequence) return;
+                const limited = limitRecognizedText(recognition.text);
+                setPhotoTranscript(limited.text);
+                setPhotoTranscriptTruncated(limited.truncated);
+                setPhotoRecognitionConfidence(recognition.recognitionConfidence);
+            })
+            .catch((error) => {
+                if (photoRecognitionSequenceRef.current !== sequence) return;
+                setPhotoRecognitionError(error instanceof Error
+                    ? error.message
+                    : "사진에서 일정 문장을 인식하지 못했습니다.");
+            })
+            .finally(() => {
+                if (photoRecognitionSequenceRef.current === sequence) {
+                    setIsPhotoRecognizing(false);
+                }
+            });
+
+        return () => {
+            if (photoRecognitionSequenceRef.current === sequence) {
+                photoRecognitionSequenceRef.current += 1;
+            }
+        };
+    }, [photoRecognitionAttempt, selectedPhoto?.uri]);
+
     if (
         visible ||
         (!openStartedRef.current && openHandoffFrameRef.current === null)
@@ -570,15 +760,29 @@ export default function QuickScheduleModal({
 
     const stopActiveRecording = useCallback(async (preserveRecording = false): Promise<string | null> => {
         const recorder = audioRecordingRef.current;
+        const liveSpeechSessionId = liveSpeechSessionIdRef.current;
+        liveSpeechOperationRef.current += 1;
         audioRecordingRef.current = null;
+        liveSpeechSessionIdRef.current = null;
+        liveSpeechStartingRef.current = false;
+        liveSpeechStopInFlightRef.current = null;
         clearVoiceTimer();
         setIsVoiceRecording(false);
+        setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
         setVoiceSpectrumEnergy(0);
 
         if (!preserveRecording) {
             setVoiceUri(null);
             setVoiceDurationMillis(0);
+            setVoiceTranscript("");
+            setVoiceTranscriptTruncated(false);
+            setVoiceRecognitionConfidence(undefined);
+            setVoiceStatusMessage("");
+        }
+
+        if (liveSpeechSessionId) {
+            await cancelLiveSpeechRecognition(liveSpeechSessionId).catch(() => undefined);
         }
 
         if (!recorder) {
@@ -632,9 +836,22 @@ export default function QuickScheduleModal({
         setRendered(prewarm);
         setText("");
         setInputMode("text");
+        documentScanOperationRef.current += 1;
+        discardOwnedDocumentScans();
         setSelectedPhoto(null);
+        setPhotoTranscript("");
+        setPhotoTranscriptTruncated(false);
+        setPhotoRecognitionConfidence(undefined);
+        setPhotoRecognitionError("");
+        setPhotoRecognitionAttempt(0);
+        setIsPhotoRecognizing(false);
+        setIsDocumentScanning(false);
         setVoiceUri(null);
         setVoiceDurationMillis(0);
+        setVoiceTranscript("");
+        setVoiceTranscriptTruncated(false);
+        setVoiceRecognitionConfidence(undefined);
+        setVoiceStatusMessage("");
         setIsVoiceRecording(false);
         setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
@@ -660,7 +877,7 @@ export default function QuickScheduleModal({
         if (shouldNotifyClose) {
             onClose();
         }
-    }, [invalidatePendingAnalysis, onClose, presentationOpacity, prewarm]);
+    }, [discardOwnedDocumentScans, invalidatePendingAnalysis, onClose, presentationOpacity, prewarm]);
 
     const runCloseAnimation = useCallback((shouldNotifyClose = false) => {
         Keyboard.dismiss();
@@ -922,16 +1139,28 @@ export default function QuickScheduleModal({
         const hasCurrentInput = analysisInputMode === "text"
             ? normalized.length > 0
             : analysisInputMode === "photo"
-                ? Boolean(selectedPhoto?.uri)
-                : Boolean(voiceUri);
-        if (!hasCurrentInput || submitting || analysisInFlightRef.current || isVoiceRecording) return;
+                ? Boolean(selectedPhoto?.uri && photoTranscript.trim())
+                : Boolean(voiceTranscript.trim() || voiceUri);
+        if (
+            !hasCurrentInput ||
+            submitting ||
+            analysisInFlightRef.current ||
+            isVoiceRecording ||
+            isPhotoRecognizing ||
+            isDocumentScanning
+        ) return;
 
         const fallbackText = analysisInputMode === "photo"
             ? "사진으로 입력한 일정"
             : analysisInputMode === "voice"
                 ? "음성으로 입력한 일정"
                 : "";
-        const sourceText = normalized || fallbackText;
+        const rawSourceText = analysisInputMode === "voice"
+            ? voiceTranscript.trim() || normalized || fallbackText
+            : analysisInputMode === "photo"
+                ? photoTranscript.trim() || normalized || fallbackText
+                : normalized || fallbackText;
+        const sourceText = rawSourceText.slice(0, QUICK_TEXT_LIMIT);
         const analysisSequence = analysisSequenceRef.current + 1;
         analysisSequenceRef.current = analysisSequence;
         analysisInFlightRef.current = true;
@@ -949,8 +1178,19 @@ export default function QuickScheduleModal({
                 inputMode: analysisInputMode,
                 inputTypeOverride,
                 photoUri: analysisInputMode === "photo" ? selectedPhoto?.uri : undefined,
+                photoTranscript: analysisInputMode === "photo"
+                    ? sourceText || undefined
+                    : undefined,
                 voiceUri: analysisInputMode === "voice" ? voiceUri ?? undefined : undefined,
-                voiceDurationMillis: analysisInputMode === "voice" && voiceUri ? voiceDurationMillis : undefined,
+                voiceDurationMillis: analysisInputMode === "voice" ? voiceDurationMillis : undefined,
+                voiceTranscript: analysisInputMode === "voice"
+                    ? sourceText || undefined
+                    : undefined,
+                recognitionConfidence: analysisInputMode === "voice"
+                    ? voiceRecognitionConfidence
+                    : analysisInputMode === "photo"
+                        ? photoRecognitionConfidence
+                        : undefined,
             });
             if (analysisSequenceRef.current !== analysisSequence || !visibleRef.current) return;
 
@@ -972,12 +1212,18 @@ export default function QuickScheduleModal({
     }, [
         defaultDay,
         inputMode,
+        isDocumentScanning,
+        isPhotoRecognizing,
         isVoiceRecording,
         onAnalyze,
+        photoRecognitionConfidence,
+        photoTranscript,
         selectedPhoto?.uri,
         submitting,
         text,
         voiceDurationMillis,
+        voiceRecognitionConfidence,
+        voiceTranscript,
         voiceUri,
     ]);
 
@@ -989,16 +1235,26 @@ export default function QuickScheduleModal({
         const requestId = initialRequestId?.trim();
         const seedText = initialText?.trim();
         if (!visible || !requestId || !seedText || initialRequestHandledRef.current === requestId) return;
+        const boundedSeedText = seedText.slice(0, QUICK_TEXT_LIMIT);
 
         initialRequestHandledRef.current = requestId;
         setInputMode("text");
-        setText(seedText);
+        setText(boundedSeedText);
+        discardOwnedDocumentScans();
         setSelectedPhoto(null);
+        setPhotoTranscript("");
+        setPhotoTranscriptTruncated(false);
+        setPhotoRecognitionConfidence(undefined);
+        setPhotoRecognitionError("");
         setVoiceUri(null);
+        setVoiceTranscript("");
+        setVoiceTranscriptTruncated(false);
+        setVoiceRecognitionConfidence(undefined);
+        setVoiceStatusMessage("");
         setAnalysisError("");
         setFlowStep("input");
-        void startAnalysis(seedText, initialInputType);
-    }, [initialInputType, initialRequestId, initialText, startAnalysis, visible]);
+        void startAnalysis(boundedSeedText, initialInputType);
+    }, [discardOwnedDocumentScans, initialInputType, initialRequestId, initialText, startAnalysis, visible]);
 
     const updatePreviewField = useCallback((field: PreviewField, value: string) => {
         setPreviewDraft((current) => current
@@ -1208,15 +1464,24 @@ export default function QuickScheduleModal({
         }
     };
 
+    const selectPhotoForRecognition = useCallback((
+        asset: ImagePickerAsset | null,
+        ownedScanUris: string[] = [],
+    ) => {
+        discardOwnedDocumentScans();
+        ownedDocumentScanUrisRef.current = ownedScanUris;
+        setSelectedPhoto(asset);
+        setPhotoRecognitionAttempt((current) => current + 1);
+    }, [discardOwnedDocumentScans]);
+
     const pickPhotoFromLibrary = useCallback(async () => {
-        if (submitting) return;
+        if (submitting || isDocumentScanning) return;
 
         Keyboard.dismiss();
         void stopActiveRecording();
         setInputMode("photo");
 
         try {
-            const ImagePicker = await import("expo-image-picker");
             const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!permission.granted) {
                 Alert.alert("사진 권한 필요", "사진으로 빠른 일정을 만들려면 사진 보관함 권한이 필요합니다.");
@@ -1233,22 +1498,21 @@ export default function QuickScheduleModal({
             });
 
             if (!result.canceled) {
-                setSelectedPhoto(result.assets[0] ?? null);
+                selectPhotoForRecognition(result.assets[0] ?? null);
             }
         } catch (error) {
             Alert.alert("사진 선택 실패", error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
         }
-    }, [stopActiveRecording, submitting]);
+    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const capturePhoto = useCallback(async () => {
-        if (submitting) return;
+        if (submitting || isDocumentScanning) return;
 
         Keyboard.dismiss();
         void stopActiveRecording();
         setInputMode("photo");
 
         try {
-            const ImagePicker = await import("expo-image-picker");
             const permission = await ImagePicker.requestCameraPermissionsAsync();
             if (!permission.granted) {
                 Alert.alert("카메라 권한 필요", "사진을 촬영해 빠른 일정을 만들려면 카메라 권한이 필요합니다.");
@@ -1264,12 +1528,70 @@ export default function QuickScheduleModal({
             });
 
             if (!result.canceled) {
-                setSelectedPhoto(result.assets[0] ?? null);
+                selectPhotoForRecognition(result.assets[0] ?? null);
             }
         } catch (error) {
             Alert.alert("촬영 실패", error instanceof Error ? error.message : "카메라를 열지 못했습니다.");
         }
-    }, [stopActiveRecording, submitting]);
+    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
+
+    const scanDocument = useCallback(async () => {
+        if (submitting || isDocumentScanning) return;
+
+        const operation = documentScanOperationRef.current + 1;
+        documentScanOperationRef.current = operation;
+        Keyboard.dismiss();
+        void stopActiveRecording();
+        setInputMode("photo");
+        setIsDocumentScanning(true);
+        try {
+            const result = await scanDocuments({ maxPages: 1, jpegQuality: 0.94 });
+            const ownedScanUris = result?.pages.map(({ uri }) => uri) ?? [];
+            const operationIsCurrent = (
+                documentScanOperationRef.current === operation
+                && mountedRef.current
+                && visibleRef.current
+                && !closingRef.current
+            );
+            if (!operationIsCurrent) {
+                await discardDocumentScanPages(ownedScanUris).catch(() => undefined);
+                return;
+            }
+
+            const page = result?.pages[0];
+            if (!page) {
+                await discardDocumentScanPages(ownedScanUris).catch(() => undefined);
+                return;
+            }
+
+            if (result.capturedPageCount > 1) {
+                Alert.alert("첫 페이지만 사용해요", "빠른 일정에는 스캔한 첫 페이지가 사용됩니다.");
+            }
+
+            selectPhotoForRecognition({
+                uri: page.uri,
+                width: page.width,
+                height: page.height,
+                fileName: "문서 스캔.jpg",
+                mimeType: "image/jpeg",
+            }, ownedScanUris);
+        } catch (error) {
+            if (
+                documentScanOperationRef.current !== operation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
+            Alert.alert(
+                "문서 스캔 실패",
+                error instanceof Error ? error.message : "문서를 스캔하지 못했습니다."
+            );
+        } finally {
+            if (documentScanOperationRef.current === operation && mountedRef.current) {
+                setIsDocumentScanning(false);
+            }
+        }
+    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const activatePhotoMode = useCallback(() => {
         if (submitting) return;
@@ -1280,25 +1602,33 @@ export default function QuickScheduleModal({
     }, [stopActiveRecording, submitting]);
 
     const openPhotoActionSheet = useCallback(() => {
-        if (submitting) return;
+        if (submitting || isDocumentScanning) return;
 
         Keyboard.dismiss();
         void stopActiveRecording();
         setInputMode("photo");
 
         if (Platform.OS === "ios") {
+            const options = documentScannerSupported
+                ? ["문서 스캔", "사진 찍기", "사진 앱에서 선택", "취소"]
+                : ["사진 찍기", "사진 앱에서 선택", "취소"];
             ActionSheetIOS.showActionSheetWithOptions(
                 {
                     title: "사진으로 일정 만들기",
-                    options: ["사진 찍기", "사진 앱에서 선택", "취소"],
-                    cancelButtonIndex: 2,
+                    options,
+                    cancelButtonIndex: options.length - 1,
                     userInterfaceStyle: mode === "dark" ? "dark" : "light",
                 },
                 (buttonIndex) => {
-                    if (buttonIndex === 0) {
+                    if (documentScannerSupported && buttonIndex === 0) {
+                        runAfterInteraction(() => void scanDocument());
+                        return;
+                    }
+                    const sourceIndex = documentScannerSupported ? buttonIndex - 1 : buttonIndex;
+                    if (sourceIndex === 0) {
                         runAfterInteraction(() => void capturePhoto());
                     }
-                    if (buttonIndex === 1) {
+                    if (sourceIndex === 1) {
                         runAfterInteraction(() => void pickPhotoFromLibrary());
                     }
                 }
@@ -1307,19 +1637,94 @@ export default function QuickScheduleModal({
         }
 
         void pickPhotoFromLibrary();
-    }, [capturePhoto, mode, pickPhotoFromLibrary, stopActiveRecording, submitting]);
+    }, [
+        capturePhoto,
+        documentScannerSupported,
+        isDocumentScanning,
+        mode,
+        pickPhotoFromLibrary,
+        scanDocument,
+        stopActiveRecording,
+        submitting,
+    ]);
 
     const startVoiceRecording = useCallback(async () => {
-        if (submitting || isVoiceRecording || isVoiceFinalizing || audioRecordingRef.current) return;
+        if (
+            submitting ||
+            isVoiceRecording ||
+            isVoiceFinalizing ||
+            audioRecordingRef.current ||
+            liveSpeechSessionIdRef.current ||
+            liveSpeechStartingRef.current ||
+            liveSpeechStopInFlightRef.current
+        ) return;
 
         Keyboard.dismiss();
         setInputMode("voice");
+        discardOwnedDocumentScans();
         setSelectedPhoto(null);
         setVoiceUri(null);
         setVoiceDurationMillis(0);
+        setVoiceTranscript("");
+        setVoiceTranscriptTruncated(false);
+        setVoiceRecognitionConfidence(undefined);
+        setVoiceStatusMessage("");
         setVoiceMeterHistory(createVoiceMeterHistory());
         setVoiceSpectrumEnergy(0);
         clearVoiceTimer();
+
+        if (isLiveSpeechRecognitionAvailable) {
+            const operation = liveSpeechOperationRef.current + 1;
+            liveSpeechOperationRef.current = operation;
+            const requestedSessionId = createLiveSpeechSessionId();
+            liveSpeechSessionIdRef.current = requestedSessionId;
+            liveSpeechStartingRef.current = true;
+            setIsVoiceFinalizing(true);
+            setVoiceStatusMessage("마이크와 음성 인식 권한을 확인하고 있어요.");
+
+            try {
+                const sessionId = await startLiveSpeechRecognition({
+                    sessionId: requestedSessionId,
+                    localeIdentifier: "ko-KR",
+                    contextualStrings: buildScheduleSpeechContext(text),
+                    maxDurationMillis: 60_000,
+                });
+                if (
+                    !liveSpeechStartingRef.current ||
+                    liveSpeechOperationRef.current !== operation ||
+                    liveSpeechSessionIdRef.current !== sessionId ||
+                    !visibleRef.current ||
+                    closingRef.current
+                ) {
+                    await cancelLiveSpeechRecognition(sessionId).catch(() => undefined);
+                    return;
+                }
+
+                liveSpeechSessionIdRef.current = sessionId;
+                liveSpeechStartingRef.current = false;
+                setIsVoiceFinalizing(false);
+                setIsVoiceRecording(true);
+                setVoiceStatusMessage("");
+            } catch (error) {
+                const ownsOperation = liveSpeechOperationRef.current === operation;
+                if (!ownsOperation) return;
+                if (liveSpeechSessionIdRef.current === requestedSessionId) {
+                    liveSpeechSessionIdRef.current = null;
+                }
+                liveSpeechStartingRef.current = false;
+                if (!mountedRef.current || !visibleRef.current || closingRef.current) return;
+                setIsVoiceRecording(false);
+                setIsVoiceFinalizing(false);
+                setVoiceMeterHistory(createVoiceMeterHistory());
+                setVoiceSpectrumEnergy(0);
+                const message = error instanceof Error
+                    ? error.message
+                    : "실시간 음성 인식을 시작하지 못했습니다.";
+                setVoiceStatusMessage(message);
+                Alert.alert("음성 인식 시작 실패", message);
+            }
+            return;
+        }
 
         try {
             const permission = await Audio.requestPermissionsAsync();
@@ -1391,10 +1796,72 @@ export default function QuickScheduleModal({
             console.warn("[QuickSchedule] Voice recording failed to start.", error);
             Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
-    }, [clearVoiceTimer, isVoiceFinalizing, isVoiceRecording, submitting]);
+    }, [clearVoiceTimer, discardOwnedDocumentScans, isVoiceFinalizing, isVoiceRecording, submitting, text]);
 
     const stopVoiceRecording = useCallback(async () => {
-        if (isVoiceFinalizing || !audioRecordingRef.current) return;
+        if (isVoiceFinalizing || liveSpeechStopInFlightRef.current) return;
+
+        const liveSpeechSessionId = liveSpeechSessionIdRef.current;
+        if (liveSpeechSessionId) {
+            const operation = liveSpeechOperationRef.current;
+            const stopOperation = { operation, sessionId: liveSpeechSessionId };
+            liveSpeechStopInFlightRef.current = stopOperation;
+            setIsVoiceRecording(false);
+            setIsVoiceFinalizing(true);
+            setVoiceStatusMessage("마지막 문장을 정리하고 있어요.");
+            setVoiceSpectrumEnergy(0);
+            try {
+                const result = await stopLiveSpeechRecognition(liveSpeechSessionId);
+                if (
+                    liveSpeechStopInFlightRef.current !== stopOperation ||
+                    liveSpeechOperationRef.current !== operation ||
+                    !mountedRef.current ||
+                    !visibleRef.current ||
+                    closingRef.current
+                ) return;
+                const limited = limitRecognizedText(result.text);
+                setVoiceTranscript(limited.text);
+                setVoiceTranscriptTruncated(limited.truncated);
+                if (result.confidence !== undefined) {
+                    setVoiceRecognitionConfidence(result.confidence);
+                }
+                if (result.elapsedMillis !== undefined) {
+                    setVoiceDurationMillis(result.elapsedMillis);
+                }
+                setVoiceStatusMessage("");
+            } catch (error) {
+                if (
+                    liveSpeechStopInFlightRef.current !== stopOperation ||
+                    liveSpeechOperationRef.current !== operation ||
+                    !mountedRef.current ||
+                    !visibleRef.current ||
+                    closingRef.current
+                ) return;
+                const message = error instanceof Error
+                    ? error.message
+                    : "음성 인식 결과를 마무리하지 못했습니다.";
+                setVoiceStatusMessage(message);
+                Alert.alert("음성 인식 실패", message);
+            } finally {
+                const ownsStopOperation = liveSpeechStopInFlightRef.current === stopOperation;
+                if (ownsStopOperation) {
+                    liveSpeechStopInFlightRef.current = null;
+                }
+                if (!ownsStopOperation || liveSpeechOperationRef.current !== operation) return;
+                if (liveSpeechSessionIdRef.current === liveSpeechSessionId) {
+                    liveSpeechSessionIdRef.current = null;
+                }
+                liveSpeechStartingRef.current = false;
+                if (!mountedRef.current || !visibleRef.current || closingRef.current) return;
+                setIsVoiceRecording(false);
+                setIsVoiceFinalizing(false);
+                setVoiceMeterHistory(createVoiceMeterHistory());
+                setVoiceSpectrumEnergy(0);
+            }
+            return;
+        }
+
+        if (!audioRecordingRef.current) return;
 
         setIsVoiceFinalizing(true);
         try {
@@ -1653,9 +2120,13 @@ export default function QuickScheduleModal({
         inputMode === "text"
             ? text.trim().length > 0
             : inputMode === "photo"
-                ? Boolean(selectedPhoto?.uri)
-                : Boolean(voiceUri)
-    ) && !submitting && !recorderState.isRecording && !isVoiceFinalizing;
+                ? Boolean(selectedPhoto?.uri && photoTranscript.trim())
+                : Boolean(voiceTranscript.trim() || voiceUri)
+    ) && !submitting
+        && !recorderState.isRecording
+        && !isVoiceFinalizing
+        && !isPhotoRecognizing
+        && !isDocumentScanning;
     const flowTitle = flowStep === "input"
         ? "빠른 일정 생성"
         : flowStep === "analyzing"
@@ -1818,163 +2289,377 @@ export default function QuickScheduleModal({
             )}
 
             {inputMode === "photo" && (
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={selectedPhoto ? "선택한 사진 변경" : "사진 선택"}
-                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                    disabled={submitting || isVoiceFinalizing}
-                    onPress={openPhotoActionSheet}
-                    style={[
-                        styles.mediaPanel,
-                        {
-                            backgroundColor: mediaPanelBackground,
-                            borderColor: selectedPhoto ? BLUE : cardBorderColor,
-                        },
-                    ]}
-                >
-                    {selectedPhoto?.uri ? (
-                        <Image source={{ uri: selectedPhoto.uri }} style={styles.photoThumbnail} />
-                    ) : (
-                        <View
-                            style={[
-                                styles.photoIconWrap,
+                <View style={styles.photoModeContent}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={selectedPhoto ? "선택한 사진 변경" : "사진 선택"}
+                        accessibilityState={{
+                            disabled: submitting || isVoiceFinalizing || isDocumentScanning,
+                        }}
+                        disabled={submitting || isVoiceFinalizing || isDocumentScanning}
+                        onPress={openPhotoActionSheet}
+                        style={[
+                            styles.mediaPanel,
+                            styles.photoPreviewPanel,
+                            {
+                                backgroundColor: mediaPanelBackground,
+                                borderColor: selectedPhoto ? BLUE : cardBorderColor,
+                            },
+                        ]}
+                    >
+                        {selectedPhoto?.uri ? (
+                            <Image source={{ uri: selectedPhoto.uri }} style={styles.photoThumbnail} />
+                        ) : (
+                            <View
+                                style={[
+                                    styles.photoIconWrap,
+                                    {
+                                        backgroundColor: selectedModeBackground,
+                                    },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="scan-outline" size={34} color={BLUE} />
+                            </View>
+                        )}
+                        <Text style={[styles.mediaPanelTitle, { color: colors.textPrimary }]}>
+                            {isDocumentScanning
+                                ? "문서 스캐너 여는 중"
+                                : selectedPhoto
+                                    ? "사진 선택됨"
+                                    : "문서나 일정 사진 추가"}
+                        </Text>
+                        {photoLabel && (
+                            <Text
+                                numberOfLines={1}
+                                style={[styles.mediaPanelMeta, { color: colors.textSecondary }]}
+                            >
+                                {photoLabel}
+                            </Text>
+                        )}
+                        {selectedPhoto && (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="선택한 사진 제거"
+                                onPress={(event) => {
+                                    event.stopPropagation();
+                                    selectPhotoForRecognition(null);
+                                }}
+                                style={({ pressed }) => [
+                                    styles.photoRemoveButton,
+                                    { opacity: pressed ? 0.72 : 1 },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="close" size={16} color="#fff" />
+                            </Pressable>
+                        )}
+                    </Pressable>
+
+                    <View style={styles.photoActions}>
+                        {documentScannerSupported ? (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="문서 스캔으로 사진 입력"
+                                disabled={submitting || isDocumentScanning}
+                                onPress={() => void scanDocument()}
+                                style={({ pressed }) => [
+                                    styles.photoSourceButton,
+                                    {
+                                        backgroundColor: selectedModeBackground,
+                                        borderColor: BLUE,
+                                        opacity: pressed ? 0.72 : 1,
+                                    },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="scan-outline" size={17} color={BLUE} />
+                                <Text style={[styles.photoSourceButtonText, { color: BLUE }]}>문서 스캔</Text>
+                            </Pressable>
+                        ) : (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="카메라로 일정 사진 촬영"
+                                disabled={submitting || isDocumentScanning}
+                                onPress={() => void capturePhoto()}
+                                style={({ pressed }) => [
+                                    styles.photoSourceButton,
+                                    {
+                                        backgroundColor: mediaPanelBackground,
+                                        borderColor: cardBorderColor,
+                                        opacity: pressed ? 0.72 : 1,
+                                    },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="camera-outline" size={17} color={BLUE} />
+                                <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>촬영</Text>
+                            </Pressable>
+                        )}
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="사진 앱에서 일정 사진 선택"
+                            disabled={submitting || isDocumentScanning}
+                            onPress={() => void pickPhotoFromLibrary()}
+                            style={({ pressed }) => [
+                                styles.photoSourceButton,
                                 {
-                                    backgroundColor: selectedModeBackground,
+                                    backgroundColor: mediaPanelBackground,
+                                    borderColor: cardBorderColor,
+                                    opacity: pressed ? 0.72 : 1,
                                 },
                             ]}
                         >
-                            <Ionicons accessible={false} name="image-outline" size={36} color={BLUE} />
-                        </View>
-                    )}
-                    <Text style={[styles.mediaPanelTitle, { color: colors.textPrimary }]}>
-                        {selectedPhoto ? "사진 선택됨" : "사진 선택"}
-                    </Text>
-                    {photoLabel && (
-                        <Text
-                            numberOfLines={1}
-                            style={[styles.mediaPanelMeta, { color: colors.textSecondary }]}
-                        >
-                            {photoLabel}
-                        </Text>
-                    )}
-                    {selectedPhoto && (
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="선택한 사진 제거"
-                            onPress={(event) => {
-                                event.stopPropagation();
-                                setSelectedPhoto(null);
-                            }}
-                            style={({ pressed }) => [
-                                styles.photoRemoveButton,
-                                { opacity: pressed ? 0.72 : 1 },
-                            ]}
-                        >
-                            <Ionicons accessible={false} name="close" size={16} color="#fff" />
+                            <Ionicons accessible={false} name="images-outline" size={17} color={BLUE} />
+                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 앱</Text>
                         </Pressable>
-                    )}
-                </Pressable>
+                    </View>
+
+                    <View
+                        style={[
+                            styles.photoTranscriptWrap,
+                            {
+                                backgroundColor: inputBackground,
+                                borderColor: photoTranscript.trim() ? BLUE : colors.inputBorder,
+                            },
+                        ]}
+                    >
+                        <View style={styles.photoTranscriptHeader}>
+                            <Text style={[styles.photoTranscriptLabel, { color: colors.textSecondary }]}>
+                                인식된 문장
+                            </Text>
+                            {photoTranscriptTruncated ? (
+                                <Text style={[styles.photoConfidence, styles.truncatedRecognitionText]}>
+                                    앞 300자만 표시
+                                </Text>
+                            ) : photoRecognitionConfidence !== undefined && (
+                                <Text style={[styles.photoConfidence, { color: colors.textSecondary }]}>
+                                    인식 {Math.round(photoRecognitionConfidence * 100)}%
+                                </Text>
+                            )}
+                        </View>
+
+                        {isPhotoRecognizing ? (
+                            <View
+                                accessibilityLabel="사진에서 일정 문장 인식 중"
+                                style={styles.photoRecognitionStatus}
+                            >
+                                <ActivityIndicator color={BLUE} size="small" />
+                                <Text style={[styles.photoRecognitionStatusText, { color: colors.textSecondary }]}>
+                                    사진을 선명하게 보정해 읽고 있어요
+                                </Text>
+                            </View>
+                        ) : photoRecognitionError ? (
+                            <View style={styles.photoRecognitionErrorWrap}>
+                                <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="사진 텍스트 다시 인식"
+                                    onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
+                                    style={({ pressed }) => [
+                                        styles.photoRecognitionRetry,
+                                        { opacity: pressed ? 0.72 : 1 },
+                                    ]}
+                                >
+                                    <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
+                                    <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
+                                </Pressable>
+                            </View>
+                        ) : (
+                            <TextInput
+                                accessibilityLabel="사진 OCR 인식 텍스트"
+                                editable={Boolean(selectedPhoto) && !submitting && !isDocumentScanning}
+                                multiline
+                                maxLength={QUICK_TEXT_LIMIT}
+                                value={photoTranscript}
+                                onChangeText={(value) => {
+                                    setPhotoTranscript(value);
+                                    setPhotoTranscriptTruncated(false);
+                                    setPhotoRecognitionConfidence(undefined);
+                                    setPhotoRecognitionError("");
+                                }}
+                                placeholder={selectedPhoto
+                                    ? "인식 후 문장을 직접 수정할 수 있어요."
+                                    : "문서를 스캔하거나 일정 사진을 선택해 주세요."}
+                                placeholderTextColor={colors.inputPlaceholder}
+                                selectionColor={BLUE}
+                                style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
+                            />
+                        )}
+
+                        {!isPhotoRecognizing
+                            && photoRecognitionConfidence !== undefined
+                            && photoRecognitionConfidence < LOW_RECOGNITION_CONFIDENCE && (
+                            <View style={styles.lowConfidenceNotice}>
+                                <Ionicons accessible={false} name="alert-circle-outline" size={14} color="#F59E0B" />
+                                <Text style={styles.lowConfidenceNoticeText}>
+                                    인식이 불확실해요. 날짜·시간·장소를 확인해 주세요.
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
             )}
 
             {inputMode === "voice" && (
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={recorderState.isRecording ? "음성 녹음 중지" : voiceUri ? "음성 다시 녹음" : "음성 녹음 시작"}
-                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                    onPress={() => {
-                        if (recorderState.isRecording) {
-                            void stopVoiceRecording();
-                            return;
-                        }
-
-                        void startVoiceRecording();
-                    }}
-                    disabled={submitting || isVoiceFinalizing}
-                    style={({ pressed }) => [
+                <View
+                    style={[
                         styles.voicePanel,
                         {
                             backgroundColor: mediaPanelBackground,
-                            borderColor: recorderState.isRecording || voiceUri ? BLUE : cardBorderColor,
-                            opacity: pressed ? 0.82 : 1,
+                            borderColor: recorderState.isRecording || voiceTranscript.trim() || voiceUri
+                                ? BLUE
+                                : cardBorderColor,
                         },
                     ]}
                 >
-                    <View style={styles.voiceOrbWrap}>
-                        {recorderState.isRecording && (
-                            <>
-                                <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
-                                <View pointerEvents="none" style={styles.voiceSpectrum}>
-                                    {VOICE_SPECTRUM_BARS.map((barIndex) => {
-                                        const angle = `${(360 / VOICE_SPECTRUM_BAR_COUNT) * barIndex}deg`;
-                                        // 두 번째 반원의 인덱스를 뒤집어 첫 번째 반원과 마주 보게 한다.
-                                        // 막대마다 미세한 높이 차이를 주어 기계적인 완전 대칭 대신
-                                        // 실제 음성이 퍼지는 듯한 부드러운 외곽선을 만든다.
-                                        const historyIndex = barIndex < VOICE_SPECTRUM_SAMPLE_COUNT
-                                            ? barIndex
-                                            : VOICE_SPECTRUM_BAR_COUNT - 1 - barIndex;
-                                        const texture = 0.78 + ((Math.sin(barIndex * 1.73) + 1) / 2) * 0.22;
-                                        const level = (voiceMeterHistory[historyIndex] ?? 0) * texture;
-                                        const colorIndex = Math.min(
-                                            VOICE_SPECTRUM_COLORS.length - 1,
-                                            Math.floor(
-                                                historyIndex
-                                                / VOICE_SPECTRUM_SAMPLE_COUNT
-                                                * VOICE_SPECTRUM_COLORS.length
-                                            )
-                                        );
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={recorderState.isRecording
+                            ? "실시간 음성 인식 중지"
+                            : voiceTranscript.trim() || voiceUri
+                                ? "음성 다시 인식"
+                                : "실시간 음성 인식 시작"}
+                        accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                        onPress={() => {
+                            if (recorderState.isRecording) {
+                                void stopVoiceRecording();
+                                return;
+                            }
 
-                                        return (
-                                            <VoiceSpectrumBar
-                                                key={barIndex}
-                                                angle={angle}
-                                                color={VOICE_SPECTRUM_COLORS[colorIndex]}
-                                                level={level}
-                                            />
-                                        );
-                                    })}
-                                </View>
-                            </>
-                        )}
-                        <View
-                            style={[
-                                styles.voiceOrb,
-                                {
-                                    backgroundColor: voiceOrbBackground,
-                                    borderColor: recorderState.isRecording || voiceUri
+                            void startVoiceRecording();
+                        }}
+                        disabled={submitting || isVoiceFinalizing}
+                        style={({ pressed }) => [
+                            styles.voiceRecordControl,
+                            { opacity: pressed ? 0.78 : 1 },
+                        ]}
+                    >
+                        <View style={styles.voiceOrbWrap}>
+                            {recorderState.isRecording && (
+                                <>
+                                    <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
+                                    <View pointerEvents="none" style={styles.voiceSpectrum}>
+                                        {VOICE_SPECTRUM_BARS.map((barIndex) => {
+                                            const angle = `${(360 / VOICE_SPECTRUM_BAR_COUNT) * barIndex}deg`;
+                                            // 두 번째 반원의 인덱스를 뒤집어 첫 번째 반원과 마주 보게 한다.
+                                            // 막대마다 미세한 높이 차이를 주어 기계적인 완전 대칭 대신
+                                            // 실제 음성이 퍼지는 듯한 부드러운 외곽선을 만든다.
+                                            const historyIndex = barIndex < VOICE_SPECTRUM_SAMPLE_COUNT
+                                                ? barIndex
+                                                : VOICE_SPECTRUM_BAR_COUNT - 1 - barIndex;
+                                            const texture = 0.78 + ((Math.sin(barIndex * 1.73) + 1) / 2) * 0.22;
+                                            const level = (voiceMeterHistory[historyIndex] ?? 0) * texture;
+                                            const colorIndex = Math.min(
+                                                VOICE_SPECTRUM_COLORS.length - 1,
+                                                Math.floor(
+                                                    historyIndex
+                                                    / VOICE_SPECTRUM_SAMPLE_COUNT
+                                                    * VOICE_SPECTRUM_COLORS.length
+                                                )
+                                            );
+
+                                            return (
+                                                <VoiceSpectrumBar
+                                                    key={barIndex}
+                                                    angle={angle}
+                                                    color={VOICE_SPECTRUM_COLORS[colorIndex]}
+                                                    level={level}
+                                                />
+                                            );
+                                        })}
+                                    </View>
+                                </>
+                            )}
+                            <View
+                                style={[
+                                    styles.voiceOrb,
+                                    {
+                                        backgroundColor: voiceOrbBackground,
+                                        borderColor: recorderState.isRecording || voiceTranscript.trim() || voiceUri
+                                            ? BLUE
+                                            : cardBorderColor,
+                                    },
+                                ]}
+                            >
+                                <Ionicons
+                                    accessible={false}
+                                    name={
+                                        recorderState.isRecording
+                                            ? "stop"
+                                            : voiceTranscript.trim() || voiceUri
+                                                ? "checkmark"
+                                                : "mic-outline"
+                                    }
+                                    size={34}
+                                    color={recorderState.isRecording || voiceTranscript.trim() || voiceUri
                                         ? BLUE
-                                        : cardBorderColor,
-                                },
-                            ]}
-                        >
-                            <Ionicons
-                                accessible={false}
-                                name={
-                                    recorderState.isRecording
-                                        ? "stop"
-                                        : voiceUri
-                                            ? "checkmark"
-                                            : "mic-outline"
-                                }
-                                size={34}
-                                color={recorderState.isRecording || voiceUri ? BLUE : colors.textPrimary}
-                            />
+                                        : colors.textPrimary}
+                                />
+                            </View>
                         </View>
-                    </View>
-                    <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
-                        {recorderState.isRecording
-                            ? "듣고 있어요"
-                            : isVoiceFinalizing
-                                ? "녹음 저장 중"
+                        <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
+                            {recorderState.isRecording
+                                ? "듣고 있어요"
+                                : isVoiceFinalizing
+                                    ? "음성을 정리하고 있어요"
+                                    : voiceTranscript.trim()
+                                        ? "인식 완료"
+                                        : voiceUri
+                                            ? "녹음 완료"
+                                            : "탭해서 말하기 시작"}
+                        </Text>
+                        <Text style={[styles.voiceMeta, { color: colors.textSecondary }]}>
+                            {voiceStatusMessage || (
+                                recorderState.isRecording || isVoiceFinalizing || voiceTranscript.trim() || voiceUri
+                                    ? voiceDurationText
+                                    : "말하는 내용이 아래에 바로 표시됩니다."
+                            )}
+                        </Text>
+                    </Pressable>
+
+                    <View
+                        style={[
+                            styles.voiceTranscriptWrap,
+                            {
+                                backgroundColor: inputBackground,
+                                borderColor: voiceTranscript.trim() ? BLUE : colors.inputBorder,
+                            },
+                        ]}
+                    >
+                        <View style={styles.voiceTranscriptHeader}>
+                            <Text style={[styles.voiceTranscriptLabel, { color: colors.textSecondary }]}>
+                                인식된 문장
+                            </Text>
+                            {voiceTranscriptTruncated ? (
+                                <Text style={[styles.voiceConfidence, styles.truncatedRecognitionText]}>
+                                    앞 300자만 표시
+                                </Text>
+                            ) : voiceRecognitionConfidence !== undefined && (
+                                <Text style={[styles.voiceConfidence, { color: colors.textSecondary }]}>
+                                    인식 {Math.round(voiceRecognitionConfidence * 100)}%
+                                </Text>
+                            )}
+                        </View>
+                        <TextInput
+                            accessibilityLabel="실시간 음성 인식 텍스트"
+                            editable={!submitting && !recorderState.isRecording && !isVoiceFinalizing}
+                            multiline
+                            maxLength={QUICK_TEXT_LIMIT}
+                            value={voiceTranscript}
+                            onChangeText={(value) => {
+                                setVoiceTranscript(value);
+                                setVoiceTranscriptTruncated(false);
+                                setVoiceRecognitionConfidence(undefined);
+                                setVoiceStatusMessage("");
+                            }}
+                            placeholder={recorderState.isRecording
+                                ? "말씀해 주세요…"
                                 : voiceUri
-                                    ? "녹음 완료"
-                                    : "탭해서 녹음 시작"}
-                    </Text>
-                    <Text style={[styles.voiceMeta, { color: colors.textSecondary }]}>
-                        {recorderState.isRecording || isVoiceFinalizing || voiceUri
-                            ? voiceDurationText
-                            : "말로 일정 내용을 알려주세요."}
-                    </Text>
-                </Pressable>
+                                    ? "일정 만들기를 누르면 녹음을 인식합니다."
+                                    : "인식 후 문장을 직접 수정할 수 있어요."}
+                            placeholderTextColor={colors.inputPlaceholder}
+                            selectionColor={BLUE}
+                            style={[styles.voiceTranscriptInput, { color: colors.textPrimary }]}
+                        />
+                    </View>
+                </View>
             )}
 
             <Pressable
@@ -3067,6 +3752,13 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.045,
         shadowRadius: 18,
     },
+    photoModeContent: {
+        marginBottom: 13,
+    },
+    photoPreviewPanel: {
+        minHeight: 142,
+        marginBottom: 0,
+    },
     photoIconWrap: {
         width: 58,
         height: 58,
@@ -3110,7 +3802,7 @@ const styles = StyleSheet.create({
         width: "100%",
         flexDirection: "row",
         gap: 9,
-        marginTop: 13,
+        marginTop: 10,
     },
     photoSourceButton: {
         flex: 1,
@@ -3130,20 +3822,116 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "800",
     },
-    voicePanel: {
-        minHeight: 176,
-        borderRadius: 20,
+    photoTranscriptWrap: {
+        minHeight: 120,
+        marginTop: 10,
+        borderRadius: 16,
         borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingTop: 9,
+        paddingBottom: 9,
+    },
+    photoTranscriptHeader: {
+        minHeight: 18,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    photoTranscriptLabel: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    photoConfidence: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    truncatedRecognitionText: {
+        color: "#F59E0B",
+    },
+    photoTranscriptInput: {
+        minHeight: 66,
+        maxHeight: 92,
+        padding: 0,
+        marginTop: 4,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: "600",
+        textAlignVertical: "top",
+    },
+    photoRecognitionStatus: {
+        minHeight: 78,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 20,
-        paddingVertical: 14,
+        gap: 9,
+    },
+    photoRecognitionStatusText: {
+        flexShrink: 1,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "700",
+    },
+    photoRecognitionErrorWrap: {
+        minHeight: 78,
+        alignItems: "flex-start",
+        justifyContent: "center",
+        gap: 8,
+    },
+    photoRecognitionErrorText: {
+        color: "#EF4444",
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "700",
+    },
+    photoRecognitionRetry: {
+        minHeight: 30,
+        borderRadius: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        paddingHorizontal: 9,
+        backgroundColor: "rgba(36,107,254,0.12)",
+    },
+    photoRecognitionRetryText: {
+        color: BLUE,
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    lowConfidenceNotice: {
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 5,
+        marginTop: 5,
+        paddingTop: 7,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "rgba(245,158,11,0.32)",
+    },
+    lowConfidenceNoticeText: {
+        flex: 1,
+        color: "#D97706",
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "700",
+    },
+    voicePanel: {
+        minHeight: 300,
+        borderRadius: 20,
+        borderWidth: 1,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
         marginBottom: 13,
         overflow: "hidden",
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 9 },
         shadowOpacity: 0.06,
         shadowRadius: 18,
+    },
+    voiceRecordControl: {
+        width: "100%",
+        alignItems: "center",
     },
     voiceOrbWrap: {
         width: 150,
@@ -3221,6 +4009,42 @@ const styles = StyleSheet.create({
         lineHeight: 18,
         fontWeight: "700",
         textAlign: "center",
+    },
+    voiceTranscriptWrap: {
+        minHeight: 78,
+        marginTop: 11,
+        borderRadius: 15,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingTop: 9,
+        paddingBottom: 8,
+    },
+    voiceTranscriptHeader: {
+        minHeight: 18,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    voiceTranscriptLabel: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    voiceConfidence: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    voiceTranscriptInput: {
+        minHeight: 42,
+        maxHeight: 70,
+        padding: 0,
+        marginTop: 3,
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: "600",
+        textAlignVertical: "top",
     },
     centerFlow: {
         flex: 1,

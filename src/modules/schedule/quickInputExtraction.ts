@@ -5,8 +5,11 @@ export type QuickScheduleMediaInput = {
     inputMode: "text" | "photo" | "voice";
     inputTypeOverride?: ParseScheduleInputType;
     photoUri?: string;
+    photoTranscript?: string;
     voiceUri?: string;
     voiceDurationMillis?: number;
+    voiceTranscript?: string;
+    recognitionConfidence?: number;
 };
 
 type NativeNoLateQuickInput = {
@@ -27,6 +30,11 @@ type NativeRecognitionResult = {
 export type QuickScheduleParseInput = {
     text: string;
     inputType: ParseScheduleInputType;
+    recognitionConfidence?: number;
+};
+
+export type QuickScheduleRecognitionResult = {
+    text: string;
     recognitionConfidence?: number;
 };
 
@@ -53,19 +61,46 @@ function normalizeExtractedText(value: NativeRecognitionResult | string) {
         ?? "";
 }
 
-function normalizeConfidence(value: NativeRecognitionResult | string): number | undefined {
-    if (typeof value === "string" || typeof value.confidence !== "number") return undefined;
-    if (!Number.isFinite(value.confidence)) return undefined;
-    return Math.max(0, Math.min(1, value.confidence));
+function normalizeConfidenceValue(value: unknown): number | undefined {
+    if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.min(1, value));
 }
 
-function buildSpeechContext(supplementalText: string) {
+function normalizeConfidence(value: NativeRecognitionResult | string): number | undefined {
+    return typeof value === "string"
+        ? undefined
+        : normalizeConfidenceValue(value.confidence);
+}
+
+export function buildScheduleSpeechContext(supplementalText: string) {
     const supplementalWords = supplementalText
         .split(/[\s,.;:!?，。]+/)
         .map((word) => word.trim())
         .filter((word) => word.length >= 2 && word.length <= 20);
 
     return Array.from(new Set([...SCHEDULE_SPEECH_CONTEXT, ...supplementalWords])).slice(0, 100);
+}
+
+export async function recognizeQuickSchedulePhoto(
+    photoUri: string
+): Promise<QuickScheduleRecognitionResult> {
+    if (!nativeQuickInput) {
+        throw new Error("이 기기에서는 사진 텍스트 인식을 사용할 수 없습니다.");
+    }
+    if (!photoUri.trim()) {
+        throw new Error("분석할 사진을 먼저 선택해 주세요.");
+    }
+
+    const recognition = await nativeQuickInput.recognizeTextFromImage(photoUri);
+    const extractedText = normalizeExtractedText(recognition);
+    if (!extractedText) {
+        throw new Error("사진에서 일정 텍스트를 찾지 못했습니다.");
+    }
+    const recognitionConfidence = normalizeConfidence(recognition);
+    return {
+        text: extractedText,
+        ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+    };
 }
 
 function inputTypeForMode(inputMode: QuickScheduleMediaInput["inputMode"]): ParseScheduleInputType {
@@ -101,6 +136,26 @@ export async function resolveQuickScheduleParseInput(
         };
     }
 
+    // 실시간 받아쓰기는 녹음 파일을 다시 전사하지 않는다. 사용자가 화면에서 확인하고
+    // 수정한 최종 문장을 그대로 일정 분석 경계로 넘겨 불필요한 재인식 손실을 피한다.
+    if (inputMode === "voice" && media?.voiceTranscript?.trim()) {
+        const recognitionConfidence = normalizeConfidenceValue(media.recognitionConfidence);
+        return {
+            text: normalizeExtractedText(media.voiceTranscript),
+            inputType,
+            ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+        };
+    }
+
+    if (inputMode === "photo" && media?.photoTranscript?.trim()) {
+        const recognitionConfidence = normalizeConfidenceValue(media.recognitionConfidence);
+        return {
+            text: normalizeExtractedText(media.photoTranscript),
+            inputType,
+            ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+        };
+    }
+
     if (!nativeQuickInput) {
         throw new Error("이 기기에서는 사진/음성 텍스트 추출을 사용할 수 없습니다.");
     }
@@ -110,17 +165,13 @@ export async function resolveQuickScheduleParseInput(
             throw new Error("분석할 사진을 먼저 선택해 주세요.");
         }
 
-        const recognition = await nativeQuickInput.recognizeTextFromImage(media.photoUri);
-        const extractedText = normalizeExtractedText(recognition);
-        if (!extractedText) {
-            throw new Error("사진에서 일정 텍스트를 찾지 못했습니다.");
-        }
+        const recognition = await recognizeQuickSchedulePhoto(media.photoUri);
 
         return {
-            text: extractedText,
+            text: recognition.text,
             inputType,
-            ...(normalizeConfidence(recognition) !== undefined
-                ? { recognitionConfidence: normalizeConfidence(recognition) }
+            ...(recognition.recognitionConfidence !== undefined
+                ? { recognitionConfidence: recognition.recognitionConfidence }
                 : {}),
         };
     }
@@ -132,7 +183,7 @@ export async function resolveQuickScheduleParseInput(
     const recognition = await nativeQuickInput.transcribeAudioFile(
         media.voiceUri,
         "ko-KR",
-        buildSpeechContext(text)
+        buildScheduleSpeechContext(text)
     );
     const extractedText = normalizeExtractedText(recognition);
     if (!extractedText) {
