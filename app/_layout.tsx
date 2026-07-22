@@ -172,7 +172,21 @@ function RootNavigator() {
                         animationDuration: 180,
                     }}
                 />
+                <Stack.Screen
+                    name="settings/places"
+                    options={{
+                        animation: "slide_from_right",
+                        animationDuration: 200,
+                    }}
+                />
                 <Stack.Screen name="schedule/index" />
+                <Stack.Screen
+                    name="notifications"
+                    options={{
+                        animation: "slide_from_right",
+                        animationDuration: 200,
+                    }}
+                />
                 <Stack.Screen name="schedule/categories" />
                 <Stack.Screen name="share/inbox" />
                 <Stack.Screen name="schedule/route-select" />

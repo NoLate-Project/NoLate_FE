@@ -112,6 +112,23 @@ export function buildDepartureParticipantPresentations(
     });
 }
 
+/**
+ * 출발 확인 푸시는 일정 오너가 아직 출발하지 않은 다른 공유 참가자에게만 보낼 수 있다.
+ * 서버 권한 검증이 최종 방어선이지만, 화면에서도 같은 정책을 사용해 실행 불가능한 버튼이
+ * 잠깐 보이거나 오너 정보가 아직 로드되지 않은 상태에서 요청되는 일을 막는다.
+ */
+export function canSendDepartureNudge(
+    participant: ScheduleDepartureParticipant,
+    currentMemberId: number | null,
+    ownerMemberId?: number
+): boolean {
+    if (typeof ownerMemberId !== "number" || currentMemberId !== ownerMemberId) return false;
+
+    return participant.role === "SHARED"
+        && participant.memberId !== currentMemberId
+        && !participant.departed;
+}
+
 export function getDepartureOverview(
     participants: ScheduleDepartureParticipant[],
     currentMemberId: number | null

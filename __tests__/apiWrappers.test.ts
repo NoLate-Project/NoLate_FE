@@ -21,6 +21,7 @@ import {
     importCalendarSchedule,
     markScheduleDeparted,
     searchSchedules,
+    sendScheduleDepartureNudge,
 } from "../src/api/schedule";
 import {
     createScheduleCategoryToApi,
@@ -227,6 +228,22 @@ describe("schedule query api wrappers", () => {
         await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
+    });
+
+    test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: { requestedCount: 1, sentCount: 1, failedCount: 0, removedTokenCount: 0 },
+        });
+
+        await expect(sendScheduleDepartureNudge("10", 2)).resolves.toEqual({
+            requestedCount: 1,
+            sentCount: 1,
+            failedCount: 0,
+            removedTokenCount: 0,
+        });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/departure-nudges/2");
     });
 
     test("calendar import posts the external occurrence identity and returns created state", async () => {

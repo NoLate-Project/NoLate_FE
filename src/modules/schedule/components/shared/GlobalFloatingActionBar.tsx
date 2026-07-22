@@ -181,6 +181,8 @@ function getNativeSymbolName(icon?: React.ComponentProps<typeof Ionicons>["name"
             return "envelope.badge";
         case "mail-outline":
             return "envelope";
+        case "notifications-outline":
+            return "bell";
         case "search":
             return "magnifyingglass";
         case "add":

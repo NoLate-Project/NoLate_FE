@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import * as Device from "expo-device";
 import * as SecureStore from "../storage/secureStorage";
 import { PermissionsAndroid, Platform } from "react-native";
 import {
@@ -21,11 +22,14 @@ import {
     isPushRegistrationGenerationCurrent,
     runPushRegistration,
 } from "./pushRegistrationCoordinator";
+import { retryPushRegistration } from "./pushRegistrationRetry";
+import { shouldRegisterRemotePush } from "./pushRegistrationDevicePolicy";
 
 const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
 const APNS_TOKEN_RETRY_COUNT = 30;
 const APNS_TOKEN_RETRY_DELAY_MS = 500;
+const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 1_500, 4_000] as const;
 
 function logPushDevelopment(message: string, error?: unknown): void {
     if (!__DEV__) return;
@@ -111,13 +115,21 @@ async function refreshFcmTokenIfNativeContextChanged(
 export function registerPushAfterLogin(memberId?: number): Promise<void> {
     if (!memberId) return Promise.resolve();
     return runPushRegistration(memberId, (generation) => (
-        performPushRegistration(memberId, generation)
+        retryPushRegistration(
+            () => performPushRegistration(memberId, generation),
+            {
+                delaysMs: PUSH_REGISTRATION_RETRY_DELAYS_MS,
+                isCurrent: () => isPushRegistrationGenerationCurrent(generation),
+            },
+        )
     ));
 }
 
 async function performPushRegistration(memberId: number, generation: number): Promise<void> {
     if (!memberId) return;
-    if (Platform.OS === "ios" && !Constants.isDevice) return;
+    // expo-constants 18에서 Constants.isDevice가 제거됐다. 제거된 값을 검사하면 undefined가
+    // false로 평가되어 실제 iPhone까지 시뮬레이터로 오인하고 모든 토큰 등록을 건너뛴다.
+    if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
 
     const messaging = getMessaging();
     let allowed = true;
@@ -176,7 +188,7 @@ export function subscribePushTokenRefresh(memberId?: number): () => void {
 export async function clearPushRegistrationAfterLogout(): Promise<void> {
     cancelPendingPushRegistration();
     await SecureStore.deleteItemAsync(PUSH_NATIVE_CONTEXT_KEY);
-    if (Platform.OS === "ios" && !Constants.isDevice) return;
+    if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
 
     try {
         await deleteToken(getMessaging());

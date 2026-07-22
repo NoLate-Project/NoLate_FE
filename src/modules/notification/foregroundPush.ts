@@ -5,7 +5,7 @@ import {
     onMessage,
     onNotificationOpenedApp,
 } from "@react-native-firebase/messaging";
-import Constants from "expo-constants";
+import * as Device from "expo-device";
 import type { NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
@@ -21,6 +21,7 @@ import {
     createPushActionFailureGate,
     type PushActionFailure,
 } from "./pushActionFailureGate";
+import { emitAppNotificationReceived } from "./appNotificationEvents";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -59,7 +60,7 @@ async function getNotifications(): Promise<ExpoNotificationsModule | null> {
     // iOS Simulator는 APNs 원격 푸시를 지원하지 않는다. expo-notifications를 import하면
     // 패키지 초기화 과정에서 서버 등록 정보를 Keychain에서 즉시 읽기 때문에, 서명되지
     // 않은 시뮬레이터 런타임에서는 errSecMissingEntitlement 오류가 발생할 수 있다.
-    if (Platform.OS === "ios" && !Constants.isDevice) {
+    if (Platform.OS === "ios" && !Device.isDevice) {
         notificationsModule = null;
         return notificationsModule;
     }
@@ -269,6 +270,10 @@ async function showForegroundNotification(
 ): Promise<void> {
     const title = message.notification?.title ?? "NoLate";
     const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
+
+    // 서버는 push 공급자 호출 전에 앱 알림을 저장한다. 수신 직후 배지 구독자에게
+    // 다시 조회하도록 알려 포그라운드 화면에서도 놓친 알림 개수가 즉시 보이게 한다.
+    emitAppNotificationReceived();
 
     await showLocalNotification({
         title,

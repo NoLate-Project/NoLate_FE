@@ -17,6 +17,13 @@ export type CalendarImportResult = {
     created: boolean;
 };
 
+export type NotificationSendResult = {
+    requestedCount: number;
+    sentCount: number;
+    failedCount: number;
+    removedTokenCount: number;
+};
+
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -147,6 +154,16 @@ export async function markScheduleDeparted(scheduleId: string): Promise<Schedule
     // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
     const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
     return normalizeSchedule(unwrapApiResponse(response));
+}
+
+export async function sendScheduleDepartureNudge(
+    scheduleId: string,
+    targetMemberId: number
+): Promise<NotificationSendResult> {
+    const response = await apiPost<ApiEnvelope<NotificationSendResult>>(
+        `/api/schedules/${scheduleId}/departure-nudges/${targetMemberId}`
+    );
+    return unwrapApiResponse(response);
 }
 
 export async function snoozeScheduleDepartureReminder(scheduleId: string): Promise<void> {

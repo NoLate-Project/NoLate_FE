@@ -339,6 +339,8 @@ describe("schedule push navigation payload", () => {
         "SCHEDULE_DEPARTURE_REMINDER",
         "SCHEDULE_DETAIL",
         "SCHEDULE_SHARE_RECEIVED",
+        "SCHEDULE_PARTICIPANT_DEPARTED",
+        "SCHEDULE_DEPARTURE_NUDGE",
         undefined,
     ])("일정 상세 이동 payload를 해석한다: %p", (type) => {
         expect(getPushNavigationTargetFromNotificationData({ type, scheduleId: "42" })).toEqual({
@@ -391,6 +393,8 @@ describe("schedule push navigation payload", () => {
 
     test.each([
         { type: "SCHEDULE_TRAFFIC", scheduleId: "42" },
+        { type: "SCHEDULE_PARTICIPANT_DEPARTED", scheduleId: "42" },
+        { type: "SCHEDULE_DEPARTURE_NUDGE", scheduleId: "42" },
         { type: "SCHEDULE_DEPARTURE_REMINDER", scheduleId: "0" },
         { type: "SCHEDULE_DEPARTURE_REMINDER" },
     ])("출발 리마인더가 아니면 알림 액션 카테고리를 붙이지 않는다: %p", (data) => {
