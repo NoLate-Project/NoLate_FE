@@ -29,6 +29,7 @@ const CATEGORY_COLORS = [
 ] as const;
 
 const CATEGORY_COLOR_LABELS = ["빨강", "주황", "초록", "파랑", "남색", "보라", "분홍"] as const;
+const BRAND_BLUE = "#246BFE";
 
 type CalendarImportCategoryCreatorProps = {
     categoryCount: number;
@@ -115,7 +116,7 @@ export default function CalendarImportCategoryCreator({
                 ]}
             >
                 <View style={styles.openIcon}>
-                    <Ionicons accessible={false} name="add" size={19} color={colors.selectedDayText} />
+                    <Ionicons accessible={false} name="add" size={19} color="#FFFFFF" />
                 </View>
                 <View style={styles.openCopy}>
                     <Text style={styles.openTitle}>새 카테고리 추가</Text>
@@ -130,7 +131,7 @@ export default function CalendarImportCategoryCreator({
         <View style={styles.creatorCard}>
             <View style={styles.creatorHeader}>
                 <View style={styles.openIcon}>
-                    <Ionicons accessible={false} name="add" size={19} color={colors.selectedDayText} />
+                    <Ionicons accessible={false} name="add" size={19} color="#FFFFFF" />
                 </View>
                 <View style={styles.openCopy}>
                     <Text style={styles.openTitle}>새 카테고리</Text>
@@ -210,9 +211,9 @@ export default function CalendarImportCategoryCreator({
                     ]}
                 >
                     {saving ? (
-                        <ActivityIndicator size="small" color={colors.selectedDayText} />
+                        <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                        <Ionicons accessible={false} name="checkmark" size={17} color={colors.selectedDayText} />
+                        <Ionicons accessible={false} name="checkmark" size={17} color="#FFFFFF" />
                     )}
                     <Text style={styles.createButtonText}>{saving ? "추가 중" : "추가"}</Text>
                 </Pressable>
@@ -243,7 +244,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderRadius: 10,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
         },
         openCopy: {
             flex: 1,
@@ -302,7 +303,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: "transparent",
         },
         colorButtonSelected: {
-            borderColor: colors.textPrimary,
+            borderColor: BRAND_BLUE,
         },
         colorSwatch: {
             width: 24,
@@ -338,10 +339,10 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             justifyContent: "center",
             gap: 5,
             borderRadius: 14,
-            backgroundColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
         },
         createButtonText: {
-            color: colors.selectedDayText,
+            color: "#FFFFFF",
             fontSize: 13,
             fontWeight: "900",
         },

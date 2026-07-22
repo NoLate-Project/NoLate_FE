@@ -3,6 +3,7 @@ import { StyleSheet, View } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
 import ScheduleCalendar from "./ScheduleCalendar";
 import type { ScheduleItem } from "../../types";
+import type { CalendarDayMetadata } from "../../calendarMetadata";
 import type { CalendarViewMode } from "./viewMode";
 
 export type DayTransitionContext = "idle" | "yearToMonth" | "monthToDay" | "dayToMonth";
@@ -15,6 +16,7 @@ type Props = {
     selectedDay: string;
     focusedMonth?: string;
     items: ScheduleItem[];
+    calendarDaysByDate?: Readonly<Record<string, CalendarDayMetadata>>;
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
     viewMode: CalendarViewMode;
@@ -41,6 +43,7 @@ function CalendarWrapper({
     selectedDay,
     focusedMonth,
     items,
+    calendarDaysByDate,
     onSelectDay,
     onOpenDay,
     viewMode,
@@ -66,6 +69,7 @@ function CalendarWrapper({
                 selectedDay={selectedDay}
                 focusedMonth={focusedMonth}
                 items={items}
+                calendarDaysByDate={calendarDaysByDate}
                 onSelectDay={onSelectDay}
                 onOpenDay={onOpenDay}
                 viewMode={viewMode}

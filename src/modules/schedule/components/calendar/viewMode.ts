@@ -3,13 +3,13 @@ export type CalendarViewMode = "compact" | "stack" | "detail" | "week" | "list";
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
     // Compact inherits the former stack presentation: a continuous month
     // scroller with short category bars.
-    compact: 92,
+    compact: 102,
     // Stack is the Apple-style detailed month presentation. Its taller cells
     // leave room for event-title chips without crowding the date number.
-    stack: 120,
-    detail: 62,
-    week: 76,
-    list: 58,
+    stack: 130,
+    detail: 72,
+    week: 86,
+    list: 68,
 };
 
 export function isContinuousMonthViewMode(

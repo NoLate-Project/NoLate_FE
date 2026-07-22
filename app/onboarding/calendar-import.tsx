@@ -141,9 +141,9 @@ const TRAVEL_MODES: Array<{
 const TRAVEL_MINUTES = [15, 30, 45, 60];
 
 const SCAN_MESSAGES = [
-    "캘린더 접근 확인 중",
-    "다가오는 일정 확인 중",
-    "장소가 있는 일정 정리 중",
+    "캘린더 연결 확인",
+    "다가오는 일정 찾기",
+    "가져올 일정 정리",
 ];
 
 const GOOGLE_AUTH_TIMEOUT_MS = 120_000;
@@ -153,8 +153,10 @@ const PLACE_SEARCH_TIMEOUT_MS = 15_000;
 const ROUTE_SEARCH_TIMEOUT_MS = 25_000;
 const IMPORT_BATCH_SIZE = 3;
 const CANDIDATE_PAGE_SIZE = 20;
+const CURATION_PROGRESS_SEGMENT_COUNT = 6;
 
 const APP_LOGO = require("../../assets/icon.png");
+const BRAND_BLUE = "#246BFE";
 
 export default function CalendarImportOnboarding() {
     const router = useRouter();
@@ -198,7 +200,7 @@ export default function CalendarImportOnboarding() {
         () => new Set()
     );
     const [scanStage, setScanStage] = useState(0);
-    const [scanStatusMessage, setScanStatusMessage] = useState("캘린더 연결 상태를 확인하고 있어요");
+    const [scanStatusMessage, setScanStatusMessage] = useState("캘린더 연결을 확인하고 있어요");
     const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
     const [visibleCandidateCount, setVisibleCandidateCount] = useState(CANDIDATE_PAGE_SIZE);
@@ -278,7 +280,7 @@ export default function CalendarImportOnboarding() {
     );
     const providerCtaLabel = selectedProviderIds.size === 0
         ? "캘린더를 선택해 주세요"
-        : "선택한 캘린더 연결하기";
+        : "선택한 캘린더로 계속";
     const permissionProviderLabel = useMemo(() => {
         const labels = [
             selectedProviderIds.has("device") ? deviceProviderLabel : null,
@@ -1069,7 +1071,7 @@ export default function CalendarImportOnboarding() {
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === "ios" ? "padding" : undefined}
-            style={[styles.root, { paddingTop: insets.top + 12, paddingBottom: Math.max(insets.bottom, 18) }]}
+            style={[styles.root, { paddingTop: insets.top + 12 }]}
         >
             <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
             <View style={styles.topRow}>
@@ -1090,10 +1092,12 @@ export default function CalendarImportOnboarding() {
                 >
                     <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
                 </Pressable>
+                <CurationProgress step={step} />
             </View>
 
             <ScrollView
                 ref={scrollViewRef}
+                style={styles.scroll}
                 keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
@@ -1107,22 +1111,22 @@ export default function CalendarImportOnboarding() {
                         </View>
                         <Text style={styles.title}>캘린더를 연결하면{"\n"}출발 준비가 쉬워져요</Text>
                         <Text style={styles.subtitle}>
-                            필요한 일정만 찾아 NoLate에 가져올게요.
+                            가져올 일정만 고르면 출발 준비까지 이어서 설정할 수 있어요.
                         </Text>
 
                         <View style={styles.introPointList}>
-                            <IntroPoint label="원본 캘린더는 바꾸지 않아요" />
-                            <IntroPoint label="가져올 일정은 직접 고를 수 있어요" />
+                            <IntroPoint label="원본 캘린더는 그대로 유지해요" />
+                            <IntroPoint label="필요한 일정만 직접 선택해요" />
                         </View>
                     </View>
                 )}
 
                 {step === "provider" && (
                     <View style={styles.stepWrap}>
-                        <Text style={styles.eyebrow}>캘린더 선택</Text>
-                        <Text style={styles.title}>어디에서 일정을{"\n"}가져올까요?</Text>
+                        <Text style={styles.eyebrow}>캘린더 가져오기</Text>
+                        <Text style={styles.title}>어느 캘린더에서{"\n"}가져올까요?</Text>
                         <Text style={styles.subtitle}>
-                            연결하고 싶은 캘린더를 체크해 주세요. 이어서 가져올 일정만 골라볼게요.
+                            가져올 캘린더를 모두 선택해 주세요.
                         </Text>
 
                         <View style={styles.providerList}>
@@ -1141,9 +1145,9 @@ export default function CalendarImportOnboarding() {
                 {step === "permission" && (
                     <View style={styles.stepWrap}>
                         <StepIcon name={Platform.OS === "ios" ? "calendar-outline" : "phone-portrait-outline"} />
-                        <Text style={styles.title}>{permissionProviderLabel}에서{"\n"}다가오는 일정을 찾아볼게요</Text>
+                        <Text style={styles.title}>{permissionProviderLabel}의{"\n"}일정을 확인할게요</Text>
                         <Text style={styles.subtitle}>
-                            아래 필수 항목에 동의하면 캘린더 권한 요청으로 이어집니다.
+                            일정을 읽기 전에 필요한 항목만 확인해 주세요.
                         </Text>
                         <CalendarConsentChecklist
                             items={calendarConsentItems}
@@ -1169,7 +1173,7 @@ export default function CalendarImportOnboarding() {
                             variant="calendar"
                             accessibilityLabel={`다가오는 일정을 찾고 있어요. ${SCAN_MESSAGES[Math.min(scanStage, SCAN_MESSAGES.length - 1)]}`}
                         />
-                        <Text style={styles.title}>다가오는 일정을{"\n"}찾고 있어요</Text>
+                        <Text style={styles.title}>가져올 일정을{"\n"}찾고 있어요</Text>
                         <Text style={styles.subtitle}>{scanStatusMessage}</Text>
                         <View style={styles.scanList}>
                             {SCAN_MESSAGES.map((message, index) => (
@@ -1181,7 +1185,7 @@ export default function CalendarImportOnboarding() {
                                                 ? "time-outline"
                                                 : "ellipse-outline"}
                                         size={19}
-                                        color={scanStage >= index ? colors.textPrimary : colors.textDisabled}
+                                        color={scanStage >= index ? BRAND_BLUE : colors.textDisabled}
                                     />
                                     <Text
                                         style={[
@@ -1199,14 +1203,14 @@ export default function CalendarImportOnboarding() {
 
                 {step === "select" && (
                     <View style={styles.stepWrap}>
-                        <Text pointerEvents="none" style={styles.eyebrow}>{candidates.length}개의 일정 후보</Text>
+                        <Text pointerEvents="none" style={styles.eyebrow}>{candidates.length}개 일정 찾음</Text>
                         <Text pointerEvents="none" style={styles.title}>
                             {selectedIds.size > 0
-                                ? `가져올 일정 ${selectedIds.size}개를 골랐어요`
-                                : "가져올 일정을 골라 주세요"}
+                                ? `일정 ${selectedIds.size}개를\n선택했어요`
+                                : "가져올 일정을\n선택해 주세요"}
                         </Text>
                         <Text pointerEvents="none" style={styles.subtitle}>
-                            장소와 시간이 있는 일정은 기본으로 선택했고, 종일 일정도 직접 고를 수 있어요.
+                            추천 일정은 미리 선택했어요. 필요 없는 일정은 해제할 수 있어요.
                         </Text>
                         {errorMessage ? (
                             <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
@@ -1219,21 +1223,21 @@ export default function CalendarImportOnboarding() {
                             <View style={styles.emptyBox}>
                                 <Ionicons name="calendar-clear-outline" size={34} color={colors.textDisabled} />
                                 <Text style={styles.emptyTitle}>가져올 일정이 없어요</Text>
-                                <Text style={styles.emptyText}>일정 화면에서 직접 첫 일정을 만들 수 있습니다.</Text>
+                                <Text style={styles.emptyText}>일정 화면에서 직접 첫 일정을 만들 수 있어요.</Text>
                             </View>
                         ) : (
                             <>
                                 <View style={styles.selectionControlList}>
                                     <SelectionControlRow
-                                        title={allCandidatesSelected ? "전체 일정 선택됨" : "전체 일정 선택"}
-                                        description={`${candidates.length}개 후보 모두 가져오기`}
+                                        title={allCandidatesSelected ? "전체 선택됨" : "전체 선택"}
+                                        description={`${candidates.length}개 일정을 한 번에 선택해요`}
                                         icon="checkmark-done-outline"
                                         active={allCandidatesSelected}
                                         onPress={selectAllCandidates}
                                     />
                                     <SelectionControlRow
-                                        title="선택 모두 해제"
-                                        description="필요한 일정만 다시 고르기"
+                                        title="전체 해제"
+                                        description="필요한 일정만 다시 골라요"
                                         icon="remove-circle-outline"
                                         active={selectedIds.size === 0}
                                         onPress={clearSelectedCandidates}
@@ -1242,7 +1246,7 @@ export default function CalendarImportOnboarding() {
 
                                 {candidateSourceGroups.length > 1 ? (
                                     <>
-                                        <SectionTitle label="원본 캘린더별 선택" />
+                                        <SectionTitle label="캘린더별 선택" />
                                         <View style={styles.sourceGroupList}>
                                             {candidateSourceGroups.map((group) => (
                                                 <CandidateSourceRow
@@ -1279,13 +1283,15 @@ export default function CalendarImportOnboarding() {
 
                 {step === "enrich" && (
                     <View style={styles.stepWrap}>
-                        <Text style={styles.eyebrow}>{selectedCandidates.length}개 일정 가져오기</Text>
-                        <Text style={styles.title}>메모를 읽고{"\n"}경로까지 준비할게요</Text>
+                        <Text style={styles.eyebrow}>출발 준비 설정</Text>
+                        <Text style={styles.title}>가져오기 전에{"\n"}출발 준비를 설정해요</Text>
                         <Text style={styles.subtitle}>
-                            {selectedCandidates.length}개 중 {routeCandidateCount}개 일정에서 경로 후보를 찾았어요.
+                            {routeCandidateCount > 0
+                                ? `${selectedCandidates.length}개 일정 중 ${routeCandidateCount}개는 경로와 알림도 준비할 수 있어요.`
+                                : "선택한 일정은 경로 없이도 바로 가져올 수 있어요."}
                         </Text>
 
-                        <SectionTitle label="카테고리" />
+                        <SectionTitle label="카테고리 선택" />
                         {categoryLoading && categories.length === 0 ? (
                             <View
                                 accessibilityLiveRegion="polite"
@@ -1356,7 +1362,7 @@ export default function CalendarImportOnboarding() {
 
                         <View style={styles.switchRow}>
                             <View style={styles.switchTextWrap}>
-                                <Text style={styles.switchTitle}>경로와 출발 알림 자동 준비</Text>
+                                <Text style={styles.switchTitle}>경로와 출발 알림 준비</Text>
                                 <Text style={styles.switchHint}>
                                     {routeCandidateCount === 0
                                         ? "경로 후보가 없어 일정만 가져와요"
@@ -1366,21 +1372,21 @@ export default function CalendarImportOnboarding() {
                                 </Text>
                             </View>
                             <Switch
-                                accessibilityLabel="경로와 출발 알림 자동 준비"
+                                accessibilityLabel="경로와 출발 알림 준비"
                                 value={routePreparationEnabled}
                                 onValueChange={setPrepareDepartureAlert}
                                 disabled={routeCandidateCount === 0 || remainingNotificationQuota === 0}
                                 trackColor={{
                                     false: mode === "dark" ? "#34363D" : "#D7D9DF",
-                                    true: colors.selectedDayBg,
+                                    true: BRAND_BLUE,
                                 }}
-                                thumbColor={routePreparationEnabled ? colors.selectedDayText : "#FFFFFF"}
+                                thumbColor="#FFFFFF"
                             />
                         </View>
 
                         {routePreparationEnabled ? (
                             <>
-                                <SectionTitle label="주로 출발하는 위치" />
+                                <SectionTitle label="기본 출발지" />
                                 <DefaultOriginPicker
                                     favorites={favoriteDeparturePlaces}
                                     selected={defaultOrigin}
@@ -1394,9 +1400,9 @@ export default function CalendarImportOnboarding() {
                                 />
 
                                 <View style={styles.routePreparationNotice}>
-                                    <Ionicons name="sparkles-outline" size={17} color={colors.textPrimary} />
+                                    <Ionicons name="sparkles-outline" size={17} color={BRAND_BLUE} />
                                     <Text style={styles.routePreparationNoticeText}>
-                                        메모에 출발지가 있으면 그 장소를 우선 사용하고, 없으면 선택한 주 출발지에서 경로를 만들어요.
+                                        일정 메모에 출발지가 있으면 우선 사용하고, 없으면 기본 출발지에서 경로를 만들어요.
                                     </Text>
                                 </View>
 
@@ -1413,7 +1419,7 @@ export default function CalendarImportOnboarding() {
                                     ))}
                                 </View>
 
-                                <SectionTitle label="경로를 못 찾았을 때 예상 이동시간" />
+                                <SectionTitle label="경로가 없을 때 예상 이동시간" />
                                 <View style={styles.chipRow}>
                                     {TRAVEL_MINUTES.map((minutes) => (
                                         <OptionChip
@@ -1431,22 +1437,29 @@ export default function CalendarImportOnboarding() {
 
                 {step === "complete" && (
                     <View style={styles.stepWrap}>
-                        <StepIcon name="checkmark-circle-outline" />
+                        <View
+                            accessible
+                            accessibilityLabel="NoLate"
+                            accessibilityRole="image"
+                            style={styles.completeLogoWrap}
+                        >
+                            <Image source={APP_LOGO} resizeMode="cover" style={styles.introLogoImage} />
+                        </View>
                         <Text style={styles.title}>
                             {importedCount > 0
-                                ? `일정 ${importedCount}개를\nNoLate에 추가했어요`
-                                : "선택한 일정은\n이미 추가되어 있어요"}
+                                ? `${importedCount}개 일정을\nNoLate로 가져왔어요`
+                                : "선택한 일정은\n이미 NoLate에 있어요"}
                         </Text>
                         <Text style={styles.subtitle}>
                             {importedCount === 0
-                                ? "중복 저장하지 않고 기존 일정을 유지했어요."
+                                ? "중복으로 저장하지 않고 기존 일정을 그대로 유지했어요."
                                 : notificationReadyCount > 0
                                 ? `${notificationReadyCount}개 일정은 경로와 출발 알림까지 준비했어요.`
                                 : preparedRouteCount > 0
                                     ? `${preparedRouteCount}개 일정의 경로를 준비했어요.`
                                     : routePreparationEnabled
-                                        ? "경로를 준비하지 못한 일정은 알림을 끈 상태로 추가했어요."
-                                        : "선택한 일정을 NoLate 캘린더에 추가했어요."}
+                                        ? "가져오기는 완료했고, 경로가 없는 일정은 알림을 꺼 두었어요."
+                                        : "선택한 일정을 NoLate 캘린더에 저장했어요."}
                             {alreadyImportedCount > 0 && importedCount > 0
                                 ? `\n이미 가져온 ${alreadyImportedCount}개 일정은 건너뛰었어요.`
                                 : ""}
@@ -1457,10 +1470,18 @@ export default function CalendarImportOnboarding() {
                 </Animated.View>
             </ScrollView>
 
-            <Animated.View style={[styles.footer, footerMotionStyle]}>
+            <Animated.View
+                style={[
+                    styles.footer,
+                    // KeyboardAvoidingView의 iOS padding이 루트 paddingBottom을 덮어쓰므로
+                    // 실제 버튼을 담는 푸터에서 기기별 하단 안전 영역을 직접 보장한다.
+                    { paddingBottom: Math.max(insets.bottom, 18) + (step === "complete" ? 8 : 0) },
+                    footerMotionStyle,
+                ]}
+            >
                 {step === "intro" && (
                     <>
-                        <PrimaryButton label="일정 불러오기" onPress={() => goToStep("provider")} />
+                        <PrimaryButton label="캘린더 선택하기" onPress={() => goToStep("provider")} />
                         <GhostButton
                             label={exitWithoutImportLabel}
                             disabled={completingCuration}
@@ -1485,7 +1506,7 @@ export default function CalendarImportOnboarding() {
                 {step === "permission" && (
                     <>
                         <PrimaryButton
-                            label={allCalendarConsentsAccepted ? "동의하고 계속하기" : "필수 항목 동의하기"}
+                            label={allCalendarConsentsAccepted ? "동의하고 일정 확인하기" : "필수 항목을 확인해 주세요"}
                             disabled={!allCalendarConsentsAccepted}
                             onPress={scanCalendars}
                         />
@@ -1509,11 +1530,12 @@ export default function CalendarImportOnboarding() {
                             />
                         ) : (
                             <PrimaryButton
-                                label={selectedIds.size > 0 ? `선택한 일정 ${selectedIds.size}개 가져오기` : "전체 일정 선택하기"}
-                                onPress={selectedIds.size > 0 ? () => goToStep("enrich") : selectAllCandidates}
+                                label={selectedIds.size > 0 ? `일정 ${selectedIds.size}개 계속하기` : "가져올 일정을 선택해 주세요"}
+                                disabled={selectedIds.size === 0}
+                                onPress={() => goToStep("enrich")}
                             />
                         )}
-                        <GhostButton label={candidates.length === 0 ? "캘린더 다시 선택" : "이전으로"} onPress={goBackStep} />
+                        <GhostButton label={candidates.length === 0 ? "캘린더 다시 선택" : "이전"} onPress={goBackStep} />
                     </>
                 )}
                 {step === "enrich" && (
@@ -1528,13 +1550,13 @@ export default function CalendarImportOnboarding() {
                                         : !selectedCategory
                                             ? "카테고리를 다시 불러와 주세요"
                                             : routePreparationEnabled && !defaultOriginReady
-                                                ? "주 출발지를 선택해 주세요"
-                                                : `선택한 일정 ${selectedCandidates.length}개 가져오기`}
+                                                ? "기본 출발지를 선택해 주세요"
+                                                : `일정 ${selectedCandidates.length}개 가져오기`}
                             disabled={categoryCreating || importing || !canImportSelectedSchedules || !selectedCategory}
                             onPress={importSelectedSchedules}
                         />
                         <GhostButton
-                            label="이전으로"
+                            label="이전"
                             disabled={categoryCreating || importing}
                             onPress={() => goToStep("select")}
                         />
@@ -1652,7 +1674,7 @@ function CalendarConsentChecklist({
                 <View style={styles.consentCopy}>
                     <Text style={styles.consentAllTitle}>필수 항목에 모두 동의해요</Text>
                     <Text style={styles.consentDescription}>
-                        원본 캘린더는 수정하지 않고, 선택한 일정만 가져옵니다.
+                        원본은 바꾸지 않고, 선택한 일정만 NoLate에 저장해요.
                     </Text>
                 </View>
             </Pressable>
@@ -1740,9 +1762,40 @@ function ConsentCheck({ checked, compact }: { checked: boolean; compact?: boolea
                 <Ionicons
                     name="checkmark"
                     size={compact ? 13 : 15}
-                    color={colors.selectedDayText}
+                    color="#FFFFFF"
                 />
             ) : null}
+        </View>
+    );
+}
+
+function CurationProgress({ step }: { step: OnboardingStep }) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+    const current = curationProgressValue(step);
+
+    return (
+        <View
+            accessible
+            accessibilityRole="progressbar"
+            accessibilityLabel="캘린더 가져오기 진행 상황"
+            accessibilityValue={{
+                min: 1,
+                max: CURATION_PROGRESS_SEGMENT_COUNT,
+                now: current,
+                text: `${current}/${CURATION_PROGRESS_SEGMENT_COUNT}단계`,
+            }}
+            style={styles.curationProgress}
+        >
+            {Array.from({ length: CURATION_PROGRESS_SEGMENT_COUNT }, (_, index) => (
+                <View
+                    key={index}
+                    style={[
+                        styles.curationProgressSegment,
+                        index < current && styles.curationProgressSegmentActive,
+                    ]}
+                />
+            ))}
         </View>
     );
 }
@@ -1753,9 +1806,27 @@ function StepIcon({ name }: { name: ComponentProps<typeof Ionicons>["name"] }) {
 
     return (
         <View style={styles.stepIcon}>
-            <Ionicons name={name} size={28} color={colors.selectedDayText} />
+            <Ionicons name={name} size={28} color={BRAND_BLUE} />
         </View>
     );
+}
+
+function curationProgressValue(step: OnboardingStep): number {
+    switch (step) {
+        case "intro":
+            return 1;
+        case "provider":
+            return 2;
+        case "permission":
+        case "scanning":
+            return 3;
+        case "select":
+            return 4;
+        case "enrich":
+            return 5;
+        case "complete":
+            return 6;
+    }
 }
 
 function IntroPoint({ label }: { label: string }) {
@@ -1764,7 +1835,7 @@ function IntroPoint({ label }: { label: string }) {
 
     return (
         <View style={styles.introPoint}>
-            <Ionicons name="checkmark-circle" size={18} color={colors.textPrimary} />
+            <Ionicons name="checkmark-circle" size={18} color={BRAND_BLUE} />
             <Text style={styles.introPointText}>{label}</Text>
         </View>
     );
@@ -1818,7 +1889,7 @@ function ProviderOptionRow({
                 </Text>
             </View>
             <View style={[styles.providerCheck, selected && styles.providerCheckSelected]}>
-                {selected ? <Ionicons name="checkmark" size={14} color={colors.selectedDayText} /> : null}
+                {selected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
             </View>
         </Pressable>
     );
@@ -1856,7 +1927,7 @@ function SelectionControlRow({
                 <Ionicons
                     name={icon}
                     size={16}
-                    color={active ? colors.selectedDayText : colors.textPrimary}
+                    color={active ? "#FFFFFF" : colors.textPrimary}
                 />
             </View>
             <View style={styles.selectionControlCopy}>
@@ -1898,7 +1969,7 @@ function CandidateSourceRow({
             ]}
         >
             <View style={[styles.checkCircle, active && styles.checkCircleSelected]}>
-                {active ? <Ionicons name="checkmark" size={14} color={colors.selectedDayText} /> : null}
+                {active ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
             </View>
             <View style={[styles.sourceGroupDot, { backgroundColor: group.color ?? colors.textDisabled }]} />
             <View style={styles.sourceGroupCopy}>
@@ -1939,13 +2010,13 @@ function CandidateRow({
             onPress={onPress}
             style={({ pressed }) => [
                 styles.candidateRow,
-                selected && styles.candidateRowSelected,
                 candidate.requiresTimeReview && styles.candidateRowReview,
+                selected && styles.candidateRowSelected,
                 pressed && styles.pressed,
             ]}
         >
             <View style={[styles.checkCircle, selected && styles.checkCircleSelected]}>
-                {selected ? <Ionicons name="checkmark" size={14} color={colors.selectedDayText} /> : null}
+                {selected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
             </View>
             <View style={styles.candidateBody}>
                 <View style={styles.candidateTitleRow}>
@@ -1966,7 +2037,7 @@ function CandidateRow({
                         ]}
                     />
                     <Text numberOfLines={1} style={styles.calendarSourceText}>
-                        {candidate.requiresTimeReview ? "종일 일정으로 가져오기" : candidate.calendarTitle}
+                        {candidate.requiresTimeReview ? "시간 확인이 필요한 종일 일정" : candidate.calendarTitle}
                     </Text>
                 </View>
             </View>
@@ -2026,7 +2097,7 @@ function DefaultOriginPicker({
                     placeholder="집, 회사 또는 도로명 주소 검색"
                     placeholderTextColor={colors.textDisabled}
                     style={styles.originSearchInput}
-                    accessibilityLabel="주로 출발하는 위치 검색"
+                    accessibilityLabel="기본 출발지 검색"
                 />
                 <Pressable
                     disabled={searching || !query.trim()}
@@ -2040,16 +2111,16 @@ function DefaultOriginPicker({
                     ]}
                 >
                     {searching ? (
-                        <ActivityIndicator size="small" color={colors.selectedDayText} />
+                        <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
-                        <Ionicons name="arrow-forward" size={17} color={colors.selectedDayText} />
+                        <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
                     )}
                 </Pressable>
             </View>
 
             {selected && hasFavoriteDepartureCoords(selected) ? (
                 <View style={styles.selectedOriginRow}>
-                    <Ionicons name="checkmark-circle" size={17} color={colors.textPrimary} />
+                    <Ionicons name="checkmark-circle" size={17} color={BRAND_BLUE} />
                     <View style={styles.selectedOriginCopy}>
                         <Text numberOfLines={1} style={styles.selectedOriginTitle}>
                             {selected.name?.trim() || "선택한 출발지"}
@@ -2122,7 +2193,7 @@ function OptionChip({
                 <Ionicons
                     name={icon}
                     size={16}
-                    color={active ? colors.selectedDayText : colors.textSecondary}
+                    color={active ? "#FFFFFF" : colors.textSecondary}
                 />
             ) : color ? (
                 <View style={[styles.optionColorDot, { backgroundColor: color }]} />
@@ -2155,12 +2226,12 @@ function PrimaryButton({
             onPress={onPress}
             style={({ pressed }) => [
                 styles.primaryButton,
-                disabled && styles.disabled,
+                disabled && styles.primaryButtonDisabled,
                 pressed && !disabled && styles.pressed,
             ]}
         >
-            <Text style={styles.primaryButtonText}>{label}</Text>
-            <Ionicons name="arrow-forward" size={18} color={colors.selectedDayText} />
+            <Text style={[styles.primaryButtonText, disabled && styles.primaryButtonTextDisabled]}>{label}</Text>
+            <Ionicons name="arrow-forward" size={18} color={disabled ? colors.textDisabled : "#FFFFFF"} />
         </Pressable>
     );
 }
@@ -2249,8 +2320,8 @@ function formatCalendarScanFailures(failures: CalendarProviderScanFailure[]): st
 
 function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProviderOption[] {
     const deviceDescription = Platform.OS === "ios"
-        ? "iPhone에 동기화된 캘린더"
-        : "Android에 동기화된 캘린더";
+        ? "이 iPhone에 동기화된 일정"
+        : "이 Android 기기에 동기화된 일정";
 
     return [
         {
@@ -2259,15 +2330,13 @@ function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProv
             description: deviceDescription,
             icon: Platform.OS === "ios" ? "logo-apple" : "phone-portrait-outline",
             available: true,
-            badge: "바로 연결",
         },
         {
             id: "google",
             title: "Google Calendar",
-            description: "Google 계정에서 일정 가져오기",
+            description: "Google 계정에 저장된 일정",
             icon: "logo-google",
             available: true,
-            badge: "직접 연결",
         },
     ];
 }
@@ -2282,7 +2351,7 @@ function buildCalendarConsentItems(
         items.push({
             id: "device_access",
             title: `${deviceProviderLabel} 접근`,
-            summary: "기기 캘린더 목록과 다가오는 일정 후보를 읽습니다.",
+            summary: "캘린더 목록과 다가오는 일정 정보를 읽어요.",
             required: true,
             detail: [
                 "캘린더 이름, 일정 제목, 시작/종료 시간, 장소, 메모, 종일 여부를 일정 후보로 확인합니다.",
@@ -2297,7 +2366,7 @@ function buildCalendarConsentItems(
         items.push({
             id: "google_access",
             title: "Google Calendar 연동",
-            summary: "Google OAuth 동의 후 읽기 전용으로 일정을 조회합니다.",
+            summary: "Google 동의 후 읽기 전용으로 일정을 확인해요.",
             required: true,
             detail: [
                 "Google Calendar API의 읽기 전용 범위로 캘린더 목록과 다가오는 일정 후보를 조회합니다.",
@@ -2312,7 +2381,7 @@ function buildCalendarConsentItems(
         {
             id: "candidate_review",
             title: "일정 후보 확인",
-            summary: "가져올 일정을 사용자가 직접 고를 수 있습니다.",
+            summary: "가져올 일정은 직접 선택해요.",
             required: true,
             detail: [
                 "장소와 시간이 있는 일정은 기본 추천으로 표시합니다.",
@@ -2324,7 +2393,7 @@ function buildCalendarConsentItems(
         {
             id: "selected_schedule_storage",
             title: "선택 일정 저장",
-            summary: "선택한 일정만 NoLate 일정으로 저장합니다.",
+            summary: "선택한 일정만 NoLate에 저장해요.",
             required: true,
             detail: [
                 "외부 캘린더 전체 원본을 서버에 일괄 저장하지 않습니다.",
@@ -2395,6 +2464,7 @@ function buildCandidateSourceGroups(
 
 function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark" | "light") {
     const isDark = mode === "dark";
+    const brandTint = isDark ? "rgba(36,107,254,0.18)" : "rgba(36,107,254,0.08)";
 
     return StyleSheet.create({
         root: {
@@ -2406,7 +2476,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             minHeight: 36,
             flexDirection: "row",
             alignItems: "center",
-            gap: 10,
+            gap: 14,
         },
         backButton: {
             width: 34,
@@ -2419,11 +2489,30 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         backButtonHidden: {
             opacity: 0,
         },
+        scroll: {
+            flex: 1,
+        },
+        curationProgress: {
+            flex: 1,
+            height: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+        },
+        curationProgressSegment: {
+            flex: 1,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.10)",
+        },
+        curationProgressSegmentActive: {
+            backgroundColor: BRAND_BLUE,
+        },
         content: {
             flexGrow: 1,
-            justifyContent: "center",
-            paddingTop: 32,
-            paddingBottom: 22,
+            justifyContent: "flex-start",
+            paddingTop: 52,
+            paddingBottom: 36,
         },
         stepMotion: {
             width: "100%",
@@ -2447,13 +2536,21 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             width: "100%",
             height: "100%",
         },
+        completeLogoWrap: {
+            width: 68,
+            height: 68,
+            borderRadius: 20,
+            overflow: "hidden",
+            backgroundColor: BRAND_BLUE,
+            marginBottom: 10,
+        },
         stepIcon: {
             width: 60,
             height: 60,
             borderRadius: 20,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: colors.selectedDayBg,
+            backgroundColor: brandTint,
             marginBottom: 8,
         },
         eyebrow: {
@@ -2509,7 +2606,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         providerRowSelected: {
-            borderColor: colors.textPrimary,
+            borderColor: BRAND_BLUE,
+            backgroundColor: brandTint,
         },
         providerIconWrap: {
             width: 38,
@@ -2567,8 +2665,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             backgroundColor: isDark ? "#16181D" : "#FFFFFF",
         },
         providerCheckSelected: {
-            backgroundColor: colors.selectedDayBg,
-            borderColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
+            borderColor: BRAND_BLUE,
         },
         providerNotice: {
             minHeight: 46,
@@ -2624,8 +2722,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             backgroundColor: isDark ? "#14161B" : "#FFFFFF",
         },
         consentCheckSelected: {
-            borderColor: colors.selectedDayBg,
-            backgroundColor: colors.selectedDayBg,
+            borderColor: BRAND_BLUE,
+            backgroundColor: BRAND_BLUE,
         },
         consentCopy: {
             flex: 1,
@@ -2786,7 +2884,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         selectionControlRowActive: {
-            borderColor: colors.textPrimary,
+            borderColor: BRAND_BLUE,
+            backgroundColor: brandTint,
         },
         selectionControlIcon: {
             width: 30,
@@ -2799,8 +2898,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         selectionControlIconActive: {
-            backgroundColor: colors.selectedDayBg,
-            borderColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
+            borderColor: BRAND_BLUE,
         },
         selectionControlCopy: {
             flex: 1,
@@ -2833,7 +2932,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         sourceGroupButtonActive: {
-            borderColor: colors.textPrimary,
+            borderColor: BRAND_BLUE,
+            backgroundColor: brandTint,
         },
         sourceGroupDot: {
             width: 8,
@@ -2871,7 +2971,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         candidateRowSelected: {
-            borderColor: colors.textPrimary,
+            borderColor: BRAND_BLUE,
+            backgroundColor: brandTint,
         },
         candidateRowReview: {
             backgroundColor: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.72)",
@@ -2887,8 +2988,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             backgroundColor: isDark ? "#16181D" : "#FFFFFF",
         },
         checkCircleSelected: {
-            backgroundColor: colors.selectedDayBg,
-            borderColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
+            borderColor: BRAND_BLUE,
         },
         candidateBody: {
             flex: 1,
@@ -2913,8 +3014,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderRadius: 9,
             paddingHorizontal: 7,
             paddingVertical: 3,
-            color: colors.selectedDayText,
-            backgroundColor: colors.selectedDayBg,
+            color: "#FFFFFF",
+            backgroundColor: BRAND_BLUE,
             fontSize: 10,
             fontWeight: "900",
         },
@@ -2996,7 +3097,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderColor: colors.border,
         },
         originSearchRowSelected: {
-            borderColor: isDark ? "rgba(255,255,255,0.32)" : "rgba(0,0,0,0.22)",
+            borderColor: BRAND_BLUE,
         },
         originSearchInput: {
             flex: 1,
@@ -3013,7 +3114,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             borderRadius: 13,
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
         },
         selectedOriginRow: {
             minHeight: 48,
@@ -3023,7 +3124,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             alignItems: "center",
             gap: 9,
             borderRadius: 14,
-            backgroundColor: isDark ? "rgba(255,255,255,0.055)" : "rgba(0,0,0,0.035)",
+            backgroundColor: brandTint,
         },
         selectedOriginCopy: {
             flex: 1,
@@ -3119,8 +3220,8 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             gap: 7,
         },
         optionChipActive: {
-            backgroundColor: colors.selectedDayBg,
-            borderColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
+            borderColor: BRAND_BLUE,
         },
         optionChipText: {
             color: colors.textPrimary,
@@ -3128,7 +3229,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontWeight: "900",
         },
         optionChipTextActive: {
-            color: colors.selectedDayText,
+            color: "#FFFFFF",
         },
         optionColorDot: {
             width: 9,
@@ -3178,12 +3279,18 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             alignItems: "center",
             justifyContent: "center",
             gap: 8,
-            backgroundColor: colors.selectedDayBg,
+            backgroundColor: BRAND_BLUE,
         },
         primaryButtonText: {
-            color: colors.selectedDayText,
+            color: "#FFFFFF",
             fontSize: 15,
             fontWeight: "900",
+        },
+        primaryButtonDisabled: {
+            backgroundColor: isDark ? "#272A31" : "#E4E7EC",
+        },
+        primaryButtonTextDisabled: {
+            color: colors.textDisabled,
         },
         ghostButtonText: {
             color: colors.textSecondary,

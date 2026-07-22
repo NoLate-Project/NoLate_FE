@@ -4,6 +4,7 @@ import {
     extractCalendarRouteHints,
 } from "../src/modules/onboarding/calendarImportRouteEnrichment";
 import type { DeviceCalendarCandidate } from "../src/modules/onboarding/deviceCalendarImport";
+import { buildSavedRouteMapPresentation } from "../src/modules/map/savedRouteMapPresentation";
 
 const CANDIDATE: DeviceCalendarCandidate = {
     id: "APPLE_DEVICE:calendar:event:2099-01-02T12:00:00.000Z",
@@ -113,10 +114,29 @@ describe("calendar import route enrichment", () => {
             locationName: "서울역 → 코엑스",
             route: {
                 id: "fast",
-                totalDurationMinutes: 35,
+                mode: "TRANSIT",
+                source: "api",
+                pathCoords: [
+                    { lat: 37.5547, lng: 126.9706 },
+                    { lat: 37.5116, lng: 127.0595 },
+                ],
+                routeInfo: {
+                    id: "fast",
+                    totalDurationMinutes: 35,
+                },
             },
             notificationEnabled: false,
         });
+
+        const presentation = buildSavedRouteMapPresentation({
+            route: result.payload.route,
+            origin: result.payload.origin,
+            destination: result.payload.destination,
+            mapZoom: 13,
+            isDark: false,
+        });
+        expect(presentation.pathOverlays).toHaveLength(1);
+        expect(presentation.pathOverlays[0]?.coords).toHaveLength(2);
     });
 
     test("메모에 출발지가 없으면 사용자가 지정한 공통 출발지를 사용한다", async () => {

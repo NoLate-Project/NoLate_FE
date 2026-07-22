@@ -854,6 +854,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     model.showsViewModeButton ? 150 : 100
   }
   private let collapsedHeight: CGFloat = 44
+  private let searchExpandedHeight: CGFloat = 52
   private let collapsedSlotWidth: CGFloat = 50
   private let viewExpandedWidth: CGFloat = 251
   private let addExpandedWidth: CGFloat = 238
@@ -1434,9 +1435,9 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var searchExpandedContent: some View {
-    HStack(spacing: 10) {
+    HStack(spacing: 11) {
       Image(systemName: "magnifyingglass")
-        .font(.system(size: 18, weight: .bold))
+        .font(.system(size: 20, weight: .bold))
         .foregroundStyle(collapsedGlyphColor.opacity(0.92))
 
       TextField(
@@ -1452,7 +1453,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       .focused($searchFocused)
       .textInputAutocapitalization(.never)
       .autocorrectionDisabled(true)
-      .font(.system(size: 16, weight: .semibold))
+      .font(.system(size: 17, weight: .semibold))
       .foregroundStyle(collapsedGlyphColor)
       .tint(collapsedGlyphColor)
       .accessibilityLabel("일정 검색어")
@@ -1464,9 +1465,9 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           model.handleSearchTextChange("")
         } label: {
           Image(systemName: "xmark.circle.fill")
-            .font(.system(size: 19, weight: .semibold))
+            .font(.system(size: 21, weight: .semibold))
             .foregroundStyle(collapsedGlyphColor.opacity(0.54))
-            .frame(width: 30, height: 34)
+            .frame(width: 36, height: 44)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("검색어 지우기")
@@ -1479,16 +1480,16 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         closeMenu()
       } label: {
         Image(systemName: "xmark")
-          .font(.system(size: 16, weight: .bold))
+          .font(.system(size: 18, weight: .bold))
           .foregroundStyle(collapsedGlyphColor.opacity(0.92))
-          .frame(width: 34, height: 34)
+          .frame(width: 40, height: 44)
       }
       .buttonStyle(.plain)
       .accessibilityLabel("검색 닫기")
     }
-    .padding(.leading, 18)
-    .padding(.trailing, 12)
-    .frame(width: surfaceWidth, height: collapsedHeight)
+    .padding(.leading, 20)
+    .padding(.trailing, 10)
+    .frame(width: surfaceWidth, height: searchExpandedHeight)
   }
 
   private var addExpandedContent: some View {
@@ -1656,10 +1657,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var heightProgress: CGFloat {
-    if activeAction == .search {
-      return 0
-    }
-
     return morphProgress
   }
 
@@ -1685,7 +1682,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private var targetExpandedHeight: CGFloat {
     switch activeAction {
     case .search:
-      return collapsedHeight
+      return searchExpandedHeight
     case .view:
       return viewExpandedHeight
     case .add:

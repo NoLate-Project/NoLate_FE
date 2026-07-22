@@ -161,8 +161,8 @@ describe("ScheduleCalendar stack month navigation", () => {
     }
 
     test.each([
-        ["compact", 92],
-        ["stack", 120],
+        ["compact", 102],
+        ["stack", 130],
     ] as const)("%s 보기에서 과거부터 미래까지 이어지는 세로 월 목록을 사용한다", async (viewMode, dayHeight) => {
         const root = await renderCalendar(viewMode);
         const list = root.findByType(FlatList);

@@ -144,7 +144,7 @@ export async function enrichCalendarCandidateWithRoute(
 
     const travelMinutes = Math.max(1, Math.ceil(selectedRoute.minutes));
     const departAt = new Date(startDate.getTime() - travelMinutes * 60_000);
-    const route = buildRouteInfoFromAlternative(selectedRoute, origin, destination, departAt);
+    const routeInfo = buildRouteInfoFromAlternative(selectedRoute, origin, destination, departAt);
 
     return {
         payload: {
@@ -155,7 +155,12 @@ export async function enrichCalendarCandidateWithRoute(
             origin,
             destination,
             locationName: `${displayPlace(origin, "출발지")} → ${displayPlace(destination, "도착지")}`,
-            route,
+            // 다른 경로 선택 흐름과 같은 저장 형식을 사용해 상세 지도에서 provider geometry를
+            // 그대로 복원할 수 있게 한다. routeInfo는 타임라인/알림 표시용으로 함께 보존한다.
+            route: {
+                ...selectedRoute,
+                routeInfo,
+            },
             // 구독 잔여량을 확인한 뒤 호출 화면에서 켠다. 경로 생성과 알림 quota 소비를 분리한다.
             notificationEnabled: false,
             notificationLeadMinutes: undefined,

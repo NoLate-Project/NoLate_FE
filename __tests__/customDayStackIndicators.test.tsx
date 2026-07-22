@@ -149,4 +149,34 @@ describe("CustomDay compact and stack indicators", () => {
         expect(findTextsByTestId(root, "stack-event-overflow")).toHaveLength(0);
         expect(root.findAllByType(View).length).toBeGreaterThan(0);
     });
+
+    test("음력과 공휴일을 표시하면서 기존 일정 마커와 접근성 정보를 유지한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <CustomDay
+                    date={DATE}
+                    marking={{ events: makeEvents(1) }}
+                    dayMetadata={{
+                        date: DATE.dateString,
+                        lunarYear: 2026,
+                        lunarMonth: 6,
+                        lunarDay: 1,
+                        leapMonth: false,
+                        holidays: [{ name: "제헌절", type: "NATIONAL_DAY" }],
+                    }}
+                    viewMode="detail"
+                />
+            );
+        });
+
+        const root = renderer!.root;
+        const [lunarText] = findTextsByTestId(root, "calendar-lunar-date");
+        const [holidayText] = findTextsByTestId(root, "calendar-holiday-name");
+
+        expect(lunarText.props.children).toBe("음 6.1");
+        expect(holidayText.props.children).toBe("제헌절");
+        expect(findViewsByTestId(root, "detail-event-markers")).toHaveLength(1);
+        expect(root.findByProps({ accessibilityRole: "button" }).props.accessibilityLabel)
+            .toContain("음 6.1, 공휴일 제헌절, 1개의 일정");
+    });
 });

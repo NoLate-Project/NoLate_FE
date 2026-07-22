@@ -11,6 +11,10 @@ import Reanimated, {
     type SharedValue,
 } from "react-native-reanimated";
 import { useTheme } from "../../../theme/ThemeContext";
+import {
+    formatLunarCalendarDay,
+    type CalendarDayMetadata,
+} from "../../calendarMetadata";
 import type { TravelMode } from "../../types";
 import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
 
@@ -54,6 +58,7 @@ type Props = {
     date?: CalendarDate;
     state?: string;
     marking?: Marking;
+    dayMetadata?: CalendarDayMetadata;
     isSelectedDay?: boolean;
     onPress?: (date: CalendarDate) => void;
     viewMode: CalendarViewMode;
@@ -90,6 +95,7 @@ export default function CustomDay({
     date,
     state,
     marking,
+    dayMetadata,
     isSelectedDay,
     onPress,
     viewMode,
@@ -125,7 +131,12 @@ export default function CustomDay({
     const isToday = state === "today";
     const isSelected = pressedSelection || (isSelectedDay ?? marking?.selected);
     const weekday = new Date(`${date.dateString}T00:00:00`).getDay();
+    const isSunday = weekday === 0;
     const isWeekend = weekday === 0 || weekday === 6;
+    const lunarText = formatLunarCalendarDay(dayMetadata);
+    const holidayNames = (dayMetadata?.holidays ?? []).map((holiday) => holiday.name);
+    const holidayText = holidayNames.join(" · ");
+    const hasHoliday = holidayNames.length > 0;
     const weekendDateColor = mode === "dark"
         ? "rgba(235,235,245,0.52)"
         : "rgba(60,60,67,0.52)";
@@ -138,8 +149,11 @@ export default function CustomDay({
     const visibleStackEvents = events.slice(0, 3);
     const stackOverflowCount = Math.max(0, events.length - visibleStackEvents.length);
     const showDots = viewMode === "week" || viewMode === "list";
-    const markerTop = viewMode === "list" ? 47 : viewMode === "week" ? 54 : 53;
+    const markerTop = (
+        viewMode === "list" ? 47 : viewMode === "week" ? 54 : 53
+    ) + (hasHoliday ? 10 : 0);
     const todayAccent = mode === "dark" ? "#ff453a" : "#ff3b30";
+    const holidayAccent = mode === "dark" ? "#ff6961" : "#d92d20";
     const selectedCircleColor = isToday ? todayAccent : colors.selectedDayBg;
     const selectedTextColor = isToday ? "#ffffff" : colors.selectedDayText;
     const showsFilledCircle = isToday || isSelected;
@@ -148,6 +162,8 @@ export default function CustomDay({
         ? colors.textPrimary
         : isToday
         ? todayAccent
+        : hasHoliday || isSunday
+        ? holidayAccent
         : isWeekend
         ? weekendDateColor
         : colors.textPrimary;
@@ -160,6 +176,8 @@ export default function CustomDay({
         `${date.year}년 ${date.month}월 ${date.day}일`,
         isToday ? "오늘" : undefined,
         isSelected ? "선택됨" : undefined,
+        lunarText ?? undefined,
+        hasHoliday ? `공휴일 ${holidayNames.join(", ")}` : undefined,
         events.length > 0 ? `${events.length}개의 일정` : "일정 없음",
     ].filter(Boolean).join(", ");
 
@@ -200,7 +218,43 @@ export default function CustomDay({
                 >
                     {date.day}
                 </Text>
+                {lunarText && (
+                    <Text
+                        testID="calendar-lunar-date"
+                        numberOfLines={1}
+                        style={[
+                            styles.lunarText,
+                            {
+                                color: showsFilledCircle
+                                    ? selectedTextColor
+                                    : hasHoliday || isSunday
+                                    ? holidayAccent
+                                    : colors.textSecondary,
+                                opacity: isDisabled ? 0.28 : 0.88,
+                            },
+                        ]}
+                    >
+                        {lunarText}
+                    </Text>
+                )}
             </View>
+
+            {hasHoliday && (
+                <Text
+                    testID="calendar-holiday-name"
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                    style={[
+                        styles.holidayText,
+                        {
+                            color: holidayAccent,
+                            opacity: isDisabled ? 0.28 : 1,
+                        },
+                    ]}
+                >
+                    {holidayText}
+                </Text>
+            )}
 
             {viewMode === "compact" && events.length > 0 && (
                 <View
@@ -227,7 +281,13 @@ export default function CustomDay({
             )}
 
             {viewMode === "stack" && events.length > 0 && (
-                <View testID="stack-event-chips" style={styles.stackEventChips}>
+                <View
+                    testID="stack-event-chips"
+                    style={[
+                        styles.stackEventChips,
+                        hasHoliday && styles.stackEventChipsWithHoliday,
+                    ]}
+                >
                     {visibleStackEvents.map((event) => (
                         <View
                             key={event.id}
@@ -274,7 +334,13 @@ export default function CustomDay({
             )}
 
             {viewMode === "detail" && events.length > 0 && (
-                <View style={styles.detailMarkers}>
+                <View
+                    testID="detail-event-markers"
+                    style={[
+                        styles.detailMarkers,
+                        hasHoliday && styles.detailMarkersWithHoliday,
+                    ]}
+                >
                     {events.slice(0, 3).map((event) => (
                         event.travelMode ? (
                             <Ionicons
@@ -296,7 +362,13 @@ export default function CustomDay({
             )}
 
             {viewMode !== "compact" && viewMode !== "stack" && viewMode !== "detail" && hasPeriods && (
-                <View style={styles.periods}>
+                <View
+                    testID="calendar-period-markers"
+                    style={[
+                        styles.periods,
+                        hasHoliday && styles.periodsWithHoliday,
+                    ]}
+                >
                     {marking!.periods!.slice(0, 2).map((period, index) => (
                         <View
                             key={index}
@@ -318,6 +390,7 @@ export default function CustomDay({
 
             {showDots && hasDots && (
                 <View
+                    testID="calendar-dot-markers"
                     style={[styles.dots, { top: markerTop + 3 }]}
                 >
                     {marking!.dots!.slice(0, 3).map((dot, index) => (
@@ -360,12 +433,35 @@ const styles = StyleSheet.create({
     },
     dayText: {
         fontSize: 18,
+        lineHeight: 20,
         letterSpacing: 0,
         fontWeight: "600",
+    },
+    lunarText: {
+        maxWidth: 38,
+        fontSize: 8,
+        lineHeight: 9,
+        fontWeight: "700",
+        letterSpacing: -0.35,
+        textAlign: "center",
+    },
+    holidayText: {
+        position: "absolute",
+        top: 49,
+        left: 2,
+        right: 2,
+        fontSize: 8.5,
+        lineHeight: 10,
+        fontWeight: "800",
+        letterSpacing: -0.25,
+        textAlign: "center",
     },
     periods: {
         alignSelf: "stretch",
         marginTop: 6,
+    },
+    periodsWithHoliday: {
+        marginTop: 11,
     },
     dots: {
         position: "absolute",
@@ -399,6 +495,9 @@ const styles = StyleSheet.create({
         right: 2,
         gap: 2,
         overflow: "hidden",
+    },
+    stackEventChipsWithHoliday: {
+        top: 62,
     },
     stackEventChip: {
         minWidth: 0,
@@ -438,6 +537,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         gap: 3,
+    },
+    detailMarkersWithHoliday: {
+        top: 61,
     },
     detailDot: {
         width: 5,

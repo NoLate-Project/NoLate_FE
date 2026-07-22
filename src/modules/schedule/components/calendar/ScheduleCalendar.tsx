@@ -34,6 +34,7 @@ import Reanimated, {
     withTiming,
 } from "react-native-reanimated";
 import type { ScheduleItem } from "../../types";
+import type { CalendarDayMetadata } from "../../calendarMetadata";
 import { useTheme } from "../../../theme/ThemeContext";
 import { enumerateDaysBetween } from "../../../../../lib/util/data";
 import {
@@ -59,6 +60,7 @@ type Props = {
     selectedDay: string;
     focusedMonth?: string;
     items: ScheduleItem[];
+    calendarDaysByDate?: Readonly<Record<string, CalendarDayMetadata>>;
     onSelectDay: (day: string) => void;
     onOpenDay: (day: string) => void;
     viewMode: CalendarViewMode;
@@ -111,6 +113,7 @@ const DETAIL_MONTH_SWIPE_EASING = Easing.bezier(
     ...DETAIL_MONTH_SWIPE_MOTION.bezier
 );
 const DETAIL_MONTH_SWIPE_QUEUE_LIMIT = 6;
+const EMPTY_CALENDAR_DAYS_BY_DATE: Readonly<Record<string, CalendarDayMetadata>> = {};
 
 type DetailMonthAnimationPhase = "idle" | "exit" | "awaitingCommit" | "enter";
 
@@ -327,6 +330,7 @@ export default function ScheduleCalendar({
     selectedDay,
     focusedMonth,
     items,
+    calendarDaysByDate = EMPTY_CALENDAR_DAYS_BY_DATE,
     onSelectDay,
     onOpenDay,
     viewMode,
@@ -1162,6 +1166,7 @@ export default function ScheduleCalendar({
             date={date}
             state={state}
             marking={marking}
+            dayMetadata={date ? calendarDaysByDate[date.dateString] : undefined}
             viewMode={viewMode}
             animatedCellHeight={animatedDayHeight}
             isSelectedDay={date?.dateString === selectedDay}
@@ -1190,6 +1195,7 @@ export default function ScheduleCalendar({
     ), [
         animatedDayHeight,
         animateDetailMonthChange,
+        calendarDaysByDate,
         onOpenDay,
         onSelectDay,
         onVisibleMonthChange,
@@ -1432,6 +1438,7 @@ export default function ScheduleCalendar({
                             date={date ?? undefined}
                             state={date?.dateString === todayDateString ? "today" : undefined}
                             marking={date ? markedDates[date.dateString] : undefined}
+                            dayMetadata={date ? calendarDaysByDate[date.dateString] : undefined}
                             viewMode={viewMode}
                             isSelectedDay={date?.dateString === selectedDay}
                             onPress={(day) => onOpenDay(day.dateString)}
@@ -1444,6 +1451,7 @@ export default function ScheduleCalendar({
         colors.border,
         colors.calendarBackground,
         colors.monthTextColor,
+        calendarDaysByDate,
         markedDates,
         onOpenDay,
         selectedDay,
@@ -1545,6 +1553,7 @@ export default function ScheduleCalendar({
                                 date={date}
                                 state={date.dateString === todayDateString ? "today" : undefined}
                                 marking={markedDates[date.dateString]}
+                                dayMetadata={calendarDaysByDate[date.dateString]}
                                 viewMode={viewMode}
                                 animatedCellHeight={animatedDayHeight}
                                 isSelectedDay={date.dateString === selectedDay}
