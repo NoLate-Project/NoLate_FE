@@ -2,18 +2,12 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
-import { ActionSheetIOS, Alert, InteractionManager } from "react-native";
+import { Alert } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type { ScheduleParseResult } from "../src/modules/schedule/types";
 
-const mockCanScanDocuments = jest.fn().mockResolvedValue(true);
-const mockScanDocuments = jest.fn().mockResolvedValue({
-    capturedPageCount: 1,
-    pages: [{ uri: "file:///tmp/corrected-scan.jpg", width: 1200, height: 1600 }],
-});
-const mockDiscardDocumentScanPages = jest.fn().mockResolvedValue(undefined);
 const mockRecognizeQuickSchedulePhoto = jest.fn().mockResolvedValue({
     text: "7월 24일 오후 두 시 서울역 회의",
     recognitionConfidence: 0.58,
@@ -23,14 +17,17 @@ const mockCancelQuickSchedulePhotoRecognition = jest.fn().mockResolvedValue(fals
 type Deferred<T> = {
     promise: Promise<T>;
     resolve: (value: T) => void;
+    reject: (reason?: unknown) => void;
 };
 
 function createDeferred<T>(): Deferred<T> {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((promiseResolve) => {
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((promiseResolve, promiseReject) => {
         resolve = promiseResolve;
+        reject = promiseReject;
     });
-    return { promise, resolve };
+    return { promise, resolve, reject };
 }
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
@@ -49,11 +46,6 @@ jest.mock("expo-av", () => ({
         requestPermissionsAsync: jest.fn(),
         setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
     },
-}));
-jest.mock("../src/modules/schedule/documentScanner", () => ({
-    canScanDocuments: (...args: unknown[]) => mockCanScanDocuments(...args),
-    scanDocuments: (...args: unknown[]) => mockScanDocuments(...args),
-    discardDocumentScanPages: (...args: unknown[]) => mockDiscardDocumentScanPages(...args),
 }));
 jest.mock("../src/modules/schedule/quickInputExtraction", () => ({
     buildScheduleSpeechContext: jest.fn(() => []),
@@ -88,7 +80,7 @@ const parseResult: ScheduleParseResult = {
     missingFields: [],
 };
 
-describe("QuickScheduleModal document scan OCR", () => {
+describe("QuickScheduleModal photo OCR", () => {
     let renderer: ReactTestRenderer | undefined;
 
     beforeAll(() => {
@@ -99,15 +91,6 @@ describe("QuickScheduleModal document scan OCR", () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
-        mockCanScanDocuments.mockReset();
-        mockCanScanDocuments.mockResolvedValue(true);
-        mockScanDocuments.mockReset();
-        mockScanDocuments.mockResolvedValue({
-            capturedPageCount: 1,
-            pages: [{ uri: "file:///tmp/corrected-scan.jpg", width: 1200, height: 1600 }],
-        });
-        mockDiscardDocumentScanPages.mockReset();
-        mockDiscardDocumentScanPages.mockResolvedValue(undefined);
         mockRecognizeQuickSchedulePhoto.mockReset();
         mockRecognizeQuickSchedulePhoto.mockResolvedValue({
             text: "7월 24일 오후 두 시 서울역 회의",
@@ -143,8 +126,9 @@ describe("QuickScheduleModal document scan OCR", () => {
         jest.useRealTimers();
     });
 
-    test("보정 스캔을 OCR하고 낮은 신뢰도를 알린 뒤 수정문을 분석한다", async () => {
-        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+    async function renderQuickScheduleModal(
+        onAnalyze: jest.Mock = jest.fn().mockResolvedValue(parseResult),
+    ) {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -158,30 +142,153 @@ describe("QuickScheduleModal document scan OCR", () => {
                 </ThemeProvider>
             );
             await Promise.resolve();
+            await Promise.resolve();
         });
+    }
 
+    async function enterPhotoMode() {
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
                 .props.onPress();
             await Promise.resolve();
         });
+    }
+
+    async function selectLibraryPhoto(uri: string) {
+        (ImagePicker.launchImageLibraryAsync as jest.Mock).mockResolvedValueOnce({
+            canceled: false,
+            assets: [{
+                uri,
+                width: 1200,
+                height: 1600,
+                fileName: uri.split("/").pop(),
+            }],
+        });
+
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
+                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
                 .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    }
+
+    async function captureCameraPhoto(uri: string) {
+        (ImagePicker.launchCameraAsync as jest.Mock).mockResolvedValueOnce({
+            canceled: false,
+            assets: [{
+                uri,
+                width: 1200,
+                height: 1600,
+                fileName: uri.split("/").pop(),
+            }],
+        });
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "카메라로 일정 사진 촬영" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+    }
+
+    function hasPhotoScanOverlay() {
+        return renderer!.root.findAllByProps({
+            testID: "quick-schedule-photo-scan-overlay",
+        }).length > 0;
+    }
+
+    test("일반 카메라 사진은 OCR 중 스캔 오버레이를 표시하고 성공하면 제거한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
+
+        await renderQuickScheduleModal();
+        await enterPhotoMode();
+        await captureCameraPhoto("file:///tmp/camera-schedule.jpg");
+
+        expect(ImagePicker.requestCameraPermissionsAsync).toHaveBeenCalledTimes(1);
+        expect(ImagePicker.launchCameraAsync).toHaveBeenCalledTimes(1);
+        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledWith(
+            "file:///tmp/camera-schedule.jpg",
+            expect.stringMatching(/^quick-photo-/)
+        );
+        expect(hasPhotoScanOverlay()).toBe(true);
+        expect(
+            renderer!.root.findAllByProps({
+                accessibilityLabel: "사진에서 일정 문장 인식 중",
+            }).length
+        ).toBeGreaterThan(0);
+        expect(
+            renderer!.root.findAllByProps({ accessibilityLabel: "선택한 사진 정보 및 변경" })
+        ).toHaveLength(0);
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .props.accessibilityState.disabled
+        ).toBe(true);
+
+        await act(async () => {
+            recognition.resolve({
+                text: "7월 24일 오후 두 시 서울역 회의",
+                recognitionConfidence: 0.92,
+            });
+            await recognition.promise;
             await Promise.resolve();
             await Promise.resolve();
         });
 
-        expect(mockScanDocuments).toHaveBeenCalledWith({ maxPages: 1, jpegQuality: 0.94 });
-        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledWith(
-            "file:///tmp/corrected-scan.jpg",
-            expect.stringMatching(/^quick-photo-/)
-        );
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
         ).toBe("7월 24일 오후 두 시 서울역 회의");
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .props.accessibilityState.disabled
+        ).toBe(false);
+        const photoMetaChangeButton = renderer!.root.findByProps({
+            accessibilityLabel: "선택한 사진 정보 및 변경",
+        });
+        expect(photoMetaChangeButton.props.accessibilityRole).toBe("button");
+        expect(photoMetaChangeButton.props.onPress).toEqual(expect.any(Function));
+    });
+
+    test("iOS 사진 선택은 보관함 선권한 없이 OCR 오버레이를 표시하고 수정문을 분석한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
+        (ImagePicker.requestMediaLibraryPermissionsAsync as jest.Mock).mockRejectedValueOnce(
+            new Error("사진 보관함 권한 거부")
+        );
+
+        await renderQuickScheduleModal(onAnalyze);
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/library-schedule.jpg");
+
+        expect(ImagePicker.requestMediaLibraryPermissionsAsync).not.toHaveBeenCalled();
+        expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
+        expect(hasPhotoScanOverlay()).toBe(true);
+
+        await act(async () => {
+            recognition.resolve({
+                text: "7월 24일 오후 두 시 서울역 회의",
+                recognitionConfidence: 0.58,
+            });
+            await recognition.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findAll((node) => (
                 node.props.children === "인식이 불확실해요. 날짜·시간·장소를 확인해 주세요."
@@ -204,118 +311,46 @@ describe("QuickScheduleModal document scan OCR", () => {
             "7월 24일 오후 세 시 서울역 회의",
             expect.objectContaining({
                 inputMode: "photo",
-                photoUri: "file:///tmp/corrected-scan.jpg",
+                photoUri: "file:///tmp/library-schedule.jpg",
                 photoTranscript: "7월 24일 오후 세 시 서울역 회의",
             })
         );
         expect(onAnalyze.mock.calls[0][1].recognitionConfidence).toBeUndefined();
     });
 
-    test("스캔 결과가 unmount 뒤 도착하면 임시 파일을 폐기하고 OCR하지 않는다", async () => {
-        const pendingScan = createDeferred<{
-            capturedPageCount: number;
-            pages: Array<{ uri: string; width: number; height: number }>;
+    test("OCR 실패 시 오버레이를 제거하고 재시도와 직접 입력을 제공한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
         }>();
-        mockScanDocuments.mockImplementationOnce(() => pendingScan.promise);
-
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-                .props.onPress();
-            await Promise.resolve();
-        });
-
-        expect(mockScanDocuments).toHaveBeenCalledTimes(1);
-        await act(async () => {
-            renderer!.unmount();
-            renderer = undefined;
-        });
-
-        await act(async () => {
-            pendingScan.resolve({
-                capturedPageCount: 1,
-                pages: [{
-                    uri: "file:///tmp/deferred-corrected-scan.jpg",
-                    width: 1400,
-                    height: 1900,
-                }],
-            });
-            await pendingScan.promise;
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(mockDiscardDocumentScanPages).toHaveBeenCalledTimes(1);
-        expect(mockDiscardDocumentScanPages).toHaveBeenCalledWith([
-            "file:///tmp/deferred-corrected-scan.jpg",
-        ]);
-        expect(mockRecognizeQuickSchedulePhoto).not.toHaveBeenCalled();
-    });
-
-    test("OCR이 실패해도 인식 문장을 직접 입력해 분석할 수 있다", async () => {
         const onAnalyze = jest.fn().mockResolvedValue(parseResult);
-        mockRecognizeQuickSchedulePhoto.mockRejectedValueOnce(
-            new Error("사진에서 일정 텍스트를 찾지 못했습니다.")
-        );
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
+
+        await renderQuickScheduleModal(onAnalyze);
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/unreadable-schedule.jpg");
+
+        expect(hasPhotoScanOverlay()).toBe(true);
 
         await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={onAnalyze}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-                .props.onPress();
-            await Promise.resolve();
+            recognition.reject(new Error("사진에서 일정 텍스트를 찾지 못했습니다."));
+            await recognition.promise.catch(() => undefined);
             await Promise.resolve();
             await Promise.resolve();
         });
 
+        expect(hasPhotoScanOverlay()).toBe(false);
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "사진 텍스트 다시 인식" })
+        ).toBeDefined();
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
                 .props.placeholder
         ).toBe("인식하지 못한 내용을 직접 입력해 주세요.");
         expect(
-            renderer!.root.findAll((node) => (
-                node.props.children === "사진에서 일정 텍스트를 찾지 못했습니다."
-            )).length
-        ).toBeGreaterThan(0);
+            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+                .props.editable
+        ).toBe(true);
 
         await act(async () => {
             renderer!.root
@@ -333,251 +368,95 @@ describe("QuickScheduleModal document scan OCR", () => {
             "7월 24일 오후 네 시 서울역 회의",
             expect.objectContaining({
                 inputMode: "photo",
-                photoUri: "file:///tmp/corrected-scan.jpg",
+                photoUri: "file:///tmp/unreadable-schedule.jpg",
                 photoTranscript: "7월 24일 오후 네 시 서울역 회의",
             })
         );
     });
 
-    test("iOS 사진 선택기는 전체 사진 보관함 권한을 먼저 요구하지 않는다", async () => {
-        (ImagePicker.requestMediaLibraryPermissionsAsync as jest.Mock).mockRejectedValueOnce(
-            new Error("사진 보관함 권한 거부")
-        );
-        (ImagePicker.launchImageLibraryAsync as jest.Mock).mockResolvedValueOnce({
-            canceled: false,
-            assets: [{
-                uri: "file:///tmp/phpicker-selected.jpg",
-                width: 1200,
-                height: 1600,
-                fileName: "phpicker-selected.jpg",
-            }],
-        });
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(ImagePicker.requestMediaLibraryPermissionsAsync).not.toHaveBeenCalled();
-        expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
-        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledWith(
-            "file:///tmp/phpicker-selected.jpg",
-            expect.stringMatching(/^quick-photo-/)
-        );
-    });
-
-    test("선택한 사진을 바꾸면 진행 중인 OCR 요청을 취소한다", async () => {
-        const pendingRecognition = createDeferred<{
+    test("OCR이 15초를 넘으면 요청과 오버레이를 정리하고 늦은 결과를 무시한다", async () => {
+        const recognition = createDeferred<{
             text: string;
             recognitionConfidence: number;
         }>();
-        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => pendingRecognition.promise);
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
 
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderQuickScheduleModal();
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/slow-schedule.jpg");
         const requestId = mockRecognizeQuickSchedulePhoto.mock.calls[0][1] as string;
 
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "선택한 사진 제거" })
-                .props.onPress({ stopPropagation: jest.fn() });
-            await Promise.resolve();
-        });
-
-        expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
-        await act(async () => {
-            pendingRecognition.resolve({
-                text: "이전 사진의 결과",
-                recognitionConfidence: 0.9,
-            });
-            await pendingRecognition.promise;
-            await Promise.resolve();
-        });
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
-        ).toBe("");
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.editable
-        ).toBe(false);
-    });
-
-    test("OCR이 15초를 넘으면 취소하고 재시도 또는 직접 입력을 안내한다", async () => {
-        const pendingRecognition = createDeferred<{
-            text: string;
-            recognitionConfidence: number;
-        }>();
-        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => pendingRecognition.promise);
-
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        const requestId = mockRecognizeQuickSchedulePhoto.mock.calls[0][1] as string;
+        expect(hasPhotoScanOverlay()).toBe(true);
 
         await act(async () => {
             jest.advanceTimersByTime(15_000);
             await Promise.resolve();
+            await Promise.resolve();
         });
 
         expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findAll((node) => (
-                node.props.children
-                === "사진 인식 시간이 길어져 중단했습니다. 다시 인식하거나 아래에 직접 입력해 주세요."
-            )).length
-        ).toBeGreaterThan(0);
+            renderer!.root.findByProps({ accessibilityLabel: "사진 텍스트 다시 인식" })
+        ).toBeDefined();
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
                 .props.editable
         ).toBe(true);
 
         await act(async () => {
-            pendingRecognition.resolve({
+            recognition.resolve({
                 text: "시간 초과 뒤 도착한 결과",
-                recognitionConfidence: 0.9,
+                recognitionConfidence: 0.99,
             });
-            await pendingRecognition.promise;
+            await recognition.promise;
             await Promise.resolve();
         });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
         ).toBe("");
-        expect(
-            renderer!.root.findAll((node) => (
-                node.props.children
-                === "사진 인식 시간이 길어져 중단했습니다. 다시 인식하거나 아래에 직접 입력해 주세요."
-            )).length
-        ).toBeGreaterThan(0);
     });
 
-    test("사진 A 인식 중 사진 B를 선택하면 B 결과만 유지한다", async () => {
+    test("사진 A 인식 중 사진 B를 선택하면 A를 취소하고 B 오버레이와 결과만 유지한다", async () => {
         const firstRecognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        const secondRecognition = createDeferred<{
             text: string;
             recognitionConfidence: number;
         }>();
         mockRecognizeQuickSchedulePhoto
             .mockImplementationOnce(() => firstRecognition.promise)
-            .mockResolvedValueOnce({
-                text: "7월 25일 오후 다섯 시 부산역 회의",
-                recognitionConfidence: 0.91,
-            });
-        (ImagePicker.launchImageLibraryAsync as jest.Mock)
-            .mockResolvedValueOnce({
-                canceled: false,
-                assets: [{ uri: "file:///tmp/photo-a.jpg", width: 1000, height: 1400 }],
-            })
-            .mockResolvedValueOnce({
-                canceled: false,
-                assets: [{ uri: "file:///tmp/photo-b.jpg", width: 1000, height: 1400 }],
-            });
+            .mockImplementationOnce(() => secondRecognition.promise);
 
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await renderQuickScheduleModal();
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/photo-a.jpg");
         const firstRequestId = mockRecognizeQuickSchedulePhoto.mock.calls[0][1] as string;
 
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        expect(hasPhotoScanOverlay()).toBe(true);
+
+        await selectLibraryPhoto("file:///tmp/photo-b.jpg");
         const secondRequestId = mockRecognizeQuickSchedulePhoto.mock.calls[1][1] as string;
 
         expect(secondRequestId).not.toBe(firstRequestId);
         expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(firstRequestId);
+        expect(hasPhotoScanOverlay()).toBe(true);
+
+        await act(async () => {
+            secondRecognition.resolve({
+                text: "7월 25일 오후 다섯 시 부산역 회의",
+                recognitionConfidence: 0.91,
+            });
+            await secondRecognition.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
         ).toBe("7월 25일 오후 다섯 시 부산역 회의");
@@ -590,254 +469,91 @@ describe("QuickScheduleModal document scan OCR", () => {
             await firstRecognition.promise;
             await Promise.resolve();
         });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
         ).toBe("7월 25일 오후 다섯 시 부산역 회의");
     });
 
-    test("액션 시트가 닫힌 뒤에만 문서 스캐너를 표시한다", async () => {
-        jest.spyOn(InteractionManager, "runAfterInteractions").mockImplementation((callback) => {
-            (callback as () => void)();
-            return { cancel: jest.fn() } as never;
-        });
-        jest.spyOn(ActionSheetIOS, "showActionSheetWithOptions").mockImplementation(
-            (_options, callback) => callback(0)
-        );
+    test("선택한 사진을 제거하면 진행 중 OCR을 취소하고 오버레이를 제거한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
 
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
+        await renderQuickScheduleModal();
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/removable-schedule.jpg");
+        const requestId = mockRecognizeQuickSchedulePhoto.mock.calls[0][1] as string;
+
+        expect(hasPhotoScanOverlay()).toBe(true);
+
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 선택" })
-                .props.onPress();
-        });
-
-        expect(mockScanDocuments).not.toHaveBeenCalled();
-        await act(async () => {
-            jest.advanceTimersByTime(359);
-        });
-        expect(mockScanDocuments).not.toHaveBeenCalled();
-
-        await act(async () => {
-            jest.advanceTimersByTime(1);
+                .findByProps({ accessibilityLabel: "선택한 사진 제거" })
+                .props.onPress({ stopPropagation: jest.fn() });
             await Promise.resolve();
             await Promise.resolve();
         });
-        expect(mockScanDocuments).toHaveBeenCalledTimes(1);
+
+        expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
+        expect(hasPhotoScanOverlay()).toBe(false);
+        expect(
+            renderer!.root.findAllByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+        ).toHaveLength(0);
+
+        await act(async () => {
+            recognition.resolve({
+                text: "제거한 사진의 늦은 결과",
+                recognitionConfidence: 0.99,
+            });
+            await recognition.promise;
+            await Promise.resolve();
+        });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
+        expect(
+            renderer!.root.findAllByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+        ).toHaveLength(0);
     });
 
-    test("액션 시트 선택 직후 화면을 닫으면 예약된 스캐너를 열지 않는다", async () => {
-        jest.spyOn(InteractionManager, "runAfterInteractions").mockImplementation((callback) => {
-            (callback as () => void)();
-            return { cancel: jest.fn() } as never;
-        });
-        jest.spyOn(ActionSheetIOS, "showActionSheetWithOptions").mockImplementation(
-            (_options, callback) => callback(0)
-        );
+    test("OCR 중 모달을 unmount하면 요청을 취소하고 스캔 오버레이를 정리한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
 
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-        });
+        await renderQuickScheduleModal();
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/unmounted-schedule.jpg");
+        const requestId = mockRecognizeQuickSchedulePhoto.mock.calls[0][1] as string;
+
+        expect(hasPhotoScanOverlay()).toBe(true);
+
         await act(async () => {
             renderer!.unmount();
-            renderer = undefined;
-            jest.advanceTimersByTime(360);
-            await Promise.resolve();
         });
+        renderer = undefined;
 
-        expect(mockScanDocuments).not.toHaveBeenCalled();
+        expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
     });
 
-    test("문서 스캔 미지원 환경에서는 스캔 버튼 대신 카메라 촬영을 제공한다", async () => {
-        mockCanScanDocuments.mockResolvedValueOnce(false);
-
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-
-        expect(
-            renderer!.root.findAllByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-        ).toHaveLength(0);
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "카메라로 일정 사진 촬영" })
-        ).toBeDefined();
-    });
-
-    test("닫았다 다시 연 뒤 도착한 이전 액션 시트 callback은 source action을 실행하지 않는다", async () => {
-        let staleActionSheetCallback: ((buttonIndex: number) => void) | undefined;
-        jest.spyOn(InteractionManager, "runAfterInteractions").mockImplementation((callback) => {
-            (callback as () => void)();
-            return { cancel: jest.fn() } as never;
-        });
-        jest.spyOn(ActionSheetIOS, "showActionSheetWithOptions").mockImplementation(
-            (_options, callback) => {
-                staleActionSheetCallback = callback;
-            }
-        );
-        const renderModal = (visible: boolean) => (
-            <ThemeProvider>
-                <QuickScheduleModal
-                    visible={visible}
-                    defaultDay="2026-07-24"
-                    onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                    onSave={jest.fn()}
-                    onClose={jest.fn()}
-                />
-            </ThemeProvider>
-        );
-
-        await act(async () => {
-            renderer = TestRenderer.create(renderModal(true));
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        expect(staleActionSheetCallback).toBeDefined();
-
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
-                .props.onPress();
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.update(renderModal(false));
-            await Promise.resolve();
-            renderer!.update(renderModal(true));
-            await Promise.resolve();
-        });
-        await act(async () => {
-            staleActionSheetCallback?.(0);
-            jest.advanceTimersByTime(360);
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-
-        expect(mockScanDocuments).not.toHaveBeenCalled();
-        expect(ImagePicker.launchCameraAsync).not.toHaveBeenCalled();
-        expect(ImagePicker.launchImageLibraryAsync).not.toHaveBeenCalled();
-    });
-
-    test("스캔 중 입력 source가 바뀌면 늦은 스캔 페이지를 버리고 기존 사진을 유지한다", async () => {
-        const pendingScan = createDeferred<{
-            capturedPageCount: number;
-            pages: Array<{ uri: string; width: number; height: number }>;
+    test("OCR 중 다른 모드로 이동하면 해당 모드 제출은 허용하고 사진 인식 상태는 보존한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
         }>();
-        mockScanDocuments.mockImplementationOnce(() => pendingScan.promise);
-        mockRecognizeQuickSchedulePhoto.mockResolvedValueOnce({
-            text: "7월 24일 오후 두 시 기존 사진 일정",
-            recognitionConfidence: 0.92,
-        });
-        (ImagePicker.launchImageLibraryAsync as jest.Mock).mockResolvedValueOnce({
-            canceled: false,
-            assets: [{ uri: "file:///tmp/current-photo.jpg", width: 1000, height: 1400 }],
-        });
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
 
-        await act(async () => {
-            renderer = TestRenderer.create(
-                <ThemeProvider>
-                    <QuickScheduleModal
-                        visible
-                        defaultDay="2026-07-24"
-                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
-                        onSave={jest.fn()}
-                        onClose={jest.fn()}
-                    />
-                </ThemeProvider>
-            );
-            await Promise.resolve();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
-                .props.onPress();
-        });
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
-        ).toBe("7월 24일 오후 두 시 기존 사진 일정");
+        await renderQuickScheduleModal(onAnalyze);
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/mode-transition-schedule.jpg");
 
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "문서 스캔으로 사진 입력" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
-        expect(mockScanDocuments).toHaveBeenCalledTimes(1);
+        expect(hasPhotoScanOverlay()).toBe(true);
 
         await act(async () => {
             renderer!.root
@@ -845,33 +561,98 @@ describe("QuickScheduleModal document scan OCR", () => {
                 .props.onPress();
             await Promise.resolve();
         });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
+        expect(mockCancelQuickSchedulePhotoRecognition).not.toHaveBeenCalled();
+
         await act(async () => {
-            pendingScan.resolve({
-                capturedPageCount: 1,
-                pages: [{
-                    uri: "file:///tmp/stale-scan.jpg",
-                    width: 1200,
-                    height: 1600,
-                }],
-            });
-            await pendingScan.promise;
-            await Promise.resolve();
+            renderer!.root
+                .findByProps({ accessibilityLabel: "빠른 일정 문장" })
+                .props.onChangeText("내일 오후 세 시 회의");
             await Promise.resolve();
         });
 
-        expect(mockDiscardDocumentScanPages).toHaveBeenCalledWith([
-            "file:///tmp/stale-scan.jpg",
-        ]);
-        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledTimes(1);
+        const textSubmitButton = renderer!.root.findByProps({
+            accessibilityLabel: "빠른 일정 문장 분석",
+        });
+        expect(textSubmitButton.props.accessibilityState.disabled).toBe(false);
 
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
                 .props.onPress();
+            await Promise.resolve();
         });
+
+        expect(hasPhotoScanOverlay()).toBe(true);
+        expect(mockRecognizeQuickSchedulePhoto).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            recognition.resolve({
+                text: "7월 26일 오전 열 시 모드 전환 회의",
+                recognitionConfidence: 0.9,
+            });
+            await recognition.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
-        ).toBe("7월 24일 오후 두 시 기존 사진 일정");
+        ).toBe("7월 26일 오전 열 시 모드 전환 회의");
+    });
+
+    test("사진 OCR이 백그라운드에서 실행 중이어도 텍스트 일정을 분석한다", async () => {
+        const recognition = createDeferred<{
+            text: string;
+            recognitionConfidence: number;
+        }>();
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        mockRecognizeQuickSchedulePhoto.mockImplementationOnce(() => recognition.promise);
+
+        await renderQuickScheduleModal(onAnalyze);
+        await enterPhotoMode();
+        await selectLibraryPhoto("file:///tmp/background-ocr-schedule.jpg");
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "텍스트로 빠른 일정 만들기" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "빠른 일정 문장" })
+                .props.onChangeText("내일 오후 세 시 회의");
+            await Promise.resolve();
+        });
+
+        const textSubmitButton = renderer!.root.findByProps({
+            accessibilityLabel: "빠른 일정 문장 분석",
+        });
+        expect(textSubmitButton.props.accessibilityState.disabled).toBe(false);
+
+        await act(async () => {
+            textSubmitButton.props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(onAnalyze).toHaveBeenCalledWith(
+            "내일 오후 세 시 회의",
+            expect.objectContaining({ inputMode: "text" }),
+        );
+
+        await act(async () => {
+            recognition.resolve({
+                text: "7월 27일 오전 열 시 백그라운드 OCR 회의",
+                recognitionConfidence: 0.91,
+            });
+            await recognition.promise;
+            await jest.advanceTimersByTimeAsync(220);
+            await Promise.resolve();
+        });
     });
 
     test("fallback 녹음 권한을 기다리는 중 unmount되면 recorder를 시작하지 않는다", async () => {
@@ -1073,7 +854,7 @@ describe("QuickScheduleModal document scan OCR", () => {
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" })
                 .props.placeholder
-        ).toBe("일정 만들기를 누르면 녹음을 인식합니다.");
+        ).toBe("일정 미리보기를 누르면 녹음을 인식합니다.");
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
                 .props.accessibilityState.disabled

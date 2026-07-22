@@ -55,11 +55,6 @@ import {
 } from "../../quickInputExtraction";
 import { finalizeQuickScheduleRecording } from "../../quickInputRecording";
 import {
-    canScanDocuments,
-    discardDocumentScanPages,
-    scanDocuments,
-} from "../../documentScanner";
-import {
     addLiveSpeechLevelListener,
     addLiveSpeechStateListener,
     addLiveSpeechTranscriptListener,
@@ -87,6 +82,7 @@ import {
     type QuickSchedulePreviewField as PreviewField,
 } from "../../quickScheduleDraft";
 import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
+import QuickSchedulePhotoScanEffect from "./QuickSchedulePhotoScanEffect";
 import BrandedLoader from "../../../../ui/BrandedLoader";
 import CategoryLoadErrorBanner from "./CategoryLoadErrorBanner";
 
@@ -125,6 +121,7 @@ type TabLayout = {
 };
 const QUICK_TEXT_LIMIT = 300;
 const PHOTO_RECOGNITION_TIMEOUT_MILLIS = 15_000;
+const PHOTO_PREVIEW_STAGE_HEIGHT = 144;
 
 function limitRecognizedText(value: string) {
     return {
@@ -140,7 +137,7 @@ const OPEN_DURATION_MS = ADD_HANDOFF_MOTION.quickOpenMs;
 const CLOSE_SURFACE_DELAY_MS = 0;
 const CLOSE_TARGET_WIDTH = 150;
 const CLOSE_TARGET_HEIGHT = 44;
-const EXPANDED_CARD_RADIUS = 38;
+const EXPANDED_CARD_RADIUS = 28;
 const OPEN_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.openBezier);
 const CLOSE_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.closeBezier);
 const MODE_PILL_SPRING = {
@@ -153,27 +150,19 @@ const CARD_SIZE_SPRING = {
     damping: 24,
     stiffness: 190,
     mass: 0.88,
-    overshootClamping: false,
+    overshootClamping: true,
 };
 const CARD_HEIGHT_BY_MODE: Record<InputMode, number> = {
-    text: 368,
-    photo: 600,
-    voice: 600,
+    text: 420,
+    photo: 620,
+    voice: 480,
 };
 const LOW_RECOGNITION_CONFIDENCE = 0.65;
-// 실제 음량 샘플은 반원만큼만 보관하고 화면에서는 반대편에 미러링한다.
-// 원형 파형의 무게 중심이 한쪽으로 쏠리지 않아 작은 화면에서도 안정적으로 보인다.
+// 실시간 음량 샘플을 짧은 가로 파형으로 보여준다.
 const VOICE_SPECTRUM_SAMPLE_COUNT = 24;
-const VOICE_SPECTRUM_BAR_COUNT = VOICE_SPECTRUM_SAMPLE_COUNT * 2;
-const VOICE_SPECTRUM_BARS = Array.from({ length: VOICE_SPECTRUM_BAR_COUNT }, (_, index) => index);
-const VOICE_SPECTRUM_SIZE = 142;
-const VOICE_SPECTRUM_INNER_RADIUS = 41;
 const VOICE_SPECTRUM_ATTACK_MS = 82;
 const VOICE_SPECTRUM_RELEASE_MS = 250;
-const VOICE_SPECTRUM_HALO_ATTACK_MS = 110;
-const VOICE_SPECTRUM_HALO_RELEASE_MS = 320;
 const VOICE_SPECTRUM_MOTION_EASING = ReanimatedEasing.bezier(0.2, 0.72, 0.24, 1);
-const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"];
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
@@ -228,15 +217,7 @@ function appendVoiceMeterHistory(history: number[], level: number) {
     return [...source.slice(1), smoothed];
 }
 
-function VoiceSpectrumBar({
-    angle,
-    color,
-    level,
-}: {
-    angle: string;
-    color: string;
-    level: number;
-}) {
+function VoiceWaveformBar({ level, active }: { level: number; active: boolean }) {
     const normalizedLevel = Math.max(0, Math.min(1, level));
     const animatedLevel = useSharedValue(normalizedLevel);
     const previousLevelRef = useRef(normalizedLevel);
@@ -251,71 +232,21 @@ function VoiceSpectrumBar({
     }, [animatedLevel, normalizedLevel]);
 
     const animatedStyle = useAnimatedStyle(() => {
-        const height = Math.max(3, Math.min(20, 3 + animatedLevel.value * 17));
+        const height = Math.max(4, Math.min(32, 4 + animatedLevel.value * 28));
         return {
             height,
-            opacity: 0.3 + animatedLevel.value * 0.7,
+            opacity: active ? 0.34 + animatedLevel.value * 0.66 : 0.18,
         };
-    });
+    }, [active]);
 
     return (
-        <View
+        <Reanimated.View
             style={[
-                styles.voiceSpectrumBarSlot,
-                { transform: [{ rotate: angle }] },
+                styles.voiceWaveformBar,
+                { backgroundColor: BLUE },
+                animatedStyle,
             ]}
-        >
-            <Reanimated.View
-                style={[
-                    styles.voiceSpectrumBar,
-                    { backgroundColor: color, shadowColor: color },
-                    animatedStyle,
-                ]}
-            />
-        </View>
-    );
-}
-
-function VoiceSpectrumHalo({ energy }: { energy: number }) {
-    const normalizedEnergy = Math.max(0, Math.min(1, energy));
-    const animatedEnergy = useSharedValue(normalizedEnergy);
-    const previousEnergyRef = useRef(normalizedEnergy);
-
-    useEffect(() => {
-        const rising = normalizedEnergy >= previousEnergyRef.current;
-        previousEnergyRef.current = normalizedEnergy;
-        animatedEnergy.value = withTiming(normalizedEnergy, {
-            duration: rising ? VOICE_SPECTRUM_HALO_ATTACK_MS : VOICE_SPECTRUM_HALO_RELEASE_MS,
-            easing: VOICE_SPECTRUM_MOTION_EASING,
-        });
-    }, [animatedEnergy, normalizedEnergy]);
-
-    const outerAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: 0.1 + animatedEnergy.value * 0.2,
-        transform: [{ scale: 1 + animatedEnergy.value * 0.1 }],
-    }));
-    const innerAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: 0.12 + animatedEnergy.value * 0.24,
-        transform: [{ scale: 1 + animatedEnergy.value * 0.055 }],
-    }));
-
-    return (
-        <>
-            <Reanimated.View
-                pointerEvents="none"
-                style={[
-                    styles.voiceSpectrumHaloOuter,
-                    outerAnimatedStyle,
-                ]}
-            />
-            <Reanimated.View
-                pointerEvents="none"
-                style={[
-                    styles.voiceSpectrumHaloInner,
-                    innerAnimatedStyle,
-                ]}
-            />
-        </>
+        />
     );
 }
 
@@ -512,8 +443,6 @@ export default function QuickScheduleModal({
     const [photoRecognitionError, setPhotoRecognitionError] = useState("");
     const [photoRecognitionAttempt, setPhotoRecognitionAttempt] = useState(0);
     const [isPhotoRecognizing, setIsPhotoRecognizing] = useState(false);
-    const [isDocumentScanning, setIsDocumentScanning] = useState(false);
-    const [documentScannerSupported, setDocumentScannerSupported] = useState(false);
     const [voiceUri, setVoiceUri] = useState<string | null>(null);
     const [voiceDurationMillis, setVoiceDurationMillis] = useState(0);
     const [voiceTranscript, setVoiceTranscript] = useState("");
@@ -525,7 +454,6 @@ export default function QuickScheduleModal({
     const [voiceMeterHistory, setVoiceMeterHistory] = useState(() => (
         createVoiceMeterHistory(0)
     ));
-    const [voiceSpectrumEnergy, setVoiceSpectrumEnergy] = useState(0);
     const [submitting, setSubmitting] = useState(false);
     const [cardRasterized, setCardRasterized] = useState(false);
     const [contentMounted, setContentMounted] = useState(visible || prewarm);
@@ -578,20 +506,10 @@ export default function QuickScheduleModal({
     const photoRecognitionSequenceRef = useRef(0);
     const photoSourceOperationRef = useRef(0);
     const pendingPhotoActionCancelRef = useRef<(() => void) | null>(null);
-    const documentScanOperationRef = useRef(0);
-    const ownedDocumentScanUrisRef = useRef<string[]>([]);
     const mountedRef = useRef(false);
     const analysisPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const analysisInFlightRef = useRef(false);
     const saveInFlightRef = useRef(false);
-
-    const discardOwnedDocumentScans = useCallback(() => {
-        const uris = ownedDocumentScanUrisRef.current;
-        ownedDocumentScanUrisRef.current = [];
-        if (uris.length > 0) {
-            void discardDocumentScanPages(uris).catch(() => undefined);
-        }
-    }, []);
 
     const cancelPendingPhotoAction = useCallback(() => {
         pendingPhotoActionCancelRef.current?.();
@@ -604,10 +522,8 @@ export default function QuickScheduleModal({
             mountedRef.current = false;
             photoSourceOperationRef.current += 1;
             cancelPendingPhotoAction();
-            documentScanOperationRef.current += 1;
-            discardOwnedDocumentScans();
         };
-    }, [cancelPendingPhotoAction, discardOwnedDocumentScans]);
+    }, [cancelPendingPhotoAction]);
 
     useEffect(() => {
         const belongsToActiveSession = (sessionId: string) => (
@@ -630,7 +546,6 @@ export default function QuickScheduleModal({
             if (!belongsToActiveSession(event.sessionId)) return;
             const level = Math.max(event.rms, event.peak * 0.72);
             setVoiceMeterHistory((current) => appendVoiceMeterHistory(current, level));
-            setVoiceSpectrumEnergy(level);
             if (event.elapsedMillis !== undefined) {
                 setVoiceDurationMillis(event.elapsedMillis);
             }
@@ -656,7 +571,6 @@ export default function QuickScheduleModal({
                 setIsVoiceRecording(false);
                 setIsVoiceFinalizing(false);
                 setVoiceMeterHistory(createVoiceMeterHistory());
-                setVoiceSpectrumEnergy(0);
                 setVoiceStatusMessage(event.state === "failed"
                     ? event.message ?? "음성을 인식하지 못했습니다. 다시 말해 주세요."
                     : "");
@@ -669,18 +583,6 @@ export default function QuickScheduleModal({
             stateSubscription?.remove();
         };
     }, []);
-
-    useEffect(() => {
-        if (Platform.OS !== "ios" || !visible) return undefined;
-
-        let cancelled = false;
-        void canScanDocuments().then((supported) => {
-            if (!cancelled) setDocumentScannerSupported(supported);
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [visible]);
 
     useEffect(() => {
         const photoUri = selectedPhoto?.uri;
@@ -762,9 +664,12 @@ export default function QuickScheduleModal({
     const closeSourceLeft = sourceRight - closeSourceWidth;
     const sourceTop = insets.top + sourceTopOffset;
     const cardTop = sourceTop;
-    const targetCardHeight = flowStep === "input"
-        ? CARD_HEIGHT_BY_MODE[inputMode]
+    const baseCardHeight = flowStep === "input"
+        ? inputMode === "photo" && !selectedPhoto
+            ? 420
+            : CARD_HEIGHT_BY_MODE[inputMode]
         : FLOW_CARD_HEIGHT_BY_STEP[flowStep];
+    const targetCardHeight = baseCardHeight + (categoryError && onRetryCategories ? 58 : 0);
     const cardHeight = Math.min(
         targetCardHeight,
         height - cardTop - Math.max(insets.bottom, 16) - 12
@@ -823,7 +728,6 @@ export default function QuickScheduleModal({
         // preserve a recording and may clear the state immediately.
         if (!preserveRecording) setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
-        setVoiceSpectrumEnergy(0);
 
         if (!preserveRecording) {
             setVoiceUri(null);
@@ -926,8 +830,6 @@ export default function QuickScheduleModal({
         setRendered(prewarm);
         setText("");
         setInputMode("text");
-        documentScanOperationRef.current += 1;
-        discardOwnedDocumentScans();
         setSelectedPhoto(null);
         setPhotoTranscript("");
         setPhotoTranscriptTruncated(false);
@@ -935,7 +837,6 @@ export default function QuickScheduleModal({
         setPhotoRecognitionError("");
         setPhotoRecognitionAttempt(0);
         setIsPhotoRecognizing(false);
-        setIsDocumentScanning(false);
         setVoiceUri(null);
         setVoiceDurationMillis(0);
         setVoiceTranscript("");
@@ -945,7 +846,6 @@ export default function QuickScheduleModal({
         setIsVoiceRecording(false);
         setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
-        setVoiceSpectrumEnergy(0);
         setSubmitting(false);
         setCardRasterized(false);
         setContentMounted(prewarm);
@@ -969,7 +869,6 @@ export default function QuickScheduleModal({
         }
     }, [
         cancelPendingPhotoAction,
-        discardOwnedDocumentScans,
         invalidatePendingAnalysis,
         onClose,
         presentationOpacity,
@@ -1258,8 +1157,7 @@ export default function QuickScheduleModal({
             submitting ||
             analysisInFlightRef.current ||
             isVoiceRecording ||
-            isPhotoRecognizing ||
-            isDocumentScanning
+            (analysisInputMode === "photo" && isPhotoRecognizing)
         ) return;
 
         const fallbackText = analysisInputMode === "photo"
@@ -1324,7 +1222,6 @@ export default function QuickScheduleModal({
     }, [
         defaultDay,
         inputMode,
-        isDocumentScanning,
         isPhotoRecognizing,
         isVoiceRecording,
         onAnalyze,
@@ -1352,7 +1249,6 @@ export default function QuickScheduleModal({
         initialRequestHandledRef.current = requestId;
         setInputMode("text");
         setText(boundedSeedText);
-        discardOwnedDocumentScans();
         setSelectedPhoto(null);
         setPhotoTranscript("");
         setPhotoTranscriptTruncated(false);
@@ -1366,7 +1262,7 @@ export default function QuickScheduleModal({
         setAnalysisError("");
         setFlowStep("input");
         void startAnalysis(boundedSeedText, initialInputType);
-    }, [discardOwnedDocumentScans, initialInputType, initialRequestId, initialText, startAnalysis, visible]);
+    }, [initialInputType, initialRequestId, initialText, startAnalysis, visible]);
 
     const updatePreviewField = useCallback((field: PreviewField, value: string) => {
         setPreviewDraft((current) => current
@@ -1576,20 +1472,14 @@ export default function QuickScheduleModal({
         }
     };
 
-    const selectPhotoForRecognition = useCallback((
-        asset: ImagePickerAsset | null,
-        ownedScanUris: string[] = [],
-    ) => {
-        discardOwnedDocumentScans();
-        ownedDocumentScanUrisRef.current = ownedScanUris;
+    const selectPhotoForRecognition = useCallback((asset: ImagePickerAsset | null) => {
         setSelectedPhoto(asset);
         setPhotoRecognitionAttempt((current) => current + 1);
-    }, [discardOwnedDocumentScans]);
+    }, []);
 
     const pickPhotoFromLibrary = useCallback(async () => {
         if (
             submitting
-            || isDocumentScanning
             || !mountedRef.current
             || !visibleRef.current
             || closingRef.current
@@ -1651,12 +1541,11 @@ export default function QuickScheduleModal({
             ) return;
             Alert.alert("사진 선택 실패", error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
         }
-    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
+    }, [selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const capturePhoto = useCallback(async () => {
         if (
             submitting
-            || isDocumentScanning
             || !mountedRef.current
             || !visibleRef.current
             || closingRef.current
@@ -1713,82 +1602,7 @@ export default function QuickScheduleModal({
             ) return;
             Alert.alert("촬영 실패", error instanceof Error ? error.message : "카메라를 열지 못했습니다.");
         }
-    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
-
-    const scanDocument = useCallback(async () => {
-        if (
-            submitting
-            || isDocumentScanning
-            || !mountedRef.current
-            || !visibleRef.current
-            || closingRef.current
-        ) return;
-
-        const operation = documentScanOperationRef.current + 1;
-        documentScanOperationRef.current = operation;
-        const sourceOperation = photoSourceOperationRef.current + 1;
-        photoSourceOperationRef.current = sourceOperation;
-        Keyboard.dismiss();
-        await stopActiveRecording();
-        if (
-            documentScanOperationRef.current !== operation
-            || photoSourceOperationRef.current !== sourceOperation
-            || !mountedRef.current
-            || !visibleRef.current
-            || closingRef.current
-        ) return;
-        setInputMode("photo");
-        setIsDocumentScanning(true);
-        try {
-            const result = await scanDocuments({ maxPages: 1, jpegQuality: 0.94 });
-            const ownedScanUris = result?.pages.map(({ uri }) => uri) ?? [];
-            const operationIsCurrent = (
-                documentScanOperationRef.current === operation
-                && photoSourceOperationRef.current === sourceOperation
-                && mountedRef.current
-                && visibleRef.current
-                && !closingRef.current
-            );
-            if (!operationIsCurrent) {
-                await discardDocumentScanPages(ownedScanUris).catch(() => undefined);
-                return;
-            }
-
-            const page = result?.pages[0];
-            if (!page) {
-                await discardDocumentScanPages(ownedScanUris).catch(() => undefined);
-                return;
-            }
-
-            if (result.capturedPageCount > 1) {
-                Alert.alert("첫 페이지만 사용해요", "빠른 일정에는 스캔한 첫 페이지가 사용됩니다.");
-            }
-
-            selectPhotoForRecognition({
-                uri: page.uri,
-                width: page.width,
-                height: page.height,
-                fileName: "문서 스캔.jpg",
-                mimeType: "image/jpeg",
-            }, ownedScanUris);
-        } catch (error) {
-            if (
-                documentScanOperationRef.current !== operation
-                || photoSourceOperationRef.current !== sourceOperation
-                || !mountedRef.current
-                || !visibleRef.current
-                || closingRef.current
-            ) return;
-            Alert.alert(
-                "문서 스캔 실패",
-                error instanceof Error ? error.message : "문서를 스캔하지 못했습니다."
-            );
-        } finally {
-            if (documentScanOperationRef.current === operation && mountedRef.current) {
-                setIsDocumentScanning(false);
-            }
-        }
-    }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
+    }, [selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const activatePhotoMode = useCallback(() => {
         if (submitting) return;
@@ -1819,7 +1633,6 @@ export default function QuickScheduleModal({
     const openPhotoActionSheet = useCallback(async () => {
         if (
             submitting
-            || isDocumentScanning
             || !mountedRef.current
             || !visibleRef.current
             || closingRef.current
@@ -1839,9 +1652,7 @@ export default function QuickScheduleModal({
         setInputMode("photo");
 
         if (Platform.OS === "ios") {
-            const options = documentScannerSupported
-                ? ["문서 스캔", "사진 찍기", "사진 앱에서 선택", "취소"]
-                : ["사진 찍기", "사진 앱에서 선택", "취소"];
+            const options = ["사진 찍기", "사진 앱에서 선택", "취소"];
             ActionSheetIOS.showActionSheetWithOptions(
                 {
                     title: "사진으로 일정 만들기",
@@ -1856,15 +1667,10 @@ export default function QuickScheduleModal({
                         || !visibleRef.current
                         || closingRef.current
                     ) return;
-                    if (documentScannerSupported && buttonIndex === 0) {
-                        schedulePhotoAction(operation, () => void scanDocument());
-                        return;
-                    }
-                    const sourceIndex = documentScannerSupported ? buttonIndex - 1 : buttonIndex;
-                    if (sourceIndex === 0) {
+                    if (buttonIndex === 0) {
                         schedulePhotoAction(operation, () => void capturePhoto());
                     }
-                    if (sourceIndex === 1) {
+                    if (buttonIndex === 1) {
                         schedulePhotoAction(operation, () => void pickPhotoFromLibrary());
                     }
                 }
@@ -1876,11 +1682,8 @@ export default function QuickScheduleModal({
     }, [
         capturePhoto,
         cancelPendingPhotoAction,
-        documentScannerSupported,
-        isDocumentScanning,
         mode,
         pickPhotoFromLibrary,
-        scanDocument,
         schedulePhotoAction,
         stopActiveRecording,
         submitting,
@@ -1945,7 +1748,6 @@ export default function QuickScheduleModal({
             setIsVoiceRecording(false);
             setIsVoiceFinalizing(false);
             setVoiceMeterHistory(createVoiceMeterHistory());
-            setVoiceSpectrumEnergy(0);
             const message = error instanceof Error
                 ? error.message
                 : "실시간 음성 인식을 시작하지 못했습니다.";
@@ -1989,7 +1791,6 @@ export default function QuickScheduleModal({
 
         Keyboard.dismiss();
         setInputMode("voice");
-        discardOwnedDocumentScans();
         setSelectedPhoto(null);
         setVoiceUri(null);
         setVoiceDurationMillis(0);
@@ -1998,7 +1799,6 @@ export default function QuickScheduleModal({
         setVoiceRecognitionConfidence(undefined);
         setVoiceStatusMessage("");
         setVoiceMeterHistory(createVoiceMeterHistory());
-        setVoiceSpectrumEnergy(0);
         clearVoiceTimer();
 
         if (isLiveSpeechRecognitionAvailable) {
@@ -2055,7 +1855,6 @@ export default function QuickScheduleModal({
                 setIsVoiceRecording(false);
                 setIsVoiceFinalizing(false);
                 setVoiceMeterHistory(createVoiceMeterHistory());
-                setVoiceSpectrumEnergy(0);
                 const message = error instanceof Error
                     ? error.message
                     : "음성 인식 지원 상태를 확인하지 못했습니다.";
@@ -2167,7 +1966,6 @@ export default function QuickScheduleModal({
                             setVoiceMeterHistory((current) => (
                                 appendVoiceMeterHistory(current, normalizedMetering)
                             ));
-                            setVoiceSpectrumEnergy(normalizedMetering);
                         }
                     })
                     .catch(() => undefined);
@@ -2184,14 +1982,12 @@ export default function QuickScheduleModal({
             setIsVoiceRecording(false);
             setIsVoiceFinalizing(false);
             setVoiceMeterHistory(createVoiceMeterHistory());
-            setVoiceSpectrumEnergy(0);
             console.warn("[QuickSchedule] Voice recording failed to start.", error);
             Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
     }, [
         beginLiveSpeechCapture,
         clearVoiceTimer,
-        discardOwnedDocumentScans,
         isVoiceFinalizing,
         isVoiceRecording,
         submitting,
@@ -2208,7 +2004,6 @@ export default function QuickScheduleModal({
             setIsVoiceRecording(false);
             setIsVoiceFinalizing(true);
             setVoiceStatusMessage("마지막 문장을 정리하고 있어요.");
-            setVoiceSpectrumEnergy(0);
             try {
                 const result = await stopLiveSpeechRecognition(liveSpeechSessionId);
                 if (
@@ -2255,7 +2050,6 @@ export default function QuickScheduleModal({
                 setIsVoiceRecording(false);
                 setIsVoiceFinalizing(false);
                 setVoiceMeterHistory(createVoiceMeterHistory());
-                setVoiceSpectrumEnergy(0);
             }
             return;
         }
@@ -2510,31 +2304,29 @@ export default function QuickScheduleModal({
             },
         ],
     }));
-    const cardBorderColor = mode === "dark"
-        ? "rgba(255,255,255,0.17)"
-        : "rgba(255,255,255,0.86)";
+    const cardBorderColor = colors.border;
     // Keep the scaled layer lightweight. A live native blur is re-rasterized
     // while the card grows and was producing visible 26-35ms frame gaps.
     const cardSurfaceBackground = mode === "dark" ? "#0E0F12" : "#FFFFFF";
-    const segmentedBackground = mode === "dark"
-        ? "rgba(255,255,255,0.10)"
-        : "rgba(255,255,255,0.56)";
-    const selectedModeBackground = mode === "dark"
-        ? "rgba(36,107,254,0.20)"
-        : "rgba(36,107,254,0.10)";
-    const inputBackground = mode === "dark"
-        ? "rgba(9,11,16,0.54)"
-        : "rgba(255,255,255,0.62)";
-    const mediaPanelBackground = mode === "dark"
-        ? "rgba(10,12,17,0.50)"
-        : "rgba(255,255,255,0.58)";
-    const voiceOrbBackground = mode === "dark"
-        ? "rgba(36,107,254,0.20)"
-        : "rgba(36,107,254,0.11)";
+    const segmentedBackground = colors.surface2;
+    const selectedModeBackground = colors.surface;
+    const inputBackground = colors.inputBackground;
+    const mediaPanelBackground = colors.surface2;
     const voiceDurationText = formatVoiceDuration(
         recorderState.isRecording ? recorderState.durationMillis : voiceDurationMillis
     );
     const photoLabel = selectedPhoto?.fileName ?? selectedPhoto?.uri.split("/").pop();
+    const selectedPhotoAspectRatio = selectedPhoto?.width && selectedPhoto.height
+        ? selectedPhoto.width / selectedPhoto.height
+        : 1;
+    const safePhotoAspectRatio = Number.isFinite(selectedPhotoAspectRatio) && selectedPhotoAspectRatio > 0
+        ? selectedPhotoAspectRatio
+        : 1;
+    const photoPreviewContentWidth = cardWidth - 38;
+    const photoScanFrameStyle = {
+        width: Math.min(photoPreviewContentWidth, PHOTO_PREVIEW_STAGE_HEIGHT * safePhotoAspectRatio),
+        height: Math.min(PHOTO_PREVIEW_STAGE_HEIGHT, photoPreviewContentWidth / safePhotoAspectRatio),
+    };
     const canSubmit = (
         inputMode === "text"
             ? text.trim().length > 0
@@ -2544,10 +2336,9 @@ export default function QuickScheduleModal({
     ) && !submitting
         && !recorderState.isRecording
         && !isVoiceFinalizing
-        && !isPhotoRecognizing
-        && !isDocumentScanning;
+        && (inputMode !== "photo" || !isPhotoRecognizing);
     const flowTitle = flowStep === "input"
-        ? "빠른 일정 생성"
+        ? "빠른 일정"
         : flowStep === "analyzing"
             ? "일정 미리보기"
             : flowStep === "saving"
@@ -2563,6 +2354,11 @@ export default function QuickScheduleModal({
                                     ? "출발 알림"
                                     : `${FIELD_LABEL[editingField]} 수정`
                             : "일정 미리보기";
+    const inputModeDescription = inputMode === "photo"
+        ? "사진을 고르면 날짜와 장소를 자동으로 읽습니다."
+        : inputMode === "voice"
+            ? "말하는 내용을 실시간 일정 문장으로 바꿉니다."
+            : "날짜·시간·장소를 한 문장으로 입력하세요.";
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
     const successColor = "#22C55E";
@@ -2616,9 +2412,7 @@ export default function QuickScheduleModal({
                     },
                     modeIndicatorAnimatedStyle,
                 ]}
-            >
-                <View style={styles.modeIndicatorUnderline} />
-            </Reanimated.View>
+            />
             {(Platform.OS === "ios" ? INPUT_MODES : INPUT_MODES.filter((item) => item.key === "text")).map((item) => {
                 const selected = item.key === inputMode;
 
@@ -2636,9 +2430,6 @@ export default function QuickScheduleModal({
                         }}
                         style={({ pressed }) => [
                             styles.modeButton,
-                            item.label.length > 2
-                                ? styles.modeButtonWide
-                                : styles.modeButtonCompact,
                             selected && styles.modeButtonSelected,
                             { opacity: pressed ? 0.7 : submitting ? 0.48 : 1 },
                         ]}
@@ -2646,13 +2437,13 @@ export default function QuickScheduleModal({
 	                        <Ionicons
 	                            accessible={false}
 	                            name={item.icon}
-	                            size={21}
+	                            size={17}
 	                            color={selected ? BLUE : colors.textSecondary}
 	                        />
                         <Text
                             style={[
                                 styles.modeText,
-                                { color: selected ? BLUE : colors.textPrimary },
+                                { color: selected ? colors.textPrimary : colors.textSecondary },
                             ]}
                         >
 	                            {item.label}
@@ -2664,105 +2455,136 @@ export default function QuickScheduleModal({
     );
 
     const renderInputStep = () => (
-        <>
-            {renderModeSelector()}
+        <View style={styles.inputStep}>
+            <ScrollView
+                keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                style={styles.inputStepScroll}
+                contentContainerStyle={styles.inputStepScrollContent}
+            >
+                {renderModeSelector()}
 
-            {inputMode === "text" && (
-                <View
-                    style={[
-                        styles.inputWrap,
-                        {
-                            backgroundColor: inputBackground,
-                            borderColor: text.length > 0
-                                ? BLUE
-                                : colors.inputBorder,
-                        },
-                    ]}
-                >
-                    <TextInput
-                        ref={inputRef}
-                        accessibilityLabel="빠른 일정 문장"
-                        editable={!submitting}
-                        multiline
-                        maxLength={QUICK_TEXT_LIMIT}
-                        value={text}
-                        onChangeText={setText}
-                        onSubmitEditing={submit}
-                        placeholder={placeholderForMode(inputMode)}
-                        placeholderTextColor={colors.inputPlaceholder}
-                        returnKeyType="done"
-                        selectionColor={BLUE}
-                        style={[
-                            styles.input,
-                            {
-                                color: colors.textPrimary,
-                            },
-                        ]}
-                    />
-                    <View style={styles.counterPill}>
-                        <Text style={[styles.counter, { color: colors.textSecondary }]}>
-                            {text.length}/{QUICK_TEXT_LIMIT}
-                        </Text>
+                {inputMode === "text" && (
+                    <View style={styles.textModeContent}>
+                    <View style={styles.sectionHeader}>
+                        <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>일정 내용</Text>
+                        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>날짜, 시간, 장소를 자유롭게 적어 주세요.</Text>
                     </View>
-                </View>
-            )}
-
-            {inputMode === "photo" && (
-                <View style={styles.photoModeContent}>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={selectedPhoto ? "선택한 사진 변경" : "사진 선택"}
-                        accessibilityState={{
-                            disabled: submitting || isVoiceFinalizing || isDocumentScanning,
-                        }}
-                        disabled={submitting || isVoiceFinalizing || isDocumentScanning}
-                        onPress={() => void openPhotoActionSheet()}
+                    <View
                         style={[
-                            styles.mediaPanel,
-                            styles.photoPreviewPanel,
+                            styles.inputWrap,
                             {
-                                backgroundColor: mediaPanelBackground,
-                                borderColor: selectedPhoto ? BLUE : cardBorderColor,
+                                backgroundColor: inputBackground,
+                                borderColor: text.length > 0
+                                    ? colors.inputBorderFocused
+                                    : colors.inputBorder,
                             },
                         ]}
                     >
-                        {selectedPhoto?.uri ? (
-                            <Image source={{ uri: selectedPhoto.uri }} style={styles.photoThumbnail} />
-                        ) : (
-                            <View
-                                style={[
-                                    styles.photoIconWrap,
-                                    {
-                                        backgroundColor: selectedModeBackground,
-                                    },
+                        <TextInput
+                            ref={inputRef}
+                            accessibilityLabel="빠른 일정 문장"
+                            editable={!submitting}
+                            multiline
+                            maxLength={QUICK_TEXT_LIMIT}
+                            value={text}
+                            onChangeText={setText}
+                            onSubmitEditing={submit}
+                            placeholder={placeholderForMode(inputMode)}
+                            placeholderTextColor={colors.inputPlaceholder}
+                            returnKeyType="done"
+                            selectionColor={BLUE}
+                            style={[
+                                styles.input,
+                                {
+                                    color: colors.textPrimary,
+                                },
+                            ]}
+                        />
+                        <View style={styles.counterPill}>
+                            <Text style={[styles.counter, { color: colors.textSecondary }]}>{text.length}/{QUICK_TEXT_LIMIT}</Text>
+                        </View>
+                    </View>
+                    </View>
+                )}
+
+                {inputMode === "photo" && (
+                    <View style={styles.photoModeContent}>
+                    {selectedPhoto?.uri ? (
+                        <View
+                            style={[
+                                styles.photoPreviewButton,
+                                {
+                                    backgroundColor: mode === "dark" ? "#090A0D" : "#EEF0F4",
+                                    borderColor: colors.border,
+                                },
+                            ]}
+                        >
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="선택한 사진 변경"
+                                accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                                disabled={submitting || isVoiceFinalizing}
+                                onPress={() => void openPhotoActionSheet()}
+                                style={({ pressed }) => [
+                                    styles.photoImageStage,
+                                    { opacity: pressed ? 0.86 : 1 },
                                 ]}
                             >
-                                <Ionicons accessible={false} name="scan-outline" size={34} color={BLUE} />
-                            </View>
-                        )}
-                        <Text style={[styles.mediaPanelTitle, { color: colors.textPrimary }]}>
-                            {isDocumentScanning
-                                ? "문서 스캐너 여는 중"
-                                : selectedPhoto
-                                    ? "사진 선택됨"
-                                    : "문서나 일정 사진 추가"}
-                        </Text>
-                        {photoLabel && (
-                            <Text
-                                numberOfLines={1}
-                                style={[styles.mediaPanelMeta, { color: colors.textSecondary }]}
-                            >
-                                {photoLabel}
-                            </Text>
-                        )}
-                        {selectedPhoto && (
+                                <QuickSchedulePhotoScanEffect
+                                    active={isPhotoRecognizing}
+                                    borderRadius={10}
+                                    style={[styles.photoScanFrame, photoScanFrameStyle]}
+                                >
+                                    <Image
+                                        source={{ uri: selectedPhoto.uri }}
+                                        resizeMode="cover"
+                                        style={styles.photoImage}
+                                    />
+                                </QuickSchedulePhotoScanEffect>
+                            </Pressable>
+                            {isPhotoRecognizing ? (
+                                <View
+                                    pointerEvents="none"
+                                    accessible
+                                    accessibilityRole="progressbar"
+                                    accessibilityLabel="사진에서 일정 문장 인식 중"
+                                    accessibilityLiveRegion="polite"
+                                    accessibilityState={{ busy: true }}
+                                    accessibilityValue={{ text: "진행 중" }}
+                                    style={styles.photoImageMetaRow}
+                                >
+                                    <>
+                                        <ActivityIndicator color="#FFFFFF" size="small" />
+                                        <Text numberOfLines={1} style={styles.photoImageFile}>사진에서 일정 정보를 읽고 있어요</Text>
+                                    </>
+                                </View>
+                            ) : (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="선택한 사진 정보 및 변경"
+                                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                                    disabled={submitting || isVoiceFinalizing}
+                                    onPress={() => void openPhotoActionSheet()}
+                                    style={({ pressed }) => [
+                                        styles.photoImageMetaRow,
+                                        { opacity: pressed ? 0.78 : 1 },
+                                    ]}
+                                >
+                                    <>
+                                        <Text numberOfLines={1} style={styles.photoImageFile}>
+                                            {photoLabel ?? "선택한 사진"}
+                                        </Text>
+                                        <Text style={styles.photoChangeHint}>변경</Text>
+                                    </>
+                                </Pressable>
+                            )}
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="선택한 사진 제거"
-                                onPress={(event) => {
-                                    event.stopPropagation();
-                                    selectPhotoForRecognition(null);
-                                }}
+                                onPress={() => selectPhotoForRecognition(null)}
+                                hitSlop={10}
                                 style={({ pressed }) => [
                                     styles.photoRemoveButton,
                                     { opacity: pressed ? 0.72 : 1 },
@@ -2770,75 +2592,83 @@ export default function QuickScheduleModal({
                             >
                                 <Ionicons accessible={false} name="close" size={16} color="#fff" />
                             </Pressable>
-                        )}
-                    </Pressable>
+                        </View>
+                    ) : (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="사진 선택"
+                            accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                            disabled={submitting || isVoiceFinalizing}
+                            onPress={() => void openPhotoActionSheet()}
+                            style={({ pressed }) => [
+                                styles.photoEmptyPanel,
+                                {
+                                    backgroundColor: mediaPanelBackground,
+                                    borderColor: colors.border,
+                                    opacity: pressed ? 0.82 : 1,
+                                },
+                            ]}
+                        >
+                            <View
+                                style={[
+                                    styles.photoEmptyIcon,
+                                    { backgroundColor: mode === "dark" ? "rgba(36,107,254,0.16)" : "rgba(36,107,254,0.09)" },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="image-outline" size={23} color={BLUE} />
+                            </View>
+                            <Text style={[styles.photoEmptyTitle, { color: colors.textPrimary }]}>일정이 담긴 사진을 추가하세요</Text>
+                            <Text style={[styles.photoEmptyMeta, { color: colors.textSecondary }]}>촬영하거나 사진 앱에서 선택하면 바로 읽습니다.</Text>
+                        </Pressable>
+                    )}
 
                     <View style={styles.photoActions}>
-                        {documentScannerSupported ? (
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel="문서 스캔으로 사진 입력"
-                                disabled={submitting || isDocumentScanning}
-                                onPress={() => void scanDocument()}
-                                style={({ pressed }) => [
-                                    styles.photoSourceButton,
-                                    {
-                                        backgroundColor: selectedModeBackground,
-                                        borderColor: BLUE,
-                                        opacity: pressed ? 0.72 : 1,
-                                    },
-                                ]}
-                            >
-                                <Ionicons accessible={false} name="scan-outline" size={17} color={BLUE} />
-                                <Text style={[styles.photoSourceButtonText, { color: BLUE }]}>문서 스캔</Text>
-                            </Pressable>
-                        ) : (
-                            <Pressable
-                                accessibilityRole="button"
-                                accessibilityLabel="카메라로 일정 사진 촬영"
-                                disabled={submitting || isDocumentScanning}
-                                onPress={() => void capturePhoto()}
-                                style={({ pressed }) => [
-                                    styles.photoSourceButton,
-                                    {
-                                        backgroundColor: mediaPanelBackground,
-                                        borderColor: cardBorderColor,
-                                        opacity: pressed ? 0.72 : 1,
-                                    },
-                                ]}
-                            >
-                                <Ionicons accessible={false} name="camera-outline" size={17} color={BLUE} />
-                                <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>촬영</Text>
-                            </Pressable>
-                        )}
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="카메라로 일정 사진 촬영"
+                            disabled={submitting || isVoiceFinalizing}
+                            onPress={() => void capturePhoto()}
+                            style={({ pressed }) => [
+                                styles.photoSourceButton,
+                                {
+                                    backgroundColor: mediaPanelBackground,
+                                    borderColor: colors.border,
+                                    opacity: pressed ? 0.72 : 1,
+                                },
+                            ]}
+                        >
+                            <Ionicons accessible={false} name="camera-outline" size={17} color={BLUE} />
+                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 촬영</Text>
+                        </Pressable>
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel="사진 앱에서 일정 사진 선택"
-                            disabled={submitting || isDocumentScanning}
+                            disabled={submitting || isVoiceFinalizing}
                             onPress={() => void pickPhotoFromLibrary()}
                             style={({ pressed }) => [
                                 styles.photoSourceButton,
                                 {
                                     backgroundColor: mediaPanelBackground,
-                                    borderColor: cardBorderColor,
+                                    borderColor: colors.border,
                                     opacity: pressed ? 0.72 : 1,
                                 },
                             ]}
                         >
                             <Ionicons accessible={false} name="images-outline" size={17} color={BLUE} />
-                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 앱</Text>
+                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 선택</Text>
                         </Pressable>
                     </View>
 
-                    <View
-                        style={[
-                            styles.photoTranscriptWrap,
-                            {
-                                backgroundColor: inputBackground,
-                                borderColor: photoTranscript.trim() ? BLUE : colors.inputBorder,
-                            },
-                        ]}
-                    >
+                    {selectedPhoto && (
+                        <View
+                            style={[
+                                styles.photoTranscriptWrap,
+                                {
+                                    backgroundColor: inputBackground,
+                                    borderColor: colors.inputBorder,
+                                },
+                            ]}
+                        >
                         <View style={styles.photoTranscriptHeader}>
                             <Text style={[styles.photoTranscriptLabel, { color: colors.textSecondary }]}>
                                 인식된 문장
@@ -2854,58 +2684,44 @@ export default function QuickScheduleModal({
                             )}
                         </View>
 
-                        {isPhotoRecognizing ? (
-                            <View
-                                accessibilityLabel="사진에서 일정 문장 인식 중"
-                                style={styles.photoRecognitionStatus}
-                            >
-                                <ActivityIndicator color={BLUE} size="small" />
-                                <Text style={[styles.photoRecognitionStatusText, { color: colors.textSecondary }]}>
-                                    사진을 선명하게 보정해 읽고 있어요
-                                </Text>
+                        {photoRecognitionError && !isPhotoRecognizing && (
+                            <View style={styles.photoRecognitionErrorWrap}>
+                                <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="사진 텍스트 다시 인식"
+                                    onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
+                                    style={({ pressed }) => [
+                                        styles.photoRecognitionRetry,
+                                        { opacity: pressed ? 0.72 : 1 },
+                                    ]}
+                                >
+                                    <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
+                                    <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
+                                </Pressable>
                             </View>
-                        ) : (
-                            <>
-                                {photoRecognitionError && (
-                                    <View style={styles.photoRecognitionErrorWrap}>
-                                        <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel="사진 텍스트 다시 인식"
-                                            onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
-                                            style={({ pressed }) => [
-                                                styles.photoRecognitionRetry,
-                                                { opacity: pressed ? 0.72 : 1 },
-                                            ]}
-                                        >
-                                            <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
-                                            <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
-                                        </Pressable>
-                                    </View>
-                                )}
-                                <TextInput
-                                    accessibilityLabel="사진 OCR 인식 텍스트"
-                                    editable={Boolean(selectedPhoto) && !submitting && !isDocumentScanning}
-                                    multiline
-                                    maxLength={QUICK_TEXT_LIMIT}
-                                    value={photoTranscript}
-                                    onChangeText={(value) => {
-                                        setPhotoTranscript(value);
-                                        setPhotoTranscriptTruncated(false);
-                                        setPhotoRecognitionConfidence(undefined);
-                                        setPhotoRecognitionError("");
-                                    }}
-                                    placeholder={selectedPhoto
-                                        ? photoRecognitionError
-                                            ? "인식하지 못한 내용을 직접 입력해 주세요."
-                                            : "인식 후 문장을 직접 수정할 수 있어요."
-                                        : "문서를 스캔하거나 일정 사진을 선택해 주세요."}
-                                    placeholderTextColor={colors.inputPlaceholder}
-                                    selectionColor={BLUE}
-                                    style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
-                                />
-                            </>
                         )}
+                        <TextInput
+                            accessibilityLabel="사진 OCR 인식 텍스트"
+                            editable={!submitting && !isPhotoRecognizing}
+                            multiline
+                            maxLength={QUICK_TEXT_LIMIT}
+                            value={photoTranscript}
+                            onChangeText={(value) => {
+                                setPhotoTranscript(value);
+                                setPhotoTranscriptTruncated(false);
+                                setPhotoRecognitionConfidence(undefined);
+                                setPhotoRecognitionError("");
+                            }}
+                            placeholder={isPhotoRecognizing
+                                ? "인식 결과가 여기에 표시됩니다."
+                                : photoRecognitionError
+                                    ? "인식하지 못한 내용을 직접 입력해 주세요."
+                                    : "인식된 문장을 확인하고 수정할 수 있어요."}
+                            placeholderTextColor={colors.inputPlaceholder}
+                            selectionColor={BLUE}
+                            style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
+                        />
 
                         {!isPhotoRecognizing
                             && photoRecognitionConfidence !== undefined
@@ -2917,133 +2733,100 @@ export default function QuickScheduleModal({
                                 </Text>
                             </View>
                         )}
+                        </View>
+                    )}
                     </View>
-                </View>
-            )}
+                )}
 
-            {inputMode === "voice" && (
-                <View
-                    style={[
-                        styles.voicePanel,
-                        {
-                            backgroundColor: mediaPanelBackground,
-                            borderColor: recorderState.isRecording || voiceTranscript.trim() || voiceUri
-                                ? BLUE
-                                : cardBorderColor,
-                        },
-                    ]}
-                >
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={recorderState.isRecording
-                            ? "실시간 음성 인식 중지"
-                            : voiceTranscript.trim() || voiceUri
-                                ? "음성 다시 인식"
-                                : "실시간 음성 인식 시작"}
-                        accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                        onPress={() => {
-                            if (recorderState.isRecording) {
-                                void stopVoiceRecording();
-                                return;
-                            }
-
-                            void startVoiceRecording();
-                        }}
-                        disabled={submitting || isVoiceFinalizing}
-                        style={({ pressed }) => [
-                            styles.voiceRecordControl,
-                            { opacity: pressed ? 0.78 : 1 },
+                {inputMode === "voice" && (
+                    <View
+                        style={[
+                            styles.voicePanel,
+                            {
+                                backgroundColor: mediaPanelBackground,
+                                borderColor: colors.border,
+                            },
                         ]}
                     >
-                        <View style={styles.voiceOrbWrap}>
-                            {recorderState.isRecording && (
-                                <>
-                                    <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
-                                    <View pointerEvents="none" style={styles.voiceSpectrum}>
-                                        {VOICE_SPECTRUM_BARS.map((barIndex) => {
-                                            const angle = `${(360 / VOICE_SPECTRUM_BAR_COUNT) * barIndex}deg`;
-                                            // 두 번째 반원의 인덱스를 뒤집어 첫 번째 반원과 마주 보게 한다.
-                                            // 막대마다 미세한 높이 차이를 주어 기계적인 완전 대칭 대신
-                                            // 실제 음성이 퍼지는 듯한 부드러운 외곽선을 만든다.
-                                            const historyIndex = barIndex < VOICE_SPECTRUM_SAMPLE_COUNT
-                                                ? barIndex
-                                                : VOICE_SPECTRUM_BAR_COUNT - 1 - barIndex;
-                                            const texture = 0.78 + ((Math.sin(barIndex * 1.73) + 1) / 2) * 0.22;
-                                            const level = (voiceMeterHistory[historyIndex] ?? 0) * texture;
-                                            const colorIndex = Math.min(
-                                                VOICE_SPECTRUM_COLORS.length - 1,
-                                                Math.floor(
-                                                    historyIndex
-                                                    / VOICE_SPECTRUM_SAMPLE_COUNT
-                                                    * VOICE_SPECTRUM_COLORS.length
-                                                )
-                                            );
+                    <View style={styles.voiceControlRow}>
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={recorderState.isRecording
+                                ? "실시간 음성 인식 중지"
+                                : voiceTranscript.trim() || voiceUri
+                                    ? "음성 다시 인식"
+                                    : "실시간 음성 인식 시작"}
+                            accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
+                            onPress={() => {
+                                if (recorderState.isRecording) {
+                                    void stopVoiceRecording();
+                                    return;
+                                }
 
-                                            return (
-                                                <VoiceSpectrumBar
-                                                    key={barIndex}
-                                                    angle={angle}
-                                                    color={VOICE_SPECTRUM_COLORS[colorIndex]}
-                                                    level={level}
-                                                />
-                                            );
-                                        })}
-                                    </View>
-                                </>
-                            )}
-                            <View
-                                style={[
-                                    styles.voiceOrb,
-                                    {
-                                        backgroundColor: voiceOrbBackground,
-                                        borderColor: recorderState.isRecording || voiceTranscript.trim() || voiceUri
-                                            ? BLUE
-                                            : cardBorderColor,
-                                    },
-                                ]}
-                            >
-                                <Ionicons
-                                    accessible={false}
-                                    name={
-                                        recorderState.isRecording
-                                            ? "stop"
-                                            : voiceTranscript.trim() || voiceUri
-                                                ? "checkmark"
-                                                : "mic-outline"
-                                    }
-                                    size={34}
-                                    color={recorderState.isRecording || voiceTranscript.trim() || voiceUri
-                                        ? BLUE
-                                        : colors.textPrimary}
-                                />
-                            </View>
+                                void startVoiceRecording();
+                            }}
+                            disabled={submitting || isVoiceFinalizing}
+                            style={({ pressed }) => [
+                                styles.voiceRecordButton,
+                                {
+                                    backgroundColor: recorderState.isRecording ? BLUE : colors.surface,
+                                    borderColor: recorderState.isRecording ? BLUE : colors.border,
+                                    opacity: pressed ? 0.74 : isVoiceFinalizing ? 0.5 : 1,
+                                },
+                            ]}
+                        >
+                            <Ionicons
+                                accessible={false}
+                                name={recorderState.isRecording ? "stop" : "mic-outline"}
+                                size={23}
+                                color={recorderState.isRecording ? "#FFFFFF" : BLUE}
+                            />
+                        </Pressable>
+                        <View style={styles.voiceStatusTextWrap}>
+                            <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
+                                {recorderState.isRecording
+                                    ? "듣고 있어요"
+                                    : isVoiceFinalizing
+                                        ? "음성을 정리하고 있어요"
+                                        : voiceTranscript.trim()
+                                            ? "인식 완료"
+                                            : voiceUri
+                                                ? "녹음 완료"
+                                                : "말하기 시작"}
+                            </Text>
+                            <Text numberOfLines={2} style={[styles.voiceMeta, { color: colors.textSecondary }]}>
+                                {voiceStatusMessage || (
+                                    recorderState.isRecording || isVoiceFinalizing || voiceTranscript.trim() || voiceUri
+                                        ? voiceDurationText
+                                        : "버튼을 누르면 실시간 텍스트가 표시됩니다."
+                                )}
+                            </Text>
                         </View>
-                        <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
-                            {recorderState.isRecording
-                                ? "듣고 있어요"
-                                : isVoiceFinalizing
-                                    ? "음성을 정리하고 있어요"
-                                    : voiceTranscript.trim()
-                                        ? "인식 완료"
-                                        : voiceUri
-                                            ? "녹음 완료"
-                                            : "탭해서 말하기 시작"}
-                        </Text>
-                        <Text style={[styles.voiceMeta, { color: colors.textSecondary }]}>
-                            {voiceStatusMessage || (
-                                recorderState.isRecording || isVoiceFinalizing || voiceTranscript.trim() || voiceUri
-                                    ? voiceDurationText
-                                    : "말하는 내용이 아래에 바로 표시됩니다."
-                            )}
-                        </Text>
-                    </Pressable>
+                    </View>
+
+                    <View
+                        pointerEvents="none"
+                        accessible={false}
+                        style={[
+                            styles.voiceWaveform,
+                            { backgroundColor: inputBackground, borderColor: colors.inputBorder },
+                        ]}
+                    >
+                        {voiceMeterHistory.map((level, index) => (
+                            <VoiceWaveformBar
+                                key={index}
+                                level={recorderState.isRecording ? level : 0}
+                                active={recorderState.isRecording}
+                            />
+                        ))}
+                    </View>
 
                     <View
                         style={[
                             styles.voiceTranscriptWrap,
                             {
                                 backgroundColor: inputBackground,
-                                borderColor: voiceTranscript.trim() ? BLUE : colors.inputBorder,
+                                borderColor: colors.inputBorder,
                             },
                         ]}
                     >
@@ -3076,15 +2859,16 @@ export default function QuickScheduleModal({
                             placeholder={recorderState.isRecording
                                 ? "말씀해 주세요…"
                                 : voiceUri
-                                    ? "일정 만들기를 누르면 녹음을 인식합니다."
+                                    ? "일정 미리보기를 누르면 녹음을 인식합니다."
                                     : "인식 후 문장을 직접 수정할 수 있어요."}
                             placeholderTextColor={colors.inputPlaceholder}
                             selectionColor={BLUE}
                             style={[styles.voiceTranscriptInput, { color: colors.textPrimary }]}
                         />
                     </View>
-                </View>
-            )}
+                    </View>
+                )}
+            </ScrollView>
 
             <Pressable
                 accessibilityRole="button"
@@ -3107,12 +2891,12 @@ export default function QuickScheduleModal({
                     />
                 ) : (
                     <>
-                        <Ionicons accessible={false} name="sparkles-outline" size={17} color="#fff" />
-                        <Text style={styles.submitText}>일정 만들기</Text>
+                        <Ionicons accessible={false} name="calendar-outline" size={17} color="#fff" />
+                        <Text style={styles.submitText}>일정 미리보기</Text>
                     </>
                 )}
             </Pressable>
-        </>
+        </View>
     );
 
     const renderLoadingStep = () => {
@@ -3781,64 +3565,10 @@ export default function QuickScheduleModal({
                                 },
                             ]}
                         >
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    styles.glassMilkyFill,
-                                    {
-                                        backgroundColor: mode === "dark"
-                                            ? "rgba(14,15,18,0.72)"
-                                            : "rgba(255,255,255,0.28)",
-                                    },
-                                ]}
-                            />
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    styles.glassTopGlow,
-                                    {
-                                        backgroundColor: mode === "dark"
-                                            ? "rgba(255,255,255,0.055)"
-                                            : "rgba(255,255,255,0.82)",
-                                        opacity: mode === "dark" ? 0.22 : 0.66,
-                                    },
-                                ]}
-                            />
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    styles.glassRefractionBand,
-                                    {
-                                        backgroundColor: mode === "dark"
-                                            ? "transparent"
-                                            : "rgba(255,255,255,0.54)",
-                                        opacity: mode === "dark" ? 0 : 0.24,
-                                    },
-                                ]}
-                            />
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    styles.glassLowerShade,
-                                    {
-                                        backgroundColor: mode === "dark"
-                                            ? "transparent"
-                                            : "rgba(255,255,255,0.18)",
-                                        opacity: mode === "dark" ? 0 : 0.46,
-                                    },
-                                ]}
-                            />
-                            <View
-                                pointerEvents="none"
-                                style={[
-                                    styles.cardSheen,
-                                    mode === "dark" && styles.cardSheenDark,
-                                ]}
-                            />
                             <View style={styles.content}>
                                 {contentMounted && (
                                     <>
-                                        <View style={styles.closeButton}>
+                                        <View style={[styles.closeButton, { backgroundColor: colors.surface2 }]}>
                                             <Pressable
                                                 accessibilityRole="button"
                                                 accessibilityLabel="빠른 일정 등록 닫기"
@@ -3858,7 +3588,12 @@ export default function QuickScheduleModal({
                                             </Pressable>
                                         </View>
 
-                                        <View style={styles.header}>
+                                        <View
+                                            style={[
+                                                styles.header,
+                                                flowStep !== "input" && styles.headerCentered,
+                                            ]}
+                                        >
                                             {flowStep === "edit" && (
                                                 <Pressable
                                                     accessibilityRole="button"
@@ -3874,6 +3609,9 @@ export default function QuickScheduleModal({
                                                 </Pressable>
                                             )}
                                             <Text style={[styles.title, { color: colors.textPrimary }]}>{flowTitle}</Text>
+                                            {flowStep === "input" && (
+                                                <Text style={[styles.headerDescription, { color: colors.textSecondary }]}>{inputModeDescription}</Text>
+                                            )}
                                         </View>
 
                                         {categoryError && onRetryCategories ? (
@@ -3922,10 +3660,10 @@ const styles = StyleSheet.create({
         position: "absolute",
         transformOrigin: [0, 0, 0],
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 18 },
-        shadowOpacity: 0.22,
-        shadowRadius: 30,
-        elevation: 24,
+        shadowOffset: { width: 0, height: 14 },
+        shadowOpacity: 0.18,
+        shadowRadius: 24,
+        elevation: 18,
     },
     cardClip: {
         width: "100%",
@@ -3939,56 +3677,11 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         zIndex: 1,
     },
-    glassMilkyFill: {
-        ...StyleSheet.absoluteFillObject,
-    },
-    glassTopGlow: {
-        position: "absolute",
-        top: 0,
-        left: 12,
-        right: 12,
-        height: 58,
-        borderRadius: 36,
-        opacity: 0.66,
-    },
-    glassRefractionBand: {
-        position: "absolute",
-        top: 34,
-        left: -34,
-        width: "124%",
-        height: 56,
-        borderRadius: 32,
-        opacity: 0.24,
-        transform: [{ rotate: "-7deg" }],
-    },
-    glassLowerShade: {
-        position: "absolute",
-        left: 14,
-        right: 14,
-        bottom: -32,
-        height: 116,
-        borderRadius: 58,
-        opacity: 0.46,
-    },
-    cardSheen: {
-        ...StyleSheet.absoluteFillObject,
-        borderRadius: EXPANDED_CARD_RADIUS,
-        backgroundColor: "rgba(255,255,255,0.025)",
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: "rgba(255,255,255,0.72)",
-        borderLeftWidth: StyleSheet.hairlineWidth,
-        borderLeftColor: "rgba(255,255,255,0.36)",
-    },
-    cardSheenDark: {
-        backgroundColor: "rgba(255,255,255,0.010)",
-        borderTopColor: "rgba(255,255,255,0.26)",
-        borderLeftColor: "rgba(255,255,255,0.14)",
-    },
     content: {
         flex: 1,
         transformOrigin: [0, 0, 0],
         paddingHorizontal: 18,
-        paddingTop: 28,
+        paddingTop: 24,
         paddingBottom: 15,
     },
     closeButton: {
@@ -4010,6 +3703,17 @@ const styles = StyleSheet.create({
     handoffBody: {
         flex: 1,
     },
+    inputStep: {
+        flex: 1,
+        minHeight: 0,
+    },
+    inputStepScroll: {
+        flex: 1,
+        minHeight: 0,
+    },
+    inputStepScrollContent: {
+        paddingBottom: 10,
+    },
     contentRevealCurtain: {
         ...StyleSheet.absoluteFillObject,
         zIndex: 2,
@@ -4026,103 +3730,93 @@ const styles = StyleSheet.create({
         zIndex: 2,
     },
     header: {
+        alignItems: "flex-start",
+        paddingRight: 42,
+        marginBottom: 16,
+    },
+    headerCentered: {
         alignItems: "center",
-        paddingHorizontal: 24,
-        marginBottom: 14,
+        paddingHorizontal: 36,
     },
     title: {
-        fontSize: 19,
-        fontWeight: "900",
-        letterSpacing: 0,
+        fontSize: 20,
+        lineHeight: 25,
+        fontWeight: "800",
+        letterSpacing: -0.3,
+    },
+    headerDescription: {
+        marginTop: 4,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "500",
     },
     modeSelector: {
-        height: 58,
-        borderRadius: 19,
+        height: 44,
+        borderRadius: 13,
         borderWidth: 1,
         alignSelf: "stretch",
         flexDirection: "row",
-        padding: 4,
-        marginBottom: 13,
-        shadowColor: "#FFFFFF",
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.12,
-        shadowRadius: 10,
+        padding: 3,
+        marginBottom: 16,
         overflow: "hidden",
     },
     modeSelectorIndicator: {
         position: "absolute",
-        top: 4,
-        bottom: 4,
+        top: 3,
+        bottom: 3,
         left: 0,
-        borderRadius: 17,
+        borderRadius: 10,
         borderWidth: StyleSheet.hairlineWidth,
-        shadowColor: BLUE,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.12,
-        shadowRadius: 14,
-    },
-    modeIndicatorUnderline: {
-        position: "absolute",
-        left: 13,
-        right: 13,
-        bottom: 0,
-        height: 2.5,
-        borderRadius: 1.25,
-        backgroundColor: BLUE,
     },
     modeButton: {
-        minWidth: 58,
-        borderRadius: 17,
+        flex: 1,
+        minWidth: 0,
+        borderRadius: 10,
+        flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
-        paddingHorizontal: 12,
-        flexGrow: 1,
+        gap: 6,
+        paddingHorizontal: 8,
         zIndex: 1,
-    },
-    modeButtonCompact: {
-        flexBasis: 72,
-        paddingHorizontal: 10,
-    },
-    modeButtonWide: {
-        flexBasis: 86,
-        paddingHorizontal: 12,
     },
     modeButtonSelected: {
         shadowColor: "transparent",
     },
     modeText: {
-        fontSize: 11,
+        fontSize: 13,
         fontWeight: "700",
     },
-    modeUnderline: {
-        position: "absolute",
-        left: 16,
-        right: 16,
-        bottom: -4,
-        height: 2,
-        borderRadius: 1,
-        backgroundColor: BLUE,
+    textModeContent: {
+        marginBottom: 16,
+    },
+    sectionHeader: {
+        marginBottom: 9,
+    },
+    sectionTitle: {
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "800",
+    },
+    sectionDescription: {
+        marginTop: 2,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "500",
     },
     inputWrap: {
-        minHeight: 132,
-        borderRadius: 19,
+        minHeight: 142,
+        borderRadius: 14,
         borderWidth: 1,
-        paddingHorizontal: 15,
-        paddingTop: 14,
-        paddingBottom: 30,
-        marginBottom: 13,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.045,
-        shadowRadius: 16,
+        paddingHorizontal: 14,
+        paddingTop: 13,
+        paddingBottom: 29,
     },
     input: {
         flex: 1,
-        minHeight: 88,
+        minHeight: 96,
         fontSize: 15,
-        lineHeight: 23,
-        fontWeight: "500",
+        lineHeight: 22,
+        fontWeight: "400",
         textAlignVertical: "top",
         padding: 0,
     },
@@ -4132,71 +3826,84 @@ const styles = StyleSheet.create({
         bottom: 10,
     },
     counter: {
-        fontSize: 12,
-        fontWeight: "600",
-    },
-    mediaAction: {
-        minHeight: 44,
-        borderRadius: 18,
-        borderWidth: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-        paddingHorizontal: 12,
-        marginBottom: 10,
-    },
-    mediaActionIcon: {
-        width: 24,
-        alignItems: "center",
-    },
-    mediaActionTextWrap: {
-        flex: 1,
-        minWidth: 0,
-    },
-    mediaActionTitle: {
-        fontSize: 13,
-        fontWeight: "800",
-    },
-    mediaActionMeta: {
-        marginTop: 2,
         fontSize: 11,
         fontWeight: "600",
     },
-    mediaPanel: {
-        minHeight: 166,
-        borderRadius: 20,
+    photoModeContent: {
+        marginBottom: 14,
+    },
+    photoPreviewButton: {
+        height: 178,
+        borderRadius: 15,
+        borderWidth: 1,
+        overflow: "hidden",
+    },
+    photoImageStage: {
+        height: PHOTO_PREVIEW_STAGE_HEIGHT,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    photoScanFrame: {
+        alignSelf: "center",
+    },
+    photoImage: {
+        width: "100%",
+        height: "100%",
+    },
+    photoImageMetaRow: {
+        position: "absolute",
+        right: 0,
+        bottom: 0,
+        left: 0,
+        minHeight: 34,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        paddingHorizontal: 11,
+        backgroundColor: "rgba(0,0,0,0.66)",
+    },
+    photoImageFile: {
+        flex: 1,
+        color: "#FFFFFF",
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    photoChangeHint: {
+        color: "rgba(255,255,255,0.78)",
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    photoEmptyPanel: {
+        minHeight: 144,
+        borderRadius: 15,
         borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: 17,
-        paddingVertical: 15,
-        marginBottom: 13,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 9 },
-        shadowOpacity: 0.045,
-        shadowRadius: 18,
+        paddingHorizontal: 22,
+        paddingVertical: 18,
     },
-    photoModeContent: {
-        marginBottom: 13,
-    },
-    photoPreviewPanel: {
-        minHeight: 142,
-        marginBottom: 0,
-    },
-    photoIconWrap: {
-        width: 58,
-        height: 58,
-        borderRadius: 20,
+    photoEmptyIcon: {
+        width: 44,
+        height: 44,
+        borderRadius: 13,
         alignItems: "center",
         justifyContent: "center",
-        marginBottom: 9,
+        marginBottom: 11,
     },
-    photoThumbnail: {
-        width: 92,
-        height: 92,
-        borderRadius: 20,
-        marginBottom: 10,
-        backgroundColor: "rgba(0,0,0,0.08)",
+    photoEmptyTitle: {
+        fontSize: 15,
+        lineHeight: 20,
+        fontWeight: "800",
+        textAlign: "center",
+    },
+    photoEmptyMeta: {
+        marginTop: 4,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "500",
+        textAlign: "center",
     },
     photoRemoveButton: {
         position: "absolute",
@@ -4209,19 +3916,6 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         backgroundColor: "rgba(0,0,0,0.52)",
     },
-    mediaPanelTitle: {
-        fontSize: 17,
-        fontWeight: "900",
-        letterSpacing: 0,
-        textAlign: "center",
-    },
-    mediaPanelMeta: {
-        marginTop: 6,
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "600",
-        textAlign: "center",
-    },
     photoActions: {
         width: "100%",
         flexDirection: "row",
@@ -4230,26 +3924,22 @@ const styles = StyleSheet.create({
     },
     photoSourceButton: {
         flex: 1,
-        minHeight: 40,
-        borderRadius: 15,
+        minHeight: 42,
+        borderRadius: 12,
         borderWidth: 1,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 7,
-        shadowColor: "#FFFFFF",
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.12,
-        shadowRadius: 9,
     },
     photoSourceButtonText: {
         fontSize: 13,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     photoTranscriptWrap: {
-        minHeight: 120,
+        minHeight: 112,
         marginTop: 10,
-        borderRadius: 16,
+        borderRadius: 12,
         borderWidth: 1,
         paddingHorizontal: 12,
         paddingTop: 9,
@@ -4265,7 +3955,7 @@ const styles = StyleSheet.create({
     photoTranscriptLabel: {
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     photoConfidence: {
         fontSize: 11,
@@ -4276,30 +3966,17 @@ const styles = StyleSheet.create({
         color: "#F59E0B",
     },
     photoTranscriptInput: {
-        minHeight: 66,
+        minHeight: 60,
         maxHeight: 92,
         padding: 0,
         marginTop: 4,
         fontSize: 14,
         lineHeight: 20,
-        fontWeight: "600",
+        fontWeight: "400",
         textAlignVertical: "top",
     },
-    photoRecognitionStatus: {
-        minHeight: 78,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 9,
-    },
-    photoRecognitionStatusText: {
-        flexShrink: 1,
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "700",
-    },
     photoRecognitionErrorWrap: {
-        minHeight: 78,
+        minHeight: 56,
         alignItems: "flex-start",
         justifyContent: "center",
         gap: 8,
@@ -4341,103 +4018,63 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     voicePanel: {
-        minHeight: 300,
-        borderRadius: 20,
+        minHeight: 248,
+        borderRadius: 15,
         borderWidth: 1,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        marginBottom: 13,
+        paddingHorizontal: 13,
+        paddingVertical: 13,
+        marginBottom: 14,
         overflow: "hidden",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 9 },
-        shadowOpacity: 0.06,
-        shadowRadius: 18,
     },
-    voiceRecordControl: {
-        width: "100%",
+    voiceControlRow: {
+        minHeight: 52,
+        flexDirection: "row",
         alignItems: "center",
+        gap: 12,
     },
-    voiceOrbWrap: {
-        width: 150,
-        height: 146,
-        alignItems: "center",
-        justifyContent: "center",
-        marginBottom: 0,
-    },
-    voiceSpectrum: {
-        position: "absolute",
-        width: VOICE_SPECTRUM_SIZE,
-        height: VOICE_SPECTRUM_SIZE,
-        borderRadius: VOICE_SPECTRUM_SIZE / 2,
-    },
-    voiceSpectrumHaloOuter: {
-        position: "absolute",
-        width: 112,
-        height: 112,
-        borderRadius: 56,
-        borderWidth: 1,
-        borderColor: "rgba(88,215,247,0.48)",
-    },
-    voiceSpectrumHaloInner: {
-        position: "absolute",
-        width: 88,
-        height: 88,
-        borderRadius: 44,
-        borderWidth: 1,
-        borderColor: "rgba(36,107,254,0.38)",
-        backgroundColor: "rgba(36,107,254,0.13)",
-        shadowColor: BLUE,
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.24,
-        shadowRadius: 20,
-    },
-    voiceSpectrumBarSlot: {
-        position: "absolute",
-        left: VOICE_SPECTRUM_SIZE / 2 - 1,
-        top: 0,
-        width: 2,
-        height: VOICE_SPECTRUM_SIZE,
-        alignItems: "center",
-    },
-    voiceSpectrumBar: {
-        position: "absolute",
-        bottom: VOICE_SPECTRUM_SIZE / 2 + VOICE_SPECTRUM_INNER_RADIUS,
-        width: 2,
-        minHeight: 3,
-        borderRadius: 1,
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-    },
-    voiceOrb: {
-        width: 62,
-        height: 62,
-        borderRadius: 31,
+    voiceRecordButton: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
         borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",
-        shadowColor: BLUE,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.16,
-        shadowRadius: 22,
+    },
+    voiceStatusTextWrap: {
+        flex: 1,
+        minWidth: 0,
+    },
+    voiceWaveform: {
+        height: 58,
+        borderRadius: 12,
+        borderWidth: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+        marginTop: 12,
+        paddingHorizontal: 10,
+    },
+    voiceWaveformBar: {
+        width: 3,
+        minHeight: 4,
+        borderRadius: 1.5,
     },
     voiceTitle: {
-        fontSize: 17,
-        fontWeight: "900",
-        letterSpacing: 0,
-        textAlign: "center",
+        fontSize: 15,
+        lineHeight: 20,
+        fontWeight: "800",
     },
     voiceMeta: {
-        marginTop: 5,
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "700",
-        textAlign: "center",
+        marginTop: 3,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "500",
     },
     voiceTranscriptWrap: {
-        minHeight: 78,
-        marginTop: 11,
-        borderRadius: 15,
+        minHeight: 96,
+        marginTop: 10,
+        borderRadius: 12,
         borderWidth: 1,
         paddingHorizontal: 12,
         paddingTop: 9,
@@ -4461,13 +4098,13 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     voiceTranscriptInput: {
-        minHeight: 42,
+        minHeight: 50,
         maxHeight: 70,
         padding: 0,
         marginTop: 3,
         fontSize: 14,
         lineHeight: 20,
-        fontWeight: "600",
+        fontWeight: "400",
         textAlignVertical: "top",
     },
     centerFlow: {
@@ -4926,21 +4563,21 @@ const styles = StyleSheet.create({
         marginTop: 18,
     },
     submitButton: {
-        height: 46,
-        borderRadius: 15,
+        height: 50,
+        borderRadius: 13,
         backgroundColor: BLUE,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
         gap: 8,
-        shadowColor: BLUE,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.22,
-        shadowRadius: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
     },
     submitText: {
         color: "#fff",
         fontSize: 15,
-        fontWeight: "900",
+        fontWeight: "800",
     },
 });
