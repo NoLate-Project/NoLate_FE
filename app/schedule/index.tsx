@@ -75,9 +75,16 @@ import { isOverlappingDay, startOfDay, toYmd } from "../../lib/util/data";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetupNavigation";
 import { createSchedule, getCalendarSchedules, getSchedules, parseScheduleText, searchSchedules } from "../../src/api/schedule";
+import { getCalendarDays } from "../../src/api/calendar";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import { getShareInbox } from "../../src/api/scheduleSharing";
+import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
+import {
+    getCalendarMetadataRange,
+    indexCalendarDays,
+    type CalendarDayMetadata,
+} from "../../src/modules/schedule/calendarMetadata";
 import {
     getCalendarWeekStart,
     getCalendarWeekdayIndex,
@@ -126,6 +133,7 @@ import {
     readSeenShareAttentionKeys,
     type ShareAttentionSummary,
 } from "../../src/modules/share/shareAttention";
+import { subscribeAppNotificationReceived } from "../../src/modules/notification/appNotificationEvents";
 import {
     resolveQuickScheduleParseInput,
     type QuickScheduleMediaInput,
@@ -187,6 +195,7 @@ const STICKY_MONTH_HEADER_HEIGHT = 50;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 18;
 const STICKY_CALENDAR_HEADER_HEIGHT = STICKY_MONTH_HEADER_HEIGHT + STICKY_WEEKDAY_HEADER_HEIGHT;
 const LIQUID_TOOLBAR_BUTTON_SIZE = 44;
+const LIQUID_TOOLBAR_SEARCH_HEIGHT = 52;
 const LIQUID_TOOLBAR_SLOT_WIDTH = 50;
 const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = ADD_MENU_SOURCE.nativeWidth;
@@ -402,6 +411,7 @@ export default function ScheduleIndex() {
     const [addFormsPrewarmed, setAddFormsPrewarmed] = useState(false);
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
+    const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
     const [routeSetupItems, setRouteSetupItems] = useState<ScheduleItem[]>([]);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
@@ -510,6 +520,7 @@ export default function ScheduleIndex() {
     const addHandoffNativeResetRef = useRef(false);
     const handledFocusRequestRef = useRef<string | null>(null);
     const scheduleLoadSequenceRef = useRef(0);
+    const calendarMetadataLoadSequenceRef = useRef(0);
 
     const [pendingSelectedDay, setPendingSelectedDay] = useState<string | null>(null);
     const selectedDay = pendingSelectedDay ?? state.selectedDay;
@@ -518,6 +529,9 @@ export default function ScheduleIndex() {
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
     const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
+    const [calendarDaysByDate, setCalendarDaysByDate] = useState<
+        Record<string, CalendarDayMetadata>
+    >({});
     const scheduleError = useMemo(
         () => state.error ? getErrorMessage(new Error(state.error)) : null,
         [state.error]
@@ -528,6 +542,12 @@ export default function ScheduleIndex() {
     );
     const scheduleFetchStartAt = scheduleFetchRange.startAt;
     const scheduleFetchEndAt = scheduleFetchRange.endAt;
+    const calendarMetadataRange = useMemo(
+        () => getCalendarMetadataRange(visibleMonth, firstDay),
+        [firstDay, visibleMonth]
+    );
+    const calendarMetadataStartDate = calendarMetadataRange.startDate;
+    const calendarMetadataEndDate = calendarMetadataRange.endDate;
 
     useEffect(() => {
         if (
@@ -1365,6 +1385,64 @@ export default function ScheduleIndex() {
         };
     }, [dispatch, isFocused, loadSchedules]);
 
+    const loadCalendarMetadata = useCallback(async () => {
+        const requestSequence = calendarMetadataLoadSequenceRef.current + 1;
+        calendarMetadataLoadSequenceRef.current = requestSequence;
+
+        try {
+            const days = await getCalendarDays(
+                calendarMetadataStartDate,
+                calendarMetadataEndDate
+            );
+            if (requestSequence !== calendarMetadataLoadSequenceRef.current) return;
+
+            if (
+                typeof __DEV__ === "boolean" &&
+                __DEV__ &&
+                days.length > 0 &&
+                !days.some((day) => day.lunarMonth !== undefined && day.lunarDay !== undefined)
+            ) {
+                console.warn("[calendar-metadata] lunar data missing from successful response", {
+                    startDate: calendarMetadataStartDate,
+                    endDate: calendarMetadataEndDate,
+                    receivedDays: days.length,
+                });
+            }
+
+            const nextDaysByDate = indexCalendarDays(days);
+            setCalendarDaysByDate((currentDaysByDate) => ({
+                ...currentDaysByDate,
+                ...nextDaysByDate,
+            }));
+        } catch (error) {
+            // 음력/공휴일은 보조 정보다. 조회 실패가 일정 화면을 막거나 오류 배너를
+            // 띄우지 않도록, 마지막으로 성공한 메타데이터를 그대로 유지한다.
+            if (typeof __DEV__ === "boolean" && __DEV__) {
+                console.warn("[calendar-metadata] load failed", {
+                    startDate: calendarMetadataStartDate,
+                    endDate: calendarMetadataEndDate,
+                    message: error instanceof Error ? error.message : "unknown error",
+                });
+            }
+        }
+    }, [calendarMetadataEndDate, calendarMetadataStartDate]);
+
+    useEffect(() => {
+        if (!isFocused) {
+            calendarMetadataLoadSequenceRef.current += 1;
+            return undefined;
+        }
+
+        loadCalendarMetadata();
+        const subscription = AppState.addEventListener("change", (nextState) => {
+            if (nextState === "active") loadCalendarMetadata();
+        });
+        return () => {
+            subscription.remove();
+            calendarMetadataLoadSequenceRef.current += 1;
+        };
+    }, [isFocused, loadCalendarMetadata]);
+
     const loadShareAttention = useCallback(async () => {
         const [inbox, seenKeys] = await Promise.all([
             getShareInbox(),
@@ -1397,6 +1475,33 @@ export default function ScheduleIndex() {
             clearInterval(timer);
         };
     }, [isFocused, loadShareAttention]);
+
+    const refreshNotificationUnreadCount = useCallback(() => {
+        getAppNotificationUnreadCount()
+            .then(setNotificationUnreadCount)
+            .catch(() => {
+                // 알림 배지는 보조 정보다. 일시적인 조회 실패가 캘린더 사용을 막지 않는다.
+            });
+    }, []);
+
+    useEffect(() => {
+        if (!isFocused) return undefined;
+
+        refreshNotificationUnreadCount();
+        const timer = setInterval(refreshNotificationUnreadCount, SHARE_ATTENTION_REFRESH_MS);
+        const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+            if (nextState === "active") refreshNotificationUnreadCount();
+        });
+        const unsubscribeReceived = subscribeAppNotificationReceived(
+            refreshNotificationUnreadCount,
+        );
+
+        return () => {
+            clearInterval(timer);
+            appStateSubscription.remove();
+            unsubscribeReceived();
+        };
+    }, [isFocused, refreshNotificationUnreadCount]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1669,8 +1774,11 @@ export default function ScheduleIndex() {
         return parseScheduleText({
             text: parseInput.text,
             inputType: parseInput.inputType,
-            referenceDate: selectedDay,
             recognitionConfidence: parseInput.recognitionConfidence,
+            // `referenceDate`는 "오늘", "내일" 같은 상대 날짜 표현의 기준이다.
+            // 캘린더에서 보고 있는 날짜는 다른 달일 수 있으므로, 빠른 자연어 입력은
+            // 앱이 주기적으로 갱신하는 실제 오늘 날짜를 기준으로 분석한다.
+            referenceDate: todayKey,
             defaultDurationMinutes: 60,
         });
     };
@@ -2592,9 +2700,22 @@ export default function ScheduleIndex() {
         router.push({ pathname: "/share/inbox", params: { tab: "all" } });
     }, [router]);
 
+    const openNotificationInbox = useCallback(() => {
+        router.push("/notifications");
+    }, [router]);
+
     const shareBadgeCount = shareAttention.unseenCount;
 
     const bottomRightActions = useMemo<FloatingBarAction[]>(() => [{
+        key: "notification-inbox-shortcut",
+        icon: "notifications-outline",
+        badgeCount: notificationUnreadCount,
+        emphasized: notificationUnreadCount > 0,
+        accessibilityLabel: notificationUnreadCount > 0
+            ? `알림함, 읽지 않은 알림 ${notificationUnreadCount}개`
+            : "알림함",
+        onPress: openNotificationInbox,
+    }, {
         key: "share-inbox-shortcut",
         icon: "mail-unread-outline",
         badgeCount: shareBadgeCount,
@@ -2613,7 +2734,14 @@ export default function ScheduleIndex() {
         icon: "person-circle-outline",
         accessibilityLabel: "프로필",
         onPress: openProfile,
-    }], [openCalendarSettings, openInvitesShortcut, openProfile, shareBadgeCount]);
+    }], [
+        notificationUnreadCount,
+        openCalendarSettings,
+        openInvitesShortcut,
+        openNotificationInbox,
+        openProfile,
+        shareBadgeCount,
+    ]);
 
     const renderMonthAgendaPanelContent = (panelKind: MonthAgendaPanelKind) => (
         panelKind === "detail" ? (
@@ -2892,6 +3020,7 @@ export default function ScheduleIndex() {
                             tone="softGlass"
                             style={[
                                 styles.toolbarActions,
+                                isSearchToolbarOpen && styles.searchToolbarActions,
                                 { borderColor: colors.border },
                             ]}
                         >
@@ -2984,7 +3113,7 @@ export default function ScheduleIndex() {
                                     },
                                 ]}
                             >
-                                <Ionicons accessible={false} name="search" size={20} color={colors.textPrimary} />
+                                <Ionicons accessible={false} name="search" size={22} color={colors.textPrimary} />
                                 <TextInput
                                     ref={searchInputRef}
                                     accessibilityLabel="일정 검색어"
@@ -3007,7 +3136,7 @@ export default function ScheduleIndex() {
                                             { opacity: pressed ? 0.58 : 1 },
                                         ]}
                                     >
-                                        <Ionicons accessible={false} name="close-circle" size={25} color={colors.textSecondary} />
+                                        <Ionicons accessible={false} name="close-circle" size={27} color={colors.textSecondary} />
                                     </Pressable>
                                 ) : null}
                                 <Pressable
@@ -3020,7 +3149,7 @@ export default function ScheduleIndex() {
                                         { opacity: pressed ? 0.58 : 1 },
                                     ]}
                                 >
-                                    <Ionicons accessible={false} name="close" size={24} color={colors.textPrimary} />
+                                    <Ionicons accessible={false} name="close" size={25} color={colors.textPrimary} />
                                 </Pressable>
                             </Animated.View>
                         </CalendarGlassSurface>
@@ -3503,6 +3632,7 @@ export default function ScheduleIndex() {
                                         selectedDay={monthDisplaySelectedDay}
                                         focusedMonth={monthDisplayFocusedMonth}
                                         items={itemsArray}
+                                        calendarDaysByDate={calendarDaysByDate}
                                         onSelectDay={handleSelectDay}
                                         onOpenDay={handleOpenDay}
                                         viewMode={calendarViewMode}
@@ -5611,9 +5741,9 @@ const styles = StyleSheet.create({
         height: "100%",
         flexDirection: "row",
         alignItems: "center",
-        gap: 9,
-        paddingLeft: 18,
-        paddingRight: 12,
+        gap: 10,
+        paddingLeft: 20,
+        paddingRight: 10,
         zIndex: 3,
         elevation: 3,
     },
@@ -5621,13 +5751,13 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         paddingVertical: 0,
-        fontSize: 16,
+        fontSize: 17,
         fontWeight: "600",
         letterSpacing: 0,
     },
     searchHeaderIconButton: {
-        width: 34,
-        height: 34,
+        width: 38,
+        height: 42,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -5651,6 +5781,10 @@ const styles = StyleSheet.create({
         borderWidth: Platform.OS === "ios" ? 0 : 1,
         paddingHorizontal: 0,
         overflow: "hidden",
+    },
+    searchToolbarActions: {
+        height: LIQUID_TOOLBAR_SEARCH_HEIGHT,
+        borderRadius: LIQUID_TOOLBAR_SEARCH_HEIGHT / 2,
     },
     toolbarActionsPlaceholder: {
         width: LIQUID_TOOLBAR_ACTIONS_WIDTH,
