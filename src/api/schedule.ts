@@ -27,6 +27,7 @@ export type ParseScheduleInputType =
 export type ParseScheduleTextPayload = {
     text: string;
     inputType?: ParseScheduleInputType;
+    recognitionConfidence?: number;
     referenceDate?: string;
     defaultDurationMinutes?: number;
 };

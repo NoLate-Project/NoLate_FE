@@ -1,4 +1,5 @@
 #import <AVFoundation/AVFoundation.h>
+#import <CoreImage/CoreImage.h>
 #import <Foundation/Foundation.h>
 #import <ImageIO/ImageIO.h>
 #import <React/RCTBridgeModule.h>
@@ -6,6 +7,7 @@
 #import <Speech/Speech.h>
 #import <UIKit/UIKit.h>
 #import <Vision/Vision.h>
+#import <float.h>
 #import <math.h>
 
 @interface NoLateQuickInput : NSObject <RCTBridgeModule>
@@ -118,6 +120,27 @@ RCT_EXPORT_MODULE();
   dispatch_async(dispatch_get_main_queue(), ^{
     resolve(value);
   });
+}
+
+- (CGImageRef)newEnhancedOCRImageFromCGImage:(CGImageRef)cgImage CF_RETURNS_RETAINED
+{
+  CIImage *input = [CIImage imageWithCGImage:cgImage];
+  CIFilter *color = [CIFilter filterWithName:@"CIColorControls"];
+  [color setValue:input forKey:kCIInputImageKey];
+  [color setValue:@0 forKey:kCIInputSaturationKey];
+  [color setValue:@1.28 forKey:kCIInputContrastKey];
+  [color setValue:@0.02 forKey:kCIInputBrightnessKey];
+
+  CIFilter *sharpen = [CIFilter filterWithName:@"CISharpenLuminance"];
+  [sharpen setValue:color.outputImage forKey:kCIInputImageKey];
+  [sharpen setValue:@0.42 forKey:kCIInputSharpnessKey];
+  CIImage *output = sharpen.outputImage;
+  if (!output) return nil;
+
+  // 흐린 촬영본과 회색 종이의 대비만 보강한 두 번째 OCR 입력이다. 원본도 그대로 비교하므로
+  // 이미 선명한 스크린샷이 과도한 샤픈 때문에 나빠져도 최종 후보로 선택되지 않는다.
+  CIContext *context = [CIContext contextWithOptions:nil];
+  return [context createCGImage:output fromRect:input.extent];
 }
 
 - (void)rejectOnMain:(RCTPromiseRejectBlock)reject
@@ -277,7 +300,10 @@ RCT_EXPORT_MODULE();
   // 특정 테스트 장소를 하드코딩하지 않고 입력 도메인에서 반복되는 공통 단어만 보정 사전에 둔다.
   request.customWords = @[
     @"월요일", @"화요일", @"수요일", @"목요일", @"금요일", @"토요일", @"일요일",
-    @"오전", @"오후", @"출발지", @"도착지", @"출발", @"도착", @"일정"
+    @"오전", @"오후", @"아침", @"점심", @"저녁", @"새벽",
+    @"출발지", @"도착지", @"출발", @"도착", @"일정", @"약속", @"회의", @"미팅",
+    @"예약", @"회식", @"데이트", @"스터디", @"강남역", @"서울역", @"신촌역",
+    @"잠실역", @"홍대입구역"
   ];
 
   VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cgImage
@@ -288,21 +314,54 @@ RCT_EXPORT_MODULE();
   }
 
   NSArray<VNRecognizedTextObservation *> *sortedObservations = [self sortTextObservations:request.results ?: @[]];
-  NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:sortedObservations.count];
-  for (VNRecognizedTextObservation *observation in sortedObservations) {
-    VNRecognizedText *candidate = [[observation topCandidates:1] firstObject];
-    NSString *line = [candidate.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (line.length > 0) {
-      [lines addObject:line];
+  NSMutableArray<NSString *> *alternatives = [NSMutableArray arrayWithCapacity:3];
+  NSString *text = @"";
+  double score = -DBL_MAX;
+  double confidence = 0;
+
+  // 각 줄의 첫 후보만 이어 붙이면 `7시`가 `1시`로, 역명이 일반 명사로 인식된 순간 복구할
+  // 방법이 없다. 상위 세 후보를 같은 순위끼리 조합한 뒤 일정 도메인 점수로 비교하면 Vision이
+  // 이미 계산한 유력 후보를 추가 네트워크 요청 없이 활용할 수 있다.
+  for (NSUInteger rank = 0; rank < 3; rank += 1) {
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithCapacity:sortedObservations.count];
+    double confidenceTotal = 0;
+    NSUInteger confidenceCount = 0;
+    for (VNRecognizedTextObservation *observation in sortedObservations) {
+      NSArray<VNRecognizedText *> *candidates = [observation topCandidates:3];
+      VNRecognizedText *candidate = rank < candidates.count ? candidates[rank] : candidates.firstObject;
+      NSString *line = [candidate.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+      if (line.length > 0) {
+        [lines addObject:line];
+        confidenceTotal += candidate.confidence;
+        confidenceCount += 1;
+      }
+    }
+
+    NSString *candidateText = [lines componentsJoinedByString:@"\n"];
+    if (candidateText.length == 0 || [alternatives containsObject:candidateText]) {
+      continue;
+    }
+    [alternatives addObject:candidateText];
+    double averageConfidence = confidenceCount > 0 ? confidenceTotal / confidenceCount : 0;
+    double candidateScore = [self scoreRecognizedText:candidateText observations:sortedObservations]
+        + averageConfidence * 4.0
+        - rank * 0.15;
+    if (candidateScore > score) {
+      text = candidateText;
+      score = candidateScore;
+      confidence = averageConfidence;
     }
   }
 
-  NSString *text = [lines componentsJoinedByString:@"\n"];
-  double score = [self scoreRecognizedText:text observations:sortedObservations];
+  if (score == -DBL_MAX) {
+    score = 0;
+  }
   return @{
     @"text": text,
     @"score": @(score),
-    @"lineCount": @(lines.count),
+    @"confidence": @(confidence),
+    @"alternatives": alternatives,
+    @"lineCount": @([text componentsSeparatedByString:@"\n"].count),
     @"orientation": @(orientation),
   };
 }
@@ -386,6 +445,34 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
         }
       }
 
+      CGImageRef enhancedImage = [self newEnhancedOCRImageFromCGImage:ocrImage];
+      if (enhancedImage) {
+        // 같은 방향 후보를 대비 보정본에도 적용한다. 원본/보정본 가운데 일정 문맥 점수가 높은
+        // 결과만 채택하고, 실제 텍스트는 로그에 남기지 않는다.
+        for (NSNumber *orientationValue in orientationCandidates) {
+          NSError *orientationError = nil;
+          NSDictionary<NSString *, id> *result = nil;
+          @autoreleasepool {
+            result = [self recognitionResultForCGImage:enhancedImage
+                                           orientation:(CGImagePropertyOrientation)orientationValue.unsignedIntValue
+                                                 error:&orientationError];
+          }
+          if (!result) {
+            lastError = orientationError;
+            continue;
+          }
+          performedAnyRequest = YES;
+          RCTLogInfo(@"[NoLateQuickInput] Enhanced OCR orientation=%@ score=%.2f lines=%@",
+                     orientationValue,
+                     [result[@"score"] doubleValue],
+                     result[@"lineCount"]);
+          if (!bestResult || [result[@"score"] doubleValue] > [bestResult[@"score"] doubleValue]) {
+            bestResult = result;
+          }
+        }
+        CGImageRelease(enhancedImage);
+      }
+
       if (!performedAnyRequest && lastError) {
         CGImageRelease(ocrImage);
         NSString *message = lastError.code == NoLateQuickInputKoreanOcrUnsupportedError
@@ -400,8 +487,14 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
 
       // 줄 단위 개행은 유지한다. 백엔드 파서는 공백뿐 아니라 줄바꿈으로 분리된 OCR 메모도 처리할 수 있다.
       NSString *recognizedText = bestResult[@"text"] ?: @"";
+      NSNumber *confidence = bestResult[@"confidence"] ?: @0;
+      NSArray<NSString *> *alternatives = bestResult[@"alternatives"] ?: @[];
       CGImageRelease(ocrImage);
-      [self resolveOnMain:resolve value:@{ @"text": recognizedText }];
+      [self resolveOnMain:resolve value:@{
+        @"text": recognizedText,
+        @"confidence": confidence,
+        @"alternatives": alternatives,
+      }];
     });
   } else {
     reject(@"quick_input_ocr_unavailable", @"이 iOS 버전에서는 사진 텍스트 추출을 사용할 수 없습니다.", nil);
@@ -502,6 +595,7 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
 RCT_REMAP_METHOD(transcribeAudioFile,
                  transcribeAudioFile:(NSString *)uri
                  localeIdentifier:(NSString *)localeIdentifier
+                 contextualStrings:(NSArray<NSString *> *)contextualStrings
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
@@ -559,6 +653,19 @@ RCT_REMAP_METHOD(transcribeAudioFile,
         SFSpeechURLRecognitionRequest *request = [[SFSpeechURLRecognitionRequest alloc] initWithURL:fileURL];
         request.shouldReportPartialResults = NO;
         request.taskHint = SFSpeechRecognitionTaskHintDictation;
+        NSMutableOrderedSet<NSString *> *shortContext = [NSMutableOrderedSet orderedSet];
+        for (id value in contextualStrings ?: @[]) {
+          if (![value isKindOfClass:NSString.class]) continue;
+          NSString *phrase = [(NSString *)value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+          if (phrase.length >= 2 && phrase.length <= 20) {
+            [shortContext addObject:phrase];
+          }
+          if (shortContext.count >= 100) break;
+        }
+        request.contextualStrings = shortContext.array;
+        if (@available(iOS 16.0, *)) {
+          request.addsPunctuation = YES;
+        }
         if (@available(iOS 13.0, *)) {
           // supportsOnDeviceRecognition이 YES여도 해당 언어 모델이 아직 내려받아지지 않은
           // 시뮬레이터/기기에서는 강제 온디바이스 요청이 kLSRErrorDomain 102로 실패할 수 있다.
@@ -590,10 +697,17 @@ RCT_REMAP_METHOD(transcribeAudioFile,
             NSString *transcript = [result.bestTranscription.formattedString
                 stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
             if (transcript.length > 0 && (result.isFinal || error)) {
+              double confidenceTotal = 0;
+              NSUInteger confidenceCount = 0;
+              for (SFTranscriptionSegment *segment in result.bestTranscription.segments) {
+                confidenceTotal += segment.confidence;
+                confidenceCount += 1;
+              }
+              double confidence = confidenceCount > 0 ? confidenceTotal / confidenceCount : 0;
               settled = YES;
               strongSelf->_speechTask = nil;
               strongSelf->_speechRecognizer = nil;
-              resolve(@{ @"text": transcript });
+              resolve(@{ @"text": transcript, @"confidence": @(confidence) });
               return;
             }
 

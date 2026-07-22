@@ -44,6 +44,7 @@ describe("quick schedule media input extraction", () => {
     test("사진 입력은 iOS OCR 결과를 IMAGE_OCR 타입으로 반환한다", async () => {
         const recognizeTextFromImage = jest.fn().mockResolvedValue({
             text: "회의명: 디자인 리뷰\r\n시간: 오후   3시",
+            confidence: 0.87,
         });
         const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
             recognizeTextFromImage,
@@ -55,12 +56,16 @@ describe("quick schedule media input extraction", () => {
         })).resolves.toEqual({
             text: "회의명: 디자인 리뷰\n시간: 오후 3시",
             inputType: "IMAGE_OCR",
+            recognitionConfidence: 0.87,
         });
         expect(recognizeTextFromImage).toHaveBeenCalledWith("file:///tmp/schedule.png");
     });
 
     test("음성 입력은 iOS 전사 결과를 VOICE_TRANSCRIPT 타입으로 반환한다", async () => {
-        const transcribeAudioFile = jest.fn().mockResolvedValue("  내일 오후 세 시 강남역 미팅  ");
+        const transcribeAudioFile = jest.fn().mockResolvedValue({
+            text: "  내일 오후 세 시 강남역 미팅  ",
+            confidence: 0.91,
+        });
         const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
             transcribeAudioFile,
         });
@@ -72,8 +77,28 @@ describe("quick schedule media input extraction", () => {
         })).resolves.toEqual({
             text: "내일 오후 세 시 강남역 미팅",
             inputType: "VOICE_TRANSCRIPT",
+            recognitionConfidence: 0.91,
         });
-        expect(transcribeAudioFile).toHaveBeenCalledWith("file:///tmp/schedule.m4a", "ko-KR");
+        expect(transcribeAudioFile).toHaveBeenCalledWith(
+            "file:///tmp/schedule.m4a",
+            "ko-KR",
+            expect.arrayContaining(["내일", "오후", "강남역", "미팅"])
+        );
+    });
+
+    test("네이티브 신뢰도는 안전한 0~1 범위로 제한한다", async () => {
+        const recognizeTextFromImage = jest.fn().mockResolvedValue({
+            text: "내일 3시 서울역",
+            confidence: 1.4,
+        });
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
+            recognizeTextFromImage,
+        });
+
+        await expect(resolveQuickScheduleParseInput("", {
+            inputMode: "photo",
+            photoUri: "file:///tmp/schedule.png",
+        })).resolves.toMatchObject({ recognitionConfidence: 1 });
     });
 
     test("음성 전사 실패 원인을 사용자에게 그대로 전달한다", async () => {

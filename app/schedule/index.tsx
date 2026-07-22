@@ -1663,13 +1663,14 @@ export default function ScheduleIndex() {
 
     const handleQuickAnalyze = async (text: string, media?: QuickScheduleMediaInput) => {
         // 사진/음성은 서버로 파일을 보내지 않는다. iOS 네이티브에서 텍스트를 먼저 추출하고,
-        // 기존 빠른일정 파서가 이해하는 text + inputType 계약으로만 백엔드에 전달한다.
+        // 기존 빠른일정 파서가 이해하는 텍스트와 기기 인식 신뢰도만 백엔드에 전달한다.
         const parseInput = await resolveQuickScheduleParseInput(text, media);
 
         return parseScheduleText({
             text: parseInput.text,
             inputType: parseInput.inputType,
             referenceDate: selectedDay,
+            recognitionConfidence: parseInput.recognitionConfidence,
             defaultDurationMinutes: 60,
         });
     };
