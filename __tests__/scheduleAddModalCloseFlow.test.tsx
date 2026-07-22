@@ -40,6 +40,9 @@ jest.mock("../src/api/subscription", () => ({
         minEtaRefreshIntervalMinutes: 20,
     }),
 }));
+jest.mock("../src/api/scheduleCalendars", () => ({
+    getScheduleCalendars: jest.fn().mockResolvedValue([]),
+}));
 
 const category = { id: "work", title: "업무", color: "#FF3B30" };
 

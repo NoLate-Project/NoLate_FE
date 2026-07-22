@@ -217,7 +217,14 @@ export default function ScheduleCategoriesScreen() {
                     <Ionicons accessible={false} name="chevron-back" size={24} color={colors.textPrimary} />
                 </Pressable>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
-                <View style={styles.headerButtonGhost} />
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="공유 캘린더 관리"
+                    onPress={() => router.push("/schedule/calendars")}
+                    style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                >
+                    <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />
+                </Pressable>
             </View>
 
             <ScrollView

@@ -19,6 +19,7 @@ import {
     getShareOutbox,
     revokeCategoryShare,
     revokeCategoryShareInvitation,
+    revokeCalendarShareInvitation,
     revokeScheduleShare,
     revokeScheduleShareInvitation,
     type ShareInbox,
@@ -30,6 +31,7 @@ import {
     type ShareResourceType,
     type ScheduleShare,
 } from "../../src/api/scheduleSharing";
+import { removeScheduleCalendarMember } from "../../src/api/scheduleCalendars";
 import type { ScheduleSharePermission } from "../../src/modules/schedule/types";
 import { createLatestAsyncRequestGuard } from "../../src/modules/share/latestAsyncRequest";
 import {
@@ -60,7 +62,9 @@ function getErrorMessage(error: unknown) {
 }
 
 function resourceLabel(type: ShareResourceType) {
-    return type === "SCHEDULE" ? "일정" : "카테고리";
+    if (type === "SCHEDULE") return "일정";
+    if (type === "CALENDAR") return "공유 캘린더";
+    return "카테고리";
 }
 
 function permissionLabel(permission: ScheduleSharePermission) {
@@ -119,6 +123,8 @@ export default function ShareInboxScreen() {
     const openSharedResource = useCallback((type: ShareResourceType, id: string) => {
         if (type === "SCHEDULE") {
             router.push({ pathname: "/schedule/[id]", params: { id } });
+        } else if (type === "CALENDAR") {
+            router.push("/schedule/calendars");
         } else {
             router.push("/schedule/categories");
         }
@@ -186,6 +192,8 @@ export default function ShareInboxScreen() {
                         try {
                             if (invitation.resourceType === "SCHEDULE") {
                                 await revokeScheduleShareInvitation(invitation.resourceId, invitation.id);
+                            } else if (invitation.resourceType === "CALENDAR") {
+                                await revokeCalendarShareInvitation(invitation.resourceId, invitation.id);
                             } else {
                                 await revokeCategoryShareInvitation(invitation.resourceId, invitation.id);
                             }
@@ -233,6 +241,8 @@ export default function ShareInboxScreen() {
                         try {
                             if (resource.resourceType === "SCHEDULE") {
                                 await revokeScheduleShare(resource.resourceId, share.id);
+                            } else if (resource.resourceType === "CALENDAR") {
+                                await removeScheduleCalendarMember(resource.resourceId, share.targetMemberId);
                             } else {
                                 await revokeCategoryShare(resource.resourceId, share.id);
                             }
@@ -582,7 +592,7 @@ function ReceivedShareList({
                 <EmptyInlineCard
                     colors={colors}
                     icon="people-outline"
-                    text="아직 공유받은 일정이나 카테고리가 없어요."
+                    text="아직 공유받은 일정이나 캘린더가 없어요."
                 />
             )}
         </View>
@@ -609,7 +619,7 @@ function SentShareList({
             <EmptyInlineCard
                 colors={colors}
                 icon="share-social-outline"
-                text="내가 공유 중인 일정이나 카테고리가 없어요."
+                text="내가 공유 중인 일정이나 캘린더가 없어요."
             />
         );
     }
@@ -971,7 +981,9 @@ function ShareResourceHeader({
         <View style={styles.resourceHeader}>
             <View style={[styles.resourceIcon, { backgroundColor: `${color}1F` }]}>
                 <Ionicons
-                    name={type === "SCHEDULE" ? "calendar-outline" : "folder-open-outline"}
+                    name={type === "SCHEDULE"
+                        ? "calendar-outline"
+                        : type === "CALENDAR" ? "people-outline" : "folder-open-outline"}
                     size={20}
                     color={color}
                 />

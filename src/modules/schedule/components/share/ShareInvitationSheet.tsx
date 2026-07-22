@@ -27,16 +27,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
     createCategoryShare,
     createCategoryShareInvitation,
+    createCalendarShare,
+    createCalendarShareInvitation,
     createScheduleShare,
     createScheduleShareInvitation,
     getCategoryShareInvitations,
+    getCalendarShareInvitations,
     getScheduleShareInvitations,
     revokeCategoryShareInvitation,
+    revokeCalendarShareInvitation,
     revokeScheduleShareInvitation,
     type CreateDirectSharePayload,
     type CreateShareInvitationPayload,
     type ScheduleShareInvitation,
 } from "../../../../api/scheduleSharing";
+import type { ScheduleShareContentMode } from "../../../../api/scheduleCalendars";
 import type { ScheduleSharePermission } from "../../types";
 import { isCurrentScheduleShareRequest } from "../../shareRequestGuard";
 import { createDirectShareTarget } from "../../../share/directShareTarget";
@@ -45,10 +50,12 @@ import BrandedLoader from "../../../../ui/BrandedLoader";
 
 type ShareInvitationSheetProps = {
     visible: boolean;
-    resourceType: "schedule" | "category";
+    resourceType: "schedule" | "category" | "calendar";
     resourceId?: string | null;
     title: string;
     subtitle?: string;
+    initialContentMode?: ScheduleShareContentMode;
+    onCalendarContentModeChange?: (mode: ScheduleShareContentMode) => Promise<void>;
     onClose: () => void;
 };
 
@@ -139,6 +146,8 @@ export default function ShareInvitationSheet({
     resourceId,
     title,
     subtitle,
+    initialContentMode = "SCHEDULE_ONLY",
+    onCalendarContentModeChange,
     onClose,
 }: ShareInvitationSheetProps) {
     const insets = useSafeAreaInsets();
@@ -147,6 +156,7 @@ export default function ShareInvitationSheet({
     const [shareMode, setShareMode] = useState<ShareMode>("direct");
     const [modeSegmentWidth, setModeSegmentWidth] = useState(0);
     const [permission, setPermission] = useState<Exclude<ScheduleSharePermission, "OWNER">>("VIEWER");
+    const [contentMode, setContentMode] = useState<ScheduleShareContentMode>(initialContentMode);
     const [targetQuery, setTargetQuery] = useState("");
     const [sharingDirect, setSharingDirect] = useState(false);
     const [lastDirectShareLabel, setLastDirectShareLabel] = useState<string | null>(null);
@@ -170,7 +180,9 @@ export default function ShareInvitationSheet({
     // 카테고리 색은 일정 구분에만 사용하고, 공유 행동은 앱의 브랜드 파랑으로 통일한다.
     const highlight = isDark ? "#8BB7FF" : "#2F80FF";
 
-    const resourceLabel = resourceType === "schedule" ? "일정" : "카테고리";
+    const resourceLabel = resourceType === "schedule"
+        ? "일정"
+        : resourceType === "calendar" ? "공유 캘린더" : "카테고리";
     const canRequest = Boolean(resourceId);
     const resourceRequestKey = visible && resourceId
         ? `${resourceType}:${resourceId}`
@@ -193,7 +205,9 @@ export default function ShareInvitationSheet({
         try {
             const nextInvitations = resourceType === "schedule"
                 ? await getScheduleShareInvitations(resourceId)
-                : await getCategoryShareInvitations(resourceId);
+                : resourceType === "calendar"
+                    ? await getCalendarShareInvitations(resourceId)
+                    : await getCategoryShareInvitations(resourceId);
             if (!isCurrentScheduleShareRequest(
                 activeResourceKeyRef.current,
                 requestKey,
@@ -236,6 +250,7 @@ export default function ShareInvitationSheet({
         setLastDirectShareLabel(null);
         setDirectError(null);
         setLinkError(null);
+        setContentMode(initialContentMode);
 
         if (resourceRequestKey) {
             loadInvitations().catch(() => undefined);
@@ -250,7 +265,7 @@ export default function ShareInvitationSheet({
                 activeResourceKeyRef.current = null;
             }
         };
-    }, [loadInvitations, resourceRequestKey]);
+    }, [initialContentMode, loadInvitations, resourceRequestKey]);
 
     const shareGeneratedLink = useCallback(async (link: string) => {
         await Share.share({
@@ -268,6 +283,7 @@ export default function ShareInvitationSheet({
 
         const payload: CreateShareInvitationPayload = {
             permission,
+            contentMode,
             ttlHours,
             maxAcceptCount,
         };
@@ -275,9 +291,14 @@ export default function ShareInvitationSheet({
         setCreating(true);
         setLinkError(null);
         try {
+            if (resourceType === "calendar" && onCalendarContentModeChange) {
+                await onCalendarContentModeChange(contentMode);
+            }
             const invitation = resourceType === "schedule"
                 ? await createScheduleShareInvitation(resourceId, payload)
-                : await createCategoryShareInvitation(resourceId, payload);
+                : resourceType === "calendar"
+                    ? await createCalendarShareInvitation(resourceId, payload)
+                    : await createCategoryShareInvitation(resourceId, payload);
             if (!isCurrentScheduleShareRequest(
                 activeResourceKeyRef.current,
                 requestKey,
@@ -314,7 +335,7 @@ export default function ShareInvitationSheet({
                 setCreating(false);
             }
         }
-    }, [creating, maxAcceptCount, permission, resourceId, resourceRequestKey, resourceType, shareGeneratedLink, ttlHours]);
+    }, [contentMode, creating, maxAcceptCount, onCalendarContentModeChange, permission, resourceId, resourceRequestKey, resourceType, shareGeneratedLink, ttlHours]);
 
     const createDirectShare = useCallback(async () => {
         const requestKey = resourceRequestKey;
@@ -333,10 +354,15 @@ export default function ShareInvitationSheet({
         setSharingDirect(true);
         setDirectError(null);
         try {
-            const payload: CreateDirectSharePayload = { ...target, permission };
+            const payload: CreateDirectSharePayload = { ...target, permission, contentMode };
+            if (resourceType === "calendar" && onCalendarContentModeChange) {
+                await onCalendarContentModeChange(contentMode);
+            }
             await (resourceType === "schedule"
                 ? createScheduleShare(resourceId, payload)
-                : createCategoryShare(resourceId, payload));
+                : resourceType === "calendar"
+                    ? createCalendarShare(resourceId, payload)
+                    : createCategoryShare(resourceId, payload));
             if (!isCurrentScheduleShareRequest(
                 activeResourceKeyRef.current,
                 requestKey,
@@ -364,7 +390,7 @@ export default function ShareInvitationSheet({
                 setSharingDirect(false);
             }
         }
-    }, [permission, resourceId, resourceRequestKey, resourceType, sharingDirect, targetQuery]);
+    }, [contentMode, onCalendarContentModeChange, permission, resourceId, resourceRequestKey, resourceType, sharingDirect, targetQuery]);
 
     const revokeInvitation = useCallback((invitation: ScheduleShareInvitation) => {
         const requestKey = resourceRequestKey;
@@ -384,7 +410,9 @@ export default function ShareInvitationSheet({
                     try {
                         await (resourceType === "schedule"
                             ? revokeScheduleShareInvitation(resourceId, invitation.id)
-                            : revokeCategoryShareInvitation(resourceId, invitation.id));
+                            : resourceType === "calendar"
+                                ? revokeCalendarShareInvitation(resourceId, invitation.id)
+                                : revokeCategoryShareInvitation(resourceId, invitation.id));
                         if (!isCurrentScheduleShareRequest(
                             activeResourceKeyRef.current,
                             requestKey,
@@ -514,7 +542,9 @@ export default function ShareInvitationSheet({
                     <View style={styles.header}>
                         <View style={[styles.resourceIcon, { backgroundColor: `${highlight}22` }]}>
                             <Ionicons
-                                name={resourceType === "schedule" ? "calendar-outline" : "folder-open-outline"}
+                                name={resourceType === "schedule"
+                                    ? "calendar-outline"
+                                    : resourceType === "calendar" ? "people-outline" : "folder-open-outline"}
                                 size={22}
                                 color={highlight}
                             />
@@ -631,6 +661,60 @@ export default function ShareInvitationSheet({
                                 );
                             })}
                         </View>
+
+                        {resourceType !== "category" ? (
+                            <>
+                                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>공유 범위</Text>
+                                <View style={styles.contentModeRow}>
+                                    {([
+                                        {
+                                            value: "SCHEDULE_ONLY" as const,
+                                            label: "일정만",
+                                            icon: "calendar-outline" as const,
+                                        },
+                                        {
+                                            value: "SCHEDULE_AND_TRAVEL" as const,
+                                            label: "일정 + 각자 경로",
+                                            icon: "navigate-outline" as const,
+                                        },
+                                    ]).map((option) => {
+                                        const selected = contentMode === option.value;
+                                        return (
+                                            <Pressable
+                                                key={option.value}
+                                                accessibilityRole="radio"
+                                                accessibilityLabel={option.label}
+                                                accessibilityState={{ selected }}
+                                                onPress={() => setContentMode(option.value)}
+                                                style={({ pressed }) => [
+                                                    styles.contentModeOption,
+                                                    {
+                                                        backgroundColor: selected ? `${highlight}1E` : colors.surface2,
+                                                        borderColor: selected ? highlight : colors.border,
+                                                        opacity: pressed ? 0.68 : 1,
+                                                    },
+                                                ]}
+                                            >
+                                                <Ionicons
+                                                    name={option.icon}
+                                                    size={18}
+                                                    color={selected ? highlight : colors.textSecondary}
+                                                />
+                                                <Text
+                                                    style={[
+                                                        styles.contentModeLabel,
+                                                        { color: selected ? highlight : colors.textPrimary },
+                                                    ]}
+                                                    numberOfLines={2}
+                                                >
+                                                    {option.label}
+                                                </Text>
+                                            </Pressable>
+                                        );
+                                    })}
+                                </View>
+                            </>
+                        ) : null}
 
                         <Animated.View style={[styles.modeContent, modeContentAnimatedStyle]}>
                             {shareMode === "direct" ? (
@@ -1052,6 +1136,29 @@ const styles = StyleSheet.create({
         fontSize: 11,
         fontWeight: "600",
         lineHeight: 15,
+        letterSpacing: 0,
+    },
+    contentModeRow: {
+        flexDirection: "row",
+        gap: 8,
+    },
+    contentModeOption: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 52,
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
+    },
+    contentModeLabel: {
+        flexShrink: 1,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "800",
         letterSpacing: 0,
     },
     optionGrid: {

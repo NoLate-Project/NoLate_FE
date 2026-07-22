@@ -341,6 +341,7 @@ describe("schedule push navigation payload", () => {
         "SCHEDULE_SHARE_RECEIVED",
         "SCHEDULE_PARTICIPANT_DEPARTED",
         "SCHEDULE_DEPARTURE_NUDGE",
+        "ROUTE_SETUP_REMINDER",
         undefined,
     ])("일정 상세 이동 payload를 해석한다: %p", (type) => {
         expect(getPushNavigationTargetFromNotificationData({ type, scheduleId: "42" })).toEqual({
@@ -349,10 +350,12 @@ describe("schedule push navigation payload", () => {
         });
     });
 
-    test("카테고리 공유 알림은 공유함으로 이동한다", () => {
+    test.each([
+        { type: "CATEGORY_SHARE_RECEIVED", categoryId: "7" },
+        { type: "CALENDAR_SHARE_RECEIVED", calendarId: "9" },
+    ])("카테고리와 캘린더 공유 알림은 공유함으로 이동한다: %p", (data) => {
         expect(getPushNavigationTargetFromNotificationData({
-            type: "CATEGORY_SHARE_RECEIVED",
-            categoryId: "7",
+            ...data,
         })).toEqual({
             kind: "shareInbox",
         });

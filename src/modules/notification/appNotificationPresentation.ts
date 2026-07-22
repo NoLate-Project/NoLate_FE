@@ -42,6 +42,7 @@ export function getAppNotificationVisual(type: string): AppNotificationVisual {
         case "SCHEDULE_SHARE_RECEIVED":
             return { icon: "calendar-outline", tone: "blue" };
         case "CATEGORY_SHARE_RECEIVED":
+        case "CALENDAR_SHARE_RECEIVED":
             return { icon: "people-outline", tone: "blue" };
         case "SCHEDULE_PARTICIPANT_DEPARTED":
             return { icon: "navigate-outline", tone: "green" };
@@ -50,6 +51,7 @@ export function getAppNotificationVisual(type: string): AppNotificationVisual {
         case "SCHEDULE_TRAFFIC":
             return { icon: "time-outline", tone: "orange" };
         case "SCHEDULE_DEPARTURE_REMINDER":
+        case "ROUTE_SETUP_REMINDER":
         case "SCHEDULE_DETAIL":
             return { icon: "alarm-outline", tone: "blue" };
         default:

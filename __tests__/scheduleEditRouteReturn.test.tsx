@@ -72,6 +72,9 @@ jest.mock("react-native-safe-area-context", () => ({
 }));
 jest.mock("@react-native-community/datetimepicker", () => "DateTimePicker");
 jest.mock("react-native-calendars", () => ({ Calendar: "Calendar" }));
+jest.mock("../src/api/scheduleCalendars", () => ({
+    getScheduleCalendars: jest.fn().mockResolvedValue([]),
+}));
 jest.mock("../src/modules/schedule/store", () => ({
     useScheduleStore: () => ({
         state: mockState,

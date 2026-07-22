@@ -1756,6 +1756,12 @@ export default function ScheduleIndex() {
         });
     };
 
+    const openSharedCalendarManager = () => {
+        runToolbarAction(() => {
+            router.push("/schedule/calendars");
+        });
+    };
+
     const openScheduleFromSearch = (id: string) => {
         setSearchQuery("");
         runToolbarAction(() => {
@@ -3555,6 +3561,13 @@ export default function ScheduleIndex() {
                                     onPress={openCategoryManager}
                                     colors={colors}
                                 />
+                                <View style={[styles.dropdownRowDivider, { backgroundColor: colors.border }]} />
+                                <ToolbarDropdownAction
+                                    icon="people-outline"
+                                    title="공유 캘린더"
+                                    onPress={openSharedCalendarManager}
+                                    colors={colors}
+                                />
                             </View>
                         </CalendarGlassSurface>
                     </Animated.View>
@@ -3834,6 +3847,7 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
+                onManageCalendars={openSharedCalendarManager}
                 presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}

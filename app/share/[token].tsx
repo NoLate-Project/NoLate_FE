@@ -72,6 +72,7 @@ export default function ShareInvitationAcceptScreen() {
     const resourceLabel = useMemo(() => {
         const type = accepted?.invitation.resourceType;
         if (type === "SCHEDULE") return "일정";
+        if (type === "CALENDAR") return "공유 캘린더";
         if (type === "CATEGORY") return "캘린더 카테고리";
         return "일정 또는 캘린더";
     }, [accepted]);
@@ -143,6 +144,11 @@ export default function ShareInvitationAcceptScreen() {
                 pathname: "/schedule/[id]",
                 params: { id: resource.resourceId },
             });
+            return;
+        }
+
+        if (resource.resourceType === "CALENDAR") {
+            router.replace("/schedule/calendars");
             return;
         }
 

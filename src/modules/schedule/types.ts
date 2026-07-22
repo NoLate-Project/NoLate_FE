@@ -1,5 +1,7 @@
 
 export type ScheduleSharePermission = "VIEWER" | "COMMENTER" | "EDITOR" | "OWNER";
+export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
+export type ScheduleType = "NORMAL" | "ROUTE";
 
 export type ScheduleCategory = {
     id: string;
@@ -95,6 +97,9 @@ export type ScheduleTravelPlanParticipant = {
 export type ScheduleItem = {
     id: string;
     ownerMemberId?: number;
+    calendarId?: number | null;
+    scheduleType?: ScheduleType;
+    calendarContentModeOverride?: ScheduleShareContentMode | null;
     title: string;
 
     // ✅ 애플 캘린더 핵심: DateTime 기반
@@ -130,5 +135,7 @@ export type ScheduleItem = {
     notificationLeadMinutes?: number;
     notificationIntervalMinutes?: number;
     sharePermission?: ScheduleSharePermission;
+    shareContentMode?: ScheduleShareContentMode | null;
+    travelCollaborationEnabled?: boolean | null;
     updatedAt?: string;
 };

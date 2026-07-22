@@ -36,6 +36,8 @@ import {
 } from "../src/api/favoritePlaces";
 import {
     acceptShareInvitation,
+    createCalendarShare,
+    createCalendarShareInvitation,
     createCategoryShareInvitation,
     createCategoryShare,
     createScheduleShareInvitation,
@@ -43,12 +45,22 @@ import {
     getShareInbox,
     getShareOutbox,
     getCategoryShareInvitations,
+    getCalendarShareInvitations,
     getScheduleShareInvitations,
     revokeCategoryShare,
     revokeCategoryShareInvitation,
+    revokeCalendarShareInvitation,
     revokeScheduleShare,
     revokeScheduleShareInvitation,
 } from "../src/api/scheduleSharing";
+import {
+    archiveScheduleCalendar,
+    createScheduleCalendar,
+    getScheduleCalendarMembers,
+    getScheduleCalendars,
+    updateMyScheduleCalendarPreferences,
+    updateScheduleCalendar,
+} from "../src/api/scheduleCalendars";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -455,14 +467,16 @@ describe("schedule sharing api wrappers", () => {
         jest.clearAllMocks();
     });
 
-    test("invitation list wrappers call schedule and category endpoints", async () => {
+    test("invitation list wrappers call schedule, category and calendar endpoints", async () => {
         mockedApiGet.mockResolvedValue({ success: true, data: [invitationDto] });
 
         await expect(getScheduleShareInvitations("10")).resolves.toEqual([invitationDto]);
         await expect(getCategoryShareInvitations("3")).resolves.toEqual([invitationDto]);
+        await expect(getCalendarShareInvitations("7")).resolves.toEqual([invitationDto]);
 
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/10/shares/invitations");
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations");
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-calendars/7/invitations");
     });
 
     test("share inbox and outbox wrappers call aggregate endpoints", async () => {
@@ -488,6 +502,7 @@ describe("schedule sharing api wrappers", () => {
 
         await expect(createScheduleShareInvitation("10", {
             permission: "VIEWER",
+            contentMode: "SCHEDULE_AND_TRAVEL",
             ttlHours: 72,
             maxAcceptCount: 1,
         })).resolves.toMatchObject({ id: "50", token: "plain-token" });
@@ -499,8 +514,20 @@ describe("schedule sharing api wrappers", () => {
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/shares/invitations", {
             permission: "VIEWER",
+            contentMode: "SCHEDULE_AND_TRAVEL",
             ttlHours: 72,
             maxAcceptCount: 1,
+        });
+
+        await expect(createCalendarShareInvitation("7", {
+            permission: "EDITOR",
+            ttlHours: 48,
+            maxAcceptCount: 3,
+        })).resolves.toMatchObject({ id: "50" });
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-calendars/7/invitations", {
+            permission: "EDITOR",
+            ttlHours: 48,
+            maxAcceptCount: 3,
         });
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations", {
             permission: "EDITOR",
@@ -522,16 +549,39 @@ describe("schedule sharing api wrappers", () => {
             },
         });
 
-        await createScheduleShare("10", { targetAppId: 2, permission: "VIEWER" });
+        await createScheduleShare("10", {
+            targetAppId: 2,
+            permission: "VIEWER",
+            contentMode: "SCHEDULE_AND_TRAVEL",
+        });
         await createCategoryShare("3", { targetEmail: "friend@example.com", permission: "EDITOR" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/shares", {
             targetAppId: 2,
             permission: "VIEWER",
+            contentMode: "SCHEDULE_AND_TRAVEL",
         });
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories/3/shares", {
             targetEmail: "friend@example.com",
             permission: "EDITOR",
+        });
+    });
+
+    test("direct calendar share maps schedule permission to calendar role", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: { id: 8, calendarId: 7, memberId: 2, role: "EDITOR", status: "ACTIVE" },
+        });
+
+        await expect(createCalendarShare("7", {
+            targetEmail: "friend@example.com",
+            permission: "EDITOR",
+        })).resolves.toMatchObject({ calendarId: 7, role: "EDITOR" });
+
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-calendars/7/members", {
+            targetEmail: "friend@example.com",
+            targetAppId: undefined,
+            role: "EDITOR",
         });
     });
 
@@ -563,9 +613,11 @@ describe("schedule sharing api wrappers", () => {
 
         await expect(revokeScheduleShareInvitation("10", "50")).resolves.toBeUndefined();
         await expect(revokeCategoryShareInvitation("3", "51")).resolves.toBeUndefined();
+        await expect(revokeCalendarShareInvitation("7", "52")).resolves.toBeUndefined();
 
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedules/10/shares/invitations/50");
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3/shares/invitations/51");
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-calendars/7/invitations/52");
     });
 
     test("direct share revoke wrappers call their resource endpoints", async () => {
@@ -576,5 +628,66 @@ describe("schedule sharing api wrappers", () => {
 
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedules/10/shares/60");
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-categories/3/shares/61");
+    });
+});
+
+describe("schedule calendar api wrappers", () => {
+    const calendarDto = {
+        id: 7,
+        title: "가족",
+        color: "#2F80FF",
+        defaultContentMode: "SCHEDULE_AND_TRAVEL",
+        status: "ACTIVE",
+        ownerMemberId: 1,
+        myRole: "OWNER",
+        memberCount: 2,
+        routeReminderEnabled: true,
+    };
+
+    afterEach(() => {
+        jest.clearAllMocks();
+    });
+
+    test("calendar list, create and update wrappers preserve sharing policy", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: [calendarDto] });
+        mockedApiPost.mockResolvedValue({ success: true, data: calendarDto });
+        mockedApiPatch.mockResolvedValue({ success: true, data: { ...calendarDto, title: "우리 가족" } });
+
+        await expect(getScheduleCalendars()).resolves.toEqual([calendarDto]);
+        await createScheduleCalendar({
+            title: "가족",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_AND_TRAVEL",
+        });
+        await updateScheduleCalendar(7, { title: "우리 가족" });
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-calendars");
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-calendars", {
+            title: "가족",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_AND_TRAVEL",
+        });
+        expect(mockedApiPatch).toHaveBeenCalledWith("/api/schedule-calendars/7", { title: "우리 가족" });
+    });
+
+    test("member list, own reminder preference and archive use dedicated endpoints", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: [] });
+        mockedApiPatch.mockResolvedValue({
+            success: true,
+            data: { id: 8, calendarId: 7, memberId: 2, role: "VIEWER", routeReminderEnabled: false },
+        });
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(getScheduleCalendarMembers(7)).resolves.toEqual([]);
+        await expect(updateMyScheduleCalendarPreferences(7, false)).resolves.toMatchObject({
+            routeReminderEnabled: false,
+        });
+        await expect(archiveScheduleCalendar(7)).resolves.toBeUndefined();
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-calendars/7/members");
+        expect(mockedApiPatch).toHaveBeenCalledWith("/api/schedule-calendars/7/preferences", {
+            routeReminderEnabled: false,
+        });
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/schedule-calendars/7");
     });
 });

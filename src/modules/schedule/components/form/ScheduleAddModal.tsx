@@ -47,6 +47,7 @@ import {
     reconcileScheduleRouteTiming,
 } from "../../scheduleRouteTiming";
 import CategoryPickerRow from "./CategorySelectBox";
+import ScheduleCalendarSelectBox from "./ScheduleCalendarSelectBox";
 import LocationInputRow from "./LocationInputRow";
 import NotificationSettingsCard from "./NotificationSettingsCard";
 import CategoryLoadErrorBanner from "./CategoryLoadErrorBanner";
@@ -74,6 +75,11 @@ import {
     buildScheduleFormLocationName,
     buildScheduleFormPlace,
 } from "../../scheduleFormPlace";
+import {
+    getScheduleCalendars,
+    type ScheduleCalendar,
+} from "../../../../api/scheduleCalendars";
+import { getWritableScheduleCalendars } from "../../calendarPermissions";
 
 type Props = {
     visible: boolean;
@@ -87,6 +93,7 @@ type Props = {
     categoryLoading?: boolean;
     onRetryCategories?: () => void;
     onManageCategories?: () => void;
+    onManageCalendars?: () => void;
     onCloseStart?: () => void;
     presentation?: "sheet" | "morph";
     sourceTopOffset?: number;
@@ -192,6 +199,7 @@ export default function ScheduleNewModal({
     categoryLoading = false,
     onRetryCategories,
     onManageCategories,
+    onManageCalendars,
     onCloseStart,
     presentation = "sheet",
     sourceTopOffset = 4,
@@ -216,6 +224,11 @@ export default function ScheduleNewModal({
     const [notes, setNotes]                           = useState("");
     const [selectedCategoryId, setSelectedCategoryId] = useState(writableCategories[0]?.id ?? "");
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+    const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
+    const [selectedCalendarId, setSelectedCalendarId] = useState<number | null>(null);
+    const [calendarLoading, setCalendarLoading] = useState(false);
+    const [calendarError, setCalendarError] = useState<string | null>(null);
+    const [calendarRetryKey, setCalendarRetryKey] = useState(0);
     const [originText, setOriginText]                 = useState("");
     const [destinationText, setDestinationText]       = useState("");
     const [originAddress, setOriginAddress]           = useState<string | undefined>();
@@ -275,6 +288,7 @@ export default function ScheduleNewModal({
         setNotes("");
         setSelectedCategoryId(writableCategories[0]?.id ?? "");
         setCategoryPickerOpen(false);
+        setSelectedCalendarId(null);
         setOriginText("");
         setDestinationText("");
         setOriginAddress(undefined);
@@ -306,6 +320,35 @@ export default function ScheduleNewModal({
         setStartTime(defaultStart.startTime);
         setEndTime(new Date(defaultStart.startTime));
     }, [defaultDay, discardDraft, writableCategories]);
+
+    useEffect(() => {
+        if (!visible) return;
+
+        let cancelled = false;
+        setCalendarLoading(true);
+        setCalendarError(null);
+        getScheduleCalendars()
+            .then((result) => {
+                if (cancelled) return;
+                const writable = getWritableScheduleCalendars(result);
+                setCalendars(writable);
+                setSelectedCalendarId((current) => (
+                    current !== null && writable.some((calendar) => calendar.id === current)
+                        ? current
+                        : null
+                ));
+            })
+            .catch(() => {
+                if (!cancelled) setCalendarError("공유 캘린더를 불러오지 못했어요.");
+            })
+            .finally(() => {
+                if (!cancelled) setCalendarLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [calendarRetryKey, visible]);
 
     // 실제 선택값과 화면 표시값을 분리해 피커 전환 애니메이션을 안정화한다.
     const [picker,        setPicker]        = useState<PickerType | null>(null);
@@ -1238,6 +1281,8 @@ export default function ScheduleNewModal({
                 hasEndTime: normalizedRange.hasEndTime,
                 allDay: normalizedRange.allDay,
                 category,
+                calendarId: selectedCalendarId,
+                calendarContentModeOverride: null,
                 travelMode: hasRoutePlan ? travelMode : undefined,
                 travelMinutes: hasRoutePlan ? travelMinutes : undefined,
                 departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
@@ -1692,6 +1737,19 @@ export default function ScheduleNewModal({
                                 onManageCategories={onManageCategories}
                             />
                         )}
+
+                        <ScheduleCalendarSelectBox
+                            calendars={calendars}
+                            value={selectedCalendarId}
+                            loading={calendarLoading}
+                            error={calendarError}
+                            onChange={(calendarId) => {
+                                markFormDirty();
+                                setSelectedCalendarId(calendarId);
+                            }}
+                            onRetry={() => setCalendarRetryKey((current) => current + 1)}
+                            onManageCalendars={onManageCalendars}
+                        />
 
                         <LocationInputRow
                             originValue={originText}

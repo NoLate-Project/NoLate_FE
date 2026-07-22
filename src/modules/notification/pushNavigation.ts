@@ -5,10 +5,12 @@ const SCHEDULE_DETAIL_TYPES = new Set([
     "SCHEDULE_SHARE_RECEIVED",
     "SCHEDULE_PARTICIPANT_DEPARTED",
     "SCHEDULE_DEPARTURE_NUDGE",
+    "ROUTE_SETUP_REMINDER",
 ]);
 
 const SHARE_INBOX_TYPES = new Set([
     "CATEGORY_SHARE_RECEIVED",
+    "CALENDAR_SHARE_RECEIVED",
 ]);
 
 // 토큰 확인처럼 사용자에게 보이지만 특정 화면으로 이동할 필요가 없는 검증 payload다.
@@ -100,8 +102,8 @@ export function getPushNavigationTargetFromNotificationData(
     }
 
     if (type && SHARE_INBOX_TYPES.has(type)) {
-        const categoryId = data?.categoryId;
-        if (typeof categoryId !== "string" || !/^[1-9]\d*$/.test(categoryId.trim())) {
+        const resourceId = type === "CALENDAR_SHARE_RECEIVED" ? data?.calendarId : data?.categoryId;
+        if (typeof resourceId !== "string" || !/^[1-9]\d*$/.test(resourceId.trim())) {
             return undefined;
         }
         return { kind: "shareInbox" };

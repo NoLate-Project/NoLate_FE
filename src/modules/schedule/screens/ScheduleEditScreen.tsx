@@ -31,6 +31,7 @@ import {
     reconcileScheduleRouteTiming,
 } from "../scheduleRouteTiming";
 import CategoryPickerRow from "../components/form/CategorySelectBox";
+import ScheduleCalendarSelectBox from "../components/form/ScheduleCalendarSelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
 import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
@@ -55,6 +56,11 @@ import {
     buildScheduleFormLocationName,
     buildScheduleFormPlace,
 } from "../scheduleFormPlace";
+import {
+    getScheduleCalendars,
+    type ScheduleCalendar,
+} from "../../../api/scheduleCalendars";
+import { getWritableScheduleCalendars } from "../calendarPermissions";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -94,6 +100,11 @@ export default function ScheduleEdit() {
         resolveWritableScheduleCategoryId(item?.category, state.categories)
     );
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+    const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
+    const [calendarId, setCalendarId] = useState<number | null>(item?.calendarId ?? null);
+    const [calendarLoading, setCalendarLoading] = useState(false);
+    const [calendarError, setCalendarError] = useState<string | null>(null);
+    const [calendarRetryKey, setCalendarRetryKey] = useState(0);
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
     const [originAddress, setOriginAddress]     = useState(item?.origin?.address);
@@ -305,6 +316,28 @@ export default function ScheduleEdit() {
 
     useEffect(() => {
         let cancelled = false;
+        setCalendarLoading(true);
+        setCalendarError(null);
+
+        getScheduleCalendars()
+            .then((result) => {
+                if (cancelled) return;
+                setCalendars(getWritableScheduleCalendars(result));
+            })
+            .catch(() => {
+                if (!cancelled) setCalendarError("공유 캘린더를 불러오지 못했어요.");
+            })
+            .finally(() => {
+                if (!cancelled) setCalendarLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [calendarRetryKey]);
+
+    useEffect(() => {
+        let cancelled = false;
         getMySubscriptionPolicy()
             .then((policy) => {
                 if (cancelled) return;
@@ -333,6 +366,7 @@ export default function ScheduleEdit() {
         setTitle(item.title);
         setNotes(item.notes ?? "");
         setCategoryId(resolveWritableScheduleCategoryId(item.category, state.categories));
+        setCalendarId(item.calendarId ?? null);
         setOriginText(item.origin?.name ?? "");
         setDestinationText(item.destination?.name ?? "");
         setOriginAddress(item.origin?.address);
@@ -676,6 +710,10 @@ export default function ScheduleEdit() {
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
+                calendarId,
+                calendarContentModeOverride: calendarId === item.calendarId
+                    ? item.calendarContentModeOverride
+                    : null,
                 startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
@@ -854,6 +892,19 @@ export default function ScheduleEdit() {
                     onManageCategories={() => router.push("/schedule/categories")}
                 />
             )}
+
+            <ScheduleCalendarSelectBox
+                calendars={calendars}
+                value={calendarId}
+                loading={calendarLoading}
+                error={calendarError}
+                onChange={(nextCalendarId) => {
+                    markFormDirty();
+                    setCalendarId(nextCalendarId);
+                }}
+                onRetry={() => setCalendarRetryKey((current) => current + 1)}
+                onManageCalendars={() => router.push("/schedule/calendars")}
+            />
 
             <LocationInputRow
                 originValue={originText}

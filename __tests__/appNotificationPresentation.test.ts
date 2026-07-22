@@ -38,6 +38,21 @@ describe("app notification presentation", () => {
         }))).toEqual({ kind: "shareInbox" });
     });
 
+    test("routes calendar shares to the unified share inbox", () => {
+        expect(getAppNotificationNavigationTarget(notification({
+            type: "CALENDAR_SHARE_RECEIVED",
+            scheduleId: null,
+            data: { type: "CALENDAR_SHARE_RECEIVED", calendarId: "9" },
+        }))).toEqual({ kind: "shareInbox" });
+    });
+
+    test("routes D-3 route setup reminders to the affected schedule", () => {
+        expect(getAppNotificationNavigationTarget(notification({
+            type: "ROUTE_SETUP_REMINDER",
+            data: { type: "ROUTE_SETUP_REMINDER", scheduleId: "55" },
+        }))).toEqual({ kind: "scheduleDetail", scheduleId: "55" });
+    });
+
     test("uses a restrained visual for each notification family", () => {
         expect(getAppNotificationVisual("SCHEDULE_PARTICIPANT_DEPARTED")).toMatchObject({
             icon: "navigate-outline",
@@ -45,6 +60,14 @@ describe("app notification presentation", () => {
         });
         expect(getAppNotificationVisual("CATEGORY_SHARE_RECEIVED")).toMatchObject({
             icon: "people-outline",
+            tone: "blue",
+        });
+        expect(getAppNotificationVisual("CALENDAR_SHARE_RECEIVED")).toMatchObject({
+            icon: "people-outline",
+            tone: "blue",
+        });
+        expect(getAppNotificationVisual("ROUTE_SETUP_REMINDER")).toMatchObject({
+            icon: "alarm-outline",
             tone: "blue",
         });
         expect(getAppNotificationVisual("UNKNOWN")).toMatchObject({
