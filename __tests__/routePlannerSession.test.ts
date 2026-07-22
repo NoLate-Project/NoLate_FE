@@ -4,11 +4,37 @@ import {
     consumeScheduleRouteUpdatePayload,
     consumeRoutePlannerResult,
     getRoutePlannerInitial,
+    observeRoutePlannerReturn,
     setRoutePlannerInitial,
     setRoutePlannerResult,
 } from "../src/modules/schedule/routePlannerSession";
 
 describe("route planner session", () => {
+    test("경로 화면으로 전환되기 전에는 빈 결과를 소비하지 않고 실제 복귀 때만 소비한다", () => {
+        const beforeNavigation = observeRoutePlannerReturn("/schedule/77", false);
+        expect(beforeNavigation).toEqual({
+            hasVisitedRouteFlow: false,
+            shouldConsumeResult: false,
+        });
+
+        const onRouteScreen = observeRoutePlannerReturn(
+            "/schedule/route-select",
+            beforeNavigation.hasVisitedRouteFlow
+        );
+        expect(onRouteScreen).toEqual({
+            hasVisitedRouteFlow: true,
+            shouldConsumeResult: false,
+        });
+
+        expect(observeRoutePlannerReturn(
+            "/schedule/77",
+            onRouteScreen.hasVisitedRouteFlow
+        )).toEqual({
+            hasVisitedRouteFlow: false,
+            shouldConsumeResult: true,
+        });
+    });
+
     test("빠른 일정의 초기 목적지와 도착 기준 시각을 왕복 동안 보존한다", () => {
         const sessionId = "quick-session-initial";
         setRoutePlannerInitial(sessionId, {

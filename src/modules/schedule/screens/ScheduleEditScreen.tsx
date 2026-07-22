@@ -22,9 +22,14 @@ import {
     buildRoutePlannerPlace,
     buildScheduleRoutePlannerInitial,
     consumeRoutePlannerResult,
+    observeRoutePlannerReturn,
     setRoutePlannerInitial,
 } from "../routePlannerSession";
 import { getRouteInfoFromRoute } from "../routeInfo";
+import {
+    hasPersistableScheduleRoute,
+    reconcileScheduleRouteTiming,
+} from "../scheduleRouteTiming";
 import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
@@ -99,6 +104,7 @@ export default function ScheduleEdit() {
     const [destinationLng, setDestinationLng]   = useState<number | undefined>(item?.destination?.lng);
     const [travelMode, setTravelMode]           = useState<TravelMode>(item?.travelMode ?? "CAR");
     const [travelMinutes, setTravelMinutes]     = useState<number | undefined>(item?.travelMinutes);
+    const [departAt, setDepartAt]               = useState<string | undefined>(item?.departAt);
     const [route, setRoute]                     = useState<unknown>(item?.route);
     const [allDay, setAllDay]                   = useState(item?.allDay ?? false);
     const [hasEndTime, setHasEndTime]           = useState(item?.hasEndTime ?? true);
@@ -107,6 +113,9 @@ export default function ScheduleEdit() {
     const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? 20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
+    const routePlannerAwayRef = useRef(false);
+    const routeTimingTargetArrivalRef = useRef<string | undefined>(item?.startAt);
+    const pendingRouteTimingTargetArrivalRef = useRef<string | undefined>(undefined);
     const [detailLoading, setDetailLoading] = useState(false);
     const [mutationPending, setMutationPending] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
@@ -239,6 +248,13 @@ export default function ScheduleEdit() {
 
     useEffect(() => {
         if (!id) return;
+        // 경로 선택 화면을 오가는 동안에는 이미 불러온 일정과 로컬 경로 초안을 유지한다.
+        // 복귀 직후 재조회가 시작되면 detailLoading 때문에 실제 변경사항이 있어도 저장 버튼이
+        // 잠시 비활성화되고, 느린 응답이 새 경로와 경쟁할 수 있다.
+        if (routePlannerSessionId || formDirtyRef.current) {
+            setDetailLoading(false);
+            return;
+        }
         let cancelled = false;
         setDetailLoading(true);
         setDetailError(null);
@@ -250,8 +266,7 @@ export default function ScheduleEdit() {
             })
             .catch((error) => {
                 if (cancelled) return;
-                const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!routeFlowActive) setDetailError(getErrorMessage(error));
+                setDetailError(getErrorMessage(error));
             })
             .finally(() => {
                 if (!cancelled) setDetailLoading(false);
@@ -260,7 +275,7 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id, pathname, retryKey]);
+    }, [dispatch, id, retryKey, routePlannerSessionId]);
 
     useEffect(() => {
         let cancelled = false;
@@ -328,7 +343,10 @@ export default function ScheduleEdit() {
         setDestinationLng(item.destination?.lng);
         setTravelMode(item.travelMode ?? "CAR");
         setTravelMinutes(item.travelMinutes);
+        setDepartAt(item.departAt);
         setRoute(item.route);
+        routeTimingTargetArrivalRef.current = item.startAt;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setAllDay(item.allDay ?? false);
         setHasEndTime(item.hasEndTime ?? fromISO(item.endAt).getTime() > fromISO(item.startAt).getTime());
         setNotificationEnabled(item.notificationEnabled ?? false);
@@ -464,20 +482,26 @@ export default function ScheduleEdit() {
         }, "도착지");
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+        const targetArrivalAt = allDay
+            ? startOfLocalScheduleDay(startDay)
+            : mergeDateTime(startDay, startTime);
+        pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
         setRoutePlannerInitial(sessionId, buildScheduleRoutePlannerInitial({
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
             travelMinutes,
+            departureAt: departAt,
             route,
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name ?? nextOrigin?.name,
-            targetArrivalAt: allDay
-                ? startOfLocalScheduleDay(startDay)
-                : mergeDateTime(startDay, startTime),
+            targetArrivalAt,
         }));
 
+        // setState가 실제 화면 전환보다 먼저 반영될 수 있다. 경로 화면 진입을 확인하기 전에는
+        // 아직 비어 있는 세션 결과를 소비하지 않는다.
+        routePlannerAwayRef.current = false;
         setRoutePlannerSessionId(sessionId);
         router.push({ pathname: "/schedule/route-select", params: { sessionId } });
     }, [
@@ -485,6 +509,7 @@ export default function ScheduleEdit() {
         destinationLat,
         destinationLng,
         destinationText,
+        departAt,
         allDay,
         originAddress,
         originLat,
@@ -509,17 +534,22 @@ export default function ScheduleEdit() {
         setDestinationLat(undefined);
         setDestinationLng(undefined);
         setTravelMinutes(undefined);
+        setDepartAt(undefined);
         setRoute(undefined);
+        routeTimingTargetArrivalRef.current = undefined;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setNotificationEnabled(false);
     }, [markFormDirty]);
 
     useEffect(() => {
-        if (
-            !routePlannerSessionId ||
-            pathname === "/schedule/route-select" ||
-            pathname === "/schedule/route-planner"
-        ) return;
+        if (!routePlannerSessionId) return;
+        const observation = observeRoutePlannerReturn(pathname, routePlannerAwayRef.current);
+        routePlannerAwayRef.current = observation.hasVisitedRouteFlow;
+        if (!observation.shouldConsumeResult) return;
+
         const result = consumeRoutePlannerResult(routePlannerSessionId);
+        const selectedTargetArrivalAt = pendingRouteTimingTargetArrivalRef.current;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setRoutePlannerSessionId(undefined);
         if (!result) return;
 
@@ -534,7 +564,9 @@ export default function ScheduleEdit() {
         setDestinationLng(result.destination?.lng);
         setTravelMode(result.travelMode);
         setTravelMinutes(result.travelMinutes);
+        setDepartAt(result.departureAt);
         setRoute(result.route);
+        routeTimingTargetArrivalRef.current = selectedTargetArrivalAt ?? result.targetArrivalAt;
     }, [markFormDirty, pathname, routePlannerSessionId]);
 
     if (!item) {
@@ -623,6 +655,20 @@ export default function ScheduleEdit() {
             lng: destinationLng,
         });
         const locationName = buildScheduleFormLocationName(nextOrigin, nextDestination);
+        const nextStartAt = normalizedRange.startAt.toISOString();
+        const reconciledRouteTiming = reconcileScheduleRouteTiming({
+            departAt,
+            route,
+            travelMinutes,
+            plannedArrivalAt: routeTimingTargetArrivalRef.current,
+            nextArrivalAt: nextStartAt,
+        });
+        const hasRoutePlan = hasPersistableScheduleRoute(
+            reconciledRouteTiming.route,
+            travelMinutes,
+            nextOrigin,
+            nextDestination
+        );
 
         try {
             mutationPendingRef.current = true;
@@ -630,20 +676,25 @@ export default function ScheduleEdit() {
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
-                startAt: normalizedRange.startAt.toISOString(),
+                startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
-                travelMode,
-                travelMinutes,
+                travelMode: hasRoutePlan ? travelMode : undefined,
+                travelMinutes: hasRoutePlan ? travelMinutes : undefined,
+                departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
                 locationName,
                 destination: nextDestination,
-                origin: nextOrigin,
+                origin: hasRoutePlan ? nextOrigin : undefined,
                 notes: notes.trim() || undefined,
                 allDay: normalizedRange.allDay,
-                route,
-                notificationEnabled,
-                notificationLeadMinutes: notificationEnabled ? notificationLeadMinutes : undefined,
-                notificationIntervalMinutes: notificationEnabled ? notificationIntervalMinutes : undefined,
+                route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
+                notificationEnabled: hasRoutePlan && notificationEnabled,
+                notificationLeadMinutes: hasRoutePlan && notificationEnabled
+                    ? notificationLeadMinutes
+                    : undefined,
+                notificationIntervalMinutes: hasRoutePlan && notificationEnabled
+                    ? notificationIntervalMinutes
+                    : undefined,
             });
             dispatch({ type: "UPDATE_ITEM", item: updated });
             closeEditScreen();
@@ -850,6 +901,7 @@ export default function ScheduleEdit() {
                     onValueChange={handleAllDayChange}
                     trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
                     thumbColor="#FFFFFF"
+                    style={styles.toggleSwitch}
                 />
             </View>
 
@@ -906,6 +958,7 @@ export default function ScheduleEdit() {
                         onValueChange={handleEndTimeEnabledChange}
                         trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
                         thumbColor="#FFFFFF"
+                        style={styles.toggleSwitch}
                     />
                 </View>
             ) : null}
@@ -1142,6 +1195,9 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontSize: 11,
         fontWeight: "600",
+    },
+    toggleSwitch: {
+        alignSelf: "center",
     },
     input: {
         borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 14,

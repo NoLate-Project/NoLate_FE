@@ -38,9 +38,14 @@ import {
     buildRoutePlannerPlace,
     buildScheduleRoutePlannerInitial,
     consumeRoutePlannerResult,
+    observeRoutePlannerReturn,
     setRoutePlannerInitial,
 } from "../../routePlannerSession";
 import { getRouteInfoFromRoute } from "../../routeInfo";
+import {
+    hasPersistableScheduleRoute,
+    reconcileScheduleRouteTiming,
+} from "../../scheduleRouteTiming";
 import CategoryPickerRow from "./CategorySelectBox";
 import LocationInputRow from "./LocationInputRow";
 import NotificationSettingsCard from "./NotificationSettingsCard";
@@ -221,6 +226,7 @@ export default function ScheduleNewModal({
     const [destinationLng, setDestinationLng]         = useState<number | undefined>();
     const [travelMode, setTravelMode]                 = useState<TravelMode>("CAR");
     const [travelMinutes, setTravelMinutes]           = useState<number | undefined>();
+    const [departAt, setDepartAt]                     = useState<string | undefined>();
     const [route, setRoute]                           = useState<unknown>();
     const [allDay, setAllDay]                         = useState(false);
     const [hasEndTime, setHasEndTime]                 = useState(false);
@@ -229,6 +235,9 @@ export default function ScheduleNewModal({
     const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
+    const routePlannerAwayRef = useRef(false);
+    const routeTimingTargetArrivalRef = useRef<string | undefined>(undefined);
+    const pendingRouteTimingTargetArrivalRef = useRef<string | undefined>(undefined);
     const [submitting, setSubmitting]                 = useState(false);
     const [formError, setFormError]                   = useState<string | null>(null);
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
@@ -276,7 +285,10 @@ export default function ScheduleNewModal({
         setDestinationLng(undefined);
         setTravelMode("CAR");
         setTravelMinutes(undefined);
+        setDepartAt(undefined);
         setRoute(undefined);
+        routeTimingTargetArrivalRef.current = undefined;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setAllDay(false);
         setHasEndTime(false);
         setNotificationEnabled(false);
@@ -381,6 +393,7 @@ export default function ScheduleNewModal({
         setDestinationLng(initialValues.destination?.lng);
         setTravelMinutes(initialValues.travelMinutes);
         setTravelMode(initialValues.travelMode ?? "CAR");
+        setDepartAt(undefined);
         setRoute(initialValues.route);
         setNotificationEnabled(Boolean(initialValues.notificationEnabled));
         if (typeof initialValues.notificationLeadMinutes === "number") {
@@ -394,7 +407,13 @@ export default function ScheduleNewModal({
         if (parsedStart && !Number.isNaN(parsedStart.getTime())) {
             setStartDay(parsedStart);
             setStartTime(parsedStart);
+            routeTimingTargetArrivalRef.current = initialValues.route
+                ? parsedStart.toISOString()
+                : undefined;
+        } else {
+            routeTimingTargetArrivalRef.current = undefined;
         }
+        pendingRouteTimingTargetArrivalRef.current = undefined;
 
         const parsedEnd = initialValues.endAt ? new Date(initialValues.endAt) : null;
         if (parsedEnd && !Number.isNaN(parsedEnd.getTime())) {
@@ -976,13 +995,14 @@ export default function ScheduleNewModal({
     }, [morphProgress, posY]);
 
     useEffect(() => {
-        if (
-            !visible ||
-            !routePlannerSessionId ||
-            pathname === "/schedule/route-select" ||
-            pathname === "/schedule/route-planner"
-        ) return;
+        if (!visible || !routePlannerSessionId) return;
+        const observation = observeRoutePlannerReturn(pathname, routePlannerAwayRef.current);
+        routePlannerAwayRef.current = observation.hasVisitedRouteFlow;
+        if (!observation.shouldConsumeResult) return;
+
         const result = consumeRoutePlannerResult(routePlannerSessionId);
+        const selectedTargetArrivalAt = pendingRouteTimingTargetArrivalRef.current;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setRoutePlannerSessionId(undefined);
         if (!result) {
             setRoutePlannerHidden(false);
@@ -1010,7 +1030,9 @@ export default function ScheduleNewModal({
         setDestinationLng(result.destination?.lng);
         setTravelMode(result.travelMode);
         setTravelMinutes(result.travelMinutes);
+        setDepartAt(result.departureAt);
         setRoute(result.route);
+        routeTimingTargetArrivalRef.current = selectedTargetArrivalAt ?? result.targetArrivalAt;
         markFormDirty();
         setRoutePlannerHidden(false);
         setRendered(true);
@@ -1056,21 +1078,26 @@ export default function ScheduleNewModal({
         }, "도착지");
         const sessionId = `route-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 
+        const targetArrivalAt = allDay
+            ? startOfLocalScheduleDay(startDay)
+            : mergeDateTime(startDay, startTime);
+        pendingRouteTimingTargetArrivalRef.current = targetArrivalAt.toISOString();
         setRoutePlannerInitial(sessionId, buildScheduleRoutePlannerInitial({
             origin: nextOrigin,
             destination: nextDestination,
             travelMode,
             travelMinutes,
+            departureAt: departAt,
             route,
             locationName: nextOrigin?.name && nextDestination?.name
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name ?? nextOrigin?.name,
-            targetArrivalAt: allDay
-                ? startOfLocalScheduleDay(startDay)
-                : mergeDateTime(startDay, startTime),
+            targetArrivalAt,
         }));
 
         setPicker(null);
+        // 모달 state가 먼저 갱신돼도 경로 화면을 실제로 다녀오기 전에는 빈 결과를 소비하지 않는다.
+        routePlannerAwayRef.current = false;
         setRoutePlannerSessionId(sessionId);
         setRoutePlannerHidden(true);
         closeSheet(undefined, { notifyCloseStart: false });
@@ -1082,6 +1109,7 @@ export default function ScheduleNewModal({
         destinationLat,
         destinationLng,
         destinationText,
+        departAt,
         originAddress,
         originLat,
         originLng,
@@ -1106,7 +1134,10 @@ export default function ScheduleNewModal({
         setDestinationLat(undefined);
         setDestinationLng(undefined);
         setTravelMinutes(undefined);
+        setDepartAt(undefined);
         setRoute(undefined);
+        routeTimingTargetArrivalRef.current = undefined;
+        pendingRouteTimingTargetArrivalRef.current = undefined;
         setNotificationEnabled(false);
     }, [markFormDirty]);
 
@@ -1181,6 +1212,20 @@ export default function ScheduleNewModal({
             lng: destinationLng,
         });
         const locationName = buildScheduleFormLocationName(nextOrigin, nextDestination);
+        const nextStartAt = normalizedRange.startAt.toISOString();
+        const reconciledRouteTiming = reconcileScheduleRouteTiming({
+            departAt,
+            route,
+            travelMinutes,
+            plannedArrivalAt: routeTimingTargetArrivalRef.current,
+            nextArrivalAt: nextStartAt,
+        });
+        const hasRoutePlan = hasPersistableScheduleRoute(
+            reconciledRouteTiming.route,
+            travelMinutes,
+            nextOrigin,
+            nextDestination
+        );
 
         try {
             submitInFlightRef.current = true;
@@ -1188,19 +1233,24 @@ export default function ScheduleNewModal({
             setFormError(null);
             await onSubmit({
                 title: t,
-                startAt: normalizedRange.startAt.toISOString(),
+                startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
                 allDay: normalizedRange.allDay,
                 category,
-                travelMode,
-                travelMinutes,
-                route,
-                notificationEnabled,
-                notificationLeadMinutes: notificationEnabled ? notificationLeadMinutes : undefined,
-                notificationIntervalMinutes: notificationEnabled ? notificationIntervalMinutes : undefined,
+                travelMode: hasRoutePlan ? travelMode : undefined,
+                travelMinutes: hasRoutePlan ? travelMinutes : undefined,
+                departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
+                route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
+                notificationEnabled: hasRoutePlan && notificationEnabled,
+                notificationLeadMinutes: hasRoutePlan && notificationEnabled
+                    ? notificationLeadMinutes
+                    : undefined,
+                notificationIntervalMinutes: hasRoutePlan && notificationEnabled
+                    ? notificationIntervalMinutes
+                    : undefined,
                 locationName,
-                origin: nextOrigin,
+                origin: hasRoutePlan ? nextOrigin : undefined,
                 destination: nextDestination,
                 notes: notes.trim() || undefined,
             });
@@ -1698,6 +1748,7 @@ export default function ScheduleNewModal({
                                 onValueChange={handleAllDayChange}
                                 trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
                                 thumbColor="#FFFFFF"
+                                style={styles.toggleSwitch}
                             />
                         </View>
 
@@ -1753,6 +1804,7 @@ export default function ScheduleNewModal({
                                 onValueChange={handleEndTimeEnabledChange}
                                 trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
                                 thumbColor="#FFFFFF"
+                                style={styles.toggleSwitch}
                             />
                         </View> : null}
 
@@ -2096,6 +2148,9 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontSize: 11,
         fontWeight: "600",
+    },
+    toggleSwitch: {
+        alignSelf: "center",
     },
     fieldBase: {
         borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12,

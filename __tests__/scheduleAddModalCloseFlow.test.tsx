@@ -3,12 +3,16 @@ import { Alert, Animated, BackHandler, PanResponder, Platform } from "react-nati
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
+import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
+
+let mockPathname = "/schedule";
+const mockRouterPush = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
-    usePathname: () => "/schedule",
-    useRouter: () => ({ push: jest.fn() }),
+    usePathname: () => mockPathname,
+    useRouter: () => ({ push: mockRouterPush }),
 }));
 jest.mock("react-native-safe-area-context", () => ({
     useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -52,6 +56,8 @@ describe("ScheduleAddModal close flow", () => {
     });
 
     beforeEach(() => {
+        mockPathname = "/schedule";
+        mockRouterPush.mockReset();
         springSpy = jest.spyOn(Animated, "spring").mockImplementation(() => ({
             start: (callback?: (result: { finished: boolean }) => void) => callback?.({ finished: true }),
             stop: jest.fn(),
@@ -197,6 +203,83 @@ describe("ScheduleAddModal close flow", () => {
         expect(onSubmit).toHaveBeenCalledTimes(1);
         expect(alertSpy).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test("경로 화면을 실제로 다녀온 뒤 새 경로와 출발 시각을 저장 payload에 반영한다", async () => {
+        const onClose = jest.fn();
+        const onSubmit = jest.fn().mockResolvedValue(undefined);
+        const tree = () => (
+            <ThemeProvider>
+                <ScheduleAddModal
+                    visible
+                    onClose={onClose}
+                    onSubmit={onSubmit}
+                    categories={[category]}
+                    defaultDay="2026-07-17"
+                />
+            </ThemeProvider>
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(tree());
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("경로 회의");
+            renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 설정" }).props.onPress();
+            await Promise.resolve();
+        });
+
+        const sessionId = mockRouterPush.mock.calls[0]?.[0]?.params?.sessionId as string;
+        expect(sessionId).toBeTruthy();
+
+        mockPathname = "/schedule/route-select";
+        await act(async () => {
+            renderer!.update(tree());
+            await Promise.resolve();
+        });
+        setRoutePlannerResult(sessionId, {
+            origin: { name: "집", lat: 37.5, lng: 126.9 },
+            destination: { name: "회사", lat: 37.49, lng: 127.02 },
+            travelMode: "TRANSIT",
+            travelMinutes: 35,
+            departureAt: "2026-07-17T00:25:00.000Z",
+            route: {
+                id: "updated-route",
+                mode: "TRANSIT",
+                source: "api",
+                pathCoords: [
+                    { lat: 37.5, lng: 126.9 },
+                    { lat: 37.49, lng: 127.02 },
+                ],
+            },
+        });
+
+        mockPathname = "/schedule";
+        await act(async () => {
+            renderer!.update(tree());
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root.findByProps({ accessibilityLabel: "일정 저장" }).props.onPress();
+        });
+
+        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+            origin: { name: "집", lat: 37.5, lng: 126.9 },
+            destination: { name: "회사", lat: 37.49, lng: 127.02 },
+            travelMode: "TRANSIT",
+            travelMinutes: 35,
+            departAt: "2026-07-17T00:25:00.000Z",
+            route: expect.objectContaining({
+                id: "updated-route",
+                mode: "TRANSIT",
+                source: "api",
+                pathCoords: [
+                    { lat: 37.5, lng: 126.9 },
+                    { lat: 37.49, lng: 127.02 },
+                ],
+            }),
+        }));
     });
 
     test("저장 버튼을 빠르게 연속으로 눌러도 일정 생성 요청은 한 번만 보낸다", async () => {

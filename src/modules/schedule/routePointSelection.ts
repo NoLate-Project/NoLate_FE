@@ -13,6 +13,17 @@ export type MapPickerSessionState = {
     hasSelection: boolean;
 };
 
+export type MapPickerCommit = {
+    coordinate: MapPickerCoordinate;
+    target: RoutePointTarget;
+};
+
+export type MapPickerPostCommitTransition = {
+    nextTarget: RoutePointTarget | null;
+    keepPickerOpen: boolean;
+    nextSession: MapPickerSessionState;
+};
+
 export type RoutePointSearchVisibilityInput = {
     isEditingRoutePoint: boolean;
     searching: boolean;
@@ -38,15 +49,6 @@ export function getMapPickedPlaceFallbackName(target: RoutePointTarget): string 
     return target === "origin" ? "지도에서 선택한 출발지" : "지도에서 선택한 도착지";
 }
 
-/** 새 위치를 탭한 뒤에는 같은 대상의 예전 핀을 새 선택 핀으로 교체한다. */
-export function shouldShowExistingMapPickerMarker(
-    markerTarget: RoutePointTarget,
-    pickerTarget: RoutePointTarget,
-    hasSelection: boolean
-): boolean {
-    return !hasSelection || markerTarget !== pickerTarget;
-}
-
 /** 지도 탐색 카메라와 사용자가 탭한 선택 좌표를 서로 독립적으로 유지한다. */
 export function createMapPickerSessionState(
     initialCoordinate?: MapPickerCoordinate,
@@ -69,6 +71,25 @@ export function selectMapPickerSessionCoordinate(
         ...session,
         pickedCoordinate: coordinate,
         hasSelection: true,
+    };
+}
+
+/** 좌표가 확정되고 주소 확인도 끝난 경우에만 선택한 출발/도착 지점으로 적용한다. */
+export function resolveMapPickerCommit(
+    session: MapPickerSessionState,
+    target: RoutePointTarget,
+    resolving: boolean
+): MapPickerCommit | null {
+    if (
+        resolving ||
+        !session.hasSelection ||
+        !session.pickedCoordinate
+    ) {
+        return null;
+    }
+    return {
+        coordinate: session.pickedCoordinate,
+        target,
     };
 }
 
@@ -101,6 +122,28 @@ export function resolveNextMissingRoutePointTarget(
     if (selectedTarget === "destination" && !originHasCoordinates) return "origin";
     if (selectedTarget === "origin" && !destinationHasCoordinates) return "destination";
     return null;
+}
+
+/** 첫 지점만 정해졌다면 지도에 남아 반대 지점을 고르도록 후보 좌표를 초기화한다. */
+export function resolveMapPickerPostCommitTransition(
+    session: MapPickerSessionState,
+    selectedTarget: RoutePointTarget,
+    originHadCoordinates: boolean,
+    destinationHadCoordinates: boolean
+): MapPickerPostCommitTransition {
+    const nextTarget = resolveNextMissingRoutePointTarget(
+        selectedTarget,
+        originHadCoordinates || selectedTarget === "origin",
+        destinationHadCoordinates || selectedTarget === "destination"
+    );
+    const keepPickerOpen = nextTarget !== null;
+    return {
+        nextTarget,
+        keepPickerOpen,
+        nextSession: keepPickerOpen
+            ? createMapPickerSessionState(session.cameraCoordinate)
+            : session,
+    };
 }
 
 /** 자동 검색도 한 번 시작했다면 0건/오류 결과를 최근 검색으로 덮지 않는다. */

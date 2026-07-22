@@ -6,6 +6,7 @@ import {
     isQuickScheduleRouteReady,
     isValidQuickScheduleDate,
     isValidQuickScheduleTime,
+    quickScheduleDateFromDraftTime,
     updateQuickSchedulePreviewDraft,
     type QuickSchedulePreviewDraft,
 } from "../src/modules/schedule/quickScheduleDraft";
@@ -40,7 +41,15 @@ function routeInfo(overrides: Partial<RouteInfo> = {}): RouteInfo {
         departureTime: "2026-07-17T10:30:00.000Z",
         arrivalTime: "2026-07-17T11:00:00.000Z",
         timeBasis: "estimated",
-        steps: [],
+        steps: [{
+            id: "bus-1",
+            type: "BUS",
+            title: "버스 이동",
+            coordinates: [
+                { latitude: origin.lat!, longitude: origin.lng! },
+                { latitude: destination.lat!, longitude: destination.lng! },
+            ],
+        }],
         ...overrides,
     };
 }
@@ -181,7 +190,7 @@ describe("quick schedule draft", () => {
         expect(next.departAt).toBe(draft.departAt);
     });
 
-    test("경로 설정 후 날짜나 시간을 바꾸면 시간 의존 정보를 무효화한다", () => {
+    test("경로 설정 후 날짜나 시간을 바꿔도 선택 경로를 새 도착 시각에 맞춰 보존한다", () => {
         const dateChanged = updateQuickSchedulePreviewDraft(
             completeDraft(),
             "date",
@@ -194,12 +203,34 @@ describe("quick schedule draft", () => {
         );
 
         for (const next of [dateChanged, timeChanged]) {
-            expect(next.route).toBeUndefined();
-            expect(next.travelMinutes).toBeUndefined();
-            expect(next.departAt).toBeUndefined();
-            expect(next.notificationLeadMinutes).toBeUndefined();
-            expect(next.badges.notification).toBe("경로 다시 확인");
+            expect(next.route).toBeDefined();
+            expect(next.travelMinutes).toBe(30);
+            expect(next.departAt).toBeDefined();
+            expect(next.notificationLeadMinutes).toBe(30);
+            expect(next.badges.notification).toBeUndefined();
+            expect(isQuickScheduleRouteReady(next)).toBe(true);
+
+            const nextRouteInfo = (next.route as { routeInfo: RouteInfo }).routeInfo;
+            const nextArrivalAt = quickScheduleDateFromDraftTime(next.date, next.time);
+            expect(nextRouteInfo.arrivalTime).toBe(nextArrivalAt.toISOString());
+            expect(nextRouteInfo.departureTime).toBe(next.departAt);
+            expect(nextRouteInfo.timeBasis).toBe("estimated");
+
+            const payload = buildQuickSchedulePayload(next, category);
+            expect(payload.travelMode).toBe("TRANSIT");
+            expect(payload.travelMinutes).toBe(30);
+            expect(payload.route).toEqual(next.route);
         }
+    });
+
+    test("유효하지 않은 일정 시각으로 바꾸면 과거 경로를 저장하지 않는다", () => {
+        const next = updateQuickSchedulePreviewDraft(completeDraft(), "time", "24:00");
+
+        expect(next.route).toBeUndefined();
+        expect(next.travelMinutes).toBeUndefined();
+        expect(next.departAt).toBeUndefined();
+        expect(next.notificationLeadMinutes).toBeUndefined();
+        expect(next.badges.notification).toBe("경로 다시 확인");
     });
 
     test("목적지를 비우면 장소 경고를 복원하고 기존 경로를 지운다", () => {

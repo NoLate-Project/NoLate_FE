@@ -57,12 +57,12 @@ import {
     getTransitStopAccessLink,
     getTransitWalkAccessLink,
     filterTransitConnectorRequestsForSuccessfulWalks,
-    joinTerminalWalkPathEndpoint,
     joinWalkPathEndpoint,
     resolveTransitWalkRequestEndpoints,
     resolveTransitRouteNodeCoordinate,
     resolveTransitStopAccessCoordinate,
     splitWalkPathAtDiscontinuities,
+    stitchTransitWalkPathToAnchors,
     TRANSIT_CONNECTOR_POLICY as CONNECTOR_POLICY,
 } from "../../src/modules/map/transitRouteGeometry";
 import { getStationTransferDisplayPath } from "../../src/modules/map/stationTransferGeometry";
@@ -108,6 +108,8 @@ import {
     getFallbackRouteStrokePresentation,
     getTransitNativeDirectionOpacity,
     getTransitRouteLinePresentation,
+    getTransitWalkGuidePresentation,
+    shouldRenderTransitStopAccessLinks,
     TRANSIT_ROUTE_ZOOM_STYLE,
     TRANSIT_WALK_DASH_PATTERN,
 } from "../../src/modules/map/transitRoutePresentation";
@@ -145,6 +147,11 @@ import {
 } from "../../src/modules/schedule/routeAlternativeRanking";
 import RouteStepTimeline from "../../src/modules/schedule/components/route/RouteStepTimeline";
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
+import {
+    getRouteDetailSummarySurface,
+    getTransitDetailScrollViewportHeight,
+    getTransitDetailSummaryPalette,
+} from "../../src/modules/schedule/transitDetailPresentation";
 import {
     buildTransitRouteProgressSegments,
     TRANSIT_PROGRESS_NEUTRAL_COLOR,
@@ -224,6 +231,7 @@ const TRANSIT_LEG_COLOR: Record<TransitLegDetail["kind"], string> = {
 };
 const BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT = 30;
 const BOTTOM_SHEET_HANDLE_PEEK_HEIGHT = BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT;
+const TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT = 26;
 const BOTTOM_SHEET_EDGE_RESISTANCE = 0.28;
 const BOTTOM_SHEET_EDGE_OVERSHOOT = 30;
 const TRANSIT_DETAIL_ACTION_BAR_MIN_HEIGHT = 72;
@@ -262,7 +270,6 @@ const ROUTE_LINE_STYLE = {
         width: TRANSIT_ROUTE_ZOOM_STYLE.walkWidth,
         opacity: 0.94,
         dashPattern: [...TRANSIT_WALK_DASH_PATTERN],
-        casingRatio: TRANSIT_ROUTE_ZOOM_STYLE.walkCasingRatio,
         casing: true,
         arrows: false,
         zIndex: 30,
@@ -278,7 +285,6 @@ const ROUTE_LINE_STYLE = {
     },
     transit: {
         mainWidth: TRANSIT_ROUTE_ZOOM_STYLE.rideWidth,
-        casingRatio: TRANSIT_ROUTE_ZOOM_STYLE.rideCasingRatio,
         opacity: 1,
         casingColor: "#FFFFFF",
         casingOpacity: 0.92,
@@ -508,7 +514,8 @@ function getTransitMainWidth(zoom: number): number {
 }
 
 function getTransitCasingExtraWidth(zoom: number): number {
-    return getTransitMainWidth(zoom) * (ROUTE_LINE_STYLE.transit.casingRatio - 1);
+    const line = getTransitRouteLinePresentation(zoom);
+    return line.rideCasingWidth - line.rideWidth;
 }
 
 function getTransitCasingWidth(zoom: number): number {
@@ -519,9 +526,10 @@ function getWalkWidth(zoom: number): number {
     return getTransitRouteLinePresentation(zoom).walkWidth;
 }
 
-// 점선 본선과 casing 비율을 고정해 줌 중간 단계에서도 캡슐 비율이 변하지 않게 한다.
+// 줌 LOD가 바뀌어도 casing은 고정된 화면 폭만 추가해 과도하게 부풀지 않게 한다.
 function getWalkOutlineWidth(zoom: number): number {
-    return getWalkWidth(zoom) * (ROUTE_LINE_STYLE.walk.casingRatio - 1) / 2;
+    const line = getTransitRouteLinePresentation(zoom);
+    return (line.walkCasingWidth - line.walkWidth) / 2;
 }
 
 function getWalkCasingWidth(zoom: number): number {
@@ -580,7 +588,7 @@ function getSegmentStyle(segment: RouteSegment, zoom: number, selected: boolean)
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(zoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                zIndex: ROUTE_LINE_STYLE.walk.zIndex + segment.sequence,
+                zIndex: ROUTE_LINE_STYLE.walk.zIndex + Math.min(segment.sequence, 9) * 0.1,
             };
         case "TRANSFER":
             return {
@@ -591,7 +599,7 @@ function getSegmentStyle(segment: RouteSegment, zoom: number, selected: boolean)
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(zoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                zIndex: ROUTE_LINE_STYLE.transfer.zIndex + segment.sequence,
+                zIndex: ROUTE_LINE_STYLE.transfer.zIndex + Math.min(segment.sequence, 9) * 0.1,
             };
         case "BUS":
             return {
@@ -601,7 +609,7 @@ function getSegmentStyle(segment: RouteSegment, zoom: number, selected: boolean)
                 outlineColor: ROUTE_LINE_STYLE.transit.casingColor,
                 outlineWidth: (getTransitCasingWidth(zoom) - getTransitMainWidth(zoom)) / 2,
                 outlineOpacity: ROUTE_LINE_STYLE.transit.casingOpacity,
-                zIndex: ROUTE_LINE_STYLE.transit.busZIndex + segment.sequence,
+                zIndex: ROUTE_LINE_STYLE.transit.busZIndex + Math.min(segment.sequence, 9) * 0.1,
             };
         case "SUBWAY":
             return {
@@ -611,7 +619,7 @@ function getSegmentStyle(segment: RouteSegment, zoom: number, selected: boolean)
                 outlineColor: ROUTE_LINE_STYLE.transit.casingColor,
                 outlineWidth: (getTransitCasingWidth(zoom) - getTransitMainWidth(zoom)) / 2,
                 outlineOpacity: ROUTE_LINE_STYLE.transit.casingOpacity,
-                zIndex: ROUTE_LINE_STYLE.transit.subwayZIndex + segment.sequence,
+                zIndex: ROUTE_LINE_STYLE.transit.subwayZIndex + Math.min(segment.sequence, 9) * 0.1,
             };
         case "ETC":
             return {
@@ -1969,6 +1977,20 @@ function getRideStopVisualCoord(
     return getRideStopDisplayCoord(legs, legIndex, position);
 }
 
+/**
+ * 승하차/환승 마커는 POI 접근 좌표가 아니라 실제로 렌더링되는 본선 anchor를 사용한다.
+ * 보행 API 요청은 기존 20m 접근 정책을 유지하고, 화면의 노선 노드만 최종 선형과 맞춘다.
+ */
+function getRideStopRouteMarkerCoord(
+    route: NormalizedRoute | undefined,
+    legIndex: number,
+    position: "BOARD" | "ALIGHT"
+): RoutePathCoord | undefined {
+    const segment = route?.segments.find((candidate) => candidate.sequence === legIndex);
+    const anchor = position === "BOARD" ? segment?.boardAnchor : segment?.alightAnchor;
+    return toRoutePathCoord(resolveTransitRouteNodeCoordinate(anchor));
+}
+
 function connectPathEndpoint(
     pathCoords: RoutePathCoord[],
     endpoint: RoutePathCoord | undefined,
@@ -1983,23 +2005,6 @@ function connectPathEndpoint(
             target: position === "start" ? pathCoords[0] : pathCoords[pathCoords.length - 1],
             endpoint,
             maxDirectConnectorMeters: TRANSIT_WALK_RIDE_CONNECTOR_MAX_METERS,
-        });
-    }
-    return result.pathCoords;
-}
-
-function connectTerminalPathEndpoint(
-    pathCoords: RoutePathCoord[],
-    endpoint: RoutePathCoord | undefined,
-    position: "start" | "end"
-): RoutePathCoord[] {
-    const result = joinTerminalWalkPathEndpoint(pathCoords, endpoint, position);
-    if (result.action === "rejected") {
-        warnRouteDebug("[route-walk-terminal] connector rejected", {
-            position,
-            distanceMeters: Number.isFinite(result.gapMeters) ? Math.round(result.gapMeters!) : undefined,
-            endpoint,
-            maxDirectConnectorMeters: TRANSIT_TERMINAL_CONNECTOR_MAX_METERS,
         });
     }
     return result.pathCoords;
@@ -2185,18 +2190,6 @@ function trimWalkApproachTail(
 
     if (trimIdx >= rawPath.length) return rawPath;
     return rawPath.slice(0, trimIdx);
-}
-
-function stitchWalkPathToAnchors(
-    pathCoords: RoutePathCoord[] | undefined,
-    from: RoutePathCoord | undefined,
-    to: RoutePathCoord | undefined
-): RoutePathCoord[] | undefined {
-    if (!Array.isArray(pathCoords) || pathCoords.length < 2) return pathCoords;
-    let stitchedPath = pathCoords.slice();
-    stitchedPath = connectPathEndpoint(stitchedPath, from, "start");
-    stitchedPath = connectPathEndpoint(stitchedPath, to, "end");
-    return stitchedPath;
 }
 
 function getTransitLegMidCoord(leg: TransitLegDetail): RoutePathCoord | undefined {
@@ -2751,6 +2744,9 @@ function RouteSegmentLayers(
     }
 
     const style = getSegmentStyle(segment, zoom, selected);
+    const walkGuide = isWalkTransferSegment(segment)
+        ? getTransitWalkGuidePresentation(zoom)
+        : undefined;
     return coordinateParts.map((coordinates, partIndex) => ({
         id: coordinateParts.length === 1 ? segment.id : `${segment.id}-part-${partIndex}`,
         coords: coordinates,
@@ -2760,9 +2756,9 @@ function RouteSegmentLayers(
         outlineColor: style.outlineColor ?? "rgba(0,0,0,0)",
         outlineWidth: style.outlineWidth ?? 0,
         outlineOpacity: style.outlineOpacity,
-        dashPattern: style.dashPattern,
-        strokeStyle: isWalkTransferSegment(segment) ? "dash" : "solid",
-        outlineStrokeStyle: "solid",
+        dashPattern: walkGuide ? [...walkGuide.dashPattern] : style.dashPattern,
+        strokeStyle: walkGuide?.strokeStyle ?? "solid",
+        outlineStrokeStyle: walkGuide?.outlineStrokeStyle ?? "solid",
         renderMode: "native",
         // 본선과 방향표를 하나의 TMAP Polyline으로 그려 줌 중에도 같은 좌표계에서 움직이게 한다.
         nativeDirection: shouldRenderNativeTransitDirection(segment, zoom),
@@ -2782,7 +2778,8 @@ function buildTransitStopAccessLinkOverlays(
     route: NormalizedRoute | undefined,
     zoom: number
 ): TmapPathOverlay[] {
-    if (!route?.segments?.length || zoom < 14) return [];
+    if (!route?.segments?.length || !shouldRenderTransitStopAccessLinks(zoom)) return [];
+    const walkGuide = getTransitWalkGuidePresentation(zoom);
     const seen = new Set<string>();
     const overlays: TmapPathOverlay[] = route.segments.flatMap((segment, segmentIndex) => {
         if (!isTransitRideSegmentMode(segment.mode)) return [];
@@ -2809,11 +2806,11 @@ function buildTransitStopAccessLinkOverlays(
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(zoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                dashPattern: [...ROUTE_LINE_STYLE.transfer.dashPattern],
-                strokeStyle: "dash",
-                outlineStrokeStyle: "solid",
+                dashPattern: [...walkGuide.dashPattern],
+                strokeStyle: walkGuide.strokeStyle,
+                outlineStrokeStyle: walkGuide.outlineStrokeStyle,
                 renderMode: "native",
-                zIndex: 36 + segment.sequence,
+                zIndex: 34 + Math.min(segment.sequence, 9) * 0.1,
             } as TmapPathOverlay];
         });
     });
@@ -2862,11 +2859,11 @@ function buildTransitStopAccessLinkOverlays(
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(zoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                dashPattern: [...ROUTE_LINE_STYLE.transfer.dashPattern],
-                strokeStyle: "dash",
-                outlineStrokeStyle: "solid",
+                dashPattern: [...walkGuide.dashPattern],
+                strokeStyle: walkGuide.strokeStyle,
+                outlineStrokeStyle: walkGuide.outlineStrokeStyle,
                 renderMode: "native",
-                zIndex: 35 + segment.sequence,
+                zIndex: 33.5 + Math.min(segment.sequence, 9) * 0.1,
             });
         });
     });
@@ -3067,7 +3064,8 @@ function buildTransitEventMarkers(
     selectedAlternativeId: string | undefined,
     legs: TransitLegDetail[] | undefined,
     mapZoom: number,
-    _isDark: boolean
+    _isDark: boolean,
+    normalizedRoute?: NormalizedRoute
 ): TmapMarker[] {
     if (!Array.isArray(legs) || !legs.length) return [];
 
@@ -3080,11 +3078,13 @@ function buildTransitEventMarkers(
     let rideLegSeen = false;
 
     legs.forEach((leg, index) => {
-        const boardMarkerCoord = getRideStopVisualCoord(legs, index, "BOARD")
+        const boardMarkerCoord = getRideStopRouteMarkerCoord(normalizedRoute, index, "BOARD")
+            ?? getRideStopVisualCoord(legs, index, "BOARD")
             ?? getTransitLegBoardCoord(leg)
             ?? getTransitLegStartCoord(leg)
             ?? getTransitLegBoardAnchorOnPath(leg);
-        const alightMarkerCoord = getRideStopVisualCoord(legs, index, "ALIGHT")
+        const alightMarkerCoord = getRideStopRouteMarkerCoord(normalizedRoute, index, "ALIGHT")
+            ?? getRideStopVisualCoord(legs, index, "ALIGHT")
             ?? getTransitLegAlightCoord(leg)
             ?? getTransitLegEndCoord(leg)
             ?? getTransitLegAlightAnchorOnPath(leg);
@@ -3676,6 +3676,7 @@ function getPrimaryTransitLineLabel(legs?: TransitLegDetail[]): string {
 
 function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, mapZoom: number): TmapPathOverlay[] {
     if (!routeInfo) return [];
+    const walkGuide = getTransitWalkGuidePresentation(mapZoom);
     const movementSteps = routeInfo.steps.filter((step) => step.type !== "ORIGIN" && step.type !== "DESTINATION");
     const isWalkingOnlyRoute = movementSteps.length > 0 && movementSteps.every((step) => step.type === "WALK");
     const isBicycleOnlyRoute = movementSteps.length > 0 && movementSteps.every((step) => step.type === "BIKE");
@@ -3720,8 +3721,9 @@ function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, mapZoom: n
                 outlineOpacity: isBicycleOnlyRoute
                     ? ROUTE_LINE_STYLE.bike.casingOpacity
                     : ROUTE_WALK_CASING_OPACITY,
-                dashPattern: isBicycleOnlyRoute ? undefined : [...ROUTE_LINE_STYLE.walk.dashPattern],
-                strokeStyle: isBicycleOnlyRoute ? "solid" : "dash",
+                dashPattern: isBicycleOnlyRoute ? undefined : [...walkGuide.dashPattern],
+                strokeStyle: isBicycleOnlyRoute ? "solid" : walkGuide.strokeStyle,
+                outlineStrokeStyle: isBicycleOnlyRoute ? "solid" : walkGuide.outlineStrokeStyle,
                 renderMode: "native",
                 nativeDirection: isBicycleOnlyRoute && ROUTE_LINE_STYLE.bike.arrows,
                 nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
@@ -3787,8 +3789,9 @@ function buildRouteInfoPathOverlays(routeInfo: RouteInfo | undefined, mapZoom: n
                     : isBike
                         ? ROUTE_LINE_STYLE.bike.casingOpacity
                         : ROUTE_LINE_STYLE.transit.casingOpacity,
-            dashPattern: isWalk ? [...ROUTE_LINE_STYLE.walk.dashPattern] : undefined,
-            strokeStyle: isWalk ? "dash" : "solid",
+            dashPattern: isWalk ? [...walkGuide.dashPattern] : undefined,
+            strokeStyle: isWalk ? walkGuide.strokeStyle : "solid",
+            outlineStrokeStyle: isWalk ? walkGuide.outlineStrokeStyle : "solid",
             renderMode: "native",
             nativeDirection: rendersNativeDirection,
             nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
@@ -3810,11 +3813,12 @@ function buildRouteEndpointAccessOverlays(
     _isDark: boolean
 ): TmapPathOverlay[] {
     if (!accessPaths.length) return [];
+    const walkGuide = getTransitWalkGuidePresentation(mapZoom);
 
     return accessPaths.flatMap((accessPath, accessIndex) => {
         const displayCoords = toDisplayOverlayCoords(accessPath.pathCoords, "WALK");
         if (displayCoords.length < 2) return [];
-        const zIndex = 72 + accessIndex * 4;
+        const zIndex = 32 + accessIndex;
         const overlays: TmapPathOverlay[] = [
             {
                 id: `${accessPath.id}-support`,
@@ -3825,9 +3829,9 @@ function buildRouteEndpointAccessOverlays(
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(mapZoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                dashPattern: [...ROUTE_LINE_STYLE.walk.dashPattern],
-                strokeStyle: "dash",
-                outlineStrokeStyle: "solid",
+                dashPattern: [...walkGuide.dashPattern],
+                strokeStyle: walkGuide.strokeStyle,
+                outlineStrokeStyle: walkGuide.outlineStrokeStyle,
                 renderMode: "native",
                 zIndex,
             },
@@ -3845,9 +3849,9 @@ function buildRouteEndpointAccessOverlays(
                 outlineColor: ROUTE_WALK_CASING_COLOR,
                 outlineWidth: getWalkOutlineWidth(mapZoom),
                 outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                dashPattern: [...ROUTE_LINE_STYLE.transfer.dashPattern],
-                strokeStyle: "dash",
-                outlineStrokeStyle: "solid",
+                dashPattern: [...walkGuide.dashPattern],
+                strokeStyle: walkGuide.strokeStyle,
+                outlineStrokeStyle: walkGuide.outlineStrokeStyle,
                 renderMode: "native",
                 zIndex: zIndex - 1,
             });
@@ -4153,6 +4157,12 @@ export default function RoutePlannerScreen() {
     const detailPrimaryText = isDark ? "#F3F4F6" : colors.textPrimary;
     const detailSecondaryText = isDark ? "#B8B8B8" : colors.textSecondary;
     const detailBorderColor = isDark ? "#343434" : colors.border;
+    const transitDetailSummaryPalette = getTransitDetailSummaryPalette(isDark, colors);
+    const routeDetailSummarySurface = getRouteDetailSummarySurface(
+        isTransitDetailMode,
+        detailCardBg,
+        transitDetailSummaryPalette.borderColor
+    );
     const transitRouteChipBg = shouldRenderTransitDetailDark ? "rgba(18,18,18,0.94)" : "rgba(248,250,252,0.985)";
     const transitRouteChipText = shouldRenderTransitDetailDark ? "#D7D7DA" : "#334155";
     const transitActionBarBg = shouldRenderTransitDetailDark ? "#0B0C0F" : "#F8FAFC";
@@ -4241,9 +4251,10 @@ export default function RoutePlannerScreen() {
         )
         : bottomPanelMaxHeight;
     const bottomPanelScrollViewportHeight = isRouteDetailMode
-        ? Math.max(
-            0,
-            visibleBottomSheetHeight - BOTTOM_SHEET_HANDLE_TOUCH_HEIGHT - transitDetailActionBarReserveHeight - 28
+        ? getTransitDetailScrollViewportHeight(
+            visibleBottomSheetHeight,
+            transitDetailActionBarReserveHeight,
+            TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT
         )
         : undefined;
     const bottomPanelScrollBottomPadding = isRouteDetailMode
@@ -5191,12 +5202,14 @@ export default function RoutePlannerScreen() {
         const exactWalkLegOverlays = transitLegs.flatMap((leg, legIndex): TmapPathOverlay[] => {
             if (!walkLegHasPrecisePath(leg) || !Array.isArray(leg.pathCoords)) return [];
             let alignedPath = alignWalkPathToRideEndpoints(transitLegs, legIndex, leg.pathCoords);
-            if (legIndex === 0) {
-                alignedPath = connectTerminalPathEndpoint(alignedPath, originPoint, "start");
-            }
-            if (legIndex === transitLegs.length - 1) {
-                alignedPath = connectTerminalPathEndpoint(alignedPath, destinationPoint, "end");
-            }
+            const isFirstLeg = legIndex === 0;
+            const isLastLeg = legIndex === transitLegs.length - 1;
+            alignedPath = stitchTransitWalkPathToAnchors(
+                alignedPath,
+                isFirstLeg ? originPoint : undefined,
+                isLastLeg ? destinationPoint : undefined,
+                { terminalStart: isFirstLeg, terminalEnd: isLastLeg }
+            );
             const displayCoords = toDisplayOverlayCoords(alignedPath, "WALK");
             if (displayCoords.length < 2) return [];
             const baseId = `${selectedAlternative.id}-walk-leg-${legIndex}`;
@@ -5416,11 +5429,12 @@ export default function RoutePlannerScreen() {
                     walkPath = trimWalkApproachTail(rawWalkPath, request.to, ridePath) ?? rawWalkPath;
                 }
                 if (walkPath && !cancelled) {
-                    const stitchedWalkPath = stitchWalkPathToAnchors(
+                    const stitchedWalkPath = stitchTransitWalkPathToAnchors(
                         walkPath,
                         request.from,
-                        request.to
-                    ) ?? walkPath;
+                        request.to,
+                        { terminalStart: request.snapFrom, terminalEnd: request.snapTo }
+                    );
                     const displayCoords = toDisplayOverlayCoords(stitchedWalkPath, "WALK");
                     if (displayCoords.length < 2) continue;
                     successfulWalkRequestIds.add(request.id);
@@ -5481,11 +5495,12 @@ export default function RoutePlannerScreen() {
                             : [];
                         connectorPath = trimWalkApproachTail(rawConnectorPath, request.to, ridePath) ?? rawConnectorPath;
                     }
-                    const stitchedConnectorPath = stitchWalkPathToAnchors(
+                    const stitchedConnectorPath = stitchTransitWalkPathToAnchors(
                         connectorPath,
                         request.from,
-                        request.to
-                    ) ?? connectorPath;
+                        request.to,
+                        { terminalStart: request.snapFrom, terminalEnd: request.snapTo }
+                    );
                     const displayCoords = toDisplayOverlayCoords(stitchedConnectorPath, "WALK");
                     if (displayCoords.length < 2) continue;
                     overlays.push({
@@ -5614,6 +5629,7 @@ export default function RoutePlannerScreen() {
         if (isRouteQaBaseOnly) return [];
         if (!hasRouteReady) return [];
 
+        const transitWalkGuide = getTransitWalkGuidePresentation(mapZoom);
         const fallbackPathCoords: TmapLatLng[] = [];
         const selectedRoute = routeAlternatives.find((option) => option.id === selectedAlternativeId);
         const shouldUseTransitLegOverlays = (
@@ -5736,11 +5752,11 @@ export default function RoutePlannerScreen() {
                     outlineColor: ROUTE_WALK_CASING_COLOR,
                     outlineWidth: getWalkOutlineWidth(mapZoom),
                     outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                    dashPattern: [...ROUTE_LINE_STYLE.walk.dashPattern],
-                    strokeStyle: "dash",
-                    outlineStrokeStyle: "solid",
+                    dashPattern: [...transitWalkGuide.dashPattern],
+                    strokeStyle: transitWalkGuide.strokeStyle,
+                    outlineStrokeStyle: transitWalkGuide.outlineStrokeStyle,
                     renderMode: "native",
-                    zIndex: 108 + index,
+                    zIndex: 32 + Math.min(index, 9) * 0.1,
                 }));
             const anchorDebugOverlays = qaLayerMode === "ANCHOR_DEBUG"
                 ? buildAnchorDebugPathOverlays(selectedNormalizedRoute)
@@ -5792,7 +5808,7 @@ export default function RoutePlannerScreen() {
                         mapZoom >= TRANSIT_NATIVE_DIRECTION_MIN_ZOOM,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
                     nativeDirectionOpacity: getNativeDirectionOpacity(mapZoom),
-                    zIndex: 20 + index,
+                    zIndex: 40 + Math.min(index, 9) * 0.1,
                 } as TmapPathOverlay];
             })
             : [];
@@ -5822,9 +5838,9 @@ export default function RoutePlannerScreen() {
                     outlineColor: ROUTE_WALK_CASING_COLOR,
                     outlineWidth: getWalkOutlineWidth(mapZoom),
                     outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                    dashPattern: [...ROUTE_LINE_STYLE.walk.dashPattern],
-                    strokeStyle: "dash",
-                    outlineStrokeStyle: "solid",
+                    dashPattern: [...transitWalkGuide.dashPattern],
+                    strokeStyle: transitWalkGuide.strokeStyle,
+                    outlineStrokeStyle: transitWalkGuide.outlineStrokeStyle,
                 } as TmapPathOverlay];
             })
             : [];
@@ -5857,11 +5873,12 @@ export default function RoutePlannerScreen() {
                         outlineColor: ROUTE_WALK_CASING_COLOR,
                         outlineWidth: getWalkOutlineWidth(mapZoom),
                         outlineOpacity: ROUTE_WALK_CASING_OPACITY,
-                        dashPattern: [...ROUTE_LINE_STYLE.walk.dashPattern],
-                        strokeStyle: "dash",
-                        outlineStrokeStyle: "solid",
+                        dashPattern: [...transitWalkGuide.dashPattern],
+                        strokeStyle: transitWalkGuide.strokeStyle,
+                        outlineStrokeStyle: transitWalkGuide.outlineStrokeStyle,
                         renderMode: "native",
-                        zIndex: 110 + index,
+                        // 승차 본선(40+)이 환승 접합부를 덮어 점선이 본선을 자르지 않게 한다.
+                        zIndex: 30 + Math.min(index, 9) * 0.1,
                     } as TmapPathOverlay;
                 })
             : [];
@@ -5903,9 +5920,12 @@ export default function RoutePlannerScreen() {
                     outlineOpacity: focusedIsWalk ? ROUTE_WALK_CASING_OPACITY : undefined,
                     renderMode: "native",
                     dashPattern: focusedIsWalk
-                        ? [...ROUTE_LINE_STYLE.walk.dashPattern]
+                        ? [...transitWalkGuide.dashPattern]
                         : undefined,
-                    strokeStyle: focusedIsWalk ? "dash" : "solid",
+                    strokeStyle: focusedIsWalk ? transitWalkGuide.strokeStyle : "solid",
+                    outlineStrokeStyle: focusedIsWalk
+                        ? transitWalkGuide.outlineStrokeStyle
+                        : "solid",
                     // 포커스 강조선이 기본 본선을 덮어도 진행 방향이 사라지지 않게 유지한다.
                     nativeDirection: focusedIsRide &&
                         ENABLE_NATIVE_ROUTE_DIRECTION &&
@@ -5984,8 +6004,9 @@ export default function RoutePlannerScreen() {
                             : isDriveRoute
                                 ? ROUTE_LINE_STYLE.drive.casingOpacity
                                 : undefined,
-                    dashPattern: isWalkRoute ? [...ROUTE_LINE_STYLE.walk.dashPattern] : undefined,
-                    strokeStyle: isWalkRoute ? "dash" : "solid",
+                    dashPattern: isWalkRoute ? [...transitWalkGuide.dashPattern] : undefined,
+                    strokeStyle: isWalkRoute ? transitWalkGuide.strokeStyle : "solid",
+                    outlineStrokeStyle: isWalkRoute ? transitWalkGuide.outlineStrokeStyle : "solid",
                     renderMode: "native",
                     // 교통정보 구간이 있으면 하부 본선은 끊김만 메우고 화살표는 상부 구간에 한 번만 그린다.
                     nativeDirection: (
@@ -6054,8 +6075,9 @@ export default function RoutePlannerScreen() {
                         : isFallbackBike
                             ? ROUTE_LINE_STYLE.bike.casingOpacity
                             : ROUTE_LINE_STYLE.drive.casingOpacity,
-                    dashPattern: isFallbackWalk ? [...ROUTE_LINE_STYLE.walk.dashPattern] : undefined,
-                    strokeStyle: isFallbackWalk ? "dash" : "solid",
+                    dashPattern: isFallbackWalk ? [...transitWalkGuide.dashPattern] : undefined,
+                    strokeStyle: isFallbackWalk ? transitWalkGuide.strokeStyle : "solid",
+                    outlineStrokeStyle: isFallbackWalk ? transitWalkGuide.outlineStrokeStyle : "solid",
                     renderMode: "native",
                     nativeDirection: (isFallbackDrive || isFallbackBike) && ENABLE_NATIVE_ROUTE_DIRECTION,
                     nativeDirectionColor: ROUTE_LINE_STYLE.arrows.color,
@@ -6831,7 +6853,8 @@ export default function RoutePlannerScreen() {
                 selectedAlternative.id,
                 selectedAlternative.transitLegs,
                 mapZoom,
-                shouldRenderTransitDetailDark
+                shouldRenderTransitDetailDark,
+                selectedNormalizedRoute
             );
             markers.push(...transitEventMarkers.filter((marker) => (
                 !isRedundantEndpointTransitEvent(
@@ -9579,7 +9602,8 @@ export default function RoutePlannerScreen() {
                                                         !isTransitMode ? styles.selectedRouteDetailCard : null,
                                                         {
                                                             borderColor: isTransitMode ? "transparent" : colors.selectedDayBg,
-                                                            backgroundColor: detailCardBg,
+                                                            borderBottomColor: routeDetailSummarySurface.borderBottomColor,
+                                                            backgroundColor: routeDetailSummarySurface.backgroundColor,
                                                         },
                                                     ]}
                                                 >
@@ -9596,7 +9620,13 @@ export default function RoutePlannerScreen() {
                                                                     : formatRouteInfoDuration(selectedRouteInfo?.totalDurationMinutes ?? selectedAlternative.minutes)}
                                                             </Text>
                                                             {!!selectedTransitMeta?.combinedText && (
-                                                                <Text numberOfLines={1} style={styles.transitDetailHeroMetaText}>
+                                                                <Text
+                                                                    numberOfLines={1}
+                                                                    style={[
+                                                                        styles.transitDetailHeroMetaText,
+                                                                        { color: transitDetailSummaryPalette.metaTextColor },
+                                                                    ]}
+                                                                >
                                                                     {selectedTransitMeta.combinedText}
                                                                 </Text>
                                                             )}
@@ -11122,7 +11152,7 @@ const styles = StyleSheet.create({
         paddingBottom: 6,
     },
     bottomHandleTouchAreaDetail: {
-        height: 26,
+        height: TRANSIT_DETAIL_HANDLE_TOUCH_HEIGHT,
         paddingTop: 6,
         paddingBottom: 4,
     },
@@ -11335,7 +11365,6 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     transitDetailHeroMetaText: {
-        color: "#D4D7DD",
         fontSize: 14,
         fontWeight: "800",
         lineHeight: 19,

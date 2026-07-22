@@ -1,11 +1,12 @@
 import {
     createMapPickerSessionState,
     getMapPickedPlaceFallbackName,
+    resolveMapPickerCommit,
+    resolveMapPickerPostCommitTransition,
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
     selectMapPickerSessionCoordinate,
-    shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
 } from "../src/modules/schedule/routePointSelection";
 
@@ -13,14 +14,6 @@ describe("route point selection priority", () => {
     test("지도에서 새 좌표를 고르면 이전 장소명 대신 대상별 임시 이름을 쓴다", () => {
         expect(getMapPickedPlaceFallbackName("origin")).toBe("지도에서 선택한 출발지");
         expect(getMapPickedPlaceFallbackName("destination")).toBe("지도에서 선택한 도착지");
-    });
-
-    test("지도에서 새 위치를 탭하면 같은 대상의 이전 핀만 새 선택 핀으로 교체한다", () => {
-        expect(shouldShowExistingMapPickerMarker("destination", "destination", false)).toBe(true);
-        expect(shouldShowExistingMapPickerMarker("destination", "destination", true)).toBe(false);
-        expect(shouldShowExistingMapPickerMarker("origin", "destination", true)).toBe(true);
-        expect(shouldShowExistingMapPickerMarker("origin", "origin", true)).toBe(false);
-        expect(shouldShowExistingMapPickerMarker("destination", "origin", true)).toBe(true);
     });
 
     test("지도 선택 핀을 옮겨도 탐색 중인 카메라를 강제로 재중앙화하지 않는다", () => {
@@ -48,6 +41,94 @@ describe("route point selection priority", () => {
             pickedCoordinate: undefined,
             hasSelection: false,
         });
+    });
+
+    test("지도에서 고른 같은 좌표를 출발지 또는 도착지로 확정할 수 있다", () => {
+        const picked = { latitude: 37.5663, longitude: 126.9779 };
+        const session = selectMapPickerSessionCoordinate(
+            createMapPickerSessionState(picked),
+            picked
+        );
+
+        expect(resolveMapPickerCommit(session, "origin", false)).toEqual({
+            coordinate: picked,
+            target: "origin",
+        });
+        expect(resolveMapPickerCommit(session, "destination", false)).toEqual({
+            coordinate: picked,
+            target: "destination",
+        });
+    });
+
+    test("좌표가 없거나 주소를 확인 중이면 출발지와 도착지 모두 확정하지 않는다", () => {
+        const emptySession = createMapPickerSessionState({
+            latitude: 37.5663,
+            longitude: 126.9779,
+        });
+        const selectedSession = selectMapPickerSessionCoordinate(emptySession, {
+            latitude: 37.5658,
+            longitude: 126.9768,
+        });
+
+        expect(resolveMapPickerCommit(emptySession, "origin", false)).toBeNull();
+        expect(resolveMapPickerCommit(emptySession, "destination", false)).toBeNull();
+        expect(resolveMapPickerCommit(selectedSession, "origin", true)).toBeNull();
+        expect(resolveMapPickerCommit(selectedSession, "destination", true)).toBeNull();
+    });
+
+    test.each([
+        { selectedTarget: "origin" as const, nextTarget: "destination" as const },
+        { selectedTarget: "destination" as const, nextTarget: "origin" as const },
+    ])("첫 $selectedTarget 확정 뒤에는 지도에 남아 반대 지점을 새로 고른다", ({
+        selectedTarget,
+        nextTarget,
+    }) => {
+        const camera = { latitude: 37.5663, longitude: 126.9779 };
+        const picked = { latitude: 37.5658, longitude: 126.9768 };
+        const session = selectMapPickerSessionCoordinate(
+            createMapPickerSessionState(camera),
+            picked
+        );
+
+        const transition = resolveMapPickerPostCommitTransition(
+            session,
+            selectedTarget,
+            false,
+            false
+        );
+
+        expect(transition.nextTarget).toBe(nextTarget);
+        expect(transition.keepPickerOpen).toBe(true);
+        expect(transition.nextSession).toEqual({
+            cameraCoordinate: camera,
+            pickedCoordinate: undefined,
+            hasSelection: false,
+        });
+    });
+
+    test.each([
+        { selectedTarget: "destination" as const, originHadCoordinates: true, destinationHadCoordinates: false },
+        { selectedTarget: "origin" as const, originHadCoordinates: false, destinationHadCoordinates: true },
+        { selectedTarget: "origin" as const, originHadCoordinates: true, destinationHadCoordinates: true },
+        { selectedTarget: "destination" as const, originHadCoordinates: true, destinationHadCoordinates: true },
+    ])("두 지점이 완성되는 $selectedTarget 확정 뒤에는 지도를 닫는다", ({
+        selectedTarget,
+        originHadCoordinates,
+        destinationHadCoordinates,
+    }) => {
+        const existing = { latitude: 37.5663, longitude: 126.9779 };
+        const session = createMapPickerSessionState(existing, true);
+
+        const transition = resolveMapPickerPostCommitTransition(
+            session,
+            selectedTarget,
+            originHadCoordinates,
+            destinationHadCoordinates
+        );
+
+        expect(transition.nextTarget).toBeNull();
+        expect(transition.keepPickerOpen).toBe(false);
+        expect(transition.nextSession).toBe(session);
     });
 
     test("빠른 일정이 목적지 이름을 넘기면 목적지를 먼저 확정한다", () => {

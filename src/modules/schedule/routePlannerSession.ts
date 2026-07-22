@@ -34,6 +34,25 @@ type ScheduleRoutePlannerInitialInput = {
 
 export type ScheduleRouteUpdatePayload = Omit<ScheduleItem, "id" | "updatedAt">;
 
+export type RoutePlannerReturnObservation = {
+    hasVisitedRouteFlow: boolean;
+    shouldConsumeResult: boolean;
+};
+
+/** state 갱신이 navigation보다 먼저 끝나도 경로 화면을 실제로 다녀온 뒤에만 결과를 소비한다. */
+export function observeRoutePlannerReturn(
+    pathname: string,
+    hasVisitedRouteFlow: boolean
+): RoutePlannerReturnObservation {
+    if (pathname === "/schedule/route-select" || pathname === "/schedule/route-planner") {
+        return { hasVisitedRouteFlow: true, shouldConsumeResult: false };
+    }
+    if (!hasVisitedRouteFlow) {
+        return { hasVisitedRouteFlow: false, shouldConsumeResult: false };
+    }
+    return { hasVisitedRouteFlow: false, shouldConsumeResult: true };
+}
+
 function cleanOptionalText(value?: string | null): string | undefined {
     const normalized = value?.trim();
     return normalized || undefined;

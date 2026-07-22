@@ -2,7 +2,6 @@ import React, { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
-import CalendarGlassSurface from "../calendar/CalendarGlassSurface";
 import { useTheme } from "../../../theme/ThemeContext";
 import {
     buildPlainScheduleDetailPresentation,
@@ -172,11 +171,7 @@ export default function PlainScheduleDetailView({
             ]}
             showsVerticalScrollIndicator={false}
         >
-            <CalendarGlassSurface
-                prominent
-                variant="sheet"
-                style={[styles.sheet, { borderColor: colors.border }]}
-            >
+            <View testID="plain-schedule-detail-page" style={styles.pageContent}>
                 <View style={styles.headerRow}>
                     <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 정보</Text>
                 </View>
@@ -310,7 +305,7 @@ export default function PlainScheduleDetailView({
                         {presentation.notes ?? "등록된 메모 없음"}
                     </Text>
                 </View>
-            </CalendarGlassSurface>
+            </View>
         </ScrollView>
     );
 }
@@ -320,21 +315,22 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     content: {
-        paddingHorizontal: 18,
+        paddingHorizontal: 20,
     },
-    sheet: {
-        borderWidth: 1,
-        borderRadius: 30,
-        padding: 18,
+    pageContent: {
+        width: "100%",
+        maxWidth: 560,
+        alignSelf: "center",
     },
     headerRow: {
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        marginBottom: 20,
+        marginBottom: 24,
     },
     headerTitle: {
-        fontSize: 22,
+        fontSize: 26,
+        lineHeight: 34,
         fontWeight: "900",
     },
     label: {

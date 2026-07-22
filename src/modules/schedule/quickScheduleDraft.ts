@@ -1,5 +1,9 @@
 import { isRouteInfo, type RouteInfo } from "./routeInfo";
 import type { RoutePlannerPayload } from "./routePlannerSession";
+import {
+    hasPersistableScheduleRoute,
+    reconcileScheduleRouteTiming,
+} from "./scheduleRouteTiming";
 import type {
     Place,
     ScheduleCategory,
@@ -156,6 +160,12 @@ export function isQuickScheduleRouteReady(
         && hasValidCoordinates(destination)
         && !!routeInfo
         && routeInfo.totalDurationMinutes > 0
+        && hasPersistableScheduleRoute(
+            draft.route,
+            draft.travelMinutes,
+            draft.origin,
+            destination
+        )
         && hasValidRouteTimes(routeInfo);
 }
 
@@ -356,15 +366,36 @@ export function updateQuickSchedulePreviewDraft(
 
         const nextDate = field === "date" ? value : draft.date;
         const nextTime = field === "time" ? value : draft.time;
-        const routeReset = clearTimeDependentRoute(draft, nextBadges);
         const nextStartAt = isValidQuickScheduleDate(nextDate) && isValidQuickScheduleTime(nextTime)
             ? quickScheduleDateFromDraftTime(nextDate, nextTime).toISOString()
+            : undefined;
+        const previousStartAt = isValidQuickScheduleDate(draft.date)
+            && isValidQuickScheduleTime(draft.time)
+            ? quickScheduleDateFromDraftTime(draft.date, draft.time).toISOString()
+            : undefined;
+        const canRebaseRoute = !!nextStartAt
+            && !!previousStartAt
+            && isQuickScheduleRouteReady(draft);
+        const routeUpdate = canRebaseRoute
+            ? reconcileScheduleRouteTiming({
+                departAt: draft.departAt,
+                route: draft.route,
+                travelMinutes: draft.travelMinutes,
+                plannedArrivalAt: previousStartAt,
+                nextArrivalAt: nextStartAt,
+            })
+            : clearTimeDependentRoute(draft, nextBadges);
+        const nextNotificationLeadMinutes = canRebaseRoute
+            ? draft.notificationLeadMinutes
             : undefined;
 
         return {
             ...draft,
             [field]: value,
-            ...routeReset,
+            travelMinutes: canRebaseRoute ? draft.travelMinutes : undefined,
+            route: routeUpdate.route,
+            departAt: routeUpdate.departAt,
+            notificationLeadMinutes: nextNotificationLeadMinutes,
             badges: nextBadges,
             parsed: draft.parsed
                 ? {
@@ -377,10 +408,11 @@ export function updateQuickSchedulePreviewDraft(
                             new Date(nextStartAt).getTime() + draft.durationMinutes * 60_000
                         ).toISOString()
                         : undefined,
-                    travelMinutes: undefined,
-                    route: undefined,
-                    notificationEnabled: false,
-                    notificationLeadMinutes: undefined,
+                    travelMinutes: canRebaseRoute ? draft.travelMinutes : undefined,
+                    route: routeUpdate.route,
+                    notificationEnabled: canRebaseRoute
+                        && nextNotificationLeadMinutes !== undefined,
+                    notificationLeadMinutes: nextNotificationLeadMinutes,
                 }
                 : draft.parsed,
         };

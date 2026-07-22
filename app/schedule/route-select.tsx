@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+    AccessibilityInfo,
     Alert,
     Animated,
     BackHandler,
@@ -20,13 +21,16 @@ import {
 } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     createFavoritePlaceCategoryToApi,
+    deleteFavoritePlaceFromApi,
     getFavoritePlaceCategoriesFromApi,
+    getFavoritePlacesFromApi,
     saveFavoritePlaceToApi,
+    type FavoritePlace,
     type FavoritePlaceCategory,
 } from "../../src/api/favoritePlaces";
 import { getCurrentLocation, getCurrentLocationPermissionState } from "../../src/modules/map/currentLocation";
@@ -48,11 +52,28 @@ import {
     type RoutePlannerPayload,
 } from "../../src/modules/schedule/routePlannerSession";
 import {
+    clearFavoriteDeparturePlaces,
     getFavoriteDeparturePlace,
     getRecentRoutePlaces,
     removeRecentRoutePlace,
+    saveFavoriteDepartureFavorite,
+    saveFavoriteDeparturePlace,
     saveRecentRoutePlace,
 } from "../../src/modules/schedule/favoriteDeparture";
+import {
+    buildFavoritePlaceTabs,
+    DEFAULT_ADDRESS_FAVORITE_TAB_ID,
+    excludeFavoritePlacesFromRecents,
+    findMatchingFavoritePlace,
+    findMatchingFavoritePlaces,
+    getFavoritePlaceCategoryDisplayName,
+    getFavoritePlaceCategoryColor,
+    isReservedFavoritePlaceCategoryName,
+    mergeLoadedFavoritePlaces,
+    resolveManagedDefaultOriginSync,
+    selectFavoritePlacesByTab,
+    upsertFavoritePlace,
+} from "../../src/modules/schedule/favoritePlaceSelection";
 import { TRAVEL_MODE_META } from "../../src/modules/schedule/travelMode";
 import type { Place, TravelMode } from "../../src/modules/schedule/types";
 import {
@@ -61,11 +82,12 @@ import {
 } from "../../src/modules/schedule/scheduleRouteTiming";
 import {
     createMapPickerSessionState,
+    resolveMapPickerCommit,
+    resolveMapPickerPostCommitTransition,
     resolveDefaultOriginUiUpdate,
     resolveInitialRoutePointTarget,
     resolveNextMissingRoutePointTarget,
     selectMapPickerSessionCoordinate,
-    shouldShowExistingMapPickerMarker,
     shouldShowRoutePointSearchResults,
     type MapPickerSessionState,
     type RoutePointTarget,
@@ -86,8 +108,8 @@ import {
 } from "../../src/modules/schedule/routeAlternativeRanking";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import MapPickerTargetActions from "../../src/modules/schedule/components/route/MapPickerTargetActions";
 import RouteEndpointReselectCard from "../../src/modules/schedule/components/route/RouteEndpointReselectCard";
-import RoutePointTargetSelector from "../../src/modules/schedule/components/route/RoutePointTargetSelector";
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
@@ -358,9 +380,56 @@ function AnimatedRouteExpansion({ children, style }: AnimatedRouteExpansionProps
     );
 }
 
-function configureRouteExpansionAnimation() {
+function FavoriteFilterSelectionIndicator({
+    selected,
+    color,
+    reduceMotionEnabled,
+}: {
+    selected: boolean;
+    color: string;
+    reduceMotionEnabled: boolean;
+}) {
+    const progress = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+    useEffect(() => {
+        progress.stopAnimation();
+        if (reduceMotionEnabled) {
+            progress.setValue(selected ? 1 : 0);
+            return;
+        }
+        const animation = Animated.timing(progress, {
+            toValue: selected ? 1 : 0,
+            duration: 160,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [progress, reduceMotionEnabled, selected]);
+
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={[
+                styles.favoriteFilterIndicator,
+                {
+                    backgroundColor: color,
+                    opacity: progress,
+                    transform: [{
+                        scaleX: progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.35, 1],
+                        }),
+                    }],
+                },
+            ]}
+        />
+    );
+}
+
+function configureRouteExpansionAnimation(duration = 210) {
     LayoutAnimation.configureNext({
-        duration: 210,
+        duration,
         create: {
             type: LayoutAnimation.Types.easeInEaseOut,
             property: LayoutAnimation.Properties.opacity,
@@ -948,8 +1017,16 @@ export default function RouteSelectScreen() {
     const [isEditingRoutePoint, setIsEditingRoutePoint] = useState(Boolean(forcedEditTarget) || !initialHasRouteCoords);
     const [originUsesDefault, setOriginUsesDefault] = useState(false);
     const [recentPlaces, setRecentPlaces] = useState<Place[]>([]);
+    const [favoritePlaces, setFavoritePlaces] = useState<FavoritePlace[]>([]);
+    const [favoritePlacesLoaded, setFavoritePlacesLoaded] = useState(false);
+    const [favoritePlacesError, setFavoritePlacesError] = useState<string>();
+    const [favoriteReloadVersion, setFavoriteReloadVersion] = useState(0);
+    const [selectedFavoriteFilterId, setSelectedFavoriteFilterId] = useState<string>();
+    const [reduceFavoriteMotionEnabled, setReduceFavoriteMotionEnabled] = useState(false);
     const [favoriteSavingKey, setFavoriteSavingKey] = useState<string>();
+    const [defaultOriginSavingKey, setDefaultOriginSavingKey] = useState<string>();
     const [favoriteSheetPlace, setFavoriteSheetPlace] = useState<Place>();
+    const [saveFavoriteAsDefaultOrigin, setSaveFavoriteAsDefaultOrigin] = useState(false);
     const [favoriteCategories, setFavoriteCategories] = useState<FavoritePlaceCategory[]>([]);
     const [favoriteCategoryLoading, setFavoriteCategoryLoading] = useState(false);
     const [favoriteCategoryError, setFavoriteCategoryError] = useState<string>();
@@ -959,7 +1036,6 @@ export default function RouteSelectScreen() {
     const [newCategoryColor, setNewCategoryColor] = useState(FAVORITE_CATEGORY_COLORS[0]);
     const [creatingFavoriteCategory, setCreatingFavoriteCategory] = useState(false);
     const [mapPickerVisible, setMapPickerVisible] = useState(false);
-    const [mapPickerTarget, setMapPickerTarget] = useState<RoutePointTarget>("origin");
     const [mapPickerSession, setMapPickerSession] = useState<MapPickerSessionState>(
         createMapPickerSessionState
     );
@@ -981,6 +1057,8 @@ export default function RouteSelectScreen() {
     const [routeError, setRouteError] = useState<string | undefined>();
     const [routeRequestVersion, setRouteRequestVersion] = useState(0);
     const [routeSubmitPending, setRouteSubmitPending] = useState(false);
+    const favoritePanelEntrance = useRef(new Animated.Value(1)).current;
+    const favoritePanelDirectionRef = useRef<1 | -1>(1);
     const routeSubmitPendingRef = useRef(false);
     const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -989,6 +1067,10 @@ export default function RouteSelectScreen() {
     const mapPickerRequestIdRef = useRef(0);
     const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
     const recentPlacesLoadedRef = useRef(false);
+    const favoriteMutationRevisionRef = useRef(0);
+    const favoriteCategoryMutationRevisionRef = useRef(0);
+    const favoritePlaceLoadSerialRef = useRef(0);
+    const favoritePlaceLoadRequestRef = useRef<{ id: number; reloadVersion: number } | undefined>(undefined);
     const originTouchedRef = useRef(Boolean(initial?.origin));
     const routePointUiRevisionRef = useRef(0);
     const destinationHasCoordinatesRef = useRef(initialHasDestinationCoords);
@@ -1007,6 +1089,23 @@ export default function RouteSelectScreen() {
         if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
             UIManager.setLayoutAnimationEnabledExperimental(true);
         }
+    }, []);
+
+    useEffect(() => {
+        let active = true;
+        AccessibilityInfo.isReduceMotionEnabled?.()
+            .then((enabled) => {
+                if (active) setReduceFavoriteMotionEnabled(enabled);
+            })
+            .catch(() => undefined);
+        const subscription = AccessibilityInfo.addEventListener?.(
+            "reduceMotionChanged",
+            setReduceFavoriteMotionEnabled
+        );
+        return () => {
+            active = false;
+            subscription?.remove();
+        };
     }, []);
 
     const origin = useMemo(
@@ -1130,6 +1229,11 @@ export default function RouteSelectScreen() {
     const goToScheduleList = useCallback(() => {
         Keyboard.dismiss();
         router.replace("/schedule");
+    }, [router]);
+
+    const openPlaceSettings = useCallback(() => {
+        Keyboard.dismiss();
+        router.push("/settings/places");
     }, [router]);
 
     const clearSearch = useCallback(() => {
@@ -1310,6 +1414,165 @@ export default function RouteSelectScreen() {
             cancelled = true;
         };
     }, []);
+
+    useFocusEffect(useCallback(() => {
+        let cancelled = false;
+        const favoriteLoadRequest = {
+            id: favoritePlaceLoadSerialRef.current + 1,
+            reloadVersion: favoriteReloadVersion,
+        };
+        favoritePlaceLoadSerialRef.current = favoriteLoadRequest.id;
+        favoritePlaceLoadRequestRef.current = favoriteLoadRequest;
+        const favoriteRevision = favoriteMutationRevisionRef.current;
+        const categoryRevision = favoriteCategoryMutationRevisionRef.current;
+
+        setFavoritePlacesError(undefined);
+        getFavoritePlacesFromApi()
+            .then((favorites) => {
+                if (!cancelled && favoritePlaceLoadRequestRef.current === favoriteLoadRequest) {
+                    setFavoritePlaces((current) => (
+                        favoriteMutationRevisionRef.current === favoriteRevision
+                            ? favorites
+                            : mergeLoadedFavoritePlaces(current, favorites)
+                    ));
+                    setFavoritePlacesLoaded(true);
+                }
+            })
+            .catch(() => {
+                if (cancelled || favoritePlaceLoadRequestRef.current !== favoriteLoadRequest) return;
+                setFavoritePlacesError("즐겨찾기를 불러오지 못했습니다.");
+                setFavoritePlacesLoaded(true);
+            });
+
+        setFavoriteCategoryLoading(true);
+        setFavoriteCategoryError(undefined);
+        getFavoritePlaceCategoriesFromApi()
+            .then((categories) => {
+                if (cancelled) return;
+                if (favoriteCategoryMutationRevisionRef.current === categoryRevision) {
+                    setFavoriteCategories(categories);
+                }
+            })
+            .catch(() => {
+                if (!cancelled) setFavoriteCategoryError("카테고리를 불러오지 못했습니다.");
+            })
+            .finally(() => {
+                if (!cancelled) setFavoriteCategoryLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [favoriteReloadVersion]));
+
+    const favoritePlaceTabs = useMemo(
+        () => buildFavoritePlaceTabs(favoritePlaces, favoriteCategories),
+        [favoriteCategories, favoritePlaces]
+    );
+
+    const toggleFavoriteFilter = useCallback((tabId: string) => {
+        const nextId = selectedFavoriteFilterId === tabId ? undefined : tabId;
+        const currentIndex = favoritePlaceTabs.findIndex((tab) => tab.id === selectedFavoriteFilterId);
+        const nextIndex = favoritePlaceTabs.findIndex((tab) => tab.id === nextId);
+        favoritePanelDirectionRef.current = nextIndex >= 0 && currentIndex >= 0 && nextIndex < currentIndex
+            ? -1
+            : 1;
+        favoritePanelEntrance.stopAnimation();
+        favoritePanelEntrance.setValue(reduceFavoriteMotionEnabled ? 1 : 0);
+        if (!reduceFavoriteMotionEnabled) configureRouteExpansionAnimation(260);
+        setSelectedFavoriteFilterId(nextId);
+    }, [
+        favoritePanelEntrance,
+        favoritePlaceTabs,
+        reduceFavoriteMotionEnabled,
+        selectedFavoriteFilterId,
+    ]);
+
+    useEffect(() => {
+        if (reduceFavoriteMotionEnabled) {
+            favoritePanelEntrance.setValue(1);
+            return;
+        }
+        const animation = Animated.timing(favoritePanelEntrance, {
+            toValue: 1,
+            duration: 190,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [favoritePanelEntrance, reduceFavoriteMotionEnabled, selectedFavoriteFilterId]);
+
+    useEffect(() => {
+        if (
+            selectedFavoriteFilterId
+            && !favoritePlaceTabs.some((tab) => tab.id === selectedFavoriteFilterId)
+        ) {
+            setSelectedFavoriteFilterId(undefined);
+        }
+    }, [favoritePlaceTabs, selectedFavoriteFilterId]);
+
+    const loadedDefaultOrigin = useMemo(
+        () => favoritePlaces.find((favorite) => favorite.defaultOrigin),
+        [favoritePlaces]
+    );
+
+    useEffect(() => {
+        if (!favoritePlacesLoaded) return;
+
+        if (originUsesDefault) {
+            const managedDefaultSync = resolveManagedDefaultOriginSync(
+                origin,
+                originUsesDefault,
+                loadedDefaultOrigin
+            );
+            if (managedDefaultSync.kind === "clear-default-label") {
+                // 기본 주소 관리에서 변경/해제해도 현재 편집 중인 경로는 보존하되,
+                // 더 이상 기본 출발지로 잘못 표시하지 않는다.
+                setOriginUsesDefault(false);
+            } else if (managedDefaultSync.kind === "replace") {
+                setOriginText(getPlaceDisplayText(managedDefaultSync.place));
+                setOriginAddress(managedDefaultSync.place.address);
+                setOriginLat(managedDefaultSync.place.lat);
+                setOriginLng(managedDefaultSync.place.lng);
+            }
+            return;
+        }
+
+        if (
+            originTouchedRef.current
+            || forcedEditTarget === "origin"
+            || !placeHasCoords(loadedDefaultOrigin)
+        ) {
+            return;
+        }
+
+        const requestUiRevision = routePointUiRevisionRef.current;
+        setOriginText(getPlaceDisplayText(loadedDefaultOrigin));
+        setOriginAddress(loadedDefaultOrigin.address);
+        setOriginLat(loadedDefaultOrigin.lat);
+        setOriginLng(loadedDefaultOrigin.lng);
+        setOriginUsesDefault(true);
+
+        const uiUpdate = resolveDefaultOriginUiUpdate({
+            requestUiRevision,
+            currentUiRevision: routePointUiRevisionRef.current,
+            destinationHasCoordinates: destinationHasCoordinatesRef.current,
+            forcedTarget: forcedEditTarget,
+        });
+        if (uiUpdate) {
+            setActiveTarget(uiUpdate.activeTarget);
+            setIsEditingRoutePoint(uiUpdate.isEditingRoutePoint);
+            clearSearch();
+        }
+    }, [
+        clearSearch,
+        favoritePlacesLoaded,
+        forcedEditTarget,
+        loadedDefaultOrigin,
+        origin,
+        originUsesDefault,
+    ]);
 
     useEffect(() => {
         if (!isEditingRoutePoint || hasTypedSearchQuery) return;
@@ -1532,7 +1795,6 @@ export default function RouteSelectScreen() {
         const targetPlace = target === "origin" ? origin : destination;
         const targetHasCoordinates = placeHasCoords(targetPlace);
         const initialCoord = getMapPickerInitialCoord(target);
-        setMapPickerTarget(target);
         setMapPickerSession(createMapPickerSessionState(initialCoord, targetHasCoordinates));
         setMapPickerName(targetHasCoordinates ? targetPlace.name : undefined);
         setMapPickerAddress(targetHasCoordinates ? targetPlace.address : undefined);
@@ -1570,30 +1832,52 @@ export default function RouteSelectScreen() {
         }
     }, []);
 
-    const confirmMapPickerSelection = useCallback(() => {
-        if (!mapPickerCoord || !mapPickerHasSelection) {
+    const confirmMapPickerSelection = useCallback((target: RoutePointTarget) => {
+        const commit = resolveMapPickerCommit(mapPickerSession, target, mapPickerResolving);
+        if (!commit) {
+            if (mapPickerResolving) {
+                Alert.alert("주소 확인 중", "선택한 위치의 주소를 확인한 뒤 다시 시도해 주세요.");
+                return;
+            }
             Alert.alert("위치 선택 필요", "지도에서 위치를 선택해 주세요.");
             return;
         }
 
-        const label = mapPickerTarget === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
+        const label = target === "origin" ? "지도 선택 출발지" : "지도 선택 도착지";
         const place: Place = {
             name: mapPickerName || mapPickerAddress || label,
             address: mapPickerAddress,
-            lat: mapPickerCoord.latitude,
-            lng: mapPickerCoord.longitude,
+            lat: commit.coordinate.latitude,
+            lng: commit.coordinate.longitude,
         };
+        const transition = resolveMapPickerPostCommitTransition(
+            mapPickerSession,
+            commit.target,
+            typeof originLat === "number" && typeof originLng === "number",
+            typeof destinationLat === "number" && typeof destinationLng === "number"
+        );
 
+        mapPickerRequestIdRef.current += 1;
         rememberRecentPlace(place);
-        applyPlaceToTarget(mapPickerTarget, place);
+        applyPlaceToTarget(commit.target, place);
+        setMapPickerResolving(false);
+        if (transition.keepPickerOpen) {
+            setMapPickerSession(transition.nextSession);
+            setMapPickerName(undefined);
+            setMapPickerAddress(undefined);
+            return;
+        }
         setMapPickerVisible(false);
     }, [
         applyPlaceToTarget,
+        destinationLat,
+        destinationLng,
         mapPickerAddress,
-        mapPickerCoord,
-        mapPickerHasSelection,
         mapPickerName,
-        mapPickerTarget,
+        mapPickerResolving,
+        mapPickerSession,
+        originLat,
+        originLng,
         rememberRecentPlace,
     ]);
 
@@ -1618,6 +1902,7 @@ export default function RouteSelectScreen() {
 
         Keyboard.dismiss();
         setFavoriteSheetPlace(place);
+        setSaveFavoriteAsDefaultOrigin(false);
         setSelectedFavoriteCategoryId(undefined);
         setShowNewCategoryForm(false);
         setNewCategoryName("");
@@ -1628,6 +1913,7 @@ export default function RouteSelectScreen() {
     const closeFavoriteSaveSheet = useCallback(() => {
         if (favoriteSavingKey || creatingFavoriteCategory) return;
         setFavoriteSheetPlace(undefined);
+        setSaveFavoriteAsDefaultOrigin(false);
         setFavoriteCategoryError(undefined);
         setShowNewCategoryForm(false);
         setNewCategoryName("");
@@ -1639,10 +1925,15 @@ export default function RouteSelectScreen() {
             Alert.alert("카테고리 추가", "카테고리 이름을 입력해 주세요.");
             return;
         }
+        if (isReservedFavoritePlaceCategoryName(categoryName)) {
+            Alert.alert("카테고리 추가", "기본주소와 미분류는 기본 제공 카테고리 이름입니다.");
+            return;
+        }
 
         setCreatingFavoriteCategory(true);
         try {
             const category = await createFavoritePlaceCategoryToApi(categoryName, newCategoryColor);
+            favoriteCategoryMutationRevisionRef.current += 1;
             setFavoriteCategories((current) => {
                 const next = [
                     ...current.filter((item) => item.id !== category.id),
@@ -1650,6 +1941,7 @@ export default function RouteSelectScreen() {
                 ];
                 return next.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
             });
+            setSaveFavoriteAsDefaultOrigin(false);
             setSelectedFavoriteCategoryId(category.id);
             setShowNewCategoryForm(false);
             setNewCategoryName("");
@@ -1671,20 +1963,160 @@ export default function RouteSelectScreen() {
         const savingKey = getPlaceActionKey(place);
         setFavoriteSavingKey(savingKey);
         try {
-            await saveFavoritePlaceToApi(place, { categoryId });
+            const saved = await saveFavoritePlaceToApi(place, { categoryId });
+            favoriteMutationRevisionRef.current += 1;
+            setFavoritePlaces((current) => upsertFavoritePlace(current, saved));
+
+            if (saveFavoriteAsDefaultOrigin) {
+                try {
+                    const defaultOrigin = saved.id
+                        ? await saveFavoriteDepartureFavorite(saved)
+                        : await saveFavoriteDeparturePlace(saved);
+                    if (defaultOrigin) {
+                        favoriteMutationRevisionRef.current += 1;
+                        if (activeTarget !== "origin") {
+                            // 도착지 검색 중 기본주소를 바꾸더라도 현재 경로의 출발지는
+                            // 이번 편집 세션 동안 그대로 둔다.
+                            originTouchedRef.current = true;
+                            setOriginUsesDefault(false);
+                        }
+                        setFavoritePlaces((current) => upsertFavoritePlace(
+                            current.map((item) => ({ ...item, defaultOrigin: false })),
+                            { ...defaultOrigin, defaultOrigin: true }
+                        ));
+                        if (activeTarget === "origin") {
+                            applyPlaceToTarget("origin", defaultOrigin);
+                            setOriginUsesDefault(true);
+                        }
+                    }
+                } catch {
+                    setFavoriteSheetPlace(undefined);
+                    setSaveFavoriteAsDefaultOrigin(false);
+                    Alert.alert(
+                        "기본주소 저장 실패",
+                        "즐겨찾기는 저장했지만 기본주소는 설정하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                    );
+                    return;
+                }
+            }
+
             setFavoriteSheetPlace(undefined);
-            Alert.alert("즐겨찾기 저장", `${getPlaceDisplayText(place)}을(를) 저장했습니다.`);
+            setSaveFavoriteAsDefaultOrigin(false);
+            Alert.alert(
+                "즐겨찾기 저장",
+                saveFavoriteAsDefaultOrigin
+                    ? `${getPlaceDisplayText(place)}을(를) 즐겨찾기와 기본주소로 저장했습니다.`
+                    : `${getPlaceDisplayText(place)}을(를) 저장했습니다.`
+            );
         } catch {
             Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
         } finally {
             setFavoriteSavingKey((current) => current === savingKey ? undefined : current);
         }
-    }, []);
+    }, [activeTarget, applyPlaceToTarget, saveFavoriteAsDefaultOrigin]);
 
     const saveFavoriteSheetPlace = useCallback(() => {
         if (!favoriteSheetPlace) return;
         savePlaceAsFavorite(favoriteSheetPlace, selectedFavoriteCategoryId).catch(() => undefined);
     }, [favoriteSheetPlace, savePlaceAsFavorite, selectedFavoriteCategoryId]);
+
+    const removePlaceFromFavorites = useCallback((
+        favorite: FavoritePlace,
+        actionPlace: Place = favorite
+    ) => {
+        if (!favorite.id || favoriteSavingKey) return;
+
+        const removalTargetsById = new Map<string, FavoritePlace>();
+        [...findMatchingFavoritePlaces(actionPlace, favoritePlaces), favorite].forEach((target) => {
+            if (target.id) removalTargetsById.set(target.id, target);
+        });
+        const removalTargets = [...removalTargetsById.values()];
+        const removesDefaultOrigin = removalTargets.some((target) => target.defaultOrigin);
+
+        const executeRemoval = async () => {
+            const savingKey = getPlaceActionKey(actionPlace);
+            setFavoriteSavingKey(savingKey);
+            try {
+                const results = await Promise.allSettled(
+                    removalTargets.map((target) => deleteFavoritePlaceFromApi(target.id!))
+                );
+                const deletedTargets = removalTargets.filter((_, index) => results[index].status === "fulfilled");
+                if (deletedTargets.length === 0) {
+                    throw new Error("즐겨찾기를 삭제하지 못했습니다.");
+                }
+
+                if (deletedTargets.some((target) => target.defaultOrigin)) {
+                    // 삭제가 먼저 성공해야 요청 실패 시 기존 기본 출발지가 보존된다.
+                    // 서버에서는 삭제된 장소가 기본 출발지 조회에서 제외되므로 로컬 캐시를 우선 비운다.
+                    await clearFavoriteDeparturePlaces().catch(() => undefined);
+                    setOriginUsesDefault(false);
+                }
+
+                // 포커스 직후 시작된 오래된 GET이 삭제한 장소를 다시 목록에 넣지 못하게 한다.
+                favoritePlaceLoadRequestRef.current = undefined;
+                favoriteMutationRevisionRef.current += 1;
+                const deletedIds = new Set(deletedTargets.map((target) => target.id));
+                setFavoritePlaces((current) => current.filter((item) => !item.id || !deletedIds.has(item.id)));
+
+                if (deletedTargets.length !== removalTargets.length) {
+                    Alert.alert(
+                        "일부 즐겨찾기를 해제하지 못했어요",
+                        "중복 저장된 항목 일부가 남았습니다. 잠시 후 다시 시도해 주세요."
+                    );
+                }
+            } catch {
+                Alert.alert("즐겨찾기 해제 실패", "잠시 후 다시 시도해 주세요.");
+            } finally {
+                setFavoriteSavingKey((current) => current === savingKey ? undefined : current);
+            }
+        };
+
+        if (removesDefaultOrigin) {
+            Alert.alert(
+                "기본 출발지 즐겨찾기를 해제할까요?",
+                "즐겨찾기에서 삭제하면 기본 출발지도 함께 해제됩니다. 현재 입력한 출발지는 그대로 유지됩니다.",
+                [
+                    { text: "취소", style: "cancel" },
+                    {
+                        text: "해제",
+                        style: "destructive",
+                        onPress: () => {
+                            executeRemoval().catch(() => undefined);
+                        },
+                    },
+                ]
+            );
+            return;
+        }
+
+        executeRemoval().catch(() => undefined);
+    }, [favoritePlaces, favoriteSavingKey]);
+
+    const setFavoriteAsDefaultOrigin = useCallback(async (place: FavoritePlace) => {
+        const savingKey = getPlaceActionKey(place);
+        setDefaultOriginSavingKey(savingKey);
+        try {
+            if (!place.id) throw new Error("즐겨찾기 ID가 없습니다.");
+            const saved = await saveFavoriteDepartureFavorite(place);
+            if (!saved) throw new Error("기본 출발지 저장 결과가 없습니다.");
+
+            favoriteMutationRevisionRef.current += 1;
+            setFavoritePlaces((current) => upsertFavoritePlace(
+                current.map((item) => ({ ...item, defaultOrigin: false })),
+                { ...saved, defaultOrigin: true }
+            ));
+            applyPlaceToTarget("origin", saved);
+            setOriginUsesDefault(true);
+            Alert.alert(
+                "기본 출발지 설정",
+                `${getPlaceDisplayText(saved)}을(를) 기본 출발지로 설정했습니다.`
+            );
+        } catch {
+            Alert.alert("기본 출발지 설정 실패", "잠시 후 다시 시도해 주세요.");
+        } finally {
+            setDefaultOriginSavingKey((current) => current === savingKey ? undefined : current);
+        }
+    }, [applyPlaceToTarget]);
 
     const swapPlaces = useCallback(() => {
         currentLocationRequestGuardRef.current.invalidate();
@@ -1953,6 +2385,34 @@ export default function RouteSelectScreen() {
         clearSearch();
     }, [clearSearch]);
 
+    const visibleFavoritePlaces = useMemo(
+        () => selectFavoritePlacesByTab(
+            favoritePlaces,
+            selectedFavoriteFilterId,
+            favoriteCategories
+        ),
+        [favoriteCategories, favoritePlaces, selectedFavoriteFilterId]
+    );
+    const visibleRecentPlaces = useMemo(
+        () => excludeFavoritePlacesFromRecents(recentPlaces, favoritePlaces),
+        [favoritePlaces, recentPlaces]
+    );
+    const favoritePanelAnimatedStyle = {
+        opacity: favoritePanelEntrance,
+        transform: [{
+            translateX: favoritePanelEntrance.interpolate({
+                inputRange: [0, 1],
+                outputRange: [favoritePanelDirectionRef.current * 10, 0],
+            }),
+        }, {
+            translateY: favoritePanelEntrance.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-6, 0],
+            }),
+        }],
+    };
+    const hasConfiguredDefaultOrigin = placeHasCoords(loadedDefaultOrigin);
+
     const routeUi = isDark
         ? {
             background: "#0F1117",
@@ -2044,7 +2504,7 @@ export default function RouteSelectScreen() {
                                 즐겨찾기 저장
                             </Text>
                             <Text style={[styles.favoriteSheetSubtitle, { color: routeUi.textSecondary }]}>
-                                카테고리를 선택하거나 새로 추가하세요
+                                저장할 카테고리를 선택하세요
                             </Text>
                         </View>
                         <Pressable
@@ -2092,38 +2552,88 @@ export default function RouteSelectScreen() {
                     </View>
                     <View style={styles.favoriteCategoryWrap}>
                         <Pressable
-                            onPress={() => setSelectedFavoriteCategoryId(undefined)}
+                            onPress={() => {
+                                setSaveFavoriteAsDefaultOrigin(true);
+                                setSelectedFavoriteCategoryId(undefined);
+                            }}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
                             accessibilityRole="button"
-                            accessibilityLabel="카테고리 없음"
-                            accessibilityState={{ selected: !selectedFavoriteCategoryId }}
+                            accessibilityLabel="기본주소 카테고리"
+                            accessibilityHint="이 장소를 다음 경로부터 사용할 기본주소로 저장합니다"
+                            accessibilityState={{ selected: saveFavoriteAsDefaultOrigin }}
                             style={[
                                 styles.favoriteCategoryChip,
                                 {
-                                    backgroundColor: selectedFavoriteCategoryId ? routeUi.surface2 : routeUi.accentBlue,
-                                    borderColor: selectedFavoriteCategoryId ? routeUi.border : routeUi.accentBlue,
+                                    backgroundColor: saveFavoriteAsDefaultOrigin ? routeUi.accentBlue : routeUi.surface2,
+                                    borderColor: saveFavoriteAsDefaultOrigin ? routeUi.accentBlue : routeUi.border,
+                                },
+                            ]}
+                        >
+                            <Ionicons
+                                name={saveFavoriteAsDefaultOrigin ? "home" : "home-outline"}
+                                size={15}
+                                color={saveFavoriteAsDefaultOrigin ? modeSelectedText : routeUi.accentBlue}
+                            />
+                            <Text
+                                style={[
+                                    styles.favoriteCategoryChipText,
+                                    { color: saveFavoriteAsDefaultOrigin ? modeSelectedText : routeUi.textPrimary },
+                                ]}
+                            >
+                                기본주소
+                            </Text>
+                        </Pressable>
+                        <Pressable
+                            onPress={() => {
+                                setSaveFavoriteAsDefaultOrigin(false);
+                                setSelectedFavoriteCategoryId(undefined);
+                            }}
+                            disabled={favoriteSheetSaving || creatingFavoriteCategory}
+                            accessibilityRole="button"
+                            accessibilityLabel="미분류 카테고리"
+                            accessibilityState={{
+                                selected: !saveFavoriteAsDefaultOrigin && !selectedFavoriteCategoryId,
+                            }}
+                            style={[
+                                styles.favoriteCategoryChip,
+                                {
+                                    backgroundColor: !saveFavoriteAsDefaultOrigin && !selectedFavoriteCategoryId
+                                        ? routeUi.accentBlue
+                                        : routeUi.surface2,
+                                    borderColor: !saveFavoriteAsDefaultOrigin && !selectedFavoriteCategoryId
+                                        ? routeUi.accentBlue
+                                        : routeUi.border,
                                 },
                             ]}
                         >
                             <Text
                                 style={[
                                     styles.favoriteCategoryChipText,
-                                    { color: selectedFavoriteCategoryId ? routeUi.textSecondary : modeSelectedText },
+                                    {
+                                        color: !saveFavoriteAsDefaultOrigin && !selectedFavoriteCategoryId
+                                            ? modeSelectedText
+                                            : routeUi.textSecondary,
+                                    },
                                 ]}
                             >
-                                카테고리 없음
+                                미분류
                             </Text>
                         </Pressable>
                         {favoriteCategories.map((category) => {
-                            const selected = selectedFavoriteCategoryId === category.id;
+                            const selected = !saveFavoriteAsDefaultOrigin
+                                && selectedFavoriteCategoryId === category.id;
                             const categoryColor = category.color || routeUi.accentBlue;
+                            const categoryDisplayName = getFavoritePlaceCategoryDisplayName(category.name);
                             return (
                                 <Pressable
                                     key={category.id ?? `${category.name}:${categoryColor}`}
-                                    onPress={() => setSelectedFavoriteCategoryId(category.id)}
+                                    onPress={() => {
+                                        setSaveFavoriteAsDefaultOrigin(false);
+                                        setSelectedFavoriteCategoryId(category.id);
+                                    }}
                                     disabled={!category.id || favoriteSheetSaving || creatingFavoriteCategory}
                                     accessibilityRole="button"
-                                    accessibilityLabel={`${category.name} 카테고리`}
+                                    accessibilityLabel={`${categoryDisplayName} 카테고리`}
                                     accessibilityState={{
                                         selected,
                                         disabled: !category.id || favoriteSheetSaving || creatingFavoriteCategory,
@@ -2150,7 +2660,7 @@ export default function RouteSelectScreen() {
                                             { color: selected ? modeSelectedText : routeUi.textPrimary },
                                         ]}
                                     >
-                                        {category.name}
+                                        {categoryDisplayName}
                                     </Text>
                                 </Pressable>
                             );
@@ -2279,29 +2789,25 @@ export default function RouteSelectScreen() {
     };
     const mapPickerMarkers = useMemo<TmapMarker[]>(() => {
         const markers: TmapMarker[] = [];
-        if (
-            placeHasCoords(origin) &&
-            shouldShowExistingMapPickerMarker("origin", mapPickerTarget, mapPickerHasSelection)
-        ) {
+        if (placeHasCoords(origin)) {
             markers.push({
                 id: "map-picker-origin",
                 latitude: origin.lat,
                 longitude: origin.lng,
                 markerStyle: "origin",
+                tintColor: routeUi.accentGreen,
                 pinLabel: "출",
                 caption: "출발지",
                 zIndex: 20,
             });
         }
-        if (
-            placeHasCoords(destination) &&
-            shouldShowExistingMapPickerMarker("destination", mapPickerTarget, mapPickerHasSelection)
-        ) {
+        if (placeHasCoords(destination)) {
             markers.push({
                 id: "map-picker-destination",
                 latitude: destination.lat,
                 longitude: destination.lng,
                 markerStyle: "destination",
+                tintColor: routeUi.accentRed,
                 pinLabel: "도",
                 caption: "도착지",
                 zIndex: 20,
@@ -2312,15 +2818,36 @@ export default function RouteSelectScreen() {
                 id: "map-picker-selected",
                 latitude: mapPickerCoord.latitude,
                 longitude: mapPickerCoord.longitude,
-                markerStyle: mapPickerTarget === "origin" ? "origin" : "destination",
-                pinLabel: mapPickerTarget === "origin" ? "출" : "도",
-                caption: mapPickerTarget === "origin" ? "선택한 출발지" : "선택한 도착지",
+                markerStyle: "default",
+                tintColor: routeUi.accentBlue,
+                pinLabel: "선택",
+                caption: "선택한 위치",
                 zIndex: 40,
             });
         }
         return markers;
-    }, [destination, mapPickerCoord, mapPickerHasSelection, mapPickerTarget, origin]);
-    const mapPickerTitle = mapPickerTarget === "origin" ? "출발지 지도 선택" : "도착지 지도 선택";
+    }, [
+        destination,
+        mapPickerCoord,
+        mapPickerHasSelection,
+        origin,
+        routeUi.accentBlue,
+        routeUi.accentGreen,
+        routeUi.accentRed,
+    ]);
+    const mapPickerTitle = "지도에서 위치 선택";
+    const mapPickerOriginMissing = !placeHasCoords(origin);
+    const mapPickerDestinationMissing = !placeHasCoords(destination);
+    const mapPickerMissingTarget = mapPickerOriginMissing === mapPickerDestinationMissing
+        ? undefined
+        : mapPickerOriginMissing
+            ? "출발지"
+            : "도착지";
+    const mapPickerInstruction = mapPickerHasSelection
+        ? "이 위치를 어디로 설정할까요?"
+        : mapPickerMissingTarget
+            ? `${mapPickerMissingTarget}로 사용할 위치를 지도에서 탭하세요`
+            : "지도에서 사용할 위치를 탭하세요";
     const mapPickerSelectionLabel = !mapPickerHasSelection
         ? "아직 선택한 위치가 없습니다"
         : mapPickerName ?? mapPickerAddress ?? (mapPickerCoord
@@ -2372,7 +2899,7 @@ export default function RouteSelectScreen() {
                     ]}
                 >
                     <Text style={[styles.mapPickerInstruction, { color: routeUi.textPrimary }]}>
-                        지도에서 사용할 위치를 탭하세요
+                        {mapPickerInstruction}
                     </Text>
                     <View style={styles.mapPickerAddressRow}>
                         {mapPickerResolving ? (
@@ -2384,36 +2911,26 @@ export default function RouteSelectScreen() {
                         ) : (
                             <Ionicons name="location" size={17} color={routeUi.accentBlue} />
                         )}
-                        <Text numberOfLines={2} style={[styles.mapPickerAddressText, { color: routeUi.textSecondary }]}>
+                        <Text
+                            numberOfLines={2}
+                            accessibilityLiveRegion="polite"
+                            style={[styles.mapPickerAddressText, { color: routeUi.textSecondary }]}
+                        >
                             {mapPickerSelectionLabel}
                         </Text>
                     </View>
-                    <View style={styles.mapPickerActionRow}>
-                        <Pressable
-                            onPress={closeMapPicker}
-                            accessibilityRole="button"
-                            accessibilityLabel="지도 선택 취소"
-                            style={[styles.mapPickerSecondaryButton, { backgroundColor: routeUi.surface2, borderColor: routeUi.border }]}
-                        >
-                            <Text style={[styles.mapPickerSecondaryText, { color: routeUi.textPrimary }]}>취소</Text>
-                        </Pressable>
-                        <Pressable
-                            onPress={confirmMapPickerSelection}
-                            disabled={!mapPickerCoord || !mapPickerHasSelection || mapPickerResolving}
-                            accessibilityRole="button"
-                            accessibilityLabel="선택한 위치 사용"
-                            accessibilityState={{ disabled: !mapPickerCoord || !mapPickerHasSelection || mapPickerResolving }}
-                            style={[
-                                styles.mapPickerPrimaryButton,
-                                {
-                                    backgroundColor: routeUi.accentBlue,
-                                    opacity: !mapPickerCoord || !mapPickerHasSelection || mapPickerResolving ? 0.5 : 1,
-                                },
-                            ]}
-                        >
-                            <Text style={styles.mapPickerPrimaryText}>이 위치 사용</Text>
-                        </Pressable>
-                    </View>
+                    <MapPickerTargetActions
+                        disabled={!mapPickerCoord || !mapPickerHasSelection || mapPickerResolving}
+                        onConfirm={confirmMapPickerSelection}
+                        colors={{
+                            surface2: routeUi.surface2,
+                            border: routeUi.border,
+                            textPrimary: routeUi.textPrimary,
+                            textDisabled: routeUi.textDisabled,
+                            accentGreen: routeUi.accentGreen,
+                            accentRed: routeUi.accentRed,
+                        }}
+                    />
                 </CalendarGlassSurface>
             </View>
         </Modal>
@@ -2435,13 +2952,28 @@ export default function RouteSelectScreen() {
                         <Text style={[styles.searchModeBackText, { color: routeUi.textPrimary }]}>‹</Text>
                     </Pressable>
                     <View style={[styles.searchModeSearchBox, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
+                        <View style={styles.searchModeTargetContext} accessible={false}>
+                            <View
+                                style={[
+                                    styles.searchModeTargetDot,
+                                    {
+                                        borderColor: activeTarget === "origin"
+                                            ? routeUi.accentGreen
+                                            : routeUi.accentRed,
+                                    },
+                                ]}
+                            />
+                            <Text style={[styles.searchModeTargetText, { color: routeUi.textSecondary }]}>
+                                {activeTargetLabel}
+                            </Text>
+                        </View>
                         <TextInput
                             autoFocus
                             value={activeSearchText}
                             onChangeText={(text) => handleSearchChange(activeTarget, text)}
                             accessibilityLabel={`${activeTargetLabel} 검색`}
                             accessibilityHint="장소 이름이나 주소를 입력하세요"
-                            placeholder={`${activeTargetLabel}를 입력하세요`}
+                            placeholder="장소명 또는 주소를 검색하세요"
                             placeholderTextColor={routeUi.inputPlaceholder}
                             selectionColor={routeUi.accentBlue}
                             returnKeyType="search"
@@ -2471,23 +3003,6 @@ export default function RouteSelectScreen() {
                     </Pressable>
                 </View>
 
-                <RoutePointTargetSelector
-                    activeTarget={activeTarget}
-                    originText={originText}
-                    destinationText={destinationText}
-                    onSelectTarget={openRoutePointEditor}
-                    colors={{
-                        surface: routeUi.surface,
-                        surface2: routeUi.surface2,
-                        border: routeUi.border,
-                        textPrimary: routeUi.textPrimary,
-                        textSecondary: routeUi.textSecondary,
-                        accentBlue: routeUi.accentBlue,
-                        accentGreen: routeUi.accentGreen,
-                        accentRed: routeUi.accentRed,
-                    }}
-                />
-
                 {originUsesDefault && activeTarget === "destination" && (
                     <Pressable
                         onPress={editDefaultOrigin}
@@ -2506,6 +3021,30 @@ export default function RouteSelectScreen() {
                             </Text>
                         </View>
                         <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>변경</Text>
+                    </Pressable>
+                )}
+
+                {activeTarget === "origin" && favoritePlacesLoaded && !favoritePlacesError && !hasConfiguredDefaultOrigin && (
+                    <Pressable
+                        onPress={openPlaceSettings}
+                        accessibilityRole="button"
+                        accessibilityLabel="기본 출발지 설정"
+                        accessibilityHint="내 장소 관리 화면에서 기본 출발지를 설정합니다"
+                        style={[
+                            styles.defaultOriginSetupBar,
+                            { backgroundColor: routeUi.selectedModeBg, borderColor: routeUi.selectedBorder },
+                        ]}
+                    >
+                        <View style={[styles.defaultOriginSetupIcon, { backgroundColor: routeUi.surface }]}>
+                            <Ionicons name="home-outline" size={19} color={routeUi.accentBlue} />
+                        </View>
+                        <View style={styles.defaultOriginCopy}>
+                            <Text style={[styles.defaultOriginSetupTitle, { color: routeUi.textPrimary }]}>기본 출발지가 없어요</Text>
+                            <Text numberOfLines={2} style={[styles.defaultOriginSetupDescription, { color: routeUi.textSecondary }]}>
+                                자주 출발하는 장소를 설정하면 다음부터 자동으로 입력돼요
+                            </Text>
+                        </View>
+                        <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>설정</Text>
                     </Pressable>
                 )}
 
@@ -2535,7 +3074,7 @@ export default function RouteSelectScreen() {
                     <Pressable
                         onPress={openMapForPointSelection}
                         accessibilityRole="button"
-                        accessibilityLabel={`${activeTargetLabel}를 지도에서 선택`}
+                        accessibilityLabel="지도에서 출발지 또는 도착지 선택"
                         style={[styles.searchModeActionButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}
                     >
                         <Ionicons name="map-outline" size={23} color={routeUi.textSecondary} />
@@ -2592,6 +3131,7 @@ export default function RouteSelectScreen() {
                                 const resultIcon = resolvePlaceListIcon({ ...resultPlace, category: item.category });
                                 const savingKey = getPlaceActionKey(resultPlace);
                                 const isSaving = favoriteSavingKey === savingKey;
+                                const savedFavorite = findMatchingFavoritePlace(resultPlace, favoritePlaces);
 
                                 return (
                                     <View
@@ -2625,10 +3165,15 @@ export default function RouteSelectScreen() {
                                             </View>
                                         </Pressable>
                                         <Pressable
-                                            onPress={() => openFavoriteSaveSheet(resultPlace)}
+                                            onPress={() => savedFavorite
+                                                ? removePlaceFromFavorites(savedFavorite, resultPlace)
+                                                : openFavoriteSaveSheet(resultPlace)}
                                             disabled={Boolean(favoriteSavingKey)}
                                             accessibilityRole="button"
-                                            accessibilityLabel={`${item.name} 즐겨찾기에 저장`}
+                                            accessibilityLabel={savedFavorite
+                                                ? `${item.name} 즐겨찾기 해제`
+                                                : `${item.name} 즐겨찾기에 저장`}
+                                            accessibilityState={{ disabled: Boolean(favoriteSavingKey) }}
                                             style={styles.searchModeFavoriteButton}
                                         >
                                             {isSaving ? (
@@ -2638,7 +3183,11 @@ export default function RouteSelectScreen() {
                                                     accessibilityLabel="즐겨찾기를 저장하고 있어요"
                                                 />
                                             ) : (
-                                                <Ionicons name="star-outline" size={21} color={routeUi.textSecondary} />
+                                                <Ionicons
+                                                    name={savedFavorite ? "star" : "star-outline"}
+                                                    size={21}
+                                                    color={savedFavorite ? routeUi.accentBlue : routeUi.textSecondary}
+                                                />
                                             )}
                                         </Pressable>
                                     </View>
@@ -2648,10 +3197,268 @@ export default function RouteSelectScreen() {
                     ) : (
                         <View style={styles.searchModePanel}>
                             <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
+                                <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>즐겨찾기</Text>
+                                <Pressable
+                                    onPress={openPlaceSettings}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="내 장소 관리"
+                                    style={styles.favoriteManageButton}
+                                >
+                                    <Ionicons name="options-outline" size={15} color={routeUi.accentBlue} />
+                                    <Text style={[styles.searchModeEditText, { color: routeUi.accentBlue }]}>관리</Text>
+                                </Pressable>
+                            </View>
+                            {!!favoritePlacesError && (
+                                <View style={styles.searchModeEmptyRow}>
+                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
+                                        {favoritePlacesError}
+                                    </Text>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="즐겨찾기 다시 불러오기"
+                                        onPress={() => setFavoriteReloadVersion((current) => current + 1)}
+                                        style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
+                                    >
+                                        <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                                        <Text style={styles.emptyRetryText}>다시 시도</Text>
+                                    </Pressable>
+                                </View>
+                            )}
+                            <ScrollView
+                                horizontal
+                                directionalLockEnabled
+                                keyboardShouldPersistTaps="handled"
+                                showsHorizontalScrollIndicator={false}
+                                style={styles.favoriteFilterScroll}
+                                contentContainerStyle={styles.favoriteFilterContent}
+                            >
+                                {favoritePlaceTabs.map((tab) => {
+                                    const selected = selectedFavoriteFilterId === tab.id;
+                                    const tabColor = tab.kind === "default-address"
+                                        ? routeUi.accentBlue
+                                        : tab.color ?? routeUi.textSecondary;
+                                    return (
+                                    <Pressable
+                                        key={tab.id}
+                                        onPress={() => toggleFavoriteFilter(tab.id)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`${tab.name} 즐겨찾기`}
+                                        accessibilityHint={selected
+                                            ? "다시 누르면 장소 목록을 접습니다"
+                                            : "누르면 장소 목록을 펼칩니다"}
+                                        accessibilityState={{ selected, expanded: selected }}
+                                        style={[
+                                            styles.favoriteFilterChip,
+                                            {
+                                                backgroundColor: selected
+                                                    ? routeUi.selectedModeBg
+                                                    : routeUi.surface2,
+                                                borderColor: selected ? tabColor : routeUi.border,
+                                            },
+                                        ]}
+                                    >
+                                        {tab.kind === "default-address" ? (
+                                            <Ionicons
+                                                name={selected ? "home" : "home-outline"}
+                                                size={14}
+                                                color={selected ? routeUi.accentBlue : routeUi.textSecondary}
+                                            />
+                                        ) : (
+                                            <View style={[styles.favoriteCategoryDot, { backgroundColor: tabColor }]} />
+                                        )}
+                                        <Text style={[
+                                            styles.favoriteFilterChipText,
+                                            {
+                                                color: selected
+                                                    ? (tab.kind === "default-address"
+                                                        ? routeUi.accentBlue
+                                                        : routeUi.textPrimary)
+                                                    : routeUi.textSecondary,
+                                            },
+                                        ]}>
+                                            {tab.name}
+                                        </Text>
+                                        <FavoriteFilterSelectionIndicator
+                                            selected={selected}
+                                            color={tabColor}
+                                            reduceMotionEnabled={reduceFavoriteMotionEnabled}
+                                        />
+                                    </Pressable>
+                                    );
+                                })}
+                            </ScrollView>
+                            <Animated.View style={[styles.favoritePanelClip, favoritePanelAnimatedStyle]}>
+                            {visibleFavoritePlaces.map((place, index) => {
+                                const favoriteIcon = place.defaultOrigin ? "home-outline" : resolvePlaceListIcon(place);
+                                const isDefaultSaving = defaultOriginSavingKey === getPlaceActionKey(place);
+                                const isFavoriteSaving = favoriteSavingKey === getPlaceActionKey(place);
+                                const categoryColor = place.defaultOrigin
+                                    ? undefined
+                                    : getFavoritePlaceCategoryColor(place, favoriteCategories);
+                                const categoryName = place.defaultOrigin || !place.categoryName
+                                    ? undefined
+                                    : getFavoritePlaceCategoryDisplayName(place.categoryName);
+                                return (
+                                    <View
+                                        key={place.id ?? `${place.lat ?? "x"}:${place.lng ?? "x"}:${index}`}
+                                        style={[
+                                            styles.searchModeRecentRow,
+                                            { borderColor: routeUi.border, backgroundColor: routeUi.surface },
+                                        ]}
+                                    >
+                                        <Pressable
+                                            onPress={() => applyRecentPlaceToActiveTarget(place)}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={`${getPlaceDisplayText(place)}, 즐겨찾기 장소 선택`}
+                                            style={styles.searchModeRecentMain}
+                                        >
+                                            <View
+                                                style={[
+                                                    styles.searchModeListIcon,
+                                                    styles.favoriteListIcon,
+                                                    {
+                                                        backgroundColor: routeUi.surface2,
+                                                        borderColor: categoryColor ?? "transparent",
+                                                    },
+                                                ]}
+                                            >
+                                                <Ionicons
+                                                    name={favoriteIcon}
+                                                    size={18}
+                                                    color={place.defaultOrigin ? routeUi.accentBlue : routeUi.textSecondary}
+                                                />
+                                            </View>
+                                            <View style={styles.searchModeResultTextWrap}>
+                                                <View style={styles.favoriteTitleRow}>
+                                                    <Text
+                                                        numberOfLines={1}
+                                                        style={[styles.recentPlaceTitle, styles.favoriteTitle, { color: routeUi.textPrimary }]}
+                                                    >
+                                                        {getPlaceDisplayText(place)}
+                                                    </Text>
+                                                    {place.defaultOrigin && (
+                                                        <View style={[styles.defaultOriginBadge, { backgroundColor: routeUi.selectedModeBg }]}>
+                                                            <Text style={[styles.defaultOriginBadgeText, { color: routeUi.accentBlue }]}>기본</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                                {!!(categoryName || place.address) && (
+                                                    <View style={styles.favoriteMetaRow}>
+                                                        {!!categoryColor && (
+                                                            <View style={[styles.favoriteCategoryDot, { backgroundColor: categoryColor }]} />
+                                                        )}
+                                                        <Text
+                                                            numberOfLines={1}
+                                                            style={[styles.recentPlaceAddress, styles.favoriteMetaText, { color: routeUi.textSecondary }]}
+                                                        >
+                                                            {[categoryName, place.address].filter(Boolean).join(" · ")}
+                                                        </Text>
+                                                    </View>
+                                                )}
+                                            </View>
+                                        </Pressable>
+                                        <View style={styles.favoriteRowActions}>
+                                            {place.defaultOrigin ? (
+                                                <View
+                                                    accessibilityRole="image"
+                                                    accessibilityLabel={`${getPlaceDisplayText(place)} 기본 출발지`}
+                                                    style={styles.searchModeFavoriteButton}
+                                                >
+                                                    <Ionicons name="home" size={20} color={routeUi.accentBlue} />
+                                                </View>
+                                            ) : activeTarget === "origin" ? (
+                                                <Pressable
+                                                    onPress={() => setFavoriteAsDefaultOrigin(place)}
+                                                    disabled={Boolean(defaultOriginSavingKey) || Boolean(favoriteSavingKey)}
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={`${getPlaceDisplayText(place)} 기본 출발지로 설정`}
+                                                    accessibilityState={{
+                                                        disabled: Boolean(defaultOriginSavingKey) || Boolean(favoriteSavingKey),
+                                                    }}
+                                                    style={styles.searchModeFavoriteButton}
+                                                >
+                                                    {isDefaultSaving ? (
+                                                        <BrandedLoader
+                                                            size="button"
+                                                            variant="route"
+                                                            accessibilityLabel="기본 출발지를 저장하고 있어요"
+                                                        />
+                                                    ) : (
+                                                        <Ionicons name="home-outline" size={20} color={routeUi.textSecondary} />
+                                                    )}
+                                                </Pressable>
+                                            ) : null}
+                                            <Pressable
+                                                onPress={() => removePlaceFromFavorites(place)}
+                                                disabled={Boolean(favoriteSavingKey) || Boolean(defaultOriginSavingKey)}
+                                                accessibilityRole="button"
+                                                accessibilityLabel={`${getPlaceDisplayText(place)} 즐겨찾기 해제`}
+                                                accessibilityState={{
+                                                    disabled: Boolean(favoriteSavingKey) || Boolean(defaultOriginSavingKey),
+                                                }}
+                                                style={styles.searchModeFavoriteButton}
+                                            >
+                                                {isFavoriteSaving ? (
+                                                    <BrandedLoader
+                                                        size="button"
+                                                        variant="route"
+                                                        accessibilityLabel="즐겨찾기를 해제하고 있어요"
+                                                    />
+                                                ) : (
+                                                    <Ionicons name="star" size={21} color={routeUi.accentBlue} />
+                                                )}
+                                            </Pressable>
+                                        </View>
+                                    </View>
+                                );
+                            })}
+                            {selectedFavoriteFilterId === DEFAULT_ADDRESS_FAVORITE_TAB_ID
+                                && favoritePlacesLoaded
+                                && !favoritePlacesError
+                                && !hasConfiguredDefaultOrigin && (
+                                <Pressable
+                                    onPress={openPlaceSettings}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="기본주소 설정"
+                                    accessibilityHint="내 장소 관리 화면에서 기본주소를 설정합니다"
+                                    style={[
+                                        styles.defaultOriginSetupBar,
+                                        { backgroundColor: routeUi.selectedModeBg, borderColor: routeUi.selectedBorder },
+                                    ]}
+                                >
+                                    <View style={[styles.defaultOriginSetupIcon, { backgroundColor: routeUi.surface }]}>
+                                        <Ionicons name="home-outline" size={19} color={routeUi.accentBlue} />
+                                    </View>
+                                    <View style={styles.defaultOriginCopy}>
+                                        <Text style={[styles.defaultOriginSetupTitle, { color: routeUi.textPrimary }]}>기본주소가 없어요</Text>
+                                        <Text numberOfLines={2} style={[styles.defaultOriginSetupDescription, { color: routeUi.textSecondary }]}>
+                                            자주 출발하는 장소를 기본주소로 설정해 보세요
+                                        </Text>
+                                    </View>
+                                    <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>설정</Text>
+                                </Pressable>
+                            )}
+                            {!!selectedFavoriteFilterId
+                                && visibleFavoritePlaces.length === 0
+                                && !favoritePlacesError
+                                && (
+                                    selectedFavoriteFilterId !== DEFAULT_ADDRESS_FAVORITE_TAB_ID
+                                    || !favoritePlacesLoaded
+                                ) && (
+                                <View style={styles.favoriteEmptyRow}>
+                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
+                                        {!favoritePlacesLoaded
+                                            ? "즐겨찾기를 불러오는 중입니다."
+                                            : "이 장소 그룹에 저장된 즐겨찾기가 없습니다."}
+                                    </Text>
+                                </View>
+                            )}
+                            </Animated.View>
+                            <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
                                 <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>최근검색</Text>
                             </View>
-                            {recentPlaces.length > 0 ? (
-                                recentPlaces.map((place, index) => {
+                            {visibleRecentPlaces.length > 0 ? (
+                                visibleRecentPlaces.map((place, index) => {
                                     const recentIcon = resolvePlaceListIcon(place);
                                     const savingKey = getPlaceActionKey(place);
                                     const isSaving = favoriteSavingKey === savingKey;
@@ -2689,6 +3496,7 @@ export default function RouteSelectScreen() {
                                                 disabled={Boolean(favoriteSavingKey)}
                                                 accessibilityRole="button"
                                                 accessibilityLabel={`${getPlaceDisplayText(place)} 즐겨찾기에 저장`}
+                                                accessibilityState={{ disabled: Boolean(favoriteSavingKey) }}
                                                 style={styles.searchModeFavoriteButton}
                                             >
                                                 {isSaving ? (
@@ -2698,7 +3506,11 @@ export default function RouteSelectScreen() {
                                                         accessibilityLabel="즐겨찾기를 저장하고 있어요"
                                                     />
                                                 ) : (
-                                                    <Ionicons name="star-outline" size={21} color={routeUi.textSecondary} />
+                                                    <Ionicons
+                                                        name="star-outline"
+                                                        size={21}
+                                                        color={routeUi.textSecondary}
+                                                    />
                                                 )}
                                             </Pressable>
                                             <Pressable
@@ -2715,7 +3527,9 @@ export default function RouteSelectScreen() {
                             ) : (
                                 <View style={styles.searchModeEmptyRow}>
                                     <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
-                                        최근 검색 내역이 없습니다.
+                                        {recentPlaces.length > 0
+                                            ? "즐겨찾기에 저장된 장소를 제외한 최근 검색이 없습니다."
+                                            : "최근 검색 내역이 없습니다."}
                                     </Text>
                                 </View>
                             )}
@@ -3431,6 +4245,23 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         letterSpacing: 0,
     },
+    searchModeTargetContext: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        marginRight: 8,
+    },
+    searchModeTargetDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+        borderWidth: 2,
+    },
+    searchModeTargetText: {
+        fontSize: 11,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
     searchModeClearButton: {
         width: 24,
         height: 24,
@@ -3473,6 +4304,35 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "800",
         letterSpacing: 0,
+    },
+    defaultOriginSetupBar: {
+        minHeight: 70,
+        marginHorizontal: 16,
+        marginTop: 2,
+        marginBottom: 4,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    defaultOriginSetupIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 999,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    defaultOriginSetupTitle: {
+        fontSize: 13,
+        fontWeight: "900",
+    },
+    defaultOriginSetupDescription: {
+        fontSize: 11,
+        fontWeight: "600",
+        lineHeight: 16,
     },
     searchModeActionRow: {
         minHeight: 86,
@@ -3521,6 +4381,93 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "800",
     },
+    favoriteManageButton: {
+        minHeight: 34,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        paddingHorizontal: 4,
+    },
+    favoriteFilterScroll: {
+        marginBottom: 8,
+    },
+    favoriteFilterContent: {
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingBottom: 2,
+    },
+    favoriteFilterChip: {
+        position: "relative",
+        minHeight: 34,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 999,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        paddingHorizontal: 13,
+        paddingVertical: 7,
+        overflow: "hidden",
+    },
+    favoriteFilterChipText: {
+        fontSize: 12,
+        fontWeight: "800",
+    },
+    favoriteFilterIndicator: {
+        position: "absolute",
+        left: 12,
+        right: 12,
+        bottom: 1,
+        height: 2,
+        borderRadius: 999,
+    },
+    favoritePanelClip: {
+        overflow: "hidden",
+    },
+    favoriteCategoryDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 999,
+    },
+    favoriteTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    favoriteTitle: {
+        flex: 1,
+        minWidth: 0,
+    },
+    defaultOriginBadge: {
+        borderRadius: 999,
+        paddingHorizontal: 7,
+        paddingVertical: 2,
+    },
+    defaultOriginBadgeText: {
+        fontSize: 10,
+        fontWeight: "900",
+    },
+    favoriteMetaRow: {
+        marginTop: 3,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    favoriteMetaText: {
+        flex: 1,
+        minWidth: 0,
+        marginTop: 0,
+    },
+    favoriteRowActions: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    favoriteEmptyRow: {
+        minHeight: 58,
+        justifyContent: "center",
+        paddingHorizontal: 22,
+        paddingBottom: 4,
+    },
     searchModeResultRow: {
         minHeight: 68,
         flexDirection: "row",
@@ -3567,6 +4514,9 @@ const styles = StyleSheet.create({
         borderRadius: 999,
         alignItems: "center",
         justifyContent: "center",
+    },
+    favoriteListIcon: {
+        borderWidth: StyleSheet.hairlineWidth,
     },
     searchModeResultTextWrap: {
         flex: 1,
@@ -4507,37 +5457,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         fontWeight: "700",
         lineHeight: 18,
-        letterSpacing: 0,
-    },
-    mapPickerActionRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-    },
-    mapPickerSecondaryButton: {
-        flex: 1,
-        minHeight: 48,
-        borderRadius: 14,
-        borderWidth: 1,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    mapPickerSecondaryText: {
-        fontSize: 15,
-        fontWeight: "900",
-        letterSpacing: 0,
-    },
-    mapPickerPrimaryButton: {
-        flex: 1.25,
-        minHeight: 48,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    mapPickerPrimaryText: {
-        color: "#FFFFFF",
-        fontSize: 15,
-        fontWeight: "900",
         letterSpacing: 0,
     },
 });

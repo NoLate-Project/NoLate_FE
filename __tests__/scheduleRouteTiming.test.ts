@@ -1,4 +1,6 @@
 import {
+    hasPersistableScheduleRoute,
+    reconcileScheduleRouteTiming,
     resolveScheduleRouteDepartureContext,
     resolveSelectedRouteTiming,
 } from "../src/modules/schedule/scheduleRouteTiming";
@@ -139,5 +141,83 @@ describe("selected route save timing", () => {
 
         expect(result.departureAt.toISOString()).toBe("2026-07-20T04:00:00.000Z");
         expect(result.arrivalAt.toISOString()).toBe(targetArrivalAt);
+    });
+});
+
+describe("schedule edit route timing reconciliation", () => {
+    const routeInfo = {
+        id: "transit-1",
+        originName: "출발지",
+        destinationName: "도착지",
+        totalDurationMinutes: 31,
+        departureTime: "2026-07-20T10:06:00.000Z",
+        arrivalTime: "2026-07-20T10:37:00.000Z",
+        timeBasis: "provider_schedule" as const,
+        steps: [{
+            id: "drive-1",
+            type: "DRIVE" as const,
+            title: "차량 이동",
+            coordinates: [
+                { latitude: 37.56, longitude: 126.97 },
+                { latitude: 37.5, longitude: 127.03 },
+            ],
+        }],
+    };
+    const route = {
+        id: "transit-1",
+        mode: "TRANSIT" as const,
+        minutes: 31,
+        source: "api" as const,
+        providerDepartureAt: routeInfo.departureTime,
+        providerArrivalAt: routeInfo.arrivalTime,
+        pathCoords: [
+            { lat: 37.56, lng: 126.97 },
+            { lat: 37.5, lng: 127.03 },
+        ],
+        routeInfo,
+    };
+
+    test("이동수단 기본값만 있거나 경로만 비어 있으면 저장 가능한 경로가 아니다", () => {
+        expect(hasPersistableScheduleRoute(undefined, undefined)).toBe(false);
+        expect(hasPersistableScheduleRoute(undefined, 23)).toBe(false);
+        expect(hasPersistableScheduleRoute({ id: "car-1" }, undefined)).toBe(false);
+        expect(hasPersistableScheduleRoute({ routeInfo: { ...routeInfo, steps: [] } }, 31))
+            .toBe(false);
+        expect(hasPersistableScheduleRoute(route, 31)).toBe(true);
+        expect(hasPersistableScheduleRoute({ routeInfo }, undefined)).toBe(true);
+    });
+
+    test("일정 시작 시각이 그대로면 선택한 공급자 시간표를 보존한다", () => {
+        const result = reconcileScheduleRouteTiming({
+            departAt: routeInfo.departureTime,
+            route,
+            travelMinutes: 31,
+            plannedArrivalAt: "2026-07-20T11:00:00.000Z",
+            nextArrivalAt: "2026-07-20T11:00:00.000Z",
+        });
+
+        expect(result.departAt).toBe(routeInfo.departureTime);
+        expect(result.route).toBe(route);
+    });
+
+    test("경로 선택 후 시작 시각을 바꾸면 출발 알림과 routeInfo를 함께 맞춘다", () => {
+        const result = reconcileScheduleRouteTiming({
+            departAt: routeInfo.departureTime,
+            route,
+            travelMinutes: 31,
+            plannedArrivalAt: "2026-07-20T11:00:00.000Z",
+            nextArrivalAt: "2026-07-20T12:30:00.000Z",
+        });
+        const nextRoute = result.route as typeof route;
+
+        expect(result.departAt).toBe("2026-07-20T11:59:00.000Z");
+        expect(nextRoute.pathCoords).toBe(route.pathCoords);
+        expect(nextRoute.providerDepartureAt).toBeUndefined();
+        expect(nextRoute.providerArrivalAt).toBeUndefined();
+        expect(nextRoute.routeInfo).toMatchObject({
+            departureTime: "2026-07-20T11:59:00.000Z",
+            arrivalTime: "2026-07-20T12:30:00.000Z",
+            timeBasis: "estimated",
+        });
     });
 });

@@ -145,7 +145,15 @@ describe("QuickScheduleModal flow", () => {
                     departureTime: "2026-07-17T10:30:00.000Z",
                     arrivalTime: "2026-07-17T11:00:00.000Z",
                     timeBasis: "estimated",
-                    steps: [],
+                    steps: [{
+                        id: "bus-1",
+                        type: "BUS",
+                        title: "버스 이동",
+                        coordinates: [
+                            { latitude: 37.5, longitude: 127 },
+                            { latitude: 37.55, longitude: 126.97 },
+                        ],
+                    }],
                 },
             },
         });
@@ -273,7 +281,15 @@ describe("QuickScheduleModal flow", () => {
                     departureTime: "2026-07-17T10:30:00.000Z",
                     arrivalTime: "2026-07-17T11:00:00.000Z",
                     timeBasis: "estimated",
-                    steps: [],
+                    steps: [{
+                        id: "bus-1",
+                        type: "BUS",
+                        title: "버스 이동",
+                        coordinates: [
+                            { latitude: 37.5, longitude: 127 },
+                            { latitude: 37.55, longitude: 126.97 },
+                        ],
+                    }],
                 },
             },
         });
