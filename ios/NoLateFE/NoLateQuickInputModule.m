@@ -16,11 +16,21 @@
 static NSString *const NoLateQuickInputErrorDomain = @"com.nolate.quick-input";
 static NSInteger const NoLateQuickInputImageDecodeError = 1001;
 static NSInteger const NoLateQuickInputKoreanOcrUnsupportedError = 1002;
+static NSInteger const NoLateQuickInputOCRCancelledError = 1003;
+static double const NoLateQuickInputOCRConfidenceThreshold = 0.62;
+static NSUInteger const NoLateQuickInputOCRMaximumAttemptCount = 3;
 
 @implementation NoLateQuickInput {
   dispatch_queue_t _visionQueue;
+  NSLock *_ocrStateLock;
+  NSUInteger _ocrGeneration;
+  NSUInteger _activeOCRGeneration;
+  NSString *_currentOCRRequestId;
+  VNRecognizeTextRequest *_activeOCRRequest;
   SFSpeechRecognizer *_speechRecognizer;
   SFSpeechRecognitionTask *_speechTask;
+  NSUInteger _speechGeneration;
+  RCTPromiseRejectBlock _pendingSpeechReject;
 }
 
 RCT_EXPORT_MODULE();
@@ -36,8 +46,103 @@ RCT_EXPORT_MODULE();
     // Vision OCR은 이미지 디코딩과 문자 인식이 같이 일어나므로 메인 스레드에서 실행하지 않는다.
     // 직렬 큐로 처리해 여러 사진 요청이 동시에 들어와도 CPU 사용량과 Promise 완료 순서를 예측 가능하게 둔다.
     _visionQueue = dispatch_queue_create("com.nolate.quick-input.vision", DISPATCH_QUEUE_SERIAL);
+    _ocrStateLock = [[NSLock alloc] init];
   }
   return self;
+}
+
+- (NSError *)ocrCancellationError
+{
+  return [NSError errorWithDomain:NoLateQuickInputErrorDomain
+                             code:NoLateQuickInputOCRCancelledError
+                         userInfo:@{ NSLocalizedDescriptionKey: @"사진 텍스트 인식이 취소되었습니다." }];
+}
+
+- (NSUInteger)beginOCRRequestWithId:(NSString *)requestId
+{
+  VNRecognizeTextRequest *requestToCancel = nil;
+  NSUInteger generation = 0;
+  [_ocrStateLock lock];
+  _ocrGeneration += 1;
+  generation = _ocrGeneration;
+  _currentOCRRequestId = [requestId copy];
+  requestToCancel = _activeOCRRequest;
+  [_ocrStateLock unlock];
+
+  // 새 사진이 선택되면 큐 앞쪽의 오래된 Accurate 요청을 계속 수행할 이유가 없다. Vision의
+  // cancel은 실행 중인 요청에도 안전하게 전달할 수 있고, 아래 generation 검사가 늦게 도착한
+  // 결과가 새 화면 상태를 덮어쓰는 것도 막는다.
+  [requestToCancel cancel];
+  return generation;
+}
+
+- (BOOL)isOCRRequestCurrent:(NSUInteger)generation requestId:(NSString *)requestId
+{
+  [_ocrStateLock lock];
+  BOOL isCurrent = _ocrGeneration == generation &&
+      [_currentOCRRequestId isEqualToString:requestId];
+  [_ocrStateLock unlock];
+  return isCurrent;
+}
+
+- (BOOL)activateOCRRequest:(VNRecognizeTextRequest *)request
+                generation:(NSUInteger)generation
+                  requestId:(NSString *)requestId
+{
+  [_ocrStateLock lock];
+  BOOL isCurrent = _ocrGeneration == generation &&
+      [_currentOCRRequestId isEqualToString:requestId];
+  if (isCurrent) {
+    _activeOCRRequest = request;
+    _activeOCRGeneration = generation;
+  }
+  [_ocrStateLock unlock];
+  return isCurrent;
+}
+
+- (void)deactivateOCRRequest:(VNRecognizeTextRequest *)request
+                  generation:(NSUInteger)generation
+{
+  [_ocrStateLock lock];
+  if (_activeOCRRequest == request && _activeOCRGeneration == generation) {
+    _activeOCRRequest = nil;
+    _activeOCRGeneration = 0;
+  }
+  [_ocrStateLock unlock];
+}
+
+- (BOOL)claimOCRCompletionWithGeneration:(NSUInteger)generation requestId:(NSString *)requestId
+{
+  [_ocrStateLock lock];
+  BOOL claimed = _ocrGeneration == generation
+      && [_currentOCRRequestId isEqualToString:requestId];
+  if (claimed) {
+    _currentOCRRequestId = nil;
+  }
+  if (claimed && _activeOCRGeneration == generation) {
+    _activeOCRRequest = nil;
+    _activeOCRGeneration = 0;
+  }
+  [_ocrStateLock unlock];
+  return claimed;
+}
+
+- (BOOL)cancelOCRRequestWithId:(NSString *)requestId
+{
+  VNRecognizeTextRequest *requestToCancel = nil;
+  BOOL cancelled = NO;
+  [_ocrStateLock lock];
+  if (_currentOCRRequestId && [_currentOCRRequestId isEqualToString:requestId]) {
+    cancelled = YES;
+    _ocrGeneration += 1;
+    _currentOCRRequestId = nil;
+    requestToCancel = _activeOCRRequest;
+    _activeOCRRequest = nil;
+    _activeOCRGeneration = 0;
+  }
+  [_ocrStateLock unlock];
+  [requestToCancel cancel];
+  return cancelled;
 }
 
 - (NSURL *)fileURLFromURI:(NSString *)uri
@@ -250,8 +355,17 @@ RCT_EXPORT_MODULE();
 
 - (NSDictionary<NSString *, id> *)recognitionResultForCGImage:(CGImageRef)cgImage
                                                    orientation:(CGImagePropertyOrientation)orientation
+                                                    generation:(NSUInteger)generation
+                                                      requestId:(NSString *)requestId
                                                          error:(NSError **)error API_AVAILABLE(ios(13.0))
 {
+  if (![self isOCRRequestCurrent:generation requestId:requestId]) {
+    if (error) {
+      *error = [self ocrCancellationError];
+    }
+    return nil;
+  }
+
   VNRecognizeTextRequest *request = [[VNRecognizeTextRequest alloc] init];
   request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
   request.usesLanguageCorrection = YES;
@@ -309,7 +423,22 @@ RCT_EXPORT_MODULE();
   VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:cgImage
                                                                       orientation:orientation
                                                                           options:@{}];
-  if (![handler performRequests:@[ request ] error:error]) {
+  if (![self activateOCRRequest:request generation:generation requestId:requestId]) {
+    if (error) {
+      *error = [self ocrCancellationError];
+    }
+    return nil;
+  }
+
+  BOOL performed = [handler performRequests:@[ request ] error:error];
+  [self deactivateOCRRequest:request generation:generation];
+  if (![self isOCRRequestCurrent:generation requestId:requestId]) {
+    if (error) {
+      *error = [self ocrCancellationError];
+    }
+    return nil;
+  }
+  if (!performed) {
     return nil;
   }
 
@@ -366,10 +495,31 @@ RCT_EXPORT_MODULE();
   };
 }
 
-RCT_REMAP_METHOD(recognizeTextFromImage,
-                 recognizeTextFromImage:(NSString *)uri
-                 resolver:(RCTPromiseResolveBlock)resolve
-                 rejecter:(RCTPromiseRejectBlock)reject)
+- (BOOL)isOCRResultSufficient:(NSDictionary<NSString *, id> *)result
+{
+  NSString *text = [result[@"text"] isKindOfClass:[NSString class]] ? result[@"text"] : @"";
+  NSString *trimmedText = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  return trimmedText.length > 0 && [result[@"confidence"] doubleValue] >= NoLateQuickInputOCRConfidenceThreshold;
+}
+
+- (CGImagePropertyOrientation)fallbackOrientationForMetadataOrientation:(CGImagePropertyOrientation)orientation
+{
+  // 대부분의 카메라 이미지는 올바른 EXIF 방향을 가지므로 메타데이터가 아닌 방향은 저신뢰도
+  // 결과에서 단 한 번만 확인한다. 회전 메타데이터가 있는 사진은 픽셀이 이미 보정된 경우를
+  // 대비해 Up을, Up인 사진은 흔한 카메라 원본 배치인 Right를 우선한다.
+  switch (orientation) {
+    case kCGImagePropertyOrientationUp:
+    case kCGImagePropertyOrientationUpMirrored:
+      return kCGImagePropertyOrientationRight;
+    default:
+      return kCGImagePropertyOrientationUp;
+  }
+}
+
+- (void)recognizeTextFromImageURI:(NSString *)uri
+                        requestId:(NSString *)requestId
+                         resolver:(RCTPromiseResolveBlock)resolve
+                         rejecter:(RCTPromiseRejectBlock)reject
 {
   if (@available(iOS 13.0, *)) {
     NSURL *fileURL = [self fileURLFromURI:uri];
@@ -378,8 +528,31 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
       return;
     }
 
+    NSString *normalizedRequestId = [requestId isKindOfClass:[NSString class]]
+        ? [requestId stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+        : @"";
+    if (normalizedRequestId.length == 0) {
+      reject(@"quick_input_invalid_request_id", @"사진 인식 요청 식별자가 올바르지 않습니다.", nil);
+      return;
+    }
+
+    NSUInteger generation = [self beginOCRRequestWithId:normalizedRequestId];
     dispatch_async(_visionQueue, ^{
+      if (![self isOCRRequestCurrent:generation requestId:normalizedRequestId]) {
+        [self rejectOnMain:reject
+                      code:@"quick_input_ocr_cancelled"
+                   message:@"사진 텍스트 인식이 취소되었습니다."
+                     error:[self ocrCancellationError]];
+        return;
+      }
       if (![[NSFileManager defaultManager] fileExistsAtPath:fileURL.path]) {
+        if (![self claimOCRCompletionWithGeneration:generation requestId:normalizedRequestId]) {
+          [self rejectOnMain:reject
+                        code:@"quick_input_ocr_cancelled"
+                     message:@"사진 텍스트 인식이 취소되었습니다."
+                       error:[self ocrCancellationError]];
+          return;
+        }
         [self rejectOnMain:reject
                       code:@"quick_input_image_not_found"
                    message:@"분석할 사진 파일을 찾을 수 없습니다."
@@ -393,6 +566,13 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
                                         orientation:&metadataOrientation
                                               error:&imageError];
       if (!ocrImage) {
+        if (![self claimOCRCompletionWithGeneration:generation requestId:normalizedRequestId]) {
+          [self rejectOnMain:reject
+                        code:@"quick_input_ocr_cancelled"
+                     message:@"사진 텍스트 인식이 취소되었습니다."
+                       error:[self ocrCancellationError]];
+          return;
+        }
         [self rejectOnMain:reject
                       code:@"quick_input_image_decode_failed"
                    message:@"사진 파일을 읽지 못했습니다."
@@ -400,81 +580,95 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
         return;
       }
 
-      NSArray<NSNumber *> *orientationCandidates = @[
-        @(metadataOrientation),
-        @(kCGImagePropertyOrientationUp),
-        @(kCGImagePropertyOrientationRight),
-        @(kCGImagePropertyOrientationLeft),
-        @(kCGImagePropertyOrientationDown),
-      ];
-
-      // PNG 공유, 스크린샷 변환, 일부 사진 선택기는 EXIF 방향을 제거한 채 픽셀만 전달한다.
-      // 메타데이터 방향을 먼저 시도한 뒤 중복을 제외한 네 방향을 비교하면 사용자가 사진을
-      // 회전해 다시 저장하지 않아도 된다. 실제 일정 텍스트는 개인정보 보호를 위해 로그에 남기지 않는다.
-      NSMutableSet<NSNumber *> *attemptedOrientations = [NSMutableSet set];
-      NSDictionary<NSString *, id> *bestResult = nil;
-      NSError *lastError = nil;
-      BOOL performedAnyRequest = NO;
-
-      for (NSNumber *orientationValue in orientationCandidates) {
-        if ([attemptedOrientations containsObject:orientationValue]) {
-          continue;
+      __block NSDictionary<NSString *, id> *bestResult = nil;
+      __block NSError *lastError = nil;
+      __block BOOL performedAnyRequest = NO;
+      __block NSUInteger attemptCount = 0;
+      void (^performAttempt)(CGImageRef, CGImagePropertyOrientation, NSString *) =
+          ^(CGImageRef image, CGImagePropertyOrientation orientation, NSString *kind) {
+        if (attemptCount >= NoLateQuickInputOCRMaximumAttemptCount ||
+            ![self isOCRRequestCurrent:generation requestId:normalizedRequestId]) {
+          return;
         }
-        [attemptedOrientations addObject:orientationValue];
 
-        NSError *orientationError = nil;
+        attemptCount += 1;
+        NSError *recognitionError = nil;
         NSDictionary<NSString *, id> *result = nil;
         @autoreleasepool {
-          result = [self recognitionResultForCGImage:ocrImage
-                                         orientation:(CGImagePropertyOrientation)orientationValue.unsignedIntValue
-                                               error:&orientationError];
+          result = [self recognitionResultForCGImage:image
+                                         orientation:orientation
+                                          generation:generation
+                                            requestId:normalizedRequestId
+                                               error:&recognitionError];
         }
         if (!result) {
-          lastError = orientationError;
-          continue;
+          lastError = recognitionError;
+          return;
         }
 
         performedAnyRequest = YES;
-        RCTLogInfo(@"[NoLateQuickInput] OCR orientation=%@ score=%.2f lines=%@",
-                   orientationValue,
-                   [result[@"score"] doubleValue],
+        RCTLogInfo(@"[NoLateQuickInput] OCR attempt=%lu kind=%@ orientation=%u confidence=%.2f lines=%@",
+                   (unsigned long)attemptCount,
+                   kind,
+                   (unsigned int)orientation,
+                   [result[@"confidence"] doubleValue],
                    result[@"lineCount"]);
-
         if (!bestResult || [result[@"score"] doubleValue] > [bestResult[@"score"] doubleValue]) {
           bestResult = result;
         }
-      }
+      };
 
-      CGImageRef enhancedImage = [self newEnhancedOCRImageFromCGImage:ocrImage];
-      if (enhancedImage) {
-        // 같은 방향 후보를 대비 보정본에도 적용한다. 원본/보정본 가운데 일정 문맥 점수가 높은
-        // 결과만 채택하고, 실제 텍스트는 로그에 남기지 않는다.
-        for (NSNumber *orientationValue in orientationCandidates) {
-          NSError *orientationError = nil;
-          NSDictionary<NSString *, id> *result = nil;
-          @autoreleasepool {
-            result = [self recognitionResultForCGImage:enhancedImage
-                                           orientation:(CGImagePropertyOrientation)orientationValue.unsignedIntValue
-                                                 error:&orientationError];
-          }
-          if (!result) {
-            lastError = orientationError;
-            continue;
-          }
-          performedAnyRequest = YES;
-          RCTLogInfo(@"[NoLateQuickInput] Enhanced OCR orientation=%@ score=%.2f lines=%@",
-                     orientationValue,
-                     [result[@"score"] doubleValue],
-                     result[@"lineCount"]);
-          if (!bestResult || [result[@"score"] doubleValue] > [bestResult[@"score"] doubleValue]) {
-            bestResult = result;
+      // 정상 사진은 이 한 번으로 끝난다. 첫 결과가 비거나 신뢰도가 낮은 경우에만 아래의
+      // 대비 보정 및 단일 회전 fallback을 추가하며, 전체 Accurate 요청은 최대 세 번이다.
+      performAttempt(ocrImage, metadataOrientation, @"metadata");
+      BOOL firstResultWasEmpty = [(NSString *)(bestResult[@"text"] ?: @"")
+          stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length == 0;
+      CGImagePropertyOrientation fallbackOrientation =
+          [self fallbackOrientationForMetadataOrientation:metadataOrientation];
+      CGImageRef enhancedImage = nil;
+
+      if (![self isOCRResultSufficient:bestResult] &&
+          [self isOCRRequestCurrent:generation requestId:normalizedRequestId]) {
+        if (firstResultWasEmpty && fallbackOrientation != metadataOrientation) {
+          performAttempt(ocrImage, fallbackOrientation, @"fallback-orientation");
+        } else {
+          enhancedImage = [self newEnhancedOCRImageFromCGImage:ocrImage];
+          if (enhancedImage) {
+            performAttempt(enhancedImage, metadataOrientation, @"enhanced");
           }
         }
-        CGImageRelease(enhancedImage);
       }
 
+      if (![self isOCRResultSufficient:bestResult] &&
+          [self isOCRRequestCurrent:generation requestId:normalizedRequestId] &&
+          attemptCount < NoLateQuickInputOCRMaximumAttemptCount) {
+        if (firstResultWasEmpty) {
+          if (!enhancedImage) {
+            enhancedImage = [self newEnhancedOCRImageFromCGImage:ocrImage];
+          }
+          if (enhancedImage) {
+            performAttempt(enhancedImage, metadataOrientation, @"enhanced");
+          }
+        } else if (fallbackOrientation != metadataOrientation) {
+          performAttempt(ocrImage, fallbackOrientation, @"fallback-orientation");
+        }
+      }
+
+      if (enhancedImage) {
+        CGImageRelease(enhancedImage);
+      }
+      CGImageRelease(ocrImage);
+
+      // cancel/new begin과 resolve 사이의 TOCTOU를 막기 위해 완료 소유권을 lock 안에서
+      // 원자적으로 가져온 요청만 Promise를 끝낼 수 있다.
+      if (![self claimOCRCompletionWithGeneration:generation requestId:normalizedRequestId]) {
+        [self rejectOnMain:reject
+                      code:@"quick_input_ocr_cancelled"
+                   message:@"사진 텍스트 인식이 취소되었습니다."
+                     error:[self ocrCancellationError]];
+        return;
+      }
       if (!performedAnyRequest && lastError) {
-        CGImageRelease(ocrImage);
         NSString *message = lastError.code == NoLateQuickInputKoreanOcrUnsupportedError
             ? @"이 iOS 버전에서는 한국어 사진 인식을 지원하지 않습니다. iOS 16 이상에서 다시 시도해주세요."
             : @"사진에서 텍스트를 추출하지 못했습니다.";
@@ -489,16 +683,55 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
       NSString *recognizedText = bestResult[@"text"] ?: @"";
       NSNumber *confidence = bestResult[@"confidence"] ?: @0;
       NSArray<NSString *> *alternatives = bestResult[@"alternatives"] ?: @[];
-      CGImageRelease(ocrImage);
       [self resolveOnMain:resolve value:@{
         @"text": recognizedText,
         @"confidence": confidence,
         @"alternatives": alternatives,
+        @"requestId": normalizedRequestId,
+        @"attemptCount": @(attemptCount),
       }];
     });
   } else {
     reject(@"quick_input_ocr_unavailable", @"이 iOS 버전에서는 사진 텍스트 추출을 사용할 수 없습니다.", nil);
   }
+}
+
+RCT_REMAP_METHOD(recognizeTextFromImage,
+                 recognizeTextFromImage:(NSString *)uri
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [self recognizeTextFromImageURI:uri
+                        requestId:[NSUUID UUID].UUIDString
+                         resolver:resolve
+                         rejecter:reject];
+}
+
+RCT_REMAP_METHOD(recognizeTextFromImageWithRequestId,
+                 recognizeTextFromImageWithRequestId:(NSString *)uri
+                 requestId:(NSString *)requestId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  [self recognizeTextFromImageURI:uri
+                        requestId:requestId
+                         resolver:resolve
+                         rejecter:reject];
+}
+
+RCT_REMAP_METHOD(cancelImageRecognition,
+                 cancelImageRecognition:(NSString *)requestId
+                 resolver:(RCTPromiseResolveBlock)resolve
+                 rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *normalizedRequestId = [requestId isKindOfClass:[NSString class]]
+      ? [requestId stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+      : @"";
+  if (normalizedRequestId.length == 0) {
+    reject(@"quick_input_invalid_request_id", @"취소할 사진 인식 요청 식별자가 올바르지 않습니다.", nil);
+    return;
+  }
+  resolve(@([self cancelOCRRequestWithId:normalizedRequestId]));
 }
 
 - (NSString *)speechAuthorizationMessageForStatus:(SFSpeechRecognizerAuthorizationStatus)status API_AVAILABLE(ios(10.0))
@@ -592,6 +825,46 @@ RCT_REMAP_METHOD(recognizeTextFromImage,
   return @"음성을 텍스트로 변환하지 못했습니다. 잠시 후 다시 시도해주세요.";
 }
 
+- (BOOL)isFileSpeechOperationCurrent:(NSUInteger)generation
+                                task:(SFSpeechRecognitionTask *)task
+{
+  @synchronized (self) {
+    BOOL taskMatches = task ? _speechTask == task : _speechTask == nil;
+    return _speechGeneration == generation
+        && _pendingSpeechReject != nil
+        && taskMatches;
+  }
+}
+
+- (BOOL)activateFileSpeechTask:(SFSpeechRecognitionTask *)task
+                    recognizer:(SFSpeechRecognizer *)recognizer
+                    generation:(NSUInteger)generation
+{
+  @synchronized (self) {
+    if (_speechGeneration != generation || _pendingSpeechReject == nil || _speechTask != nil) {
+      return NO;
+    }
+    _speechRecognizer = recognizer;
+    _speechTask = task;
+    return YES;
+  }
+}
+
+- (BOOL)claimFileSpeechCompletion:(NSUInteger)generation
+                              task:(SFSpeechRecognitionTask *)task
+{
+  @synchronized (self) {
+    BOOL taskMatches = task ? _speechTask == task : _speechTask == nil;
+    if (_speechGeneration != generation || _pendingSpeechReject == nil || !taskMatches) {
+      return NO;
+    }
+    _pendingSpeechReject = nil;
+    _speechTask = nil;
+    _speechRecognizer = nil;
+    return YES;
+  }
+}
+
 RCT_REMAP_METHOD(transcribeAudioFile,
                  transcribeAudioFile:(NSString *)uri
                  localeIdentifier:(NSString *)localeIdentifier
@@ -625,8 +898,29 @@ RCT_REMAP_METHOD(transcribeAudioFile,
       return;
     }
 
+    SFSpeechRecognitionTask *previousTask = nil;
+    RCTPromiseRejectBlock previousReject = nil;
+    NSUInteger speechGeneration = 0;
+    @synchronized (self) {
+      previousTask = _speechTask;
+      previousReject = _pendingSpeechReject;
+      _speechGeneration += 1;
+      speechGeneration = _speechGeneration;
+      _speechTask = nil;
+      _speechRecognizer = nil;
+      _pendingSpeechReject = [reject copy];
+    }
+    [previousTask cancel];
+    if (previousReject) {
+      [self rejectOnMain:previousReject
+                    code:@"quick_input_transcription_cancelled"
+                 message:@"새 음성 분석 요청으로 이전 작업을 취소했습니다."
+                   error:nil];
+    }
+
     [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
       if (status != SFSpeechRecognizerAuthorizationStatusAuthorized) {
+        if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
         NSString *message = [self speechAuthorizationMessageForStatus:status];
         [self rejectOnMain:reject
                       code:@"quick_input_speech_permission_denied"
@@ -636,28 +930,28 @@ RCT_REMAP_METHOD(transcribeAudioFile,
       }
 
       dispatch_async(dispatch_get_main_queue(), ^{
-        // 한 번에 하나의 빠른일정 음성 분석만 유지한다. 사용자가 새 녹음을 바로 분석하면
-        // 이전 작업을 취소해 늦게 도착한 결과가 새 입력을 덮어쓰지 않게 한다.
-        [self->_speechTask cancel];
-        self->_speechTask = nil;
+        if (![self isFileSpeechOperationCurrent:speechGeneration task:nil]) return;
 
         NSString *identifier = localeIdentifier.length > 0 ? localeIdentifier : @"ko-KR";
         NSLocale *locale = [NSLocale localeWithLocaleIdentifier:identifier];
-        self->_speechRecognizer = [[SFSpeechRecognizer alloc] initWithLocale:locale];
+        SFSpeechRecognizer *recognizer = [[SFSpeechRecognizer alloc] initWithLocale:locale];
 
-        if (!self->_speechRecognizer || !self->_speechRecognizer.available) {
+        if (!recognizer || !recognizer.available) {
+          if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
           reject(@"quick_input_speech_unavailable", @"현재 음성 인식 서비스를 사용할 수 없습니다.", nil);
           return;
         }
 
         if (@available(iOS 13.0, *)) {
-          if (!self->_speechRecognizer.supportsOnDeviceRecognition) {
+          if (!recognizer.supportsOnDeviceRecognition) {
+            if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
             reject(@"quick_input_on_device_speech_unavailable",
                    @"이 기기에는 한국어 온디바이스 음성 인식이 준비되지 않았습니다. iOS 설정과 언어 다운로드 상태를 확인해주세요.",
                    nil);
             return;
           }
         } else {
+          if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
           reject(@"quick_input_on_device_speech_unavailable",
                  @"이 iOS 버전에서는 온디바이스 음성 인식을 사용할 수 없습니다.",
                  nil);
@@ -685,15 +979,15 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           // 모델이 준비되지 않은 기기는 위에서 명시적으로 안내하고 네트워크 경로로 폴백하지 않는다.
           request.requiresOnDeviceRecognition = YES;
           RCTLogInfo(@"[NoLateQuickInput] Speech recognizer ready. onDeviceSupported=%@ locale=%@",
-                     self->_speechRecognizer.supportsOnDeviceRecognition ? @"YES" : @"NO",
+                     recognizer.supportsOnDeviceRecognition ? @"YES" : @"NO",
                      identifier);
         }
 
         __block BOOL settled = NO;
         __weak typeof(self) weakSelf = self;
-        __block SFSpeechRecognitionTask *activeTask = nil;
-        activeTask = [self->_speechRecognizer recognitionTaskWithRequest:request
-                                                            resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
+        __block __weak SFSpeechRecognitionTask *activeTask = nil;
+        activeTask = [recognizer recognitionTaskWithRequest:request
+                                              resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
           __strong typeof(weakSelf) strongSelf = weakSelf;
           if (!strongSelf) {
             return;
@@ -703,7 +997,7 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           // 메인 큐에서 직렬화한다. 일부 iOS 버전은 사용할 수 있는 마지막 전사와 종료 오류를
           // 같은 콜백에 전달하므로, 오류보다 비어 있지 않은 transcript를 먼저 채택한다.
           dispatch_async(dispatch_get_main_queue(), ^{
-            if (settled || strongSelf->_speechTask != activeTask) {
+            if (settled || ![strongSelf isFileSpeechOperationCurrent:speechGeneration task:activeTask]) {
               return;
             }
 
@@ -717,41 +1011,45 @@ RCT_REMAP_METHOD(transcribeAudioFile,
                 confidenceCount += 1;
               }
               double confidence = confidenceCount > 0 ? confidenceTotal / confidenceCount : 0;
+              if (![strongSelf claimFileSpeechCompletion:speechGeneration task:activeTask]) return;
               settled = YES;
-              strongSelf->_speechTask = nil;
-              strongSelf->_speechRecognizer = nil;
               resolve(@{ @"text": transcript, @"confidence": @(confidence) });
               return;
             }
 
             if (error) {
+              if (![strongSelf claimFileSpeechCompletion:speechGeneration task:activeTask]) return;
               settled = YES;
               RCTLogWarn(@"[NoLateQuickInput] Speech recognition failed. domain=%@ code=%ld",
                          error.domain,
                          (long)error.code);
-              strongSelf->_speechTask = nil;
-              strongSelf->_speechRecognizer = nil;
               reject(@"quick_input_transcription_failed",
                      [strongSelf speechRecognitionMessageForError:error],
                      error);
             }
           });
         }];
-        self->_speechTask = activeTask;
+        if (![self activateFileSpeechTask:activeTask
+                               recognizer:recognizer
+                               generation:speechGeneration]) {
+          [activeTask cancel];
+          return;
+        }
 
         // 온디바이스 Speech가 final result를 보내지 않는 경우에도
         // 빠른 일정 화면이 분석 중 상태에 계속 머물지 않도록 명시적인 상한을 둔다.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(20 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
           __strong typeof(weakSelf) strongSelf = weakSelf;
-          if (!strongSelf || settled || strongSelf->_speechTask != activeTask) {
+          if (!strongSelf
+              || settled
+              || ![strongSelf isFileSpeechOperationCurrent:speechGeneration task:activeTask]) {
             return;
           }
 
+          if (![strongSelf claimFileSpeechCompletion:speechGeneration task:activeTask]) return;
           settled = YES;
           [activeTask cancel];
-          strongSelf->_speechTask = nil;
-          strongSelf->_speechRecognizer = nil;
           reject(@"quick_input_transcription_timeout",
                  @"음성 인식 시간이 초과됐습니다. 마이크 입력과 기기 음성 인식 설정을 확인해주세요.",
                  nil);

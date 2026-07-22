@@ -7,6 +7,7 @@ import {
     ActionSheetIOS,
     BackHandler,
     Image,
+    InteractionManager,
     Keyboard,
     KeyboardAvoidingView,
     LayoutChangeEvent,
@@ -48,6 +49,7 @@ import {
 } from "../../addHandoffMotion";
 import {
     buildScheduleSpeechContext,
+    cancelQuickSchedulePhotoRecognition,
     recognizeQuickSchedulePhoto,
     type QuickScheduleMediaInput,
 } from "../../quickInputExtraction";
@@ -63,6 +65,7 @@ import {
     addLiveSpeechTranscriptListener,
     cancelLiveSpeechRecognition,
     createLiveSpeechSessionId,
+    getLiveSpeechRecognitionAvailability,
     isLiveSpeechRecognitionAvailable,
     startLiveSpeechRecognition,
     stopLiveSpeechRecognition,
@@ -121,6 +124,7 @@ type TabLayout = {
     width: number;
 };
 const QUICK_TEXT_LIMIT = 300;
+const PHOTO_RECOGNITION_TIMEOUT_MILLIS = 15_000;
 
 function limitRecognizedText(value: string) {
     return {
@@ -338,7 +342,23 @@ const NOTIFICATION_OPTIONS = [
 ];
 
 function runAfterInteraction(task: () => void) {
-    setTimeout(task, 120);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // ActionSheetIOS의 선택 콜백은 시트가 완전히 사라지기 전에 호출될 수 있다.
+    // UIKit 전환과 사진 선택기/문서 스캐너 presentation이 겹치지 않도록 현재
+    // interaction과 dismiss animation이 끝난 다음 네이티브 화면을 연다.
+    const interaction = InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        timer = setTimeout(() => {
+            timer = null;
+            if (!cancelled) task();
+        }, Platform.OS === "ios" ? 360 : 0);
+    });
+    return () => {
+        cancelled = true;
+        interaction.cancel();
+        if (timer) clearTimeout(timer);
+    };
 }
 function placeholderForMode(inputMode: InputMode) {
     switch (inputMode) {
@@ -534,6 +554,7 @@ export default function QuickScheduleModal({
     const modeIndicatorWidth = useSharedValue(0);
     const inputRef = useRef<TextInput>(null);
     const audioRecordingRef = useRef<Audio.Recording | null>(null);
+    const recordingCleanupPromiseRef = useRef<Promise<string | null> | null>(null);
     const liveSpeechSessionIdRef = useRef<string | null>(null);
     const liveSpeechStartingRef = useRef(false);
     const liveSpeechOperationRef = useRef(0);
@@ -555,6 +576,8 @@ export default function QuickScheduleModal({
     const initialRequestHandledRef = useRef<string | null>(null);
     const analysisSequenceRef = useRef(0);
     const photoRecognitionSequenceRef = useRef(0);
+    const photoSourceOperationRef = useRef(0);
+    const pendingPhotoActionCancelRef = useRef<(() => void) | null>(null);
     const documentScanOperationRef = useRef(0);
     const ownedDocumentScanUrisRef = useRef<string[]>([]);
     const mountedRef = useRef(false);
@@ -570,14 +593,21 @@ export default function QuickScheduleModal({
         }
     }, []);
 
+    const cancelPendingPhotoAction = useCallback(() => {
+        pendingPhotoActionCancelRef.current?.();
+        pendingPhotoActionCancelRef.current = null;
+    }, []);
+
     useEffect(() => {
         mountedRef.current = true;
         return () => {
             mountedRef.current = false;
+            photoSourceOperationRef.current += 1;
+            cancelPendingPhotoAction();
             documentScanOperationRef.current += 1;
             discardOwnedDocumentScans();
         };
-    }, [discardOwnedDocumentScans]);
+    }, [cancelPendingPhotoAction, discardOwnedDocumentScans]);
 
     useEffect(() => {
         const belongsToActiveSession = (sessionId: string) => (
@@ -671,12 +701,24 @@ export default function QuickScheduleModal({
         setPhotoRecognitionConfidence(undefined);
         setPhotoRecognitionError("");
         setIsPhotoRecognizing(true);
-        void recognizeQuickSchedulePhoto(photoUri)
+        const requestId = `quick-photo-${Date.now()}-${sequence}`;
+        let completed = false;
+        const timeout = setTimeout(() => {
+            if (photoRecognitionSequenceRef.current !== sequence) return;
+            photoRecognitionSequenceRef.current += 1;
+            void cancelQuickSchedulePhotoRecognition(requestId).catch(() => undefined);
+            setIsPhotoRecognizing(false);
+            setPhotoRecognitionError(
+                "사진 인식 시간이 길어져 중단했습니다. 다시 인식하거나 아래에 직접 입력해 주세요."
+            );
+        }, PHOTO_RECOGNITION_TIMEOUT_MILLIS);
+
+        void recognizeQuickSchedulePhoto(photoUri, requestId)
             .then((recognition) => {
                 if (photoRecognitionSequenceRef.current !== sequence) return;
                 const limited = limitRecognizedText(recognition.text);
                 setPhotoTranscript(limited.text);
-                setPhotoTranscriptTruncated(limited.truncated);
+                setPhotoTranscriptTruncated(limited.truncated || recognition.truncated === true);
                 setPhotoRecognitionConfidence(recognition.recognitionConfidence);
             })
             .catch((error) => {
@@ -686,12 +728,18 @@ export default function QuickScheduleModal({
                     : "사진에서 일정 문장을 인식하지 못했습니다.");
             })
             .finally(() => {
+                completed = true;
+                clearTimeout(timeout);
                 if (photoRecognitionSequenceRef.current === sequence) {
                     setIsPhotoRecognizing(false);
                 }
             });
 
         return () => {
+            clearTimeout(timeout);
+            if (!completed) {
+                void cancelQuickSchedulePhotoRecognition(requestId).catch(() => undefined);
+            }
             if (photoRecognitionSequenceRef.current === sequence) {
                 photoRecognitionSequenceRef.current += 1;
             }
@@ -758,17 +806,22 @@ export default function QuickScheduleModal({
         }
     }, []);
 
-    const stopActiveRecording = useCallback(async (preserveRecording = false): Promise<string | null> => {
+    const stopActiveRecording = useCallback((preserveRecording = false): Promise<string | null> => {
+        const pendingCleanup = recordingCleanupPromiseRef.current;
         const recorder = audioRecordingRef.current;
         const liveSpeechSessionId = liveSpeechSessionIdRef.current;
-        liveSpeechOperationRef.current += 1;
+        const cleanupOperation = liveSpeechOperationRef.current + 1;
+        liveSpeechOperationRef.current = cleanupOperation;
         audioRecordingRef.current = null;
         liveSpeechSessionIdRef.current = null;
         liveSpeechStartingRef.current = false;
         liveSpeechStopInFlightRef.current = null;
         clearVoiceTimer();
         setIsVoiceRecording(false);
-        setIsVoiceFinalizing(false);
+        // The explicit stop button owns the "finalizing" state while it waits for
+        // `finalizeQuickScheduleRecording`. Lifecycle/mode-change cleanup does not
+        // preserve a recording and may clear the state immediately.
+        if (!preserveRecording) setIsVoiceFinalizing(false);
         setVoiceMeterHistory(createVoiceMeterHistory());
         setVoiceSpectrumEnergy(0);
 
@@ -781,40 +834,73 @@ export default function QuickScheduleModal({
             setVoiceStatusMessage("");
         }
 
-        if (liveSpeechSessionId) {
-            await cancelLiveSpeechRecognition(liveSpeechSessionId).catch(() => undefined);
-        }
-
-        if (!recorder) {
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-            }).catch(() => undefined);
-            return null;
-        }
-
-        try {
-            // stopAndUnloadAsync가 끝나기 전에 getURI를 읽거나 분석 버튼을 활성화하면,
-            // Speech가 아직 닫히지 않은 m4a를 읽어 decode 실패가 날 수 있다.
-            if (!preserveRecording) {
-                await recorder.stopAndUnloadAsync();
-                return null;
+        const cleanupPromise = (async () => {
+            let pendingResult: string | null = null;
+            if (pendingCleanup) {
+                try {
+                    pendingResult = await pendingCleanup;
+                } catch (error) {
+                    // A close/mode-change cleanup supersedes an earlier "save recording"
+                    // request. Preserve the error only when this caller is still asking for
+                    // that same result; lifecycle teardown must always continue.
+                    if (preserveRecording && !recorder && !liveSpeechSessionId) throw error;
+                }
             }
 
-            const recordedUri = await finalizeQuickScheduleRecording(recorder);
-            setVoiceUri(recordedUri);
-            return recordedUri;
-        } catch (error) {
-            // 화면 닫기나 입력 모드 변경처럼 녹음을 버리는 경로에서는 저장 실패를 사용자에게
-            // 노출하지 않는다. 사용자가 중지 버튼으로 보존을 요청한 경우에만 호출자가 처리한다.
-            if (preserveRecording) throw error;
-            return null;
-        } finally {
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-            }).catch(() => undefined);
-        }
+            if (liveSpeechSessionId) {
+                await cancelLiveSpeechRecognition(liveSpeechSessionId).catch(() => undefined);
+            }
+
+            if (!recorder) {
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: false,
+                    playsInSilentModeIOS: true,
+                }).catch(() => undefined);
+                return preserveRecording ? pendingResult : null;
+            }
+
+            try {
+                // stopAndUnloadAsync가 끝나기 전에 getURI를 읽거나 분석 버튼을 활성화하면,
+                // Speech가 아직 닫히지 않은 m4a를 읽어 decode 실패가 날 수 있다.
+                if (!preserveRecording) {
+                    await recorder.stopAndUnloadAsync();
+                    return null;
+                }
+
+                const recordedUri = await finalizeQuickScheduleRecording(recorder);
+                if (
+                    liveSpeechOperationRef.current === cleanupOperation
+                    && mountedRef.current
+                    && visibleRef.current
+                    && !closingRef.current
+                ) {
+                    setVoiceUri(recordedUri);
+                }
+                return recordedUri;
+            } catch (error) {
+                // 화면 닫기나 입력 모드 변경처럼 녹음을 버리는 경로에서는 저장 실패를 사용자에게
+                // 노출하지 않는다. 사용자가 중지 버튼으로 보존을 요청한 경우에만 호출자가 처리한다.
+                if (preserveRecording) throw error;
+                return null;
+            } finally {
+                await Audio.setAudioModeAsync({
+                    allowsRecordingIOS: false,
+                    playsInSilentModeIOS: true,
+                }).catch(() => undefined);
+            }
+        })();
+
+        recordingCleanupPromiseRef.current = cleanupPromise;
+        const clearCleanup = () => {
+            if (recordingCleanupPromiseRef.current === cleanupPromise) {
+                recordingCleanupPromiseRef.current = null;
+            }
+        };
+        // `finally()` creates a rejecting child promise when finalization fails.
+        // Clearing through both `then` branches keeps the caller-owned rejection
+        // on `cleanupPromise` without creating an unhandled derivative.
+        void cleanupPromise.then(clearCleanup, clearCleanup);
+        return cleanupPromise;
     }, [clearVoiceTimer]);
 
     const invalidatePendingAnalysis = useCallback(() => {
@@ -829,6 +915,10 @@ export default function QuickScheduleModal({
     const finishClose = useCallback((shouldNotifyClose: boolean) => {
         if (closeFinishedRef.current) return;
         closeFinishedRef.current = true;
+        liveSpeechOperationRef.current += 1;
+        liveSpeechStartingRef.current = false;
+        photoSourceOperationRef.current += 1;
+        cancelPendingPhotoAction();
         if (closeFinishTimerRef.current) {
             clearTimeout(closeFinishTimerRef.current);
             closeFinishTimerRef.current = null;
@@ -877,10 +967,23 @@ export default function QuickScheduleModal({
         if (shouldNotifyClose) {
             onClose();
         }
-    }, [discardOwnedDocumentScans, invalidatePendingAnalysis, onClose, presentationOpacity, prewarm]);
+    }, [
+        cancelPendingPhotoAction,
+        discardOwnedDocumentScans,
+        invalidatePendingAnalysis,
+        onClose,
+        presentationOpacity,
+        prewarm,
+    ]);
 
     const runCloseAnimation = useCallback((shouldNotifyClose = false) => {
         Keyboard.dismiss();
+        // 권한 확인/온라인 인식 동의/ActionSheet 지연 작업은 화면 수명보다 오래
+        // 살아남을 수 있으므로 닫기 시작 시 세대와 예약 작업을 즉시 무효화한다.
+        liveSpeechOperationRef.current += 1;
+        liveSpeechStartingRef.current = false;
+        photoSourceOperationRef.current += 1;
+        cancelPendingPhotoAction();
         if (
             audioRecordingRef.current ||
             isVoiceRecording ||
@@ -920,6 +1023,7 @@ export default function QuickScheduleModal({
             finishClose(shouldNotifyClose);
         }, CLOSE_SURFACE_DELAY_MS + closeDuration + 48);
     }, [
+        cancelPendingPhotoAction,
         closingPhase,
         finishClose,
         isVoiceFinalizing,
@@ -1129,6 +1233,14 @@ export default function QuickScheduleModal({
         onCloseStart?.();
         runCloseAnimation(true);
     }, [onCloseStart, prewarm, rendered, runCloseAnimation, visible]);
+
+    useEffect(() => {
+        if (visible) return;
+        liveSpeechOperationRef.current += 1;
+        liveSpeechStartingRef.current = false;
+        photoSourceOperationRef.current += 1;
+        cancelPendingPhotoAction();
+    }, [cancelPendingPhotoAction, visible]);
 
     const startAnalysis = useCallback(async (
         textOverride?: string,
@@ -1475,18 +1587,42 @@ export default function QuickScheduleModal({
     }, [discardOwnedDocumentScans]);
 
     const pickPhotoFromLibrary = useCallback(async () => {
-        if (submitting || isDocumentScanning) return;
+        if (
+            submitting
+            || isDocumentScanning
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
 
+        const operation = photoSourceOperationRef.current + 1;
+        photoSourceOperationRef.current = operation;
         Keyboard.dismiss();
-        void stopActiveRecording();
+        await stopActiveRecording();
+        if (
+            photoSourceOperationRef.current !== operation
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
         setInputMode("photo");
 
         try {
-            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-            if (!permission.granted) {
-                Alert.alert("사진 권한 필요", "사진으로 빠른 일정을 만들려면 사진 보관함 권한이 필요합니다.");
-                return;
+            // iOS의 시스템 PHPicker는 사용자가 고른 항목만 전달하므로 전체 사진 보관함
+            // 권한을 선요청할 필요가 없다. 권한이 거부된 사용자도 선택기를 사용할 수 있다.
+            if (Platform.OS !== "ios") {
+                const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                if (!permission.granted) {
+                    Alert.alert("사진 권한 필요", "사진으로 빠른 일정을 만들려면 사진 보관함 권한이 필요합니다.");
+                    return;
+                }
             }
+            if (
+                photoSourceOperationRef.current !== operation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
 
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ["images"],
@@ -1497,19 +1633,45 @@ export default function QuickScheduleModal({
                 preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
             });
 
-            if (!result.canceled) {
+            if (
+                photoSourceOperationRef.current === operation
+                && mountedRef.current
+                && visibleRef.current
+                && !closingRef.current
+                && !result.canceled
+            ) {
                 selectPhotoForRecognition(result.assets[0] ?? null);
             }
         } catch (error) {
+            if (
+                photoSourceOperationRef.current !== operation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
             Alert.alert("사진 선택 실패", error instanceof Error ? error.message : "사진을 불러오지 못했습니다.");
         }
     }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const capturePhoto = useCallback(async () => {
-        if (submitting || isDocumentScanning) return;
+        if (
+            submitting
+            || isDocumentScanning
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
 
+        const operation = photoSourceOperationRef.current + 1;
+        photoSourceOperationRef.current = operation;
         Keyboard.dismiss();
-        void stopActiveRecording();
+        await stopActiveRecording();
+        if (
+            photoSourceOperationRef.current !== operation
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
         setInputMode("photo");
 
         try {
@@ -1518,6 +1680,12 @@ export default function QuickScheduleModal({
                 Alert.alert("카메라 권한 필요", "사진을 촬영해 빠른 일정을 만들려면 카메라 권한이 필요합니다.");
                 return;
             }
+            if (
+                photoSourceOperationRef.current !== operation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
 
             const result = await ImagePicker.launchCameraAsync({
                 mediaTypes: ["images"],
@@ -1527,21 +1695,48 @@ export default function QuickScheduleModal({
                 quality: 1,
             });
 
-            if (!result.canceled) {
+            if (
+                photoSourceOperationRef.current === operation
+                && mountedRef.current
+                && visibleRef.current
+                && !closingRef.current
+                && !result.canceled
+            ) {
                 selectPhotoForRecognition(result.assets[0] ?? null);
             }
         } catch (error) {
+            if (
+                photoSourceOperationRef.current !== operation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
             Alert.alert("촬영 실패", error instanceof Error ? error.message : "카메라를 열지 못했습니다.");
         }
     }, [isDocumentScanning, selectPhotoForRecognition, stopActiveRecording, submitting]);
 
     const scanDocument = useCallback(async () => {
-        if (submitting || isDocumentScanning) return;
+        if (
+            submitting
+            || isDocumentScanning
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
 
         const operation = documentScanOperationRef.current + 1;
         documentScanOperationRef.current = operation;
+        const sourceOperation = photoSourceOperationRef.current + 1;
+        photoSourceOperationRef.current = sourceOperation;
         Keyboard.dismiss();
-        void stopActiveRecording();
+        await stopActiveRecording();
+        if (
+            documentScanOperationRef.current !== operation
+            || photoSourceOperationRef.current !== sourceOperation
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
         setInputMode("photo");
         setIsDocumentScanning(true);
         try {
@@ -1549,6 +1744,7 @@ export default function QuickScheduleModal({
             const ownedScanUris = result?.pages.map(({ uri }) => uri) ?? [];
             const operationIsCurrent = (
                 documentScanOperationRef.current === operation
+                && photoSourceOperationRef.current === sourceOperation
                 && mountedRef.current
                 && visibleRef.current
                 && !closingRef.current
@@ -1578,6 +1774,7 @@ export default function QuickScheduleModal({
         } catch (error) {
             if (
                 documentScanOperationRef.current !== operation
+                || photoSourceOperationRef.current !== sourceOperation
                 || !mountedRef.current
                 || !visibleRef.current
                 || closingRef.current
@@ -1596,16 +1793,49 @@ export default function QuickScheduleModal({
     const activatePhotoMode = useCallback(() => {
         if (submitting) return;
 
+        cancelPendingPhotoAction();
         Keyboard.dismiss();
         void stopActiveRecording();
         setInputMode("photo");
-    }, [stopActiveRecording, submitting]);
+    }, [cancelPendingPhotoAction, stopActiveRecording, submitting]);
 
-    const openPhotoActionSheet = useCallback(() => {
-        if (submitting || isDocumentScanning) return;
+    const schedulePhotoAction = useCallback((
+        expectedSourceOperation: number,
+        action: () => void,
+    ) => {
+        cancelPendingPhotoAction();
+        pendingPhotoActionCancelRef.current = runAfterInteraction(() => {
+            pendingPhotoActionCancelRef.current = null;
+            if (
+                photoSourceOperationRef.current !== expectedSourceOperation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
+            action();
+        });
+    }, [cancelPendingPhotoAction]);
 
+    const openPhotoActionSheet = useCallback(async () => {
+        if (
+            submitting
+            || isDocumentScanning
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
+
+        const operation = photoSourceOperationRef.current + 1;
+        photoSourceOperationRef.current = operation;
+        cancelPendingPhotoAction();
         Keyboard.dismiss();
-        void stopActiveRecording();
+        await stopActiveRecording();
+        if (
+            photoSourceOperationRef.current !== operation
+            || !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+        ) return;
         setInputMode("photo");
 
         if (Platform.OS === "ios") {
@@ -1620,16 +1850,22 @@ export default function QuickScheduleModal({
                     userInterfaceStyle: mode === "dark" ? "dark" : "light",
                 },
                 (buttonIndex) => {
+                    if (
+                        photoSourceOperationRef.current !== operation
+                        || !mountedRef.current
+                        || !visibleRef.current
+                        || closingRef.current
+                    ) return;
                     if (documentScannerSupported && buttonIndex === 0) {
-                        runAfterInteraction(() => void scanDocument());
+                        schedulePhotoAction(operation, () => void scanDocument());
                         return;
                     }
                     const sourceIndex = documentScannerSupported ? buttonIndex - 1 : buttonIndex;
                     if (sourceIndex === 0) {
-                        runAfterInteraction(() => void capturePhoto());
+                        schedulePhotoAction(operation, () => void capturePhoto());
                     }
                     if (sourceIndex === 1) {
-                        runAfterInteraction(() => void pickPhotoFromLibrary());
+                        schedulePhotoAction(operation, () => void pickPhotoFromLibrary());
                     }
                 }
             );
@@ -1639,14 +1875,84 @@ export default function QuickScheduleModal({
         void pickPhotoFromLibrary();
     }, [
         capturePhoto,
+        cancelPendingPhotoAction,
         documentScannerSupported,
         isDocumentScanning,
         mode,
         pickPhotoFromLibrary,
         scanDocument,
+        schedulePhotoAction,
         stopActiveRecording,
         submitting,
     ]);
+
+    const beginLiveSpeechCapture = useCallback(async (
+        requiresOnDeviceRecognition: boolean
+    ) => {
+        if (
+            !mountedRef.current
+            || !visibleRef.current
+            || closingRef.current
+            || liveSpeechSessionIdRef.current
+            || liveSpeechStartingRef.current
+            || liveSpeechStopInFlightRef.current
+        ) return;
+
+        const operation = liveSpeechOperationRef.current + 1;
+        liveSpeechOperationRef.current = operation;
+        const requestedSessionId = createLiveSpeechSessionId();
+        liveSpeechSessionIdRef.current = requestedSessionId;
+        liveSpeechStartingRef.current = true;
+        setIsVoiceFinalizing(true);
+        setVoiceStatusMessage(requiresOnDeviceRecognition
+            ? "기기 내 음성 인식을 시작하고 있어요."
+            : "Apple 온라인 음성 인식을 시작하고 있어요.");
+
+        try {
+            const sessionId = await startLiveSpeechRecognition({
+                sessionId: requestedSessionId,
+                localeIdentifier: "ko-KR",
+                contextualStrings: buildScheduleSpeechContext(text),
+                maxDurationMillis: 60_000,
+                requiresOnDeviceRecognition,
+            });
+            if (
+                !liveSpeechStartingRef.current
+                || liveSpeechOperationRef.current !== operation
+                || liveSpeechSessionIdRef.current !== sessionId
+                || !visibleRef.current
+                || closingRef.current
+            ) {
+                await cancelLiveSpeechRecognition(sessionId).catch(() => undefined);
+                return;
+            }
+
+            liveSpeechSessionIdRef.current = sessionId;
+            liveSpeechStartingRef.current = false;
+            setIsVoiceFinalizing(false);
+            setIsVoiceRecording(true);
+            setVoiceStatusMessage(requiresOnDeviceRecognition
+                ? "기기에서 음성을 인식하고 있어요."
+                : "Apple 온라인 인식 사용 중 · 원본은 NoLate에 저장되지 않아요.");
+        } catch (error) {
+            const ownsOperation = liveSpeechOperationRef.current === operation;
+            if (!ownsOperation) return;
+            if (liveSpeechSessionIdRef.current === requestedSessionId) {
+                liveSpeechSessionIdRef.current = null;
+            }
+            liveSpeechStartingRef.current = false;
+            if (!mountedRef.current || !visibleRef.current || closingRef.current) return;
+            setIsVoiceRecording(false);
+            setIsVoiceFinalizing(false);
+            setVoiceMeterHistory(createVoiceMeterHistory());
+            setVoiceSpectrumEnergy(0);
+            const message = error instanceof Error
+                ? error.message
+                : "실시간 음성 인식을 시작하지 못했습니다.";
+            setVoiceStatusMessage(message);
+            Alert.alert("음성 인식 시작 실패", message);
+        }
+    }, [text]);
 
     const startVoiceRecording = useCallback(async () => {
         if (
@@ -1656,8 +1962,30 @@ export default function QuickScheduleModal({
             audioRecordingRef.current ||
             liveSpeechSessionIdRef.current ||
             liveSpeechStartingRef.current ||
-            liveSpeechStopInFlightRef.current
+            liveSpeechStopInFlightRef.current ||
+            !mountedRef.current ||
+            !visibleRef.current ||
+            closingRef.current
         ) return;
+
+        const operation = liveSpeechOperationRef.current + 1;
+        liveSpeechOperationRef.current = operation;
+        liveSpeechStartingRef.current = true;
+        setIsVoiceFinalizing(true);
+
+        const startIsCurrent = () => (
+            liveSpeechOperationRef.current === operation
+            && liveSpeechStartingRef.current
+            && mountedRef.current
+            && visibleRef.current
+            && !closingRef.current
+        );
+        const pendingCleanup = recordingCleanupPromiseRef.current;
+        if (pendingCleanup) {
+            setVoiceStatusMessage("이전 음성 입력을 안전하게 정리하고 있어요.");
+            await pendingCleanup.catch(() => undefined);
+            if (!startIsCurrent()) return;
+        }
 
         Keyboard.dismiss();
         setInputMode("voice");
@@ -1674,43 +2002,54 @@ export default function QuickScheduleModal({
         clearVoiceTimer();
 
         if (isLiveSpeechRecognitionAvailable) {
-            const operation = liveSpeechOperationRef.current + 1;
-            liveSpeechOperationRef.current = operation;
-            const requestedSessionId = createLiveSpeechSessionId();
-            liveSpeechSessionIdRef.current = requestedSessionId;
-            liveSpeechStartingRef.current = true;
-            setIsVoiceFinalizing(true);
-            setVoiceStatusMessage("마이크와 음성 인식 권한을 확인하고 있어요.");
+            setVoiceStatusMessage("이 기기의 한국어 음성 인식 지원을 확인하고 있어요.");
 
             try {
-                const sessionId = await startLiveSpeechRecognition({
-                    sessionId: requestedSessionId,
-                    localeIdentifier: "ko-KR",
-                    contextualStrings: buildScheduleSpeechContext(text),
-                    maxDurationMillis: 60_000,
-                });
-                if (
-                    !liveSpeechStartingRef.current ||
-                    liveSpeechOperationRef.current !== operation ||
-                    liveSpeechSessionIdRef.current !== sessionId ||
-                    !visibleRef.current ||
-                    closingRef.current
-                ) {
-                    await cancelLiveSpeechRecognition(sessionId).catch(() => undefined);
+                const availability = await getLiveSpeechRecognitionAvailability("ko-KR");
+                if (!startIsCurrent()) return;
+
+                liveSpeechStartingRef.current = false;
+                setIsVoiceFinalizing(false);
+                if (!availability.serviceAvailable) {
+                    const message = availability.reason
+                        ?? "현재 이 기기에서 한국어 음성 인식 서비스를 사용할 수 없습니다.";
+                    setVoiceStatusMessage(`${message} 아래 입력칸에 직접 입력할 수 있어요.`);
+                    Alert.alert(
+                        "음성 인식 사용 불가",
+                        `${message}\n\n아래 인식 문장 칸에 일정을 직접 입력해 주세요.`
+                    );
                     return;
                 }
 
-                liveSpeechSessionIdRef.current = sessionId;
-                liveSpeechStartingRef.current = false;
-                setIsVoiceFinalizing(false);
-                setIsVoiceRecording(true);
-                setVoiceStatusMessage("");
+                if (availability.supportsOnDevice) {
+                    await beginLiveSpeechCapture(true);
+                    return;
+                }
+
+                const reason = availability.reason
+                    ?? "이 기기에는 한국어 온디바이스 음성 인식 모델이 없습니다.";
+                setVoiceStatusMessage(`${reason} 직접 입력하거나 온라인 인식을 선택할 수 있어요.`);
+                Alert.alert(
+                    "기기 내 음성 인식 미지원",
+                    `${reason}\n\n온라인 인식을 선택하면 음성이 Apple 서버에서 처리될 수 있습니다. 원본 음성은 NoLate 서버에 저장되지 않습니다.`,
+                    [
+                        { text: "직접 입력", style: "cancel" },
+                        {
+                            text: "온라인 인식 사용",
+                            onPress: () => {
+                                if (
+                                    liveSpeechOperationRef.current !== operation
+                                    || !visibleRef.current
+                                    || closingRef.current
+                                ) return;
+                                void beginLiveSpeechCapture(false);
+                            },
+                        },
+                    ]
+                );
             } catch (error) {
                 const ownsOperation = liveSpeechOperationRef.current === operation;
                 if (!ownsOperation) return;
-                if (liveSpeechSessionIdRef.current === requestedSessionId) {
-                    liveSpeechSessionIdRef.current = null;
-                }
                 liveSpeechStartingRef.current = false;
                 if (!mountedRef.current || !visibleRef.current || closingRef.current) return;
                 setIsVoiceRecording(false);
@@ -1719,37 +2058,72 @@ export default function QuickScheduleModal({
                 setVoiceSpectrumEnergy(0);
                 const message = error instanceof Error
                     ? error.message
-                    : "실시간 음성 인식을 시작하지 못했습니다.";
-                setVoiceStatusMessage(message);
-                Alert.alert("음성 인식 시작 실패", message);
+                    : "음성 인식 지원 상태를 확인하지 못했습니다.";
+                setVoiceStatusMessage(`${message} 아래 입력칸에 직접 입력할 수 있어요.`);
+                Alert.alert("음성 인식 확인 실패", message);
             }
             return;
         }
 
+        let recorder: Audio.Recording | null = null;
+        let recordingAudioModeEnabled = false;
+        const restorePlaybackAudioMode = async () => {
+            await Audio.setAudioModeAsync({
+                allowsRecordingIOS: false,
+                playsInSilentModeIOS: true,
+            }).catch(() => undefined);
+        };
+        const discardPreparedRecorder = async () => {
+            const staleRecorder = recorder;
+            recorder = null;
+            if (staleRecorder) {
+                await staleRecorder.stopAndUnloadAsync().catch(() => undefined);
+            }
+            if (recordingAudioModeEnabled) {
+                recordingAudioModeEnabled = false;
+                await restorePlaybackAudioMode();
+            }
+        };
+
         try {
             const permission = await Audio.requestPermissionsAsync();
+            if (!startIsCurrent()) return;
             if (!permission.granted) {
+                liveSpeechStartingRef.current = false;
+                setIsVoiceFinalizing(false);
                 Alert.alert("마이크 권한 필요", "음성으로 빠른 일정을 만들려면 마이크 권한이 필요합니다.");
                 return;
             }
 
             await waitForAudioForegroundReady();
+            if (!startIsCurrent()) return;
             await Audio.setAudioModeAsync({
                 allowsRecordingIOS: true,
                 playsInSilentModeIOS: true,
             });
+            recordingAudioModeEnabled = true;
+            if (!startIsCurrent()) {
+                await discardPreparedRecorder();
+                return;
+            }
 
             const prepareAndStartRecording = async () => {
-                const recorder = new Audio.Recording();
-                await recorder.prepareToRecordAsync({
-                    ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
-                    isMeteringEnabled: true,
-                });
-                await recorder.startAsync();
-                return recorder;
+                const candidate = new Audio.Recording();
+                recorder = candidate;
+                try {
+                    await candidate.prepareToRecordAsync({
+                        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+                        isMeteringEnabled: true,
+                    });
+                    await candidate.startAsync();
+                    return candidate;
+                } catch (error) {
+                    await candidate.stopAndUnloadAsync().catch(() => undefined);
+                    if (recorder === candidate) recorder = null;
+                    throw error;
+                }
             };
 
-            let recorder: Audio.Recording;
             try {
                 recorder = await prepareAndStartRecording();
             } catch (error) {
@@ -1758,11 +2132,26 @@ export default function QuickScheduleModal({
                     throw error;
                 }
 
+                if (!startIsCurrent()) {
+                    await discardPreparedRecorder();
+                    return;
+                }
                 await waitForAudioForegroundReady();
+                if (!startIsCurrent()) {
+                    await discardPreparedRecorder();
+                    return;
+                }
                 recorder = await prepareAndStartRecording();
             }
 
+            if (!startIsCurrent()) {
+                await discardPreparedRecorder();
+                return;
+            }
             audioRecordingRef.current = recorder;
+            recorder = null;
+            liveSpeechStartingRef.current = false;
+            setIsVoiceFinalizing(false);
             setIsVoiceRecording(true);
             voiceTimerRef.current = setInterval(() => {
                 const activeRecorder = audioRecordingRef.current;
@@ -1784,19 +2173,29 @@ export default function QuickScheduleModal({
                     .catch(() => undefined);
             }, 110);
         } catch (error) {
+            await discardPreparedRecorder();
+            // Audio-mode restoration is asynchronous. Re-check ownership after it
+            // completes so a close/mode change during cleanup cannot surface a stale
+            // alert or update a hidden/unmounted form.
+            if (!startIsCurrent()) return;
             audioRecordingRef.current = null;
+            liveSpeechStartingRef.current = false;
             clearVoiceTimer();
             setIsVoiceRecording(false);
+            setIsVoiceFinalizing(false);
             setVoiceMeterHistory(createVoiceMeterHistory());
             setVoiceSpectrumEnergy(0);
-            void Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-            }).catch(() => undefined);
             console.warn("[QuickSchedule] Voice recording failed to start.", error);
             Alert.alert("녹음 시작 실패", "음성 녹음을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
         }
-    }, [clearVoiceTimer, discardOwnedDocumentScans, isVoiceFinalizing, isVoiceRecording, submitting, text]);
+    }, [
+        beginLiveSpeechCapture,
+        clearVoiceTimer,
+        discardOwnedDocumentScans,
+        isVoiceFinalizing,
+        isVoiceRecording,
+        submitting,
+    ]);
 
     const stopVoiceRecording = useCallback(async () => {
         if (isVoiceFinalizing || liveSpeechStopInFlightRef.current) return;
@@ -1864,16 +2263,31 @@ export default function QuickScheduleModal({
         if (!audioRecordingRef.current) return;
 
         setIsVoiceFinalizing(true);
+        const cleanupPromise = stopActiveRecording(true);
+        const cleanupOperation = liveSpeechOperationRef.current;
         try {
-            await stopActiveRecording(true);
+            await cleanupPromise;
         } catch (error) {
+            if (
+                liveSpeechOperationRef.current !== cleanupOperation
+                || !mountedRef.current
+                || !visibleRef.current
+                || closingRef.current
+            ) return;
             setVoiceUri(null);
             Alert.alert(
                 "녹음 저장 실패",
                 error instanceof Error ? error.message : "녹음 파일을 저장하지 못했습니다. 다시 녹음해 주세요."
             );
         } finally {
-            setIsVoiceFinalizing(false);
+            if (
+                liveSpeechOperationRef.current === cleanupOperation
+                && mountedRef.current
+                && visibleRef.current
+                && !closingRef.current
+            ) {
+                setIsVoiceFinalizing(false);
+            }
         }
     }, [isVoiceFinalizing, stopActiveRecording]);
 
@@ -1883,6 +2297,8 @@ export default function QuickScheduleModal({
             return;
         }
 
+        photoSourceOperationRef.current += 1;
+        cancelPendingPhotoAction();
         if (nextMode === "voice") {
             if (inputMode !== "voice") {
                 void stopActiveRecording();
@@ -1895,6 +2311,7 @@ export default function QuickScheduleModal({
         setInputMode(nextMode);
     }, [
         activatePhotoMode,
+        cancelPendingPhotoAction,
         inputMode,
         stopActiveRecording,
     ]);
@@ -1902,13 +2319,15 @@ export default function QuickScheduleModal({
     useEffect(() => {
         return () => {
             invalidatePendingAnalysis();
+            photoSourceOperationRef.current += 1;
+            cancelPendingPhotoAction();
             void stopActiveRecording();
             if (closeFinishTimerRef.current) {
                 clearTimeout(closeFinishTimerRef.current);
                 closeFinishTimerRef.current = null;
             }
         };
-    }, [invalidatePendingAnalysis, stopActiveRecording]);
+    }, [cancelPendingPhotoAction, invalidatePendingAnalysis, stopActiveRecording]);
 
     useEffect(() => {
         const selectedLayout = modeLayouts[inputMode];
@@ -2297,7 +2716,7 @@ export default function QuickScheduleModal({
                             disabled: submitting || isVoiceFinalizing || isDocumentScanning,
                         }}
                         disabled={submitting || isVoiceFinalizing || isDocumentScanning}
-                        onPress={openPhotoActionSheet}
+                        onPress={() => void openPhotoActionSheet()}
                         style={[
                             styles.mediaPanel,
                             styles.photoPreviewPanel,
@@ -2426,7 +2845,7 @@ export default function QuickScheduleModal({
                             </Text>
                             {photoTranscriptTruncated ? (
                                 <Text style={[styles.photoConfidence, styles.truncatedRecognitionText]}>
-                                    앞 300자만 표시
+                                    일정 관련 문장 우선 표시
                                 </Text>
                             ) : photoRecognitionConfidence !== undefined && (
                                 <Text style={[styles.photoConfidence, { color: colors.textSecondary }]}>
@@ -2445,42 +2864,47 @@ export default function QuickScheduleModal({
                                     사진을 선명하게 보정해 읽고 있어요
                                 </Text>
                             </View>
-                        ) : photoRecognitionError ? (
-                            <View style={styles.photoRecognitionErrorWrap}>
-                                <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="사진 텍스트 다시 인식"
-                                    onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
-                                    style={({ pressed }) => [
-                                        styles.photoRecognitionRetry,
-                                        { opacity: pressed ? 0.72 : 1 },
-                                    ]}
-                                >
-                                    <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
-                                    <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
-                                </Pressable>
-                            </View>
                         ) : (
-                            <TextInput
-                                accessibilityLabel="사진 OCR 인식 텍스트"
-                                editable={Boolean(selectedPhoto) && !submitting && !isDocumentScanning}
-                                multiline
-                                maxLength={QUICK_TEXT_LIMIT}
-                                value={photoTranscript}
-                                onChangeText={(value) => {
-                                    setPhotoTranscript(value);
-                                    setPhotoTranscriptTruncated(false);
-                                    setPhotoRecognitionConfidence(undefined);
-                                    setPhotoRecognitionError("");
-                                }}
-                                placeholder={selectedPhoto
-                                    ? "인식 후 문장을 직접 수정할 수 있어요."
-                                    : "문서를 스캔하거나 일정 사진을 선택해 주세요."}
-                                placeholderTextColor={colors.inputPlaceholder}
-                                selectionColor={BLUE}
-                                style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
-                            />
+                            <>
+                                {photoRecognitionError && (
+                                    <View style={styles.photoRecognitionErrorWrap}>
+                                        <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            accessibilityLabel="사진 텍스트 다시 인식"
+                                            onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
+                                            style={({ pressed }) => [
+                                                styles.photoRecognitionRetry,
+                                                { opacity: pressed ? 0.72 : 1 },
+                                            ]}
+                                        >
+                                            <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
+                                            <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
+                                        </Pressable>
+                                    </View>
+                                )}
+                                <TextInput
+                                    accessibilityLabel="사진 OCR 인식 텍스트"
+                                    editable={Boolean(selectedPhoto) && !submitting && !isDocumentScanning}
+                                    multiline
+                                    maxLength={QUICK_TEXT_LIMIT}
+                                    value={photoTranscript}
+                                    onChangeText={(value) => {
+                                        setPhotoTranscript(value);
+                                        setPhotoTranscriptTruncated(false);
+                                        setPhotoRecognitionConfidence(undefined);
+                                        setPhotoRecognitionError("");
+                                    }}
+                                    placeholder={selectedPhoto
+                                        ? photoRecognitionError
+                                            ? "인식하지 못한 내용을 직접 입력해 주세요."
+                                            : "인식 후 문장을 직접 수정할 수 있어요."
+                                        : "문서를 스캔하거나 일정 사진을 선택해 주세요."}
+                                    placeholderTextColor={colors.inputPlaceholder}
+                                    selectionColor={BLUE}
+                                    style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
+                                />
+                            </>
                         )}
 
                         {!isPhotoRecognizing

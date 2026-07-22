@@ -27,6 +27,27 @@ describe("document scanner bridge", () => {
         expect(nativeModule.isSupported).toHaveBeenCalledTimes(1);
     });
 
+    test("네이티브에서 지원하지 않는 환경은 스캐너를 노출하지 않는다", async () => {
+        const nativeModule = {
+            isSupported: jest.fn().mockResolvedValue(false),
+            scan: jest.fn(),
+        };
+        const { canScanDocuments } = await loadModuleWithNative(nativeModule);
+
+        await expect(canScanDocuments()).resolves.toBe(false);
+        expect(nativeModule.scan).not.toHaveBeenCalled();
+    });
+
+    test("지원 여부 확인이 실패하면 안전하게 지원하지 않음으로 처리한다", async () => {
+        const nativeModule = {
+            isSupported: jest.fn().mockRejectedValue(new Error("native unavailable")),
+            scan: jest.fn(),
+        };
+        const { canScanDocuments } = await loadModuleWithNative(nativeModule);
+
+        await expect(canScanDocuments()).resolves.toBe(false);
+    });
+
     test("스캔 옵션을 안전한 범위로 제한하고 보정 이미지 목록을 반환한다", async () => {
         const nativeModule = {
             isSupported: jest.fn().mockResolvedValue(true),
@@ -77,6 +98,17 @@ describe("document scanner bridge", () => {
         const { scanDocuments } = await loadModuleWithNative(nativeModule);
 
         await expect(scanDocuments()).resolves.toBeNull();
+    });
+
+    test("네이티브 화면 표시 실패는 호출자에게 즉시 전달한다", async () => {
+        const presentationError = new Error("presentation timeout");
+        const nativeModule = {
+            isSupported: jest.fn(),
+            scan: jest.fn().mockRejectedValue(presentationError),
+        };
+        const { scanDocuments } = await loadModuleWithNative(nativeModule);
+
+        await expect(scanDocuments()).rejects.toBe(presentationError);
     });
 
     test("네이티브 모듈이 없으면 지원하지 않으며 스캔 요청은 설명 가능한 오류를 낸다", async () => {

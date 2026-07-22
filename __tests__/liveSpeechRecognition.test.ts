@@ -2,6 +2,7 @@ describe("live speech recognition bridge", () => {
     const listeners = new Map<string, (value: unknown) => void>();
 
     async function loadModule(nativeModule?: {
+        getAvailability?: jest.Mock;
         start: jest.Mock;
         stop: jest.Mock;
         cancel: jest.Mock;
@@ -47,7 +48,48 @@ describe("live speech recognition bridge", () => {
             localeIdentifier: "ko-KR",
             contextualStrings: ["내일", "오후"],
             maxDurationMillis: 120_000,
+            requiresOnDeviceRecognition: true,
         });
+    });
+
+    test("reports native availability and normalizes the requested locale", async () => {
+        const nativeModule = {
+            getAvailability: jest.fn().mockResolvedValue({
+                serviceAvailable: true,
+                supportsOnDevice: false,
+                reason: " 온디바이스 모델이 없습니다. ",
+            }),
+            start: jest.fn(),
+            stop: jest.fn(),
+            cancel: jest.fn(),
+        };
+        const bridge = await loadModule(nativeModule);
+
+        await expect(bridge.getLiveSpeechRecognitionAvailability(" ")).resolves.toEqual({
+            serviceAvailable: true,
+            supportsOnDevice: false,
+            reason: "온디바이스 모델이 없습니다.",
+        });
+        expect(nativeModule.getAvailability).toHaveBeenCalledWith("ko-KR");
+    });
+
+    test("allows explicitly opting into Apple's network recognizer", async () => {
+        const nativeModule = {
+            start: jest.fn().mockResolvedValue({ sessionId: "session-network" }),
+            stop: jest.fn(),
+            cancel: jest.fn(),
+        };
+        const bridge = await loadModule(nativeModule);
+
+        await bridge.startLiveSpeechRecognition({
+            sessionId: "session-network",
+            requiresOnDeviceRecognition: false,
+        });
+
+        expect(nativeModule.start).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: "session-network",
+            requiresOnDeviceRecognition: false,
+        }));
     });
 
     test("normalizes transcript, level, and state events", async () => {
@@ -132,6 +174,11 @@ describe("live speech recognition bridge", () => {
     test("reports an actionable error when the native module is unavailable", async () => {
         const bridge = await loadModule();
         expect(bridge.isLiveSpeechRecognitionAvailable).toBe(false);
+        await expect(bridge.getLiveSpeechRecognitionAvailability()).resolves.toEqual({
+            serviceAvailable: false,
+            supportsOnDevice: false,
+            reason: "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.",
+        });
         await expect(bridge.startLiveSpeechRecognition()).rejects.toThrow(
             "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다."
         );

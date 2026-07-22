@@ -1,5 +1,7 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
+import * as ImagePicker from "expo-image-picker";
+import { Alert } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
@@ -20,6 +22,10 @@ const mockStopLiveSpeechRecognition = jest.fn().mockResolvedValue({
 });
 const mockCancelLiveSpeechRecognition = jest.fn().mockResolvedValue(undefined);
 const mockCreateLiveSpeechSessionId = jest.fn(() => "speech-session-1");
+const mockGetLiveSpeechRecognitionAvailability = jest.fn().mockResolvedValue({
+    serviceAvailable: true,
+    supportsOnDevice: true,
+});
 
 type Deferred<T> = {
     promise: Promise<T>;
@@ -56,6 +62,9 @@ jest.mock("expo-av", () => ({
 }));
 jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
     isLiveSpeechRecognitionAvailable: true,
+    getLiveSpeechRecognitionAvailability: (...args: unknown[]) => (
+        mockGetLiveSpeechRecognitionAvailability(...args)
+    ),
     startLiveSpeechRecognition: (options: { sessionId: string }) => mockStartLiveSpeechRecognition(options),
     stopLiveSpeechRecognition: (...args: unknown[]) => mockStopLiveSpeechRecognition(...args),
     cancelLiveSpeechRecognition: (...args: unknown[]) => mockCancelLiveSpeechRecognition(...args),
@@ -114,6 +123,12 @@ describe("QuickScheduleModal live speech", () => {
         mockCancelLiveSpeechRecognition.mockResolvedValue(undefined);
         mockCreateLiveSpeechSessionId.mockReset();
         mockCreateLiveSpeechSessionId.mockReturnValue("speech-session-1");
+        mockGetLiveSpeechRecognitionAvailability.mockReset();
+        mockGetLiveSpeechRecognitionAvailability.mockResolvedValue({
+            serviceAvailable: true,
+            supportsOnDevice: true,
+        });
+        (ImagePicker.launchImageLibraryAsync as jest.Mock).mockClear();
     });
 
     afterEach(async () => {
@@ -155,6 +170,7 @@ describe("QuickScheduleModal live speech", () => {
             sessionId: "speech-session-1",
             localeIdentifier: "ko-KR",
             maxDurationMillis: 60_000,
+            requiresOnDeviceRecognition: true,
         }));
 
         await act(async () => {
@@ -469,5 +485,303 @@ describe("QuickScheduleModal live speech", () => {
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
         ).toBe("내일 오후 세 시 강남역 회의");
+    });
+
+    test("온디바이스 모델이 없으면 동의 후에만 Apple 온라인 인식을 시작한다", async () => {
+        mockGetLiveSpeechRecognitionAvailability.mockResolvedValueOnce({
+            serviceAvailable: true,
+            supportsOnDevice: false,
+            reason: "한국어 온디바이스 모델이 없습니다.",
+        });
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
+        expect(alertSpy).toHaveBeenCalledWith(
+            "기기 내 음성 인식 미지원",
+            expect.stringContaining("Apple 서버에서 처리될 수 있습니다"),
+            expect.any(Array)
+        );
+        const buttons = alertSpy.mock.calls.at(-1)?.[2];
+        const onlineButton = buttons?.find((button) => button.text === "온라인 인식 사용");
+
+        await act(async () => {
+            onlineButton?.onPress?.();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledWith(expect.objectContaining({
+            requiresOnDeviceRecognition: false,
+        }));
+        alertSpy.mockRestore();
+    });
+
+    test("음성 서비스가 없으면 녹음을 시작하지 않고 직접 입력을 안내한다", async () => {
+        mockGetLiveSpeechRecognitionAvailability.mockResolvedValueOnce({
+            serviceAvailable: false,
+            supportsOnDevice: false,
+            reason: "현재 한국어 음성 인식 서비스를 사용할 수 없습니다.",
+        });
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
+        expect(alertSpy).toHaveBeenCalledWith(
+            "음성 인식 사용 불가",
+            expect.stringContaining("직접 입력해 주세요")
+        );
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" })
+                .props.editable
+        ).toBe(true);
+        alertSpy.mockRestore();
+    });
+
+    test("닫기 전에 띄운 온라인 인식 동의는 재오픈 뒤 새 녹음을 시작하지 않는다", async () => {
+        mockGetLiveSpeechRecognitionAvailability.mockResolvedValueOnce({
+            serviceAvailable: true,
+            supportsOnDevice: false,
+            reason: "한국어 온디바이스 모델이 없습니다.",
+        });
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+        const renderModal = (visible: boolean) => (
+            <ThemeProvider>
+                <QuickScheduleModal
+                    visible={visible}
+                    defaultDay="2026-07-23"
+                    onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                    onSave={jest.fn()}
+                    onClose={jest.fn()}
+                />
+            </ThemeProvider>
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(renderModal(true));
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        const buttons = alertSpy.mock.calls.at(-1)?.[2];
+        const staleOnlineButton = buttons?.find((button) => button.text === "온라인 인식 사용");
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.update(renderModal(false));
+            await Promise.resolve();
+            renderer!.update(renderModal(true));
+            await Promise.resolve();
+        });
+        await act(async () => {
+            staleOnlineButton?.onPress?.();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
+        alertSpy.mockRestore();
+    });
+
+    test("활성 STT 오디오 세션 취소가 끝난 뒤에만 사진 선택기를 연다", async () => {
+        const pendingCancel = createDeferred<void>();
+        mockCancelLiveSpeechRecognition.mockImplementationOnce(() => pendingCancel.promise);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(ImagePicker.launchImageLibraryAsync).not.toHaveBeenCalled();
+        await act(async () => {
+            pendingCancel.resolve(undefined);
+            await pendingCancel.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
+    });
+
+    test("이전 STT 정리가 끝나기 전에는 재시작하지 않고 새 세션도 닫을 때 정리한다", async () => {
+        const firstCancel = createDeferred<void>();
+        mockCreateLiveSpeechSessionId
+            .mockReturnValueOnce("speech-session-a")
+            .mockReturnValueOnce("speech-session-b");
+        mockCancelLiveSpeechRecognition
+            .mockImplementationOnce(() => firstCancel.promise)
+            .mockResolvedValueOnce(undefined);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "사진으로 빠른 일정 만들기" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+        expect(mockCancelLiveSpeechRecognition).toHaveBeenCalledWith("speech-session-a");
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            firstCancel.resolve(undefined);
+            await firstCancel.promise;
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(2);
+        expect(mockStartLiveSpeechRecognition).toHaveBeenLastCalledWith(expect.objectContaining({
+            sessionId: "speech-session-b",
+        }));
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockCancelLiveSpeechRecognition).toHaveBeenCalledWith("speech-session-b");
+        expect(
+            mockCancelLiveSpeechRecognition.mock.calls.filter(
+                ([sessionId]) => sessionId === "speech-session-b"
+            )
+        ).toHaveLength(1);
     });
 });

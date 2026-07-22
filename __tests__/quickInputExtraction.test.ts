@@ -1,6 +1,8 @@
 describe("quick schedule media input extraction", () => {
     async function loadModuleWithNative(nativeModule?: {
         recognizeTextFromImage?: jest.Mock;
+        recognizeTextFromImageWithRequestId?: jest.Mock;
+        cancelImageRecognition?: jest.Mock;
         transcribeAudioFile?: jest.Mock;
     }) {
         jest.resetModules();
@@ -59,6 +61,74 @@ describe("quick schedule media input extraction", () => {
             recognitionConfidence: 0.87,
         });
         expect(recognizeTextFromImage).toHaveBeenCalledWith("file:///tmp/schedule.png");
+    });
+
+    test("긴 OCR 결과에서도 뒤쪽의 일정 날짜와 시간을 우선 보존한다", async () => {
+        const noisyPrefix = Array.from(
+            { length: 30 },
+            (_, index) => `광고 메뉴와 알림 문구 ${index + 1}`
+        ).join("\n");
+        const recognizeTextFromImage = jest.fn().mockResolvedValue({
+            text: `${noisyPrefix}\n프로젝트 킥오프\n7월 24일 오후 3시\n서울역 회의실`,
+            confidence: 0.84,
+        });
+        const { recognizeQuickSchedulePhoto } = await loadModuleWithNative({
+            recognizeTextFromImage,
+        });
+
+        const result = await recognizeQuickSchedulePhoto("file:///tmp/long-screenshot.png");
+
+        expect(result.text).toContain("프로젝트 킥오프");
+        expect(result.text).toContain("7월 24일 오후 3시");
+        expect(result.text).toContain("서울역 회의실");
+        expect(result.text.length).toBeLessThanOrEqual(300);
+        expect(result.truncated).toBe(true);
+        expect(result.sourceLength).toBeGreaterThan(300);
+    });
+
+    test("requestId OCR API를 우선 사용하고 해당 요청만 취소한다", async () => {
+        const recognizeTextFromImage = jest.fn();
+        const recognizeTextFromImageWithRequestId = jest.fn().mockResolvedValue({
+            text: "7월 24일 오후 3시 서울역 회의",
+            requestId: "photo-request-7",
+            attemptCount: 1,
+        });
+        const cancelImageRecognition = jest.fn().mockResolvedValue(true);
+        const {
+            cancelQuickSchedulePhotoRecognition,
+            recognizeQuickSchedulePhoto,
+        } = await loadModuleWithNative({
+            recognizeTextFromImage,
+            recognizeTextFromImageWithRequestId,
+            cancelImageRecognition,
+        });
+
+        await expect(
+            recognizeQuickSchedulePhoto("file:///tmp/schedule.png", " photo-request-7 ")
+        ).resolves.toMatchObject({ text: "7월 24일 오후 3시 서울역 회의" });
+        await expect(cancelQuickSchedulePhotoRecognition(" photo-request-7 ")).resolves.toBe(true);
+
+        expect(recognizeTextFromImageWithRequestId).toHaveBeenCalledWith(
+            "file:///tmp/schedule.png",
+            "photo-request-7"
+        );
+        expect(recognizeTextFromImage).not.toHaveBeenCalled();
+        expect(cancelImageRecognition).toHaveBeenCalledWith("photo-request-7");
+    });
+
+    test("다른 requestId의 OCR 결과는 현재 사진에 적용하지 않는다", async () => {
+        const recognizeTextFromImageWithRequestId = jest.fn().mockResolvedValue({
+            text: "이전 사진의 일정",
+            requestId: "old-photo-request",
+        });
+        const { recognizeQuickSchedulePhoto } = await loadModuleWithNative({
+            recognizeTextFromImage: jest.fn(),
+            recognizeTextFromImageWithRequestId,
+        });
+
+        await expect(
+            recognizeQuickSchedulePhoto("file:///tmp/new.png", "new-photo-request")
+        ).rejects.toThrow("다른 사진의 인식 결과");
     });
 
     test("사용자가 확인한 사진 OCR 문장은 재인식 없이 그대로 반환한다", async () => {

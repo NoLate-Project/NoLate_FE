@@ -2,7 +2,20 @@
 #import <React/RCTUtils.h>
 #import <UIKit/UIKit.h>
 #import <VisionKit/VisionKit.h>
+#import <TargetConditionals.h>
 #import <math.h>
+
+static const NSTimeInterval NoLateDocumentScannerPresentationRetryInterval = 0.1;
+static const NSTimeInterval NoLateDocumentScannerPresentationTimeout = 5.0;
+
+static BOOL NoLateDocumentScanningIsSupported(void)
+{
+#if TARGET_OS_SIMULATOR
+  return NO;
+#else
+  return VNDocumentCameraViewController.isSupported;
+#endif
+}
 
 @interface NoLateDocumentScanner : NSObject <RCTBridgeModule, VNDocumentCameraViewControllerDelegate>
 @end
@@ -14,6 +27,9 @@
   RCTPromiseRejectBlock _scanReject;
   NSUInteger _maxPages;
   CGFloat _jpegQuality;
+  NSUInteger _scanGeneration;
+  BOOL _presentationStarted;
+  BOOL _presentationConfirmed;
 }
 
 RCT_EXPORT_MODULE();
@@ -38,12 +54,109 @@ RCT_EXPORT_MODULE();
 
 - (void)clearActiveScanner
 {
+  _scanGeneration += 1;
   _scannerViewController.delegate = nil;
   _scannerViewController = nil;
   _scanResolve = nil;
   _scanReject = nil;
   _maxPages = 0;
   _jpegQuality = 0;
+  _presentationStarted = NO;
+  _presentationConfirmed = NO;
+}
+
+- (BOOL)isActiveScanner:(VNDocumentCameraViewController *)controller
+              generation:(NSUInteger)generation
+{
+  return controller != nil
+      && controller == _scannerViewController
+      && generation == _scanGeneration
+      && _scanResolve != nil
+      && _scanReject != nil;
+}
+
+- (BOOL)confirmPresentationForController:(VNDocumentCameraViewController *)controller
+                              generation:(NSUInteger)generation
+{
+  if (![self isActiveScanner:controller generation:generation]) return NO;
+  if (_presentationConfirmed) return YES;
+
+  BOOL isPresented = controller.presentingViewController != nil
+      && controller.isBeingDismissed == NO
+      && controller.viewIfLoaded.window != nil;
+  if (isPresented) _presentationConfirmed = YES;
+  return isPresented;
+}
+
+- (void)rejectPresentationForController:(VNDocumentCameraViewController *)controller
+                              generation:(NSUInteger)generation
+                                   error:(NSError *)error
+{
+  if (![self isActiveScanner:controller generation:generation]) return;
+
+  RCTPromiseRejectBlock reject = _scanReject;
+  BOOL shouldDismiss = controller.presentingViewController != nil
+      || controller.viewIfLoaded.window != nil;
+  [self clearActiveScanner];
+
+  // Presentation failures must settle the JS promise even if UIKit never calls a
+  // presentation or dismissal completion handler.
+  if (reject) {
+    reject(@"document_scan_presentation_failed",
+           @"문서 스캐너 화면을 표시하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+           error);
+  }
+  if (shouldDismiss) {
+    [controller dismissViewControllerAnimated:YES completion:nil];
+  }
+}
+
+- (void)attemptPresentationForController:(VNDocumentCameraViewController *)controller
+                               generation:(NSUInteger)generation
+{
+  if (![self isActiveScanner:controller generation:generation]
+      || _presentationStarted
+      || _presentationConfirmed) {
+    return;
+  }
+
+  UIViewController *presenter = RCTPresentedViewController();
+  BOOL presenterIsReady = presenter != nil
+      && presenter.viewIfLoaded.window != nil
+      && presenter.isBeingDismissed == NO
+      && presenter.isBeingPresented == NO
+      && presenter.presentedViewController == nil;
+  if (!presenterIsReady) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(NoLateDocumentScannerPresentationRetryInterval * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+      [self attemptPresentationForController:controller generation:generation];
+    });
+    return;
+  }
+
+  _presentationStarted = YES;
+  @try {
+    [presenter presentViewController:controller animated:YES completion:^{
+      if (![self confirmPresentationForController:controller generation:generation]) {
+        NSError *error = [NSError errorWithDomain:@"com.nolate.document-scanner"
+                                             code:1002
+                                         userInfo:@{
+                                           NSLocalizedDescriptionKey:
+                                               @"문서 스캐너의 화면 표시가 완료되지 않았습니다."
+                                         }];
+        [self rejectPresentationForController:controller generation:generation error:error];
+      }
+    }];
+  } @catch (NSException *exception) {
+    NSError *error = [NSError errorWithDomain:@"com.nolate.document-scanner"
+                                         code:1003
+                                     userInfo:@{
+                                       NSLocalizedDescriptionKey:
+                                           exception.reason ?: @"문서 스캐너 화면 표시 중 오류가 발생했습니다."
+                                     }];
+    [self rejectPresentationForController:controller generation:generation error:error];
+  }
 }
 
 - (NSURL *)scanRootDirectory
@@ -97,7 +210,7 @@ RCT_REMAP_METHOD(isSupported,
                  isSupportedWithResolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(__unused RCTPromiseRejectBlock)reject)
 {
-  resolve(@(VNDocumentCameraViewController.isSupported));
+  resolve(@(NoLateDocumentScanningIsSupported()));
 }
 
 RCT_REMAP_METHOD(scan,
@@ -105,7 +218,7 @@ RCT_REMAP_METHOD(scan,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  if (!VNDocumentCameraViewController.isSupported) {
+  if (!NoLateDocumentScanningIsSupported()) {
     reject(@"document_scan_unsupported",
            @"이 기기에서는 문서 스캔을 사용할 수 없습니다. 사진 촬영을 이용해 주세요.",
            nil);
@@ -113,12 +226,6 @@ RCT_REMAP_METHOD(scan,
   }
   if (_scannerViewController || _scanResolve) {
     reject(@"document_scan_in_progress", @"이미 문서 스캔이 진행 중입니다.", nil);
-    return;
-  }
-
-  UIViewController *presenter = RCTPresentedViewController();
-  if (!presenter || !presenter.view.window) {
-    reject(@"document_scan_presenter", @"문서 스캐너를 표시할 화면을 찾지 못했습니다.", nil);
     return;
   }
 
@@ -135,8 +242,26 @@ RCT_REMAP_METHOD(scan,
   _scannerViewController = [VNDocumentCameraViewController new];
   _scannerViewController.delegate = self;
   _scannerViewController.modalPresentationStyle = UIModalPresentationFullScreen;
+  _presentationStarted = NO;
+  _presentationConfirmed = NO;
+  _scanGeneration += 1;
+  NSUInteger generation = _scanGeneration;
+  VNDocumentCameraViewController *controller = _scannerViewController;
 
-  [presenter presentViewController:_scannerViewController animated:YES completion:nil];
+  [self attemptPresentationForController:controller generation:generation];
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                               (int64_t)(NoLateDocumentScannerPresentationTimeout * NSEC_PER_SEC)),
+                 dispatch_get_main_queue(), ^{
+    if ([self confirmPresentationForController:controller generation:generation]) return;
+
+    NSError *error = [NSError errorWithDomain:@"com.nolate.document-scanner"
+                                         code:1004
+                                     userInfo:@{
+                                       NSLocalizedDescriptionKey:
+                                           @"문서 스캐너 화면 표시 시간이 초과되었습니다."
+                                     }];
+    [self rejectPresentationForController:controller generation:generation error:error];
+  });
 }
 
 RCT_REMAP_METHOD(discard,

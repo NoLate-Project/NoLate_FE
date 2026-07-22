@@ -23,6 +23,13 @@ export type LiveSpeechStartOptions = {
     localeIdentifier?: string;
     contextualStrings?: string[];
     maxDurationMillis?: number;
+    requiresOnDeviceRecognition?: boolean;
+};
+
+export type LiveSpeechAvailability = {
+    serviceAvailable: boolean;
+    supportsOnDevice: boolean;
+    reason?: string;
 };
 
 export type LiveSpeechTranscript = {
@@ -54,11 +61,13 @@ export type LiveSpeechFinalResult = {
 };
 
 type NativeLiveSpeechModule = {
+    getAvailability?: (localeIdentifier: string) => Promise<unknown>;
     start: (options: {
         sessionId: string;
         localeIdentifier: string;
         contextualStrings: string[];
         maxDurationMillis: number;
+        requiresOnDeviceRecognition: boolean;
     }) => Promise<{ sessionId?: string }>;
     stop: (sessionId: string) => Promise<LiveSpeechFinalResult>;
     cancel: (sessionId: string) => Promise<void>;
@@ -111,6 +120,30 @@ function normalizeMaxDurationMillis(value: number | undefined): number {
         return DEFAULT_MAX_DURATION_MILLIS;
     }
     return Math.max(5_000, Math.min(120_000, Math.round(value)));
+}
+
+function normalizeLocaleIdentifier(value: string | undefined): string {
+    return value?.trim() || "ko-KR";
+}
+
+function normalizeAvailability(value: unknown): LiveSpeechAvailability {
+    if (!value || typeof value !== "object") {
+        return {
+            serviceAvailable: false,
+            supportsOnDevice: false,
+            reason: "음성 인식 지원 상태를 확인하지 못했습니다.",
+        };
+    }
+
+    const source = value as Record<string, unknown>;
+    const reason = typeof source.reason === "string"
+        ? source.reason.trim()
+        : "";
+    return {
+        serviceAvailable: source.serviceAvailable === true,
+        supportsOnDevice: source.supportsOnDevice === true,
+        ...(reason ? { reason } : {}),
+    };
 }
 
 function normalizeTranscript(value: unknown): LiveSpeechTranscript | null {
@@ -208,6 +241,23 @@ export function addLiveSpeechStateListener(
     return subscribe(STATE_EVENT, normalizeState, listener);
 }
 
+export async function getLiveSpeechRecognitionAvailability(
+    localeIdentifier = "ko-KR"
+): Promise<LiveSpeechAvailability> {
+    if (!nativeLiveSpeech?.getAvailability) {
+        return {
+            serviceAvailable: false,
+            supportsOnDevice: false,
+            reason: "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.",
+        };
+    }
+
+    const result = await nativeLiveSpeech.getAvailability(
+        normalizeLocaleIdentifier(localeIdentifier)
+    );
+    return normalizeAvailability(result);
+}
+
 export async function startLiveSpeechRecognition(
     options: LiveSpeechStartOptions = {}
 ): Promise<string> {
@@ -220,9 +270,10 @@ export async function startLiveSpeechRecognition(
 
     const result = await nativeLiveSpeech.start({
         sessionId: requestedSessionId,
-        localeIdentifier: options.localeIdentifier?.trim() || "ko-KR",
+        localeIdentifier: normalizeLocaleIdentifier(options.localeIdentifier),
         contextualStrings: normalizeContextualStrings(options.contextualStrings),
         maxDurationMillis: normalizeMaxDurationMillis(options.maxDurationMillis),
+        requiresOnDeviceRecognition: options.requiresOnDeviceRecognition !== false,
     });
     const sessionId = normalizeSessionId(result?.sessionId);
     if (!sessionId || sessionId !== requestedSessionId) {
