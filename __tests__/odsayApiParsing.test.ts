@@ -4,6 +4,26 @@ jest.mock("../src/api/env", () => ({
 
 import { parseTransitOptionsFromOdsay } from "../src/modules/map/odsayApi";
 
+type ParsedCoord = { lat: number; lng: number };
+
+function pathLengthMeters(coords: ParsedCoord[] | undefined): number {
+    if (!Array.isArray(coords) || coords.length < 2) return 0;
+    const earthRadiusMeters = 6_371_000;
+    const toRadians = Math.PI / 180;
+    return coords.slice(1).reduce((total, coord, index) => {
+        const previous = coords[index];
+        const startLat = previous.lat * toRadians;
+        const endLat = coord.lat * toRadians;
+        const deltaLat = (coord.lat - previous.lat) * toRadians;
+        const deltaLng = (coord.lng - previous.lng) * toRadians;
+        const haversine = (
+            Math.sin(deltaLat / 2) ** 2 +
+            Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2
+        );
+        return total + (2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(haversine))));
+    }, 0);
+}
+
 describe("ODsay multimodal transit parser", () => {
     test("keeps provider schedule, exact geometry, stop IDs, and fast-transfer position", () => {
         const result = parseTransitOptionsFromOdsay({
@@ -158,5 +178,191 @@ describe("ODsay multimodal transit parser", () => {
             boardingPlatform: "5번 승강장",
         });
         expect(option.transitLegs?.[0].passStops?.[0].code).toBe("ARS:02005");
+    });
+
+    test("assembles first and last WALK terminal connectors without tail loops", () => {
+        const origin = { x: 126.9, y: 37.5 };
+        const firstLinkStart = { x: 126.9001, y: 37.5 };
+        const firstLinkMiddle = { x: 126.9002, y: 37.5 };
+        const firstLinkEnd = { x: 126.9003, y: 37.5 };
+        const firstStation = { x: 126.9004, y: 37.5 };
+        const lastStation = { x: 126.91, y: 37.5 };
+        const lastLinkStart = { x: 126.9101, y: 37.5 };
+        const lastLinkMiddle = { x: 126.9102, y: 37.5 };
+        const lastLinkEnd = { x: 126.9103, y: 37.5 };
+        const destination = { x: 126.9104, y: 37.5 };
+
+        const [option] = parseTransitOptionsFromOdsay({
+            result: {
+                paths: [{
+                    pathType: 2,
+                    totalTime: 20,
+                    totalDistance: 1_200,
+                    totalPayment: 1_500,
+                    rps: [
+                        {
+                            trafficType: 3,
+                            duration: 4,
+                            distance: 38,
+                            // Recording-shaped fixture: terminal cross exists only on the
+                            // first and last route, while an intermediate link is reversed.
+                            routes: [
+                                {
+                                    rseq: 3,
+                                    crossXYInfos: [firstLinkEnd, firstStation],
+                                    xyInfos: [firstLinkMiddle, firstLinkEnd],
+                                },
+                                {
+                                    rseq: 1,
+                                    crossXYInfos: [origin, firstLinkStart],
+                                    xyInfos: [firstLinkStart, firstLinkMiddle],
+                                },
+                                {
+                                    rseq: 2,
+                                    xyInfos: [firstLinkEnd, firstLinkMiddle],
+                                },
+                            ],
+                        },
+                        {
+                            trafficType: 1,
+                            duration: 12,
+                            distance: 1_100,
+                            startName: "첫역",
+                            startX: firstStation.x,
+                            startY: firstStation.y,
+                            endName: "마지막역",
+                            endX: lastStation.x,
+                            endY: lastStation.y,
+                            graph: `${firstStation.x} ${firstStation.y}|${lastStation.x} ${lastStation.y}`,
+                            lane: [{ name: "테스트선" }],
+                        },
+                        {
+                            trafficType: 3,
+                            duration: 4,
+                            distance: 38,
+                            routes: [
+                                {
+                                    rseq: 1,
+                                    crossXYInfos: [lastStation, lastLinkStart],
+                                    xyInfos: [lastLinkStart, lastLinkMiddle],
+                                },
+                                {
+                                    rseq: 2,
+                                    xyInfos: [lastLinkEnd, lastLinkMiddle],
+                                },
+                                {
+                                    rseq: 3,
+                                    crossXYInfos: [lastLinkEnd, destination],
+                                    xyInfos: [lastLinkMiddle, lastLinkEnd],
+                                },
+                            ],
+                        },
+                    ],
+                }],
+            },
+        });
+
+        const firstWalkPath = option.transitLegs?.[0].pathCoords;
+        const lastWalkPath = option.transitLegs?.[2].pathCoords;
+        expect(firstWalkPath).toEqual([
+            { lat: origin.y, lng: origin.x },
+            { lat: firstLinkStart.y, lng: firstLinkStart.x },
+            { lat: firstLinkMiddle.y, lng: firstLinkMiddle.x },
+            { lat: firstLinkEnd.y, lng: firstLinkEnd.x },
+            { lat: firstStation.y, lng: firstStation.x },
+        ]);
+        expect(lastWalkPath).toEqual([
+            { lat: lastStation.y, lng: lastStation.x },
+            { lat: lastLinkStart.y, lng: lastLinkStart.x },
+            { lat: lastLinkMiddle.y, lng: lastLinkMiddle.x },
+            { lat: lastLinkEnd.y, lng: lastLinkEnd.x },
+            { lat: destination.y, lng: destination.x },
+        ]);
+        expect(firstWalkPath?.filter((coord) => coord.lng === firstStation.x)).toHaveLength(1);
+        expect(lastWalkPath?.filter((coord) => coord.lng === destination.x)).toHaveLength(1);
+        expect(pathLengthMeters(firstWalkPath)).toBeLessThan(38 * 1.2);
+        expect(pathLengthMeters(lastWalkPath)).toBeLessThan(38 * 1.2);
+    });
+
+    test("orients a single route from start to end and tolerates missing cross or link coordinates", () => {
+        const [option] = parseTransitOptionsFromOdsay({
+            result: {
+                paths: [{
+                    pathType: 2,
+                    totalTime: 3,
+                    totalDistance: 60,
+                    rps: [
+                        {
+                            trafficType: 3,
+                            duration: 1,
+                            distance: 20,
+                            startX: 126.92,
+                            startY: 37.5,
+                            endX: 126.9202,
+                            endY: 37.5,
+                            routes: [{
+                                rseq: 1,
+                                crossXYInfos: [
+                                    { x: 126.9201, y: 37.5 },
+                                    { x: 126.92, y: 37.5 },
+                                ],
+                                xyInfos: [
+                                    { x: 126.9202, y: 37.5 },
+                                    { x: 126.9201, y: 37.5 },
+                                ],
+                            }],
+                        },
+                        {
+                            trafficType: 3,
+                            duration: 1,
+                            distance: 20,
+                            startX: 126.93,
+                            startY: 37.5,
+                            endX: 126.9302,
+                            endY: 37.5,
+                            routes: [{
+                                rseq: 1,
+                                xyInfos: [
+                                    { x: 126.9302, y: 37.5 },
+                                    { x: 126.93, y: 37.5 },
+                                ],
+                            }],
+                        },
+                        {
+                            trafficType: 3,
+                            duration: 1,
+                            distance: 20,
+                            startX: 126.94,
+                            startY: 37.5,
+                            endX: 126.9402,
+                            endY: 37.5,
+                            routes: [{
+                                rseq: 1,
+                                crossXYInfos: [
+                                    { x: 126.9402, y: 37.5 },
+                                    { x: 126.94, y: 37.5 },
+                                ],
+                            }],
+                        },
+                    ],
+                }],
+            },
+        });
+
+        expect(option.transitLegs?.map((leg) => leg.pathCoords)).toEqual([
+            [
+                { lat: 37.5, lng: 126.92 },
+                { lat: 37.5, lng: 126.9201 },
+                { lat: 37.5, lng: 126.9202 },
+            ],
+            [
+                { lat: 37.5, lng: 126.93 },
+                { lat: 37.5, lng: 126.9302 },
+            ],
+            [
+                { lat: 37.5, lng: 126.94 },
+                { lat: 37.5, lng: 126.9402 },
+            ],
+        ]);
     });
 });

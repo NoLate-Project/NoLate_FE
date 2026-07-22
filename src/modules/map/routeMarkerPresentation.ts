@@ -13,6 +13,7 @@ const EARTH_RADIUS_METERS = 6_371_000;
 const MIN_ENDPOINT_LABEL_DISTANCE_PX = 84;
 const OVERVIEW_MARKER_SCALE = 0.84;
 const OVERVIEW_MARKER_MAX_ZOOM = 12;
+const STANDARD_MARKER_SCALE = 0.92;
 const DETAIL_MARKER_MIN_ZOOM = 16.5;
 
 function getEndpointMarkerScale(mapZoom: number): number {
@@ -20,10 +21,7 @@ function getEndpointMarkerScale(mapZoom: number): number {
         return OVERVIEW_MARKER_SCALE;
     }
     if (mapZoom >= DETAIL_MARKER_MIN_ZOOM) return 1;
-
-    const progress = (mapZoom - OVERVIEW_MARKER_MAX_ZOOM) /
-        (DETAIL_MARKER_MIN_ZOOM - OVERVIEW_MARKER_MAX_ZOOM);
-    return Number((OVERVIEW_MARKER_SCALE + ((1 - OVERVIEW_MARKER_SCALE) * progress)).toFixed(3));
+    return STANDARD_MARKER_SCALE;
 }
 
 function distanceMeters(from: RouteMarkerCoordinate, to: RouteMarkerCoordinate): number {

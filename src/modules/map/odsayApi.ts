@@ -82,6 +82,130 @@ function parseCoordinateList(raw: unknown): RoutePathCoord[] {
         .filter((coord): coord is RoutePathCoord => !!coord);
 }
 
+function coordinateGapScore(left: RoutePathCoord | undefined, right: RoutePathCoord | undefined): number {
+    if (!left || !right) return Number.POSITIVE_INFINITY;
+    const latitudeRadians = (((left.lat + right.lat) / 2) * Math.PI) / 180;
+    const latitudeDelta = (right.lat - left.lat) * 111_320;
+    const longitudeDelta = (right.lng - left.lng) * 111_320 * Math.cos(latitudeRadians);
+    return (latitudeDelta * latitudeDelta) + (longitudeDelta * longitudeDelta);
+}
+
+function nearestEndpointGapScore(
+    coordinate: RoutePathCoord | undefined,
+    pathCoords: RoutePathCoord[]
+): number {
+    if (!coordinate || pathCoords.length === 0) return Number.POSITIVE_INFINITY;
+    return Math.min(
+        coordinateGapScore(coordinate, pathCoords[0]),
+        coordinateGapScore(coordinate, pathCoords[pathCoords.length - 1])
+    );
+}
+
+function orientInitialCoords(
+    coords: RoutePathCoord[],
+    startHint?: RoutePathCoord,
+    followingCoords: RoutePathCoord[] = []
+): RoutePathCoord[] {
+    if (coords.length < 2) return coords;
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+    const forwardStartScore = startHint ? coordinateGapScore(startHint, first) : 0;
+    const reverseStartScore = startHint ? coordinateGapScore(startHint, last) : 0;
+    const forwardJoinScore = followingCoords.length > 0
+        ? nearestEndpointGapScore(last, followingCoords)
+        : 0;
+    const reverseJoinScore = followingCoords.length > 0
+        ? nearestEndpointGapScore(first, followingCoords)
+        : 0;
+    return reverseStartScore + reverseJoinScore < forwardStartScore + forwardJoinScore
+        ? coords.slice().reverse()
+        : coords;
+}
+
+function pathOverlapCount(target: RoutePathCoord[], coords: RoutePathCoord[]): number {
+    const maximum = Math.min(target.length, coords.length);
+    for (let length = maximum; length > 0; length -= 1) {
+        const targetStart = target.length - length;
+        const matches = coords
+            .slice(0, length)
+            .every((coord, index) => sameCoord(target[targetStart + index], coord));
+        if (matches) return length;
+    }
+    return 0;
+}
+
+function appendContinuousCoords(target: RoutePathCoord[], coords: RoutePathCoord[]): void {
+    if (coords.length === 0) return;
+    if (target.length === 0) {
+        appendCoords(target, coords);
+        return;
+    }
+
+    const reversedCoords = coords.slice().reverse();
+    const forwardOverlap = pathOverlapCount(target, coords);
+    const reverseOverlap = pathOverlapCount(target, reversedCoords);
+    const previous = target[target.length - 1];
+    const forwardGap = coordinateGapScore(previous, coords[0]);
+    const reverseGap = coordinateGapScore(previous, reversedCoords[0]);
+    const orientedCoords = reverseOverlap > forwardOverlap ||
+        (reverseOverlap === forwardOverlap && reverseGap < forwardGap)
+        ? reversedCoords
+        : coords;
+    const overlap = orientedCoords === reversedCoords ? reverseOverlap : forwardOverlap;
+    appendCoords(target, orientedCoords.slice(overlap));
+}
+
+function orientPathFromTo(
+    pathCoords: RoutePathCoord[],
+    from?: RoutePathCoord,
+    to?: RoutePathCoord
+): RoutePathCoord[] {
+    if (pathCoords.length < 2 || (!from && !to)) return pathCoords;
+    const first = pathCoords[0];
+    const last = pathCoords[pathCoords.length - 1];
+    const forwardScore = (from ? coordinateGapScore(from, first) : 0) +
+        (to ? coordinateGapScore(last, to) : 0);
+    const reverseScore = (from ? coordinateGapScore(from, last) : 0) +
+        (to ? coordinateGapScore(first, to) : 0);
+    return reverseScore < forwardScore ? pathCoords.slice().reverse() : pathCoords;
+}
+
+function assembleSingleWalkRoute(
+    crossCoords: RoutePathCoord[],
+    linkCoords: RoutePathCoord[],
+    fromHint?: RoutePathCoord,
+    toHint?: RoutePathCoord
+): RoutePathCoord[] {
+    if (crossCoords.length === 0) return orientPathFromTo(linkCoords, fromHint, toHint);
+    if (linkCoords.length === 0) return orientPathFromTo(crossCoords, fromHint, toHint);
+
+    const crossTouchesLinkStart = nearestEndpointGapScore(linkCoords[0], crossCoords);
+    const crossTouchesLinkEnd = nearestEndpointGapScore(linkCoords[linkCoords.length - 1], crossCoords);
+    const crossComesFirst = crossTouchesLinkStart <= crossTouchesLinkEnd;
+    const assembleParts = (
+        firstPart: RoutePathCoord[],
+        secondPart: RoutePathCoord[]
+    ): RoutePathCoord[] => {
+        const result: RoutePathCoord[] = [];
+        appendCoords(result, orientInitialCoords(firstPart, fromHint, secondPart));
+        appendContinuousCoords(result, secondPart);
+        return orientPathFromTo(result, fromHint, toHint);
+    };
+    const preferred = crossComesFirst
+        ? assembleParts(crossCoords, linkCoords)
+        : assembleParts(linkCoords, crossCoords);
+    if (!fromHint && !toHint) return preferred;
+
+    const alternate = crossComesFirst
+        ? assembleParts(linkCoords, crossCoords)
+        : assembleParts(crossCoords, linkCoords);
+    const endpointScore = (coords: RoutePathCoord[]) => (
+        (fromHint ? coordinateGapScore(fromHint, coords[0]) : 0) +
+        (toHint ? coordinateGapScore(coords[coords.length - 1], toHint) : 0)
+    );
+    return endpointScore(alternate) < endpointScore(preferred) ? alternate : preferred;
+}
+
 function parseGraph(raw: unknown): RoutePathCoord[] {
     if (typeof raw !== "string") return [];
     return raw
@@ -93,7 +217,6 @@ function parseGraph(raw: unknown): RoutePathCoord[] {
 
 /** ODsay 도보 RP의 링크 좌표를 순서대로 합쳐 화면용 실제 보행 선형을 만든다. */
 function parseWalkPath(leg: any): RoutePathCoord[] {
-    const result: RoutePathCoord[] = [];
     const routes = ensureArray<any>(leg?.routes)
         .map((route, originalIndex) => ({
             route,
@@ -101,12 +224,67 @@ function parseWalkPath(leg: any): RoutePathCoord[] {
             sequence: safeNumber(route?.rseq) ?? originalIndex,
         }))
         .sort((left, right) => left.sequence - right.sequence || left.originalIndex - right.originalIndex);
+    if (routes.length === 0) return [];
 
-    routes.forEach(({ route }) => {
-        appendCoords(result, parseCoordinateList(route?.crossXYInfos));
-        appendCoords(result, parseCoordinateList(route?.xyInfos));
+    const routeParts = routes.map(({ route }) => ({
+        crossCoords: parseCoordinateList(route?.crossXYInfos),
+        linkCoords: parseCoordinateList(route?.xyInfos),
+    }));
+    const explicitFrom = routeCoord(leg?.startX, leg?.startY);
+    const explicitTo = routeCoord(leg?.endX, leg?.endY);
+
+    if (routeParts.length === 1) {
+        return assembleSingleWalkRoute(
+            routeParts[0].crossCoords,
+            routeParts[0].linkCoords,
+            explicitFrom,
+            explicitTo
+        );
+    }
+
+    const firstCrossCoords = routeParts[0].crossCoords;
+    const lastCrossCoords = routeParts[routeParts.length - 1].crossCoords;
+    const fromHint = explicitFrom ?? firstCrossCoords[0];
+    const toHint = explicitTo ?? lastCrossCoords[lastCrossCoords.length - 1];
+    const result: RoutePathCoord[] = [];
+
+    routeParts.forEach(({ crossCoords, linkCoords }, index) => {
+        const first = index === 0;
+        const last = index === routeParts.length - 1;
+
+        if (first) {
+            const followingCoords = linkCoords.length > 0
+                ? linkCoords
+                : (routeParts[index + 1]?.linkCoords ?? routeParts[index + 1]?.crossCoords ?? []);
+            if (crossCoords.length > 0) {
+                appendCoords(result, orientInitialCoords(crossCoords, fromHint, followingCoords));
+            }
+            if (linkCoords.length > 0) {
+                if (result.length === 0) {
+                    appendCoords(result, orientInitialCoords(
+                        linkCoords,
+                        fromHint,
+                        routeParts[index + 1]?.linkCoords ?? routeParts[index + 1]?.crossCoords ?? []
+                    ));
+                } else {
+                    appendContinuousCoords(result, linkCoords);
+                }
+            }
+            return;
+        }
+
+        if (last) {
+            appendContinuousCoords(result, linkCoords.length > 0 ? linkCoords : crossCoords);
+            if (linkCoords.length > 0) appendContinuousCoords(result, crossCoords);
+            return;
+        }
+
+        // crossXYInfos는 출발/도착과 링크 사이의 terminal connector다. 중간 route는
+        // 링크 좌표만 사용하되, 비정상 응답에서 xyInfos가 빠졌을 때만 cross를 보존한다.
+        appendContinuousCoords(result, linkCoords.length > 0 ? linkCoords : crossCoords);
     });
-    return result;
+
+    return orientPathFromTo(result, fromHint, toHint);
 }
 
 function normalizeLegKind(trafficType: unknown): TransitLegKind {

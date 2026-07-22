@@ -3,23 +3,37 @@ jest.mock("../src/api/env", () => ({
 }));
 
 import {
+    getTmapVectorMapType,
+    getTmapVectorScriptUrl,
     isDuplicateTmapMapSelection,
     isValidWgs84Coordinate,
     TMAP_MAP_SELECTION_DEDUPE_WINDOW_MS,
     TMAP_MAP_SELECTION_EVENTS,
     TMAP_MAP_TOUCH_SELECTION_MAX_MOVEMENT_PX,
+    TMAP_VECTOR_JS_NAMESPACE,
+    TMAP_VECTOR_JS_SCRIPT_VERSION,
 } from "../src/modules/map/TmapMapView";
 
 describe("Tmap map selection event", () => {
-    it("데스크톱 click과 이동량을 검사하는 모바일 touch lifecycle을 사용한다", () => {
+    it("Vector JS의 대소문자 구분 이벤트와 이동량을 검사하는 touch lifecycle을 사용한다", () => {
         expect(TMAP_MAP_SELECTION_EVENTS).toEqual({
-            click: "click",
-            touchStart: "touchstart",
-            touchMove: ["touchmove", "dragstart", "drag", "dragend"],
-            touchCancel: ["zoomstart", "zoom_changed", "gesturestart"],
-            touchEnd: "touchend",
+            click: "Click",
+            touchStart: "TouchStart",
+            touchMove: ["TouchMove", "DragStart", "Drag", "DragEnd"],
+            touchCancel: ["TouchCancel", "ZoomStart", "Zoom"],
+            touchEnd: "TouchEnd",
         });
         expect(TMAP_MAP_TOUCH_SELECTION_MAX_MOVEMENT_PX).toBeGreaterThan(0);
+    });
+
+    it("Raster v2 대신 Vector JS v3 로더와 공식 map type을 사용한다", () => {
+        expect(TMAP_VECTOR_JS_SCRIPT_VERSION).toBe("vectorjs?version=1");
+        expect(TMAP_VECTOR_JS_NAMESPACE).toBe("Tmapv3");
+        expect(getTmapVectorScriptUrl("key with space")).toBe(
+            "https://apis.openapi.sk.com/tmap/vectorjs?version=1&appKey=key%20with%20space"
+        );
+        expect(getTmapVectorMapType(false)).toBe("ROAD");
+        expect(getTmapVectorMapType(true)).toBe("NIGHT");
     });
 
     it("같은 물리 탭에서 연이어 온 touch/click 선택은 한 번으로 합친다", () => {

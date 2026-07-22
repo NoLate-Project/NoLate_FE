@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import {
     ActivityIndicator,
+    Platform,
     Pressable,
     StyleProp,
     StyleSheet,
@@ -17,11 +18,11 @@ import {
     ViewStyle,
 } from "react-native";
 import { getEnv } from "../../api/env";
+import TmapNativeMapView, { isNativeTMapViewAvailable } from "./TmapNativeMapView";
 import {
     expandNativeDashPathOverlays,
     type NativeDashViewport,
 } from "./nativeDashPathPresentation";
-import { ROUTE_MAP_TILE_FILTERS } from "./routeMapPresentation";
 
 export type TmapLatLng = {
     latitude: number;
@@ -143,16 +144,27 @@ export type TmapCameraState = {
 };
 
 /**
- * TMAP 지도 객체는 데스크톱에서는 click을, 모바일에서는 touch lifecycle을 보낸다.
+ * TMAP Vector 지도 객체는 데스크톱에서는 Click을, 모바일에서는 touch lifecycle을 보낸다.
  * 모바일 touchend는 drag 뒤에도 오므로 시작점 대비 이동량을 검사한 뒤에만 선택한다.
  */
 export const TMAP_MAP_SELECTION_EVENTS = {
-    click: "click",
-    touchStart: "touchstart",
-    touchMove: ["touchmove", "dragstart", "drag", "dragend"],
-    touchCancel: ["zoomstart", "zoom_changed", "gesturestart"],
-    touchEnd: "touchend",
+    click: "Click",
+    touchStart: "TouchStart",
+    touchMove: ["TouchMove", "DragStart", "Drag", "DragEnd"],
+    touchCancel: ["TouchCancel", "ZoomStart", "Zoom"],
+    touchEnd: "TouchEnd",
 } as const;
+
+export const TMAP_VECTOR_JS_SCRIPT_VERSION = "vectorjs?version=1";
+export const TMAP_VECTOR_JS_NAMESPACE = "Tmapv3";
+
+export function getTmapVectorScriptUrl(appKey: string): string {
+    return `https://apis.openapi.sk.com/tmap/${TMAP_VECTOR_JS_SCRIPT_VERSION}&appKey=${encodeURIComponent(appKey)}`;
+}
+
+export function getTmapVectorMapType(isDark: boolean): "NIGHT" | "ROAD" {
+    return isDark ? "NIGHT" : "ROAD";
+}
 
 export const TMAP_MAP_TOUCH_SELECTION_MAX_MOVEMENT_PX = 10;
 export const TMAP_MAP_SELECTION_DEDUPE_WINDOW_MS = 500;
@@ -181,7 +193,7 @@ export function isValidWgs84Coordinate(latitude: number, longitude: number): boo
         latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
 }
 
-type TmapMapViewProps = {
+export type TmapMapViewProps = {
     style?: StyleProp<ViewStyle>;
     /**
      * 전체 화면 지도처럼 하단 시트가 지도를 가리는 화면에서 오류 카드를
@@ -254,44 +266,18 @@ function safeNumber(value: unknown): number | undefined {
 }
 
 /**
- * TMAP SDK가 native direction을 지원하지 않는 실행 환경에서도 방향 정보가 사라지지 않게
- * 기존 화면 좌표 arrow renderer에 화살표 전용 overlay를 넘긴다. 본선은 native Polyline이
- * 계속 소유하고, fallback은 drawLine=false라 동일 선을 두 번 그리지 않는다.
+ * 경로 방향 표시는 앱이 screen-space 화살표를 덧그리지 않고
+ * TMAP Vector Polyline의 native `direction` 패턴에 전담한다.
+ * 호출부 호환성을 위해 기존 함수명은 유지하되 overlay는 그대로 반환한다.
  */
 export function addNativeDirectionScreenFallbacks(
     overlays: TmapPathOverlay[],
-    nativeDirectionUsable: boolean | undefined
+    _nativeDirectionUsable: boolean | undefined
 ): TmapPathOverlay[] {
-    if (nativeDirectionUsable !== false) return overlays;
-
-    const fallbacks = overlays
-        .filter((overlay) => (
-            overlay.renderMode !== "screen" &&
-            overlay.nativeDirection === true &&
-            (overlay.strokeStyle ?? "solid") === "solid" &&
-            overlay.coords.length >= 2
-        ))
-        .map<TmapPathOverlay>((overlay) => ({
-            id: `${overlay.id}--screen-direction-fallback`,
-            coords: overlay.coords,
-            renderMode: "screen",
-            shape: "solid",
-            drawLine: false,
-            showDirection: true,
-            nativeDirection: false,
-            directionColor: overlay.nativeDirectionColor ?? "#FFFFFF",
-            directionOpacity: overlay.nativeDirectionOpacity ?? 0.9,
-            directionSpacingPx: overlay.directionSpacingPx ?? 26,
-            directionSizePx: overlay.directionSizePx ?? 6.4,
-            directionInsetPx: overlay.directionInsetPx ?? 13,
-            directionMaxCount: overlay.directionMaxCount ?? 120,
-            zIndex: (overlay.zIndex ?? 0) + 2,
-        }));
-
-    return fallbacks.length > 0 ? [...overlays, ...fallbacks] : overlays;
+    return overlays;
 }
 
-// SDK 기능 판정은 Release에서도 RN에 전달해야 screen-space 방향표시 fallback을 선택할 수 있다.
+// SDK 기능 판정은 Release에서도 RN에 전달해 native direction 상태를 진단한다.
 // 실제 WebView에 삽입하는 동일한 조각을 테스트에서 실행해 개발 모드 조건이 다시 섞이지 않게 한다.
 export const TMAP_NATIVE_DIRECTION_REPORT_SCRIPT = String.raw`
         post("tmapNativeDirectionReport", nativeDirectionReport);
@@ -311,15 +297,23 @@ type TmapNativeDirectionProbeLine = {
             directionColor?: unknown;
             directionOpacity?: unknown;
         };
+        vsmStyle?: Record<string, unknown>;
     };
 };
 
-/** WebView probe와 동일한 fail-closed 판정을 테스트와 네이티브 코드에서 공유한다. */
+/**
+ * WebView probe와 동일한 fail-closed 판정을 테스트와 네이티브 코드에서 공유한다.
+ * 현재 Vector JS는 directionColor/directionOpacity를 drawInfo에만 보관하고 실제 VSM에는
+ * 고정 PATTERN:arrow를 넣으므로, 네이티브 화살표의 색상·투명도 지원으로 판정하지 않는다.
+ */
 export function readTmapNativeDirectionCapability(
     line: unknown
 ): TmapNativeDirectionCapability {
-    const drawInfo = (line as TmapNativeDirectionProbeLine | null)?._shape_data?.drawInfo;
-    if (!drawInfo) {
+    const shapeData = (line as TmapNativeDirectionProbeLine | null)?._shape_data;
+    const drawInfo = shapeData?.drawInfo;
+    const strokePattern = String(shapeData?.vsmStyle?.["stroke-pattern"] ?? "").toUpperCase();
+    const usesFixedArrowPattern = strokePattern === "PATTERN:ARROW";
+    if (!drawInfo || !usesFixedArrowPattern) {
         return {
             confirmed: false,
             supportsDirection: false,
@@ -330,17 +324,20 @@ export function readTmapNativeDirectionCapability(
     return {
         confirmed: true,
         supportsDirection: drawInfo.direction === true,
-        supportsDirectionColor: String(drawInfo.directionColor ?? "").toUpperCase() === "#FFFFFF",
-        supportsDirectionOpacity: Math.abs(Number(drawInfo.directionOpacity) - 0.001) < 0.000001,
+        supportsDirectionColor: false,
+        supportsDirectionOpacity: false,
     };
 }
 
-// 실제 WebView에서 생성된 Polyline의 drawInfo가 옵션을 반영했는지 확인한다. SDK 내부 구조를
-// 읽을 수 없으면 지원된다고 추측하지 않고 screen-space fallback을 선택한다.
+// 실제 WebView에서 생성된 Polyline이 TMAP의 고정 PATTERN:arrow를 사용하는지 진단한다.
+// 색상·투명도는 지원 여부만 기록하고, 앱 화살표 fallback 선택에는 사용하지 않는다.
 export const TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT = String.raw`
     function readTmapNativeDirectionCapability(line) {
-      var drawInfo = line && line._shape_data && line._shape_data.drawInfo;
-      if (!drawInfo) {
+      var shapeData = line && line._shape_data;
+      var drawInfo = shapeData && shapeData.drawInfo;
+      var strokePattern = String(shapeData && shapeData.vsmStyle && shapeData.vsmStyle["stroke-pattern"] || "").toUpperCase();
+      var usesFixedArrowPattern = strokePattern === "PATTERN:ARROW";
+      if (!drawInfo || !usesFixedArrowPattern) {
         return {
           confirmed: false,
           supportsDirection: false,
@@ -351,8 +348,9 @@ export const TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT = String.raw`
       return {
         confirmed: true,
         supportsDirection: drawInfo.direction === true,
-        supportsDirectionColor: String(drawInfo.directionColor || "").toUpperCase() === "#FFFFFF",
-        supportsDirectionOpacity: Math.abs(Number(drawInfo.directionOpacity) - 0.001) < 0.000001,
+        // Vector JS는 요청값을 drawInfo에 저장하지만 실제 렌더링은 고정 PATTERN:arrow다.
+        supportsDirectionColor: false,
+        supportsDirectionOpacity: false,
       };
     }
 `;
@@ -455,12 +453,12 @@ export const TMAP_NATIVE_STROKE_COLOR_SCRIPT = String.raw`
 
 const DEFAULT_FALLBACK_BACKGROUND = "#E5E7EB";
 const DEFAULT_FALLBACK_TEXT = "#6B7280";
-const TMAP_WEBVIEW_HTML_VERSION = "route-native-first-v42-guarded-touch-selection";
+const TMAP_WEBVIEW_HTML_VERSION = "route-vector-v45-tmap-native-direction";
 // WebView 내부 SVG <image>에서 안정적으로 렌더되도록 아이콘을 data URI로 고정한다.
 const BUS_BADGE_GLYPH_URI = "data:image/png;base64,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";
 const SUBWAY_BADGE_GLYPH_URI = "data:image/png;base64,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";
 
-const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function TmapMapView(
+const TmapWebMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function TmapWebMapView(
     {
         style,
         errorOverlayTop,
@@ -515,7 +513,6 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         webViewKey,
         String(webViewReloadRevision),
         nightModeEnabled ? "dark" : "light",
-        routeFocusMode ? "route" : "default",
         showLocationButton ? "location" : "no-location",
         showZoomControls ? "zoom" : "no-zoom",
     ].join(":");
@@ -882,7 +879,6 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         const showZoomControlFlag = showZoomControls ? "true" : "false";
         const showLocationControlFlag = showLocationButton ? "true" : "false";
         const darkFlag = nightModeEnabled ? "true" : "false";
-        const routeFocusFlag = routeFocusMode ? "true" : "false";
         const initialMapBackground = nightModeEnabled ? "#0B1220" : "#F2F2F7";
 
         return `<!doctype html>
@@ -953,8 +949,8 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     }
     #locationBtn.hidden { display: none; }
   </style>
-  <script>window.__TMAP_SCRIPT_VERSION__ = "jsv2?version=1";</script>
-  <script src="https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(appKey)}"></script>
+  <script>window.__TMAP_SCRIPT_VERSION__ = ${JSON.stringify(TMAP_VECTOR_JS_SCRIPT_VERSION)};</script>
+  <script src="${getTmapVectorScriptUrl(appKey)}"></script>
 </head>
 <body>
   <div id="map"></div>
@@ -992,6 +988,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       var pendingData = null;
       var initRetry = 0;
       var isDarkTheme = ${darkFlag};
+      var appliedMapType = null;
       var isDevelopment = ${isDevelopmentFlag};
       function debugLog() {
         if (isDevelopment && window.console && typeof window.console.log === "function") {
@@ -1008,11 +1005,6 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           window.console.table(value);
         }
       }
-      var isRouteFocusMode = ${routeFocusFlag};
-      var nativeDarkMapTypeApplied = false;
-      var nativeMapTypeCandidates = null;
-      var mapTilePresentationObserver = null;
-      var routeMapTileFilters = ${JSON.stringify(ROUTE_MAP_TILE_FILTERS)};
       var busBadgeGlyphUri = ${JSON.stringify(BUS_BADGE_GLYPH_URI)};
       var subwayBadgeGlyphUri = ${JSON.stringify(SUBWAY_BADGE_GLYPH_URI)};
 
@@ -1066,14 +1058,6 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         try {
           if (map && typeof map.relayout === "function") map.relayout();
         } catch (_relayoutError) {}
-        try {
-          if (map && typeof map.setSize === "function" && window.Tmapv2 && Tmapv2.Size) {
-            var rect = mapEl && mapEl.getBoundingClientRect ? mapEl.getBoundingClientRect() : null;
-            var width = Math.max(1, Math.round((rect && rect.width) || window.innerWidth || 1));
-            var height = Math.max(1, Math.round((rect && rect.height) || window.innerHeight || 1));
-            map.setSize(new Tmapv2.Size(width, height));
-          }
-        } catch (_sizeError) {}
         scheduleScreenRouteOverlayRender(40);
         setTimeout(function () {
           scheduleScreenRouteOverlayRender();
@@ -1088,7 +1072,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
       }
 
       function toLatLng(point) {
-        return new Tmapv2.LatLng(point.latitude, point.longitude);
+        return new Tmapv3.LatLng(point.latitude, point.longitude);
       }
 
       ${TMAP_NATIVE_STROKE_COLOR_SCRIPT}
@@ -1096,14 +1080,12 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
 
       function probeTmapNativeDirectionSupport() {
         var sdkReport = {
-          hasTmapv2: !!window.Tmapv2,
           hasTmapv3: !!window.Tmapv3,
-          polylineV2: !!(window.Tmapv2 && Tmapv2.Polyline),
           polylineV3: !!(window.Tmapv3 && Tmapv3.Polyline),
           scriptVersion: window.__TMAP_SCRIPT_VERSION__,
         };
         var row = {
-          sdk: sdkReport.polylineV3 ? "Tmapv3" : (sdkReport.polylineV2 ? "Tmapv2" : "unknown"),
+          sdk: sdkReport.polylineV3 ? "Tmapv3" : "unknown",
           supportsDirection: false,
           supportsDirectionColor: false,
           supportsDirectionOpacity: false,
@@ -1116,18 +1098,18 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
         var testLine = null;
         var testDashLine = null;
         try {
-          if (map && sdkReport.polylineV2) {
+          if (map && sdkReport.polylineV3) {
             var center = null;
             try {
               center = readLatLngFields(map.getCenter && map.getCenter());
             } catch (_centerError) {}
             var baseLat = center && isFinite(center.latitude) ? center.latitude : 37.5665;
             var baseLng = center && isFinite(center.longitude) ? center.longitude : 126.9780;
-            testLine = new Tmapv2.Polyline({
+            testLine = new Tmapv3.Polyline({
               path: [
-                new Tmapv2.LatLng(baseLat, baseLng),
-                new Tmapv2.LatLng(baseLat + 0.0004, baseLng + 0.0012),
-                new Tmapv2.LatLng(baseLat + 0.0009, baseLng + 0.0024),
+                new Tmapv3.LatLng(baseLat, baseLng),
+                new Tmapv3.LatLng(baseLat + 0.0004, baseLng + 0.0012),
+                new Tmapv3.LatLng(baseLat + 0.0009, baseLng + 0.0024),
               ],
               strokeColor: "#00A84D",
               strokeWeight: 8,
@@ -1137,19 +1119,17 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
               direction: true,
               directionColor: "#FFFFFF",
               directionOpacity: 0.001,
-              map: map,
             });
 
-            testDashLine = new Tmapv2.Polyline({
+            testDashLine = new Tmapv3.Polyline({
               path: [
-                new Tmapv2.LatLng(baseLat, baseLng),
-                new Tmapv2.LatLng(baseLat + 0.0002, baseLng + 0.0012),
+                new Tmapv3.LatLng(baseLat, baseLng),
+                new Tmapv3.LatLng(baseLat + 0.0002, baseLng + 0.0012),
               ],
               strokeColor: "#2F7BFF",
               strokeWeight: 5,
               strokeOpacity: 0.001,
               strokeStyle: "dash",
-              map: map,
             });
 
             // 현재 로드된 SDK가 옵션을 실제 drawInfo에 반영하는지 확인한다.
@@ -1161,13 +1141,13 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
             row.supportsDashStroke = !!dashDrawInfo && dashDrawInfo.strokeStyle === "dash";
             row.pathOrderControlsDirection = row.supportsDirection;
             row.arrowMovesWithPolyline = row.supportsDirection;
-            row.usableForRouteLine = row.supportsDirection &&
-              row.supportsDirectionColor &&
-              row.supportsDirectionOpacity;
+            // 앱이 별도 화살표를 그리지 않고 TMAP의 내장 PATTERN:arrow를 사용한다.
+            // 색상·투명도 지원 여부는 native direction 사용 조건에 포함하지 않는다.
+            row.usableForRouteLine = row.supportsDirection;
             row.reasonNativeDirectionDisabled = row.usableForRouteLine
               ? null
               : directionCapability.confirmed
-              ? "Tmap Polyline direction options were not reflected by the loaded SDK."
+              ? "TMAP Vector JS native arrow pattern is unavailable."
               : "Tmap Polyline direction support could not be confirmed by the loaded SDK.";
           }
         } catch (error) {
@@ -1180,14 +1160,14 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
           row.reasonNativeDirectionDisabled = error && error.message ? String(error.message) : "Polyline direction option rejected";
           row.reason = row.reasonNativeDirectionDisabled;
         } finally {
-          if (testLine && testLine.setMap) {
+          if (testLine && testLine.getMap && testLine.getMap() && testLine.setMap) {
             setTimeout(function () {
               try {
                 testLine.setMap(null);
               } catch (_removeError) {}
             }, 60);
           }
-          if (testDashLine && testDashLine.setMap) {
+          if (testDashLine && testDashLine.getMap && testDashLine.getMap() && testDashLine.setMap) {
             setTimeout(function () {
               try {
                 testDashLine.setMap(null);
@@ -1411,15 +1391,9 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         var latitude = Number(coord.latitude);
         var longitude = Number(coord.longitude);
         if (!isFinite(latitude) || !isFinite(longitude)) return null;
-        // Tmap Web SDK builds differ on whether projection helpers return container
-        // pixels or global world pixels. For the idle-only arrow layer we need stable
-        // screen pixels, so prefer our camera/zoom based projection and only fall back
-        // to SDK helpers if the camera state is not readable.
-        var cameraProjectedPoint = projectWithMapCenter({ latitude: latitude, longitude: longitude });
-        if (cameraProjectedPoint) return cameraProjectedPoint;
         var latLng = null;
         try {
-          latLng = new Tmapv2.LatLng(latitude, longitude);
+          latLng = new Tmapv3.LatLng(latitude, longitude);
         } catch (_error) {
           latLng = { latitude: latitude, longitude: longitude };
         }
@@ -1432,8 +1406,8 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         }
 
         var methodTargets = [
+          { target: map, methods: ["realToScreen", "pointFromLatLngToContainerPixel", "fromLatLngToContainerPixel", "latLngToContainerPixel", "latLngToPoint", "fromLatLngToPoint"] },
           { target: projection, methods: ["pointFromLatLngToContainerPixel", "fromLatLngToContainerPixel", "latLngToContainerPixel", "latLngToPoint", "fromLatLngToPoint"] },
-          { target: map, methods: ["pointFromLatLngToContainerPixel", "fromLatLngToContainerPixel", "latLngToContainerPixel", "latLngToPoint", "fromLatLngToPoint"] },
         ];
         for (var groupIndex = 0; groupIndex < methodTargets.length; groupIndex += 1) {
           var group = methodTargets[groupIndex];
@@ -1449,7 +1423,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           }
         }
 
-        return null;
+        return projectWithMapCenter({ latitude: latitude, longitude: longitude });
       }
 
       function cleanScreenPoints(coords) {
@@ -2126,7 +2100,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           if (shouldDrawLine) {
             strokeCanvasRoutePath(ctx, points, item, strokeColor, width, 1);
           }
-          drawCanvasDirectionalArrows(ctx, points, item);
+          // 방향 화살표는 screen Canvas에서 그리지 않고 TMAP Polyline direction이 전담한다.
           drawCanvasLineLabel(ctx, points, item, totalDistance);
         });
       }
@@ -2513,241 +2487,26 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           height: size,
         };
       }
-      // 지도 테마는 앱/프로필 테마 값을 그대로 전달하고, TMAP native mapType을 우선 적용한다.
-      // 지도 컨테이너 전체에 필터나 tone overlay를 얹으면 안내선·마커까지 탁해지므로 사용하지 않는다.
-      // Tmap Web SDK는 dark mapType 이름이 런타임마다 달라 보이지만,
-      // 지원하지 않는 값을 넣어도 setMapType()이 조용히 통과하는 경우가 있다.
-      // 기존 구현처럼 후보를 넓게 추측하면 \"적용 성공\"으로 오판해서 타일 fallback이 꺼지고
-      // 결과적으로 지도 타일은 계속 라이트로 남는다.
-      // 그래서 아래 로직은:
-      // 1) SDK가 실제로 export한 정확한 키만 후보로 사용하고
-      // 2) getter로 mapType 변화가 확인될 때만 native theme 성공으로 인정한다.
-      // 검증이 불가능하면 false를 반환해 기본 타일만 대상으로 하는 dark fallback을 사용한다.
-      function resolveVerifiedNativeMapTypeCandidates() {
-        if (nativeMapTypeCandidates) return nativeMapTypeCandidates;
-
-        nativeMapTypeCandidates = {
-          light: [],
-          dark: [],
-        };
-
-        try {
-          var mapTypeObj = (window.Tmapv2 && Tmapv2.MapType) ? Tmapv2.MapType : null;
-          if (!mapTypeObj || typeof mapTypeObj !== "object") return nativeMapTypeCandidates;
-
-          // 여기서는 "SDK가 실제로 export한 키"만 후보로 쓴다.
-          // 추정 문자열까지 섞어 넣으면 setMapType()이 조용히 통과하는 런타임에서
-          // dark theme 성공으로 오판할 수 있어서, 후보 집합 자체를 보수적으로 유지한다.
-          var appendUniqueCandidate = function (bucket, key) {
-            var value = mapTypeObj[key];
-            if (value === undefined || value === null) return;
-            if (bucket.some(function (candidate) { return String(candidate) === String(value); })) return;
-            bucket.push(value);
-          };
-
-          ["ROAD", "BASIC", "NORMAL", "DEFAULT", "STANDARD", "BASE", "DAY"].forEach(function (key) {
-            appendUniqueCandidate(nativeMapTypeCandidates.light, key);
-          });
-          ["NIGHT", "NAVI_NIGHT", "MIDNIGHT", "DARK", "BLACK", "DARKMODE"].forEach(function (key) {
-            appendUniqueCandidate(nativeMapTypeCandidates.dark, key);
-          });
-        } catch (_error) {
-          nativeMapTypeCandidates = {
-            light: [],
-            dark: [],
-          };
-        }
-
-        return nativeMapTypeCandidates;
-      }
-
-      // 현재 mapType을 읽어 검증할 수 있는 런타임인지 먼저 확인한다.
-      // setter만 있고 getter가 전혀 없으면 "실제로 바뀌었는지"를 증명할 수 없으므로
-      // native theme 적용 성공으로 보지 않고 CSS fallback 경로를 유지한다.
-      function canInspectMapType() {
-        if (!map) return false;
-        if (typeof map.getMapType === "function") return true;
-        if (typeof map.mapType !== "undefined") return true;
-        if (typeof map.mapTypeId !== "undefined") return true;
-        return false;
-      }
-
-      function readCurrentMapType() {
-        if (!map) return undefined;
-
-        try {
-          // SDK 버전에 따라 노출하는 getter/field 이름이 달라서 읽기 경로를 순서대로 시도한다.
-          if (typeof map.getMapType === "function") {
-            return map.getMapType();
-          }
-          if (typeof map.mapType !== "undefined") {
-            return map.mapType;
-          }
-          if (typeof map.mapTypeId !== "undefined") {
-            return map.mapTypeId;
-          }
-        } catch (_error) {}
-
-        return undefined;
-      }
-
-      function isSameMapTypeValue(left, right) {
-        if (left === right) return true;
-        if (left === undefined || left === null || right === undefined || right === null) return false;
-        return String(left) === String(right);
-      }
-
-      function trySetVerifiedMapType(candidates) {
-        if (!map || !map.setMapType || !Array.isArray(candidates) || candidates.length === 0 || !canInspectMapType()) {
-          return false;
-        }
-
-        for (var i = 0; i < candidates.length; i += 1) {
-          var candidate = candidates[i];
-          var before = readCurrentMapType();
-
-          try {
-            map.setMapType(candidate);
-            var after = readCurrentMapType();
-            // setter 호출 직후에도 값을 읽지 못하면 "적용 여부를 입증할 수 없는 상태"다.
-            // 이런 경우는 성공으로 치지 않고 다음 후보를 보거나 fallback으로 넘긴다.
-            if (after === undefined || after === null) {
-              continue;
-            }
-            // 1) getter가 후보 값을 그대로 돌려주거나
-            // 2) before/after 값이 명확히 달라져 실제 변경이 관측될 때만
-            // native mapType 적용이 성공했다고 판정한다.
-            if (isSameMapTypeValue(after, candidate)) {
-              return true;
-            }
-            if (before !== undefined && before !== null && !isSameMapTypeValue(before, after)) {
-              return true;
-            }
-          } catch (_error) {
-            // 다음 후보를 확인한다.
-          }
-        }
-
-        return false;
-      }
-
-      function resolveVerifiedNativeThemeApplied(isDark) {
-        var candidates = resolveVerifiedNativeMapTypeCandidates();
-        if (isDark) {
-          return trySetVerifiedMapType(candidates.dark);
-        }
-        // 라이트 모드는 대부분의 런타임에서 기본 상태다.
-        // 전용 light mapType 상수가 없어도 굳이 실패로 볼 필요가 없고,
-        // false를 반환하면 라이트 모드에서 불필요한 fallback tint가 깔릴 수 있으므로
-        // 이런 경우는 "이미 정상 상태"로 간주한다.
-        if (!Array.isArray(candidates.light) || candidates.light.length === 0) {
-          return true;
-        }
-        return trySetVerifiedMapType(candidates.light);
-      }
-
-      function isMapBaseTileImage(imgEl) {
-        if (!imgEl) return false;
-        var source = "";
-        try {
-          source = String(imgEl.currentSrc || imgEl.getAttribute("src") || "").trim();
-        } catch (_error) {}
-        if (!source) return false;
-
-        var imageWidth = Number(imgEl.naturalWidth || imgEl.width || imgEl.clientWidth || 0);
-        var imageHeight = Number(imgEl.naturalHeight || imgEl.height || imgEl.clientHeight || 0);
-        if ((imageWidth > 0 && imageWidth < 128) || (imageHeight > 0 && imageHeight < 128)) {
-          return false;
-        }
-
-        // 앱의 Marker 아이콘은 data URI다. 이 이미지는 지도 타일과 달리
-        // 경로 정보 자체이므로 색상·명도 필터에서 반드시 제외한다.
-        return source.indexOf("data:") !== 0 && source.indexOf("blob:") !== 0;
-      }
-
-      function getRouteFocusTileFilter() {
-        if (!isRouteFocusMode) return "none";
-        if (isDarkTheme) {
-          if (nativeDarkMapTypeApplied) {
-            return routeMapTileFilters.darkNative;
-          }
-          // TMAP 런타임에 native dark mapType이 없는 경우에만 기본 타일을 어둡게 변환한다.
-          // Marker와 Polyline은 별도 native overlay라 이 필터의 영향을 받지 않는다.
-          return routeMapTileFilters.darkFallback;
-        }
-        return routeMapTileFilters.light;
-      }
-
-      function syncMapTilePresentation() {
-        var mapEl = document.getElementById("map");
-        if (!mapEl || !mapEl.querySelectorAll) return;
-        var imgNodes = mapEl.querySelectorAll("img");
-        var tileFilter = getRouteFocusTileFilter();
-        var tilePanes = [];
-        for (var index = 0; index < imgNodes.length; index += 1) {
-          var imgEl = imgNodes[index];
-          if (!imgEl || !imgEl.style) continue;
-
-          // 타일마다 filter를 적용하면 iOS WKWebView가 각 이미지를 별도 레이어로
-          // 합성하면서 줌 이동 후 1px 경계가 생긴다. TMAP의 타일 전용 pane에 한 번만
-          // 적용해 경로 Polyline/Marker는 그대로 두고 타일 사이 이음새를 없앤다.
-          imgEl.style.filter = "none";
-          imgEl.style.transition = "";
-          if (!isMapBaseTileImage(imgEl)) continue;
-
-          var tilePane = imgEl.parentElement;
-          if (!tilePane || tilePane === mapEl || !tilePane.style) continue;
-          if (tilePane.querySelector && tilePane.querySelector("svg, canvas")) continue;
-          if (tilePanes.indexOf(tilePane) < 0) tilePanes.push(tilePane);
-        }
-
-        for (var paneIndex = 0; paneIndex < tilePanes.length; paneIndex += 1) {
-          var pane = tilePanes[paneIndex];
-          pane.style.filter = tileFilter;
-          pane.style.transition = "none";
-          pane.style.backfaceVisibility = "hidden";
-        }
-      }
-
-      function bindMapTilePresentationObserver() {
-        var mapEl = document.getElementById("map");
-        if (!mapEl || typeof MutationObserver === "undefined") return;
-        if (mapTilePresentationObserver) {
-          mapTilePresentationObserver.disconnect();
-          mapTilePresentationObserver = null;
-        }
-        // TMAP은 이동·확대 때 타일 DOM을 교체하므로 새 타일에도 같은 표현 규칙을 적용한다.
-        mapTilePresentationObserver = new MutationObserver(function () {
-          syncMapTilePresentation();
-        });
-        mapTilePresentationObserver.observe(mapEl, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ["src"],
-        });
-        syncMapTilePresentation();
-      }
-
+      // Vector JS는 ROAD/NIGHT mapType을 공식 지원한다. Raster 타일 DOM에 CSS 필터를
+      // 적용하던 이전 보정은 벡터 라벨과 도로를 흐리게 만들 수 있어 사용하지 않는다.
       function applyTheme(isDark) {
         isDarkTheme = !!isDark;
         var mapEl = document.getElementById("map");
         var toneEl = document.getElementById("mapTone");
         var locationBtn = document.getElementById("locationBtn");
+        var nextMapType = isDarkTheme ? "NIGHT" : "ROAD";
 
-        // 우선 native mapType을 사용한다. 지원되지 않을 때만 경로 화면의 기본 타일을
-        // 선택적으로 변환하며, 전체 지도 필터나 tone overlay는 사용하지 않는다.
-        nativeDarkMapTypeApplied = isDarkTheme && resolveVerifiedNativeThemeApplied(true);
-        if (!isDarkTheme) {
-          resolveVerifiedNativeThemeApplied(false);
-        }
+        try {
+          if (map && typeof map.setMapType === "function" && appliedMapType !== nextMapType) {
+            map.setMapType(nextMapType);
+            appliedMapType = nextMapType;
+          }
+        } catch (_mapTypeError) {}
 
         if (mapEl) {
           mapEl.style.filter = "none";
           mapEl.style.transition = "none";
         }
-
-        syncMapTilePresentation();
 
         if (toneEl) {
           toneEl.style.background = "transparent";
@@ -2946,29 +2705,34 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           var markerOption = {
             position: toLatLng(item),
             icon: iconInfo.uri,
-            iconSize: new Tmapv2.Size(iconInfo.width, iconInfo.height),
+            iconSize: new Tmapv3.Size(iconInfo.width, iconInfo.height),
             title: item.caption || "",
             map: map,
           };
           var markerZIndex = Number(item && item.zIndex);
           if (!isFinite(markerZIndex)) markerZIndex = undefined;
 
-          if (window.Tmapv2 && Tmapv2.Point) {
+          if (window.Tmapv3 && Tmapv3.Point) {
             try {
               var markerStyle = item && item.markerStyle ? String(item.markerStyle) : "default";
               var isFloatingBadge = isBadge && (markerStyle === "bus" || markerStyle === "subway" || markerStyle === "walk");
               var customAnchorX = Number(iconInfo && iconInfo.anchorX);
               var customAnchorY = Number(iconInfo && iconInfo.anchorY);
-              // TMAP v2 Marker는 iconAnchor가 아니라 이미지 내부 기준점인 offset을 사용한다.
-              markerOption.offset = isFinite(customAnchorX) && isFinite(customAnchorY)
-                ? new Tmapv2.Point(Math.round(customAnchorX), Math.round(customAnchorY))
-                : isBadge
-                  ? new Tmapv2.Point(Math.round(iconInfo.width / 2), isFloatingBadge ? (iconInfo.height - 6) : iconInfo.height)
-                  : isDot
-                    ? new Tmapv2.Point(Math.round(iconInfo.width / 2), Math.round(iconInfo.height / 2))
-                    : isStation
-                      ? new Tmapv2.Point(Math.round(iconInfo.width / 2), Math.round(iconInfo.height / 2))
-                      : new Tmapv2.Point(Math.round(iconInfo.width / 2), iconInfo.height);
+              var anchorX = isFinite(customAnchorX)
+                ? customAnchorX
+                : (iconInfo.width / 2);
+              var anchorY = isFinite(customAnchorY)
+                ? customAnchorY
+                : (isDot || isStation ? (iconInfo.height / 2) : (isFloatingBadge ? iconInfo.height - 6 : iconInfo.height));
+              // Vector Marker는 anchor 위치를 기준으로 offset을 더한다. 기존 이미지 내부
+              // 기준점을 bottom anchor 대비 이동량으로 변환해 핀 끝이 좌표에 정확히 붙게 한다.
+              markerOption.anchor = isDot || isStation ? "center" : "bottom";
+              var baseAnchorX = iconInfo.width / 2;
+              var baseAnchorY = markerOption.anchor === "center" ? iconInfo.height / 2 : iconInfo.height;
+              markerOption.offset = new Tmapv3.Point(
+                Math.round(baseAnchorX - anchorX),
+                Math.round(baseAnchorY - anchorY)
+              );
             } catch (_error) {}
           }
 
@@ -2993,13 +2757,15 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           }
 
           try {
-            var marker = new Tmapv2.Marker({
+            var marker = new Tmapv3.Marker({
               position: markerOption.position,
               icon: markerOption.icon,
               iconSize: markerOption.iconSize,
               title: markerOption.title,
               map: markerOption.map,
+              anchor: markerOption.anchor,
               offset: markerOption.offset,
+              zIndex: markerZIndex,
             });
             if (isFinite(markerZIndex) && marker && typeof marker.setZIndex === "function") {
               try {
@@ -3022,31 +2788,11 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
                   interactionId: String(item.interactionId),
                 });
               };
-              var markerPressBound = false;
               try {
-                if (typeof marker.addListener === "function") {
-                  marker.addListener("click", markerPressHandler);
-                  marker.addListener("touchend", markerPressHandler);
-                  markerPressBound = true;
+                if (typeof marker.on === "function") {
+                  marker.on("Click", markerPressHandler);
                 }
               } catch (_error) {}
-              if (!markerPressBound) {
-                try {
-                  if (window.Tmapv2 && Tmapv2.events && Tmapv2.events.addListener) {
-                    Tmapv2.events.addListener(marker, "click", markerPressHandler);
-                    Tmapv2.events.addListener(marker, "touchend", markerPressHandler);
-                    markerPressBound = true;
-                  }
-                } catch (_error) {}
-              }
-              if (!markerPressBound) {
-                try {
-                  if (window.Tmapv2 && Tmapv2.Event && Tmapv2.Event.addListener) {
-                    Tmapv2.Event.addListener(marker, "click", markerPressHandler);
-                    Tmapv2.Event.addListener(marker, "touchend", markerPressHandler);
-                  }
-                } catch (_error) {}
-              }
             }
             retainedMarkerIds[markerId] = true;
             markers[markerId] = {
@@ -3138,19 +2884,21 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
 
       function ensureRouteLayerAttached(item) {
         if (!item || !map) return false;
-        var attached = false;
-        try {
-          if (item.outline && item.outline.setMap) {
-            item.outline.setMap(map);
-            attached = true;
+        var hasLayer = !!(item.outline || item.line);
+        var attachLayerOnce = function (layer) {
+          if (!layer) return true;
+          try {
+            // Vector Polyline.setMap(map)은 동일 지도에 다시 호출해도 멱등이 아니며,
+            // 같은 layer/style id를 재등록한다. 현재 지도에 붙어 있으면 그대로 둔다.
+            if (typeof layer.getMap === "function" && layer.getMap() === map) return true;
+            if (typeof layer.setMap !== "function") return false;
+            layer.setMap(map);
+            return true;
+          } catch (_attachError) {
+            return false;
           }
-        } catch (_outlineError) {}
-        try {
-          if (item.line && item.line.setMap) {
-            item.line.setMap(map);
-            attached = true;
-          }
-        } catch (_lineError) {}
+        };
+        var attached = hasLayer && attachLayerOnce(item.outline) && attachLayerOnce(item.line);
         item.attachedToMap = attached;
         item.visible = attached;
         item.updatedAt = Date.now();
@@ -3281,24 +3029,17 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         var strokeOpacity = strokePaint.opacity;
         var strokeOutlineOpacity = outlinePaint.opacity;
         var zIndexValue = Number(zIndex);
-        var nativeDirectionUsable = !!(
-          nativeDirectionReport &&
-          nativeDirectionReport.rows &&
-          nativeDirectionReport.rows[0] &&
-          nativeDirectionReport.rows[0].usableForRouteLine === true
-        );
-        // TMAP V2 SDK는 solid Polyline에서만 native direction indicator를 그린다.
-        var useNativeDirection = nativeDirection === true && normalizedStrokeStyle === "solid" && nativeDirectionUsable;
+        // 방향 화살표는 앱의 Canvas/SVG fallback 대신 TMAP Vector Polyline이 그린다.
+        // 현재 사용하는 Vector v3의 direction 옵션은 solid 경로에 적용한다.
+        var useNativeDirection = nativeDirection === true && normalizedStrokeStyle === "solid";
         if (nativeDirection === true && !useNativeDirection && !nativeDirectionUnavailableWarned) {
           nativeDirectionUnavailableWarned = true;
           debugWarn("[route-direction] native Tmap direction unavailable, drawing route line without arrows", {
             sdk: nativeDirectionReport && nativeDirectionReport.rows ? nativeDirectionReport.rows[0].sdk : "unknown",
             reason: normalizedStrokeStyle !== "solid"
               ? "Tmap native direction requires a solid Polyline stroke."
-              : nativeDirectionReport && nativeDirectionReport.rows
-              ? (nativeDirectionReport.rows[0].reasonNativeDirectionDisabled || nativeDirectionReport.rows[0].reason)
-              : "native direction probe not usable",
-            fallback: "screen-overlay",
+              : "native direction disabled",
+            fallback: "none",
           });
         }
         var nativeDirectionPaint = resolveNativeStrokePaint(
@@ -3346,7 +3087,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
             map: map,
           };
           if (isFinite(zIndexValue)) outlineOptions.zIndex = zIndexValue;
-          outlineLayer = new Tmapv2.Polyline(outlineOptions);
+          outlineLayer = new Tmapv3.Polyline(outlineOptions);
         }
 
         var lineOptions = {
@@ -3361,11 +3102,9 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         };
         if (useNativeDirection) {
           lineOptions.direction = true;
-          lineOptions.directionColor = nativeDirectionStrokeColor;
-          lineOptions.directionOpacity = nativeDirectionStrokeOpacity;
         }
         if (isFinite(zIndexValue)) lineOptions.zIndex = zIndexValue + 1;
-        lineLayer = new Tmapv2.Polyline(lineOptions);
+        lineLayer = new Tmapv3.Polyline(lineOptions);
 
         var nextItem = {
           id: registryId,
@@ -3410,7 +3149,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         var lng = Number(payload.longitude);
         if (!isFinite(lat) || !isFinite(lng)) return;
         markRouteOverlayMoving();
-        map.setCenter(new Tmapv2.LatLng(lat, lng));
+        map.setCenter(new Tmapv3.LatLng(lat, lng));
         if (isFinite(Number(payload.zoom))) {
           map.setZoom(Math.max(6, Math.min(18, Math.round(Number(payload.zoom)))));
         }
@@ -3447,7 +3186,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
       // 경로 전체 bounds fit용 보조 함수. SDK 계산이 실패하면 center/zoom 계산으로 fallback 한다.
       function fitBounds(payload) {
         if (!map || !payload || !Array.isArray(payload.coords) || payload.coords.length < 2) return;
-        var bounds = new Tmapv2.LatLngBounds();
+        var bounds = new Tmapv3.LatLngBounds();
         var minLat = 90;
         var maxLat = -90;
         var minLng = 180;
@@ -3460,7 +3199,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           maxLat = Math.max(maxLat, lat);
           minLng = Math.min(minLng, lng);
           maxLng = Math.max(maxLng, lng);
-          bounds.extend(new Tmapv2.LatLng(lat, lng));
+          bounds.extend(new Tmapv3.LatLng(lat, lng));
         });
 
         try {
@@ -3544,10 +3283,6 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         if (typeof payload.nightModeEnabled === "boolean") {
           applyTheme(payload.nightModeEnabled);
         }
-        if (typeof payload.routeFocusMode === "boolean") {
-          isRouteFocusMode = payload.routeFocusMode;
-          syncMapTilePresentation();
-        }
         applyBaseDim(payload.mapBaseDimOpacity);
         var markerItems = Array.isArray(payload.markers) ? payload.markers : [];
         renderMarkers(markerItems);
@@ -3575,6 +3310,15 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         if (overlayItems.length > 0) {
           var nativeOverlayItems = overlayItems.filter(function (overlay) {
             return !overlay || overlay.renderMode !== "screen";
+          });
+          // Vector Polyline은 zIndex 옵션을 실제 VSM layer 순서에 반영하지 않으므로,
+          // 낮은 우선순위부터 생성해 높은 우선순위 경로가 위에 올라오게 한다.
+          nativeOverlayItems.sort(function (a, b) {
+            var az = Number(a && a.zIndex);
+            var bz = Number(b && b.zIndex);
+            if (!isFinite(az)) az = 0;
+            if (!isFinite(bz)) bz = 0;
+            return az - bz;
           });
           var screenOverlayItems = overlayItems.filter(function (overlay) {
             return overlay && overlay.renderMode === "screen";
@@ -3662,36 +3406,28 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
       function parseTapLatLng(eventObj) {
         if (!eventObj || typeof eventObj !== "object") return null;
 
+        var eventData = eventObj.data && typeof eventObj.data === "object"
+          ? eventObj.data
+          : eventObj;
+
         var latLng =
-          eventObj.latLng ||
-          eventObj.latlng ||
-          eventObj.coordinate ||
-          eventObj.coord ||
-          eventObj.position ||
-          eventObj._latLng ||
+          eventData.lngLat ||
+          eventData.latLng ||
+          eventData.latlng ||
+          eventData.coordinate ||
+          eventData.coord ||
+          eventData.position ||
+          eventData._latLng ||
           null;
 
-        var lat = NaN;
-        var lng = NaN;
+        var parsedLatLng = readLatLngFields(latLng);
+        var lat = parsedLatLng ? parsedLatLng.latitude : NaN;
+        var lng = parsedLatLng ? parsedLatLng.longitude : NaN;
 
-        if (latLng) {
-          lat = numberFromUnknown(latLng._lat);
-          if (!isFinite(lat)) lat = numberFromUnknown(latLng.lat);
-          if (!isFinite(lat)) lat = numberFromUnknown(latLng.latitude);
-          if (!isFinite(lat)) lat = numberFromUnknown(latLng.getLat);
-          if (!isFinite(lat)) lat = numberFromUnknown(latLng.getLatitude);
-
-          lng = numberFromUnknown(latLng._lng);
-          if (!isFinite(lng)) lng = numberFromUnknown(latLng.lng);
-          if (!isFinite(lng)) lng = numberFromUnknown(latLng.longitude);
-          if (!isFinite(lng)) lng = numberFromUnknown(latLng.getLng);
-          if (!isFinite(lng)) lng = numberFromUnknown(latLng.getLongitude);
-        }
-
-        if (!isFinite(lat)) lat = numberFromUnknown(eventObj.lat);
-        if (!isFinite(lat)) lat = numberFromUnknown(eventObj.latitude);
-        if (!isFinite(lng)) lng = numberFromUnknown(eventObj.lng);
-        if (!isFinite(lng)) lng = numberFromUnknown(eventObj.longitude);
+        if (!isFinite(lat)) lat = numberFromUnknown(eventData.lat);
+        if (!isFinite(lat)) lat = numberFromUnknown(eventData.latitude);
+        if (!isFinite(lng)) lng = numberFromUnknown(eventData.lng);
+        if (!isFinite(lng)) lng = numberFromUnknown(eventData.longitude);
 
         if (!isFinite(lat) || !isFinite(lng)) return null;
         if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
@@ -3700,20 +3436,34 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
 
       function parseSelectionScreenPoint(eventObj) {
         if (!eventObj || typeof eventObj !== "object") return null;
-        // touchstart의 screenPoint와 touchend/drag의 mapPixel이 같은 지도 로컬 좌표계다.
-        var point = eventObj.mapPixel || eventObj.screenPoint || eventObj.pixel || null;
+        var eventData = eventObj.data && typeof eventObj.data === "object"
+          ? eventObj.data
+          : eventObj;
+        // Vector 이벤트의 screenPoint는 지도 컨테이너 기준 픽셀이다.
+        var point = eventData.screenPoint || eventData.mapPixel || eventData.pixel || null;
         if (!point) return null;
 
-        var x = numberFromUnknown(point.x);
-        if (!isFinite(x)) x = numberFromUnknown(point._x);
-        if (!isFinite(x)) x = numberFromUnknown(point.getX);
+        return readPointXY(point);
+      }
 
-        var y = numberFromUnknown(point.y);
-        if (!isFinite(y)) y = numberFromUnknown(point._y);
-        if (!isFinite(y)) y = numberFromUnknown(point.getY);
-
-        if (!isFinite(x) || !isFinite(y)) return null;
-        return { x: x, y: y };
+      function isMarkerDomInteraction(eventObj) {
+        if (!eventObj || typeof eventObj !== "object") return false;
+        var eventData = eventObj.data && typeof eventObj.data === "object"
+          ? eventObj.data
+          : eventObj;
+        var domEvent = eventData.domEvent || eventObj.domEvent || eventObj.originalEvent || null;
+        var target = domEvent && (domEvent.target || domEvent.srcElement);
+        if (!target) return false;
+        try {
+          if (typeof target.closest === "function" && target.closest(".vsm-marker")) return true;
+        } catch (_closestError) {}
+        while (target) {
+          try {
+            if (target.classList && target.classList.contains("vsm-marker")) return true;
+          } catch (_classError) {}
+          target = target.parentElement;
+        }
+        return false;
       }
 
       // 지도 탭 좌표를 React Native 쪽으로 다시 올려, 출발/도착 직접 지정 같은 상호작용에 사용한다.
@@ -3723,11 +3473,18 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         var touchCandidate = null;
 
         var postSelection = function (eventObj) {
+          // Marker의 DOM touch가 Vector map container까지 버블되더라도 지도 좌표 선택으로
+          // 처리하지 않는다. Marker 자체 Click은 별도의 markerPress로만 전달한다.
+          if (isMarkerDomInteraction(eventObj)) return;
           var parsed = parseTapLatLng(eventObj);
           if (parsed) post("tap", parsed);
         };
 
         var beginTouchSelection = function (eventObj) {
+          if (isMarkerDomInteraction(eventObj)) {
+            touchCandidate = null;
+            return;
+          }
           var startPoint = parseSelectionScreenPoint(eventObj);
           touchCandidate = startPoint
             ? { startPoint: startPoint, maxDistance: 0, cancelled: false }
@@ -3756,6 +3513,10 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
 
         var endTouchSelection = function (eventObj) {
           if (!touchCandidate) return;
+          if (isMarkerDomInteraction(eventObj)) {
+            touchCandidate = null;
+            return;
+          }
           trackTouchSelection(eventObj);
           var shouldSelect = !touchCandidate.cancelled &&
             touchCandidate.maxDistance <= ${TMAP_MAP_TOUCH_SELECTION_MAX_MOVEMENT_PX};
@@ -3775,39 +3536,16 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           bindings.push({ name: eventName, handler: cancelTouchSelection });
         });
 
-        var bindAll = function (addListener) {
-          var boundAny = false;
+        var bindAll = function () {
           bindings.forEach(function (binding) {
             try {
-              addListener(binding.name, binding.handler);
-              boundAny = true;
+              map.on(binding.name, binding.handler);
             } catch (_error) {}
           });
-          return boundAny;
         };
 
         try {
-          if (map.addListener) {
-            if (bindAll(function (eventName, handler) {
-              map.addListener(eventName, handler);
-            })) return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.events && Tmapv2.events.addListener) {
-            if (bindAll(function (eventName, handler) {
-              Tmapv2.events.addListener(map, eventName, handler);
-            })) return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.Event && Tmapv2.Event.addListener) {
-            bindAll(function (eventName, handler) {
-              Tmapv2.Event.addListener(map, eventName, handler);
-            });
-          }
+          if (typeof map.on === "function") bindAll();
         } catch (_error) {}
       }
 
@@ -3818,31 +3556,9 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           emitZoomChanged();
         };
 
-        try {
-          if (map.addListener) {
-            map.addListener("zoom_changed", zoomHandler);
-            map.addListener("zoomend", zoomHandler);
-            map.addListener("moveend", zoomHandler);
-            return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.events && Tmapv2.events.addListener) {
-            Tmapv2.events.addListener(map, "zoom_changed", zoomHandler);
-            Tmapv2.events.addListener(map, "zoomend", zoomHandler);
-            Tmapv2.events.addListener(map, "moveend", zoomHandler);
-            return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.Event && Tmapv2.Event.addListener) {
-            Tmapv2.Event.addListener(map, "zoom_changed", zoomHandler);
-            Tmapv2.Event.addListener(map, "zoomend", zoomHandler);
-            Tmapv2.Event.addListener(map, "moveend", zoomHandler);
-          }
-        } catch (_error) {}
+        try { map.on("Zoom", zoomHandler); } catch (_error) {}
+        try { map.on("ZoomEnd", zoomHandler); } catch (_error) {}
+        try { map.on("MoveEnd", zoomHandler); } catch (_error) {}
       }
 
       function bindScreenRouteOverlayEvents() {
@@ -3859,68 +3575,32 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           }, 220);
         };
         var activeEventNames = [
-          "dragstart",
-          "drag",
-          "movestart",
-          "move",
-          "center_changed",
-          "bounds_changed",
-          "zoom_changed",
-          "zoomstart",
-          "touchstart",
-          "gesturestart",
+          "DragStart",
+          "Drag",
+          "MoveStart",
+          "Move",
+          "ZoomStart",
+          "Zoom",
+          "TouchStart",
         ];
         var stableEventNames = [
-          "dragend",
-          "moveend",
-          "zoomend",
-          "idle",
-          "touchend",
-          "gestureend",
+          "DragEnd",
+          "MoveEnd",
+          "ZoomEnd",
+          "Idle",
+          "TouchEnd",
         ];
 
         try {
-          if (map.addListener) {
+          if (typeof map.on === "function") {
             activeEventNames.forEach(function (eventName) {
               try {
-                map.addListener(eventName, activeRenderHandler);
+                map.on(eventName, activeRenderHandler);
               } catch (_error) {}
             });
             stableEventNames.forEach(function (eventName) {
               try {
-                map.addListener(eventName, stableRenderHandler);
-              } catch (_error) {}
-            });
-            return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.events && Tmapv2.events.addListener) {
-            activeEventNames.forEach(function (eventName) {
-              try {
-                Tmapv2.events.addListener(map, eventName, activeRenderHandler);
-              } catch (_error) {}
-            });
-            stableEventNames.forEach(function (eventName) {
-              try {
-                Tmapv2.events.addListener(map, eventName, stableRenderHandler);
-              } catch (_error) {}
-            });
-            return;
-          }
-        } catch (_error) {}
-
-        try {
-          if (window.Tmapv2 && Tmapv2.Event && Tmapv2.Event.addListener) {
-            activeEventNames.forEach(function (eventName) {
-              try {
-                Tmapv2.Event.addListener(map, eventName, activeRenderHandler);
-              } catch (_error) {}
-            });
-            stableEventNames.forEach(function (eventName) {
-              try {
-                Tmapv2.Event.addListener(map, eventName, stableRenderHandler);
+                map.on(eventName, stableRenderHandler);
               } catch (_error) {}
             });
           }
@@ -3936,7 +3616,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
             var lng = Number(position.coords.longitude);
             if (!isFinite(lat) || !isFinite(lng)) return;
             markRouteOverlayMoving();
-            map.setCenter(new Tmapv2.LatLng(lat, lng));
+            map.setCenter(new Tmapv3.LatLng(lat, lng));
             map.setZoom(Math.max(14, map.getZoom ? map.getZoom() : 14));
             markRouteOverlayIdleSoon(220);
           },
@@ -3945,34 +3625,13 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         );
       }
 
-      // 실제 Tmap 인스턴스를 만들고 테마/이벤트/초기 data를 붙이는 지도 초기화 루틴.
-      function initMap() {
-        if (!window.Tmapv2 || !window.Tmapv2.Map) {
-          initRetry += 1;
-          if (initRetry > 40) {
-            post("error", { message: "Tmap JS SDK 로딩 실패: 앱키 또는 네트워크/권한 설정을 확인해 주세요." });
-            return;
-          }
-          setTimeout(initMap, 220);
-          return;
-        }
+      var didFinishMapInitialization = false;
 
-        map = new Tmapv2.Map("map", {
-          center: new Tmapv2.LatLng(${initialLat}, ${initialLng}),
-          width: "100%",
-          height: "100%",
-          zoom: ${initialZoom},
-          // WebView의 inline HTML은 about:blank에서 실행된다. TMAP의
-          // 기본값(http)을 그대로 쓰면 iOS ATS가 모든 지도 타일을 차단한다.
-          httpsMode: true,
-          zoomControl: ${showZoomControlFlag},
-          scrollwheel: true,
-        });
-        probeTmapNativeDirectionSupport();
+      function finishMapInitialization() {
+        if (!map || didFinishMapInitialization) return;
+        didFinishMapInitialization = true;
 
-        bindMapTilePresentationObserver();
         applyTheme(isDarkTheme);
-
         bindMapTap();
         bindMapZoom();
         bindScreenRouteOverlayEvents();
@@ -3983,6 +3642,8 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
           locationBtn.onclick = goToCurrentLocation;
         }
 
+        probeTmapNativeDirectionSupport();
+
         if (pendingData) {
           applyData(pendingData);
           pendingData = null;
@@ -3990,6 +3651,63 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
 
         post("initialized", {});
         emitZoomChanged();
+      }
+
+      function handleVectorConfigLoaded() {
+        if (!map || didFinishMapInitialization) return;
+        if (!isDarkTheme) {
+          // Vector JS의 기본 스타일은 ROAD다. 같은 스타일을 다시 loadStyle 하지 않는다.
+          appliedMapType = "ROAD";
+          finishMapInitialization();
+          return;
+        }
+
+        try {
+          // NIGHT는 별도 벡터 스타일을 로드하므로 완료 뒤 overlay를 생성한다.
+          map.on("StyleLoad", finishMapInitialization);
+          applyTheme(true);
+          // 이미 같은 스타일이 적용된 SDK 빌드는 StyleLoad를 다시 보내지 않을 수 있다.
+          setTimeout(finishMapInitialization, 8000);
+        } catch (_styleLoadError) {
+          finishMapInitialization();
+        }
+      }
+
+      // Vector 지도는 ConfigLoad 이후에만 Marker/Polyline을 안전하게 생성할 수 있다.
+      function initMap() {
+        if (!window.Tmapv3 || !window.Tmapv3.Map) {
+          initRetry += 1;
+          if (initRetry > 40) {
+            post("error", { message: "TMAP Vector JS SDK 로딩 실패: 앱키에서 Vector Map SDK 상품과 네트워크 설정을 확인해 주세요." });
+            return;
+          }
+          setTimeout(initMap, 220);
+          return;
+        }
+
+        try {
+          map = new Tmapv3.Map("map", {
+            center: new Tmapv3.LatLng(${initialLat}, ${initialLng}),
+            width: "100%",
+            height: "100%",
+            zoom: ${initialZoom},
+            minZoom: 6,
+            maxZoom: 18,
+            mapType: isDarkTheme ? "NIGHT" : "ROAD",
+            naviControl: ${showZoomControlFlag},
+            scaleBar: false,
+            dragEnabled: true,
+            zoomEnabled: true,
+            rotateEnabled: false,
+            pitchEnabled: false,
+          });
+          map.on("ConfigLoad", handleVectorConfigLoaded);
+        } catch (error) {
+          map = null;
+          post("error", {
+            message: "TMAP Vector 지도 초기화 실패: " + (error && error.message ? String(error.message) : "앱키 권한을 확인해 주세요."),
+          });
+        }
       }
 
       function onCommand(rawData) {
@@ -4056,7 +3774,6 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         appKey,
         htmlBootstrapScope,
         nightModeEnabled,
-        routeFocusMode,
         showLocationButton,
         showZoomControls,
     ]);
@@ -4212,6 +3929,40 @@ const styles = StyleSheet.create({
         lineHeight: 16,
         fontWeight: "800",
     },
+});
+
+const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function TmapMapView(props, ref) {
+    if (isNativeTMapViewAvailable()) {
+        return <TmapNativeMapView ref={ref} {...props} />;
+    }
+
+    // iOS/Android에서는 TMAP 네이티브 모듈이 빠진 구빌드를 Web 지도로
+    // 조용히 대체하지 않는다. 그렇게 하면 Web SDK의 검은 방향 표시가
+    // 네이티브 SDK 결과처럼 보여 설치 누락을 알아차리기 어렵다.
+    if (Platform.OS !== "web" && process.env.NODE_ENV !== "test") {
+        const message = "TMAP 네이티브 지도를 사용할 수 없습니다. 앱을 다시 빌드해 설치해 주세요.";
+        return (
+            <View
+                accessible
+                accessibilityRole="alert"
+                accessibilityLabel={message}
+                style={[
+                    styles.fallback,
+                    { backgroundColor: props.fallbackBackgroundColor ?? DEFAULT_FALLBACK_BACKGROUND },
+                    props.style,
+                ]}
+            >
+                <Text style={[
+                    styles.fallbackText,
+                    { color: props.fallbackTextColor ?? DEFAULT_FALLBACK_TEXT },
+                ]}>
+                    {message}
+                </Text>
+            </View>
+        );
+    }
+
+    return <TmapWebMapView ref={ref} {...props} />;
 });
 
 export default TmapMapView;

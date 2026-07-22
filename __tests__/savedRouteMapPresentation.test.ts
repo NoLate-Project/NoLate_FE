@@ -1,8 +1,10 @@
 import {
     buildSavedRouteMapPresentation,
     getSavedRouteFitCoords,
+    getSavedRouteOverviewFitKey,
     getSavedTransitLegBoardCoord,
     getStoredRouteOverlayGeometryProvenance,
+    hasRenderableSavedRouteGeometry,
     resolveDetailedWalkGeometrySource,
 } from "../src/modules/map/savedRouteMapPresentation";
 import type { RouteAlternativeOption, TransitLegDetail } from "../src/modules/map/routingService";
@@ -62,6 +64,434 @@ const transitRoute: RouteAlternativeOption = {
 };
 
 describe("saved route map presentation", () => {
+    it("repairs legacy saved ODsay WALK tails and keeps every marker on the adopted path", () => {
+        const legacyOrigin = { name: "출발", lat: 37.5, lng: 127.0 };
+        const firstRepeatStart = { lat: 37.5, lng: 127.0001 };
+        const firstRepeatEnd = { lat: 37.5, lng: 127.0002 };
+        const firstRideStart = { lat: 37.5, lng: 127.0005 };
+        const firstInner = { lat: 37.5001, lng: 127.0003 };
+        const firstRideEnd = { lat: 37.51, lng: 127.01 };
+        const transferRepeatStart = { lat: 37.5101, lng: 127.0101 };
+        const transferRepeatEnd = { lat: 37.5102, lng: 127.0102 };
+        const secondRideStart = { lat: 37.5105, lng: 127.0105 };
+        const transferInner = { lat: 37.5103, lng: 127.0104 };
+        const secondRideEnd = { lat: 37.52, lng: 127.02 };
+        const finalRepeatStart = { lat: 37.5201, lng: 127.0201 };
+        const finalRepeatEnd = { lat: 37.5202, lng: 127.0202 };
+        const legacyDestination = { name: "도착", lat: 37.5205, lng: 127.0205 };
+        const finalInner = { lat: 37.5203, lng: 127.0204 };
+        const legacyRoute: RouteAlternativeOption = {
+            id: "legacy-odsay-saved",
+            mode: "TRANSIT",
+            minutes: 29,
+            source: "api",
+            provider: "odsay",
+            pathCoords: [legacyOrigin, legacyDestination],
+            transitLegs: [
+                {
+                    kind: "WALK",
+                    label: "첫 도보",
+                    distanceMeters: 0,
+                    pathGeometrySource: "WALK_STEPS_LINESTRING",
+                    startCoord: legacyOrigin,
+                    endCoord: firstRepeatEnd,
+                    pathCoords: [
+                        legacyOrigin,
+                        firstRepeatStart,
+                        firstRepeatEnd,
+                        firstRideStart,
+                        firstRepeatStart,
+                        firstInner,
+                        firstRepeatEnd,
+                    ],
+                },
+                {
+                    kind: "SUBWAY",
+                    label: "5호선",
+                    lineName: "5호선",
+                    startCoord: firstRideStart,
+                    endCoord: firstRideEnd,
+                    pathCoords: [firstRideStart, firstRideEnd],
+                },
+                {
+                    kind: "WALK",
+                    label: "환승 도보",
+                    distanceMeters: 90,
+                    pathGeometrySource: "WALK_STEPS_LINESTRING",
+                    startCoord: firstRideEnd,
+                    endCoord: transferRepeatEnd,
+                    pathCoords: [
+                        firstRideEnd,
+                        transferRepeatStart,
+                        transferRepeatEnd,
+                        secondRideStart,
+                        transferRepeatStart,
+                        transferInner,
+                        transferRepeatEnd,
+                    ],
+                },
+                {
+                    kind: "SUBWAY",
+                    label: "8호선",
+                    lineName: "8호선",
+                    startCoord: secondRideStart,
+                    endCoord: secondRideEnd,
+                    pathCoords: [secondRideStart, secondRideEnd],
+                },
+                {
+                    kind: "WALK",
+                    label: "마지막 도보",
+                    distanceMeters: 90,
+                    pathGeometrySource: "WALK_STEPS_LINESTRING",
+                    startCoord: secondRideEnd,
+                    endCoord: finalRepeatEnd,
+                    pathCoords: [
+                        secondRideEnd,
+                        finalRepeatStart,
+                        finalRepeatEnd,
+                        legacyDestination,
+                        finalRepeatStart,
+                        finalInner,
+                        finalRepeatEnd,
+                    ],
+                },
+            ],
+        };
+
+        const presentation = buildSavedRouteMapPresentation({
+            route: legacyRoute,
+            origin: legacyOrigin,
+            destination: legacyDestination,
+            mapZoom: 17,
+            isDark: false,
+        });
+
+        expect(presentation.routeLegs[0].pathCoords).toEqual([
+            { lat: legacyOrigin.lat, lng: legacyOrigin.lng },
+            firstRepeatStart,
+            firstInner,
+            firstRepeatEnd,
+            firstRideStart,
+        ]);
+        expect(presentation.routeLegs[0].startCoord).toEqual({
+            lat: legacyOrigin.lat,
+            lng: legacyOrigin.lng,
+        });
+        expect(presentation.routeLegs[0].endCoord).toEqual(firstRideStart);
+        expect(presentation.routeLegs[2].pathCoords?.at(-1)).toEqual(secondRideStart);
+        expect(presentation.routeLegs[4].pathCoords?.at(-1)).toEqual({
+            lat: legacyDestination.lat,
+            lng: legacyDestination.lng,
+        });
+        expect(presentation.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-0")?.coords.at(-1))
+            .toEqual({ latitude: firstRideStart.lat, longitude: firstRideStart.lng });
+        expect(presentation.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-4")?.coords.at(-1))
+            .toEqual({ latitude: legacyDestination.lat, longitude: legacyDestination.lng });
+        expect(presentation.markers.find((marker) => (
+            marker.id === "saved-transit-event-legacy-odsay-saved-1-board-node"
+        ))).toMatchObject({
+            latitude: firstRideStart.lat,
+            longitude: firstRideStart.lng,
+        });
+        expect(presentation.markers.find((marker) => (
+            marker.id === "saved-transit-event-legacy-odsay-saved-3-transfer-node"
+        ))).toMatchObject({
+            latitude: secondRideStart.lat,
+            longitude: secondRideStart.lng,
+        });
+        expect(presentation.routeOption?.pathCoords?.at(-1)).toEqual({
+            lat: legacyDestination.lat,
+            lng: legacyDestination.lng,
+        });
+    });
+
+    it("leaves a healthy current ODsay WALK untouched when geometryRevision is absent", () => {
+        const start = { name: "출발", lat: 37.5, lng: 127.0 };
+        const walkEnd = { lat: 37.5, lng: 127.0002 };
+        const rideStart = { lat: 37.5, lng: 127.0003 };
+        const healthyPath = [start, walkEnd];
+        const route: RouteAlternativeOption = {
+            id: "current-odsay-without-revision",
+            mode: "TRANSIT",
+            minutes: 10,
+            source: "api",
+            provider: "odsay",
+            transitLegs: [{
+                kind: "WALK",
+                label: "도보",
+                distanceMeters: 18,
+                pathGeometrySource: "WALK_STEPS_LINESTRING",
+                pathCoords: healthyPath,
+            }, {
+                kind: "SUBWAY",
+                label: "5호선",
+                startCoord: rideStart,
+                endCoord: { lat: 37.51, lng: 127.01 },
+                pathCoords: [rideStart, { lat: 37.51, lng: 127.01 }],
+            }],
+        };
+
+        const presentation = buildSavedRouteMapPresentation({
+            route,
+            origin: start,
+            mapZoom: 17,
+            isDark: false,
+        });
+
+        expect(presentation.routeLegs).toBe(route.transitLegs);
+        expect(presentation.routeLegs[0].pathCoords).toBe(healthyPath);
+        expect(presentation.routeLegs[0].pathCoords?.at(-1)).toBe(walkEnd);
+    });
+
+    it("ignores a malformed stored WALK overlay after repairing the legacy leg", () => {
+        const start = { name: "출발", lat: 37.5, lng: 127.0 };
+        const repeatedStart = { lat: 37.5, lng: 127.0001 };
+        const repeatedEnd = { lat: 37.5, lng: 127.0002 };
+        const rideStart = { lat: 37.5, lng: 127.0005 };
+        const inner = { lat: 37.5001, lng: 127.0003 };
+        const legacyPath = [
+            start,
+            repeatedStart,
+            repeatedEnd,
+            rideStart,
+            repeatedStart,
+            inner,
+            repeatedEnd,
+        ];
+        const route: RouteAlternativeOption = {
+            id: "legacy-odsay-with-overlay",
+            mode: "TRANSIT",
+            minutes: 10,
+            source: "api",
+            provider: "odsay",
+            storedPathOverlays: [{
+                id: "persisted-legacy-walk",
+                coords: legacyPath.map((coord) => ({
+                    latitude: coord.lat,
+                    longitude: coord.lng,
+                })),
+                geometrySource: "WALK_STEPS_LINESTRING",
+                transitLegIndex: 0,
+            }],
+            transitLegs: [{
+                kind: "WALK",
+                label: "도보",
+                distanceMeters: 0,
+                pathGeometrySource: "WALK_STEPS_LINESTRING",
+                pathCoords: legacyPath,
+            }, {
+                kind: "SUBWAY",
+                label: "5호선",
+                startCoord: rideStart,
+                endCoord: { lat: 37.51, lng: 127.01 },
+                pathCoords: [rideStart, { lat: 37.51, lng: 127.01 }],
+            }],
+        } as RouteAlternativeOption;
+
+        const presentation = buildSavedRouteMapPresentation({
+            route,
+            origin: start,
+            mapZoom: 17,
+            isDark: false,
+        });
+        const walkOverlay = presentation.pathOverlays.find((overlay) => (
+            overlay.id === "saved-route-leg-0"
+        ));
+
+        expect(walkOverlay?.coords).toEqual(presentation.routeLegs[0].pathCoords?.map((coord) => ({
+            latitude: coord.lat,
+            longitude: coord.lng,
+        })));
+        expect(presentation.pathOverlays.some((overlay) => (
+            overlay.id === "persisted-legacy-walk"
+        ))).toBe(false);
+    });
+
+    it("does not migrate non-ODsay or revision-2 saved WALK geometry", () => {
+        const start = { name: "출발", lat: 37.5, lng: 127.0 };
+        const repeatStart = { lat: 37.5, lng: 127.0001 };
+        const repeatEnd = { lat: 37.5, lng: 127.0002 };
+        const rideStart = { lat: 37.5, lng: 127.0005 };
+        const legacyPath = [start, repeatStart, repeatEnd, rideStart, repeatStart, repeatEnd];
+        const baseRoute = {
+            id: "migration-gate",
+            mode: "TRANSIT" as const,
+            minutes: 10,
+            source: "api" as const,
+            provider: "odsay" as const,
+            transitLegs: [{
+                kind: "WALK" as const,
+                label: "도보",
+                distanceMeters: 50,
+                pathGeometrySource: "WALK_STEPS_LINESTRING" as const,
+                pathCoords: legacyPath,
+            }, {
+                kind: "SUBWAY" as const,
+                label: "5호선",
+                startCoord: rideStart,
+                endCoord: { lat: 37.51, lng: 127.01 },
+                pathCoords: [rideStart, { lat: 37.51, lng: 127.01 }],
+            }],
+        };
+
+        const nonOdsay = buildSavedRouteMapPresentation({
+            route: { ...baseRoute, provider: "tmap" },
+            origin: start,
+            mapZoom: 17,
+            isDark: false,
+        });
+        const currentRevision = buildSavedRouteMapPresentation({
+            route: { ...baseRoute, geometryRevision: 2 },
+            origin: start,
+            mapZoom: 17,
+            isDark: false,
+        });
+
+        expect(nonOdsay.routeLegs[0].pathCoords).toBe(legacyPath);
+        expect(currentRevision.routeLegs[0].pathCoords).toBe(legacyPath);
+    });
+
+    it("restores legacy RouteInfo-only geometry instead of showing endpoint markers alone", () => {
+        const legacyRouteInfo = {
+            id: "legacy-calendar-route",
+            originName: "출발지",
+            destinationName: "도착지",
+            totalDurationMinutes: 24,
+            departureTime: "2026-07-20T01:00:00.000Z",
+            arrivalTime: "2026-07-20T01:24:00.000Z",
+            timeBasis: "estimated" as const,
+            steps: [
+                {
+                    id: "origin",
+                    type: "ORIGIN" as const,
+                    title: "출발지",
+                    coordinates: [{ latitude: 37.56, longitude: 126.97 }],
+                },
+                {
+                    id: "leg-0",
+                    type: "DRIVE" as const,
+                    title: "차량 이동",
+                    coordinates: [
+                        { latitude: 37.56, longitude: 126.97 },
+                        { latitude: 37.53, longitude: 127.0 },
+                        { latitude: 37.5, longitude: 127.03 },
+                    ],
+                },
+                {
+                    id: "destination",
+                    type: "DESTINATION" as const,
+                    title: "도착지",
+                    coordinates: [{ latitude: 37.5, longitude: 127.03 }],
+                },
+            ],
+        };
+
+        const presentation = buildSavedRouteMapPresentation({
+            route: legacyRouteInfo,
+            origin,
+            destination,
+            mapZoom: 13,
+            isDark: false,
+        });
+
+        expect(presentation.routeOption).toBeUndefined();
+        expect(presentation.pathOverlays).toHaveLength(1);
+        expect(presentation.pathOverlays[0]).toMatchObject({
+            id: "saved-route-info-leg-0-0",
+            coords: [
+                { latitude: 37.56, longitude: 126.97 },
+                { latitude: 37.53, longitude: 127.0 },
+                { latitude: 37.5, longitude: 127.03 },
+            ],
+        });
+        expect(getSavedRouteFitCoords(legacyRouteInfo, origin, destination)).toContainEqual({
+            latitude: 37.53,
+            longitude: 127.0,
+        });
+        expect(hasRenderableSavedRouteGeometry(legacyRouteInfo, origin, destination)).toBe(true);
+    });
+
+    it("does not invent a straight transit line from endpoint markers when movement geometry is missing", () => {
+        const routeInfoWithoutGeometry = {
+            id: "legacy-transit-without-geometry",
+            originName: "출발지",
+            destinationName: "도착지",
+            totalDurationMinutes: 25,
+            departureTime: "2026-07-20T01:00:00.000Z",
+            arrivalTime: "2026-07-20T01:25:00.000Z",
+            timeBasis: "provider_schedule" as const,
+            steps: [
+                {
+                    id: "origin",
+                    type: "ORIGIN" as const,
+                    title: "출발지",
+                    coordinates: [{ latitude: 37.56, longitude: 126.97 }],
+                },
+                {
+                    id: "bus",
+                    type: "BUS" as const,
+                    title: "버스 이동",
+                    coordinates: [{ latitude: 37.54, longitude: 127.0 }],
+                },
+                {
+                    id: "destination",
+                    type: "DESTINATION" as const,
+                    title: "도착지",
+                    coordinates: [{ latitude: 37.5, longitude: 127.03 }],
+                },
+            ],
+        };
+
+        const presentation = buildSavedRouteMapPresentation({
+            route: routeInfoWithoutGeometry,
+            origin,
+            destination,
+            mapZoom: 13,
+            isDark: false,
+        });
+
+        expect(presentation.pathOverlays).toHaveLength(0);
+        expect(hasRenderableSavedRouteGeometry(
+            routeInfoWithoutGeometry,
+            origin,
+            destination
+        )).toBe(false);
+    });
+
+    it("uses the normal map walking style when restoring RouteInfo geometry", () => {
+        const walkingRouteInfo = {
+            id: "legacy-walk",
+            originName: "출발지",
+            destinationName: "도착지",
+            totalDurationMinutes: 12,
+            departureTime: "2026-07-20T01:00:00.000Z",
+            arrivalTime: "2026-07-20T01:12:00.000Z",
+            timeBasis: "estimated" as const,
+            steps: [{
+                id: "walk",
+                type: "WALK" as const,
+                title: "도보 이동",
+                coordinates: [
+                    { latitude: 37.56, longitude: 126.97 },
+                    { latitude: 37.5, longitude: 127.03 },
+                ],
+            }],
+        };
+
+        const presentation = buildSavedRouteMapPresentation({
+            route: walkingRouteInfo,
+            origin,
+            destination,
+            mapZoom: 13,
+            isDark: false,
+        });
+
+        expect(presentation.pathOverlays[0]).toMatchObject({
+            color: "#1A73E8",
+            strokeStyle: "dot",
+        });
+    });
+
     it("uses the current native line policy for saved transit routes", () => {
         const presentation = buildSavedRouteMapPresentation({
             route: transitRoute,
@@ -75,8 +505,10 @@ describe("saved route map presentation", () => {
 
         expect(walk).toMatchObject({
             color: "#1A73E8",
-            width: 4.4,
-            strokeStyle: "dash",
+            width: 4.2,
+            outlineWidth: 0,
+            strokeStyle: "dot",
+            outlineStrokeStyle: "dot",
             renderMode: "native",
             nativeDirection: false,
             showDirection: false,
@@ -90,9 +522,35 @@ describe("saved route map presentation", () => {
             nativeDirection: true,
             nativeDirectionColor: "#FFFFFF",
         });
+        expect(Number(subway?.zIndex)).toBeGreaterThan(Number(walk?.zIndex));
     });
 
-    it("changes marker density by zoom without changing route stroke proportions", () => {
+    it("keeps saved transit WALK styling identical across every supported zoom", () => {
+        for (let zoom = 6; zoom <= 18; zoom += 1) {
+            const presentation = buildSavedRouteMapPresentation({
+                route: transitRoute,
+                origin,
+                destination,
+                mapZoom: zoom,
+                isDark: false,
+            });
+            const walk = presentation.pathOverlays.find(
+                (overlay) => overlay.id === "saved-route-leg-0"
+            );
+            const expectedWidth = zoom < 11 ? 3.8 : zoom < 16 ? 4.2 : 4.6;
+
+            expect(walk).toMatchObject({
+                width: expectedWidth,
+                outlineWidth: 0,
+                dashPattern: [1, 13],
+                strokeStyle: "dot",
+                outlineStrokeStyle: "dot",
+                nativeDirection: false,
+            });
+        }
+    });
+
+    it("changes marker density and thickens route strokes at detail zoom", () => {
         const overview = buildSavedRouteMapPresentation({
             route: transitRoute,
             origin,
@@ -113,8 +571,10 @@ describe("saved route map presentation", () => {
         expect(detail.markers.some((marker) => marker.id.startsWith("saved-transit-route-label-"))).toBe(false);
         expect(detail.markers.some((marker) => marker.id.startsWith("saved-transit-stop-"))).toBe(true);
         expect(detail.markers.some((marker) => marker.badgeVariant === "context")).toBe(true);
+        expect(overview.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-0")?.width).toBe(4.2);
+        expect(detail.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-0")?.width).toBe(4.6);
         expect(overview.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-1")?.width).toBe(7.2);
-        expect(detail.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-1")?.width).toBe(7.2);
+        expect(detail.pathOverlays.find((overlay) => overlay.id === "saved-route-leg-1")?.width).toBe(8);
         expect(overview.markers.find((marker) => marker.id === "origin")?.markerScale).toBe(0.84);
         expect(detail.markers.find((marker) => marker.id === "origin")?.markerScale).toBe(1);
     });
@@ -158,7 +618,7 @@ describe("saved route map presentation", () => {
         expect(presentation.pathOverlays.filter((overlay) => overlay.nativeDirection)).toHaveLength(1);
     });
 
-    it("does not stack a second dashed line over a focused walking leg", () => {
+    it("does not stack a second dotted line over a focused walking leg", () => {
         const presentation = buildSavedRouteMapPresentation({
             route: transitRoute,
             origin,
@@ -168,7 +628,7 @@ describe("saved route map presentation", () => {
             focusedLegIndex: 0,
         });
         const walkingOverlays = presentation.pathOverlays.filter(
-            (overlay) => overlay.strokeStyle === "dash"
+            (overlay) => overlay.strokeStyle === "dot"
         );
 
         expect(walkingOverlays).toHaveLength(1);
@@ -784,7 +1244,7 @@ describe("saved route map presentation", () => {
 
         expect(presentation.pathOverlays[0]).toMatchObject({
             color: "#64748B",
-            width: 7.2,
+            width: 8,
             strokeStyle: "solid",
             outlineColor: "#0F172A",
             nativeDirection: false,
@@ -929,11 +1389,11 @@ describe("saved route map presentation", () => {
         expect(walk).toMatchObject({
             id: "legacy-route-piece",
             color: "#1A73E8",
-            width: 4.4,
+            width: 4.2,
             outlineColor: "#FFFFFF",
             outlineOpacity: 0.9,
             dashPattern: [1, 13],
-            strokeStyle: "dash",
+            strokeStyle: "dot",
             nativeDirection: false,
             zIndex: 40,
         });
@@ -947,7 +1407,7 @@ describe("saved route map presentation", () => {
             strokeStyle: "solid",
             nativeDirection: true,
             nativeDirectionColor: "#FFFFFF",
-            nativeDirectionOpacity: 0.94,
+            nativeDirectionOpacity: 0.96,
             zIndex: 40,
         });
         expect(transitWithoutLegs.outlineWidth).toBeCloseTo(freshTransitWithoutLegs.outlineWidth ?? 0);
@@ -1032,6 +1492,32 @@ describe("saved route map presentation", () => {
         expect(first).toEqual(second);
         expect(first).toContainEqual({ latitude: origin.lat, longitude: origin.lng });
         expect(first).toContainEqual({ latitude: destination.lat, longitude: destination.lng });
+    });
+
+    it("keeps the saved-route overview fit stable across equivalent API refreshes", () => {
+        const coords = getSavedRouteFitCoords(transitRoute, origin, destination);
+        const padding = { top: 180, right: 44, bottom: 260, left: 44 };
+        const first = getSavedRouteOverviewFitKey(coords, padding);
+        const refreshed = getSavedRouteOverviewFitKey(
+            coords.map((coord) => ({ ...coord })),
+            { ...padding }
+        );
+        const interiorGeometryUpdate = getSavedRouteOverviewFitKey([
+            coords[0],
+            { latitude: 37.53, longitude: 127.0 },
+            coords[coords.length - 1],
+        ], padding);
+
+        expect(refreshed).toBe(first);
+        expect(interiorGeometryUpdate).toBe(first);
+        expect(getSavedRouteOverviewFitKey(coords, {
+            ...padding,
+            bottom: padding.bottom + 12,
+        })).not.toBe(first);
+        expect(getSavedRouteOverviewFitKey([
+            ...coords,
+            { latitude: 37.49, longitude: 127.04 },
+        ], padding)).not.toBe(first);
     });
 
     it("draws the saved root path underneath transit legs when one leg has no usable geometry", () => {
@@ -1150,6 +1636,53 @@ describe("saved route map presentation", () => {
         ]);
     });
 
+    it("themes mode-less legacy stored overlays without changing their geometry", () => {
+        const legacyRoute = {
+            storedPathOverlays: [{
+                id: "legacy-walk-overlay",
+                coords: [
+                    { lat: 37.56, lng: 126.97 },
+                    { lat: 37.55, lng: 126.98 },
+                ],
+                color: "#1A73E8",
+                width: 4,
+                outlineColor: "#FFFFFF",
+                outlineWidth: 2,
+                outlineOpacity: 0.9,
+                dashPattern: [1, 13],
+                strokeStyle: "dot",
+                outlineStrokeStyle: "dot",
+            }],
+        };
+
+        const light = buildSavedRouteMapPresentation({
+            route: legacyRoute,
+            origin,
+            destination,
+            mapZoom: 17,
+            isDark: false,
+        });
+        const dark = buildSavedRouteMapPresentation({
+            route: legacyRoute,
+            origin,
+            destination,
+            mapZoom: 17,
+            isDark: true,
+        });
+
+        expect(light.pathOverlays[0]).toMatchObject({
+            id: "legacy-walk-overlay",
+            outlineColor: "#FFFFFF",
+            outlineOpacity: 0.9,
+        });
+        expect(dark.pathOverlays[0]).toMatchObject({
+            id: "legacy-walk-overlay",
+            outlineColor: "#0F172A",
+            outlineOpacity: 0.72,
+        });
+        expect(dark.pathOverlays[0]?.coords).toEqual(light.pathOverlays[0]?.coords);
+    });
+
     it("does not add the root fallback or duplicate base lines when every leg has geometry", () => {
         const presentation = buildSavedRouteMapPresentation({
             route: transitRoute,
@@ -1233,7 +1766,7 @@ describe("saved route map presentation", () => {
         expect(darkPresentation.pathOverlays.find(
             (overlay) => overlay.id === "stored-subway-access-link-0"
         )).toMatchObject({
-            strokeStyle: "dash",
+            strokeStyle: "dot",
             nativeDirection: false,
             outlineColor: "#0F172A",
             outlineOpacity: 0.72,

@@ -165,7 +165,7 @@ describe("Tmap native direction fallback", () => {
         });
     });
 
-    it("실제 drawInfo가 모든 방향 옵션을 반영했을 때만 native 지원을 확정한다", () => {
+    it("Vector JS의 고정 arrow pattern은 요청 색상을 저장해도 color 지원으로 보지 않는다", () => {
         expect(readTmapNativeDirectionCapability({
             _shape_data: {
                 drawInfo: {
@@ -173,24 +173,29 @@ describe("Tmap native direction fallback", () => {
                     directionColor: "#ffffff",
                     directionOpacity: 0.001,
                 },
+                vsmStyle: {
+                    "stroke-pattern": "PATTERN:arrow",
+                },
             },
         })).toEqual({
-            confirmed: true,
-            supportsDirection: true,
-            supportsDirectionColor: true,
-            supportsDirectionOpacity: true,
-        });
-
-        expect(readTmapNativeDirectionCapability({
-            _shape_data: { drawInfo: { direction: true } },
-        })).toMatchObject({
             confirmed: true,
             supportsDirection: true,
             supportsDirectionColor: false,
             supportsDirectionOpacity: false,
         });
-        expect(TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT).toContain("if (!drawInfo)");
+
+        expect(readTmapNativeDirectionCapability({
+            _shape_data: { drawInfo: { direction: true } },
+        })).toMatchObject({
+            confirmed: false,
+            supportsDirection: false,
+            supportsDirectionColor: false,
+            supportsDirectionOpacity: false,
+        });
+        expect(TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT).toContain("if (!drawInfo || !usesFixedArrowPattern)");
         expect(TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT).toContain("confirmed: false");
+        expect(TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT).toContain("PATTERN:ARROW");
+        expect(TMAP_NATIVE_DIRECTION_CAPABILITY_SCRIPT).toContain("supportsDirectionColor: false");
     });
 
     it("Release HTML에서도 SDK 방향표시 판정 결과를 RN에 항상 전달한다", () => {
@@ -214,37 +219,24 @@ describe("Tmap native direction fallback", () => {
         expect(TMAP_NATIVE_DIRECTION_REPORT_SCRIPT).not.toContain("isDevelopment");
     });
 
-    it("SDK native direction 사용 가능 여부가 확정되기 전이나 사용 가능할 때는 원본만 유지한다", () => {
-        expect(addNativeDirectionScreenFallbacks([ride], undefined)).toEqual([ride]);
-        expect(addNativeDirectionScreenFallbacks([ride], true)).toEqual([ride]);
+    it("SDK 판정과 관계없이 TMAP native direction overlay를 그대로 유지한다", () => {
+        const overlays = [ride];
+
+        expect(addNativeDirectionScreenFallbacks(overlays, undefined)).toBe(overlays);
+        expect(addNativeDirectionScreenFallbacks(overlays, false)).toBe(overlays);
+        expect(addNativeDirectionScreenFallbacks(overlays, true)).toBe(overlays);
+        expect(ride.nativeDirection).toBe(true);
     });
 
-    it("SDK native direction을 쓸 수 없으면 본선 없이 화면 화살표만 추가한다", () => {
-        const result = addNativeDirectionScreenFallbacks([ride], false);
-
-        expect(result).toHaveLength(2);
-        expect(result[0]).toBe(ride);
-        expect(result[1]).toMatchObject({
-            id: "ride--screen-direction-fallback",
-            renderMode: "screen",
-            drawLine: false,
-            showDirection: true,
-            nativeDirection: false,
-            directionColor: "#FFFFFF",
-            directionOpacity: 0.96,
-            directionSpacingPx: 26,
-            directionSizePx: 6.4,
-            zIndex: 42,
-        });
-    });
-
-    it("도보·점선·이미 screen인 overlay에는 화살표 fallback을 만들지 않는다", () => {
-        const result = addNativeDirectionScreenFallbacks([
+    it("앱이 screen 화살표 overlay를 추가하지 않는다", () => {
+        const overlays = [
             { ...ride, id: "walk", strokeStyle: "dash" as const },
             { ...ride, id: "screen", renderMode: "screen" as const },
             { ...ride, id: "disabled", nativeDirection: false },
-        ], false);
+        ];
+        const result = addNativeDirectionScreenFallbacks(overlays, false);
 
-        expect(result).toHaveLength(3);
+        expect(result).toBe(overlays);
+        expect(result.some((overlay) => overlay.id.includes("screen-direction-fallback"))).toBe(false);
     });
 });

@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "verify:release-config": "node scripts/verify-release-config.mjs",
     "verify": "npm run verify:release-config && npm run typecheck && npm run lint && npm test -- --runInBand --no-watchman",
+    "setup:tmap-native": "bash scripts/install-tmap-native-sdk.sh all",
+    "eas-build-post-install": "bash scripts/install-tmap-native-sdk.sh \"${EAS_BUILD_PLATFORM:-all}\"",
     "postinstall": "patch-package",
     "start": "react-native start",
     "test": "jest"
@@ -36,6 +38,7 @@
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.21",
+    "expo-device": "~8.0.10",
     "expo-doctor": "^1.17.14",
     "expo-glass-effect": "~0.1.10",
     "expo-image-picker": "~17.0.11",

@@ -4,30 +4,71 @@ import {
     getTransitNativeDirectionOpacity,
     getTransitRouteLinePresentation,
     getTransitRouteThemePresentation,
+    getTransitWalkGuidePresentation,
     shouldRenderTransitNativeDirection,
+    shouldRenderTransitStopAccessLinks,
     TRANSIT_WALK_DASH_PATTERN,
 } from "../src/modules/map/transitRoutePresentation";
 
 describe("transit route zoom presentation", () => {
-    it("도보선은 모든 줌에서 분리된 둥근 점 리듬을 유지한다", () => {
-        Array.from({ length: 13 }, (_, index) => index + 6).forEach(() => {
-            expect(TRANSIT_WALK_DASH_PATTERN).toEqual([1, 13]);
+    it("z6~18 전 레벨에서 같은 native dot 리듬을 유지하고 상세 줌에서만 access-link를 보인다", () => {
+        expect(TRANSIT_WALK_DASH_PATTERN).toEqual([1, 13]);
+
+        const matrix = Array.from({ length: 13 }, (_, index) => {
+            const zoom = index + 6;
+            return { zoom, accessLinks: zoom >= 14 };
+        });
+
+        matrix.forEach(({ zoom, accessLinks }) => {
+            expect(getTransitWalkGuidePresentation(zoom)).toEqual({
+                dashPattern: [1, 13],
+                strokeStyle: "dot",
+                outlineStrokeStyle: "dot",
+            });
+            expect(shouldRenderTransitStopAccessLinks(zoom)).toBe(accessLinks);
+        });
+        expect(shouldRenderTransitStopAccessLinks(13.999)).toBe(false);
+        expect(shouldRenderTransitStopAccessLinks(14)).toBe(true);
+    });
+
+    it("z6~18에서 도보 폭을 약 20%만 키우고 별도 dot casing은 만들지 않는다", () => {
+        const matrix = [
+            ...[6, 7, 8, 9, 10].map((zoom) => ({ zoom, rideWidth: 6.4, walkWidth: 3.8 })),
+            ...[11, 12, 13, 14, 15].map((zoom) => ({ zoom, rideWidth: 7.2, walkWidth: 4.2 })),
+            ...[16, 17, 18].map((zoom) => ({ zoom, rideWidth: 8, walkWidth: 4.6 })),
+        ];
+
+        matrix.forEach(({ zoom, rideWidth, walkWidth }) => {
+            expect(getTransitRouteLinePresentation(zoom)).toEqual({
+                rideWidth,
+                rideCasingWidth: Number((rideWidth + 1.6).toFixed(1)),
+                walkWidth,
+                walkCasingWidth: walkWidth,
+            });
         });
     });
 
-    it("줌 단계 사이에서도 본선과 casing의 화면상 폭을 고정한다", () => {
-        const zooms = [6, 8, 10, 12, 13.5, 15, 16, 17, 17.5, 18];
-        const values = zooms.map(getTransitRouteLinePresentation);
-
-        values.forEach((value) => {
-            expect(value.rideCasingWidth / value.rideWidth).toBeCloseTo(1.22);
-            expect(value.walkCasingWidth / value.walkWidth).toBeCloseTo(1.3);
-            expect((value.rideCasingWidth - value.rideWidth) / 2).toBeCloseTo(0.792);
-            expect((value.walkCasingWidth - value.walkWidth) / 2).toBeLessThan(0.8);
+    it("LOD 경계 안에서는 소수 줌에도 선 폭을 보간하지 않는다", () => {
+        expect(getTransitRouteLinePresentation(10.999)).toEqual({
+            rideWidth: 6.4,
+            rideCasingWidth: 8,
+            walkWidth: 3.8,
+            walkCasingWidth: 3.8,
         });
-        values.forEach((value) => {
-            expect(value.rideWidth).toBeCloseTo(7.2);
-            expect(value.walkWidth).toBeCloseTo(4.4);
+        expect(getTransitRouteLinePresentation(11)).toEqual({
+            rideWidth: 7.2,
+            rideCasingWidth: 8.8,
+            walkWidth: 4.2,
+            walkCasingWidth: 4.2,
+        });
+        expect(getTransitRouteLinePresentation(15.999)).toEqual(
+            getTransitRouteLinePresentation(11)
+        );
+        expect(getTransitRouteLinePresentation(16)).toEqual({
+            rideWidth: 8,
+            rideCasingWidth: 9.6,
+            walkWidth: 4.6,
+            walkCasingWidth: 4.6,
         });
     });
 
@@ -42,7 +83,7 @@ describe("transit route zoom presentation", () => {
         });
     });
 
-    it("native direction은 BUS/SUBWAY에만 적용하고 z11부터 확대할수록 선명하게 유지한다", () => {
+    it("native direction은 BUS/SUBWAY에만 적용하고 z11부터 고정 대비를 유지한다", () => {
         expect(shouldRenderTransitNativeDirection("BUS", 5.9)).toBe(false);
         expect(shouldRenderTransitNativeDirection("SUBWAY", 6)).toBe(false);
         expect(shouldRenderTransitNativeDirection("BUS", 10)).toBe(false);
@@ -53,13 +94,9 @@ describe("transit route zoom presentation", () => {
         expect(shouldRenderTransitNativeDirection("BUS", 15)).toBe(true);
         expect(shouldRenderTransitNativeDirection("WALK", 18)).toBe(false);
         expect(shouldRenderTransitNativeDirection("TRANSFER", 18)).toBe(false);
-        expect(getTransitNativeDirectionOpacity(11)).toBeCloseTo(0.9);
-        expect(getTransitNativeDirectionOpacity(12)).toBeCloseTo(0.9);
-        expect(getTransitNativeDirectionOpacity(13.5)).toBeCloseTo(0.92);
-        expect(getTransitNativeDirectionOpacity(15)).toBeCloseTo(0.94);
-        expect(getTransitNativeDirectionOpacity(16)).toBeCloseTo(0.95);
-        expect(getTransitNativeDirectionOpacity(17)).toBeCloseTo(0.96);
-        expect(getTransitNativeDirectionOpacity(18)).toBeCloseTo(0.96);
+        [6, 10, 11, 12, 13.5, 15, 16, 17, 18].forEach((zoom) => {
+            expect(getTransitNativeDirectionOpacity(zoom)).toBe(0.96);
+        });
     });
 
     it("라이트와 다크 안내선의 casing과 방향 대비를 분리한다", () => {
@@ -69,7 +106,7 @@ describe("transit route zoom presentation", () => {
             walkCasingColor: "#FFFFFF",
             walkCasingOpacity: 0.9,
             directionColor: "#FFFFFF",
-            directionOpacity: 0.9,
+            directionOpacity: 0.96,
         });
         expect(getTransitRouteThemePresentation(12, "dark")).toMatchObject({
             rideCasingColor: "#0F172A",
@@ -77,16 +114,14 @@ describe("transit route zoom presentation", () => {
             walkCasingColor: "#0F172A",
             walkCasingOpacity: 0.72,
             directionColor: "#FFFFFF",
-            directionOpacity: 0.9,
+            directionOpacity: 0.96,
         });
-        const darkDirectionStops = [0.9, 0.92, 0.94, 0.95, 0.96, 0.96];
-        [12, 13.5, 15, 16, 17, 18].forEach((zoom, index) => {
+        [12, 13.5, 15, 16, 17, 18].forEach((zoom) => {
             const lightTheme = getTransitRouteThemePresentation(zoom, "light");
             const darkTheme = getTransitRouteThemePresentation(zoom, "dark");
-            expect(darkTheme.directionOpacity)
-                .toBeCloseTo(darkDirectionStops[index]);
+            expect(darkTheme.directionOpacity).toBe(0.96);
             expect(lightTheme.directionColor).toBe(darkTheme.directionColor);
-            expect(lightTheme.directionOpacity).toBeCloseTo(darkTheme.directionOpacity);
+            expect(lightTheme.directionOpacity).toBe(darkTheme.directionOpacity);
         });
 
         const ride = {

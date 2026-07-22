@@ -1,8 +1,12 @@
-import type { Place } from "../schedule/types";
+import type { Place, TravelMode } from "../schedule/types";
 import {
     compactTransitLineLabel,
     getBusLineColor,
+    getRouteInfoFromRoute,
+    getRouteStepColor,
     getSubwayLineColor,
+    type RouteInfo,
+    type RouteStep,
 } from "../schedule/routeInfo";
 import type {
     RouteAlternativeOption,
@@ -18,8 +22,9 @@ import {
     getTransitNativeDirectionOpacity,
     getTransitRouteLinePresentation,
     getTransitRouteThemePresentation,
+    getTransitWalkGuidePresentation,
     shouldRenderTransitNativeDirection,
-    TRANSIT_WALK_DASH_PATTERN,
+    shouldRenderTransitStopAccessLinks,
 } from "./transitRoutePresentation";
 import { selectTransitRouteLabelCoordinate } from "./transitRouteLabelPlacement";
 import {
@@ -33,7 +38,9 @@ import {
     buildTransitStopInteractionId,
 } from "./transitMapInteraction";
 import {
+    repairLegacyOdsayWalkPath,
     routeCoordDistanceMeters,
+    stitchTransitWalkPathToAnchors,
     TRANSIT_CONNECTOR_POLICY,
 } from "./transitRouteGeometry";
 import { getTransitBoardingDirectionHint } from "./transitStopLabelPresentation";
@@ -205,6 +212,28 @@ function distinctMapCoords(coords: TmapLatLng[]): TmapLatLng[] {
     });
 }
 
+function compactConsecutiveMapCoords(coords: TmapLatLng[]): TmapLatLng[] {
+    return coords.filter((coord, index) => {
+        const previous = coords[index - 1];
+        return !previous ||
+            Math.abs(previous.latitude - coord.latitude) > 1e-8 ||
+            Math.abs(previous.longitude - coord.longitude) > 1e-8;
+    });
+}
+
+function getSavedRouteInfoStepCoordGroups(route: unknown): TmapLatLng[][] {
+    const routeInfo = getRouteInfoFromRoute(route);
+    if (!routeInfo) return [];
+    return routeInfo.steps.flatMap((step) => {
+        const coords = compactConsecutiveMapCoords(mapCoords(step.coordinates));
+        return coords.length ? [coords] : [];
+    });
+}
+
+function getSavedRouteInfoPathCoords(route: unknown): TmapLatLng[] {
+    return compactConsecutiveMapCoords(getSavedRouteInfoStepCoordGroups(route).flat());
+}
+
 export function getSavedRouteAlternative(route: unknown): RouteAlternativeOption | undefined {
     if (!route || typeof route !== "object") return undefined;
     const candidate = route as Partial<RouteAlternativeOption>;
@@ -235,7 +264,9 @@ function getExplicitSavedRouteRootPathCoords(route: unknown): TmapLatLng[] {
 function getSavedRoutePathCoords(route: unknown, legs: TransitLegDetail[]): TmapLatLng[] {
     const rootPath = getExplicitSavedRouteRootPathCoords(route);
     if (rootPath.length >= 2) return rootPath;
-    return distinctMapCoords(legs.flatMap(getSavedTransitLegCoords));
+    const legPath = distinctMapCoords(legs.flatMap(getSavedTransitLegCoords));
+    if (legPath.length >= 2) return legPath;
+    return getSavedRouteInfoPathCoords(route);
 }
 
 /** 저장 presentation 중 실제로 채택될 geometry만 사용해 고정 bounds를 만든다. */
@@ -245,7 +276,13 @@ export function getSavedRouteFitCoords(
     destination?: Place
 ): TmapLatLng[] {
     const routeOption = getSavedRouteAlternative(route);
-    const legs = Array.isArray(routeOption?.transitLegs) ? routeOption.transitLegs : [];
+    const storedLegs = Array.isArray(routeOption?.transitLegs) ? routeOption.transitLegs : [];
+    const legs = normalizeLegacySavedTransitLegs(
+        route,
+        storedLegs,
+        placeCoord(origin),
+        placeCoord(destination)
+    );
     const storedOverlays = parseStoredPathOverlays(route);
     let activeGeometry: TmapLatLng[];
 
@@ -255,7 +292,11 @@ export function getSavedRouteFitCoords(
             [...assignments].map(([overlayIndex, legIndex]) => [legIndex, overlayIndex])
         );
         const legGeometry = legs.flatMap((leg, legIndex) => {
-            const overlayIndex = storedOverlayIndexByLeg.get(legIndex);
+            // A legacy WALK repaired below is authoritative. Reusing a persisted
+            // overlay for that leg would put the old loop back into fit bounds.
+            const overlayIndex = leg !== storedLegs[legIndex]
+                ? undefined
+                : storedOverlayIndexByLeg.get(legIndex);
             return typeof overlayIndex === "number"
                 ? storedOverlays[overlayIndex]?.coords ?? getSavedTransitLegCoords(leg)
                 : getSavedTransitLegCoords(leg);
@@ -278,6 +319,50 @@ export function getSavedRouteFitCoords(
         ...[toMapCoord(origin), toMapCoord(destination)]
             .filter((coord): coord is TmapLatLng => !!coord),
     ]);
+}
+
+type SavedRouteOverviewPadding = {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+};
+
+/**
+ * 동일한 경로가 API 재조회로 새 객체가 되어도 상세 지도의 overview camera를 다시 움직이지 않는다.
+ * 카메라 결과에 영향을 주는 bounds와 padding만 identity에 포함한다.
+ */
+export function getSavedRouteOverviewFitKey(
+    coords: readonly TmapLatLng[],
+    padding: SavedRouteOverviewPadding
+): string | undefined {
+    const finiteCoords = coords.filter((coord) => (
+        Number.isFinite(coord.latitude) && Number.isFinite(coord.longitude)
+    ));
+    if (finiteCoords.length < 2) return undefined;
+
+    let minLatitude = finiteCoords[0].latitude;
+    let maxLatitude = finiteCoords[0].latitude;
+    let minLongitude = finiteCoords[0].longitude;
+    let maxLongitude = finiteCoords[0].longitude;
+    for (const coord of finiteCoords.slice(1)) {
+        minLatitude = Math.min(minLatitude, coord.latitude);
+        maxLatitude = Math.max(maxLatitude, coord.latitude);
+        minLongitude = Math.min(minLongitude, coord.longitude);
+        maxLongitude = Math.max(maxLongitude, coord.longitude);
+    }
+
+    return [
+        "saved-route-overview-v1",
+        minLatitude.toFixed(6),
+        maxLatitude.toFixed(6),
+        minLongitude.toFixed(6),
+        maxLongitude.toFixed(6),
+        Math.round(padding.top),
+        Math.round(padding.right),
+        Math.round(padding.bottom),
+        Math.round(padding.left),
+    ].join(":");
 }
 
 function getLegLineColor(leg: TransitLegDetail): string {
@@ -354,10 +439,11 @@ function styleStoredTransitOverlay(
     const walk = leg ? leg.kind === "WALK" : isWalkOverlay(overlay);
     const neutral = leg?.kind === "ETC";
     const accessLink = /access-link/i.test(overlay.id);
-    if (accessLink && mapZoom < 14) return undefined;
+    if (accessLink && !shouldRenderTransitStopAccessLinks(mapZoom)) return undefined;
     const walkAccessLink = /walk-access-link/i.test(overlay.id);
 
     if (walk) {
+        const walkGuide = getTransitWalkGuidePresentation(mapZoom);
         const width = walkAccessLink
             ? Math.max(1.8, line.rideWidth * 0.42)
             : accessLink
@@ -372,13 +458,16 @@ function styleStoredTransitOverlay(
             outlineColor: WALK_CASING_COLOR,
             outlineWidth: Math.max(0, (line.walkCasingWidth - line.walkWidth) / 2),
             outlineOpacity: 0.9,
-            dashPattern: [...TRANSIT_WALK_DASH_PATTERN],
-            strokeStyle: "dash",
-            outlineStrokeStyle: "solid",
+            dashPattern: [...walkGuide.dashPattern],
+            strokeStyle: walkGuide.strokeStyle,
+            outlineStrokeStyle: walkGuide.outlineStrokeStyle,
             renderMode: "native",
             showDirection: false,
             nativeDirection: false,
-            zIndex: typeof legIndex === "number" ? 110 + legIndex : 100,
+            // 승차 본선(40+)이 접합부에서 도보 점을 덮도록 planner와 같은 계층을 쓴다.
+            zIndex: (accessLink ? 34 : 30) + (
+                typeof legIndex === "number" ? Math.min(legIndex, 9) * 0.1 : 0
+            ),
         };
     }
 
@@ -420,6 +509,7 @@ function buildTransitLegOverlay(
     if (coords.length < 2) return undefined;
     const walk = leg.kind === "WALK";
     const neutral = leg.kind === "ETC";
+    const walkGuide = getTransitWalkGuidePresentation(mapZoom);
     const directionEnabled = !walk && !neutral && legIndex !== focusedLegIndex &&
         shouldRenderTransitNativeDirection(leg.kind, mapZoom);
 
@@ -434,15 +524,19 @@ function buildTransitLegOverlay(
             ? Math.max(0, (line.walkCasingWidth - line.walkWidth) / 2)
             : Math.max(0, (line.rideCasingWidth - line.rideWidth) / 2),
         outlineOpacity: walk ? 0.9 : 0.92,
-        dashPattern: walk ? [...TRANSIT_WALK_DASH_PATTERN] : undefined,
-        strokeStyle: walk ? "dash" : "solid",
-        outlineStrokeStyle: "solid",
+        dashPattern: walk ? [...walkGuide.dashPattern] : undefined,
+        strokeStyle: walk ? walkGuide.strokeStyle : "solid",
+        outlineStrokeStyle: walk ? walkGuide.outlineStrokeStyle : "solid",
         renderMode: "native",
         showDirection: false,
         nativeDirection: directionEnabled,
         nativeDirectionColor: directionEnabled ? DIRECTION_COLOR : undefined,
         nativeDirectionOpacity: directionEnabled ? getTransitNativeDirectionOpacity(mapZoom) : undefined,
-        zIndex: walk ? 110 + legIndex : neutral ? 35 + legIndex : 40 + legIndex,
+        zIndex: walk
+            ? 30 + Math.min(legIndex, 9) * 0.1
+            : neutral
+                ? 35 + Math.min(legIndex, 9) * 0.1
+                : 40 + Math.min(legIndex, 9) * 0.1,
     };
 }
 
@@ -499,6 +593,7 @@ function styleNonTransitOverlay(
     const directionEnabled = !walk && (
         route.mode !== "TRANSIT" || shouldRenderTransitNativeDirection("BUS", mapZoom)
     );
+    const walkGuide = getTransitWalkGuidePresentation(mapZoom);
 
     return {
         id: overlay.id,
@@ -519,9 +614,9 @@ function styleNonTransitOverlay(
             : transitFallback
                 ? theme.rideCasingOpacity
                 : 0.94,
-        dashPattern: walk ? [...TRANSIT_WALK_DASH_PATTERN] : undefined,
-        strokeStyle: walk ? "dash" : "solid",
-        outlineStrokeStyle: "solid",
+        dashPattern: walk ? [...walkGuide.dashPattern] : undefined,
+        strokeStyle: walk ? walkGuide.strokeStyle : "solid",
+        outlineStrokeStyle: walk ? walkGuide.outlineStrokeStyle : "solid",
         renderMode: "native",
         showDirection: false,
         nativeDirection: directionEnabled,
@@ -529,6 +624,80 @@ function styleNonTransitOverlay(
         nativeDirectionOpacity: directionEnabled ? getTransitNativeDirectionOpacity(mapZoom) : undefined,
         zIndex: 40,
     };
+}
+
+function routeInfoStepMode(step: RouteStep): TravelMode {
+    if (step.type === "BUS" || step.type === "SUBWAY") return "TRANSIT";
+    if (step.type === "WALK" || step.type === "TRANSFER") return "WALK";
+    if (step.type === "BIKE") return "BIKE";
+    return "CAR";
+}
+
+function inferRouteInfoMode(routeInfo: RouteInfo): TravelMode {
+    const movementSteps = routeInfo.steps.filter(
+        (step) => step.type !== "ORIGIN" && step.type !== "DESTINATION"
+    );
+    if (movementSteps.some((step) => step.type === "BUS" || step.type === "SUBWAY")) return "TRANSIT";
+    if (movementSteps.some((step) => step.type === "BIKE")) return "BIKE";
+    if (movementSteps.some((step) => step.type === "DRIVE")) return "CAR";
+    if (movementSteps.some((step) => step.type === "WALK" || step.type === "TRANSFER")) return "WALK";
+    return "ETC";
+}
+
+/** RouteInfo만 저장한 구버전 일정에서도 단계별 geometry를 서로 임의로 잇지 않고 복원한다. */
+function buildRouteInfoPathOverlays(
+    routeInfo: RouteInfo,
+    mapZoom: number,
+    isDark: boolean
+): TmapPathOverlay[] {
+    const movementSteps = routeInfo.steps.filter(
+        (step) => step.type !== "ORIGIN" && step.type !== "DESTINATION"
+    );
+    const overlays = movementSteps.flatMap((step, index): TmapPathOverlay[] => {
+        const coords = compactConsecutiveMapCoords(mapCoords(step.coordinates));
+        if (coords.length < 2) return [];
+
+        const mode = routeInfoStepMode(step);
+        const overlay = styleNonTransitOverlay({
+            id: `${routeInfo.id}-${step.id}`,
+            mode,
+            minutes: step.durationMinutes,
+            source: "fallback",
+        }, {
+            id: `saved-route-info-${step.id}-${index}`,
+            coords,
+        }, mapZoom, isDark);
+
+        if (step.type !== "BUS" && step.type !== "SUBWAY") return [overlay];
+
+        const line = getTransitRouteLinePresentation(mapZoom);
+        return [{
+            ...overlay,
+            color: getRouteStepColor(step),
+            width: line.rideWidth,
+            outlineWidth: Math.max(0, (line.rideCasingWidth - line.rideWidth) / 2),
+        }];
+    });
+    if (overlays.length > 0) return overlays;
+
+    // 일부 오래된 비대중교통 안내는 이동 단계마다 한 점만 남아 있다. 이때에만 실제 이동
+    // 단계의 점을 안내 순서대로 잇는다. 출·도착 마커 좌표나 대중교통 승하차점만 이어서
+    // 실제 경로처럼 보이는 직선을 만들지는 않는다.
+    const mode = inferRouteInfoMode(routeInfo);
+    if (mode === "TRANSIT" || mode === "ETC") return [];
+    const summaryCoords = compactConsecutiveMapCoords(
+        movementSteps.flatMap((step) => mapCoords(step.coordinates))
+    );
+    if (summaryCoords.length < 2) return [];
+    return [styleNonTransitOverlay({
+        id: routeInfo.id,
+        mode,
+        minutes: routeInfo.totalDurationMinutes,
+        source: "fallback",
+    }, {
+        id: "saved-route-info-summary",
+        coords: summaryCoords,
+    }, mapZoom, isDark)];
 }
 
 function endpointDistance(first: TmapLatLng, second: TmapLatLng): number {
@@ -830,6 +999,125 @@ function placeCoord(place: Place | undefined): RoutePathCoord | undefined {
     return { lat: place.lat, lng: place.lng };
 }
 
+function isTransitRideLeg(leg: TransitLegDetail | undefined): boolean {
+    return leg?.kind === "BUS" || leg?.kind === "SUBWAY";
+}
+
+function getRideBoundaryCoord(
+    leg: TransitLegDetail | undefined,
+    position: "start" | "end"
+): RoutePathCoord | undefined {
+    if (!leg) return undefined;
+    const path = routeCoords(leg.pathCoords);
+    return position === "start"
+        ? toRouteCoord(leg.startCoord) ?? path[0]
+        : toRouteCoord(leg.endCoord) ?? path[path.length - 1];
+}
+
+function getSavedWalkDisplayAnchors(
+    legs: TransitLegDetail[],
+    legIndex: number,
+    origin: RoutePathCoord | undefined,
+    destination: RoutePathCoord | undefined
+): { from?: RoutePathCoord; to?: RoutePathCoord } {
+    const leg = legs[legIndex];
+    const previous = legs[legIndex - 1];
+    const next = legs[legIndex + 1];
+    const path = routeCoords(leg?.pathCoords);
+    const from = legIndex === 0
+        ? origin ?? toRouteCoord(leg?.startCoord) ?? path[0]
+        : isTransitRideLeg(previous)
+            ? getRideBoundaryCoord(previous, "end") ?? toRouteCoord(leg?.startCoord) ?? path[0]
+            : toRouteCoord(leg?.startCoord) ?? path[0];
+    const to = legIndex === legs.length - 1
+        ? destination ?? toRouteCoord(leg?.endCoord) ?? path[path.length - 1]
+        : isTransitRideLeg(next)
+            ? getRideBoundaryCoord(next, "start") ?? toRouteCoord(leg?.endCoord) ?? path[path.length - 1]
+            : toRouteCoord(leg?.endCoord) ?? path[path.length - 1];
+    return { from, to };
+}
+
+function sameRoutePath(
+    first: readonly RoutePathCoord[] | undefined,
+    second: readonly RoutePathCoord[] | undefined
+): boolean {
+    if (first === second) return true;
+    if (!first || !second || first.length !== second.length) return false;
+    return first.every((coordinate, index) => (
+        Math.abs(coordinate.lat - second[index].lat) <= 1e-9 &&
+        Math.abs(coordinate.lng - second[index].lng) <= 1e-9
+    ));
+}
+
+/**
+ * Parser v1 ODsay WALK tails are repaired only in the saved-route presentation.
+ * This keeps backend history immutable while old schedules render with the same
+ * geometry assembly now used by fresh route searches.
+ */
+function normalizeLegacySavedTransitLegs(
+    route: unknown,
+    legs: TransitLegDetail[],
+    origin: RoutePathCoord | undefined,
+    destination: RoutePathCoord | undefined
+): TransitLegDetail[] {
+    const metadata = route as { provider?: unknown; geometryRevision?: unknown } | undefined;
+    const revision = isFiniteNumber(metadata?.geometryRevision)
+        ? metadata.geometryRevision
+        : undefined;
+    if (metadata?.provider !== "odsay" || (revision !== undefined && revision >= 2)) {
+        return legs;
+    }
+
+    let changed = false;
+    const normalized = legs.map((leg, legIndex) => {
+        if (leg.kind !== "WALK" || !Array.isArray(leg.pathCoords) || leg.pathCoords.length < 2) {
+            return leg;
+        }
+        const { from, to } = getSavedWalkDisplayAnchors(
+            legs,
+            legIndex,
+            origin,
+            destination
+        );
+        if (leg.pathGeometrySource !== "WALK_STEPS_LINESTRING") return leg;
+        const repairedPath = repairLegacyOdsayWalkPath({
+            pathCoords: leg.pathCoords,
+            expectedFrom: from,
+            expectedTo: to,
+            reportedDistanceMeters: leg.distanceMeters,
+        });
+        // geometryRevision was not persisted by older clients. Require the exact
+        // legacy parser signature before stitching so a healthy current ODsay
+        // entrance path is never changed merely because the revision is absent.
+        if (sameRoutePath(repairedPath, leg.pathCoords)) return leg;
+        const pathCoords = stitchTransitWalkPathToAnchors(repairedPath, from, to, {
+            terminalStart: legIndex === 0 && !!origin,
+            terminalEnd: legIndex === legs.length - 1 && !!destination,
+        });
+        changed = true;
+        return {
+            ...leg,
+            pathCoords,
+            startCoord: pathCoords[0] ?? leg.startCoord,
+            endCoord: pathCoords[pathCoords.length - 1] ?? leg.endCoord,
+        };
+    });
+    return changed ? normalized : legs;
+}
+
+function buildTransitOptionPath(legs: TransitLegDetail[]): RoutePathCoord[] | undefined {
+    const pathCoords: RoutePathCoord[] = [];
+    legs.forEach((leg) => {
+        routeCoords(leg.pathCoords).forEach((coordinate) => {
+            const previous = pathCoords[pathCoords.length - 1];
+            if (!previous || routeCoordDistanceMeters(previous, coordinate) > 0.5) {
+                pathCoords.push(coordinate);
+            }
+        });
+    });
+    return pathCoords.length >= 2 ? pathCoords : undefined;
+}
+
 function getLegBoardCoord(legs: TransitLegDetail[], legIndex: number): RoutePathCoord | undefined {
     const leg = legs[legIndex];
     if (!leg) return undefined;
@@ -838,7 +1126,7 @@ function getLegBoardCoord(legs: TransitLegDetail[], legIndex: number): RoutePath
     const isRideLeg = leg.kind === "BUS" || leg.kind === "SUBWAY";
     if (isRideLeg && previousWalk?.kind === "WALK") {
         const walkPath = routeCoords(previousWalk.pathCoords);
-        const walkEndCoord = toRouteCoord(previousWalk.endCoord) ?? walkPath[walkPath.length - 1];
+        const walkEndCoord = walkPath[walkPath.length - 1] ?? toRouteCoord(previousWalk.endCoord);
         if (walkEndCoord) return walkEndCoord;
     }
 
@@ -860,7 +1148,7 @@ function getLegAlightCoord(legs: TransitLegDetail[], legIndex: number): RoutePat
     const nextWalk = legs[legIndex + 1];
     if (nextWalk?.kind === "WALK") {
         const walkPath = routeCoords(nextWalk.pathCoords);
-        return toRouteCoord(nextWalk.startCoord) ?? walkPath[0];
+        return walkPath[0] ?? toRouteCoord(nextWalk.startCoord);
     }
     const leg = legs[legIndex];
     const path = routeCoords(leg.pathCoords);
@@ -1204,9 +1492,30 @@ export function buildSavedRouteMapPresentation({
     isDark,
     focusedLegIndex,
 }: SavedRouteMapPresentationInput): SavedRouteMapPresentation {
-    const routeOption = getSavedRouteAlternative(route);
-    const routeLegs = Array.isArray(routeOption?.transitLegs) ? routeOption.transitLegs : [];
-    const pathCoords = getSavedRoutePathCoords(route, routeLegs);
+    const storedRouteOption = getSavedRouteAlternative(route);
+    const routeInfo = getRouteInfoFromRoute(route);
+    const storedRouteLegs = Array.isArray(storedRouteOption?.transitLegs)
+        ? storedRouteOption.transitLegs
+        : [];
+    const routeLegs = normalizeLegacySavedTransitLegs(
+        route,
+        storedRouteLegs,
+        placeCoord(origin),
+        placeCoord(destination)
+    );
+    const normalizedTransitPath = routeLegs !== storedRouteLegs
+        ? buildTransitOptionPath(routeLegs)
+        : undefined;
+    const routeOption = storedRouteOption && routeLegs !== storedRouteLegs
+        ? {
+            ...storedRouteOption,
+            transitLegs: routeLegs,
+            pathCoords: normalizedTransitPath ?? storedRouteOption.pathCoords,
+        }
+        : storedRouteOption;
+    const pathCoords = routeOption?.mode === "TRANSIT" && routeLegs.length > 0
+        ? compactConsecutiveMapCoords(routeLegs.flatMap(getSavedTransitLegCoords))
+        : getSavedRoutePathCoords(route, routeLegs);
     const storedOverlays = parseStoredPathOverlays(route);
     let pathOverlays: TmapPathOverlay[];
 
@@ -1217,7 +1526,11 @@ export function buildSavedRouteMapPresentation({
         );
         const adoptedBaseCoordsByLeg = new Map<number, TmapLatLng[]>();
         const baseOverlays = routeLegs.flatMap((leg, legIndex): TmapPathOverlay[] => {
-            const storedOverlayIndex = storedOverlayIndexByLeg.get(legIndex);
+            // Never resurrect a malformed persisted WALK overlay after its leg
+            // geometry has been repaired for this presentation.
+            const storedOverlayIndex = leg !== storedRouteLegs[legIndex]
+                ? undefined
+                : storedOverlayIndexByLeg.get(legIndex);
             const storedOverlay = typeof storedOverlayIndex === "number"
                 ? storedOverlays[storedOverlayIndex]
                 : undefined;
@@ -1286,8 +1599,15 @@ export function buildSavedRouteMapPresentation({
             styleNonTransitOverlay(routeOption, overlay, mapZoom, isDark)
         ));
     } else if (storedOverlays.length) {
-        // 모드를 판별할 수 없는 비정상 구형 데이터는 geometry 유실을 피하기 위해 기존 fallback을 유지한다.
-        pathOverlays = storedOverlays;
+        // 모드를 판별할 수 없는 비정상 구형 데이터는 geometry와 기존 선 표현을 유지하되,
+        // 다크 지도에서 라이트 casing이 남지 않도록 최소한의 테마만 적용한다.
+        pathOverlays = isDark
+            ? storedOverlays.map((overlay) => (
+                applyTransitRouteThemeToOverlay(overlay, mapZoom, "dark")
+            ))
+            : storedOverlays;
+    } else if (!routeOption && routeInfo) {
+        pathOverlays = buildRouteInfoPathOverlays(routeInfo, mapZoom, isDark);
     } else {
         pathOverlays = buildNonTransitOverlays(routeOption, pathCoords, mapZoom, isDark);
     }
@@ -1303,4 +1623,23 @@ export function buildSavedRouteMapPresentation({
         markers,
         fitCoords,
     };
+}
+
+/** 저장 상세 지도에서 실제 안내선으로 그릴 수 있는 geometry가 있는지 확인한다. */
+export function hasRenderableSavedRouteGeometry(
+    route: unknown,
+    origin?: Place,
+    destination?: Place
+) {
+    try {
+        return buildSavedRouteMapPresentation({
+            route,
+            origin,
+            destination,
+            mapZoom: 13,
+            isDark: false,
+        }).pathOverlays.some((overlay) => overlay.coords.length >= 2);
+    } catch {
+        return false;
+    }
 }

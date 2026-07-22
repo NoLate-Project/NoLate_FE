@@ -4,10 +4,12 @@ import {
     getTransitWalkAccessLink,
     joinTerminalWalkPathEndpoint,
     joinWalkPathEndpoint,
+    repairLegacyOdsayWalkPath,
     resolveTransitWalkRequestEndpoints,
     resolveTransitRouteNodeCoordinate,
     resolveTransitStopAccessCoordinate,
     splitWalkPathAtDiscontinuities,
+    stitchTransitWalkPathToAnchors,
     TRANSIT_CONNECTOR_POLICY,
 } from "../src/modules/map/transitRouteGeometry";
 
@@ -111,6 +113,134 @@ describe("transit route geometry", () => {
         expect(result.pathCoords.at(-1)).toEqual(destination);
         expect(result.pathCoords).not.toContainEqual(path[2]);
         expect(result.pathCoords).not.toContainEqual(path[3]);
+    });
+
+    it("repairs the legacy ODsay E-F-T-E-tail-F ordering without guessing a new path", () => {
+        const start = { lat: 37.5, lng: 127.0 };
+        const repeatedStart = { lat: 37.5, lng: 127.0001 };
+        const repeatedEnd = { lat: 37.5, lng: 127.0002 };
+        const target = { lat: 37.5, lng: 127.0005 };
+        const innerCorner = { lat: 37.5001, lng: 127.0003 };
+        const legacy = [
+            start,
+            repeatedStart,
+            repeatedEnd,
+            target,
+            repeatedStart,
+            innerCorner,
+            repeatedEnd,
+        ];
+
+        expect(repairLegacyOdsayWalkPath({
+            pathCoords: legacy,
+            expectedFrom: start,
+            expectedTo: target,
+            reportedDistanceMeters: 58,
+        })).toEqual([
+            start,
+            repeatedStart,
+            innerCorner,
+            repeatedEnd,
+            target,
+        ]);
+    });
+
+    it("repairs the same legacy signature when ODsay reported the first WALK as zero metres", () => {
+        const start = { lat: 37.5, lng: 127.0 };
+        const repeatedStart = { lat: 37.5, lng: 127.0001 };
+        const repeatedEnd = { lat: 37.5, lng: 127.0002 };
+        const target = { lat: 37.5, lng: 127.0005 };
+        const legacy = [
+            start,
+            repeatedStart,
+            repeatedEnd,
+            target,
+            repeatedStart,
+            repeatedEnd,
+        ];
+
+        expect(repairLegacyOdsayWalkPath({
+            pathCoords: legacy,
+            expectedFrom: start,
+            expectedTo: target,
+            reportedDistanceMeters: 0,
+        })).toEqual([
+            start,
+            repeatedStart,
+            repeatedEnd,
+            target,
+        ]);
+    });
+
+    it("leaves current and structurally-unmatched WALK geometry untouched", () => {
+        const start = { lat: 37.5, lng: 127.0 };
+        const middle = { lat: 37.5, lng: 127.0002 };
+        const target = { lat: 37.5, lng: 127.0005 };
+        const current = [start, middle, target];
+        const unmatched = [
+            start,
+            { lat: 37.5001, lng: 127.0001 },
+            { lat: 37.5002, lng: 127.0002 },
+            target,
+            { lat: 37.5003, lng: 127.0003 },
+            { lat: 37.5004, lng: 127.0004 },
+        ];
+
+        expect(repairLegacyOdsayWalkPath({
+            pathCoords: current,
+            expectedFrom: start,
+            expectedTo: target,
+            reportedDistanceMeters: 45,
+        })).toBe(current);
+        expect(repairLegacyOdsayWalkPath({
+            pathCoords: unmatched,
+            expectedFrom: start,
+            expectedTo: target,
+            reportedDistanceMeters: 45,
+        })).toBe(unmatched);
+    });
+
+    it("trims a long provider tail before an origin inside the terminal WALK path", () => {
+        const origin = { lat: 37.5, lng: 127.0 };
+        const destination = { lat: 37.5, lng: 127.0009 };
+        const path = [
+            { lat: 37.5, lng: 126.99945 },
+            { lat: 37.5, lng: 126.9997 },
+            origin,
+            { lat: 37.5, lng: 127.00045 },
+            destination,
+        ];
+
+        const stitched = stitchTransitWalkPathToAnchors(path, origin, destination, {
+            terminalStart: true,
+            terminalEnd: true,
+        });
+
+        expect(stitched[0]).toEqual(origin);
+        expect(stitched).not.toContainEqual(path[0]);
+        expect(stitched).not.toContainEqual(path[1]);
+    });
+
+    it("orients a reversed provider WALK path from its from anchor to its to anchor", () => {
+        const from = { lat: 37.5, lng: 127.0 };
+        const middle = { lat: 37.5002, lng: 127.0003 };
+        const to = { lat: 37.5004, lng: 127.0006 };
+
+        expect(stitchTransitWalkPathToAnchors([to, middle, from], from, to)).toEqual([
+            from,
+            middle,
+            to,
+        ]);
+    });
+
+    it("preserves a non-terminal WALK path when its nearest anchor gap is too long", () => {
+        const path = [
+            { lat: 37.5, lng: 127.0 },
+            { lat: 37.5, lng: 127.0002 },
+        ];
+        const distantFrom = { lat: 37.5, lng: 126.9995 };
+
+        expect(stitchTransitWalkPathToAnchors(path, distantFrom, undefined)).toBe(path);
     });
 
     it("separates a subway entrance gap from the actual walking geometry", () => {

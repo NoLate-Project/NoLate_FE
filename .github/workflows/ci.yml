@@ -38,6 +38,7 @@ jobs:
           java-version: 17
           cache: gradle
       - run: npm ci
+      - run: bash scripts/install-tmap-native-sdk.sh android
       - run: chmod +x android/gradlew
       - working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest
@@ -51,6 +52,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: bash scripts/install-tmap-native-sdk.sh ios
       - working-directory: ios
         run: pod install
       - run: >-

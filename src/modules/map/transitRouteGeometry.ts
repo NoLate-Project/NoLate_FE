@@ -34,6 +34,11 @@ export type WalkPathJoinResult = {
     action: WalkPathJoinAction;
 };
 
+export type TransitWalkPathStitchOptions = {
+    terminalStart?: boolean;
+    terminalEnd?: boolean;
+};
+
 export type TransitWalkRequestEndpointInput = {
     legIndex: number;
     legCount: number;
@@ -60,6 +65,13 @@ export type TransitConnectorRequestFilterInput = {
     successfulWalkRequestIds: ReadonlySet<string>;
     successfulWalkLegIndexes: ReadonlySet<number>;
     legKinds: readonly string[];
+};
+
+export type LegacyOdsayWalkPathRepairInput = {
+    pathCoords: RoutePathCoord[];
+    expectedFrom: RoutePathCoord | undefined;
+    expectedTo: RoutePathCoord | undefined;
+    reportedDistanceMeters?: number;
 };
 
 function isFiniteRouteCoord(coord: RoutePathCoord | undefined): coord is RoutePathCoord {
@@ -158,6 +170,109 @@ export function routeCoordDistanceMeters(from: RoutePathCoord, to: RoutePathCoor
         Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2
     );
     return 2 * earthRadiusMeters * Math.asin(Math.min(1, Math.sqrt(haversine)));
+}
+
+function routePathLengthMeters(pathCoords: RoutePathCoord[]): number {
+    return pathCoords.slice(1).reduce((total, coordinate, index) => (
+        total + routeCoordDistanceMeters(pathCoords[index], coordinate)
+    ), 0);
+}
+
+function routePathMaxSegmentMeters(pathCoords: RoutePathCoord[]): number {
+    return pathCoords.slice(1).reduce((maximum, coordinate, index) => (
+        Math.max(maximum, routeCoordDistanceMeters(pathCoords[index], coordinate))
+    ), 0);
+}
+
+function appendDistinctRouteCoordinate(
+    pathCoords: RoutePathCoord[],
+    coordinate: RoutePathCoord,
+    toleranceMeters = 0.75
+): void {
+    const previous = pathCoords[pathCoords.length - 1];
+    if (!previous || routeCoordDistanceMeters(previous, coordinate) > toleranceMeters) {
+        pathCoords.push(coordinate);
+    }
+}
+
+/**
+ * 2026-07 parser correction before saved ODsay WALK geometry with the shape
+ * `... E, F, T, E, ..., F` was persisted. `T` is the actual following ride or
+ * destination anchor, while the repeated E/F tail belongs before T. Repair only
+ * that exact structural signature; arbitrary malformed paths remain untouched.
+ */
+export function repairLegacyOdsayWalkPath({
+    pathCoords,
+    expectedFrom,
+    expectedTo,
+    reportedDistanceMeters,
+}: LegacyOdsayWalkPathRepairInput): RoutePathCoord[] {
+    if (
+        !Array.isArray(pathCoords) ||
+        pathCoords.length < 6 ||
+        pathCoords.some((coordinate) => !isFiniteRouteCoord(coordinate)) ||
+        !isFiniteRouteCoord(expectedFrom) ||
+        !isFiniteRouteCoord(expectedTo) ||
+        routeCoordDistanceMeters(pathCoords[0], expectedFrom) > 2
+    ) {
+        return pathCoords;
+    }
+
+    const originalLengthMeters = routePathLengthMeters(pathCoords);
+    const originalMaxSegmentMeters = routePathMaxSegmentMeters(pathCoords);
+    const hasReportedDistance = typeof reportedDistanceMeters === "number" &&
+        Number.isFinite(reportedDistanceMeters) && reportedDistanceMeters >= 20;
+    let best: { pathCoords: RoutePathCoord[]; score: number } | undefined;
+
+    // Two coordinates must precede T, and its tail must contain at least the
+    // repeated E/F pair. This excludes already-correct paths whose anchor is last.
+    for (let targetIndex = 2; targetIndex <= pathCoords.length - 3; targetIndex += 1) {
+        const target = pathCoords[targetIndex];
+        if (routeCoordDistanceMeters(target, expectedTo) > 2) continue;
+
+        const repeatedStart = pathCoords[targetIndex - 2];
+        const repeatedEnd = pathCoords[targetIndex - 1];
+        const tail = pathCoords.slice(targetIndex + 1);
+        if (
+            routeCoordDistanceMeters(repeatedStart, tail[0]) > 1 ||
+            routeCoordDistanceMeters(repeatedEnd, tail[tail.length - 1]) > 1
+        ) {
+            continue;
+        }
+
+        const repaired: RoutePathCoord[] = [];
+        [
+            ...pathCoords.slice(0, targetIndex - 1),
+            ...tail,
+            target,
+        ].forEach((coordinate) => appendDistinctRouteCoordinate(repaired, coordinate));
+        if (
+            repaired.length < 2 ||
+            routeCoordDistanceMeters(repaired[0], expectedFrom) > 2 ||
+            routeCoordDistanceMeters(repaired[repaired.length - 1], expectedTo) > 2
+        ) {
+            continue;
+        }
+
+        const repairedLengthMeters = routePathLengthMeters(repaired);
+        const removedLoopMeters = originalLengthMeters - repairedLengthMeters;
+        if (removedLoopMeters < 3) continue;
+        if (routePathMaxSegmentMeters(repaired) > originalMaxSegmentMeters + 0.5) continue;
+
+        const originalDistanceError = hasReportedDistance
+            ? Math.abs(originalLengthMeters - reportedDistanceMeters)
+            : originalLengthMeters;
+        const repairedDistanceError = hasReportedDistance
+            ? Math.abs(repairedLengthMeters - reportedDistanceMeters)
+            : repairedLengthMeters;
+        if (repairedDistanceError >= originalDistanceError) continue;
+
+        if (!best || repairedDistanceError < best.score) {
+            best = { pathCoords: repaired, score: repairedDistanceError };
+        }
+    }
+
+    return best?.pathCoords ?? pathCoords;
 }
 
 /**
@@ -496,4 +611,57 @@ export function joinTerminalWalkPathEndpoint(
         return { ...result, action: "trimmed" };
     }
     return result;
+}
+
+/**
+ * 공급자 WALK geometry를 실제 이동 방향으로 정렬한 뒤 양 끝의 표시 좌표만 보정한다.
+ * 출발·도착 터미널은 경로가 POI를 지나친 꼬리까지 반환한 경우 이를 잘라낼 수 있지만,
+ * 일반 환승 경계는 기존의 짧은 endpoint 오차만 허용한다.
+ */
+export function stitchTransitWalkPathToAnchors(
+    pathCoords: RoutePathCoord[],
+    from: RoutePathCoord | undefined,
+    to: RoutePathCoord | undefined,
+    options: TransitWalkPathStitchOptions = {}
+): RoutePathCoord[] {
+    if (
+        !Array.isArray(pathCoords) ||
+        pathCoords.length < 2 ||
+        pathCoords.some((coord) => !isFiniteRouteCoord(coord)) ||
+        (from !== undefined && !isFiniteRouteCoord(from)) ||
+        (to !== undefined && !isFiniteRouteCoord(to)) ||
+        (!from && !to)
+    ) {
+        return pathCoords;
+    }
+
+    const first = pathCoords[0];
+    const last = pathCoords[pathCoords.length - 1];
+    let shouldReverse = false;
+    if (from && to) {
+        const forwardDistance =
+            routeCoordDistanceMeters(first, from) + routeCoordDistanceMeters(last, to);
+        const reverseDistance =
+            routeCoordDistanceMeters(last, from) + routeCoordDistanceMeters(first, to);
+        shouldReverse = reverseDistance < forwardDistance;
+    } else if (from) {
+        shouldReverse = routeCoordDistanceMeters(last, from) <
+            routeCoordDistanceMeters(first, from);
+    } else if (to) {
+        shouldReverse = routeCoordDistanceMeters(first, to) <
+            routeCoordDistanceMeters(last, to);
+    }
+
+    let displayPath = shouldReverse ? pathCoords.slice().reverse() : pathCoords;
+    if (from) {
+        displayPath = (options.terminalStart
+            ? joinTerminalWalkPathEndpoint(displayPath, from, "start")
+            : joinWalkPathEndpoint(displayPath, from, "start")).pathCoords;
+    }
+    if (to) {
+        displayPath = (options.terminalEnd
+            ? joinTerminalWalkPathEndpoint(displayPath, to, "end")
+            : joinWalkPathEndpoint(displayPath, to, "end")).pathCoords;
+    }
+    return displayPath;
 }

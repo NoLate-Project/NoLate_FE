@@ -1,37 +1,54 @@
 import { getZoomStyleValue, type ZoomStyleStops } from "./routeZoomStyle";
 
-// 네이버 배포 자산 측정과 카카오 실제 경로 확인처럼 본선보다 가벼운 둥근 점과
-// 명확한 빈칸을 유지한다. 확인된 14~16px 중심 간격 중 낮은 쪽에 맞춰 짧은
-// 도보 구간도 읽히면서 뭉치지 않게 한다.
+// 네이버의 현재 길찾기 화면과 각 SDK의 screen-space 패턴 정책처럼, 줌이 바뀌어도
+// 같은 둥근 점 리듬을 유지한다. TMAP iOS는 임의 dash 배열을 지원하지 않으므로
+// 숫자 배열로 dash/dot을 전환하지 않고 native `.dot` 한 종류만 요청한다.
 export const TRANSIT_WALK_DASH_PATTERN = [1, 13] as const;
 
+export function getTransitWalkGuidePresentation(_zoom: number) {
+    return {
+        dashPattern: TRANSIT_WALK_DASH_PATTERN,
+        strokeStyle: "dot" as const,
+        outlineStrokeStyle: "dot" as const,
+    };
+}
+
+export function shouldRenderTransitStopAccessLinks(zoom: number): boolean {
+    // 카카오 Route LOD처럼 개요 지도에서는 짧은 역사 내부 연결선을 생략한다.
+    // 저장 화면과 경로 탐색 화면 모두 같은 경계에서 표시해야 확대 중 선이 튀지 않는다.
+    return Number.isFinite(zoom) && zoom >= 14;
+}
+
+const TRANSIT_ROUTE_LINE_LOD = {
+    overview: { rideWidth: 6.4, walkWidth: 3.8 },
+    standard: { rideWidth: 7.2, walkWidth: 4.2 },
+    detail: { rideWidth: 8, walkWidth: 4.6 },
+} as const;
+
 export const TRANSIT_ROUTE_ZOOM_STYLE = {
-    // TMAP Polyline strokeWeight는 화면 픽셀 단위다. 배율별 값을 바꾸면 native Polyline이
-    // 재생성되어 direction 위상이 다시 시작된다. 비교 화면에서 본선이 지도를 가리지 않는
-    // 광학 비율을 참고해 7.2px 폭을 모든 지원 배율에서 유지한다.
+    // 지도 SDK의 화면 픽셀 기반 선 폭은 매 프레임 보간하지 않고 LOD 경계에서만 바꾼다.
+    // 아래 stop은 기존 설정 소비자의 타입을 유지하고, 실제 선택은 getTransitRouteLinePresentation이
+    // z6~10 / z11~15 / z16~18 세 구간으로 고정한다.
     rideWidth: {
-        zoom12: 7.2,
+        zoom12: TRANSIT_ROUTE_LINE_LOD.standard.rideWidth,
         zoom15: 7.2,
-        zoom17: 7.2,
-        zoom18: 7.2,
+        zoom17: TRANSIT_ROUTE_LINE_LOD.detail.rideWidth,
+        zoom18: TRANSIT_ROUTE_LINE_LOD.detail.rideWidth,
     },
-    rideCasingRatio: 1.22,
+    rideCasingExtraWidth: 1.6,
     walkWidth: {
-        zoom12: 4.4,
-        zoom15: 4.4,
-        zoom17: 4.4,
-        zoom18: 4.4,
+        zoom12: TRANSIT_ROUTE_LINE_LOD.standard.walkWidth,
+        zoom15: TRANSIT_ROUTE_LINE_LOD.standard.walkWidth,
+        zoom17: TRANSIT_ROUTE_LINE_LOD.detail.walkWidth,
+        zoom18: TRANSIT_ROUTE_LINE_LOD.detail.walkWidth,
     },
-    walkCasingRatio: 1.3,
+    // TMAP iOS는 casing과 본선을 서로 다른 polyline으로 그려 native dot 위상을
+    // 동기화할 수 없다. 도보 점에는 별도 casing을 두지 않아 사다리 모양을 방지한다.
+    walkCasingExtraWidth: 0,
     // 카카오 실제 웹 경로의 줌별 반복 표시와 사용자 요구를 반영해 z11부터 진행 방향을 읽게 한다.
-    // TMAP 자동차 내비 표시는 대중교통 기준과 혼용하지 않고, 흰색 대비만 확대할수록 조금 높인다.
+    // 확대 중 native layer signature가 바뀌지 않도록 방향표 투명도는 전 구간에서 고정한다.
     directionMinZoom: 11,
-    directionOpacity: {
-        zoom12: 0.9,
-        zoom15: 0.94,
-        zoom17: 0.96,
-        zoom18: 0.96,
-    },
+    directionOpacity: 0.96,
     fallbackMainWidth: {
         zoom12: 6.4,
         zoom15: 7.2,
@@ -55,12 +72,7 @@ export const TRANSIT_ROUTE_THEME_STYLE = {
         walkCasingColor: "#FFFFFF",
         walkCasingOpacity: 0.9,
         directionColor: "#FFFFFF",
-        directionOpacity: {
-            zoom12: 0.9,
-            zoom15: 0.94,
-            zoom17: 0.96,
-            zoom18: 0.96,
-        },
+        directionOpacity: 0.96,
     },
     dark: {
         rideCasingColor: "#0F172A",
@@ -68,12 +80,7 @@ export const TRANSIT_ROUTE_THEME_STYLE = {
         walkCasingColor: "#0F172A",
         walkCasingOpacity: 0.72,
         directionColor: "#FFFFFF",
-        directionOpacity: {
-            zoom12: 0.9,
-            zoom15: 0.94,
-            zoom17: 0.96,
-            zoom18: 0.96,
-        },
+        directionOpacity: 0.96,
     },
 } as const;
 
@@ -107,7 +114,7 @@ export function getTransitRouteThemePresentation(
         walkCasingColor: theme.walkCasingColor,
         walkCasingOpacity: theme.walkCasingOpacity,
         directionColor: theme.directionColor,
-        directionOpacity: getZoomStyleValue(theme.directionOpacity, zoom),
+        directionOpacity: theme.directionOpacity,
     };
 }
 
@@ -134,13 +141,22 @@ export function applyTransitRouteThemeToOverlay<T extends TransitThemeOverlay>(
 }
 
 export function getTransitRouteLinePresentation(zoom: number) {
-    const rideWidth = getZoomStyleValue(TRANSIT_ROUTE_ZOOM_STYLE.rideWidth, zoom);
-    const walkWidth = getZoomStyleValue(TRANSIT_ROUTE_ZOOM_STYLE.walkWidth, zoom);
+    const safeZoom = Number.isFinite(zoom) ? zoom : 15;
+    const lod = safeZoom < 11
+        ? TRANSIT_ROUTE_LINE_LOD.overview
+        : safeZoom < 16
+            ? TRANSIT_ROUTE_LINE_LOD.standard
+            : TRANSIT_ROUTE_LINE_LOD.detail;
+    const { rideWidth, walkWidth } = lod;
     return {
         rideWidth,
-        rideCasingWidth: rideWidth * TRANSIT_ROUTE_ZOOM_STYLE.rideCasingRatio,
+        rideCasingWidth: Math.round(
+            (rideWidth + TRANSIT_ROUTE_ZOOM_STYLE.rideCasingExtraWidth) * 10
+        ) / 10,
         walkWidth,
-        walkCasingWidth: walkWidth * TRANSIT_ROUTE_ZOOM_STYLE.walkCasingRatio,
+        walkCasingWidth: Math.round(
+            (walkWidth + TRANSIT_ROUTE_ZOOM_STYLE.walkCasingExtraWidth) * 10
+        ) / 10,
     };
 }
 

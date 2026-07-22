@@ -83,6 +83,10 @@ eas-builds.json
 # testing
 /coverage
 
+# TMAP native SDK binaries (installed from the official distribution endpoint)
+/modules/nolate-tmap/ios/Vendor/
+/modules/nolate-tmap/android/libs/
+
 # Yarn
 .yarn/*
 !.yarn/patches
