@@ -1,9 +1,12 @@
-import React from "react";
-import { Platform, StyleSheet, View, type ViewProps } from "react-native";
+import React, { useEffect, useState } from "react";
+import { AccessibilityInfo, Platform, StyleSheet, View, type ViewProps } from "react-native";
 
 import { useTheme } from "../../../theme/ThemeContext";
 
 type GlassEffectModule = {
+    GlassContainer: React.ComponentType<ViewProps & {
+        spacing?: number;
+    }>;
     GlassView: React.ComponentType<ViewProps & {
         colorScheme?: "dark" | "light";
         glassEffectStyle?: "clear" | "regular";
@@ -14,18 +17,57 @@ type GlassEffectModule = {
     isLiquidGlassAvailable: () => boolean;
 };
 
+export type LiquidGlassVariant =
+    | "toolbar"
+    | "popover"
+    | "sheet"
+    | "card"
+    | "mapCard"
+    | "alert"
+    | "bottomBar";
+
 type Props = ViewProps & {
     interactive?: boolean;
     clear?: boolean;
+    prominent?: boolean;
+    variant?: LiquidGlassVariant;
+    tone?: "default" | "flat" | "softGlass" | "menuLiquid" | "solidCard";
+    glow?: boolean;
+    forceColorScheme?: "dark" | "light";
+};
+
+type ContainerProps = ViewProps & {
+    spacing?: number;
 };
 
 type GlassPalette = {
     background: string;
-    fill: string;
-    topHighlight: string;
-    bottomShade: string;
-    nativeTint: string;
+    nativeTint?: string;
+    highlight: string;
+    stroke: string;
+    glow: string;
+    contrast: string;
+    sheen: string;
 };
+
+export const liquidGlassTokens = {
+    cornerRadiusSmall: 14,
+    cornerRadiusMedium: 22,
+    cornerRadiusLarge: 28,
+    cornerRadiusSheet: 30,
+    padding: 14,
+    pressedScale: 0.96,
+    spring: {
+        damping: 22,
+        stiffness: 230,
+        mass: 0.9,
+    },
+    quickSpring: {
+        damping: 18,
+        stiffness: 260,
+        mass: 0.82,
+    },
+} as const;
 
 function loadGlassEffect(): GlassEffectModule | null {
     try {
@@ -49,76 +91,126 @@ function canUseNativeGlass() {
     }
 }
 
-function getGlassPalette(mode: "dark" | "light", clear: boolean): GlassPalette {
+function getGlassPalette(
+    mode: "dark" | "light",
+    clear: boolean,
+    prominent: boolean,
+    variant: LiquidGlassVariant,
+    reduceTransparency: boolean
+): GlassPalette {
     const isDark = mode === "dark";
     const isAndroid = Platform.OS === "android";
+    const stronger = prominent || variant === "sheet" || variant === "mapCard" || variant === "alert";
+    const airy = clear || variant === "toolbar" || variant === "bottomBar" || variant === "popover";
 
     if (isDark) {
+        const background = reduceTransparency
+            ? "rgba(17, 18, 22, 0.98)"
+            : variant === "bottomBar"
+                ? "rgba(32, 34, 40, 0.40)"
+            : variant === "toolbar" || variant === "popover"
+                ? "rgba(24, 25, 30, 0.41)"
+            : stronger
+                ? "rgba(18, 19, 24, 0.74)"
+                : airy
+                    ? isAndroid
+                        ? "rgba(24, 25, 30, 0.94)"
+                        : "rgba(22, 23, 28, 0.50)"
+                    : isAndroid
+                        ? "rgba(28, 29, 35, 0.96)"
+                        : "rgba(28, 29, 35, 0.65)";
         return {
-            background: clear
-                ? "rgba(29, 31, 37, 0.88)"
-                : isAndroid
-                    ? "rgba(30, 32, 38, 0.96)"
-                    : "rgba(32, 34, 40, 0.92)",
-            fill: clear ? "rgba(255, 255, 255, 0.04)" : "rgba(255, 255, 255, 0.07)",
-            topHighlight: "rgba(255, 255, 255, 0.14)",
-            bottomShade: "rgba(0, 0, 0, 0.18)",
-            nativeTint: clear ? "rgba(36, 38, 44, 0.44)" : "rgba(40, 42, 48, 0.54)",
+            background,
+            nativeTint: stronger ? "rgba(255, 255, 255, 0.059)" : "rgba(255, 255, 255, 0.032)",
+            highlight: variant === "bottomBar" ? "rgba(255,255,255,0.27)" : "rgba(255,255,255,0.18)",
+            stroke: variant === "bottomBar" ? "rgba(255,255,255,0.27)" : "rgba(255,255,255,0.20)",
+            glow: variant === "mapCard" ? "rgba(47,128,255,0.18)" : "rgba(255,255,255,0.09)",
+            contrast: stronger ? "rgba(0,0,0,0.135)" : "rgba(0,0,0,0.050)",
+            sheen: variant === "bottomBar" ? "rgba(255,255,255,0.074)" : "rgba(255,255,255,0.058)",
         };
     }
 
+    const background = reduceTransparency
+        ? "rgba(255, 255, 255, 0.98)"
+            : variant === "bottomBar"
+            ? "rgba(255, 255, 255, 0.59)"
+        : variant === "toolbar" || variant === "popover"
+            ? "rgba(255, 255, 255, 0.45)"
+        : stronger
+            ? "rgba(255, 255, 255, 0.77)"
+            : airy
+                ? isAndroid
+                    ? "rgba(255, 255, 255, 0.94)"
+                    : "rgba(255, 255, 255, 0.52)"
+                : isAndroid
+                    ? "rgba(255, 255, 255, 0.96)"
+                    : "rgba(255, 255, 255, 0.65)";
     return {
-        background: clear
-            ? "rgba(255, 255, 255, 0.84)"
-            : isAndroid
-                ? "rgba(255, 255, 255, 0.96)"
-                : "rgba(255, 255, 255, 0.90)",
-        fill: clear ? "rgba(255, 255, 255, 0.18)" : "rgba(255, 255, 255, 0.26)",
-        topHighlight: "rgba(255, 255, 255, 0.58)",
-        bottomShade: "rgba(15, 23, 42, 0.07)",
-        nativeTint: clear ? "rgba(255, 255, 255, 0.40)" : "rgba(255, 255, 255, 0.52)",
+        background,
+        nativeTint: variant === "bottomBar"
+            ? "rgba(255, 255, 255, 0.16)"
+            : stronger ? "rgba(255, 255, 255, 0.14)" : "rgba(255, 255, 255, 0.072)",
+        highlight: variant === "bottomBar" ? "rgba(255,255,255,0.77)" : "rgba(255,255,255,0.68)",
+        stroke: variant === "bottomBar" ? "rgba(255,255,255,0.65)" : "rgba(255,255,255,0.56)",
+        glow: variant === "mapCard" ? "rgba(47,128,255,0.108)" : "rgba(255,255,255,0.20)",
+        contrast: variant === "bottomBar" ? "rgba(255,255,255,0.099)" : "rgba(255,255,255,0.072)",
+        sheen: variant === "bottomBar" ? "rgba(255,255,255,0.216)" : "rgba(255,255,255,0.252)",
     };
-}
-
-function GlassLayers({ palette }: { palette: GlassPalette }) {
-    return (
-        <>
-            <View
-                pointerEvents="none"
-                style={[
-                    StyleSheet.absoluteFillObject,
-                    { backgroundColor: palette.fill },
-                ]}
-            />
-            <View
-                pointerEvents="none"
-                style={[
-                    styles.topHighlight,
-                    { backgroundColor: palette.topHighlight },
-                ]}
-            />
-            <View
-                pointerEvents="none"
-                style={[
-                    styles.bottomShade,
-                    { backgroundColor: palette.bottomShade },
-                ]}
-            />
-        </>
-    );
 }
 
 export default function CalendarGlassSurface({
     children,
     interactive = false,
     clear = false,
+    prominent = false,
+    variant = "card",
+    tone = "default",
+    glow = false,
+    forceColorScheme,
     style,
     ...viewProps
 }: Props) {
     const { mode } = useTheme();
+    const effectiveMode = forceColorScheme ?? mode;
+    const [reduceTransparency, setReduceTransparency] = useState(false);
     const nativeGlassAvailable = canUseNativeGlass();
     const glassEffect = nativeGlassAvailable ? loadGlassEffect() : null;
-    const palette = getGlassPalette(mode, clear);
+    const palette = getGlassPalette(effectiveMode, clear, prominent, variant, reduceTransparency);
+    const isFlatTone = tone === "flat";
+    const isSoftGlassTone = tone === "softGlass";
+    const isMenuLiquidTone = tone === "menuLiquid";
+    const isSolidCardTone = tone === "solidCard";
+    const usesTonedSurface = isFlatTone || isSoftGlassTone || isMenuLiquidTone || isSolidCardTone;
+    const menuLiquidNativeTint = effectiveMode === "dark"
+        ? "rgba(8, 9, 14, 0.76)"
+        : "rgba(255, 255, 255, 0.76)";
+    const solidCardNativeTint = effectiveMode === "dark"
+        ? "rgba(9, 10, 13, 0.96)"
+        : "rgba(255, 255, 255, 0.86)";
+    const nativeTintColor = isSolidCardTone
+        ? solidCardNativeTint
+        : isMenuLiquidTone
+            ? menuLiquidNativeTint
+            : palette.nativeTint;
+
+    useEffect(() => {
+        let mounted = true;
+        AccessibilityInfo.isReduceTransparencyEnabled()
+            .then((enabled) => {
+                if (mounted) setReduceTransparency(enabled);
+            })
+            .catch(() => undefined);
+
+        const subscription = AccessibilityInfo.addEventListener?.(
+            "reduceTransparencyChanged",
+            setReduceTransparency
+        );
+
+        return () => {
+            mounted = false;
+            subscription?.remove?.();
+        };
+    }, []);
 
     if (nativeGlassAvailable && glassEffect) {
         const { GlassView } = glassEffect;
@@ -126,19 +218,100 @@ export default function CalendarGlassSurface({
         return (
             <GlassView
                 {...viewProps}
-                colorScheme={mode}
-                glassEffectStyle={clear ? "clear" : "regular"}
+                colorScheme={effectiveMode}
+                glassEffectStyle="regular"
                 isInteractive={interactive}
-                tintColor={palette.nativeTint}
+                tintColor={nativeTintColor}
                 style={[
                     styles.surface,
-                    style,
-                    { backgroundColor: palette.background },
                     styles.clipped,
+                    styles.nativeDepth,
+                    variant === "bottomBar" && styles.bottomBarDepth,
+                    variant === "mapCard" && styles.mapDepth,
+                    isMenuLiquidTone && (
+                        effectiveMode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                    ),
+                    isSolidCardTone && (
+                        effectiveMode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                    ),
+                    style,
                 ]}
             >
-                <GlassLayers palette={palette} />
+                {!isSolidCardTone && (prominent || reduceTransparency) && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            isFlatTone && styles.prominentFillFlat,
+                            isSoftGlassTone && styles.prominentFillSoftGlass,
+                            isMenuLiquidTone && styles.prominentFillMenuLiquid,
+                            { backgroundColor: palette.background },
+                        ]}
+                    />
+                )}
+                {!isSolidCardTone && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            styles.contrastLayer,
+                            usesTonedSurface && (
+                                isMenuLiquidTone
+                                    ? styles.contrastLayerMenuLiquid
+                                    : isSoftGlassTone
+                                        ? styles.contrastLayerSoftGlass
+                                        : styles.contrastLayerFlat
+                            ),
+                            { backgroundColor: palette.contrast },
+                        ]}
+                    />
+                )}
+                {!isSolidCardTone && (glow || variant === "mapCard") && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            StyleSheet.absoluteFillObject,
+                            styles.glow,
+                            { backgroundColor: palette.glow },
+                        ]}
+                    />
+                )}
+                {!isSolidCardTone && !isFlatTone && !isMenuLiquidTone && (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            styles.sheenLayer,
+                            isSoftGlassTone && styles.sheenLayerSoftGlass,
+                            { backgroundColor: palette.sheen },
+                        ]}
+                    />
+                )}
                 {children}
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.topHighlight,
+                        usesTonedSurface && (
+                            isMenuLiquidTone
+                                ? styles.topHighlightMenuLiquid
+                                : isSolidCardTone
+                                    ? styles.topHighlightSolidCard
+                                    : isSoftGlassTone
+                                    ? styles.topHighlightSoftGlass
+                                    : styles.topHighlightFlat
+                        ),
+                        { borderTopColor: palette.highlight },
+                    ]}
+                />
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.innerStroke,
+                        { borderColor: palette.stroke },
+                    ]}
+                />
             </GlassView>
         );
     }
@@ -149,13 +322,123 @@ export default function CalendarGlassSurface({
             style={[
                 styles.surface,
                 styles.fallbackDepth,
-                style,
+                variant === "bottomBar" && styles.bottomBarDepth,
+                variant === "mapCard" && styles.mapDepth,
                 { backgroundColor: palette.background },
+                isMenuLiquidTone && (
+                    effectiveMode === "dark" ? styles.menuLiquidSurfaceDark : styles.menuLiquidSurfaceLight
+                ),
+                isSolidCardTone && (
+                    effectiveMode === "dark" ? styles.solidCardSurfaceDark : styles.solidCardSurfaceLight
+                ),
+                style,
                 styles.clipped,
                 Platform.OS === "android" && styles.androidDepth,
             ]}
         >
-            <GlassLayers palette={palette} />
+            {!isSolidCardTone && prominent && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.prominentFill,
+                        isFlatTone && styles.prominentFillFlat,
+                        isSoftGlassTone && styles.prominentFillSoftGlass,
+                        isMenuLiquidTone && styles.prominentFillMenuLiquid,
+                        effectiveMode === "dark"
+                            ? styles.prominentFillDark
+                            : styles.prominentFillLight,
+                    ]}
+                />
+            )}
+            {!isSolidCardTone && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.contrastLayer,
+                        usesTonedSurface && (
+                            isMenuLiquidTone
+                                ? styles.contrastLayerMenuLiquid
+                                : isSoftGlassTone
+                                    ? styles.contrastLayerSoftGlass
+                                    : styles.contrastLayerFlat
+                        ),
+                        { backgroundColor: palette.contrast },
+                    ]}
+                />
+            )}
+            {!isSolidCardTone && (glow || variant === "mapCard") && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.glow,
+                        { backgroundColor: palette.glow },
+                    ]}
+                />
+            )}
+            {!isSolidCardTone && !isFlatTone && !isMenuLiquidTone && (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.sheenLayer,
+                        isSoftGlassTone && styles.sheenLayerSoftGlass,
+                        { backgroundColor: palette.sheen },
+                    ]}
+                />
+            )}
+            {children}
+            <View
+                pointerEvents="none"
+                style={[
+                    StyleSheet.absoluteFillObject,
+                    styles.topHighlight,
+                    usesTonedSurface && (
+                        isMenuLiquidTone
+                            ? styles.topHighlightMenuLiquid
+                            : isSolidCardTone
+                                ? styles.topHighlightSolidCard
+                                : isSoftGlassTone
+                                ? styles.topHighlightSoftGlass
+                                : styles.topHighlightFlat
+                    ),
+                    { borderTopColor: palette.highlight },
+                ]}
+            />
+            <View
+                pointerEvents="none"
+                style={[
+                    StyleSheet.absoluteFillObject,
+                    styles.innerStroke,
+                    { borderColor: palette.stroke },
+                ]}
+            />
+        </View>
+    );
+}
+
+export function CalendarGlassContainer({
+    children,
+    spacing = 0,
+    style,
+    ...viewProps
+}: ContainerProps) {
+    const nativeGlassAvailable = canUseNativeGlass();
+    const glassEffect = nativeGlassAvailable ? loadGlassEffect() : null;
+
+    if (nativeGlassAvailable && glassEffect) {
+        const { GlassContainer } = glassEffect;
+
+        return (
+            <GlassContainer {...viewProps} spacing={spacing} style={style}>
+                {children}
+            </GlassContainer>
+        );
+    }
+
+    return (
+        <View {...viewProps} style={style}>
             {children}
         </View>
     );
@@ -168,29 +451,111 @@ const styles = StyleSheet.create({
     clipped: {
         overflow: "hidden",
     },
-    fallbackDepth: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.16,
-        shadowRadius: 18,
-        elevation: 12,
+    menuLiquidSurfaceDark: {
+        backgroundColor: "rgba(8, 9, 14, 0.79)",
     },
-    androidDepth: {
-        elevation: 14,
+    menuLiquidSurfaceLight: {
+        backgroundColor: "rgba(255, 255, 255, 0.79)",
+    },
+    solidCardSurfaceDark: {
+        backgroundColor: "rgba(9, 10, 13, 0.96)",
+    },
+    solidCardSurfaceLight: {
+        backgroundColor: "rgba(255, 255, 255, 0.84)",
+    },
+    innerStroke: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.20)",
     },
     topHighlight: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        opacity: 0.74,
+    },
+    topHighlightFlat: {
+        opacity: 0.18,
+    },
+    topHighlightSoftGlass: {
+        opacity: 0.34,
+    },
+    topHighlightMenuLiquid: {
+        opacity: 0.27,
+    },
+    topHighlightSolidCard: {
+        opacity: 0.22,
+    },
+    glow: {
+        opacity: 0.65,
+    },
+    contrastLayer: {
+        opacity: 0.83,
+    },
+    contrastLayerFlat: {
+        opacity: 0.28,
+    },
+    contrastLayerSoftGlass: {
+        opacity: 0.41,
+    },
+    contrastLayerMenuLiquid: {
+        opacity: 0.86,
+    },
+    sheenLayer: {
         position: "absolute",
         top: 0,
         left: 0,
         right: 0,
-        height: "48%",
-        opacity: 0.75,
+        height: "42%",
+        opacity: 0.65,
     },
-    bottomShade: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        bottom: 0,
-        height: "44%",
+    sheenLayerSoftGlass: {
+        height: "26%",
+        opacity: 0.18,
+    },
+    prominentFill: {
+        opacity: 0.81,
+    },
+    prominentFillFlat: {
+        opacity: 0.48,
+    },
+    prominentFillSoftGlass: {
+        opacity: 0.56,
+    },
+    prominentFillMenuLiquid: {
+        opacity: 0.86,
+    },
+    prominentFillDark: {
+        backgroundColor: "rgba(14,15,18,0.76)",
+    },
+    prominentFillLight: {
+        backgroundColor: "rgba(255,255,255,0.82)",
+    },
+    fallbackDepth: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.18,
+        shadowRadius: 24,
+        elevation: 12,
+    },
+    nativeDepth: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 7 },
+        shadowOpacity: 0.12,
+        shadowRadius: 16,
+    },
+    bottomBarDepth: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.13,
+        shadowRadius: 18,
+        elevation: 16,
+    },
+    mapDepth: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 18 },
+        shadowOpacity: 0.30,
+        shadowRadius: 30,
+        elevation: 24,
+    },
+    androidDepth: {
+        elevation: 14,
     },
 });

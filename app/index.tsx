@@ -1,9 +1,11 @@
 import { Redirect } from "expo-router";
 
 import { useAuth } from "../src/modules/auth/AuthContext";
+import { getPostAuthRoute } from "../src/modules/onboarding/curationRouting";
 
 export default function Index() {
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, isCurationCompleted } = useAuth();
 
-    return <Redirect href={isAuthenticated ? "/schedule" : "/auth/login"} />;
+    if (!isAuthenticated) return <Redirect href="/auth/login" />;
+    return <Redirect href={getPostAuthRoute(isCurationCompleted)} />;
 }

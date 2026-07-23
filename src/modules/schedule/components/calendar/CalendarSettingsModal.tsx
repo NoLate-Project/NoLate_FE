@@ -3,7 +3,6 @@ import {
     Modal,
     Pressable,
     StyleSheet,
-    Switch,
     Text,
     View,
 } from "react-native";
@@ -11,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
+import ThemeModeSwitch from "../../../theme/ThemeModeSwitch";
 import CalendarGlassSurface from "./CalendarGlassSurface";
 
 type Props = {
@@ -27,15 +27,23 @@ export default function CalendarSettingsModal({
     onClose,
 }: Props) {
     const insets = useSafeAreaInsets();
-    const { colors, mode, toggleMode } = useTheme();
+    const { colors } = useTheme();
 
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <Pressable style={styles.backdrop} onPress={onClose}>
+        <Modal
+            visible={visible}
+            transparent
+            animationType="fade"
+            onRequestClose={onClose}
+            accessibilityViewIsModal
+        >
+            <View style={styles.backdrop}>
                 <Pressable
-                    style={styles.panelHitArea}
-                    onPress={() => undefined}
-                >
+                    accessible={false}
+                    style={StyleSheet.absoluteFill}
+                    onPress={onClose}
+                />
+                <View style={styles.panelHitArea}>
                     <CalendarGlassSurface
                         style={[
                             styles.panel,
@@ -47,15 +55,23 @@ export default function CalendarSettingsModal({
                     >
                         <View style={styles.titleRow}>
                             <Text style={[styles.title, { color: colors.textPrimary }]}>캘린더 설정</Text>
-                            <Pressable onPress={onClose} style={styles.closeButton}>
-                                <Ionicons name="close" size={22} color={colors.textSecondary} />
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="캘린더 설정 닫기"
+                                onPress={onClose}
+                                style={styles.closeButton}
+                            >
+                                <Ionicons accessible={false} name="close" size={22} color={colors.textSecondary} />
                             </Pressable>
                         </View>
 
                         <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
                             한 주의 시작
                         </Text>
-                        <View style={[styles.segment, { backgroundColor: colors.surface2 }]}>
+                        <View
+                            accessibilityRole="radiogroup"
+                            style={[styles.segment, { backgroundColor: colors.surface2 }]}
+                        >
                             {([
                                 { value: 0 as const, label: "일요일" },
                                 { value: 1 as const, label: "월요일" },
@@ -64,6 +80,11 @@ export default function CalendarSettingsModal({
                                 return (
                                     <Pressable
                                         key={option.value}
+                                        accessible
+                                        role="radio"
+                                        accessibilityRole="radio"
+                                        accessibilityState={{ selected }}
+                                        accessibilityLabel={`한 주의 시작 ${option.label}`}
                                         onPress={() => onChangeFirstDay(option.value)}
                                         style={[
                                             styles.segmentButton,
@@ -87,25 +108,26 @@ export default function CalendarSettingsModal({
                             })}
                         </View>
 
-                        <View style={[styles.settingRow, { borderTopColor: colors.border }]}>
+                        <View
+                            style={[styles.settingRow, { borderTopColor: colors.border }]}
+                        >
                             <View>
-                                <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>
-                                    다크 모드
+                                <Text
+                                    style={[styles.settingTitle, { color: colors.textPrimary }]}
+                                >
+                                    화면 테마
                                 </Text>
-                                <Text style={[styles.settingHint, { color: colors.textSecondary }]}>
-                                    캘린더 화면 테마
+                                <Text
+                                    style={[styles.settingHint, { color: colors.textSecondary }]}
+                                >
+                                    시스템 설정을 따르거나 밝기를 선택하세요
                                 </Text>
                             </View>
-                            <Switch
-                                value={mode === "dark"}
-                                onValueChange={toggleMode}
-                                trackColor={{ false: colors.border, true: "#34c759" }}
-                                thumbColor="#ffffff"
-                            />
+                            <ThemeModeSwitch />
                         </View>
                     </CalendarGlassSurface>
-                </Pressable>
-            </Pressable>
+                </View>
+            </View>
         </Modal>
     );
 }
@@ -169,9 +191,7 @@ const styles = StyleSheet.create({
         marginTop: 22,
         paddingTop: 18,
         borderTopWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
+        gap: 12,
     },
     settingTitle: {
         fontSize: 16,

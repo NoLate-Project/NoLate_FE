@@ -34,6 +34,8 @@ local.properties
 .cxx/
 *.keystore
 !debug.keystore
+*.jks
+keystore.properties
 .kotlin/
 
 # node.js
@@ -68,11 +70,22 @@ yarn-error.log
 # Temporary files created by Metro to check the health of the file watcher
 .metro-health-check*
 .expo/
+eas-builds.json
 .tmp/
 .claude/
 
+# Local QA and native build artifacts
+/.playwright-cli/
+/output/
+/screenshots/
+/ios/build-*/
+
 # testing
 /coverage
+
+# TMAP native SDK binaries (installed from the official distribution endpoint)
+/modules/nolate-tmap/ios/Vendor/
+/modules/nolate-tmap/android/libs/
 
 # Yarn
 .yarn/*

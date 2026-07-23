@@ -1,0 +1,229 @@
+import { apiGet } from "./api";
+import { type ApiEnvelope, unwrapApiResponse } from "./response";
+
+export type LegalDocumentType =
+    | "TERMS_OF_SERVICE"
+    | "PRIVACY_COLLECTION_CONSENT"
+    | "PRIVACY_POLICY";
+
+export type LegalDocumentSection = {
+    title: string;
+    body: string[];
+};
+
+export type LegalDocument = {
+    type: LegalDocumentType;
+    title: string;
+    version: string;
+    effectiveDate: string;
+    summary: string;
+    sections: LegalDocumentSection[];
+};
+
+export type SignupConsentPolicy = {
+    terms: LegalDocument;
+    privacyCollection: LegalDocument;
+};
+
+export const TERMS_OF_SERVICE_FALLBACK: LegalDocument = {
+    type: "TERMS_OF_SERVICE",
+    title: "서비스 이용약관",
+    version: "2026.07.16",
+    effectiveDate: "2026-07-16",
+    summary: "NoLate 계정과 일정·경로·알림 기능을 이용할 때 필요한 기본 원칙입니다.",
+    sections: [
+        {
+            title: "1. 목적과 적용",
+            body: [
+                "이 약관은 NoLate가 제공하는 일정 관리, 캘린더 가져오기, 경로 탐색, 출발 알림 및 일정 공유 기능의 이용 조건을 정합니다.",
+                "회원이 가입 절차에서 동의하고 계정을 생성하면 이 약관이 적용됩니다.",
+            ],
+        },
+        {
+            title: "2. 계정과 서비스",
+            body: [
+                "회원은 정확한 가입 정보를 제공하고 자신의 로그인 수단과 인증 정보를 안전하게 관리해야 합니다.",
+                "경로와 도착 예상시간은 외부 데이터와 당시 상황을 바탕으로 한 참고 정보이며 실제 이동 결과와 다를 수 있습니다.",
+                "회원은 앱의 회원 탈퇴 기능을 통해 언제든지 계정 삭제를 요청할 수 있습니다.",
+            ],
+        },
+        {
+            title: "3. 서비스 변경과 문의",
+            body: [
+                "안정적인 운영, 보안, 법령 준수 또는 외부 제공자의 정책 변경을 위해 서비스의 일부가 변경되거나 일시 중단될 수 있습니다.",
+                "약관 및 서비스 이용 문의: support@nolate.jinuk.dev",
+            ],
+        },
+    ],
+};
+
+export const PRIVACY_COLLECTION_CONSENT_FALLBACK: LegalDocument = {
+    type: "PRIVACY_COLLECTION_CONSENT",
+    title: "개인정보 수집·이용 동의",
+    version: "2026.07.16",
+    effectiveDate: "2026-07-16",
+    summary: "계정 생성과 로그인에 필요한 최소 회원정보의 수집·이용에 관한 필수 동의입니다.",
+    sections: [
+        {
+            title: "1. 수집·이용 목적",
+            body: [
+                "회원 가입, 로그인, 계정 식별 및 부정 이용 방지",
+                "회원별 일정, 설정, 프로필과 서비스 이용 상태 관리",
+            ],
+        },
+        {
+            title: "2. 수집 항목",
+            body: [
+                "일반 가입: 이름, 이메일, 비밀번호 해시, 로그인 유형",
+                "SNS 가입: SNS 제공자, SNS 식별자, 이름, 이메일(제공된 경우), 로그인 유형",
+                "인증 과정에서 생성되는 access token, refresh token 및 만료 정보",
+            ],
+        },
+        {
+            title: "3. 보유 기간과 거부 권리",
+            body: [
+                "회원 탈퇴 시까지 보유·이용하며 법령상 보존 의무가 있는 정보는 해당 기간 후 파기합니다.",
+                "동의를 거부할 수 있으나 계정 생성에 필요한 최소 정보이므로 회원가입을 진행할 수 없습니다.",
+            ],
+        },
+    ],
+};
+
+export const SIGNUP_CONSENT_POLICY_FALLBACK: SignupConsentPolicy = {
+    terms: TERMS_OF_SERVICE_FALLBACK,
+    privacyCollection: PRIVACY_COLLECTION_CONSENT_FALLBACK,
+};
+
+export const PRIVACY_POLICY_FALLBACK: LegalDocument = {
+    type: "PRIVACY_POLICY",
+    title: "개인정보처리방침",
+    version: "2026.07.16",
+    effectiveDate: "2026-07-16",
+    summary: "NoLate는 일정, 위치, 캘린더 연동 정보를 늦지 않는 일정 관리를 제공하기 위해 필요한 범위에서만 처리합니다.",
+    sections: [
+        {
+            title: "1. 처리 목적",
+            body: [
+                "회원 가입, 로그인, 계정 식별 및 부정 이용 방지",
+                "일정 생성, 일정 공유, 출발 알림, 경로 추천, 교통 상황 확인 등 NoLate 핵심 기능 제공",
+                "캘린더 큐레이션을 통한 일정 후보 조회 및 사용자가 선택한 일정 저장",
+                "푸시 알림 발송, 고객 문의 대응, 서비스 안정성 및 보안 유지",
+            ],
+        },
+        {
+            title: "2. 처리하는 개인정보 항목",
+            body: [
+                "회원 정보: 이름, 이메일, 비밀번호 해시, 로그인 유형, SNS 식별자",
+                "서비스 이용 정보: 일정 제목, 일정 시간, 장소명, 좌표, 카테고리, 이동수단, 알림 설정, 공유 일정 정보",
+                "캘린더 연동 정보: 연동 제공자, 캘린더 이름, 일정 후보의 제목, 시간, 장소, 메모, 종일 여부",
+                "기기 및 알림 정보: 앱에서 생성한 기기 식별값, 푸시 토큰, OS 정보, 인증 토큰",
+                "빠른 일정 입력 기능 사용 시: 사용자가 입력하거나 업로드한 텍스트, 음성, 이미지에서 추출된 일정 후보 정보",
+            ],
+        },
+        {
+            title: "3. 외부 캘린더 데이터 처리",
+            body: [
+                "Apple EventKit 또는 Android 기기 캘린더는 사용자의 기기 권한이 허용된 경우에만 앱에서 읽습니다.",
+                "Google Calendar는 사용자가 Google OAuth로 동의한 경우 읽기 전용 범위로 다가오는 일정과 캘린더 목록을 조회합니다.",
+                "Google Calendar 접근 토큰은 기기 보안 저장소에 저장되며, 현재 서버에는 저장하지 않습니다.",
+                "사용자가 선택한 일정의 장소와 메모는 앱에서 명시적인 출발지·도착지 후보를 찾는 데 사용합니다. 전체 메모를 지도 사업자에 전송하지 않고, 추출된 장소 검색어와 좌표만 장소 검색 및 경로 생성에 사용합니다.",
+                "외부 캘린더의 전체 원본을 서버에 일괄 저장하지 않고, 사용자가 가져오기로 선택한 일정만 NoLate 일정으로 저장합니다.",
+            ],
+        },
+        {
+            title: "4. 보유 및 이용 기간",
+            body: [
+                "회원 정보와 일정 정보는 회원 탈퇴 또는 사용자의 삭제 요청 시까지 보유합니다.",
+                "로그아웃 또는 회원 탈퇴 시 서버에 저장된 refresh token과 푸시 토큰은 더 이상 인증 및 알림 목적으로 사용하지 않습니다.",
+                "관계 법령에 따라 보관이 필요한 정보는 해당 법령에서 정한 기간 동안 별도 보관 후 파기합니다.",
+                "기기에만 저장된 외부 캘린더 접근 토큰은 앱 삭제, 로그아웃, 권한 철회 또는 토큰 만료 시 더 이상 사용할 수 없습니다.",
+            ],
+        },
+        {
+            title: "5. 개인정보 처리의 위탁",
+            body: [
+                "Google LLC(Firebase Cloud Messaging): 앱 푸시 알림 발송 및 알림 토큰 처리. 처리 항목은 기기 식별값, 푸시 토큰, 알림 발송에 필요한 일정 식별 정보이며, 회원 탈퇴, 토큰 삭제 또는 위탁 계약 종료 시까지 처리합니다.",
+                "Groq, Inc.: 빠른 일정 입력의 AI 일정 후보 추출. 처리 항목은 사용자가 입력하거나 업로드한 텍스트, 음성 전사 결과, 이미지에서 추출된 일정 관련 내용이며, 일정 후보 생성 목적 범위에서만 처리합니다.",
+                "NoLate는 위탁계약 또는 이에 준하는 이용 조건을 통해 목적 외 처리 제한, 안전성 확보조치, 재위탁 제한, 관리·감독, 손해배상 등 개인정보 보호에 필요한 사항을 관리합니다.",
+                "수탁자 또는 위탁 업무가 변경되는 경우 본 개인정보처리방침을 통해 지체 없이 공개합니다.",
+            ],
+        },
+        {
+            title: "6. 개인정보의 제3자 제공 및 외부 서비스 이용",
+            body: [
+                "NoLate는 이용자의 개인정보를 사전 동의 없이 제3자에게 판매하지 않으며, 법령상 근거가 있거나 이용자가 기능 사용 과정에서 직접 요청한 경우에 필요한 범위에서만 제공합니다.",
+                "일정 공유 기능: 사용자가 공유를 생성하거나 초대를 수락한 경우 지정된 다른 NoLate 회원에게 일정 제목, 시간, 장소, 카테고리, 공유 권한, 공유 상태 등 공유 기능 제공에 필요한 정보가 제공될 수 있으며, 공유 해제 또는 일정 삭제 시까지 보관됩니다.",
+                "Google LLC: Google 로그인 및 Google Calendar 연동 시 인증 식별 정보, Calendar API 요청에 필요한 접근 토큰, 캘린더 식별자, 조회 기간이 처리될 수 있습니다. Google Calendar 원본 데이터는 사용자가 선택한 일정만 NoLate 일정으로 저장합니다.",
+                "Apple Inc., NAVER Corp., Kakao Corp.: 사용자가 해당 SNS 로그인을 선택한 경우 인증 결과, SNS 식별자, 이름, 이메일 등 로그인 처리에 필요한 정보가 처리될 수 있습니다.",
+                "TMAP Mobility/SK open API, ODsay, NAVER 지도·검색, OpenStreetMap, 서울시/공공데이터 교통 API: 경로 탐색, 장소 검색, 실시간 도착 정보 제공을 위해 출발지·도착지 좌표, 장소 검색어, 경로 조건, 정류장·노선 식별자, 요청 시간이 전송될 수 있습니다.",
+                "각 외부 서비스 제공자는 전달받은 정보를 해당 서비스의 정책과 법령에 따라 처리하며, 이용자는 외부 계정 또는 기기 설정에서 연동과 권한을 철회할 수 있습니다.",
+            ],
+        },
+        {
+            title: "7. 파기 절차 및 방법",
+            body: [
+                "처리 목적이 달성되거나 보유 기간이 지난 개인정보는 복구하기 어려운 방법으로 파기합니다.",
+                "전자적 파일은 안전하게 삭제하고, 출력물 등 물리적 자료가 있는 경우 분쇄 또는 이에 준하는 방법으로 파기합니다.",
+            ],
+        },
+        {
+            title: "8. 이용자의 권리",
+            body: [
+                "이용자는 자신의 개인정보 열람, 정정, 삭제, 처리정지, 동의 철회를 요청할 수 있습니다.",
+                "앱의 프로필, 일정 삭제, 로그아웃, 회원 탈퇴 기능을 통해 일부 권리를 직접 행사할 수 있습니다.",
+                "외부 캘린더 권한은 iOS/Android 설정 또는 Google 계정 보안 설정에서 철회할 수 있습니다.",
+            ],
+        },
+        {
+            title: "9. 안전성 확보 조치",
+            body: [
+                "비밀번호는 해시로 저장하고, 인증에는 JWT 및 refresh token을 사용합니다.",
+                "서버 접근 권한을 제한하고, 인증이 필요한 API는 토큰 검증 후 처리합니다.",
+                "기기 내 민감 토큰은 SecureStore 등 보안 저장소를 사용합니다.",
+            ],
+        },
+        {
+            title: "10. 개인정보 보호책임자 및 열람청구 접수",
+            body: [
+                "개인정보 보호책임자: NoLate 운영팀",
+                "담당부서: NoLate 개인정보보호 담당",
+                "이메일: privacy@nolate.jinuk.dev",
+                "처리 업무: 개인정보 열람·정정·삭제·처리정지 요청 접수, 동의 철회, 외부 캘린더 연동 관련 문의, 개인정보 침해 신고 및 고충 처리",
+                "서비스 공개 URL: https://nolate.jinuk.dev/legal/privacy-policy",
+            ],
+        },
+        {
+            title: "11. 권익침해 구제방법",
+            body: [
+                "개인정보 침해에 대한 상담이나 신고가 필요한 경우 개인정보침해신고센터, 개인정보 분쟁조정위원회, 대검찰청, 경찰청 등 관계 기관에 문의할 수 있습니다.",
+                "NoLate는 이용자의 개인정보 관련 문의가 접수되면 지체 없이 확인하고 처리 결과를 안내합니다.",
+            ],
+        },
+        {
+            title: "12. 변경 고지",
+            body: [
+                "개인정보처리방침이 변경되는 경우 앱 또는 웹사이트를 통해 변경 내용과 시행일을 안내합니다.",
+            ],
+        },
+    ],
+};
+
+export async function getPrivacyPolicy(): Promise<LegalDocument> {
+    const response = await apiGet<ApiEnvelope<LegalDocument>>("/api/legal/privacy-policy");
+    return unwrapApiResponse(response);
+}
+
+export async function getTermsOfService(): Promise<LegalDocument> {
+    const response = await apiGet<ApiEnvelope<LegalDocument>>("/api/legal/terms-of-service");
+    return unwrapApiResponse(response);
+}
+
+export async function getPrivacyCollectionConsent(): Promise<LegalDocument> {
+    const response = await apiGet<ApiEnvelope<LegalDocument>>("/api/legal/privacy-collection-consent");
+    return unwrapApiResponse(response);
+}
+
+export async function getSignupConsentPolicy(): Promise<SignupConsentPolicy> {
+    const response = await apiGet<ApiEnvelope<SignupConsentPolicy>>("/api/legal/signup-consents");
+    return unwrapApiResponse(response);
+}

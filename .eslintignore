@@ -1,0 +1,6 @@
+android/**/build/
+ios/Pods/
+ios/build*/
+output/
+screenshots/
+.playwright-cli/

@@ -1,3 +1,3 @@
-// 기존 import 경로 호환을 위해 tmapApi를 재-export 한다.
-// 실제 구현은 모두 tmapApi.ts에 있다.
+// 기존 import 경로 호환을 위한 레거시 re-export.
+// 신규 화면/서비스는 provider 구현체가 아니라 routingService.ts를 import해야 한다.
 export * from "./tmapApi";

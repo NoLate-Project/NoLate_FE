@@ -9,6 +9,8 @@ export default function FloatingButton({ onPress, bottomInset = 0 }: { onPress: 
 
     return (
         <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="새 일정 추가"
             onPress={onPress}
             style={({ pressed }) => ({
                 position: "absolute",

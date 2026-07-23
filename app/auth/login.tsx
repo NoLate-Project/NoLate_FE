@@ -1,58 +1,158 @@
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import type { ComponentProps } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
+    ActivityIndicator,
     Alert,
-    Animated,
+    BackHandler,
+    Linking,
     Pressable,
-    StatusBar,
+    Platform,
+    StyleProp,
     StyleSheet,
     Text,
-    TextInput,
     View,
+    ViewStyle,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 
-import { loginMember, snsLoginMember, tokenLoginMember } from "../../src/api/member";
-import { clearAuthTokens, getRefreshToken, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import {
+    getSnsRegistrationStatus,
+    loginMember,
+    snsLoginMember,
+    snsSignUpMember,
+    tokenLoginMember,
+    type MemberDto,
+    type SignupConsentsPayload,
+} from "../../src/api/member";
+import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
+import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
+import {
+    clearAuthTokens,
+    getAuthMember,
+    getRefreshToken,
+    saveAuthMember,
+    saveAuthTokens,
+} from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
-import { loginWithAppleSdk, loginWithKakaoSdk, loginWithNaverSdk } from "../../src/modules/auth/socialLogin";
+import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
+import {
+    getAuthErrorPresentation,
+    isAuthCancellation,
+} from "../../src/modules/auth/authErrorMessage";
+import { isDefinitiveAuthRejection } from "../../src/modules/auth/refreshPolicy";
+import {
+    isValidSignupEmail,
+    MAX_EMAIL_LENGTH,
+    normalizeSignupEmail,
+} from "../../src/modules/auth/signupValidation";
+import {
+    loginWithAppleSdk,
+    loginWithKakaoSdk,
+    loginWithNaverSdk,
+    type SocialSdkLoginResult,
+} from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
+import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
+import {
+    handleSignupAgreementHardwareBack,
+    shouldHandleSignupAgreementHardwareBack,
+} from "../../src/modules/auth/signupNavigation";
 
 type SocialProvider = "naver" | "kakao" | "apple";
+const ACCOUNT_SUPPORT_EMAIL = "support@nolate.jinuk.dev";
+
+type SocialButtonProps = {
+    label: string;
+    symbol?: string;
+    symbolColor?: string;
+    icon?: ComponentProps<typeof Ionicons>["name"];
+    markStyle?: StyleProp<ViewStyle>;
+    disabled: boolean;
+    loading?: boolean;
+    onPress: () => void;
+};
 
 export default function Login() {
     const router = useRouter();
+    const isFocused = useIsFocused();
+    const { shareToken } = useLocalSearchParams<{ shareToken?: string | string[] }>();
     const { syncAuthentication } = useAuth();
-    const { mode, colors, toggleMode } = useTheme();
-    const styles = createStyles(colors);
-    const fadeAnim = useRef(new Animated.Value(1)).current;
-    const btnScale = useRef(new Animated.Value(1)).current;
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
     const [id, setId] = useState("");
     const [pwd, setPwd] = useState("");
     const [submitting, setSubmitting] = useState(false);
-    const [socialSubmitting, setSocialSubmitting] = useState(false);
+    const [restoringSession, setRestoringSession] = useState(true);
+    const [socialSubmittingProvider, setSocialSubmittingProvider] = useState<SocialProvider | null>(null);
+    const [pendingSocialProfile, setPendingSocialProfile] = useState<SocialSdkLoginResult | null>(null);
+    const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
+    const pendingShareToken = normalizeShareToken(shareToken);
+
+    const finishAuthentication = useCallback(async (member: MemberDto) => {
+        const authenticatedMember = requireAuthenticatedMember(member);
+        await saveAuthTokens(authenticatedMember.accessToken, authenticatedMember.refreshToken);
+        await saveAuthMember(authenticatedMember);
+        const authenticated = await syncAuthentication();
+        if (!authenticated) {
+            throw new Error("로그인 상태를 저장하지 못했어요. 다시 시도해 주세요.");
+        }
+        registerPushAfterLogin(authenticatedMember.id).catch((error) => {
+            console.warn("[push] token registration failed", error);
+        });
+        if (pendingShareToken) {
+            router.replace({
+                pathname: "/share/[token]",
+                params: { token: pendingShareToken, autoAccept: "1" },
+            });
+            return;
+        }
+        // syncAuthentication refreshes curation from the authoritative status
+        // endpoint. Route from that stored result instead of a potentially stale
+        // login-response flag, otherwise existing users can be sent to onboarding.
+        const syncedMember = await getAuthMember();
+        router.replace(getPostAuthRoute(syncedMember?.curationCompleted === true));
+    }, [pendingShareToken, router, syncAuthentication]);
+
+    useEffect(() => {
+        if (!shouldHandleSignupAgreementHardwareBack({
+            platform: Platform.OS,
+            isFocused,
+            isAgreementStep: Boolean(pendingSocialProfile),
+        })) return;
+
+        const subscription = BackHandler.addEventListener("hardwareBackPress", () => (
+            handleSignupAgreementHardwareBack({
+                submitting: socialSignupSubmitting,
+                returnToDetails: () => setPendingSocialProfile(null),
+            })
+        ));
+
+        return () => subscription.remove();
+    }, [isFocused, pendingSocialProfile, socialSignupSubmitting]);
 
     useEffect(() => {
         let cancelled = false;
 
         const tryTokenLogin = async () => {
-            const refreshToken = await getRefreshToken();
-            if (!refreshToken || cancelled) return;
-
             try {
+                const refreshToken = await getRefreshToken();
+                if (!refreshToken || cancelled) return;
+
                 const member = await tokenLoginMember({ refreshToken });
                 if (cancelled) return;
 
-                await saveAuthTokens(member.accessToken, member.refreshToken);
-                await syncAuthentication();
-                await registerPushAfterLogin(member.id).catch((error) => {
-                    console.warn("[push] token registration failed", error);
-                });
-                router.replace("/schedule");
-            } catch {
+                await finishAuthentication(member);
+            } catch (error) {
                 if (cancelled) return;
-                await clearAuthTokens();
-                await syncAuthentication();
+                if (isDefinitiveAuthRejection(error)) {
+                    await clearAuthTokens();
+                    await syncAuthentication();
+                }
+            } finally {
+                if (!cancelled) setRestoringSession(false);
             }
         };
 
@@ -61,12 +161,12 @@ export default function Login() {
         return () => {
             cancelled = true;
         };
-    }, [router, syncAuthentication]);
+    }, [finishAuthentication, syncAuthentication]);
 
     const onLogin = async () => {
-        if (submitting) return;
+        if (submitting || restoringSession || socialSubmittingProvider) return;
 
-        const email = id.trim();
+        const email = normalizeSignupEmail(id);
         const password = pwd;
 
         if (!email || !password) {
@@ -74,30 +174,30 @@ export default function Login() {
             return;
         }
 
+        if (!isValidSignupEmail(email)) {
+            Alert.alert("로그인", "올바른 이메일 주소를 입력해 주세요.");
+            return;
+        }
+
         try {
             setSubmitting(true);
             const member = await loginMember({ email, password });
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await syncAuthentication();
-            await registerPushAfterLogin(member.id).catch((error) => {
-                console.warn("[push] token registration failed", error);
-            });
-            router.replace("/schedule");
+            await finishAuthentication(member);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "로그인에 실패했습니다.";
+            const presentation = getAuthErrorPresentation(error, "login");
             await clearAuthTokens();
             await syncAuthentication();
-            Alert.alert("로그인 실패", message);
+            Alert.alert(presentation.title, presentation.message);
         } finally {
             setSubmitting(false);
         }
     };
 
     const onSocialLogin = async (provider: SocialProvider) => {
-        if (socialSubmitting) return;
+        if (socialSubmittingProvider || submitting || restoringSession) return;
 
         try {
-            setSocialSubmitting(true);
+            setSocialSubmittingProvider(provider);
 
             const profile =
                 provider === "kakao"
@@ -106,306 +206,396 @@ export default function Login() {
                         ? await loginWithNaverSdk()
                         : await loginWithAppleSdk();
 
+            const registration = await getSnsRegistrationStatus({
+                loginType: profile.loginType,
+                providerToken: profile.providerToken,
+                authorizationCode: profile.authorizationCode,
+                nonce: profile.nonce,
+            });
+            if (!registration.registered) {
+                setPendingSocialProfile(profile);
+                return;
+            }
+
             const member = await snsLoginMember({
                 loginType: profile.loginType,
-                snsId: profile.snsId,
-                email: profile.email,
-                name: profile.name,
+                providerToken: profile.providerToken,
+                authorizationCode: profile.authorizationCode,
+                nonce: profile.nonce,
             });
 
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await syncAuthentication();
-            await registerPushAfterLogin(member.id).catch((error) => {
-                console.warn("[push] token registration failed", error);
-            });
-            router.replace("/schedule");
+            await finishAuthentication(member);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "SNS 로그인에 실패했습니다.";
-            Alert.alert("SNS 로그인 실패", message);
+            if (isAuthCancellation(error)) return;
+            const presentation = getAuthErrorPresentation(
+                error,
+                "social-login",
+                getSocialProviderLabel(provider),
+            );
+            Alert.alert(presentation.title, presentation.message);
         } finally {
-            setSocialSubmitting(false);
+            setSocialSubmittingProvider(null);
         }
     };
 
-    const handleToggleMode = () => {
-        Animated.sequence([
-            Animated.timing(btnScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
-            Animated.spring(btnScale, { toValue: 1, friction: 4, useNativeDriver: true }),
-        ]).start();
+    const onSocialSignUp = async (consents: SignupConsentsPayload) => {
+        if (!pendingSocialProfile || socialSignupSubmitting) return;
 
-        Animated.timing(fadeAnim, {
-            toValue: 0.08,
-            duration: 140,
-            useNativeDriver: true,
-        }).start(({ finished }) => {
-            if (finished) {
-                toggleMode();
-                Animated.timing(fadeAnim, {
-                    toValue: 1,
-                    duration: 280,
-                    useNativeDriver: true,
-                }).start();
+        let accountCreated = false;
+        try {
+            setSocialSignupSubmitting(true);
+            const member = await snsSignUpMember({
+                loginType: pendingSocialProfile.loginType,
+                providerToken: pendingSocialProfile.providerToken,
+                authorizationCode: pendingSocialProfile.authorizationCode,
+                nonce: pendingSocialProfile.nonce,
+                consents,
+            });
+            accountCreated = true;
+            await finishAuthentication(member);
+        } catch (error) {
+            if (accountCreated) {
+                await clearAuthTokens().catch(() => undefined);
+                await syncAuthentication().catch(() => false);
+                setPendingSocialProfile(null);
+                Alert.alert(
+                    "가입은 완료됐어요",
+                    "자동 로그인만 완료하지 못했어요. 같은 간편 로그인 버튼을 다시 눌러 로그인해 주세요.",
+                );
+                return;
             }
-        });
+            const presentation = getAuthErrorPresentation(error, "social-signup");
+            Alert.alert(presentation.title, presentation.message);
+        } finally {
+            setSocialSignupSubmitting(false);
+        }
     };
 
+    const openPasswordHelp = async () => {
+        const subject = encodeURIComponent("NoLate 비밀번호 로그인 문의");
+        const url = `mailto:${ACCOUNT_SUPPORT_EMAIL}?subject=${subject}`;
+
+        try {
+            await Linking.openURL(url);
+        } catch {
+            Alert.alert(
+                "로그인 문의",
+                `메일 앱을 열 수 없어요. ${ACCOUNT_SUPPORT_EMAIL}로 문의해 주세요.`,
+            );
+        }
+    };
+
+    if (pendingSocialProfile) {
+        return (
+            <AuthScreen
+                title="가입 전 확인"
+                subtitle={`${getProviderLabel(pendingSocialProfile.loginType)} 계정으로 NoLate를 시작하기 전에 필요한 항목입니다.`}
+                density="compact"
+                onBack={() => setPendingSocialProfile(null)}
+                backDisabled={socialSignupSubmitting}
+            >
+                <SignupAgreementPanel
+                    submitting={socialSignupSubmitting}
+                    onConfirm={onSocialSignUp}
+                    onOpenTerms={() => router.push("/legal/terms-of-service")}
+                    onOpenPrivacyCollection={() => router.push("/legal/privacy-collection-consent")}
+                    onOpenPrivacyPolicy={() => router.push("/legal/privacy-policy")}
+                />
+            </AuthScreen>
+        );
+    }
+
     return (
-        <Animated.View style={[styles.screen, { opacity: fadeAnim }]}>
-            <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
+        <AuthScreen
+            subtitle="늦지 않게, 오늘의 이동을 준비하세요."
+        >
+            <AuthInput
+                label="이메일"
+                icon="mail-outline"
+                value={id}
+                onChangeText={setId}
+                maxLength={MAX_EMAIL_LENGTH}
+                editable={!restoringSession && !submitting && !socialSubmittingProvider}
+                placeholder="you@example.com"
+                autoCapitalize="none"
+                keyboardType="email-address"
+                autoComplete="email"
+                textContentType="emailAddress"
+            />
+            <AuthInput
+                label="비밀번호"
+                icon="lock-closed-outline"
+                value={pwd}
+                onChangeText={setPwd}
+                editable={!restoringSession && !submitting && !socialSubmittingProvider}
+                placeholder="비밀번호"
+                secureTextEntry
+                autoComplete="password"
+                textContentType="password"
+            />
 
-            <View style={styles.card}>
-                <View style={styles.topRow}>
-                    <View>
-                        <Text style={styles.logo}>NoLate</Text>
-                        <Text style={styles.subtitle}>일정을 놓치지 않도록 로그인해 주세요</Text>
-                    </View>
-                    <Animated.View style={{ transform: [{ scale: btnScale }] }}>
-                        <Pressable onPress={handleToggleMode} style={({ pressed }) => [styles.modeToggle, pressed && styles.pressed]}>
-                            <Text style={styles.modeIcon}>{mode === "dark" ? "☀️" : "🌙"}</Text>
-                            <Text style={styles.modeText}>{mode === "dark" ? "라이트" : "다크"}</Text>
-                        </Pressable>
-                    </Animated.View>
-                </View>
+            <Pressable
+                accessibilityRole="link"
+                accessibilityLabel="비밀번호 로그인 문의 메일 보내기"
+                onPress={openPasswordHelp}
+                style={({ pressed }) => [styles.passwordHelp, { opacity: pressed ? 0.58 : 1 }]}
+            >
+                <Text style={styles.passwordHelpText}>비밀번호를 잊으셨나요?</Text>
+            </Pressable>
 
-                <View style={styles.form}>
-                    <TextInput
-                        value={id}
-                        onChangeText={setId}
-                        placeholder="Email"
-                        placeholderTextColor={colors.textSecondary}
-                        style={styles.input}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                    />
-                    <TextInput
-                        value={pwd}
-                        onChangeText={setPwd}
-                        placeholder="Password"
-                        placeholderTextColor={colors.textSecondary}
-                        secureTextEntry
-                        style={styles.input}
-                    />
-                </View>
+            <AuthPrimaryButton
+                disabled={submitting || restoringSession || Boolean(socialSubmittingProvider)}
+                loading={submitting || restoringSession}
+                onPress={onLogin}
+                label={restoringSession ? "로그인 상태 확인 중" : submitting ? "로그인 중" : "로그인"}
+            />
 
-                <Pressable
-                    disabled={submitting}
-                    onPress={onLogin}
-                    style={({ pressed }) => [styles.loginButton, pressed && styles.pressed, submitting && styles.disabled]}
-                >
-                    <Text style={styles.loginButtonText}>{submitting ? "로그인 중..." : "로그인"}</Text>
-                </Pressable>
+            <View style={styles.dividerWrap}>
+                <View style={styles.divider} />
+                <Text style={styles.dividerText}>간편 로그인</Text>
+                <View style={styles.divider} />
+            </View>
 
-                <View style={styles.dividerWrap}>
-                    <View style={styles.divider} />
-                    <Text style={styles.dividerText}>또는 SNS 로그인</Text>
-                    <View style={styles.divider} />
-                </View>
-
-                <View style={styles.socialGroup}>
-                    <Pressable
-                        disabled={socialSubmitting}
-                        onPress={() => onSocialLogin("naver")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.naverButton]}>
-                            <Text style={styles.naverSymbol}>N</Text>
-                        </View>
-                        <Text style={styles.socialLabel}>네이버</Text>
-                    </Pressable>
-                    <Pressable
-                        disabled={socialSubmitting}
-                        onPress={() => onSocialLogin("kakao")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.kakaoButton]}>
-                            <Text style={styles.kakaoSymbol}>K</Text>
-                        </View>
-                        <Text style={styles.socialLabel}>카카오</Text>
-                    </Pressable>
-                    <Pressable
-                        disabled={socialSubmitting}
+            <View style={styles.socialRow}>
+                <SocialButton
+                    label="네이버"
+                    symbol="N"
+                    symbolColor="#FFFFFF"
+                    markStyle={styles.naverMark}
+                    disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                    loading={socialSubmittingProvider === "naver"}
+                    onPress={() => onSocialLogin("naver")}
+                />
+                <SocialButton
+                    label="카카오"
+                    symbol="K"
+                    symbolColor="#191600"
+                    markStyle={styles.kakaoMark}
+                    disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                    loading={socialSubmittingProvider === "kakao"}
+                    onPress={() => onSocialLogin("kakao")}
+                />
+                {Platform.OS === "ios" ? (
+                    <SocialButton
+                        label="Apple"
+                        icon="logo-apple"
+                        markStyle={styles.appleMark}
+                        disabled={restoringSession || submitting || Boolean(socialSubmittingProvider)}
+                        loading={socialSubmittingProvider === "apple"}
                         onPress={() => onSocialLogin("apple")}
-                        style={({ pressed }) => [styles.socialItem, pressed && styles.pressed, socialSubmitting && styles.disabled]}
-                    >
-                        <View style={[styles.socialCircle, styles.appleButton]}>
-                            <Text style={styles.appleSymbol}></Text>
-                        </View>
-                        <Text style={styles.socialLabel}>Apple</Text>
-                    </Pressable>
-                </View>
+                    />
+                ) : null}
+            </View>
 
-                <Pressable onPress={() => router.push("/auth/signup")} style={({ pressed }) => [styles.signUpLinkWrap, pressed && styles.pressed]}>
-                    <Text style={styles.signUpLink}>회원가입 하기</Text>
+            <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push({
+                    pathname: "/auth/signup",
+                    params: pendingShareToken ? { shareToken: pendingShareToken } : {},
+                })}
+                style={({ pressed }) => [
+                    styles.signUpLink,
+                    { opacity: pressed ? 0.62 : 1 },
+                ]}
+            >
+                <Text style={styles.signUpHint}>처음이신가요?</Text>
+                <Text style={styles.signUpText}>회원가입</Text>
+            </Pressable>
+
+            <View style={styles.legalLinks}>
+                <Pressable
+                    accessibilityRole="link"
+                    onPress={() => router.push("/legal/terms-of-service")}
+                    hitSlop={8}
+                >
+                    <Text style={styles.legalLinkText}>이용약관</Text>
+                </Pressable>
+                <Text style={styles.legalSeparator}>·</Text>
+                <Pressable
+                    accessibilityRole="link"
+                    onPress={() => router.push("/legal/privacy-policy")}
+                    hitSlop={8}
+                >
+                    <Text style={styles.legalLinkText}>개인정보처리방침</Text>
                 </Pressable>
             </View>
-        </Animated.View>
+        </AuthScreen>
     );
 }
 
-function createStyles(colors: ReturnType<typeof useTheme>["colors"]) {
+function normalizeShareToken(value?: string | string[]): string | null {
+    const token = (Array.isArray(value) ? value[0] : value)?.trim();
+    return token && /^[A-Za-z0-9_-]{16,512}$/.test(token) ? token : null;
+}
+
+function getProviderLabel(loginType: SocialSdkLoginResult["loginType"]): string {
+    if (loginType === "KAKAO") return "카카오";
+    if (loginType === "NAVER") return "네이버";
+    return "Apple";
+}
+
+function getSocialProviderLabel(provider: SocialProvider): string {
+    if (provider === "kakao") return "카카오";
+    if (provider === "naver") return "네이버";
+    return "Apple";
+}
+
+function SocialButton({
+    label,
+    symbol,
+    symbolColor,
+    icon,
+    markStyle,
+    disabled,
+    loading = false,
+    onPress,
+}: SocialButtonProps) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${label}로 로그인`}
+            accessibilityState={{ disabled, busy: loading }}
+            disabled={disabled}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.socialButton,
+                {
+                    backgroundColor: colors.surface2,
+                    borderColor: colors.border,
+                    opacity: disabled ? 0.55 : pressed ? 0.72 : 1,
+                    transform: [{ scale: pressed && !disabled ? 0.98 : 1 }],
+                },
+            ]}
+        >
+            <View style={[styles.socialMark, markStyle]}>
+                {loading ? (
+                    <ActivityIndicator size="small" color={symbolColor ?? colors.textPrimary} />
+                ) : icon ? (
+                    <Ionicons name={icon} size={16} color={symbolColor ?? colors.textPrimary} />
+                ) : (
+                    <Text style={[styles.socialSymbol, { color: symbolColor }]}>{symbol}</Text>
+                )}
+            </View>
+            <Text style={styles.socialLabel}>{label}</Text>
+        </Pressable>
+    );
+}
+
+function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark" | "light") {
     return StyleSheet.create({
-        screen: {
-            flex: 1,
-            backgroundColor: colors.background,
-            paddingHorizontal: 20,
-            justifyContent: "center",
-        },
-        card: {
-            backgroundColor: colors.surface,
-            borderColor: colors.border,
-            borderWidth: 1,
-            borderRadius: 18,
-            paddingHorizontal: 16,
-            paddingVertical: 20,
-            gap: 14,
-        },
-        logo: {
-            color: colors.textPrimary,
-            fontSize: 28,
-            fontWeight: "800",
-            letterSpacing: 0.3,
-        },
-        topRow: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 10,
-        },
-        subtitle: {
-            color: colors.textSecondary,
-            fontSize: 14,
-            fontWeight: "500",
-        },
-        modeToggle: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 4,
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface2,
-            borderRadius: 999,
-            paddingHorizontal: 10,
-            paddingVertical: 6,
-        },
-        modeIcon: {
-            fontSize: 14,
-        },
-        modeText: {
-            color: colors.textPrimary,
-            fontSize: 12,
-            fontWeight: "700",
-        },
-        form: {
-            gap: 10,
-            marginTop: 4,
-        },
-        input: {
-            borderWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface2,
-            color: colors.textPrimary,
-            paddingHorizontal: 12,
-            paddingVertical: 12,
-            borderRadius: 10,
-            fontSize: 15,
-        },
-        loginButton: {
-            backgroundColor: colors.selectedDayBg,
-            borderRadius: 10,
-            minHeight: 48,
-            alignItems: "center",
-            justifyContent: "center",
-            marginTop: 2,
-        },
-        loginButtonText: {
-            color: colors.selectedDayText,
-            fontSize: 15,
-            fontWeight: "700",
-        },
         dividerWrap: {
+            marginTop: 6,
             flexDirection: "row",
             alignItems: "center",
-            gap: 8,
-            marginTop: 2,
+            gap: 10,
+        },
+        passwordHelp: {
+            minHeight: 34,
+            marginTop: -5,
+            alignSelf: "flex-end",
+            justifyContent: "center",
+        },
+        passwordHelpText: {
+            color: colors.textSecondary,
+            fontSize: 12,
+            lineHeight: 17,
+            fontWeight: "800",
+            textDecorationLine: "underline",
         },
         divider: {
             flex: 1,
-            height: 1,
+            height: StyleSheet.hairlineWidth,
             backgroundColor: colors.border,
         },
         dividerText: {
             color: colors.textSecondary,
             fontSize: 12,
-            fontWeight: "600",
+            fontWeight: "900",
         },
-        socialGroup: {
+        socialRow: {
             flexDirection: "row",
-            justifyContent: "space-evenly",
-            marginTop: 2,
+            gap: 9,
         },
-        socialItem: {
+        socialButton: {
+            flex: 1,
+            minHeight: 72,
+            borderRadius: 18,
+            borderWidth: 1,
             alignItems: "center",
-            gap: 8,
+            justifyContent: "center",
+            gap: 7,
         },
-        socialCircle: {
-            width: 62,
-            height: 62,
-            borderRadius: 31,
+        socialMark: {
+            width: 30,
+            height: 30,
+            borderRadius: 15,
             alignItems: "center",
             justifyContent: "center",
         },
-        naverButton: {
+        naverMark: {
             backgroundColor: "#03C75A",
         },
-        kakaoButton: {
+        kakaoMark: {
             backgroundColor: "#FEE500",
         },
-        appleButton: {
-            backgroundColor: modeAwareApple(colors.background),
+        appleMark: {
+            backgroundColor: mode === "dark" ? "#1f1f22" : "#FFFFFF",
             borderWidth: 1,
             borderColor: colors.border,
         },
-        naverSymbol: {
-            color: "#FFFFFF",
-            fontSize: 24,
+        socialSymbol: {
+            fontSize: 14,
             fontWeight: "900",
-        },
-        kakaoSymbol: {
-            color: "#191600",
-            fontSize: 24,
-            fontWeight: "900",
-        },
-        appleSymbol: {
-            color: colors.textPrimary,
-            fontSize: 26,
-            fontWeight: "700",
         },
         socialLabel: {
-            color: colors.textSecondary,
+            color: colors.textPrimary,
             fontSize: 12,
-            fontWeight: "700",
-        },
-        signUpLinkWrap: {
-            marginTop: 4,
-            alignItems: "center",
-            justifyContent: "center",
-            minHeight: 32,
+            fontWeight: "900",
         },
         signUpLink: {
+            minHeight: 54,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: colors.border,
+            backgroundColor: colors.surface2,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 7,
+            marginTop: 4,
+        },
+        signUpHint: {
+            color: colors.textSecondary,
+            fontSize: 13,
+            fontWeight: "800",
+        },
+        signUpText: {
             color: colors.textPrimary,
             fontSize: 13,
+            fontWeight: "900",
+        },
+        legalLinks: {
+            minHeight: 32,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+        },
+        legalLinkText: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
             fontWeight: "700",
             textDecorationLine: "underline",
         },
-        pressed: {
-            opacity: 0.84,
-        },
-        disabled: {
-            opacity: 0.65,
+        legalSeparator: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "700",
         },
     });
-}
-
-function modeAwareApple(backgroundColor: string) {
-    return backgroundColor === "#000" ? "#1A1A1A" : "#FFFFFF";
 }

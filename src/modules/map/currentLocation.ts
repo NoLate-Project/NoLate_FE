@@ -39,6 +39,24 @@ async function ensureForegroundPermission() {
     }
 }
 
+export async function getCurrentLocationPermissionState() {
+    const servicesEnabled = await Location.hasServicesEnabledAsync();
+    if (!servicesEnabled) {
+        return {
+            servicesEnabled: false,
+            granted: false,
+            canAskAgain: false,
+        };
+    }
+
+    const current = await Location.getForegroundPermissionsAsync();
+    return {
+        servicesEnabled: true,
+        granted: current.granted,
+        canAskAgain: current.canAskAgain,
+    };
+}
+
 // route-planner/위치 선택 모달에서 공통으로 쓰는 현재 위치 조회 래퍼.
 export async function getCurrentLocation(): Promise<Coords> {
     await ensureForegroundPermission();

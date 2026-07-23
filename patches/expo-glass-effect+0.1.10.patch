@@ -1,0 +1,57 @@
+diff --git a/node_modules/expo-glass-effect/ios/GlassContainer.swift b/node_modules/expo-glass-effect/ios/GlassContainer.swift
+index 61fb67c..749abd1 100644
+--- a/node_modules/expo-glass-effect/ios/GlassContainer.swift
++++ b/node_modules/expo-glass-effect/ios/GlassContainer.swift
+@@ -11,11 +11,22 @@ public final class GlassContainer: ExpoView {
+   public required init(appContext: AppContext? = nil) {
+     super.init(appContext: appContext)
+ 
++    backgroundColor = .clear
++    isOpaque = false
++    clipsToBounds = false
++    containerEffectView.backgroundColor = .clear
++    containerEffectView.isOpaque = false
++    containerEffectView.clipsToBounds = false
+     containerEffectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+ 
+     addSubview(containerEffectView)
+   }
+ 
++  override public func layoutSubviews() {
++    super.layoutSubviews()
++    containerEffectView.frame = bounds
++  }
++
+   // UIGlassEffect initialiser is failing for iOS 26 beta versions for some reason, so we need to check if it's available at runtime
+   // https://github.com/expo/expo/issues/40911
+   private func isGlassContainerEffectAvailable() -> Bool {
+diff --git a/node_modules/expo-glass-effect/ios/GlassView.swift b/node_modules/expo-glass-effect/ios/GlassView.swift
+index 778732c..9ab4096 100644
+--- a/node_modules/expo-glass-effect/ios/GlassView.swift
++++ b/node_modules/expo-glass-effect/ios/GlassView.swift
+@@ -29,6 +29,12 @@ public final class GlassView: ExpoView {
+   public required init(appContext: AppContext? = nil) {
+     super.init(appContext: appContext)
+ 
++    backgroundColor = .clear
++    isOpaque = false
++    clipsToBounds = false
++    glassEffectView.backgroundColor = .clear
++    glassEffectView.isOpaque = false
++    glassEffectView.clipsToBounds = false
+     glassEffectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+ 
+     addSubview(glassEffectView)
+@@ -51,10 +57,12 @@ public final class GlassView: ExpoView {
+ 
+   override public func layoutSubviews() {
+     super.layoutSubviews()
++    glassEffectView.frame = bounds
+     if !isMounted {
+       isMounted = true
+       updateEffect()
+     }
++    updateBorderRadius()
+   }
+ 
+   func updateBorderRadius() {

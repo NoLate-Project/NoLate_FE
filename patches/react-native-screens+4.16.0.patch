@@ -1,0 +1,26 @@
+diff --git a/node_modules/react-native-screens/ios/RNSSearchBar.mm b/node_modules/react-native-screens/ios/RNSSearchBar.mm
+index 6e6ce17..0d34b1b 100644
+--- a/node_modules/react-native-screens/ios/RNSSearchBar.mm
++++ b/node_modules/react-native-screens/ios/RNSSearchBar.mm
+@@ -70,6 +70,21 @@ namespace react = facebook::react;
+   _placement = RNSSearchBarPlacementAutomatic;
+ 
+   _allowToolbarIntegration = YES;
++
++  self.backgroundColor = UIColor.clearColor;
++  self.clipsToBounds = NO;
++#if !TARGET_OS_TV
++  _controller.searchBar.searchBarStyle = UISearchBarStyleMinimal;
++  _controller.searchBar.translucent = YES;
++  _controller.searchBar.backgroundColor = UIColor.clearColor;
++#endif
++  [self addSubview:_controller.searchBar];
++}
++
++- (void)layoutSubviews
++{
++  [super layoutSubviews];
++  _controller.searchBar.frame = self.bounds;
+ }
+ 
+ - (void)emitOnFocusEvent

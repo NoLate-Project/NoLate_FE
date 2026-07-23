@@ -1,0 +1,43 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.nolate.tmap'
+version = '1.0.0'
+
+expoModule {
+  canBePublished false
+}
+
+def tmapSdkAar = file('libs/tmap-sdk-3.7.aar')
+def tmapVsmAar = file('libs/vsm-tmap-sdk-v2-eaa-2.0.14.aar')
+def missingTmapAars = [tmapSdkAar, tmapVsmAar].findAll { !it.isFile() }
+
+if (!missingTmapAars.isEmpty()) {
+  throw new GradleException(
+    'NoLate TMAP Android SDK is not installed. Download Android Vector Map SDK 3.7 ' +
+      'from the official TMAP API site and place these files in modules/nolate-tmap/android/libs/: ' +
+      missingTmapAars.collect { it.name }.join(', ')
+  )
+}
+
+android {
+  namespace 'expo.modules.nolatetmap'
+
+  defaultConfig {
+    minSdk 24
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':nolate-tmap$tmap-sdk')
+  implementation project(':nolate-tmap$vsm-tmap-sdk')
+  implementation 'com.google.flatbuffers:flatbuffers-java:24.3.25'
+  implementation 'com.facebook.react:react-android'
+}

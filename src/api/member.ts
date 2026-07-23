@@ -1,7 +1,10 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 
+const CURATION_STATUS_BOOTSTRAP_TIMEOUT_MS = 3_500;
+
 export type LoginType = "COMMON" | "KAKAO" | "GOOGLE" | "APPLE" | "NAVER";
+export type SocialLoginType = "KAKAO" | "APPLE" | "NAVER";
 
 export type MemberDto = {
     id?: number;
@@ -11,12 +14,26 @@ export type MemberDto = {
     snsId?: string;
     accessToken?: string;
     refreshToken?: string;
+    isNewMember?: boolean;
+    curationCompleted?: boolean;
+};
+
+export type CurationStatusDto = {
+    curationCompleted: boolean;
+};
+
+export type SignupConsentsPayload = {
+    termsVersion: string;
+    privacyCollectionVersion: string;
+    termsAgreed: boolean;
+    privacyCollectionAgreed: boolean;
 };
 
 type SignUpPayload = {
     email: string;
     password: string;
     name: string;
+    consents: SignupConsentsPayload;
 };
 
 type LoginPayload = {
@@ -24,11 +41,21 @@ type LoginPayload = {
     password: string;
 };
 
-type SnsLoginPayload = {
-    loginType: Exclude<LoginType, "COMMON">;
-    snsId: string;
-    email?: string;
-    name: string;
+export type SnsLoginPayload = {
+    loginType: SocialLoginType;
+    providerToken: string;
+    authorizationCode?: string;
+    nonce?: string;
+};
+
+type SnsRegistrationPayload = SnsLoginPayload;
+
+type SnsRegistrationStatusDto = {
+    registered: boolean;
+};
+
+type SnsSignUpPayload = SnsLoginPayload & {
+    consents: SignupConsentsPayload;
 };
 
 type TokenLoginPayload = {
@@ -73,6 +100,24 @@ export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDt
     return unwrapApiResponse(response);
 }
 
+export async function getSnsRegistrationStatus(
+    payload: SnsRegistrationPayload
+): Promise<SnsRegistrationStatusDto> {
+    const response = await apiPost<ApiEnvelope<SnsRegistrationStatusDto>, SnsRegistrationPayload>(
+        "/api/member/auth/sns-registration",
+        payload
+    );
+    return unwrapApiResponse(response);
+}
+
+export async function snsSignUpMember(payload: SnsSignUpPayload): Promise<MemberDto> {
+    const response = await apiPost<ApiEnvelope<MemberDto>, SnsSignUpPayload>(
+        "/api/member/auth/sns-sign-up",
+        payload
+    );
+    return unwrapApiResponse(response);
+}
+
 
 export async function tokenLoginMember(payload: TokenLoginPayload): Promise<MemberDto> {
     const response = await apiPost<ApiEnvelope<MemberDto>, TokenLoginPayload>("/api/member/auth/token-login", payload);
@@ -87,6 +132,18 @@ export async function refreshMemberToken(payload: TokenLoginPayload): Promise<Me
 export async function logoutMember(payload: TokenLoginPayload): Promise<void> {
     const response = await apiPost<ApiEnvelope<unknown>, TokenLoginPayload>("/api/member/auth/logout", payload);
     assertApiSuccess(response);
+}
+
+export async function getMemberCurationStatus(): Promise<CurationStatusDto> {
+    const response = await apiGet<ApiEnvelope<CurationStatusDto>>("/api/member/curation", {
+        timeout: CURATION_STATUS_BOOTSTRAP_TIMEOUT_MS,
+    });
+    return unwrapApiResponse(response);
+}
+
+export async function completeMemberCuration(): Promise<CurationStatusDto> {
+    const response = await apiPatch<ApiEnvelope<CurationStatusDto>>("/api/member/curation/complete");
+    return unwrapApiResponse(response);
 }
 
 export async function getMyProfile(): Promise<MemberProfileDto> {

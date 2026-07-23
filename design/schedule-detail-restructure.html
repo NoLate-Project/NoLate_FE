@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>NoLate 일정 상세 재배치 시안</title>
+  <style>
+    :root {
+      --page: #eef1f4;
+      --ink: #14171c;
+      --muted: #69707b;
+      --line: #d9dde3;
+      --sheet: rgba(31, 38, 50, 0.95);
+      --sheet-line: rgba(255, 255, 255, 0.13);
+      --sheet-ink: #f8fafc;
+      --sheet-muted: rgba(241, 245, 249, 0.61);
+      --green: #2fd06f;
+      --green-soft: rgba(47, 208, 111, 0.15);
+      --blue: #4394ff;
+      --yellow: #f1bd42;
+      --red: #ff5b56;
+      --shadow: 0 24px 64px rgba(16, 24, 40, 0.18);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page);
+      color: var(--ink);
+    }
+
+    main {
+      width: min(100%, 1380px);
+      margin: 0 auto;
+      padding: 36px 24px 54px;
+    }
+
+    .intro {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 26px;
+    }
+
+    .intro h1 {
+      margin: 0;
+      font-size: 31px;
+      line-height: 38px;
+      letter-spacing: 0;
+    }
+
+    .intro p {
+      max-width: 700px;
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 21px;
+      font-weight: 650;
+    }
+
+    .structure {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #4d5561;
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .structure span {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .structure b {
+      color: #a2a8b1;
+      font-size: 16px;
+    }
+
+    .concept-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(310px, 390px));
+      justify-content: center;
+      align-items: start;
+      gap: 28px;
+    }
+
+    .concept {
+      min-width: 0;
+    }
+
+    .concept-head {
+      min-height: 62px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 14px;
+      padding: 0 5px 11px;
+    }
+
+    .concept-head h2 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 21px;
+      letter-spacing: 0;
+    }
+
+    .concept-head p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 15px;
+      font-weight: 700;
+    }
+
+    .state-number {
+      color: #a3a9b2;
+      font-size: 28px;
+      line-height: 30px;
+      font-weight: 900;
+    }
+
+    .phone {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 393 / 852;
+      overflow: hidden;
+      border: 9px solid #111318;
+      border-radius: 42px;
+      background: #dfe6dc;
+      box-shadow: var(--shadow);
+    }
+
+    .map {
+      position: absolute;
+      inset: 0;
+      background-image: url("../output/playwright/naver-seoul-station-gangnam-4-2-z12.png");
+      background-size: auto 100%;
+      background-position: 75% center;
+      background-repeat: no-repeat;
+    }
+
+    .map::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: rgba(246, 248, 250, 0.10);
+      pointer-events: none;
+    }
+
+    .island {
+      position: absolute;
+      z-index: 20;
+      top: 10px;
+      left: 50%;
+      width: 116px;
+      height: 33px;
+      transform: translateX(-50%);
+      border-radius: 18px;
+      background: #050506;
+    }
+
+    .top-actions {
+      position: absolute;
+      z-index: 15;
+      top: 60px;
+      left: 22px;
+      right: 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    button {
+      font: inherit;
+      cursor: default;
+    }
+
+    .icon-button,
+    .action-group {
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      background: rgba(255, 255, 255, 0.075);
+      color: #fff;
+      box-shadow: 0 8px 22px rgba(20, 27, 38, 0.18);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .icon-button {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 19px;
+      font-size: 24px;
+      line-height: 1;
+    }
+
+    .action-group {
+      height: 38px;
+      display: flex;
+      align-items: center;
+      border-radius: 19px;
+      padding: 0 4px;
+    }
+
+    .action-group button {
+      width: 33px;
+      height: 31px;
+      border: 0;
+      background: transparent;
+      color: #fff;
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    .action-group button + button {
+      border-left: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .recenter {
+      position: absolute;
+      z-index: 10;
+      right: 16px;
+      bottom: 136px;
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.38);
+      border-radius: 19px;
+      background: rgba(255, 255, 255, 0.9);
+      color: #273142;
+      font-size: 18px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+    }
+
+    .top-summary {
+      position: absolute;
+      z-index: 11;
+      top: 54px;
+      left: 16px;
+      right: 16px;
+      min-height: 92px;
+      padding: 9px 82px 10px 60px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 8px;
+      background: rgba(31, 38, 50, 0.93);
+      color: var(--sheet-ink);
+      box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16), inset 0 1px rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+    }
+
+    .top-summary .event-title {
+      margin-top: 0;
+      font-size: 17px;
+      line-height: 22px;
+    }
+
+    .top-summary .destination {
+      margin-top: 3px;
+      font-size: 13px;
+      line-height: 17px;
+    }
+
+    .top-summary .meta {
+      gap: 5px;
+      margin-top: 3px;
+      overflow: hidden;
+      white-space: nowrap;
+      font-size: 9px;
+      line-height: 13px;
+    }
+
+    .sharing-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .sharing-label .event-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+    }
+
+    .sheet {
+      position: absolute;
+      z-index: 12;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow: hidden;
+      border-top: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 24px 24px 0 0;
+      background: var(--sheet);
+      color: var(--sheet-ink);
+      box-shadow: 0 -15px 40px rgba(15, 23, 42, 0.2);
+      backdrop-filter: blur(26px);
+      -webkit-backdrop-filter: blur(26px);
+    }
+
+    .phone.map-first .sheet { height: 124px; }
+    .phone.default .sheet { height: 336px; }
+    .phone.route-open .sheet { height: 598px; }
+
+    .sheet-inner {
+      height: 100%;
+      padding: 10px 20px 28px;
+    }
+
+    .handle {
+      width: 34px;
+      height: 4px;
+      margin: 0 auto 13px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    .event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 4px;
+      background: var(--red);
+    }
+
+    .event-title {
+      margin: 4px 0 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 23px;
+      line-height: 29px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .destination {
+      margin-top: 13px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 17px;
+      line-height: 22px;
+      font-weight: 850;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 5px;
+      color: var(--sheet-muted);
+      font-size: 11px;
+      line-height: 16px;
+      font-weight: 750;
+    }
+
+    .meta i {
+      width: 3px;
+      height: 3px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    .quick-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      align-items: center;
+      gap: 10px;
+      margin-top: 17px;
+      padding-top: 14px;
+      border-top: 1px solid var(--sheet-line);
+    }
+
+    .map-first .quick-summary {
+      margin-top: 4px;
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .quick-summary span {
+      color: var(--sheet-muted);
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 750;
+    }
+
+    .quick-summary strong {
+      display: block;
+      margin-top: 2px;
+      color: var(--sheet-ink);
+      font-size: 14px;
+      line-height: 18px;
+    }
+
+    .quick-summary small {
+      display: block;
+      margin-top: 1px;
+      overflow: hidden;
+      color: rgba(241, 245, 249, 0.45);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 8px;
+      line-height: 11px;
+      font-weight: 700;
+    }
+
+    .quick-summary .green { color: #8ef2b9; }
+
+    .up-button {
+      width: 31px;
+      height: 31px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.09);
+      color: #fff;
+      font-size: 17px;
+    }
+
+    .section {
+      margin-top: 17px;
+      padding-top: 15px;
+      border-top: 1px solid var(--sheet-line);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .section-head h3 {
+      margin: 0;
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .section-head strong {
+      color: #9df0bd;
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 850;
+    }
+
+    .departure-action {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 12px;
+      padding: 0 5px 0 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.055);
+    }
+
+    .departure-copy {
+      min-width: 0;
+      display: grid;
+      gap: 1px;
+    }
+
+    .departure-copy strong {
+      overflow: hidden;
+      color: rgba(255, 255, 255, 0.9);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 850;
+    }
+
+    .departure-copy span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--sheet-muted);
+      font-size: 8px;
+      line-height: 12px;
+      font-weight: 750;
+    }
+
+    .departure-action button {
+      height: 31px;
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 7px;
+      background: var(--green);
+      color: #0c2818;
+      padding: 0 11px;
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .people {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 13px;
+    }
+
+    .person {
+      flex: 1;
+      min-width: 0;
+      display: grid;
+      justify-items: center;
+      gap: 5px;
+    }
+
+    .avatar-wrap { position: relative; }
+
+    .avatar {
+      width: 33px;
+      height: 33px;
+      display: grid;
+      place-items: center;
+      border-radius: 17px;
+      background: rgba(255, 255, 255, 0.11);
+      color: rgba(255, 255, 255, 0.65);
+      font-size: 10px;
+      font-weight: 900;
+    }
+
+    .avatar.departed {
+      background: rgba(47, 208, 111, 0.24);
+      color: #b7f6cf;
+    }
+
+    .check {
+      position: absolute;
+      right: -3px;
+      bottom: -2px;
+      width: 14px;
+      height: 14px;
+      display: grid;
+      place-items: center;
+      border: 1px solid #25302d;
+      border-radius: 7px;
+      background: var(--green);
+      color: #fff;
+      font-size: 8px;
+      font-weight: 900;
+    }
+
+    .person label {
+      width: 100%;
+      overflow: hidden;
+      color: rgba(255, 255, 255, 0.75);
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 9px;
+      line-height: 12px;
+      font-weight: 750;
+    }
+
+    .person.active label { color: #9df0bd; }
+
+    .route-section { margin-top: 17px; }
+
+    .route-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 12px;
+    }
+
+    .route-heading small {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--sheet-muted);
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 750;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      flex: 0 0 auto;
+      border-radius: 3px;
+      background: var(--green);
+    }
+
+    .route-heading h3 {
+      margin: 2px 0 0;
+      font-size: 18px;
+      line-height: 22px;
+      font-weight: 900;
+      letter-spacing: 0;
+    }
+
+    .route-heading strong {
+      font-size: 27px;
+      line-height: 30px;
+      font-weight: 900;
+    }
+
+    .route-strip {
+      display: grid;
+      grid-template-columns: 14fr 44fr 31fr 11fr;
+      gap: 3px;
+      height: 7px;
+      margin-top: 14px;
+    }
+
+    .route-strip i { border-radius: 4px; }
+    .route-strip i:nth-child(1), .route-strip i:nth-child(4) { background: #9da5b1; }
+    .route-strip i:nth-child(2) { background: var(--blue); }
+    .route-strip i:nth-child(3) { background: #4ec76e; }
+
+    .route-caption {
+      display: grid;
+      grid-template-columns: 14fr 44fr 31fr 11fr;
+      gap: 10px;
+      margin-top: 8px;
+      color: var(--sheet-muted);
+      font-size: 9px;
+      line-height: 13px;
+      font-weight: 750;
+    }
+
+    .route-caption span { text-align: center; white-space: nowrap; }
+    .route-caption span:first-child { text-align: left; }
+    .route-caption span:last-child { text-align: right; }
+
+    .compact-participants {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .compact-participants .avatar {
+      width: 23px;
+      height: 23px;
+      margin-left: -6px;
+      border: 2px solid #222b38;
+      font-size: 8px;
+    }
+
+    .compact-participants .avatar:first-child { margin-left: 0; }
+
+    .timeline {
+      display: grid;
+      gap: 0;
+      margin-top: 15px;
+    }
+
+    .leg {
+      min-height: 68px;
+      display: grid;
+      grid-template-columns: 37px 17px 1fr auto;
+      align-items: start;
+      gap: 8px;
+    }
+
+    .leg-time {
+      color: var(--sheet-muted);
+      font-size: 9px;
+      line-height: 20px;
+      font-weight: 800;
+    }
+
+    .leg-mark {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      min-height: 68px;
+    }
+
+    .leg-mark::after {
+      content: "";
+      position: absolute;
+      top: 17px;
+      bottom: -2px;
+      width: 2px;
+      background: rgba(255, 255, 255, 0.18);
+    }
+
+    .leg:last-child .leg-mark::after { display: none; }
+
+    .leg-mark i {
+      position: relative;
+      z-index: 1;
+      width: 11px;
+      height: 11px;
+      margin-top: 4px;
+      border: 3px solid #27303d;
+      border-radius: 6px;
+      background: #9da5b1;
+      box-shadow: 0 0 0 2px #9da5b1;
+    }
+
+    .leg.rail-blue .leg-mark i { background: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
+    .leg.rail-green .leg-mark i { background: #4ec76e; box-shadow: 0 0 0 2px #4ec76e; }
+    .leg.arrive .leg-mark i { background: var(--red); box-shadow: 0 0 0 2px var(--red); }
+
+    .leg-copy strong {
+      display: block;
+      font-size: 11px;
+      line-height: 17px;
+      font-weight: 850;
+    }
+
+    .leg-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--sheet-muted);
+      font-size: 9px;
+      line-height: 14px;
+      font-weight: 700;
+    }
+
+    .line-badge {
+      min-width: 24px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--blue);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .line-badge.green { background: #32aa56; }
+
+    .route-footer {
+      height: 39px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 3px;
+      padding: 0 12px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.055);
+      color: var(--sheet-muted);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .route-footer strong { color: #fff; }
+
+    .default .full-content > .section:first-child,
+    .route-open .compact-share {
+      margin-top: 4px;
+      padding-top: 0;
+      border-top: 0;
+    }
+
+    .default .quick-summary,
+    .default .route-timeline,
+    .default .compact-share,
+    .map-first .full-content,
+    .map-first .route-timeline,
+    .map-first .compact-share,
+    .route-open .quick-summary,
+    .route-open .full-content {
+      display: none;
+    }
+
+    .route-open .section {
+      margin-top: 14px;
+      padding-top: 12px;
+    }
+
+    .route-open .recenter,
+    .default .recenter { display: none; }
+
+    .safe-home {
+      position: absolute;
+      z-index: 30;
+      left: 50%;
+      bottom: 9px;
+      width: 126px;
+      height: 5px;
+      transform: translateX(-50%);
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .notes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      max-width: 1210px;
+      margin: 30px auto 0;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+
+    .note {
+      display: flex;
+      gap: 10px;
+      padding: 0 7px;
+    }
+
+    .note b {
+      flex: 0 0 auto;
+      color: #9ca3ad;
+      font-size: 13px;
+    }
+
+    .note strong {
+      display: block;
+      font-size: 12px;
+      line-height: 16px;
+    }
+
+    .note p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 16px;
+      font-weight: 650;
+    }
+
+    @media (max-width: 1040px) {
+      .intro { align-items: flex-start; flex-direction: column; }
+      .concept-grid { grid-template-columns: repeat(2, minmax(310px, 390px)); }
+      .notes { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 720px) {
+      main { padding: 24px 16px 42px; }
+      .intro h1 { font-size: 26px; line-height: 32px; }
+      .structure { flex-wrap: wrap; white-space: normal; }
+      .concept-grid { grid-template-columns: minmax(290px, 390px); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="intro">
+      <div>
+        <h1>일정 상세 디테일 보강</h1>
+        <p>지도 앱의 툴바와 단계형 시트, 공유 캘린더의 프로필 표현을 참고했습니다. 일정 요약은 더 얇게 유지하고 각 시트 높이에서 지금 필요한 정보가 먼저 보이도록 다듬었습니다.</p>
+      </div>
+      <div class="structure">
+        <span>Apple Maps</span><b>+</b><span>iOS Sheet</span><b>+</b><span>TimeTree</span>
+      </div>
+    </section>
+
+    <section class="concept-grid">
+      <article class="concept">
+        <header class="concept-head">
+          <div><h2>지도 중심</h2><p>이동 중 위치와 경로를 넓게 확인</p></div>
+          <span class="state-number">01</span>
+        </header>
+        <div class="phone map-first">
+          <div class="map"></div><div class="island"></div>
+          <nav class="top-actions" aria-label="지도 중심 화면 도구">
+            <button type="button" class="icon-button" aria-label="뒤로" title="뒤로">‹</button>
+            <div class="action-group"><button type="button" aria-label="공유" title="공유">↗</button><button type="button" aria-label="더보기" title="더보기">•••</button></div>
+          </nav>
+          <div class="top-summary">
+            <h3 class="event-title">클라이언트 미팅</h3>
+            <div class="destination">서울역 → 강남역</div>
+            <div class="meta"><span class="sharing-label"><span class="event-dot"></span>4명 공유</span><i></i><span>오늘 14:30</span><i></i><span>대중교통 32분</span></div>
+          </div>
+          <button type="button" class="recenter" aria-label="현재 위치" title="현재 위치">⌖</button>
+          <section class="sheet">
+            <div class="sheet-inner">
+              <div class="handle"></div>
+              <div class="quick-summary">
+                <div><span>출발 현황</span><strong class="green">1/4</strong><small>yuna 이동 중</small></div>
+                <div><span>도착 예정</span><strong>14:29</strong><small>32분 · 지연 없음</small></div>
+                <button type="button" class="up-button" aria-label="상세 펼치기" title="상세 펼치기">⌃</button>
+              </div>
+            </div>
+          </section>
+          <div class="safe-home"></div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <header class="concept-head">
+          <div><h2>출발 현황</h2><p>시트를 열어 공유 상태를 확인</p></div>
+          <span class="state-number">02</span>
+        </header>
+        <div class="phone default">
+          <div class="map"></div><div class="island"></div>
+          <nav class="top-actions" aria-label="출발 현황 화면 도구">
+            <button type="button" class="icon-button" aria-label="뒤로" title="뒤로">‹</button>
+            <div class="action-group"><button type="button" aria-label="공유" title="공유">↗</button><button type="button" aria-label="더보기" title="더보기">•••</button></div>
+          </nav>
+          <div class="top-summary">
+            <h3 class="event-title">클라이언트 미팅</h3>
+            <div class="destination">서울역 → 강남역</div>
+            <div class="meta"><span class="sharing-label"><span class="event-dot"></span>4명 공유</span><i></i><span>오늘 14:30</span><i></i><span>대중교통 32분</span></div>
+          </div>
+          <section class="sheet">
+            <div class="sheet-inner">
+              <div class="handle"></div>
+              <div class="full-content">
+                <section class="section">
+                  <div class="section-head"><h3>출발 현황</h3><strong>1/4 출발</strong></div>
+                  <div class="departure-action"><div class="departure-copy"><strong>아직 출발 전이에요</strong><span>권장 출발 13:58</span></div><button type="button">출발 알리기</button></div>
+                  <div class="people">
+                    <div class="person"><div class="avatar-wrap"><div class="avatar">O</div></div><label>owner</label></div>
+                    <div class="person active"><div class="avatar-wrap"><div class="avatar departed">Y</div><span class="check">✓</span></div><label>yuna</label></div>
+                    <div class="person"><div class="avatar-wrap"><div class="avatar">M</div></div><label>minsu</label></div>
+                    <div class="person"><div class="avatar-wrap"><div class="avatar">J</div></div><label>jiyoon</label></div>
+                  </div>
+                </section>
+
+                <section class="section route-section">
+                  <div class="route-heading"><div><small><span class="live-dot"></span>14:29 도착 · 환승 1회</small><h3>최적 경로</h3></div><strong>32분</strong></div>
+                  <div class="route-strip"><i></i><i></i><i></i><i></i></div>
+                  <div class="route-caption"><span>도보 3</span><span>4호선 16</span><span>2호선 8</span><span>도보 4</span></div>
+                </section>
+              </div>
+            </div>
+          </section>
+          <div class="safe-home"></div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <header class="concept-head">
+          <div><h2>경로 확장</h2><p>시트를 올려 구간별 이동을 확인</p></div>
+          <span class="state-number">03</span>
+        </header>
+        <div class="phone route-open">
+          <div class="map"></div><div class="island"></div>
+          <nav class="top-actions" aria-label="경로 확장 화면 도구">
+            <button type="button" class="icon-button" aria-label="뒤로" title="뒤로">‹</button>
+            <div class="action-group"><button type="button" aria-label="공유" title="공유">↗</button><button type="button" aria-label="더보기" title="더보기">•••</button></div>
+          </nav>
+          <div class="top-summary">
+            <h3 class="event-title">클라이언트 미팅</h3>
+            <div class="destination">서울역 → 강남역</div>
+            <div class="meta"><span class="sharing-label"><span class="event-dot"></span>4명 공유</span><i></i><span>오늘 14:30</span><i></i><span>대중교통 32분</span></div>
+          </div>
+          <section class="sheet">
+            <div class="sheet-inner">
+              <div class="handle"></div>
+              <section class="section compact-share">
+                <div class="section-head">
+                  <h3>출발 현황 <strong>1/4 출발</strong></h3>
+                  <div class="compact-participants"><div class="avatar">O</div><div class="avatar departed">Y</div><div class="avatar">M</div><div class="avatar">J</div></div>
+                </div>
+              </section>
+
+              <section class="section route-timeline">
+                <div class="route-heading"><div><small><span class="live-dot"></span>14:29 도착 · 지연 없음</small><h3>최적 경로</h3></div><strong>32분</strong></div>
+                <div class="timeline">
+                  <div class="leg">
+                    <span class="leg-time">13:58</span><span class="leg-mark"><i></i></span>
+                    <div class="leg-copy"><strong>서울역까지 도보</strong><span>약 220m · 3분</span></div>
+                  </div>
+                  <div class="leg rail-blue">
+                    <span class="leg-time">14:01</span><span class="leg-mark"><i></i></span>
+                    <div class="leg-copy"><strong>서울역 → 사당역</strong><span>숙대입구 방면 · 16분</span></div><b class="line-badge">4</b>
+                  </div>
+                  <div class="leg rail-green">
+                    <span class="leg-time">14:17</span><span class="leg-mark"><i></i></span>
+                    <div class="leg-copy"><strong>사당역 → 강남역</strong><span>성수 방면 · 8분</span></div><b class="line-badge green">2</b>
+                  </div>
+                  <div class="leg arrive">
+                    <span class="leg-time">14:29</span><span class="leg-mark"><i></i></span>
+                    <div class="leg-copy"><strong>강남역 도착</strong><span>4번 출구까지 도보 4분</span></div>
+                  </div>
+                </div>
+                <div class="route-footer"><span>환승 1회 · 다른 경로 2개</span><strong>경로 비교 ›</strong></div>
+              </section>
+            </div>
+          </section>
+          <div class="safe-home"></div>
+        </div>
+      </article>
+    </section>
+
+    <section class="notes" aria-label="설계 원칙">
+      <div class="note"><b>01</b><div><strong>툴바와 일정 정보 통합</strong><p>내비게이션, 제목, 주요 액션을 하나의 재질 안에서 정렬해 지도 방해를 줄였습니다.</p></div></div>
+      <div class="note"><b>02</b><div><strong>현재 상황을 먼저 표시</strong><p>단순 소요 시간보다 이동 중인 사람과 예상 도착 시간을 먼저 읽게 했습니다.</p></div></div>
+      <div class="note"><b>03</b><div><strong>시트 단계마다 역할 부여</strong><p>접힘은 요약, 중간은 공유 상태, 확장은 구간별 경로에만 집중합니다.</p></div></div>
+    </section>
+  </main>
+</body>
+</html>

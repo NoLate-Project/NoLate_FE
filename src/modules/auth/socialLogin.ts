@@ -1,11 +1,15 @@
 import { getEnv } from "../../api/env";
 import * as AppleAuthentication from "expo-apple-authentication";
+import * as Crypto from "expo-crypto";
 import * as KakaoLogin from "@react-native-seoul/kakao-login";
-import * as NaverLoginModule from "@react-native-seoul/naver-login";
+import NaverLogin from "@react-native-seoul/naver-login";
 
 export type SocialSdkLoginResult = {
     loginType: "KAKAO" | "NAVER" | "APPLE";
-    snsId: string;
+    /** Provider proof that the server must verify before resolving an account. */
+    providerToken: string;
+    authorizationCode?: string;
+    nonce?: string;
     name: string;
     email?: string;
 };
@@ -13,11 +17,12 @@ export type SocialSdkLoginResult = {
 export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
     const kakao = KakaoLogin as any;
 
+    let loginToken: unknown;
     try {
         if (typeof kakao.loginWithKakaoAccount === "function") {
-            await kakao.loginWithKakaoAccount();
+            loginToken = await kakao.loginWithKakaoAccount();
         } else if (typeof kakao.login === "function") {
-            await kakao.login();
+            loginToken = await kakao.login();
         } else {
             throw new Error("카카오 SDK 로그인 함수(login)가 없습니다.");
         }
@@ -25,29 +30,25 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
         throw new Error(`카카오 로그인 실패: ${formatSdkError(error)}`);
     }
 
+    const providerToken = stringify((loginToken as { accessToken?: unknown } | null)?.accessToken);
+    if (!providerToken) {
+        throw new Error("카카오 인증 토큰을 가져오지 못했습니다.");
+    }
+
     if (typeof kakao.getProfile !== "function") {
         throw new Error("카카오 SDK 프로필 함수(getProfile)가 없습니다.");
     }
 
     const profile = await kakao.getProfile();
-    const snsId = stringify(profile?.id);
-    if (!snsId) {
-        throw new Error("카카오 사용자 ID를 가져오지 못했습니다.");
-    }
-
     return {
         loginType: "KAKAO",
-        snsId,
+        providerToken,
         name: firstString(profile?.nickname, profile?.name, profile?.properties?.nickname) || "사용자",
         email: optionalString(profile?.email, profile?.kakaoAccount?.email),
     };
 }
 
 export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
-    const naverModule = NaverLoginModule as any;
-    const naverLogin = naverModule.NaverLogin ?? naverModule.default ?? naverModule;
-    const getProfile = naverModule.getProfile ?? naverLogin?.getProfile;
-
     const consumerKey = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_KEY") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_ID");
     const consumerSecret = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_SECRET") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_SECRET");
     const appName = getEnv("EXPO_PUBLIC_NAVER_APP_NAME") ?? "NoLate";
@@ -66,42 +67,49 @@ export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
         disableNaverAppAuthIOS: true,
     };
 
-    if (typeof naverLogin?.initialize === "function") {
-        await naverLogin.initialize(loginConfig);
-    }
+    NaverLogin.initialize(loginConfig);
 
-    const token = await loginWithNaver(naverLogin, loginConfig);
+    const token = await NaverLogin.login();
     if (token?.isSuccess === false) {
         const failureMessage = stringify(token?.failureResponse?.message);
         throw new Error(failureMessage ? `네이버 로그인 실패: ${failureMessage}` : "네이버 로그인에 실패했습니다.");
     }
 
-    const accessToken =
-        stringify(token?.accessToken) ||
-        stringify(token?.successResponse?.accessToken) ||
-        stringify(token?.response?.accessToken);
+    const accessToken = stringify(token?.successResponse?.accessToken);
 
     if (!accessToken) {
         throw new Error("네이버 AccessToken을 가져오지 못했습니다.");
     }
 
-    if (typeof getProfile !== "function") {
-        throw new Error("네이버 SDK 프로필 함수(getProfile)가 없습니다.");
-    }
-
-    const profileResult = await getProfile(accessToken);
+    const profileResult = await NaverLogin.getProfile(accessToken);
     const profile = profileResult?.response ?? profileResult;
-    const snsId = stringify(profile?.id);
-    if (!snsId) {
-        throw new Error("네이버 사용자 ID를 가져오지 못했습니다.");
-    }
+    // The server verifies the access token and reads the authoritative profile.
+    // Do not block an otherwise valid login just because the optional display
+    // name scope was not granted on the device.
+    const name = firstString(profile?.name, profile?.nickname, profile?.email) || "사용자";
 
     return {
         loginType: "NAVER",
-        snsId,
-        name: firstString(profile?.name, profile?.nickname) || "사용자",
+        providerToken: accessToken,
+        name,
         email: optionalString(profile?.email),
     };
+}
+
+export async function logoutFromNaverSdk(): Promise<void> {
+    await NaverLogin.logout();
+}
+
+export async function unlinkNaverSdk(): Promise<void> {
+    await NaverLogin.deleteToken();
+}
+
+export async function logoutFromKakaoSdk(): Promise<void> {
+    await KakaoLogin.logout();
+}
+
+export async function unlinkKakaoSdk(): Promise<void> {
+    await KakaoLogin.unlink();
 }
 
 export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
@@ -110,53 +118,28 @@ export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
         throw new Error("Apple 로그인은 iOS 13 이상 기기에서만 사용할 수 있습니다.");
     }
 
+    const nonce = Crypto.randomUUID();
     const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
             AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
             AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+        nonce,
     });
 
-    const snsId = stringify(credential.user);
-    if (!snsId) {
-        throw new Error("Apple 사용자 ID를 가져오지 못했습니다.");
+    const providerToken = stringify(credential.identityToken);
+    if (!providerToken) {
+        throw new Error("Apple 인증 토큰을 가져오지 못했습니다.");
     }
 
     return {
         loginType: "APPLE",
-        snsId,
+        providerToken,
+        authorizationCode: optionalString(credential.authorizationCode),
+        nonce,
         name: appleDisplayName(credential.fullName) || optionalString(credential.email) || "Apple 사용자",
         email: optionalString(credential.email),
     };
-}
-
-async function loginWithNaver(
-    naverLogin: any,
-    loginConfig: {
-        appName: string;
-        consumerKey: string;
-        consumerSecret: string;
-        serviceUrlSchemeIOS: string;
-        disableNaverAppAuthIOS: boolean;
-    }
-) {
-    if (typeof naverLogin?.login !== "function") {
-        throw new Error("네이버 SDK 로그인 함수(login)가 없습니다.");
-    }
-
-    if (naverLogin.login.length >= 2) {
-        return await new Promise((resolve, reject) => {
-            naverLogin.login(loginConfig, (err: unknown, token: unknown) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(token);
-            });
-        });
-    }
-
-    return await naverLogin.login();
 }
 
 function stringify(value: unknown): string {
