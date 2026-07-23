@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     Alert,
@@ -56,6 +56,7 @@ function contentModeLabel(mode: ScheduleShareContentMode) {
 
 export default function ScheduleCalendarsScreen() {
     const router = useRouter();
+    const params = useLocalSearchParams<{ id?: string }>();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
@@ -92,6 +93,13 @@ export default function ScheduleCalendarsScreen() {
             setCalendars(result);
             setSelectedId((current) => {
                 if (current && result.some((calendar) => calendar.id === current)) return current;
+                const requestedId = Number(params.id);
+                if (
+                    Number.isFinite(requestedId)
+                    && result.some((calendar) => calendar.id === requestedId)
+                ) {
+                    return requestedId;
+                }
                 return result[0]?.id ?? null;
             });
         } catch (error) {
@@ -100,7 +108,7 @@ export default function ScheduleCalendarsScreen() {
             setLoading(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [params.id]);
 
     const loadMembers = useCallback(async (calendarId: number) => {
         setMembersLoading(true);

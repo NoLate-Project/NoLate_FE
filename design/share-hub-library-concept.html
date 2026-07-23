@@ -1,0 +1,1526 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <title>NoLate 공유 허브 시안</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root {
+      --ink: #111827;
+      --muted: #64748b;
+      --quiet: #94a3b8;
+      --line: #e5e7eb;
+      --soft-line: #eef0f3;
+      --surface: #ffffff;
+      --soft: #f5f7f9;
+      --canvas: #edf1f5;
+      --blue: #2f7df6;
+      --blue-soft: #eaf2ff;
+      --green: #18a558;
+      --green-soft: #e9f8ef;
+      --amber: #d78400;
+      --amber-soft: #fff4df;
+      --red: #e5484d;
+      --shadow: 0 24px 64px rgba(15, 23, 42, 0.14);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      min-height: 100%;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    .studio {
+      width: min(100%, 1320px);
+      margin: 0 auto;
+      padding: 36px 28px 56px;
+    }
+
+    .studio-header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 28px;
+    }
+
+    .studio-title {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.18;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .studio-copy {
+      max-width: 720px;
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.55;
+      font-weight: 600;
+    }
+
+    .principles {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .principle {
+      min-height: 32px;
+      padding: 0 11px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #dce0e6;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.84);
+      color: #475569;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 750;
+    }
+
+    .showcase {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(340px, 402px)) minmax(240px, 1fr);
+      gap: 24px;
+      align-items: start;
+    }
+
+    .concept {
+      min-width: 0;
+    }
+
+    .concept-label {
+      min-height: 42px;
+      margin-bottom: 10px;
+    }
+
+    .concept-label strong,
+    .concept-label span {
+      display: block;
+    }
+
+    .concept-label strong {
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 800;
+    }
+
+    .concept-label span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 600;
+    }
+
+    .phone {
+      position: relative;
+      width: 100%;
+      max-width: 402px;
+      aspect-ratio: 402 / 874;
+      overflow: hidden;
+      border: 9px solid #111216;
+      border-radius: 46px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      isolation: isolate;
+    }
+
+    .screen {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .dynamic-island {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      z-index: 25;
+      width: 124px;
+      height: 36px;
+      transform: translateX(-50%);
+      border-radius: 22px;
+      background: #050505;
+    }
+
+    .status-bar {
+      position: relative;
+      z-index: 20;
+      height: 58px;
+      padding: 17px 25px 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      font-size: 15px;
+      line-height: 18px;
+      font-weight: 800;
+    }
+
+    .status-icons {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-icons svg {
+      width: 16px;
+      height: 16px;
+      stroke-width: 2.6;
+    }
+
+    .app-view {
+      position: absolute;
+      top: 58px;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      background: #fff;
+      transform: translateX(0);
+      transition: transform 270ms cubic-bezier(0.22, 0.82, 0.28, 1);
+    }
+
+    .app-view.off-left {
+      transform: translateX(-100%);
+    }
+
+    .app-view.off-right {
+      transform: translateX(100%);
+    }
+
+    .app-header {
+      height: 64px;
+      padding: 0 17px;
+      display: grid;
+      grid-template-columns: 40px 1fr 40px;
+      align-items: center;
+      border-bottom: 1px solid var(--soft-line);
+      background: #fff;
+    }
+
+    .app-header h2 {
+      margin: 0;
+      overflow: hidden;
+      font-size: 21px;
+      line-height: 27px;
+      font-weight: 850;
+      text-align: center;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      letter-spacing: 0;
+    }
+
+    .icon-button {
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .icon-button:hover,
+    .icon-button:focus-visible {
+      background: var(--soft);
+      outline: none;
+    }
+
+    .icon-button svg {
+      width: 21px;
+      height: 21px;
+      stroke-width: 2.35;
+    }
+
+    .app-scroll {
+      height: calc(100% - 64px);
+      padding: 8px 0 40px;
+      overflow-y: auto;
+      scrollbar-width: none;
+    }
+
+    .app-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .hub-intro {
+      padding: 17px 22px 4px;
+    }
+
+    .hub-intro strong,
+    .hub-intro span {
+      display: block;
+    }
+
+    .hub-intro strong {
+      font-size: 19px;
+      line-height: 25px;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .hub-intro span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 600;
+    }
+
+    .hub-section {
+      padding-top: 19px;
+    }
+
+    .section-heading {
+      min-height: 34px;
+      padding: 0 18px 0 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .section-heading h3 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .see-all {
+      min-height: 32px;
+      padding: 0 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .see-all svg {
+      width: 15px;
+      height: 15px;
+      stroke-width: 2.4;
+    }
+
+    .object-list {
+      border-top: 1px solid var(--soft-line);
+      border-bottom: 1px solid var(--soft-line);
+    }
+
+    .object-row {
+      position: relative;
+      width: 100%;
+      min-height: 72px;
+      padding: 10px 12px 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border: 0;
+      background: #fff;
+      text-align: left;
+    }
+
+    button.object-row {
+      cursor: pointer;
+    }
+
+    button.object-row:hover,
+    button.object-row:focus-visible {
+      background: #fafbfc;
+      outline: none;
+    }
+
+    .object-row + .object-row::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 68px;
+      right: 18px;
+      height: 1px;
+      background: var(--soft-line);
+    }
+
+    .object-icon {
+      position: relative;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .object-icon.green {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .object-icon.amber {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .object-icon svg {
+      width: 19px;
+      height: 19px;
+      stroke-width: 2.25;
+    }
+
+    .new-dot {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 9px;
+      height: 9px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .date-tile {
+      width: 38px;
+      height: 42px;
+      flex: 0 0 38px;
+      overflow: hidden;
+      border: 1px solid #dce2e9;
+      border-radius: 8px;
+      background: #fff;
+      text-align: center;
+    }
+
+    .date-month {
+      height: 15px;
+      display: grid;
+      place-items: center;
+      background: var(--blue);
+      color: #fff;
+      font-size: 9px;
+      line-height: 12px;
+      font-weight: 800;
+    }
+
+    .date-day {
+      height: 26px;
+      display: grid;
+      place-items: center;
+      color: #1f2937;
+      font-size: 15px;
+      line-height: 18px;
+      font-weight: 850;
+    }
+
+    .object-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    button.object-copy {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    button.object-copy:focus-visible {
+      outline: 2px solid #b9d2ff;
+      outline-offset: 3px;
+    }
+
+    .object-title,
+    .object-meta {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .object-title {
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 20px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .object-meta {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 600;
+    }
+
+    .row-tail {
+      width: 32px;
+      height: 36px;
+      flex: 0 0 32px;
+      display: grid;
+      place-items: center;
+      color: var(--quiet);
+    }
+
+    .row-tail svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 2.2;
+    }
+
+    .more-button {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      flex: 0 0 36px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .more-button:hover,
+    .more-button:focus-visible {
+      background: var(--soft);
+      outline: none;
+    }
+
+    .more-button svg {
+      width: 19px;
+      height: 19px;
+      stroke-width: 2.3;
+    }
+
+    .search-wrap {
+      padding: 12px 18px 8px;
+    }
+
+    .search-field {
+      height: 43px;
+      padding: 0 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+
+    .search-field svg {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 18px;
+      color: var(--muted);
+      stroke-width: 2.25;
+    }
+
+    .search-field input {
+      min-width: 0;
+      flex: 1;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 650;
+    }
+
+    .search-field input::placeholder {
+      color: var(--quiet);
+    }
+
+    .list-toolbar {
+      min-height: 42px;
+      padding: 0 15px 0 21px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .result-label {
+      color: #334155;
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 750;
+    }
+
+    .filter-button {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .filter-button:hover,
+    .filter-button:focus-visible {
+      background: var(--soft);
+      outline: none;
+    }
+
+    .filter-button svg {
+      width: 18px;
+      height: 18px;
+      stroke-width: 2.3;
+    }
+
+    .empty-search {
+      padding: 44px 28px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 20px;
+      font-weight: 650;
+      text-align: center;
+    }
+
+    .phone-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 60;
+      background: rgba(15, 23, 42, 0.3);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms ease;
+    }
+
+    .phone-overlay.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .bottom-sheet {
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      max-height: 680px;
+      overflow-y: auto;
+      border-radius: 26px 26px 0 0;
+      background: #fff;
+      box-shadow: 0 -12px 34px rgba(15, 23, 42, 0.14);
+      transform: translateY(102%);
+      transition: transform 290ms cubic-bezier(0.22, 0.82, 0.28, 1);
+      scrollbar-width: none;
+    }
+
+    .phone-overlay.open .bottom-sheet {
+      transform: translateY(0);
+    }
+
+    .bottom-sheet::-webkit-scrollbar {
+      display: none;
+    }
+
+    .sheet-handle {
+      width: 42px;
+      height: 5px;
+      margin: 10px auto 7px;
+      border-radius: 3px;
+      background: #d9dde3;
+    }
+
+    .sheet-header {
+      min-height: 70px;
+      padding: 3px 16px 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border-bottom: 1px solid var(--soft-line);
+    }
+
+    .sheet-header-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .sheet-header h3,
+    .sheet-header p {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .sheet-header h3 {
+      margin: 0;
+      font-size: 17px;
+      line-height: 22px;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+
+    .sheet-header p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 600;
+    }
+
+    .sheet-body {
+      padding: 15px 20px 26px;
+    }
+
+    .sheet-section + .sheet-section {
+      margin-top: 17px;
+      padding-top: 17px;
+      border-top: 1px solid var(--soft-line);
+    }
+
+    .sheet-section-heading {
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .sheet-section-heading h4 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 800;
+    }
+
+    .text-action {
+      min-height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .text-action svg {
+      width: 15px;
+      height: 15px;
+      stroke-width: 2.4;
+    }
+
+    .member-row {
+      min-height: 50px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .member-row + .member-row {
+      border-top: 1px solid var(--soft-line);
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #eef2f7;
+      color: #475569;
+      font-size: 12px;
+      line-height: 16px;
+      font-weight: 800;
+    }
+
+    .avatar.owner {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .member-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .member-name,
+    .member-id {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .member-name {
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 750;
+    }
+
+    .member-id {
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 15px;
+      font-weight: 600;
+    }
+
+    .permission {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 15px;
+      font-weight: 750;
+    }
+
+    .share-method {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+    }
+
+    .share-method-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .share-method-copy strong,
+    .share-method-copy span {
+      display: block;
+    }
+
+    .share-method-copy strong {
+      font-size: 13px;
+      line-height: 18px;
+      font-weight: 750;
+    }
+
+    .share-method-copy span {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 15px;
+      font-weight: 600;
+    }
+
+    .switch {
+      position: relative;
+      width: 48px;
+      height: 29px;
+      flex: 0 0 48px;
+      padding: 0;
+      border: 0;
+      border-radius: 16px;
+      background: var(--blue);
+      cursor: pointer;
+      transition: background-color 180ms ease;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 22px;
+      width: 23px;
+      height: 23px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.24);
+      transition: left 180ms ease;
+    }
+
+    .switch.off {
+      background: #cbd1d9;
+    }
+
+    .switch.off::after {
+      left: 3px;
+    }
+
+    .scope-title {
+      display: block;
+      margin-bottom: 9px;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 800;
+    }
+
+    .scope-control {
+      height: 46px;
+      padding: 3px;
+      display: grid;
+      grid-template-columns: 0.8fr 1.2fr;
+      gap: 3px;
+      border-radius: 8px;
+      background: #f0f2f5;
+    }
+
+    .scope-option {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .scope-option.selected {
+      background: #fff;
+      color: var(--blue);
+      box-shadow: 0 1px 4px rgba(15, 23, 42, 0.1);
+    }
+
+    .scope-option svg {
+      width: 16px;
+      height: 16px;
+      stroke-width: 2.25;
+    }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 24px;
+      z-index: 90;
+      min-height: 40px;
+      max-width: calc(100% - 40px);
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.92);
+      color: #fff;
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 700;
+      text-align: center;
+      transform: translate(-50%, 10px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .toast.show {
+      transform: translate(-50%, 0);
+      opacity: 1;
+    }
+
+    .notes-panel {
+      margin-top: 52px;
+      overflow: hidden;
+      border: 1px solid #dce0e6;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.84);
+    }
+
+    .notes-section {
+      padding: 18px;
+    }
+
+    .notes-section + .notes-section {
+      border-top: 1px solid #e3e6eb;
+    }
+
+    .notes-section h3 {
+      margin: 0 0 11px;
+      font-size: 14px;
+      line-height: 20px;
+      font-weight: 800;
+    }
+
+    .decision-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .decision-list li {
+      position: relative;
+      padding-left: 15px;
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.55;
+      font-weight: 650;
+    }
+
+    .decision-list li + li {
+      margin-top: 8px;
+    }
+
+    .decision-list li::before {
+      content: "";
+      position: absolute;
+      top: 7px;
+      left: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--blue);
+    }
+
+    .reference-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .reference-link {
+      min-height: 42px;
+      padding: 9px 10px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid #e0e4e9;
+      border-radius: 8px;
+      background: #fff;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .reference-link:hover,
+    .reference-link:focus-visible {
+      border-color: #b9d2ff;
+      outline: none;
+    }
+
+    .reference-link svg {
+      width: 17px;
+      height: 17px;
+      flex: 0 0 17px;
+      color: var(--blue);
+      stroke-width: 2.2;
+    }
+
+    .reference-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .reference-copy strong,
+    .reference-copy span {
+      display: block;
+    }
+
+    .reference-copy strong {
+      font-size: 12px;
+      line-height: 17px;
+      font-weight: 800;
+    }
+
+    .reference-copy span {
+      margin-top: 1px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 14px;
+      font-weight: 600;
+    }
+
+    .reference-link > svg:last-child {
+      width: 14px;
+      height: 14px;
+      flex-basis: 14px;
+      color: var(--quiet);
+    }
+
+    @media (max-width: 1120px) {
+      .showcase {
+        grid-template-columns: repeat(2, minmax(330px, 402px));
+        justify-content: center;
+      }
+
+      .notes-panel {
+        grid-column: 1 / -1;
+        margin-top: 0;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .notes-section + .notes-section {
+        border-top: 0;
+        border-left: 1px solid #e3e6eb;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .studio {
+        padding: 24px 14px 42px;
+      }
+
+      .studio-header {
+        align-items: flex-start;
+        flex-direction: column;
+        margin-bottom: 22px;
+      }
+
+      .studio-title {
+        font-size: 25px;
+      }
+
+      .principles {
+        justify-content: flex-start;
+      }
+
+      .showcase {
+        grid-template-columns: minmax(0, 402px);
+      }
+
+      .notes-panel {
+        grid-column: auto;
+        display: block;
+      }
+
+      .notes-section + .notes-section {
+        border-top: 1px solid #e3e6eb;
+        border-left: 0;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="studio">
+    <header class="studio-header">
+      <div>
+        <h1 class="studio-title">NoLate 공유 허브 시안</h1>
+        <p class="studio-copy">
+          받은 것과 보낸 것을 먼저 나누지 않고, 공유 캘린더와 개별 공유 일정이라는 실제 항목부터 구분했습니다.
+          첫 화면은 짧게 유지하고 항목이 많아지면 각 섹션의 전체 목록에서 검색합니다.
+        </p>
+      </div>
+      <div class="principles" aria-label="디자인 원칙">
+        <span class="principle">객체 종류 우선</span>
+        <span class="principle">허브는 짧게</span>
+        <span class="principle">전체 목록은 검색 중심</span>
+      </div>
+    </header>
+
+    <section class="showcase">
+      <article class="concept">
+        <div class="concept-label">
+          <strong>공유 허브</strong>
+          <span>캘린더와 개별 일정을 먼저 구분해 무엇인지 바로 인지</span>
+        </div>
+        <div class="phone" id="hubPhone">
+          <div class="screen">
+            <div class="dynamic-island" aria-hidden="true"></div>
+            <div class="status-bar" aria-hidden="true">
+              <span>9:41</span>
+              <span class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span>
+            </div>
+
+            <section class="app-view hub-view">
+              <header class="app-header">
+                <button class="icon-button" type="button" aria-label="뒤로 가기"><i data-lucide="chevron-left"></i></button>
+                <h2>공유함</h2>
+                <button class="icon-button" type="button" aria-label="공유함 검색" data-open-library="schedule"><i data-lucide="search"></i></button>
+              </header>
+              <div class="app-scroll">
+                <div class="hub-intro">
+                  <strong>함께 쓰는 일정</strong>
+                  <span>캘린더 단위 공유와 개별 일정 공유를 따로 모았어요.</span>
+                </div>
+
+                <section class="hub-section">
+                  <div class="section-heading">
+                    <h3>공유 캘린더</h3>
+                    <button class="see-all" type="button" data-open-library="calendar"><span>전체 4개</span><i data-lucide="chevron-right"></i></button>
+                  </div>
+                  <div class="object-list">
+                    <div class="object-row">
+                      <span class="object-icon"><i data-lucide="calendar-range"></i></span>
+                      <button class="object-copy" type="button" data-open-object>
+                        <span class="object-title">NoLate Shared Calendar</span>
+                        <span class="object-meta">내 캘린더 · 3명과 공유 중</span>
+                      </button>
+                      <button class="more-button" type="button" aria-label="NoLate Shared Calendar 공유 관리" data-manage><i data-lucide="ellipsis"></i></button>
+                    </div>
+                    <button class="object-row" type="button" data-open-object>
+                      <span class="object-icon green"><i data-lucide="calendar-range"></i><span class="new-dot" aria-label="새 공유"></span></span>
+                      <span class="object-copy">
+                        <span class="object-title">프로젝트 일정</span>
+                        <span class="object-meta">민지의 캘린더 · 보기 권한</span>
+                      </span>
+                      <span class="row-tail"><i data-lucide="chevron-right"></i></span>
+                    </button>
+                  </div>
+                </section>
+
+                <section class="hub-section">
+                  <div class="section-heading">
+                    <h3>개별 공유 일정</h3>
+                    <button class="see-all" type="button" data-open-library="schedule"><span>전체 18개</span><i data-lucide="chevron-right"></i></button>
+                  </div>
+                  <div class="object-list">
+                    <button class="object-row" type="button" data-open-object>
+                      <span class="date-tile"><span class="date-month">7월</span><span class="date-day">25</span></span>
+                      <span class="object-copy">
+                        <span class="object-title">클라이언트 미팅</span>
+                        <span class="object-meta">14:30 · 준욱에게 받음 · 내 경로 필요</span>
+                      </span>
+                      <span class="row-tail"><i data-lucide="navigation"></i></span>
+                    </button>
+                    <div class="object-row">
+                      <span class="date-tile"><span class="date-month">7월</span><span class="date-day">27</span></span>
+                      <button class="object-copy" type="button" data-open-object>
+                        <span class="object-title">금요일 저녁 약속</span>
+                        <span class="object-meta">19:00 · 내가 공유 · 2명</span>
+                      </button>
+                      <button class="more-button" type="button" aria-label="금요일 저녁 약속 공유 관리" data-manage><i data-lucide="ellipsis"></i></button>
+                    </div>
+                    <button class="object-row" type="button" data-open-object>
+                      <span class="date-tile"><span class="date-month">8월</span><span class="date-day">02</span></span>
+                      <span class="object-copy">
+                        <span class="object-title">공항 출발</span>
+                        <span class="object-meta">06:40 · 서준에게 받음 · 보기 권한</span>
+                      </span>
+                      <span class="row-tail"><i data-lucide="chevron-right"></i></span>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section class="app-view library-view off-right" aria-hidden="true">
+              <header class="app-header">
+                <button class="icon-button library-back" type="button" aria-label="공유 허브로 돌아가기"><i data-lucide="chevron-left"></i></button>
+                <h2 class="library-title">공유 일정</h2>
+                <span aria-hidden="true"></span>
+              </header>
+              <div class="app-scroll">
+                <div class="search-wrap">
+                  <label class="search-field">
+                    <i data-lucide="search"></i>
+                    <input type="search" placeholder="공유 일정 검색" aria-label="공유 일정 검색" />
+                  </label>
+                </div>
+                <div class="list-toolbar">
+                  <span class="result-label">최근 공유순</span>
+                  <button class="filter-button" type="button" aria-label="공유 목록 필터"><i data-lucide="list-filter"></i></button>
+                </div>
+                <div class="object-list library-list"></div>
+                <div class="empty-search" hidden>검색 결과가 없어요.</div>
+              </div>
+            </section>
+
+            <div class="phone-overlay" aria-hidden="true">
+              <section class="bottom-sheet" aria-label="공유 관리">
+                <div class="sheet-handle"></div>
+                <header class="sheet-header">
+                  <span class="object-icon"><i data-lucide="calendar-range"></i></span>
+                  <div class="sheet-header-copy"><h3>NoLate Shared Calendar</h3><p>공유 캘린더 · 소유자</p></div>
+                  <button class="icon-button sheet-close" type="button" aria-label="공유 관리 닫기"><i data-lucide="x"></i></button>
+                </header>
+                <div class="sheet-body">
+                  <section class="sheet-section">
+                    <div class="sheet-section-heading"><h4>공유 대상</h4><button class="text-action add-person" type="button"><i data-lucide="user-plus"></i><span>사람 추가</span></button></div>
+                    <div class="member-row"><span class="avatar owner">나</span><span class="member-copy"><span class="member-name">준욱</span><span class="member-id">@nolate_28</span></span><span class="permission">소유자</span></div>
+                    <div class="member-row"><span class="avatar">민</span><span class="member-copy"><span class="member-name">민지</span><span class="member-id">@minji_day</span></span><span class="permission">편집</span></div>
+                    <div class="member-row"><span class="avatar">서</span><span class="member-copy"><span class="member-name">서준</span><span class="member-id">seojun@example.com</span></span><span class="permission">보기</span></div>
+                  </section>
+                  <section class="sheet-section">
+                    <div class="share-method"><span class="share-method-copy"><strong>초대 링크</strong><span>7월 30일까지 · 0/5명 참여</span></span><button class="switch" type="button" role="switch" aria-checked="true" aria-label="초대 링크 사용"></button></div>
+                  </section>
+                  <section class="sheet-section">
+                    <span class="scope-title">공유 범위</span>
+                    <div class="scope-control" role="radiogroup" aria-label="공유 범위">
+                      <button class="scope-option" type="button" role="radio" aria-checked="false"><i data-lucide="calendar-days"></i><span>일정만</span></button>
+                      <button class="scope-option selected" type="button" role="radio" aria-checked="true"><i data-lucide="navigation"></i><span>일정 + 각자 경로</span></button>
+                    </div>
+                  </section>
+                </div>
+              </section>
+            </div>
+            <div class="toast" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="concept">
+        <div class="concept-label">
+          <strong>일정이 많아졌을 때</strong>
+          <span>탭을 늘리지 않고 개별 일정 전체 목록에서 검색·필터</span>
+        </div>
+        <div class="phone" id="libraryPhone">
+          <div class="screen">
+            <div class="dynamic-island" aria-hidden="true"></div>
+            <div class="status-bar" aria-hidden="true">
+              <span>9:41</span>
+              <span class="status-icons"><i data-lucide="signal"></i><i data-lucide="wifi"></i><i data-lucide="battery-full"></i></span>
+            </div>
+            <section class="app-view">
+              <header class="app-header">
+                <button class="icon-button" type="button" aria-label="공유 허브로 돌아가기"><i data-lucide="chevron-left"></i></button>
+                <h2>공유 일정</h2>
+                <span aria-hidden="true"></span>
+              </header>
+              <div class="app-scroll">
+                <div class="search-wrap">
+                  <label class="search-field"><i data-lucide="search"></i><input class="preview-search" type="search" placeholder="공유 일정 검색" aria-label="공유 일정 검색" /></label>
+                </div>
+                <div class="list-toolbar">
+                  <span class="result-label preview-result">예정된 일정 18개</span>
+                  <button class="filter-button preview-filter" type="button" aria-label="공유 목록 필터"><i data-lucide="list-filter"></i></button>
+                </div>
+                <div class="object-list preview-list">
+                  <button class="object-row" type="button" data-search="클라이언트 미팅 준욱 받음"><span class="date-tile"><span class="date-month">7월</span><span class="date-day">25</span></span><span class="object-copy"><span class="object-title">클라이언트 미팅</span><span class="object-meta">14:30 · 준욱에게 받음 · 내 경로 필요</span></span><span class="row-tail"><i data-lucide="navigation"></i></span></button>
+                  <div class="object-row" data-search="금요일 저녁 약속 내가 공유"><span class="date-tile"><span class="date-month">7월</span><span class="date-day">27</span></span><button class="object-copy" type="button"><span class="object-title">금요일 저녁 약속</span><span class="object-meta">19:00 · 내가 공유 · 2명</span></button><button class="more-button" type="button" aria-label="금요일 저녁 약속 공유 관리"><i data-lucide="ellipsis"></i></button></div>
+                  <button class="object-row" type="button" data-search="공항 출발 서준 받음"><span class="date-tile"><span class="date-month">8월</span><span class="date-day">02</span></span><span class="object-copy"><span class="object-title">공항 출발</span><span class="object-meta">06:40 · 서준에게 받음 · 보기 권한</span></span><span class="row-tail"><i data-lucide="chevron-right"></i></span></button>
+                  <div class="object-row" data-search="치과 예약 내가 공유"><span class="date-tile"><span class="date-month">8월</span><span class="date-day">05</span></span><button class="object-copy" type="button"><span class="object-title">치과 예약</span><span class="object-meta">11:00 · 내가 공유 · 1명</span></button><button class="more-button" type="button" aria-label="치과 예약 공유 관리"><i data-lucide="ellipsis"></i></button></div>
+                  <button class="object-row" type="button" data-search="팀 워크숍 민지 받음"><span class="date-tile"><span class="date-month">8월</span><span class="date-day">09</span></span><span class="object-copy"><span class="object-title">팀 워크숍</span><span class="object-meta">10:00 · 민지에게 받음 · 편집 권한</span></span><span class="row-tail"><i data-lucide="chevron-right"></i></span></button>
+                  <div class="object-row" data-search="부모님 저녁 내가 공유"><span class="date-tile"><span class="date-month">8월</span><span class="date-day">12</span></span><button class="object-copy" type="button"><span class="object-title">부모님과 저녁</span><span class="object-meta">18:30 · 내가 공유 · 3명</span></button><button class="more-button" type="button" aria-label="부모님과 저녁 공유 관리"><i data-lucide="ellipsis"></i></button></div>
+                  <button class="object-row" type="button" data-search="프로젝트 회고 민지 받음"><span class="date-tile"><span class="date-month">8월</span><span class="date-day">16</span></span><span class="object-copy"><span class="object-title">프로젝트 회고</span><span class="object-meta">16:00 · 민지에게 받음 · 보기 권한</span></span><span class="row-tail"><i data-lucide="chevron-right"></i></span></button>
+                </div>
+                <div class="empty-search preview-empty" hidden>검색 결과가 없어요.</div>
+              </div>
+            </section>
+            <div class="toast" role="status" aria-live="polite"></div>
+          </div>
+        </div>
+      </article>
+
+      <aside class="notes-panel">
+        <section class="notes-section">
+          <h3>이번 안이 다른 점</h3>
+          <ul class="decision-list">
+            <li>받음과 보냄보다 캘린더와 일정을 먼저 구분합니다.</li>
+            <li>허브에는 각 종류의 일부 항목만 노출해 항상 짧게 유지합니다.</li>
+            <li>공유가 많아지면 종류별 전체 목록에서 검색하므로 탭이 늘어나지 않습니다.</li>
+            <li>소유 관계와 권한은 모든 행의 두 번째 줄에서 같은 형식으로 표시합니다.</li>
+          </ul>
+        </section>
+        <section class="notes-section">
+          <h3>참고한 패턴</h3>
+          <div class="reference-list">
+            <a class="reference-link" href="https://support.apple.com/en-gb/guide/iphone/iph17f9f92a6/26/ios/26" target="_blank" rel="noreferrer"><i data-lucide="folder"></i><span class="reference-copy"><strong>Apple Files</strong><span>폴더와 파일을 객체 중심으로 표시·관리</span></span><i data-lucide="external-link"></i></a>
+            <a class="reference-link" href="https://support.google.com/drive/answer/2375057?co=GENIE.Platform%3DDesktop&hl=en" target="_blank" rel="noreferrer"><i data-lucide="search"></i><span class="reference-copy"><strong>Google Drive</strong><span>종류·소유자·공유 날짜를 고정 정보로 제공</span></span><i data-lucide="external-link"></i></a>
+            <a class="reference-link" href="https://support.timetreeapp.com/hc/en-us/articles/203005579-I-want-to-invite-someone-to-a-shared-calendar" target="_blank" rel="noreferrer"><i data-lucide="calendar-range"></i><span class="reference-copy"><strong>TimeTree</strong><span>캘린더를 일정의 공유 컨테이너로 취급</span></span><i data-lucide="external-link"></i></a>
+            <a class="reference-link" href="https://www.notion.com/en-gb/help/sharing-and-permissions" target="_blank" rel="noreferrer"><i data-lucide="users"></i><span class="reference-copy"><strong>Notion</strong><span>사람·권한·링크 관리를 항목별 패널에 통합</span></span><i data-lucide="external-link"></i></a>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const hubPhone = document.querySelector("#hubPhone");
+    const hubView = hubPhone.querySelector(".hub-view");
+    const libraryView = hubPhone.querySelector(".library-view");
+    const libraryTitle = hubPhone.querySelector(".library-title");
+    const libraryInput = hubPhone.querySelector(".library-view input");
+    const libraryList = hubPhone.querySelector(".library-list");
+    const libraryResult = hubPhone.querySelector(".library-view .result-label");
+    const libraryEmpty = hubPhone.querySelector(".library-view .empty-search");
+    const overlay = hubPhone.querySelector(".phone-overlay");
+    const toast = hubPhone.querySelector(".toast");
+    const previewPhone = document.querySelector("#libraryPhone");
+    const previewSearch = previewPhone.querySelector(".preview-search");
+    const previewRows = Array.from(previewPhone.querySelectorAll(".preview-list > [data-search]"));
+    const previewEmpty = previewPhone.querySelector(".preview-empty");
+    const previewResult = previewPhone.querySelector(".preview-result");
+    let toastTimer;
+    let libraryFilterMode = "all";
+    let previewFilterMode = "all";
+
+    const calendarItems = [
+      { title: "NoLate Shared Calendar", meta: "내 캘린더 · 3명과 공유 중", icon: "calendar-range", tone: "", owner: true },
+      { title: "프로젝트 일정", meta: "민지의 캘린더 · 보기 권한", icon: "calendar-range", tone: "green", owner: false },
+      { title: "가족 캘린더", meta: "내 캘린더 · 5명과 공유 중", icon: "calendar-range", tone: "amber", owner: true },
+      { title: "운동 모임", meta: "서준의 캘린더 · 편집 권한", icon: "calendar-range", tone: "green", owner: false },
+    ];
+
+    const scheduleItems = [
+      { title: "클라이언트 미팅", meta: "7월 25일 14:30 · 준욱에게 받음", month: "7월", day: "25", owner: false, route: true },
+      { title: "금요일 저녁 약속", meta: "7월 27일 19:00 · 내가 공유 · 2명", month: "7월", day: "27", owner: true, route: false },
+      { title: "공항 출발", meta: "8월 2일 06:40 · 서준에게 받음", month: "8월", day: "02", owner: false, route: true },
+      { title: "치과 예약", meta: "8월 5일 11:00 · 내가 공유 · 1명", month: "8월", day: "05", owner: true, route: false },
+      { title: "팀 워크숍", meta: "8월 9일 10:00 · 민지에게 받음", month: "8월", day: "09", owner: false, route: false },
+      { title: "부모님과 저녁", meta: "8월 12일 18:30 · 내가 공유 · 3명", month: "8월", day: "12", owner: true, route: false },
+    ];
+
+    function refreshIcons() {
+      if (window.lucide) window.lucide.createIcons();
+    }
+
+    function showToast(target, message) {
+      window.clearTimeout(toastTimer);
+      target.textContent = message;
+      target.classList.add("show");
+      toastTimer = window.setTimeout(() => target.classList.remove("show"), 1600);
+    }
+
+    function calendarRow(item) {
+      return `
+        <div class="object-row library-item" data-owner="${item.owner}" data-search="${item.title} ${item.meta}">
+          <span class="object-icon ${item.tone}"><i data-lucide="${item.icon}"></i></span>
+          <button class="object-copy" type="button" data-open-object><span class="object-title">${item.title}</span><span class="object-meta">${item.meta}</span></button>
+          ${item.owner ? '<button class="more-button" type="button" aria-label="공유 관리" data-manage><i data-lucide="ellipsis"></i></button>' : '<span class="row-tail"><i data-lucide="chevron-right"></i></span>'}
+        </div>`;
+    }
+
+    function scheduleRow(item) {
+      return `
+        <div class="object-row library-item" data-owner="${item.owner}" data-search="${item.title} ${item.meta}">
+          <span class="date-tile"><span class="date-month">${item.month}</span><span class="date-day">${item.day}</span></span>
+          <button class="object-copy" type="button" data-open-object><span class="object-title">${item.title}</span><span class="object-meta">${item.meta}</span></button>
+          ${item.owner ? '<button class="more-button" type="button" aria-label="공유 관리" data-manage><i data-lucide="ellipsis"></i></button>' : `<span class="row-tail"><i data-lucide="${item.route ? "navigation" : "chevron-right"}"></i></span>`}
+        </div>`;
+    }
+
+    function bindLibraryActions() {
+      libraryList.querySelectorAll("[data-open-object]").forEach((button) => button.addEventListener("click", () => showToast(toast, `${button.querySelector(".object-title").textContent} 열기`)));
+      libraryList.querySelectorAll("[data-manage]").forEach((button) => button.addEventListener("click", openManagement));
+    }
+
+    function renderLibrary() {
+      const type = libraryView.dataset.type || "schedule";
+      const source = type === "calendar" ? calendarItems : scheduleItems;
+      const query = libraryInput.value.trim().toLowerCase();
+      const filtered = source.filter((item) => {
+        const matchesQuery = `${item.title} ${item.meta}`.toLowerCase().includes(query);
+        const matchesFilter = libraryFilterMode === "all" || (libraryFilterMode === "owned" ? item.owner : !item.owner);
+        return matchesQuery && matchesFilter;
+      });
+      libraryList.innerHTML = filtered.map((item) => type === "calendar" ? calendarRow(item) : scheduleRow(item)).join("");
+      libraryResult.textContent = `${libraryFilterMode === "all" ? "최근 공유순" : libraryFilterMode === "owned" ? "내가 공유" : "공유받음"} · ${filtered.length}개`;
+      libraryEmpty.hidden = filtered.length > 0;
+      bindLibraryActions();
+      refreshIcons();
+    }
+
+    function openLibrary(type) {
+      libraryView.dataset.type = type;
+      libraryTitle.textContent = type === "calendar" ? "공유 캘린더" : "공유 일정";
+      libraryInput.placeholder = type === "calendar" ? "공유 캘린더 검색" : "공유 일정 검색";
+      libraryInput.value = "";
+      libraryFilterMode = "all";
+      renderLibrary();
+      hubView.classList.add("off-left");
+      libraryView.classList.remove("off-right");
+      libraryView.setAttribute("aria-hidden", "false");
+    }
+
+    function closeLibrary() {
+      hubView.classList.remove("off-left");
+      libraryView.classList.add("off-right");
+      libraryView.setAttribute("aria-hidden", "true");
+    }
+
+    function openManagement(event) {
+      event?.stopPropagation();
+      const row = event?.currentTarget?.closest(".object-row");
+      const title = row?.querySelector(".object-title")?.textContent || "NoLate Shared Calendar";
+      const isSchedule = Boolean(row?.querySelector(".date-tile"));
+      const heading = overlay.querySelector(".sheet-header");
+
+      heading.querySelector("h3").textContent = title;
+      heading.querySelector("p").textContent = isSchedule ? "공유 일정 · 소유자" : "공유 캘린더 · 소유자";
+      heading.querySelector(".object-icon").innerHTML = `<i data-lucide="${isSchedule ? "navigation" : "calendar-range"}"></i>`;
+      overlay.classList.add("open");
+      overlay.setAttribute("aria-hidden", "false");
+      refreshIcons();
+    }
+
+    function closeManagement() {
+      overlay.classList.remove("open");
+      overlay.setAttribute("aria-hidden", "true");
+    }
+
+    hubPhone.querySelectorAll("[data-open-library]").forEach((button) => button.addEventListener("click", () => openLibrary(button.dataset.openLibrary)));
+    hubPhone.querySelector(".library-back").addEventListener("click", closeLibrary);
+    libraryInput.addEventListener("input", renderLibrary);
+    hubPhone.querySelector(".library-view .filter-button").addEventListener("click", () => {
+      libraryFilterMode = libraryFilterMode === "all" ? "owned" : libraryFilterMode === "owned" ? "received" : "all";
+      renderLibrary();
+    });
+    hubPhone.querySelectorAll("[data-manage]").forEach((button) => button.addEventListener("click", openManagement));
+    hubPhone.querySelectorAll("[data-open-object]").forEach((button) => button.addEventListener("click", () => showToast(toast, `${button.querySelector(".object-title").textContent} 열기`)));
+    hubPhone.querySelector(".sheet-close").addEventListener("click", closeManagement);
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) closeManagement(); });
+    hubPhone.querySelector(".add-person").addEventListener("click", () => showToast(toast, "사람 추가 화면으로 이동"));
+    hubPhone.querySelector(".switch").addEventListener("click", (event) => {
+      const enabled = event.currentTarget.getAttribute("aria-checked") !== "true";
+      event.currentTarget.setAttribute("aria-checked", String(enabled));
+      event.currentTarget.classList.toggle("off", !enabled);
+    });
+    hubPhone.querySelectorAll(".scope-option").forEach((button) => button.addEventListener("click", () => {
+      hubPhone.querySelectorAll(".scope-option").forEach((option) => {
+        option.classList.toggle("selected", option === button);
+        option.setAttribute("aria-checked", String(option === button));
+      });
+    }));
+
+    function renderPreviewList() {
+      const query = previewSearch.value.trim().toLowerCase();
+      let visible = 0;
+      previewRows.forEach((row) => {
+        const matchesQuery = row.dataset.search.toLowerCase().includes(query);
+        const owner = row.dataset.search.includes("내가 공유");
+        const matchesFilter = previewFilterMode === "all" || (previewFilterMode === "owned" ? owner : !owner);
+        row.hidden = !(matchesQuery && matchesFilter);
+        if (!row.hidden) visible += 1;
+      });
+      previewResult.textContent = `${previewFilterMode === "all" ? "예정된 일정" : previewFilterMode === "owned" ? "내가 공유" : "공유받은 일정"} ${visible}개`;
+      previewEmpty.hidden = visible > 0;
+    }
+
+    previewSearch.addEventListener("input", renderPreviewList);
+    previewPhone.querySelector(".preview-filter").addEventListener("click", () => {
+      previewFilterMode = previewFilterMode === "all" ? "owned" : previewFilterMode === "owned" ? "received" : "all";
+      renderPreviewList();
+    });
+    previewPhone.querySelectorAll(".object-copy, button.object-row").forEach((button) => button.addEventListener("click", () => showToast(previewPhone.querySelector(".toast"), "일정 상세 열기")));
+    previewPhone.querySelectorAll(".more-button").forEach((button) => button.addEventListener("click", (event) => { event.stopPropagation(); showToast(previewPhone.querySelector(".toast"), "공유 관리 열기"); }));
+
+    refreshIcons();
+  </script>
+</body>
+</html>
