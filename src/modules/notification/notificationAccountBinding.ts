@@ -1,4 +1,6 @@
-import { getExplicitLogicalNotificationEventKey } from "./notificationEventKey";
+import {
+    getRawBackendLogicalNotificationEventKey,
+} from "./notificationEventKey";
 
 export function getNotificationRecipientMemberId(
     data?: Record<string, unknown>,
@@ -14,6 +16,7 @@ export function getNotificationRecipientMemberId(
 
 export type ValidatedNotificationAccountBinding = {
     recipientMemberId: number;
+    rawLogicalEventKey: string;
     logicalEventKey: string;
 };
 
@@ -22,13 +25,31 @@ export function getValidatedNotificationAccountBinding(options: {
     currentMemberId?: number | null;
 }): ValidatedNotificationAccountBinding | undefined {
     const recipientMemberId = getNotificationRecipientMemberId(options.data);
-    const logicalEventKey = getExplicitLogicalNotificationEventKey(options.data);
+    const rawLogicalEventKey =
+        getRawBackendLogicalNotificationEventKey(options.data);
     if (
         recipientMemberId === undefined ||
-        !logicalEventKey ||
+        !rawLogicalEventKey ||
         options.currentMemberId !== recipientMemberId
     ) return undefined;
-    return { recipientMemberId, logicalEventKey };
+    return {
+        recipientMemberId,
+        rawLogicalEventKey,
+        logicalEventKey: `logical:${rawLogicalEventKey}`,
+    };
+}
+
+export function createNotificationActionKeys(
+    action: "departNow" | "snooze",
+    binding: ValidatedNotificationAccountBinding,
+): {
+    dedupeKey: string;
+    idempotencyKey: string;
+} {
+    return {
+        dedupeKey: `${action}:${binding.logicalEventKey}`,
+        idempotencyKey: `${action}:${binding.rawLogicalEventKey}`,
+    };
 }
 
 export function validateNotificationAccountBinding(options: {

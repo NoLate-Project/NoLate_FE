@@ -42,6 +42,7 @@ import {
 import { emitAppNotificationReceived } from "./appNotificationEvents";
 import { refreshForegroundPushCaches } from "./foregroundTrafficRefresh";
 import {
+    createNotificationActionKeys,
     getValidatedNotificationAccountBinding,
     type ValidatedNotificationAccountBinding,
 } from "./notificationAccountBinding";
@@ -221,17 +222,17 @@ export async function configurePushNavigation(
             });
             return;
         }
-        const actionKey = `departNow:${binding.logicalEventKey}`;
+        const actionKeys = createNotificationActionKeys("departNow", binding);
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
-                actionKey,
+                actionKeys.dedupeKey,
                 async () => {
                     const abort = createAuthEpochAbortController(binding.authEpoch);
                     try {
                         const result = await markScheduleDeparted(scheduleId, {
                             signal: abort.signal,
-                            idempotencyKey: actionKey,
+                            idempotencyKey: actionKeys.idempotencyKey,
                         });
                         if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
                             throw new Error("AUTH_SESSION_CHANGED");
@@ -300,17 +301,17 @@ export async function configurePushNavigation(
             });
             return;
         }
-        const actionKey = `snooze:${binding.logicalEventKey}`;
+        const actionKeys = createNotificationActionKeys("snooze", binding);
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
-                actionKey,
+                actionKeys.dedupeKey,
                 async () => {
                     const abort = createAuthEpochAbortController(binding.authEpoch);
                     try {
                         const result = await snoozeScheduleDepartureReminder(scheduleId, {
                             signal: abort.signal,
-                            idempotencyKey: actionKey,
+                            idempotencyKey: actionKeys.idempotencyKey,
                         });
                         if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
                             throw new Error("AUTH_SESSION_CHANGED");

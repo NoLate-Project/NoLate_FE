@@ -1,8 +1,12 @@
 import {
+    createNotificationActionKeys,
     getValidatedNotificationAccountBinding,
     getNotificationRecipientMemberId,
     validateNotificationAccountBinding,
 } from "../src/modules/notification/notificationAccountBinding";
+
+const HASH_LOGICAL_EVENT_KEY = `key:${"a".repeat(64)}`;
+const UUID_LOGICAL_EVENT_KEY = "event:550e8400-e29b-41d4-a716-446655440000";
 
 describe("notification account binding", () => {
     test("recipientMemberId 타입을 안전하게 파싱한다", () => {
@@ -17,11 +21,17 @@ describe("notification account binding", () => {
             currentMemberId: 1,
         })).toBe(false);
         expect(validateNotificationAccountBinding({
-            data: { recipientMemberId: "1", logicalEventKey: "event-a" },
+            data: {
+                recipientMemberId: "1",
+                logicalEventKey: UUID_LOGICAL_EVENT_KEY,
+            },
             currentMemberId: 2,
         })).toBe(false);
         expect(validateNotificationAccountBinding({
-            data: { recipientMemberId: "1", logicalEventKey: "event-a" },
+            data: {
+                recipientMemberId: "1",
+                logicalEventKey: UUID_LOGICAL_EVENT_KEY,
+            },
             currentMemberId: null,
         })).toBe(false);
         expect(validateNotificationAccountBinding({
@@ -31,25 +41,26 @@ describe("notification account binding", () => {
         expect(validateNotificationAccountBinding({
             data: {
                 recipientMemberId: "1",
-                logicalEventKey: "event-a",
+                logicalEventKey: `  ${UUID_LOGICAL_EVENT_KEY}  `,
             },
             currentMemberId: 1,
         })).toBe(true);
         expect(getValidatedNotificationAccountBinding({
             data: {
                 recipientMemberId: "1",
-                logicalEventKey: "event-a",
+                logicalEventKey: `  ${UUID_LOGICAL_EVENT_KEY}  `,
             },
             currentMemberId: 1,
         })).toEqual({
             recipientMemberId: 1,
-            logicalEventKey: "logical:event-a",
+            rawLogicalEventKey: UUID_LOGICAL_EVENT_KEY,
+            logicalEventKey: `logical:${UUID_LOGICAL_EVENT_KEY}`,
         });
     });
 
     test("A 알림은 A→logout→B 전환 뒤 같은 공유 schedule에서도 action할 수 없다", () => {
         const payload = {
-            logicalEventKey: "departure-42-A",
+            logicalEventKey: HASH_LOGICAL_EVENT_KEY,
             scheduleId: "42",
             recipientMemberId: "1",
         };
@@ -82,7 +93,7 @@ describe("notification account binding", () => {
         expect(validateNotificationAccountBinding({
             data: {
                 type,
-                logicalEventKey: "logical-only",
+                logicalEventKey: UUID_LOGICAL_EVENT_KEY,
                 scheduleId: "42",
             },
             currentMemberId: 1,
@@ -91,10 +102,52 @@ describe("notification account binding", () => {
             data: {
                 type,
                 recipientMemberId: "1",
-                logicalEventKey: "bound-event",
+                logicalEventKey: HASH_LOGICAL_EVENT_KEY,
                 scheduleId: "42",
             },
             currentMemberId: 1,
         })).toBe(true);
+    });
+
+    test("BE raw logical key는 canonical dedupe와 idempotency suffix로 분리한다", () => {
+        const hashBinding = getValidatedNotificationAccountBinding({
+            data: {
+                recipientMemberId: "1",
+                logicalEventKey: HASH_LOGICAL_EVENT_KEY,
+            },
+            currentMemberId: 1,
+        })!;
+        const uuidBinding = getValidatedNotificationAccountBinding({
+            data: {
+                recipientMemberId: "1",
+                logicalEventKey: UUID_LOGICAL_EVENT_KEY,
+            },
+            currentMemberId: 1,
+        })!;
+
+        expect(createNotificationActionKeys("departNow", hashBinding)).toEqual({
+            dedupeKey: `departNow:logical:${HASH_LOGICAL_EVENT_KEY}`,
+            idempotencyKey: `departNow:${HASH_LOGICAL_EVENT_KEY}`,
+        });
+        expect(createNotificationActionKeys("snooze", uuidBinding)).toEqual({
+            dedupeKey: `snooze:logical:${UUID_LOGICAL_EVENT_KEY}`,
+            idempotencyKey: `snooze:${UUID_LOGICAL_EVENT_KEY}`,
+        });
+        expect(
+            createNotificationActionKeys("departNow", hashBinding).idempotencyKey,
+        ).not.toContain(":logical:");
+    });
+
+    test("이미 logical: namespace가 붙었거나 BE 형식이 아닌 key는 binding에서 거부한다", () => {
+        for (const logicalEventKey of [
+            `logical:${HASH_LOGICAL_EVENT_KEY}`,
+            "event:not-a-uuid",
+            `key:${"A".repeat(64)}`,
+        ]) {
+            expect(validateNotificationAccountBinding({
+                data: { recipientMemberId: "1", logicalEventKey },
+                currentMemberId: 1,
+            })).toBe(false);
+        }
     });
 });

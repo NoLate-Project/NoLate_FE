@@ -361,6 +361,9 @@ describe("schedule query api wrappers", () => {
     });
 
     test("notification action idempotency key를 action API에 전달한다", async () => {
+        const hashLogicalEventKey = `key:${"b".repeat(64)}`;
+        const uuidLogicalEventKey =
+            "event:6ba7b810-9dad-41d1-80b4-00c04fd430c8";
         mockedApiPost
             .mockResolvedValueOnce({ success: true, data: scheduleDto })
             .mockResolvedValueOnce({
@@ -374,10 +377,10 @@ describe("schedule query api wrappers", () => {
             });
 
         await markScheduleDeparted("10", {
-            idempotencyKey: "departNow:logical:event-10",
+            idempotencyKey: `departNow:${hashLogicalEventKey}`,
         });
         await snoozeScheduleDepartureReminder("10", {
-            idempotencyKey: "snooze:logical:event-10",
+            idempotencyKey: `snooze:${uuidLogicalEventKey}`,
         });
 
         expect(mockedApiPost).toHaveBeenNthCalledWith(
@@ -387,7 +390,7 @@ describe("schedule query api wrappers", () => {
             {
                 signal: undefined,
                 headers: {
-                    "Idempotency-Key": "departNow:logical:event-10",
+                    "Idempotency-Key": `departNow:${hashLogicalEventKey}`,
                 },
             },
         );
@@ -398,9 +401,19 @@ describe("schedule query api wrappers", () => {
             {
                 signal: undefined,
                 headers: {
-                    "Idempotency-Key": "snooze:logical:event-10",
+                    "Idempotency-Key": `snooze:${uuidLogicalEventKey}`,
                 },
             },
+        );
+        expect(mockedApiPost.mock.calls[0][2]?.headers).not.toEqual(
+            expect.objectContaining({
+                "Idempotency-Key": expect.stringContaining(":logical:"),
+            }),
+        );
+        expect(mockedApiPost.mock.calls[1][2]?.headers).not.toEqual(
+            expect.objectContaining({
+                "Idempotency-Key": expect.stringContaining(":logical:"),
+            }),
         );
     });
 

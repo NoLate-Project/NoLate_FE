@@ -10,6 +10,23 @@ const PROVIDER_EVENT_ID_FIELDS = [
     "google.message_id",
     "gcm.message_id",
 ] as const;
+const BACKEND_HASH_LOGICAL_EVENT_KEY = /^key:[0-9a-f]{64}$/;
+const BACKEND_UUID_LOGICAL_EVENT_KEY =
+    /^event:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function getRawBackendLogicalNotificationEventKey(
+    data?: Record<string, unknown>,
+): string | undefined {
+    const value = data?.logicalEventKey;
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return (
+        BACKEND_HASH_LOGICAL_EVENT_KEY.test(trimmed) ||
+        BACKEND_UUID_LOGICAL_EVENT_KEY.test(trimmed)
+    )
+        ? trimmed
+        : undefined;
+}
 
 export function getExplicitLogicalNotificationEventKey(
     data?: Record<string, unknown>,
