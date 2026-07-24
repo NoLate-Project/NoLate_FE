@@ -92,8 +92,10 @@ import { getShareInbox } from "../../src/api/scheduleSharing";
 import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 import {
+    clearCalendarScheduleCache,
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
+    removeCalendarScheduleCacheItem,
     refreshCalendarScheduleCache,
     subscribeCalendarScheduleCacheInvalidated,
 } from "../../src/modules/schedule/calendarScheduleCache";
@@ -159,6 +161,7 @@ import {
     type QuickScheduleMediaInput,
 } from "../../src/modules/schedule/quickInputExtraction";
 import {
+    buildNextDepartureCandidate,
     buildNextDepartureHeroModel,
     selectNextDeparture,
 } from "../../src/modules/schedule/nextDeparture";
@@ -441,7 +444,7 @@ export default function ScheduleIndex() {
     const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
     const focusDayRequest = Array.isArray(params.focusDay) ? params.focusDay[0] : params.focusDay;
     const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
-    const { state, dispatch } = useScheduleStore();
+    const { state, dispatch, removedItemIds } = useScheduleStore();
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
@@ -1742,22 +1745,54 @@ export default function ScheduleIndex() {
         () => Object.values(state.itemsById),
         [state.itemsById]
     );
+    const handleScheduleAccessRevoked = useCallback((scheduleId: string) => {
+        removeCalendarScheduleCacheItem(scheduleId);
+        setSearchResults((current) => current.filter(
+            (item) => item.id !== scheduleId
+        ));
+        dispatch({ type: "DELETE_ITEM", id: scheduleId });
+    }, [dispatch]);
+    const handleScheduleSessionRejected = useCallback(() => {
+        clearCalendarScheduleCache();
+        setSearchResults([]);
+        dispatch({ type: "SET_ITEMS", items: [] });
+    }, [dispatch]);
     const departureHome = useNextDepartureHome({
         fallbackItems: itemsArray,
         focused: isFocused,
+        authoritativeRemovedScheduleIds: removedItemIds,
+        onScheduleAccessRevoked: handleScheduleAccessRevoked,
+        onSessionAccessRejected: handleScheduleSessionRejected,
     });
-    const nextDepartureCandidate = useMemo(
+    const rankedNextDepartureCandidate = useMemo(
         () => selectNextDeparture(
             departureHome.candidateItems,
-            departureHome.statusesByScheduleId,
+            departureHome.statusOrderingSafe
+                ? departureHome.statusesByScheduleId
+                : {},
             departureNow,
             departureHome.currentMemberId
         ),
         [
             departureHome.currentMemberId,
             departureHome.candidateItems,
+            departureHome.statusOrderingSafe,
             departureHome.statusesByScheduleId,
             departureNow,
+        ]
+    );
+    const nextDepartureCandidate = useMemo(
+        () => rankedNextDepartureCandidate
+            ? buildNextDepartureCandidate(
+                rankedNextDepartureCandidate.item,
+                departureHome.statusesByScheduleId[
+                    rankedNextDepartureCandidate.item.id
+                ]
+            )
+            : null,
+        [
+            departureHome.statusesByScheduleId,
+            rankedNextDepartureCandidate,
         ]
     );
     const nextDepartureConnectionIssue = departureHome.connectionIssue

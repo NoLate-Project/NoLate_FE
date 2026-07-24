@@ -1,10 +1,19 @@
-import React, {createContext, useContext, useEffect, useMemo, useReducer} from "react";
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useReducer,
+    useRef,
+    useState,
+} from "react";
 import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
 import { clearCalendarScheduleCache } from "./calendarScheduleCache";
 
-type Action =
+export type ScheduleAction =
     | { type: "SET_SELECTED_DAY"; day: string }
     | { type: "SET_CATEGORIES"; categories: ScheduleCategory[] }
     | { type: "ADD_CATEGORY"; category: ScheduleCategory }
@@ -18,7 +27,7 @@ type Action =
     | { type: "UPDATE_ITEM"; item: ScheduleItem }
     | { type: "DELETE_ITEM"; id: string };
 
-function reducer(state: ScheduleState, action: Action): ScheduleState {
+function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
     switch (action.type) {
         case "RESET":
             return action.state;
@@ -101,7 +110,8 @@ function reducer(state: ScheduleState, action: Action): ScheduleState {
 
 const ScheduleContext = createContext<{
     state: ScheduleState;
-    dispatch: React.Dispatch<Action>;
+    dispatch: React.Dispatch<ScheduleAction>;
+    removedItemIds: ReadonlySet<string>;
 } | null>(null);
 
 export function ScheduleProvider({
@@ -111,13 +121,61 @@ export function ScheduleProvider({
     children: React.ReactNode;
     initialState: ScheduleState;
 }) {
-    const [state, dispatch] = useReducer(reducer, initialState);
+    const [state, baseDispatch] = useReducer(reducer, initialState);
+    const removedItemIdsRef = useRef<ReadonlySet<string>>(new Set());
+    const [removedItemIds, setRemovedItemIds] = useState<ReadonlySet<string>>(
+        removedItemIdsRef.current
+    );
+    const updateRemovedItemIds = useCallback((next: ReadonlySet<string>) => {
+        removedItemIdsRef.current = next;
+        setRemovedItemIds(next);
+    }, []);
+    const dispatch = useCallback((action: ScheduleAction) => {
+        if (action.type === "RESET") {
+            updateRemovedItemIds(new Set());
+            baseDispatch(action);
+            return;
+        }
+        if (action.type === "DELETE_ITEM") {
+            const next = new Set(removedItemIdsRef.current);
+            next.add(action.id);
+            updateRemovedItemIds(next);
+            baseDispatch(action);
+            return;
+        }
+        if (action.type === "SET_ITEMS") {
+            baseDispatch({
+                ...action,
+                items: action.items.filter(
+                    (item) => !removedItemIdsRef.current.has(item.id)
+                ),
+            });
+            return;
+        }
+        if (
+            action.type === "UPDATE_ITEM"
+            && removedItemIdsRef.current.has(action.item.id)
+        ) {
+            return;
+        }
+        if (action.type === "ADD_ITEM") {
+            if (removedItemIdsRef.current.has(action.item.id)) {
+                const next = new Set(removedItemIdsRef.current);
+                next.delete(action.item.id);
+                updateRemovedItemIds(next);
+            }
+        }
+        baseDispatch(action);
+    }, [updateRemovedItemIds]);
     useEffect(() => subscribeAuthInvalidation(() => {
         // 계정이 바뀌면 이전 회원의 월별 일정 캐시도 상태와 함께 제거한다.
         clearCalendarScheduleCache();
         dispatch({ type: "RESET", state: initialState });
-    }), [initialState]);
-    const value = useMemo(() => ({state, dispatch}), [state]);
+    }), [dispatch, initialState]);
+    const value = useMemo(
+        () => ({ state, dispatch, removedItemIds }),
+        [dispatch, removedItemIds, state]
+    );
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }
 

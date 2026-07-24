@@ -1,6 +1,8 @@
 import React from "react";
 import {
+    AccessibilityInfo,
     ActivityIndicator,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -80,10 +82,20 @@ function getPhaseAnnouncement(phase: NextDeparturePhase): string {
 const NextDeparturePhaseAnnouncement = React.memo(
     function NextDeparturePhaseAnnouncement({
         phase,
+        scheduleId,
+        scheduleTitle,
     }: {
         phase: NextDeparturePhase;
+        scheduleId: string;
+        scheduleTitle: string;
     }) {
-        const announcement = getPhaseAnnouncement(phase);
+        const announcementKey = `${scheduleId}:${scheduleTitle}:${phase}`;
+        const announcement = `${scheduleTitle}, ${getPhaseAnnouncement(phase)}`;
+        React.useEffect(() => {
+            if (Platform.OS === "ios") {
+                AccessibilityInfo.announceForAccessibility(announcement);
+            }
+        }, [announcement, announcementKey]);
         return (
             <Text
                 testID="next-departure-phase-announcement"
@@ -205,7 +217,11 @@ export default function NextDepartureHero({
 
     return (
         <>
-            <NextDeparturePhaseAnnouncement phase={model.phase} />
+            <NextDeparturePhaseAnnouncement
+                phase={model.phase}
+                scheduleId={model.item.id}
+                scheduleTitle={model.item.title}
+            />
             <Pressable
                 testID="next-departure-hero"
                 accessibilityRole="button"

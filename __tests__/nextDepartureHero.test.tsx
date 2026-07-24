@@ -1,5 +1,10 @@
 import React from "react";
-import { ScrollView, Text } from "react-native";
+import {
+    AccessibilityInfo,
+    Platform,
+    ScrollView,
+    Text,
+} from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import NextDepartureHero, {
@@ -58,6 +63,7 @@ describe("NextDepartureHero", () => {
     afterEach(() => {
         act(() => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
     });
 
     test("shows departure, remaining time, travel, destination, and saved ETA at a glance", async () => {
@@ -214,7 +220,12 @@ describe("NextDepartureHero", () => {
         )).toBeGreaterThanOrEqual(4.5);
     });
 
-    test("TalkBack live region announces phase changes instead of minute-by-minute copy", async () => {
+    test("screen readers announce stable target/phase changes without minute polling noise", async () => {
+        jest.replaceProperty(Platform, "OS", "ios");
+        const announce = jest.spyOn(
+            AccessibilityInfo,
+            "announceForAccessibility"
+        ).mockImplementation(() => undefined);
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -234,11 +245,58 @@ describe("NextDepartureHero", () => {
         });
         expect(announcement.props.accessibilityLiveRegion).toBe("polite");
         expect(announcement.props.accessibilityLabel)
-            .toBe("다음 출발이 예정되어 있습니다");
+            .toBe("프로젝트 발표, 다음 출발이 예정되어 있습니다");
+        const initialAnnouncementCount = announce.mock.calls.length;
+        expect(initialAnnouncementCount).toBeGreaterThanOrEqual(1);
 
         const remaining = renderer!.root.findAllByType(Text).find(
             (node) => node.props.children === model.remainingLabel
         );
         expect(remaining?.props.accessibilityLiveRegion).toBeUndefined();
+
+        const sameTargetSamePhase = buildNextDepartureHeroModel(
+            buildNextDepartureCandidate(item),
+            new Date("2026-07-24T09:01:00+09:00")
+        );
+        await act(async () => {
+            renderer!.update(
+                <ThemeProvider>
+                    <NextDepartureHero
+                        model={sameTargetSamePhase}
+                        loading={false}
+                        connectionIssue={null}
+                        onPressSchedule={jest.fn()}
+                        onPressRetry={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        expect(announce).toHaveBeenCalledTimes(initialAnnouncementCount);
+
+        const nextTarget = {
+            ...item,
+            id: "next-43",
+            title: "고객 미팅",
+        };
+        await act(async () => {
+            renderer!.update(
+                <ThemeProvider>
+                    <NextDepartureHero
+                        model={buildNextDepartureHeroModel(
+                            buildNextDepartureCandidate(nextTarget),
+                            now
+                        )}
+                        loading={false}
+                        connectionIssue={null}
+                        onPressSchedule={jest.fn()}
+                        onPressRetry={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        expect(announce).toHaveBeenCalledTimes(initialAnnouncementCount + 1);
+        expect(announce).toHaveBeenLastCalledWith(
+            "고객 미팅, 다음 출발이 예정되어 있습니다"
+        );
     });
 });

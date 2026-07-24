@@ -19,9 +19,13 @@ import {
     isDepartureCandidateEligible,
     isDepartureStatusFresh,
     NEXT_DEPARTURE_STATUS_MAX_AGE_MS,
+    rankNextDepartures,
 } from "./nextDeparture";
 
 export const DEPARTURE_HOME_REQUEST_CONCURRENCY = 4;
+// 최대 24개(detail + status) 요청으로 한 refresh의 비용을 제한한다.
+// 12개를 넘으면 저장 출발 시각 순서를 보수적으로 유지하고 live 값으로 재정렬하지 않는다.
+export const DEPARTURE_HOME_CANDIDATE_LIMIT = 12;
 export const DEPARTURE_HOME_RETRY_BACKOFF_MS = [
     60_000,
     2 * 60_000,
@@ -48,6 +52,7 @@ type DepartureHomeSnapshot = {
         string,
         DepartureHomeDetailIssue | undefined
     >;
+    statusOrderingSafe: boolean;
     currentMemberId?: number;
     loading: boolean;
     connectionIssue: DepartureHomeConnectionIssue | null;
@@ -68,6 +73,11 @@ type RetryState = {
     accountKey: string;
     fingerprint: string | null;
     consecutive: number;
+};
+
+type DepartureCandidateWindow = {
+    items: ScheduleItem[];
+    truncated: boolean;
 };
 
 function getMemberId(member: { id?: number } | null): number | undefined {
@@ -124,10 +134,13 @@ function isRolloutUnavailable(error: unknown): boolean {
         && (error.status === 404 || error.status === 501);
 }
 
-function isAuthoritativeDetailFailure(error: unknown): boolean {
-    return error instanceof ApiResponseError
-        && error.status !== undefined
-        && [400, 401, 403, 404, 410, 422].includes(error.status);
+function getDetailAccessFailure(
+    error: unknown
+): "session" | "schedule" | null {
+    if (!(error instanceof ApiResponseError)) return null;
+    if (error.status === 401) return "session";
+    if (error.status === 403 || error.status === 404) return "schedule";
+    return null;
 }
 
 function mergeConnectionIssue(
@@ -135,6 +148,28 @@ function mergeConnectionIssue(
     next: DepartureHomeConnectionIssue
 ): DepartureHomeConnectionIssue {
     return current === "offline" || next === "offline" ? "offline" : "error";
+}
+
+function getDepartureCandidateWindow(
+    items: ScheduleItem[],
+    now: Date,
+    currentMemberId?: number
+): DepartureCandidateWindow {
+    const eligibleItems = getDepartureVerificationItems(
+        items,
+        now,
+        currentMemberId
+    );
+    const rankedItems = rankNextDepartures(
+        eligibleItems,
+        {},
+        now,
+        currentMemberId
+    ).map((candidate) => candidate.item);
+    return {
+        items: rankedItems.slice(0, DEPARTURE_HOME_CANDIDATE_LIMIT),
+        truncated: rankedItems.length > DEPARTURE_HOME_CANDIDATE_LIMIT,
+    };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -206,6 +241,27 @@ function mergeScheduleItems(
     return Array.from(merged.values());
 }
 
+function removeScheduleIdsFromItems(
+    items: ScheduleItem[],
+    removedIds: ReadonlySet<string>
+): ScheduleItem[] {
+    return removedIds.size === 0
+        ? items
+        : items.filter((item) => !removedIds.has(item.id));
+}
+
+function removeScheduleIdsFromRecord<T>(
+    record: Record<string, T | undefined>,
+    removedIds: ReadonlySet<string>
+): Record<string, T | undefined> {
+    if (removedIds.size === 0) return record;
+    return Object.fromEntries(
+        Object.entries(record).filter(([scheduleId]) => (
+            !removedIds.has(scheduleId)
+        ))
+    );
+}
+
 function markStatusesStale(
     statuses: DepartureHomeSnapshot["statusesByScheduleId"]
 ): DepartureHomeSnapshot["statusesByScheduleId"] {
@@ -246,10 +302,11 @@ function getRetryFingerprint({
                 "stale",
                 status.scheduleId,
                 status.source ?? "unknown",
-                status.evaluatedAt ?? "",
-                status.liveFetchedAt ?? "",
-                status.nextCheckAt ?? "",
+                status.stale ? "stale" : "expired",
                 status.failureReason ?? "",
+                status.confidence ?? "",
+                status.lastChangedAt ?? "",
+                status.lastTrafficChangeMinutes ?? "",
             ].join(":")),
     ].sort();
     return parts.length > 0 ? parts.join("|") : null;
@@ -278,6 +335,7 @@ function createInitialSnapshot(): DepartureHomeSnapshot {
         statusesByScheduleId: {},
         statusIssuesByScheduleId: {},
         detailIssuesByScheduleId: {},
+        statusOrderingSafe: true,
         loading: true,
         connectionIssue: null,
         refreshedAt: null,
@@ -288,21 +346,45 @@ function createInitialSnapshot(): DepartureHomeSnapshot {
 export function useNextDepartureHome({
     fallbackItems,
     focused,
+    authoritativeRemovedScheduleIds,
+    onScheduleAccessRevoked,
+    onSessionAccessRejected,
 }: {
     fallbackItems: ScheduleItem[];
     focused: boolean;
+    authoritativeRemovedScheduleIds?: ReadonlySet<string>;
+    onScheduleAccessRevoked?: (scheduleId: string) => void;
+    onSessionAccessRejected?: () => void;
 }) {
     const requestSequenceRef = useRef(0);
+    const authEpochRef = useRef(0);
+    const collectionEpochRef = useRef(0);
     const activeControllerRef = useRef<AbortController | null>(null);
     const focusedRef = useRef(focused);
     const pendingRefreshRef = useRef(false);
+    const redactedScheduleIdsRef = useRef(new Set<string>());
+    const tombstoneScheduleIdsRef = useRef(
+        new Set(authoritativeRemovedScheduleIds ?? [])
+    );
+    const fullKnownAbsentScheduleIdsRef = useRef(new Set<string>());
+    const onScheduleAccessRevokedRef = useRef(onScheduleAccessRevoked);
+    onScheduleAccessRevokedRef.current = onScheduleAccessRevoked;
+    const onSessionAccessRejectedRef = useRef(onSessionAccessRejected);
+    onSessionAccessRejectedRef.current = onSessionAccessRejected;
     const fallbackItemsRef = useRef(fallbackItems);
     fallbackItemsRef.current = fallbackItems;
+    const fullScheduleItemsRef = useRef<ScheduleItem[]>([]);
+    const hasFullScheduleSnapshotRef = useRef(false);
     const fallbackRevision = useMemo(
         () => getFallbackRevision(fallbackItems),
         [fallbackItems]
     );
     const observedFallbackRevisionRef = useRef(fallbackRevision);
+    const removalRevision = useMemo(
+        () => [...(authoritativeRemovedScheduleIds ?? [])].sort().join("|"),
+        [authoritativeRemovedScheduleIds]
+    );
+    const observedRemovalRevisionRef = useRef(removalRevision);
     const retryStateRef = useRef<RetryState>({
         accountKey: "anonymous",
         fingerprint: null,
@@ -361,9 +443,13 @@ export function useNextDepartureHome({
         activeControllerRef.current = controller;
         const requestSequence = requestSequenceRef.current + 1;
         requestSequenceRef.current = requestSequence;
+        const requestAuthEpoch = authEpochRef.current;
+        const requestCollectionEpoch = collectionEpochRef.current;
         const isCurrent = () => (
             focusedRef.current
             && requestSequence === requestSequenceRef.current
+            && requestAuthEpoch === authEpochRef.current
+            && requestCollectionEpoch === collectionEpochRef.current
             && !controller.signal.aborted
         );
 
@@ -382,27 +468,82 @@ export function useNextDepartureHome({
         } catch (error) {
             const currentMemberId = getMemberId(await memberPromise);
             if (!isCurrent()) return;
+            const latestMemberId = getMemberId(
+                await getAuthMember().catch(() => null)
+            );
+            if (!isCurrent()) return;
+            if (latestMemberId !== currentMemberId) {
+                authEpochRef.current += 1;
+                controller.abort();
+                requestSequenceRef.current += 1;
+                redactedScheduleIdsRef.current.clear();
+                tombstoneScheduleIdsRef.current.clear();
+                fullKnownAbsentScheduleIdsRef.current.clear();
+                fullScheduleItemsRef.current = [];
+                hasFullScheduleSnapshotRef.current = false;
+                retryStateRef.current = {
+                    accountKey: String(latestMemberId ?? "anonymous"),
+                    fingerprint: null,
+                    consecutive: 0,
+                };
+                pendingRefreshRef.current = focusedRef.current;
+                commitSnapshot({
+                    ...createInitialSnapshot(),
+                    source: "calendar-fallback",
+                    items: [],
+                    candidateItems: [],
+                    currentMemberId: latestMemberId,
+                    loading: false,
+                });
+                return;
+            }
 
             const previous = snapshotRef.current;
             const sameAccount = previous.currentMemberId === currentMemberId;
-            const mergedItems = sameAccount && previous.source === "schedules"
-                ? mergeScheduleItems(previous.items, fallbackItemsRef.current)
-                : fallbackItemsRef.current;
+            if (!sameAccount) {
+                redactedScheduleIdsRef.current.clear();
+                tombstoneScheduleIdsRef.current.clear();
+                fullKnownAbsentScheduleIdsRef.current.clear();
+                fullScheduleItemsRef.current = [];
+                hasFullScheduleSnapshotRef.current = false;
+            }
+            const hiddenScheduleIds = new Set([
+                ...redactedScheduleIdsRef.current,
+                ...tombstoneScheduleIdsRef.current,
+                ...fullKnownAbsentScheduleIdsRef.current,
+            ]);
+            const mergedItems = removeScheduleIdsFromItems(
+                sameAccount && hasFullScheduleSnapshotRef.current
+                    ? mergeScheduleItems(
+                        fullScheduleItemsRef.current,
+                        fallbackItemsRef.current
+                    )
+                    : fallbackItemsRef.current,
+                hiddenScheduleIds
+            );
+            if (sameAccount && hasFullScheduleSnapshotRef.current) {
+                fullScheduleItemsRef.current = mergedItems;
+            }
             const statusesByScheduleId = sameAccount
-                ? markStatusesStale(previous.statusesByScheduleId)
+                ? removeScheduleIdsFromRecord(
+                    markStatusesStale(previous.statusesByScheduleId),
+                    hiddenScheduleIds
+                )
                 : {};
             const issue = getDepartureHomeConnectionIssue(error);
+            const candidateWindow = getDepartureCandidateWindow(
+                mergedItems,
+                requestedAt,
+                currentMemberId
+            );
             const partial: DepartureHomeSnapshot = {
                 source: "calendar-fallback",
                 items: mergedItems,
-                candidateItems: getDepartureVerificationItems(
-                    mergedItems,
-                    requestedAt,
-                    currentMemberId
-                ),
+                candidateItems: candidateWindow.items,
                 statusesByScheduleId,
                 statusIssuesByScheduleId: {},
                 detailIssuesByScheduleId: {},
+                statusOrderingSafe: !candidateWindow.truncated,
                 currentMemberId,
                 loading: false,
                 connectionIssue: issue,
@@ -424,11 +565,59 @@ export function useNextDepartureHome({
         const currentMemberId = getMemberId(storedMember);
         if (!isCurrent()) return;
 
-        const verificationItems = getDepartureVerificationItems(
+        const returnedScheduleIds = new Set(items.map((item) => item.id));
+        const previouslyKnownScheduleIds = new Set([
+            ...fullScheduleItemsRef.current.map((item) => item.id),
+            ...fallbackItemsRef.current.map((item) => item.id),
+            ...snapshotRef.current.items.map((item) => item.id),
+        ]);
+        returnedScheduleIds.forEach((scheduleId) => {
+            fullKnownAbsentScheduleIdsRef.current.delete(scheduleId);
+        });
+        previouslyKnownScheduleIds.forEach((scheduleId) => {
+            if (!returnedScheduleIds.has(scheduleId)) {
+                fullKnownAbsentScheduleIdsRef.current.add(scheduleId);
+            }
+        });
+        items = mergeScheduleItems(items, fallbackItemsRef.current);
+        const preflightHiddenScheduleIds = new Set([
+            ...redactedScheduleIdsRef.current,
+            ...tombstoneScheduleIdsRef.current,
+            ...fullKnownAbsentScheduleIdsRef.current,
+        ]);
+        items = removeScheduleIdsFromItems(items, preflightHiddenScheduleIds);
+        const candidateWindow = getDepartureCandidateWindow(
             items,
             requestedAt,
             currentMemberId
         );
+        const verificationItems = candidateWindow.items;
+        fullScheduleItemsRef.current = items;
+        hasFullScheduleSnapshotRef.current = true;
+        const preliminarySnapshot = snapshotRef.current;
+        const preliminaryStatuses = preliminarySnapshot.currentMemberId
+            === currentMemberId
+            ? removeScheduleIdsFromRecord(
+                preliminarySnapshot.statusesByScheduleId,
+                preflightHiddenScheduleIds
+            )
+            : {};
+        commitSnapshot({
+            source: "schedules",
+            items,
+            candidateItems: verificationItems,
+            statusesByScheduleId: preliminaryStatuses,
+            statusIssuesByScheduleId: {},
+            detailIssuesByScheduleId: {},
+            statusOrderingSafe: !candidateWindow.truncated,
+            currentMemberId,
+            loading: true,
+            connectionIssue: null,
+            refreshedAt: preliminarySnapshot.refreshedAt,
+            retryDelayMs: null,
+        });
+        if (!isCurrent()) return;
+
         const requests: CandidateRequest[] = verificationItems.flatMap((item) => [
             { kind: "detail" as const, item },
             { kind: "status" as const, item },
@@ -463,8 +652,14 @@ export function useNextDepartureHome({
         );
         if (!isCurrent()) return;
         if (latestMemberId !== currentMemberId) {
+            authEpochRef.current += 1;
             controller.abort();
             requestSequenceRef.current += 1;
+            redactedScheduleIdsRef.current.clear();
+            tombstoneScheduleIdsRef.current.clear();
+            fullKnownAbsentScheduleIdsRef.current.clear();
+            fullScheduleItemsRef.current = [];
+            hasFullScheduleSnapshotRef.current = false;
             retryStateRef.current = {
                 accountKey: String(latestMemberId ?? "anonymous"),
                 fingerprint: null,
@@ -474,12 +669,8 @@ export function useNextDepartureHome({
             commitSnapshot({
                 ...createInitialSnapshot(),
                 source: "calendar-fallback",
-                items: fallbackItemsRef.current,
-                candidateItems: getDepartureVerificationItems(
-                    fallbackItemsRef.current,
-                    requestedAt,
-                    latestMemberId
-                ),
+                items: [],
+                candidateItems: [],
                 currentMemberId: latestMemberId,
                 loading: false,
             });
@@ -504,6 +695,9 @@ export function useNextDepartureHome({
             DepartureHomeDetailIssue | undefined
         > = {};
         const excludedScheduleIds = new Set<string>();
+        const revokedScheduleIds = new Set<string>();
+        const successfulDetailIds = new Set<string>();
+        let sessionAccessRejected = false;
 
         results.forEach((result) => {
             const scheduleId = result.item.id;
@@ -512,14 +706,20 @@ export function useNextDepartureHome({
                     const detail = result.value as ScheduleItem;
                     if (detail.id === scheduleId) {
                         detailsByScheduleId[scheduleId] = detail;
+                        successfulDetailIds.add(scheduleId);
                     } else {
                         detailIssuesByScheduleId[scheduleId] = "verification";
                         excludedScheduleIds.add(scheduleId);
                     }
                 } else if (result.error) {
-                    if (isAuthoritativeDetailFailure(result.error)) {
+                    const accessFailure = getDetailAccessFailure(result.error);
+                    if (accessFailure === "session") {
+                        sessionAccessRejected = true;
+                        detailIssuesByScheduleId[scheduleId] = "verification";
+                    } else if (accessFailure === "schedule") {
                         detailIssuesByScheduleId[scheduleId] = "verification";
                         excludedScheduleIds.add(scheduleId);
+                        revokedScheduleIds.add(scheduleId);
                     } else {
                         detailIssuesByScheduleId[scheduleId] =
                             getDepartureHomeConnectionIssue(result.error);
@@ -548,24 +748,83 @@ export function useNextDepartureHome({
             }
         });
 
-        const verifiedAllItems = items.map(
-            (item) => detailsByScheduleId[item.id] ?? item
-        );
+        if (sessionAccessRejected) {
+            if (!isCurrent()) return;
+            authEpochRef.current += 1;
+            requestSequenceRef.current += 1;
+            controller.abort();
+            redactedScheduleIdsRef.current.clear();
+            tombstoneScheduleIdsRef.current.clear();
+            fullKnownAbsentScheduleIdsRef.current.clear();
+            fullScheduleItemsRef.current = [];
+            hasFullScheduleSnapshotRef.current = false;
+            onSessionAccessRejectedRef.current?.();
+            commitSnapshot({
+                ...createInitialSnapshot(),
+                source: "calendar-fallback",
+                loading: false,
+                connectionIssue: "error",
+                refreshedAt: Date.now(),
+                retryDelayMs: DEPARTURE_HOME_RETRY_BACKOFF_MS[
+                    DEPARTURE_HOME_RETRY_BACKOFF_MS.length - 1
+                ],
+            });
+            return;
+        }
+
+        successfulDetailIds.forEach((scheduleId) => {
+            redactedScheduleIdsRef.current.delete(scheduleId);
+        });
+        revokedScheduleIds.forEach((scheduleId) => {
+            redactedScheduleIdsRef.current.add(scheduleId);
+        });
+        const hiddenScheduleIds = new Set([
+            ...redactedScheduleIdsRef.current,
+            ...tombstoneScheduleIdsRef.current,
+            ...fullKnownAbsentScheduleIdsRef.current,
+            ...excludedScheduleIds,
+        ]);
+        if (!isCurrent()) return;
+        revokedScheduleIds.forEach((scheduleId) => {
+            if (isCurrent()) {
+                onScheduleAccessRevokedRef.current?.(scheduleId);
+            }
+        });
+        if (!isCurrent()) return;
+
+        const verifiedAllItems = items
+            .map((item) => detailsByScheduleId[item.id] ?? item)
+            .filter((item) => !hiddenScheduleIds.has(item.id));
+        fullScheduleItemsRef.current = verifiedAllItems;
+        hasFullScheduleSnapshotRef.current = true;
         const verifiedCandidateItems = verificationItems
-            .filter((item) => !excludedScheduleIds.has(item.id))
+            .filter((item) => !hiddenScheduleIds.has(item.id))
             .map((item) => detailsByScheduleId[item.id] ?? item)
             .filter((item) => isDepartureCandidateEligible(
                 item,
                 requestedAt.getTime(),
                 currentMemberId
             ));
+        const visibleStatusesByScheduleId = removeScheduleIdsFromRecord(
+            statusesByScheduleId,
+            hiddenScheduleIds
+        );
+        const visibleStatusIssuesByScheduleId = removeScheduleIdsFromRecord(
+            statusIssuesByScheduleId,
+            hiddenScheduleIds
+        );
+        const visibleDetailIssuesByScheduleId = removeScheduleIdsFromRecord(
+            detailIssuesByScheduleId,
+            hiddenScheduleIds
+        );
         const partial: DepartureHomeSnapshot = {
             source: "schedules",
             items: verifiedAllItems,
             candidateItems: verifiedCandidateItems,
-            statusesByScheduleId,
-            statusIssuesByScheduleId,
-            detailIssuesByScheduleId,
+            statusesByScheduleId: visibleStatusesByScheduleId,
+            statusIssuesByScheduleId: visibleStatusIssuesByScheduleId,
+            detailIssuesByScheduleId: visibleDetailIssuesByScheduleId,
+            statusOrderingSafe: !candidateWindow.truncated,
             currentMemberId,
             loading: false,
             connectionIssue: null,
@@ -592,6 +851,50 @@ export function useNextDepartureHome({
             return undefined;
         }
 
+        const current = snapshotRef.current;
+        if (current.refreshedAt !== null || current.items.length > 0) {
+            const hiddenScheduleIds = new Set([
+                ...redactedScheduleIdsRef.current,
+                ...tombstoneScheduleIdsRef.current,
+                ...fullKnownAbsentScheduleIdsRef.current,
+            ]);
+            const mergedItems = removeScheduleIdsFromItems(
+                mergeScheduleItems(
+                    hasFullScheduleSnapshotRef.current
+                        ? fullScheduleItemsRef.current
+                        : current.items,
+                    fallbackItemsRef.current
+                ),
+                hiddenScheduleIds
+            );
+            if (hasFullScheduleSnapshotRef.current) {
+                fullScheduleItemsRef.current = mergedItems;
+            }
+            const candidateWindow = getDepartureCandidateWindow(
+                mergedItems,
+                new Date(),
+                current.currentMemberId
+            );
+            commitSnapshot({
+                ...current,
+                items: mergedItems,
+                candidateItems: candidateWindow.items,
+                statusOrderingSafe: !candidateWindow.truncated,
+                loading: false,
+                statusesByScheduleId: removeScheduleIdsFromRecord(
+                    current.statusesByScheduleId,
+                    hiddenScheduleIds
+                ),
+                statusIssuesByScheduleId: removeScheduleIdsFromRecord(
+                    current.statusIssuesByScheduleId,
+                    hiddenScheduleIds
+                ),
+                detailIssuesByScheduleId: removeScheduleIdsFromRecord(
+                    current.detailIssuesByScheduleId,
+                    hiddenScheduleIds
+                ),
+            });
+        }
         refresh();
         const subscription = AppState.addEventListener("change", (nextState) => {
             if (nextState === "active") refresh();
@@ -603,13 +906,19 @@ export function useNextDepartureHome({
             activeControllerRef.current = null;
             subscription?.remove();
         };
-    }, [focused, refresh]);
+    }, [commitSnapshot, focused, refresh]);
 
     useEffect(() => subscribeAuthInvalidation(() => {
+        authEpochRef.current += 1;
         requestSequenceRef.current += 1;
         activeControllerRef.current?.abort();
         activeControllerRef.current = null;
         pendingRefreshRef.current = false;
+        redactedScheduleIdsRef.current.clear();
+        tombstoneScheduleIdsRef.current.clear();
+        fullKnownAbsentScheduleIdsRef.current.clear();
+        fullScheduleItemsRef.current = [];
+        hasFullScheduleSnapshotRef.current = false;
         retryStateRef.current = {
             accountKey: "anonymous",
             fingerprint: null,
@@ -632,35 +941,76 @@ export function useNextDepartureHome({
     }, [focused, refresh, snapshot]);
 
     useEffect(() => {
-        if (observedFallbackRevisionRef.current === fallbackRevision) return;
+        const fallbackChanged =
+            observedFallbackRevisionRef.current !== fallbackRevision;
+        const removalsChanged =
+            observedRemovalRevisionRef.current !== removalRevision;
+        if (!fallbackChanged && !removalsChanged) return;
         observedFallbackRevisionRef.current = fallbackRevision;
+        observedRemovalRevisionRef.current = removalRevision;
+        tombstoneScheduleIdsRef.current = new Set(
+            authoritativeRemovedScheduleIds ?? []
+        );
+        collectionEpochRef.current += 1;
+        requestSequenceRef.current += 1;
+        activeControllerRef.current?.abort();
+        activeControllerRef.current = null;
+        pendingRefreshRef.current = false;
         if (!focused) return;
-        if (snapshot.loading) {
-            pendingRefreshRef.current = true;
-            return;
-        }
 
         const current = snapshotRef.current;
-        const mergedItems = mergeScheduleItems(
-            current.items,
-            fallbackItemsRef.current
+        const hiddenScheduleIds = new Set([
+            ...redactedScheduleIdsRef.current,
+            ...tombstoneScheduleIdsRef.current,
+            ...fullKnownAbsentScheduleIdsRef.current,
+        ]);
+        const mergedItems = removeScheduleIdsFromItems(
+            mergeScheduleItems(
+                hasFullScheduleSnapshotRef.current
+                    ? fullScheduleItemsRef.current
+                    : current.items,
+                fallbackItemsRef.current
+            ),
+            hiddenScheduleIds
+        );
+        if (hasFullScheduleSnapshotRef.current) {
+            fullScheduleItemsRef.current = mergedItems;
+        }
+        const candidateWindow = getDepartureCandidateWindow(
+            mergedItems,
+            new Date(),
+            current.currentMemberId
         );
         commitSnapshot({
             ...current,
+            source: current.source === "loading"
+                ? "calendar-fallback"
+                : current.source,
             items: mergedItems,
-            candidateItems: getDepartureVerificationItems(
-                mergedItems,
-                new Date(),
-                current.currentMemberId
+            candidateItems: candidateWindow.items,
+            statusOrderingSafe: !candidateWindow.truncated,
+            loading: false,
+            statusesByScheduleId: removeScheduleIdsFromRecord(
+                current.statusesByScheduleId,
+                hiddenScheduleIds
+            ),
+            statusIssuesByScheduleId: removeScheduleIdsFromRecord(
+                current.statusIssuesByScheduleId,
+                hiddenScheduleIds
+            ),
+            detailIssuesByScheduleId: removeScheduleIdsFromRecord(
+                current.detailIssuesByScheduleId,
+                hiddenScheduleIds
             ),
         });
         refresh();
     }, [
+        authoritativeRemovedScheduleIds,
         commitSnapshot,
         fallbackRevision,
         focused,
         refresh,
-        snapshot.loading,
+        removalRevision,
     ]);
 
     useEffect(() => {

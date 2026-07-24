@@ -14,11 +14,13 @@ import {
     subscribeAuthInvalidation,
 } from "../src/modules/auth/authStorage";
 import {
+    buildNextDepartureCandidate,
     buildNextDepartureHeroModel,
     selectNextDeparture,
 } from "../src/modules/schedule/nextDeparture";
 import type { ScheduleItem } from "../src/modules/schedule/types";
 import {
+    DEPARTURE_HOME_CANDIDATE_LIMIT,
     getDepartureHomeConnectionIssue,
     useNextDepartureHome,
 } from "../src/modules/schedule/useNextDepartureHome";
@@ -46,6 +48,7 @@ const mockedSubscribeAuthInvalidation = jest.mocked(
     subscribeAuthInvalidation
 );
 const SYSTEM_NOW = new Date("2099-07-24T09:00:00+09:00");
+const NO_REMOVED_SCHEDULES = new Set<string>();
 
 function item(
     id: string,
@@ -102,17 +105,35 @@ function networkFailure(message = "connection unavailable") {
 function Harness({
     fallbackItems = [],
     focused = true,
+    removedScheduleIds = NO_REMOVED_SCHEDULES,
+    onScheduleAccessRevoked,
+    onSessionAccessRejected,
 }: {
     fallbackItems?: ScheduleItem[];
     focused?: boolean;
+    removedScheduleIds?: ReadonlySet<string>;
+    onScheduleAccessRevoked?: (scheduleId: string) => void;
+    onSessionAccessRejected?: () => void;
 }) {
-    const home = useNextDepartureHome({ fallbackItems, focused });
-    const selected = selectNextDeparture(
+    const home = useNextDepartureHome({
+        fallbackItems,
+        focused,
+        authoritativeRemovedScheduleIds: removedScheduleIds,
+        onScheduleAccessRevoked,
+        onSessionAccessRejected,
+    });
+    const ranked = selectNextDeparture(
         home.candidateItems,
-        home.statusesByScheduleId,
+        home.statusOrderingSafe ? home.statusesByScheduleId : {},
         new Date(),
         home.currentMemberId
     );
+    const selected = ranked
+        ? buildNextDepartureCandidate(
+            ranked.item,
+            home.statusesByScheduleId[ranked.item.id]
+        )
+        : null;
     const issue = home.connectionIssue
         ?? (selected
             ? home.statusIssuesByScheduleId[selected.item.id] ?? null
@@ -123,6 +144,9 @@ function Harness({
     const routeSetupCount = home.items.filter(
         (schedule) => schedule.routeSetupRequired === true
     ).length;
+    const routeSetupTarget = home.items.find(
+        (schedule) => schedule.routeSetupRequired === true
+    )?.id ?? "route-none";
     const selectedDetailIssue = selected
         ? home.detailIssuesByScheduleId[selected.item.id] ?? "detail-ok"
         : "detail-none";
@@ -143,6 +167,9 @@ function Harness({
                     model?.etaLabel ?? "no-eta-label",
                     selectedDetailIssue,
                     selectedRoute,
+                    home.statusOrderingSafe ? "order-live" : "order-saved",
+                    routeSetupTarget,
+                    home.loading ? "loading" : "settled",
                 ].join(":")}
             </Text>
             <Text testID="all-items">
@@ -186,6 +213,16 @@ function abortableRequest<T>(
         }
         signal.addEventListener("abort", rejectAbort, { once: true });
     });
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return { promise, reject, resolve };
 }
 
 describe("useNextDepartureHome", () => {
@@ -289,6 +326,78 @@ describe("useNextDepartureHome", () => {
         expect(maxActiveRequests).toBeGreaterThan(1);
         expect(maxActiveRequests).toBeLessThanOrEqual(4);
         expect(snapshot(renderer!)).toContain("schedules:far-seventh:8");
+    });
+
+    test("commits the full list for route setup before bounded fan-out finishes", async () => {
+        const routeSetup = item("route-before-detail", 5, {
+            routeSetupRequired: true,
+        });
+        const detail = deferred<ScheduleItem>();
+        mockedGetSchedules.mockResolvedValue([routeSetup]);
+        mockedGetScheduleForDepartureHome.mockReturnValue(detail.promise);
+        mockedGetScheduleDepartureStatus.mockReturnValue(
+            new Promise<ScheduleDepartureStatus>(() => undefined)
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(<Harness />);
+            await flushAsyncWork();
+        });
+
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("route-before-detail");
+        expect(snapshot(renderer!)).toContain(
+            "schedules:route-before-detail:0:connected:2:1"
+        );
+        expect(snapshot(renderer!)).toContain("route-before-detail:loading");
+
+        act(() => renderer?.unmount());
+        renderer = undefined;
+    });
+
+    test("caps fan-out after sorting local candidates and keeps truncated ordering conservative", async () => {
+        const candidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT + 2 },
+            (_, index) => item(
+                `candidate-${index + 1}`,
+                index + 1,
+                index === DEPARTURE_HOME_CANDIDATE_LIMIT + 1
+                    ? { routeSetupRequired: true }
+                    : {}
+            )
+        ).reverse();
+        mockedGetSchedules.mockResolvedValue(candidates);
+        mockDetails(candidates);
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            id === "candidate-2"
+                ? "2099-07-24T09:01:00+09:00"
+                : id === `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
+                    ? "2099-07-24T09:00:30+09:00"
+                    : `2099-07-24T10:${id.split("-")[1]!.padStart(2, "0")}:00+09:00`
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(<Harness />);
+            await flushAsyncWork();
+        });
+
+        expect(mockedGetScheduleForDepartureHome)
+            .toHaveBeenCalledTimes(DEPARTURE_HOME_CANDIDATE_LIMIT);
+        expect(mockedGetScheduleDepartureStatus)
+            .toHaveBeenCalledTimes(DEPARTURE_HOME_CANDIDATE_LIMIT);
+        const detailIds = mockedGetScheduleForDepartureHome.mock.calls.map(
+            ([scheduleId]) => scheduleId
+        );
+        expect(detailIds).toContain("candidate-1");
+        expect(detailIds).not.toContain(
+            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
+        );
+        expect(snapshot(renderer!)).toContain("schedules:candidate-1");
+        expect(snapshot(renderer!)).toContain("order-saved");
+        expect(snapshot(renderer!)).toContain(
+            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
+        );
     });
 
     test("a multi-day active event and a sole event beyond day fifteen remain candidates without window expansion", async () => {
@@ -409,16 +518,306 @@ describe("useNextDepartureHome", () => {
             .toBe("a,b");
     });
 
+    test("an explicit deletion tombstone removes hero and route target before an offline refresh completes", async () => {
+        const deleted = item("deleted-route", 5, {
+            routeSetupRequired: true,
+        });
+        const pendingList = deferred<ScheduleItem[]>();
+        mockedGetSchedules
+            .mockResolvedValueOnce([deleted])
+            .mockReturnValueOnce(pendingList.promise);
+        mockDetails([deleted]);
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            deleted.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[deleted]} />
+            );
+            await flushAsyncWork();
+        });
+        expect(snapshot(renderer!)).toContain("schedules:deleted-route");
+
+        await act(async () => {
+            renderer!.update(
+                <Harness
+                    fallbackItems={[]}
+                    removedScheduleIds={new Set([deleted.id])}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+        expect(snapshot(renderer!)).toContain("none:0:connected:2:0");
+        expect(snapshot(renderer!)).toContain("route-none");
+
+        await act(async () => {
+            pendingList.reject(networkFailure());
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+    });
+
+    test("a successful full-list omission overrides a stale range fallback without inferring other range absences", async () => {
+        const deleted = item("full-list-absent", 5, {
+            routeSetupRequired: true,
+        });
+        mockedGetSchedules
+            .mockResolvedValueOnce([deleted])
+            .mockResolvedValueOnce([])
+            .mockRejectedValueOnce(networkFailure());
+        mockDetails([deleted]);
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            deleted.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[deleted]} />
+            );
+            await flushAsyncWork();
+        });
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+        expect(snapshot(renderer!)).toContain("route-none");
+    });
+
+    test("a tombstone during fan-out aborts the old run and a late detail cannot resurrect it", async () => {
+        const deleted = item("deleted-during-fanout", 5, {
+            routeSetupRequired: true,
+        });
+        const lateDetail = deferred<ScheduleItem>();
+        mockedGetSchedules
+            .mockResolvedValueOnce([deleted])
+            .mockRejectedValueOnce(networkFailure());
+        mockedGetScheduleForDepartureHome.mockReturnValue(lateDetail.promise);
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            deleted.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[deleted]} />
+            );
+            await flushAsyncWork();
+        });
+        expect(snapshot(renderer!)).toContain("deleted-during-fanout");
+        expect(snapshot(renderer!)).toContain("loading");
+
+        await act(async () => {
+            renderer!.update(
+                <Harness
+                    fallbackItems={[]}
+                    removedScheduleIds={new Set([deleted.id])}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+
+        await act(async () => {
+            lateDetail.resolve(deleted);
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+        expect(snapshot(renderer!)).toContain("route-none");
+    });
+
+    test("consecutive offline failures retain non-deleted full-list items outside the visible fallback", async () => {
+        const deleted = item("deleted-near", 5, {
+            routeSetupRequired: true,
+        });
+        const far = item("far-retained", 10, {
+            startAt: "2099-09-24T10:30:00+09:00",
+            endAt: "2099-09-24T11:30:00+09:00",
+            departAt: "2099-09-24T10:10:00+09:00",
+            routeSetupRequired: true,
+        });
+        mockedGetSchedules
+            .mockResolvedValueOnce([deleted, far])
+            .mockRejectedValue(networkFailure());
+        mockDetails([deleted, far]);
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            id === deleted.id ? deleted.departAt! : far.departAt!
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[deleted]} />
+            );
+            await flushAsyncWork();
+        });
+
+        await act(async () => {
+            renderer!.update(
+                <Harness
+                    fallbackItems={[]}
+                    removedScheduleIds={new Set([deleted.id])}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("far-retained");
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("far-retained");
+        expect(snapshot(renderer!)).toContain("far-retained");
+        expect(snapshot(renderer!)).toContain("far-retained:settled");
+    });
+
+    test("focus return overlays completed fallback immediately before a slow network revalidation", async () => {
+        const a = item("completed-while-away", 5, { ownerMemberId: 2 });
+        const completedA = {
+            ...a,
+            myDepartedAt: "2099-07-24T09:02:00+09:00",
+            updatedAt: "2099-07-24T09:02:00+09:00",
+        };
+        const b = item("still-upcoming", 10, { ownerMemberId: 2 });
+        const slowList = deferred<ScheduleItem[]>();
+        mockedGetSchedules
+            .mockResolvedValueOnce([a, b])
+            .mockReturnValueOnce(slowList.promise);
+        mockDetails([a, b]);
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            id === a.id
+                ? "2099-07-24T10:05:00+09:00"
+                : "2099-07-24T10:10:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[a, b]} focused />
+            );
+            await flushAsyncWork();
+        });
+        expect(snapshot(renderer!)).toContain("schedules:completed-while-away");
+
+        await act(async () => {
+            renderer!.update(
+                <Harness fallbackItems={[completedA, b]} focused={false} />
+            );
+            await flushAsyncWork();
+        });
+        await act(async () => {
+            renderer!.update(
+                <Harness fallbackItems={[completedA, b]} focused />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(snapshot(renderer!)).toContain("schedules:still-upcoming");
+        expect(snapshot(renderer!)).toContain("loading");
+
+        await act(async () => {
+            slowList.reject(networkFailure());
+            await flushAsyncWork();
+        });
+        expect(snapshot(renderer!)).toContain(
+            "calendar-fallback:still-upcoming"
+        );
+    });
+
+    test("focus return keeps the latest completion while a large bounded fan-out is pending", async () => {
+        const a = item("completed-before-large-run", 1, { ownerMemberId: 2 });
+        const completedA = {
+            ...a,
+            myDepartedAt: "2099-07-24T09:03:00+09:00",
+            updatedAt: "2099-07-24T09:03:00+09:00",
+        };
+        const others = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT + 1 },
+            (_, index) => item(`large-${index + 1}`, index + 2, {
+                ownerMemberId: 2,
+            })
+        );
+        mockedGetSchedules
+            .mockResolvedValueOnce([a, ...others])
+            .mockResolvedValueOnce([a, ...others]);
+        mockDetails([a, ...others]);
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            `2099-07-24T10:${id === a.id ? "01" : "30"}:00+09:00`
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness fallbackItems={[a, ...others]} focused />
+            );
+            await flushAsyncWork();
+        });
+        await act(async () => {
+            renderer!.update(
+                <Harness
+                    fallbackItems={[completedA, ...others]}
+                    focused={false}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        mockedGetScheduleForDepartureHome.mockImplementation(
+            async () => new Promise<ScheduleItem>(() => undefined)
+        );
+        mockedGetScheduleDepartureStatus.mockImplementation(
+            async () => new Promise<ScheduleDepartureStatus>(() => undefined)
+        );
+        await act(async () => {
+            renderer!.update(
+                <Harness
+                    fallbackItems={[completedA, ...others]}
+                    focused
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(snapshot(renderer!)).toContain("schedules:large-1");
+        expect(snapshot(renderer!)).not.toContain("completed-before-large-run");
+        expect(snapshot(renderer!)).toContain("loading");
+
+        act(() => renderer?.unmount());
+        renderer = undefined;
+    });
+
     test("unchanged stale snapshots back off at one, two, then capped five minutes", async () => {
         const candidate = item("stale", 5);
         mockedGetSchedules.mockResolvedValue([candidate]);
         mockDetails([candidate]);
-        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+        mockedGetScheduleDepartureStatus.mockImplementation(async () => status(
             candidate.id,
             "2099-07-24T10:05:00+09:00",
             {
                 stale: true,
-                nextCheckAt: "2099-07-24T08:59:00+09:00",
+                evaluatedAt: new Date().toISOString(),
+                liveFetchedAt: new Date().toISOString(),
+                nextCheckAt: new Date(Date.now() - 1_000).toISOString(),
             }
         ));
 
@@ -563,6 +962,95 @@ describe("useNextDepartureHome", () => {
             .toBe("b-1");
     });
 
+    test("a post-refresh 401 redacts the current schedule session instead of purging one ID", async () => {
+        const privateItem = item("private-session-item", 5, {
+            routeSetupRequired: true,
+        });
+        const revokeOne = jest.fn();
+        const rejectSession = jest.fn();
+        mockedGetSchedules.mockResolvedValue([privateItem]);
+        mockedGetScheduleForDepartureHome.mockRejectedValue(
+            new ApiResponseError("unauthorized", { status: 401 })
+        );
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            privateItem.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[privateItem]}
+                    onScheduleAccessRevoked={revokeOne}
+                    onSessionAccessRejected={rejectSession}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(rejectSession).toHaveBeenCalledTimes(1);
+        expect(revokeOne).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+        expect(snapshot(renderer!)).toContain(
+            "calendar-fallback:none:0:error:anonymous:0"
+        );
+    });
+
+    test("a late access denial from auth epoch A cannot purge account B", async () => {
+        const accountAItem = item("account-a-private", 5);
+        const accountBItem = item("account-b-current", 10, {
+            ownerMemberId: 2,
+        });
+        const lateDetail = deferred<ScheduleItem>();
+        const revoked = jest.fn();
+        let memberId = 1;
+        mockedGetAuthMember.mockImplementation(async () => ({ id: memberId }));
+        mockedGetSchedules.mockImplementation(async () => (
+            memberId === 1 ? [accountAItem] : [accountBItem]
+        ));
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => (
+            id === accountAItem.id ? lateDetail.promise : accountBItem
+        ));
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            id === accountAItem.id
+                ? "2099-07-24T10:05:00+09:00"
+                : "2099-07-24T10:10:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[accountAItem]}
+                    onScheduleAccessRevoked={revoked}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        memberId = 2;
+        await act(async () => {
+            await authInvalidationListener?.();
+            renderer!.update(
+                <Harness
+                    fallbackItems={[accountBItem]}
+                    onScheduleAccessRevoked={revoked}
+                />
+            );
+            await flushAsyncWork();
+        });
+        await act(async () => {
+            lateDetail.reject(new ApiResponseError("forbidden", { status: 403 }));
+            await flushAsyncWork();
+        });
+
+        expect(revoked).not.toHaveBeenCalledWith(accountAItem.id);
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("account-b-current");
+        expect(snapshot(renderer!)).toContain("schedules:account-b-current");
+    });
+
     test("a newer overlapping refresh aborts and cannot be overwritten by the older result", async () => {
         const initial = item("initial", 5);
         const stale = item("stale-overlap", 10);
@@ -692,7 +1180,10 @@ describe("useNextDepartureHome", () => {
         new ApiResponseError("forbidden", { status: 403 }),
         new ApiResponseError("gone", { status: 404 }),
     ])("authoritative detail failure excludes an unverified candidate", async (failure) => {
-        const candidate = item("unverified", 5);
+        const revoked = jest.fn();
+        const candidate = item("unverified", 5, {
+            routeSetupRequired: true,
+        });
         mockedGetSchedules.mockResolvedValue([candidate]);
         mockedGetScheduleForDepartureHome.mockRejectedValue(failure);
         mockedGetScheduleDepartureStatus.mockResolvedValue(status(
@@ -701,11 +1192,20 @@ describe("useNextDepartureHome", () => {
         ));
 
         await act(async () => {
-            renderer = TestRenderer.create(<Harness />);
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[candidate]}
+                    onScheduleAccessRevoked={revoked}
+                />
+            );
             await flushAsyncWork();
         });
 
-        expect(snapshot(renderer!)).toContain("schedules:none:1:connected");
+        expect(snapshot(renderer!)).toContain("schedules:none:0:connected:2:0");
+        expect(snapshot(renderer!)).toContain("order-live:route-none");
+        expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
+            .toBe("");
+        expect(revoked).toHaveBeenCalledWith("unverified");
     });
 
     test("a mismatched detail response is excluded without turning live status into a saved-data error", async () => {
@@ -725,7 +1225,7 @@ describe("useNextDepartureHome", () => {
             await flushAsyncWork();
         });
 
-        expect(snapshot(renderer!)).toContain("schedules:none:1:connected");
+        expect(snapshot(renderer!)).toContain("schedules:none:0:connected");
     });
 
     test("authoritative detail nulls clear stale route and travel-plan values", async () => {
