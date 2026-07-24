@@ -95,9 +95,11 @@ import {
     clearCalendarScheduleCache,
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
+    reconcileCalendarScheduleCacheWithFullList,
     removeCalendarScheduleCacheItem,
     refreshCalendarScheduleCache,
     subscribeCalendarScheduleCacheInvalidated,
+    upsertCalendarScheduleCacheItem,
 } from "../../src/modules/schedule/calendarScheduleCache";
 import {
     getCalendarMetadataPrefetchMonthKeys,
@@ -166,6 +168,9 @@ import {
     selectNextDeparture,
 } from "../../src/modules/schedule/nextDeparture";
 import { useNextDepartureHome } from "../../src/modules/schedule/useNextDepartureHome";
+import {
+    ScheduleSessionRequestFence,
+} from "../../src/modules/schedule/sessionRequestFence";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const getErrorMessage = (error: unknown) => {
@@ -471,7 +476,6 @@ export default function ScheduleIndex() {
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
-    const searchSequenceRef = useRef(0);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
     const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
@@ -563,7 +567,9 @@ export default function ScheduleIndex() {
     const addHandoffClosingRef = useRef(false);
     const addHandoffNativeResetRef = useRef(false);
     const handledFocusRequestRef = useRef<string | null>(null);
-    const scheduleLoadSequenceRef = useRef(0);
+    const scheduleSessionFenceRef = useRef(
+        new ScheduleSessionRequestFence()
+    );
     const calendarMetadataMountedRef = useRef(true);
     const calendarMetadataLoadedMonthKeysRef = useRef(new Set<string>());
     const calendarMetadataInFlightMonthKeysRef = useRef(new Set<string>());
@@ -1491,15 +1497,25 @@ export default function ScheduleIndex() {
     }, []);
 
     const loadSchedules = useCallback(async () => {
-        const requestSequence = scheduleLoadSequenceRef.current + 1;
-        scheduleLoadSequenceRef.current = requestSequence;
+        const request = scheduleSessionFenceRef.current.begin("schedule");
+        if (!request) {
+            dispatch({ type: "SET_LOADING", loading: false });
+            return;
+        }
+        const isCurrentRequest = () => (
+            scheduleSessionFenceRef.current.isCurrent(request)
+        );
         const cached = readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt);
         const hasVisibleMonthCache = hasCalendarScheduleMonthCache(fetchVisibleMonth);
 
         const hasNewCachedItems = cached.items.some(
             (item) => scheduleItemsByIdRef.current[item.id] !== item
         );
-        if (cached.cachedMonthKeys.length > 0 && hasNewCachedItems) {
+        if (
+            isCurrentRequest()
+            && cached.cachedMonthKeys.length > 0
+            && hasNewCachedItems
+        ) {
             // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
             dispatch({ type: "SET_ITEMS", items: cached.items });
         }
@@ -1510,6 +1526,7 @@ export default function ScheduleIndex() {
         // 초기 진입 또는 캐시 범위를 벗어난 월에서만 앞뒤 2개월을 한 번에 다시 채운다.
         if (hasVisibleMonthCache) {
             dispatch({ type: "SET_LOADING", loading: false });
+            scheduleSessionFenceRef.current.finish(request);
             return;
         }
 
@@ -1517,21 +1534,31 @@ export default function ScheduleIndex() {
             const refreshed = await refreshCalendarScheduleCache(
                 scheduleFetchStartAt,
                 scheduleFetchEndAt,
-                getCalendarSchedules,
+                async (startAt, endAt) => {
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    const nextItems = await getCalendarSchedules(startAt, endAt);
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    return nextItems;
+                },
             );
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
+            if (!isCurrentRequest()) return;
             dispatch({ type: "SET_ITEMS", items: refreshed.items });
         } catch (error) {
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
+            if (!isCurrentRequest()) return;
             // 화면에 표시할 월이 캐시에 있으면 프리패치 실패가 기존 일정을 가리지 않게 한다.
             if (!hasVisibleMonthCache) {
                 const message = getErrorMessage(error);
                 dispatch({ type: "SET_ERROR", error: message });
             }
         } finally {
-            if (requestSequence === scheduleLoadSequenceRef.current) {
+            if (isCurrentRequest()) {
                 dispatch({ type: "SET_LOADING", loading: false });
             }
+            scheduleSessionFenceRef.current.finish(request);
         }
     }, [dispatch, fetchVisibleMonth, scheduleFetchEndAt, scheduleFetchStartAt]);
 
@@ -1540,6 +1567,7 @@ export default function ScheduleIndex() {
             dispatch({ type: "SET_LOADING", loading: false });
             return undefined;
         }
+        const sessionFence = scheduleSessionFenceRef.current;
 
         const synchronizeAndLoad = () => {
             synchronizeCalendarScheduleCacheRevision()
@@ -1560,7 +1588,7 @@ export default function ScheduleIndex() {
             unsubscribeInvalidated();
             // 화면을 벗어나거나 조회 범위가 바뀐 뒤 도착한 응답이
             // 상세 화면의 최신 수정값을 덮지 못하도록 무효화한다.
-            scheduleLoadSequenceRef.current += 1;
+            sessionFence.invalidate("schedule");
         };
     }, [dispatch, isFocused, loadSchedules]);
 
@@ -1750,18 +1778,48 @@ export default function ScheduleIndex() {
         setSearchResults((current) => current.filter(
             (item) => item.id !== scheduleId
         ));
-        dispatch({ type: "DELETE_ITEM", id: scheduleId });
+        dispatch({ type: "REDACT_ITEM", id: scheduleId });
+    }, [dispatch]);
+    const handleScheduleRestored = useCallback((item: ScheduleItem) => {
+        upsertCalendarScheduleCacheItem(item);
+        dispatch({ type: "RESTORE_ITEM", item });
     }, [dispatch]);
     const handleScheduleSessionRejected = useCallback(() => {
-        clearCalendarScheduleCache();
+        scheduleSessionFenceRef.current.rejectSession();
         setSearchResults([]);
+        setSearchLoading(false);
+        setSearchError(null);
         dispatch({ type: "SET_ITEMS", items: [] });
+        clearCalendarScheduleCache();
+    }, [dispatch]);
+    const handleFullSchedulesVerified = useCallback((verifiedItems: ScheduleItem[]) => {
+        const verifiedIds = new Set(verifiedItems.map((item) => item.id));
+        const removedIds = new Set([
+            ...reconcileCalendarScheduleCacheWithFullList(verifiedIds),
+            ...Object.keys(scheduleItemsByIdRef.current).filter(
+                (scheduleId) => !verifiedIds.has(scheduleId)
+            ),
+        ]);
+        if (removedIds.size > 0) {
+            setSearchResults((current) => current.filter(
+                (item) => !removedIds.has(item.id)
+            ));
+            removedIds.forEach((scheduleId) => {
+                dispatch({ type: "REDACT_ITEM", id: scheduleId });
+            });
+        }
+        if (!scheduleSessionFenceRef.current.acceptVerifiedSession()) return;
+        dispatch({ type: "SET_ITEMS", items: verifiedItems });
+        setSearchRetryKey((current) => current + 1);
     }, [dispatch]);
     const departureHome = useNextDepartureHome({
         fallbackItems: itemsArray,
         focused: isFocused,
         authoritativeRemovedScheduleIds: removedItemIds,
         onScheduleAccessRevoked: handleScheduleAccessRevoked,
+        onScheduleAuthoritativelyRemoved: handleScheduleAccessRevoked,
+        onScheduleRestored: handleScheduleRestored,
+        onFullSchedulesVerified: handleFullSchedulesVerified,
         onSessionAccessRejected: handleScheduleSessionRejected,
     });
     const rankedNextDepartureCandidate = useMemo(
@@ -1785,12 +1843,15 @@ export default function ScheduleIndex() {
         () => rankedNextDepartureCandidate
             ? buildNextDepartureCandidate(
                 rankedNextDepartureCandidate.item,
-                departureHome.statusesByScheduleId[
-                    rankedNextDepartureCandidate.item.id
-                ]
+                departureHome.statusOrderingSafe
+                    ? departureHome.statusesByScheduleId[
+                        rankedNextDepartureCandidate.item.id
+                    ]
+                    : undefined
             )
             : null,
         [
+            departureHome.statusOrderingSafe,
             departureHome.statusesByScheduleId,
             rankedNextDepartureCandidate,
         ]
@@ -1824,37 +1885,50 @@ export default function ScheduleIndex() {
         [state.categories]
     );
     useEffect(() => {
+        const sessionFence = scheduleSessionFenceRef.current;
         const keyword = searchQuery.trim();
-        const sequence = searchSequenceRef.current + 1;
-        searchSequenceRef.current = sequence;
         if (!keyword) {
+            sessionFence.invalidate("search");
             setSearchResults([]);
             setSearchLoading(false);
             setSearchError(null);
             return undefined;
         }
+        const request = sessionFence.begin("search");
+        if (!request) {
+            setSearchResults([]);
+            setSearchLoading(false);
+            setSearchError(null);
+            return undefined;
+        }
+        const isCurrentRequest = () => (
+            sessionFence.isCurrent(request)
+        );
 
         setSearchLoading(true);
         setSearchError(null);
         const timer = setTimeout(() => {
             searchSchedules({ keyword })
                 .then((items) => {
-                    if (searchSequenceRef.current !== sequence) return;
+                    if (!isCurrentRequest()) return;
                     setSearchResults(items
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
                         .slice(0, 20));
                 })
                 .catch((error) => {
-                    if (searchSequenceRef.current !== sequence) return;
+                    if (!isCurrentRequest()) return;
                     setSearchResults([]);
                     setSearchError(getErrorMessage(error));
                 })
                 .finally(() => {
-                    if (searchSequenceRef.current === sequence) setSearchLoading(false);
+                    if (isCurrentRequest()) setSearchLoading(false);
                 });
         }, 300);
 
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            sessionFence.invalidate("search");
+        };
     }, [searchQuery, searchRetryKey]);
 
     // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
@@ -1866,7 +1940,7 @@ export default function ScheduleIndex() {
             const item = await createSchedule(payload);
             // 생성 요청보다 먼저 시작된 캘린더 조회는 새 일정을 포함하지 않을 수 있다.
             // 해당 응답을 무효화해 방금 저장한 일정이 화면에서 다시 사라지지 않게 한다.
-            scheduleLoadSequenceRef.current += 1;
+            scheduleSessionFenceRef.current.invalidate("schedule");
             dispatch({ type: "ADD_ITEM", item });
             dispatch({ type: "SET_LOADING", loading: false });
         } catch (error) {

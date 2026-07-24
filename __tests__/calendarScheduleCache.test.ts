@@ -2,6 +2,7 @@ import {
     clearCalendarScheduleCache,
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
+    reconcileCalendarScheduleCacheWithFullList,
     refreshCalendarScheduleCache,
     removeCalendarScheduleCacheItem,
     subscribeCalendarScheduleCacheInvalidated,
@@ -22,6 +23,14 @@ function schedule(id: string, startAt: Date, endAt = startAt): ScheduleItem {
 
 function localDate(year: number, monthIndex: number, day: number): Date {
     return new Date(year, monthIndex, day, 9, 0, 0, 0);
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
 }
 
 describe("calendar schedule month cache", () => {
@@ -113,6 +122,42 @@ describe("calendar schedule month cache", () => {
 
         removeCalendarScheduleCacheItem(moved.id);
         expect(readCalendarScheduleCache(january.startAt, march.endAt).items).toEqual([]);
+    });
+
+    test("authoritative full list purges absent cache items and fences a late range response", async () => {
+        const january = getMonthRange("2026-01-01");
+        const february = getMonthRange("2026-02-01");
+        const kept = schedule("kept", localDate(2026, 0, 10));
+        const stale = schedule("stale-private", localDate(2026, 0, 12));
+        await refreshCalendarScheduleCache(
+            january.startAt,
+            january.endAt,
+            jest.fn().mockResolvedValue([kept, stale]),
+        );
+
+        const lateRange = deferred<ScheduleItem[]>();
+        const pendingRefresh = refreshCalendarScheduleCache(
+            february.startAt,
+            february.endAt,
+            jest.fn().mockReturnValue(lateRange.promise),
+        );
+        const removed = reconcileCalendarScheduleCacheWithFullList(
+            new Set([kept.id])
+        );
+
+        expect(removed).toEqual([stale.id]);
+        expect(
+            readCalendarScheduleCache(january.startAt, january.endAt)
+                .items.map((item) => item.id)
+        ).toEqual([kept.id]);
+
+        lateRange.resolve([
+            schedule(stale.id, localDate(2026, 1, 12)),
+        ]);
+        await pendingRefresh;
+        expect(
+            readCalendarScheduleCache(february.startAt, february.endAt).items
+        ).toEqual([]);
     });
 
     test("원격 공유 변경으로 캐시를 비우면 화면 구독자에게 다시 조회하도록 알린다", () => {

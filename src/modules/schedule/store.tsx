@@ -25,7 +25,9 @@ export type ScheduleAction =
     | { type: "RESET"; state: ScheduleState }
     | { type: "ADD_ITEM"; item: ScheduleItem }
     | { type: "UPDATE_ITEM"; item: ScheduleItem }
-    | { type: "DELETE_ITEM"; id: string };
+    | { type: "DELETE_ITEM"; id: string }
+    | { type: "REDACT_ITEM"; id: string }
+    | { type: "RESTORE_ITEM"; item: ScheduleItem };
 
 function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
     switch (action.type) {
@@ -86,7 +88,8 @@ function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
             return {...state, error: action.error};
 
         case "ADD_ITEM":
-        case "UPDATE_ITEM": {
+        case "UPDATE_ITEM":
+        case "RESTORE_ITEM": {
             return {
                 ...state,
                 error: null,
@@ -97,7 +100,8 @@ function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
             };
         }
 
-        case "DELETE_ITEM": {
+        case "DELETE_ITEM":
+        case "REDACT_ITEM": {
             const next = {...state.itemsById};
             delete next[action.id];
             return {...state, error: null, itemsById: next};
@@ -112,6 +116,7 @@ const ScheduleContext = createContext<{
     state: ScheduleState;
     dispatch: React.Dispatch<ScheduleAction>;
     removedItemIds: ReadonlySet<string>;
+    redactedItemIds: ReadonlySet<string>;
 } | null>(null);
 
 export function ScheduleProvider({
@@ -126,13 +131,22 @@ export function ScheduleProvider({
     const [removedItemIds, setRemovedItemIds] = useState<ReadonlySet<string>>(
         removedItemIdsRef.current
     );
+    const redactedItemIdsRef = useRef<ReadonlySet<string>>(new Set());
+    const [redactedItemIds, setRedactedItemIds] = useState<ReadonlySet<string>>(
+        redactedItemIdsRef.current
+    );
     const updateRemovedItemIds = useCallback((next: ReadonlySet<string>) => {
         removedItemIdsRef.current = next;
         setRemovedItemIds(next);
     }, []);
+    const updateRedactedItemIds = useCallback((next: ReadonlySet<string>) => {
+        redactedItemIdsRef.current = next;
+        setRedactedItemIds(next);
+    }, []);
     const dispatch = useCallback((action: ScheduleAction) => {
         if (action.type === "RESET") {
             updateRemovedItemIds(new Set());
+            updateRedactedItemIds(new Set());
             baseDispatch(action);
             return;
         }
@@ -143,18 +157,43 @@ export function ScheduleProvider({
             baseDispatch(action);
             return;
         }
+        if (action.type === "REDACT_ITEM") {
+            if (!redactedItemIdsRef.current.has(action.id)) {
+                const next = new Set(redactedItemIdsRef.current);
+                next.add(action.id);
+                updateRedactedItemIds(next);
+            }
+            baseDispatch(action);
+            return;
+        }
+        if (action.type === "RESTORE_ITEM") {
+            if (removedItemIdsRef.current.has(action.item.id)) return;
+            if (redactedItemIdsRef.current.has(action.item.id)) {
+                const next = new Set(redactedItemIdsRef.current);
+                next.delete(action.item.id);
+                updateRedactedItemIds(next);
+            }
+            baseDispatch(action);
+            return;
+        }
         if (action.type === "SET_ITEMS") {
             baseDispatch({
                 ...action,
                 items: action.items.filter(
-                    (item) => !removedItemIdsRef.current.has(item.id)
+                    (item) => (
+                        !removedItemIdsRef.current.has(item.id)
+                        && !redactedItemIdsRef.current.has(item.id)
+                    )
                 ),
             });
             return;
         }
         if (
             action.type === "UPDATE_ITEM"
-            && removedItemIdsRef.current.has(action.item.id)
+            && (
+                removedItemIdsRef.current.has(action.item.id)
+                || redactedItemIdsRef.current.has(action.item.id)
+            )
         ) {
             return;
         }
@@ -164,17 +203,22 @@ export function ScheduleProvider({
                 next.delete(action.item.id);
                 updateRemovedItemIds(next);
             }
+            if (redactedItemIdsRef.current.has(action.item.id)) {
+                const next = new Set(redactedItemIdsRef.current);
+                next.delete(action.item.id);
+                updateRedactedItemIds(next);
+            }
         }
         baseDispatch(action);
-    }, [updateRemovedItemIds]);
+    }, [updateRedactedItemIds, updateRemovedItemIds]);
     useEffect(() => subscribeAuthInvalidation(() => {
         // 계정이 바뀌면 이전 회원의 월별 일정 캐시도 상태와 함께 제거한다.
         clearCalendarScheduleCache();
         dispatch({ type: "RESET", state: initialState });
     }), [dispatch, initialState]);
     const value = useMemo(
-        () => ({ state, dispatch, removedItemIds }),
-        [dispatch, removedItemIds, state]
+        () => ({ state, dispatch, removedItemIds, redactedItemIds }),
+        [dispatch, redactedItemIds, removedItemIds, state]
     );
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }

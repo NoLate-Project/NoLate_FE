@@ -23,13 +23,25 @@ const privateItem: ScheduleItem = {
 };
 
 function Harness() {
-    const { state, dispatch, removedItemIds } = useScheduleStore();
+    const {
+        state,
+        dispatch,
+        removedItemIds,
+        redactedItemIds,
+    } = useScheduleStore();
+    const agendaItems = Object.values(state.itemsById);
     return (
         <>
             <Text testID="state">
                 {`${Object.keys(state.itemsById).join(",")}:${[
                     ...removedItemIds,
-                ].join(",")}`}
+                ].join(",")}:${[...redactedItemIds].join(",")}`}
+            </Text>
+            <Text testID="agenda-input">
+                {agendaItems.map((item) => item.id).join(",")}
+            </Text>
+            <Text testID="route-target">
+                {agendaItems.find((item) => item.routeSetupRequired)?.id ?? "none"}
             </Text>
             <Pressable
                 testID="delete"
@@ -50,6 +62,20 @@ function Harness() {
                 onPress={() => dispatch({
                     type: "UPDATE_ITEM",
                     item: { ...privateItem, title: "늦은 응답" },
+                })}
+            />
+            <Pressable
+                testID="redact"
+                onPress={() => dispatch({
+                    type: "REDACT_ITEM",
+                    id: privateItem.id,
+                })}
+            />
+            <Pressable
+                testID="restore"
+                onPress={() => dispatch({
+                    type: "RESTORE_ITEM",
+                    item: privateItem,
                 })}
             />
         </>
@@ -79,14 +105,71 @@ describe("ScheduleProvider deletion tombstones", () => {
             renderer!.root.findByProps({ testID: "delete" }).props.onPress();
         });
         expect(renderer!.root.findByProps({ testID: "state" }).props.children)
-            .toBe(":private-a");
+            .toBe(":private-a:");
 
         await act(async () => {
             renderer!.root.findByProps({ testID: "late-set" }).props.onPress();
             renderer!.root.findByProps({ testID: "late-update" }).props.onPress();
         });
         expect(renderer!.root.findByProps({ testID: "state" }).props.children)
-            .toBe(":private-a");
+            .toBe(":private-a:");
+    });
+
+    test("access redaction blocks late range writes but a fenced restore can regrant it", async () => {
+        const initialState = createScheduleInitialState(SYSTEM_NOW);
+        initialState.itemsById = { [privateItem.id]: privateItem };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness />
+                </ScheduleProvider>
+            );
+        });
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "redact" }).props.onPress();
+            renderer!.root.findByProps({ testID: "late-set" }).props.onPress();
+            renderer!.root.findByProps({ testID: "late-update" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ testID: "state" }).props.children)
+            .toBe("::private-a");
+        expect(
+            renderer!.root.findByProps({ testID: "agenda-input" }).props.children
+        ).toBe("");
+        expect(
+            renderer!.root.findByProps({ testID: "route-target" }).props.children
+        ).toBe("none");
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "restore" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ testID: "state" }).props.children)
+            .toBe("private-a::");
+        expect(
+            renderer!.root.findByProps({ testID: "agenda-input" }).props.children
+        ).toBe("private-a");
+        expect(
+            renderer!.root.findByProps({ testID: "route-target" }).props.children
+        ).toBe("private-a");
+    });
+
+    test("a regrant cannot override an explicit user deletion tombstone", async () => {
+        const initialState = createScheduleInitialState(SYSTEM_NOW);
+        initialState.itemsById = { [privateItem.id]: privateItem };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness />
+                </ScheduleProvider>
+            );
+        });
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "delete" }).props.onPress();
+            renderer!.root.findByProps({ testID: "restore" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ testID: "state" }).props.children)
+            .toBe(":private-a:");
     });
 });
 

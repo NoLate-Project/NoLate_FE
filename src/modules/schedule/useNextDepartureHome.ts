@@ -183,7 +183,7 @@ async function mapWithConcurrency<T, R>(
     let nextIndex = 0;
     const workerCount = Math.min(Math.max(1, concurrency), values.length);
 
-    await Promise.all(Array.from({ length: workerCount }, async () => {
+    const workers = Promise.all(Array.from({ length: workerCount }, async () => {
         while (!signal.aborted && isCurrent() && nextIndex < values.length) {
             const index = nextIndex;
             nextIndex += 1;
@@ -191,6 +191,21 @@ async function mapWithConcurrency<T, R>(
             results[index] = await mapper(values[index]!);
         }
     }));
+
+    if (!signal.aborted) {
+        await new Promise<void>((resolve, reject) => {
+            const finish = (callback: () => void) => {
+                signal.removeEventListener("abort", handleAbort);
+                callback();
+            };
+            const handleAbort = () => finish(resolve);
+            signal.addEventListener("abort", handleAbort, { once: true });
+            workers.then(
+                () => finish(resolve),
+                (error) => finish(() => reject(error))
+            );
+        });
+    }
 
     return results.filter((result): result is R => result !== undefined);
 }
@@ -348,12 +363,18 @@ export function useNextDepartureHome({
     focused,
     authoritativeRemovedScheduleIds,
     onScheduleAccessRevoked,
+    onScheduleAuthoritativelyRemoved,
+    onScheduleRestored,
+    onFullSchedulesVerified,
     onSessionAccessRejected,
 }: {
     fallbackItems: ScheduleItem[];
     focused: boolean;
     authoritativeRemovedScheduleIds?: ReadonlySet<string>;
     onScheduleAccessRevoked?: (scheduleId: string) => void;
+    onScheduleAuthoritativelyRemoved?: (scheduleId: string) => void;
+    onScheduleRestored?: (item: ScheduleItem) => void;
+    onFullSchedulesVerified?: (items: ScheduleItem[]) => void;
     onSessionAccessRejected?: () => void;
 }) {
     const requestSequenceRef = useRef(0);
@@ -369,6 +390,15 @@ export function useNextDepartureHome({
     const fullKnownAbsentScheduleIdsRef = useRef(new Set<string>());
     const onScheduleAccessRevokedRef = useRef(onScheduleAccessRevoked);
     onScheduleAccessRevokedRef.current = onScheduleAccessRevoked;
+    const onScheduleAuthoritativelyRemovedRef = useRef(
+        onScheduleAuthoritativelyRemoved
+    );
+    onScheduleAuthoritativelyRemovedRef.current =
+        onScheduleAuthoritativelyRemoved;
+    const onScheduleRestoredRef = useRef(onScheduleRestored);
+    onScheduleRestoredRef.current = onScheduleRestored;
+    const onFullSchedulesVerifiedRef = useRef(onFullSchedulesVerified);
+    onFullSchedulesVerifiedRef.current = onFullSchedulesVerified;
     const onSessionAccessRejectedRef = useRef(onSessionAccessRejected);
     onSessionAccessRejectedRef.current = onSessionAccessRejected;
     const fallbackItemsRef = useRef(fallbackItems);
@@ -461,11 +491,64 @@ export function useNextDepartureHome({
 
         const requestedAt = new Date();
         const memberPromise = getAuthMember().catch(() => null);
+        let sessionAccessRejected = false;
+        const rejectSessionImmediately = () => {
+            if (!isCurrent() || sessionAccessRejected) return;
+            sessionAccessRejected = true;
+            authEpochRef.current += 1;
+            requestSequenceRef.current += 1;
+            controller.abort();
+            redactedScheduleIdsRef.current.clear();
+            tombstoneScheduleIdsRef.current.clear();
+            fullKnownAbsentScheduleIdsRef.current.clear();
+            fullScheduleItemsRef.current = [];
+            hasFullScheduleSnapshotRef.current = false;
+            onSessionAccessRejectedRef.current?.();
+            commitSnapshot({
+                ...createInitialSnapshot(),
+                source: "calendar-fallback",
+                loading: false,
+                connectionIssue: "error",
+                refreshedAt: Date.now(),
+                retryDelayMs: DEPARTURE_HOME_RETRY_BACKOFF_MS[
+                    DEPARTURE_HOME_RETRY_BACKOFF_MS.length - 1
+                ],
+            });
+        };
+        const resetForMemberChange = (latestMemberId?: number) => {
+            if (!isCurrent()) return;
+            authEpochRef.current += 1;
+            controller.abort();
+            requestSequenceRef.current += 1;
+            redactedScheduleIdsRef.current.clear();
+            tombstoneScheduleIdsRef.current.clear();
+            fullKnownAbsentScheduleIdsRef.current.clear();
+            fullScheduleItemsRef.current = [];
+            hasFullScheduleSnapshotRef.current = false;
+            retryStateRef.current = {
+                accountKey: String(latestMemberId ?? "anonymous"),
+                fingerprint: null,
+                consecutive: 0,
+            };
+            pendingRefreshRef.current = focusedRef.current;
+            commitSnapshot({
+                ...createInitialSnapshot(),
+                source: "calendar-fallback",
+                items: [],
+                candidateItems: [],
+                currentMemberId: latestMemberId,
+                loading: false,
+            });
+        };
 
         let items: ScheduleItem[];
         try {
             items = await getSchedules({ signal: controller.signal });
         } catch (error) {
+            if (getDetailAccessFailure(error) === "session") {
+                rejectSessionImmediately();
+                return;
+            }
             const currentMemberId = getMemberId(await memberPromise);
             if (!isCurrent()) return;
             const latestMemberId = getMemberId(
@@ -473,28 +556,7 @@ export function useNextDepartureHome({
             );
             if (!isCurrent()) return;
             if (latestMemberId !== currentMemberId) {
-                authEpochRef.current += 1;
-                controller.abort();
-                requestSequenceRef.current += 1;
-                redactedScheduleIdsRef.current.clear();
-                tombstoneScheduleIdsRef.current.clear();
-                fullKnownAbsentScheduleIdsRef.current.clear();
-                fullScheduleItemsRef.current = [];
-                hasFullScheduleSnapshotRef.current = false;
-                retryStateRef.current = {
-                    accountKey: String(latestMemberId ?? "anonymous"),
-                    fingerprint: null,
-                    consecutive: 0,
-                };
-                pendingRefreshRef.current = focusedRef.current;
-                commitSnapshot({
-                    ...createInitialSnapshot(),
-                    source: "calendar-fallback",
-                    items: [],
-                    candidateItems: [],
-                    currentMemberId: latestMemberId,
-                    loading: false,
-                });
+                resetForMemberChange(latestMemberId);
                 return;
             }
 
@@ -564,48 +626,97 @@ export function useNextDepartureHome({
         const storedMember = await memberPromise;
         const currentMemberId = getMemberId(storedMember);
         if (!isCurrent()) return;
+        const confirmedMemberId = getMemberId(
+            await getAuthMember().catch(() => null)
+        );
+        if (!isCurrent()) return;
+        if (confirmedMemberId !== currentMemberId) {
+            resetForMemberChange(confirmedMemberId);
+            return;
+        }
+        onFullSchedulesVerifiedRef.current?.(items);
+        if (!isCurrent()) return;
 
+        const authoritativeItemsById = new Map(
+            items.map((item) => [item.id, item])
+        );
         const returnedScheduleIds = new Set(items.map((item) => item.id));
         const previouslyKnownScheduleIds = new Set([
             ...fullScheduleItemsRef.current.map((item) => item.id),
             ...fallbackItemsRef.current.map((item) => item.id),
             ...snapshotRef.current.items.map((item) => item.id),
         ]);
+        const accessRegrantScheduleIds = new Set<string>();
         returnedScheduleIds.forEach((scheduleId) => {
+            if (
+                redactedScheduleIdsRef.current.has(scheduleId)
+                && !tombstoneScheduleIdsRef.current.has(scheduleId)
+            ) {
+                accessRegrantScheduleIds.add(scheduleId);
+            }
+            const restoredItem = authoritativeItemsById.get(scheduleId);
+            const wasKnownAbsent =
+                fullKnownAbsentScheduleIdsRef.current.has(scheduleId);
             fullKnownAbsentScheduleIdsRef.current.delete(scheduleId);
+            if (wasKnownAbsent && restoredItem && isCurrent()) {
+                onScheduleRestoredRef.current?.(restoredItem);
+            }
         });
         previouslyKnownScheduleIds.forEach((scheduleId) => {
             if (!returnedScheduleIds.has(scheduleId)) {
+                const newlyAbsent =
+                    !fullKnownAbsentScheduleIdsRef.current.has(scheduleId);
                 fullKnownAbsentScheduleIdsRef.current.add(scheduleId);
+                if (newlyAbsent && isCurrent()) {
+                    onScheduleAuthoritativelyRemovedRef.current?.(scheduleId);
+                }
             }
         });
         items = mergeScheduleItems(items, fallbackItemsRef.current);
-        const preflightHiddenScheduleIds = new Set([
+        const displayHiddenScheduleIds = new Set([
             ...redactedScheduleIdsRef.current,
             ...tombstoneScheduleIdsRef.current,
             ...fullKnownAbsentScheduleIdsRef.current,
         ]);
-        items = removeScheduleIdsFromItems(items, preflightHiddenScheduleIds);
-        const candidateWindow = getDepartureCandidateWindow(
+        const verificationHiddenScheduleIds = new Set([
+            ...tombstoneScheduleIdsRef.current,
+            ...fullKnownAbsentScheduleIdsRef.current,
+        ]);
+        redactedScheduleIdsRef.current.forEach((scheduleId) => {
+            if (!accessRegrantScheduleIds.has(scheduleId)) {
+                verificationHiddenScheduleIds.add(scheduleId);
+            }
+        });
+        const displayedItems = removeScheduleIdsFromItems(
             items,
+            displayHiddenScheduleIds
+        );
+        const verificationSourceItems = removeScheduleIdsFromItems(
+            items,
+            verificationHiddenScheduleIds
+        );
+        const candidateWindow = getDepartureCandidateWindow(
+            verificationSourceItems,
             requestedAt,
             currentMemberId
         );
         const verificationItems = candidateWindow.items;
-        fullScheduleItemsRef.current = items;
+        fullScheduleItemsRef.current = displayedItems;
         hasFullScheduleSnapshotRef.current = true;
         const preliminarySnapshot = snapshotRef.current;
         const preliminaryStatuses = preliminarySnapshot.currentMemberId
             === currentMemberId
             ? removeScheduleIdsFromRecord(
                 preliminarySnapshot.statusesByScheduleId,
-                preflightHiddenScheduleIds
+                displayHiddenScheduleIds
             )
             : {};
         commitSnapshot({
             source: "schedules",
-            items,
-            candidateItems: verificationItems,
+            items: displayedItems,
+            candidateItems: verificationItems.filter(
+                (item) => !displayHiddenScheduleIds.has(item.id)
+            ),
             statusesByScheduleId: preliminaryStatuses,
             statusIssuesByScheduleId: {},
             detailIssuesByScheduleId: {},
@@ -622,6 +733,60 @@ export function useNextDepartureHome({
             { kind: "detail" as const, item },
             { kind: "status" as const, item },
         ]);
+        const previous = snapshotRef.current;
+        const previousStatuses = previous.currentMemberId === currentMemberId
+            ? previous.statusesByScheduleId
+            : {};
+        const detailsByScheduleId: Record<string, ScheduleItem | undefined> = {};
+        const statusesByScheduleId: Record<
+            string,
+            ScheduleDepartureStatus | undefined
+        > = {};
+        const statusIssuesByScheduleId: Record<
+            string,
+            DepartureHomeConnectionIssue | undefined
+        > = {};
+        const detailIssuesByScheduleId: Record<
+            string,
+            DepartureHomeDetailIssue | undefined
+        > = {};
+        const excludedScheduleIds = new Set<string>();
+        const successfulDetailIds = new Set<string>();
+
+        const redactScheduleImmediately = (scheduleId: string) => {
+            if (!isCurrent()) return;
+            const shouldNotify = !redactedScheduleIdsRef.current.has(scheduleId);
+            redactedScheduleIdsRef.current.add(scheduleId);
+            fullScheduleItemsRef.current = removeScheduleIdsFromItems(
+                fullScheduleItemsRef.current,
+                new Set([scheduleId])
+            );
+
+            const current = snapshotRef.current;
+            commitSnapshot({
+                ...current,
+                items: current.items.filter((item) => item.id !== scheduleId),
+                candidateItems: current.candidateItems.filter(
+                    (item) => item.id !== scheduleId
+                ),
+                statusesByScheduleId: removeScheduleIdsFromRecord(
+                    current.statusesByScheduleId,
+                    new Set([scheduleId])
+                ),
+                statusIssuesByScheduleId: removeScheduleIdsFromRecord(
+                    current.statusIssuesByScheduleId,
+                    new Set([scheduleId])
+                ),
+                detailIssuesByScheduleId: removeScheduleIdsFromRecord(
+                    current.detailIssuesByScheduleId,
+                    new Set([scheduleId])
+                ),
+            });
+            if (shouldNotify && isCurrent()) {
+                onScheduleAccessRevokedRef.current?.(scheduleId);
+            }
+        };
+
         const results = await mapWithConcurrency(
             requests,
             DEPARTURE_HOME_REQUEST_CONCURRENCY,
@@ -641,6 +806,18 @@ export function useNextDepartureHome({
                         );
                     return { ...request, value };
                 } catch (error) {
+                    if (request.kind === "detail") {
+                        const accessFailure = getDetailAccessFailure(error);
+                        if (accessFailure === "session") {
+                            rejectSessionImmediately();
+                        } else if (accessFailure === "schedule") {
+                            redactScheduleImmediately(request.item.id);
+                        }
+                    } else if (
+                        getDetailAccessFailure(error) === "session"
+                    ) {
+                        rejectSessionImmediately();
+                    }
                     return { ...request, error };
                 }
             }
@@ -652,52 +829,9 @@ export function useNextDepartureHome({
         );
         if (!isCurrent()) return;
         if (latestMemberId !== currentMemberId) {
-            authEpochRef.current += 1;
-            controller.abort();
-            requestSequenceRef.current += 1;
-            redactedScheduleIdsRef.current.clear();
-            tombstoneScheduleIdsRef.current.clear();
-            fullKnownAbsentScheduleIdsRef.current.clear();
-            fullScheduleItemsRef.current = [];
-            hasFullScheduleSnapshotRef.current = false;
-            retryStateRef.current = {
-                accountKey: String(latestMemberId ?? "anonymous"),
-                fingerprint: null,
-                consecutive: 0,
-            };
-            pendingRefreshRef.current = focusedRef.current;
-            commitSnapshot({
-                ...createInitialSnapshot(),
-                source: "calendar-fallback",
-                items: [],
-                candidateItems: [],
-                currentMemberId: latestMemberId,
-                loading: false,
-            });
+            resetForMemberChange(latestMemberId);
             return;
         }
-
-        const previous = snapshotRef.current;
-        const previousStatuses = previous.currentMemberId === currentMemberId
-            ? previous.statusesByScheduleId
-            : {};
-        const detailsByScheduleId: Record<string, ScheduleItem | undefined> = {};
-        const statusesByScheduleId: Record<
-            string,
-            ScheduleDepartureStatus | undefined
-        > = {};
-        const statusIssuesByScheduleId: Record<
-            string,
-            DepartureHomeConnectionIssue | undefined
-        > = {};
-        const detailIssuesByScheduleId: Record<
-            string,
-            DepartureHomeDetailIssue | undefined
-        > = {};
-        const excludedScheduleIds = new Set<string>();
-        const revokedScheduleIds = new Set<string>();
-        const successfulDetailIds = new Set<string>();
-        let sessionAccessRejected = false;
 
         results.forEach((result) => {
             const scheduleId = result.item.id;
@@ -714,12 +848,10 @@ export function useNextDepartureHome({
                 } else if (result.error) {
                     const accessFailure = getDetailAccessFailure(result.error);
                     if (accessFailure === "session") {
-                        sessionAccessRejected = true;
                         detailIssuesByScheduleId[scheduleId] = "verification";
                     } else if (accessFailure === "schedule") {
                         detailIssuesByScheduleId[scheduleId] = "verification";
                         excludedScheduleIds.add(scheduleId);
-                        revokedScheduleIds.add(scheduleId);
                     } else {
                         detailIssuesByScheduleId[scheduleId] =
                             getDepartureHomeConnectionIssue(result.error);
@@ -748,35 +880,15 @@ export function useNextDepartureHome({
             }
         });
 
-        if (sessionAccessRejected) {
-            if (!isCurrent()) return;
-            authEpochRef.current += 1;
-            requestSequenceRef.current += 1;
-            controller.abort();
-            redactedScheduleIdsRef.current.clear();
-            tombstoneScheduleIdsRef.current.clear();
-            fullKnownAbsentScheduleIdsRef.current.clear();
-            fullScheduleItemsRef.current = [];
-            hasFullScheduleSnapshotRef.current = false;
-            onSessionAccessRejectedRef.current?.();
-            commitSnapshot({
-                ...createInitialSnapshot(),
-                source: "calendar-fallback",
-                loading: false,
-                connectionIssue: "error",
-                refreshedAt: Date.now(),
-                retryDelayMs: DEPARTURE_HOME_RETRY_BACKOFF_MS[
-                    DEPARTURE_HOME_RETRY_BACKOFF_MS.length - 1
-                ],
-            });
-            return;
-        }
-
         successfulDetailIds.forEach((scheduleId) => {
+            const restoredItem = detailsByScheduleId[scheduleId];
+            const wasAccessRedacted =
+                redactedScheduleIdsRef.current.has(scheduleId)
+                && accessRegrantScheduleIds.has(scheduleId);
             redactedScheduleIdsRef.current.delete(scheduleId);
-        });
-        revokedScheduleIds.forEach((scheduleId) => {
-            redactedScheduleIdsRef.current.add(scheduleId);
+            if (wasAccessRedacted && restoredItem && isCurrent()) {
+                onScheduleRestoredRef.current?.(restoredItem);
+            }
         });
         const hiddenScheduleIds = new Set([
             ...redactedScheduleIdsRef.current,
@@ -784,12 +896,6 @@ export function useNextDepartureHome({
             ...fullKnownAbsentScheduleIdsRef.current,
             ...excludedScheduleIds,
         ]);
-        if (!isCurrent()) return;
-        revokedScheduleIds.forEach((scheduleId) => {
-            if (isCurrent()) {
-                onScheduleAccessRevokedRef.current?.(scheduleId);
-            }
-        });
         if (!isCurrent()) return;
 
         const verifiedAllItems = items

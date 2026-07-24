@@ -232,6 +232,25 @@ export function removeCalendarScheduleCacheItem(scheduleId: string): void {
     });
 }
 
+export function reconcileCalendarScheduleCacheWithFullList(
+    authoritativeScheduleIds: ReadonlySet<string>
+): string[] {
+    cacheRevision += 1;
+    const removedScheduleIds = new Set<string>();
+    monthCache.forEach((entry) => {
+        entry.items.forEach((item) => {
+            if (!authoritativeScheduleIds.has(item.id)) {
+                removedScheduleIds.add(item.id);
+            }
+        });
+        entry.items = entry.items.filter(
+            (item) => authoritativeScheduleIds.has(item.id)
+        );
+        entry.lastAccessedAt = Date.now();
+    });
+    return [...removedScheduleIds];
+}
+
 export function clearCalendarScheduleCache(): void {
     cacheRevision += 1;
     monthCache.clear();

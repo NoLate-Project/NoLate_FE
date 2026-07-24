@@ -299,4 +299,50 @@ describe("NextDepartureHero", () => {
             "고객 미팅, 다음 출발이 예정되어 있습니다"
         );
     });
+
+    test("concurrent outgoing and current heroes dedupe the same iOS announcement key", async () => {
+        jest.replaceProperty(Platform, "OS", "ios");
+        const announce = jest.spyOn(
+            AccessibilityInfo,
+            "announceForAccessibility"
+        ).mockImplementation(() => undefined);
+        const transitionItem = {
+            ...item,
+            id: "transition-duplicate",
+            title: "전환 중 일정",
+        };
+        const transitionModel = buildNextDepartureHeroModel(
+            buildNextDepartureCandidate(transitionItem),
+            now
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <>
+                        <NextDepartureHero
+                            model={transitionModel}
+                            loading={false}
+                            connectionIssue={null}
+                            onPressSchedule={jest.fn()}
+                            onPressRetry={jest.fn()}
+                        />
+                        <NextDepartureHero
+                            model={transitionModel}
+                            loading={false}
+                            connectionIssue={null}
+                            onPressSchedule={jest.fn()}
+                            onPressRetry={jest.fn()}
+                        />
+                    </>
+                </ThemeProvider>
+            );
+        });
+
+        expect(announce.mock.calls.filter(
+            ([message]) => (
+                message === "전환 중 일정, 다음 출발이 예정되어 있습니다"
+            )
+        )).toHaveLength(1);
+    });
 });

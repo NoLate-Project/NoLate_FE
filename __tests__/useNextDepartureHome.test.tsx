@@ -107,12 +107,18 @@ function Harness({
     focused = true,
     removedScheduleIds = NO_REMOVED_SCHEDULES,
     onScheduleAccessRevoked,
+    onScheduleAuthoritativelyRemoved,
+    onScheduleRestored,
+    onFullSchedulesVerified,
     onSessionAccessRejected,
 }: {
     fallbackItems?: ScheduleItem[];
     focused?: boolean;
     removedScheduleIds?: ReadonlySet<string>;
     onScheduleAccessRevoked?: (scheduleId: string) => void;
+    onScheduleAuthoritativelyRemoved?: (scheduleId: string) => void;
+    onScheduleRestored?: (item: ScheduleItem) => void;
+    onFullSchedulesVerified?: (items: ScheduleItem[]) => void;
     onSessionAccessRejected?: () => void;
 }) {
     const home = useNextDepartureHome({
@@ -120,6 +126,9 @@ function Harness({
         focused,
         authoritativeRemovedScheduleIds: removedScheduleIds,
         onScheduleAccessRevoked,
+        onScheduleAuthoritativelyRemoved,
+        onScheduleRestored,
+        onFullSchedulesVerified,
         onSessionAccessRejected,
     });
     const ranked = selectNextDeparture(
@@ -131,7 +140,9 @@ function Harness({
     const selected = ranked
         ? buildNextDepartureCandidate(
             ranked.item,
-            home.statusesByScheduleId[ranked.item.id]
+            home.statusOrderingSafe
+                ? home.statusesByScheduleId[ranked.item.id]
+                : undefined
         )
         : null;
     const issue = home.connectionIssue
@@ -174,6 +185,22 @@ function Harness({
             </Text>
             <Text testID="all-items">
                 {home.items.map((schedule) => schedule.id).sort().join(",")}
+            </Text>
+            <Text testID="selected-departure">
+                {selected?.recommendedDepartureAt?.toISOString() ?? "none"}
+            </Text>
+            <Text testID="home-records">
+                {[
+                    ...Object.keys(home.statusesByScheduleId).map(
+                        (scheduleId) => `status:${scheduleId}`
+                    ),
+                    ...Object.keys(home.statusIssuesByScheduleId).map(
+                        (scheduleId) => `status-issue:${scheduleId}`
+                    ),
+                    ...Object.keys(home.detailIssuesByScheduleId).map(
+                        (scheduleId) => `detail-issue:${scheduleId}`
+                    ),
+                ].sort().join(",")}
             </Text>
             <Pressable testID="refresh" onPress={home.refresh} />
         </>
@@ -357,11 +384,11 @@ describe("useNextDepartureHome", () => {
 
     test("caps fan-out after sorting local candidates and keeps truncated ordering conservative", async () => {
         const candidates = Array.from(
-            { length: DEPARTURE_HOME_CANDIDATE_LIMIT + 2 },
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT + 1 },
             (_, index) => item(
                 `candidate-${index + 1}`,
                 index + 1,
-                index === DEPARTURE_HOME_CANDIDATE_LIMIT + 1
+                index === DEPARTURE_HOME_CANDIDATE_LIMIT
                     ? { routeSetupRequired: true }
                     : {}
             )
@@ -370,10 +397,12 @@ describe("useNextDepartureHome", () => {
         mockDetails(candidates);
         mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
             id,
-            id === "candidate-2"
-                ? "2099-07-24T09:01:00+09:00"
-                : id === `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
-                    ? "2099-07-24T09:00:30+09:00"
+            id === "candidate-1"
+                ? "2099-07-24T10:40:00+09:00"
+                : id === "candidate-2"
+                    ? "2099-07-24T09:01:00+09:00"
+                    : id === `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 1}`
+                        ? "2099-07-24T09:00:30+09:00"
                     : `2099-07-24T10:${id.split("-")[1]!.padStart(2, "0")}:00+09:00`
         ));
 
@@ -391,12 +420,17 @@ describe("useNextDepartureHome", () => {
         );
         expect(detailIds).toContain("candidate-1");
         expect(detailIds).not.toContain(
-            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
+            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 1}`
         );
         expect(snapshot(renderer!)).toContain("schedules:candidate-1");
         expect(snapshot(renderer!)).toContain("order-saved");
+        expect(snapshot(renderer!)).toContain("저장된 ETA");
+        expect(
+            renderer!.root.findByProps({ testID: "selected-departure" })
+                .props.children
+        ).toBe("2099-07-24T01:01:00.000Z");
         expect(snapshot(renderer!)).toContain(
-            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 2}`
+            `candidate-${DEPARTURE_HOME_CANDIDATE_LIMIT + 1}`
         );
     });
 
@@ -567,6 +601,7 @@ describe("useNextDepartureHome", () => {
         const deleted = item("full-list-absent", 5, {
             routeSetupRequired: true,
         });
+        const authoritativelyRemoved = jest.fn();
         mockedGetSchedules
             .mockResolvedValueOnce([deleted])
             .mockResolvedValueOnce([])
@@ -579,7 +614,10 @@ describe("useNextDepartureHome", () => {
 
         await act(async () => {
             renderer = TestRenderer.create(
-                <Harness fallbackItems={[deleted]} />
+                <Harness
+                    fallbackItems={[deleted]}
+                    onScheduleAuthoritativelyRemoved={authoritativelyRemoved}
+                />
             );
             await flushAsyncWork();
         });
@@ -589,6 +627,8 @@ describe("useNextDepartureHome", () => {
         });
         expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
             .toBe("");
+        expect(authoritativelyRemoved).toHaveBeenCalledTimes(1);
+        expect(authoritativelyRemoved).toHaveBeenCalledWith(deleted.id);
 
         await act(async () => {
             await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
@@ -597,6 +637,7 @@ describe("useNextDepartureHome", () => {
         expect(renderer!.root.findByProps({ testID: "all-items" }).props.children)
             .toBe("");
         expect(snapshot(renderer!)).toContain("route-none");
+        expect(authoritativelyRemoved).toHaveBeenCalledTimes(1);
     });
 
     test("a tombstone during fan-out aborts the old run and a late detail cannot resurrect it", async () => {
@@ -995,6 +1036,249 @@ describe("useNextDepartureHome", () => {
         expect(snapshot(renderer!)).toContain(
             "calendar-fallback:none:0:error:anonymous:0"
         );
+    });
+
+    test("a full-list 401 immediately redacts fallback and rejects the session once", async () => {
+        const privateItem = item("list-private-item", 5, {
+            routeSetupRequired: true,
+        });
+        const rejectSession = jest.fn();
+        mockedGetSchedules.mockRejectedValue(
+            new ApiResponseError("unauthorized", { status: 401 })
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[privateItem]}
+                    onSessionAccessRejected={rejectSession}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(rejectSession).toHaveBeenCalledTimes(1);
+        expect(mockedGetScheduleForDepartureHome).not.toHaveBeenCalled();
+        expect(mockedGetScheduleDepartureStatus).not.toHaveBeenCalled();
+        expect(snapshot(renderer!)).toContain(
+            "calendar-fallback:none:0:error:anonymous:0"
+        );
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+    });
+
+    test("the first detail 403 immediately redacts its item while the remaining bounded fan-out is pending", async () => {
+        const deniedId = "access-denied-1";
+        const candidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT },
+            (_, index) => item(
+                index === 0 ? deniedId : `access-candidate-${index + 1}`,
+                index + 1,
+                index === 0 ? { routeSetupRequired: true } : {}
+            )
+        );
+        const pendingDetail = deferred<ScheduleItem>();
+        const pendingStatus = deferred<ScheduleDepartureStatus>();
+        const revoked = jest.fn();
+        let rejectAccess = false;
+        mockedGetSchedules.mockResolvedValue(candidates);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (!rejectAccess) {
+                return candidates.find((candidate) => candidate.id === id)!;
+            }
+            if (id === deniedId) {
+                throw new ApiResponseError("forbidden", { status: 403 });
+            }
+            return pendingDetail.promise;
+        });
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => {
+            if (!rejectAccess) {
+                return status(
+                    id,
+                    candidates.find((candidate) => candidate.id === id)!.departAt!
+                );
+            }
+            return pendingStatus.promise;
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness onScheduleAccessRevoked={revoked} />
+            );
+            await flushAsyncWork();
+        });
+        expect(
+            renderer!.root.findByProps({ testID: "home-records" }).props.children
+        ).toContain(`status:${deniedId}`);
+
+        rejectAccess = true;
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(revoked).toHaveBeenCalledTimes(1);
+        expect(revoked).toHaveBeenCalledWith(deniedId);
+        expect(snapshot(renderer!)).toContain(
+            "schedules:access-candidate-2:11:connected:2:0"
+        );
+        expect(snapshot(renderer!)).toContain("loading");
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).not.toContain(deniedId);
+        expect(
+            renderer!.root.findByProps({ testID: "home-records" }).props.children
+        ).not.toContain(deniedId);
+
+        await act(async () => {
+            await flushAsyncWork();
+        });
+        expect(revoked).toHaveBeenCalledTimes(1);
+    });
+
+    test("the first detail 401 immediately redacts the session and aborts pending workers", async () => {
+        const deniedId = "session-denied-1";
+        const candidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT },
+            (_, index) => item(
+                index === 0 ? deniedId : `session-candidate-${index + 1}`,
+                index + 1,
+                index === 0 ? { routeSetupRequired: true } : {}
+            )
+        );
+        const pendingDetail = deferred<ScheduleItem>();
+        const pendingStatus = deferred<ScheduleDepartureStatus>();
+        const revokeOne = jest.fn();
+        const rejectSession = jest.fn();
+        mockedGetSchedules.mockResolvedValue(candidates);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (id === deniedId) {
+                throw new ApiResponseError("unauthorized", { status: 401 });
+            }
+            return pendingDetail.promise;
+        });
+        mockedGetScheduleDepartureStatus.mockReturnValue(pendingStatus.promise);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    onScheduleAccessRevoked={revokeOne}
+                    onSessionAccessRejected={rejectSession}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(rejectSession).toHaveBeenCalledTimes(1);
+        expect(revokeOne).not.toHaveBeenCalled();
+        expect(snapshot(renderer!)).toContain(
+            "calendar-fallback:none:0:error:anonymous:0"
+        );
+        expect(snapshot(renderer!)).toContain("settled");
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+        expect(
+            mockedGetScheduleForDepartureHome.mock.calls.length
+            + mockedGetScheduleDepartureStatus.mock.calls.length
+        ).toBeLessThanOrEqual(4);
+    });
+
+    test("the first departure-status 401 immediately redacts the session and aborts pending workers", async () => {
+        const deniedId = "status-session-denied-1";
+        const candidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT },
+            (_, index) => item(
+                index === 0 ? deniedId : `status-session-candidate-${index + 1}`,
+                index + 1,
+                index === 0 ? { routeSetupRequired: true } : {}
+            )
+        );
+        const pendingDetail = deferred<ScheduleItem>();
+        const pendingStatus = deferred<ScheduleDepartureStatus>();
+        const rejectSession = jest.fn();
+        mockedGetSchedules.mockResolvedValue(candidates);
+        mockedGetScheduleForDepartureHome.mockReturnValue(pendingDetail.promise);
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => {
+            if (id === deniedId) {
+                throw new ApiResponseError("unauthorized", { status: 401 });
+            }
+            return pendingStatus.promise;
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness onSessionAccessRejected={rejectSession} />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(rejectSession).toHaveBeenCalledTimes(1);
+        expect(snapshot(renderer!)).toContain(
+            "calendar-fallback:none:0:error:anonymous:0"
+        );
+        expect(snapshot(renderer!)).toContain("settled");
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+        expect(
+            mockedGetScheduleForDepartureHome.mock.calls.length
+            + mockedGetScheduleDepartureStatus.mock.calls.length
+        ).toBeLessThanOrEqual(4);
+    });
+
+    test("a new authoritative full list revalidates and restores an access-redacted schedule", async () => {
+        const candidate = item("access-regranted", 5, {
+            routeSetupRequired: true,
+        });
+        const restoredCandidate = {
+            ...candidate,
+            title: "다시 공유된 일정",
+            updatedAt: "2099-07-24T09:05:00+09:00",
+        };
+        const revoked = jest.fn();
+        const restored = jest.fn();
+        mockedGetSchedules
+            .mockResolvedValueOnce([candidate])
+            .mockResolvedValueOnce([restoredCandidate]);
+        mockedGetScheduleForDepartureHome
+            .mockRejectedValueOnce(
+                new ApiResponseError("forbidden", { status: 403 })
+            )
+            .mockResolvedValueOnce(restoredCandidate);
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            candidate.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    onScheduleAccessRevoked={revoked}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(revoked).toHaveBeenCalledTimes(1);
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(restored).toHaveBeenCalledTimes(1);
+        expect(restored).toHaveBeenCalledWith(restoredCandidate);
+        expect(snapshot(renderer!)).toContain(
+            "schedules:access-regranted:1:connected:2:1"
+        );
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("access-regranted");
     });
 
     test("a late access denial from auth epoch A cannot purge account B", async () => {

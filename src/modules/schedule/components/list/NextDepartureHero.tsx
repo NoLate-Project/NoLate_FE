@@ -79,6 +79,10 @@ function getPhaseAnnouncement(phase: NextDeparturePhase): string {
     }
 }
 
+const activeIOSAnnouncementKeys = new Map<string, number>();
+const recentIOSAnnouncementKeys = new Map<string, number>();
+const IOS_ANNOUNCEMENT_DEDUPE_MS = 1_000;
+
 const NextDeparturePhaseAnnouncement = React.memo(
     function NextDeparturePhaseAnnouncement({
         phase,
@@ -92,9 +96,37 @@ const NextDeparturePhaseAnnouncement = React.memo(
         const announcementKey = `${scheduleId}:${scheduleTitle}:${phase}`;
         const announcement = `${scheduleTitle}, ${getPhaseAnnouncement(phase)}`;
         React.useEffect(() => {
-            if (Platform.OS === "ios") {
+            if (Platform.OS !== "ios") return undefined;
+            const activeCount =
+                activeIOSAnnouncementKeys.get(announcementKey) ?? 0;
+            activeIOSAnnouncementKeys.set(announcementKey, activeCount + 1);
+            const now = Date.now();
+            const lastAnnouncedAt =
+                recentIOSAnnouncementKeys.get(announcementKey);
+            if (
+                activeCount === 0
+                && (
+                    lastAnnouncedAt === undefined
+                    || now - lastAnnouncedAt >= IOS_ANNOUNCEMENT_DEDUPE_MS
+                )
+            ) {
+                recentIOSAnnouncementKeys.set(announcementKey, now);
                 AccessibilityInfo.announceForAccessibility(announcement);
             }
+            recentIOSAnnouncementKeys.forEach((announcedAt, key) => {
+                if (now - announcedAt >= IOS_ANNOUNCEMENT_DEDUPE_MS) {
+                    recentIOSAnnouncementKeys.delete(key);
+                }
+            });
+            return () => {
+                const remaining =
+                    (activeIOSAnnouncementKeys.get(announcementKey) ?? 1) - 1;
+                if (remaining <= 0) {
+                    activeIOSAnnouncementKeys.delete(announcementKey);
+                } else {
+                    activeIOSAnnouncementKeys.set(announcementKey, remaining);
+                }
+            };
         }, [announcement, announcementKey]);
         return (
             <Text
