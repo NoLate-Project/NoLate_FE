@@ -1814,8 +1814,8 @@ export default function ScheduleIndex() {
         const nextRedactedIds = new Set(redactedItemIdsRef.current);
         nextRedactedIds.delete(item.id);
         redactedItemIdsRef.current = nextRedactedIds;
-        upsertCalendarScheduleCacheItem(item);
         dispatch({ type: "RESTORE_ITEM", item });
+        upsertCalendarScheduleCacheItem(item);
         setSearchRetryKey((current) => current + 1);
     }, [dispatch]);
     const handleScheduleSessionRejected = useCallback(() => {

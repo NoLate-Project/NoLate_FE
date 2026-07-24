@@ -5,6 +5,7 @@ import {
     reconcileCalendarScheduleCacheWithFullList,
     refreshCalendarScheduleCache,
     removeCalendarScheduleCacheItem,
+    setCalendarScheduleCacheSecurityFence,
     subscribeCalendarScheduleCacheInvalidated,
     upsertCalendarScheduleCacheItem,
 } from "../src/modules/schedule/calendarScheduleCache";
@@ -35,6 +36,7 @@ function deferred<T>() {
 
 describe("calendar schedule month cache", () => {
     beforeEach(() => {
+        setCalendarScheduleCacheSecurityFence(new Set(), new Set());
         clearCalendarScheduleCache();
     });
 
@@ -218,6 +220,51 @@ describe("calendar schedule month cache", () => {
         expect(
             readCalendarScheduleCache(march.startAt, march.endAt).items
         ).toEqual([]);
+    });
+
+    test("range writes started after purge obey the live provider security fence", async () => {
+        const january = getMonthRange("2026-01-01");
+        const february = getMonthRange("2026-02-01");
+        const accessId = "access-redacted";
+        const deletedId = "explicit-deleted";
+        const redactedIds = new Set([accessId]);
+        const removedIds = new Set([deletedId]);
+
+        removeCalendarScheduleCacheItem(accessId);
+        removeCalendarScheduleCacheItem(deletedId);
+        setCalendarScheduleCacheSecurityFence(removedIds, redactedIds);
+        await refreshCalendarScheduleCache(
+            january.startAt,
+            january.endAt,
+            jest.fn().mockResolvedValue([
+                schedule("visible", localDate(2026, 0, 10)),
+                schedule(accessId, localDate(2026, 0, 11)),
+                schedule(deletedId, localDate(2026, 0, 12)),
+            ]),
+        );
+
+        expect(
+            readCalendarScheduleCache(january.startAt, january.endAt)
+                .items.map((item) => item.id)
+        ).toEqual(["visible"]);
+
+        // A verified access regrant updates the same provider set read at
+        // write time. Explicit deletion remains fenced.
+        redactedIds.delete(accessId);
+        setCalendarScheduleCacheSecurityFence(removedIds, redactedIds);
+        await refreshCalendarScheduleCache(
+            february.startAt,
+            february.endAt,
+            jest.fn().mockResolvedValue([
+                schedule(accessId, localDate(2026, 1, 11)),
+                schedule(deletedId, localDate(2026, 1, 12)),
+            ]),
+        );
+
+        expect(
+            readCalendarScheduleCache(february.startAt, february.endAt)
+                .items.map((item) => item.id)
+        ).toEqual([accessId]);
     });
 
     test("원격 공유 변경으로 캐시를 비우면 화면 구독자에게 다시 조회하도록 알린다", () => {

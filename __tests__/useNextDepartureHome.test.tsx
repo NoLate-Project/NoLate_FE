@@ -21,6 +21,7 @@ import {
 import type { ScheduleItem } from "../src/modules/schedule/types";
 import {
     DEPARTURE_HOME_CANDIDATE_LIMIT,
+    DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT,
     getDepartureHomeConnectionIssue,
     useNextDepartureHome,
 } from "../src/modules/schedule/useNextDepartureHome";
@@ -1378,6 +1379,198 @@ describe("useNextDepartureHome", () => {
             )).toHaveLength(2);
         });
         expect(snapshot(renderer!)).toContain("order-saved");
+    });
+
+    test("bounded regrant verification rotates past twelve persistent denials", async () => {
+        const redactedItems = Array.from(
+            { length: DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT + 1 },
+            (_, index) => item(
+                `fair-regrant-${String(index + 1).padStart(2, "0")}`,
+                index + 1,
+                {
+                    departAt: undefined,
+                    travelMinutes: undefined,
+                    route: undefined,
+                    routeSetupRequired: true,
+                }
+            )
+        );
+        const redactedIds = new Set(redactedItems.map(({ id }) => id));
+        const recoverable = redactedItems[redactedItems.length - 1]!;
+        const restored = jest.fn();
+        mockedGetSchedules.mockResolvedValue(redactedItems);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (id === recoverable.id) return recoverable;
+            throw new ApiResponseError("forbidden", { status: 403 });
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    redactedScheduleIds={redactedIds}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(mockedGetScheduleForDepartureHome).toHaveBeenCalledTimes(
+            DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT
+        );
+        expect(mockedGetScheduleForDepartureHome).not.toHaveBeenCalledWith(
+            recoverable.id,
+            expect.anything()
+        );
+        expect(restored).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+
+        const callsBeforeNextRefresh =
+            mockedGetScheduleForDepartureHome.mock.calls.length;
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(
+            mockedGetScheduleForDepartureHome.mock.calls.length
+            - callsBeforeNextRefresh
+        ).toBe(DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT);
+        expect(restored).toHaveBeenCalledTimes(1);
+        expect(restored).toHaveBeenCalledWith(recoverable);
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe(recoverable.id);
+    });
+
+    test("a changed authoritative regrant list resets the cursor without restoring an old ID", async () => {
+        const oldItems = Array.from(
+            { length: DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT + 1 },
+            (_, index) => item(
+                `old-redacted-${String(index + 1).padStart(2, "0")}`,
+                index + 1,
+                {
+                    departAt: undefined,
+                    travelMinutes: undefined,
+                    route: undefined,
+                }
+            )
+        );
+        const replacement = item("new-account-list-redacted", 20, {
+            departAt: undefined,
+            travelMinutes: undefined,
+            route: undefined,
+        });
+        const redactedIds = new Set([
+            ...oldItems.map(({ id }) => id),
+            replacement.id,
+        ]);
+        const restored = jest.fn();
+        mockedGetSchedules
+            .mockResolvedValueOnce(oldItems)
+            .mockResolvedValueOnce([replacement]);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (id === replacement.id) return replacement;
+            throw new ApiResponseError("forbidden", { status: 403 });
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    redactedScheduleIds={redactedIds}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+        const firstRefreshIds = mockedGetScheduleForDepartureHome.mock.calls.map(
+            ([scheduleId]) => scheduleId
+        );
+        expect(firstRefreshIds).toHaveLength(
+            DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT
+        );
+        expect(firstRefreshIds).not.toContain(replacement.id);
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(restored.mock.calls.map(([restoredItem]) => (
+            (restoredItem as ScheduleItem).id
+        ))).toEqual([replacement.id]);
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe(replacement.id);
+    });
+
+    test("an auth epoch change resets regrant rotation before the new account restores", async () => {
+        const accountAItems = Array.from(
+            { length: DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT + 1 },
+            (_, index) => item(
+                `account-a-redacted-${String(index + 1).padStart(2, "0")}`,
+                index + 1,
+                {
+                    ownerMemberId: 1,
+                    departAt: undefined,
+                    travelMinutes: undefined,
+                    route: undefined,
+                }
+            )
+        );
+        const accountBItem = item("account-b-regranted", 20, {
+            ownerMemberId: 2,
+            departAt: undefined,
+            travelMinutes: undefined,
+            route: undefined,
+        });
+        const accountARedactions = new Set(
+            accountAItems.map(({ id }) => id)
+        );
+        const accountBRedactions = new Set([accountBItem.id]);
+        const restored = jest.fn();
+        let memberId = 1;
+        mockedGetAuthMember.mockImplementation(async () => ({ id: memberId }));
+        mockedGetSchedules.mockImplementation(async () => (
+            memberId === 1 ? accountAItems : [accountBItem]
+        ));
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (id === accountBItem.id) return accountBItem;
+            throw new ApiResponseError("forbidden", { status: 403 });
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    redactedScheduleIds={accountARedactions}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(mockedGetScheduleForDepartureHome).toHaveBeenCalledTimes(
+            DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT
+        );
+
+        memberId = 2;
+        await act(async () => {
+            await authInvalidationListener?.();
+            renderer!.update(
+                <Harness
+                    redactedScheduleIds={accountBRedactions}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(restored.mock.calls.map(([restoredItem]) => (
+            (restoredItem as ScheduleItem).id
+        ))).toEqual([accountBItem.id]);
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe(accountBItem.id);
     });
 
     test("provider redaction survives a home remount and stale full lists for non-candidates", async () => {

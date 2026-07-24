@@ -81,6 +81,58 @@ type DepartureCandidateWindow = {
     truncated: boolean;
 };
 
+type RegrantVerificationCursor = {
+    identity: string | null;
+    offset: number;
+};
+
+function selectRegrantVerificationItems(
+    items: ScheduleItem[],
+    redactedScheduleIds: ReadonlySet<string>,
+    tombstoneScheduleIds: ReadonlySet<string>,
+    currentMemberId: number | undefined,
+    cursor: RegrantVerificationCursor
+): {
+    items: ScheduleItem[];
+    cursor: RegrantVerificationCursor;
+} {
+    const candidates = items
+        .filter((item) => (
+            redactedScheduleIds.has(item.id)
+            && !tombstoneScheduleIds.has(item.id)
+        ))
+        .sort((left, right) => left.id.localeCompare(right.id));
+    const identity = JSON.stringify([
+        currentMemberId ?? null,
+        [...redactedScheduleIds].sort(),
+        candidates.map((item) => item.id),
+    ]);
+    if (candidates.length === 0) {
+        return {
+            items: [],
+            cursor: { identity, offset: 0 },
+        };
+    }
+
+    const start = cursor.identity === identity
+        ? cursor.offset % candidates.length
+        : 0;
+    const count = Math.min(
+        DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT,
+        candidates.length
+    );
+    const selected = Array.from({ length: count }, (_, index) => (
+        candidates[(start + index) % candidates.length]!
+    ));
+    return {
+        items: selected,
+        cursor: {
+            identity,
+            offset: (start + count) % candidates.length,
+        },
+    };
+}
+
 function getMemberId(member: { id?: number } | null): number | undefined {
     return Number.isSafeInteger(member?.id) && (member?.id ?? 0) > 0
         ? member?.id
@@ -386,6 +438,10 @@ export function useNextDepartureHome({
     const activeControllerRef = useRef<AbortController | null>(null);
     const focusedRef = useRef(focused);
     const pendingRefreshRef = useRef(false);
+    const regrantVerificationCursorRef = useRef<RegrantVerificationCursor>({
+        identity: null,
+        offset: 0,
+    });
     const authoritativeRemovedScheduleIdsRef = useRef(
         authoritativeRemovedScheduleIds
     );
@@ -524,6 +580,10 @@ export function useNextDepartureHome({
             tombstoneScheduleIdsRef.current = new Set(
                 authoritativeRemovedScheduleIdsRef.current ?? []
             );
+            regrantVerificationCursorRef.current = {
+                identity: null,
+                offset: 0,
+            };
             fullKnownAbsentScheduleIdsRef.current.clear();
             fullScheduleItemsRef.current = [];
             hasFullScheduleSnapshotRef.current = false;
@@ -546,6 +606,10 @@ export function useNextDepartureHome({
             requestSequenceRef.current += 1;
             redactedScheduleIdsRef.current.clear();
             tombstoneScheduleIdsRef.current.clear();
+            regrantVerificationCursorRef.current = {
+                identity: null,
+                offset: 0,
+            };
             fullKnownAbsentScheduleIdsRef.current.clear();
             fullScheduleItemsRef.current = [];
             hasFullScheduleSnapshotRef.current = false;
@@ -589,6 +653,10 @@ export function useNextDepartureHome({
             if (!sameAccount) {
                 redactedScheduleIdsRef.current.clear();
                 tombstoneScheduleIdsRef.current.clear();
+                regrantVerificationCursorRef.current = {
+                    identity: null,
+                    offset: 0,
+                };
                 fullKnownAbsentScheduleIdsRef.current.clear();
                 fullScheduleItemsRef.current = [];
                 hasFullScheduleSnapshotRef.current = false;
@@ -670,10 +738,15 @@ export function useNextDepartureHome({
             ...fallbackItemsRef.current.map((item) => item.id),
             ...snapshotRef.current.items.map((item) => item.id),
         ]);
-        const regrantVerificationItems = items.filter((item) => (
-            redactedScheduleIdsRef.current.has(item.id)
-            && !tombstoneScheduleIdsRef.current.has(item.id)
-        )).slice(0, DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT);
+        const regrantWindow = selectRegrantVerificationItems(
+            items,
+            redactedScheduleIdsRef.current,
+            tombstoneScheduleIdsRef.current,
+            currentMemberId,
+            regrantVerificationCursorRef.current
+        );
+        const regrantVerificationItems = regrantWindow.items;
+        regrantVerificationCursorRef.current = regrantWindow.cursor;
         returnedScheduleIds.forEach((scheduleId) => {
             const restoredItem = authoritativeItemsById.get(scheduleId);
             const wasKnownAbsent =
@@ -1053,6 +1126,10 @@ export function useNextDepartureHome({
         pendingRefreshRef.current = false;
         redactedScheduleIdsRef.current.clear();
         tombstoneScheduleIdsRef.current.clear();
+        regrantVerificationCursorRef.current = {
+            identity: null,
+            offset: 0,
+        };
         fullKnownAbsentScheduleIdsRef.current.clear();
         fullScheduleItemsRef.current = [];
         hasFullScheduleSnapshotRef.current = false;
@@ -1097,6 +1174,12 @@ export function useNextDepartureHome({
             redactedScheduleIdsRef.current = new Set(
                 authoritativeRedactedScheduleIds ?? []
             );
+        }
+        if (removalsChanged || redactionsChanged) {
+            regrantVerificationCursorRef.current = {
+                identity: null,
+                offset: 0,
+            };
         }
         collectionEpochRef.current += 1;
         requestSequenceRef.current += 1;

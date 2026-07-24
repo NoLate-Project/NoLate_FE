@@ -11,7 +11,10 @@ import React, {
 import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
-import { clearCalendarScheduleCache } from "./calendarScheduleCache";
+import {
+    clearCalendarScheduleCache,
+    setCalendarScheduleCacheSecurityFence,
+} from "./calendarScheduleCache";
 
 export type ScheduleAction =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -137,10 +140,18 @@ export function ScheduleProvider({
     );
     const updateRemovedItemIds = useCallback((next: ReadonlySet<string>) => {
         removedItemIdsRef.current = next;
+        setCalendarScheduleCacheSecurityFence(
+            next,
+            redactedItemIdsRef.current
+        );
         setRemovedItemIds(next);
     }, []);
     const updateRedactedItemIds = useCallback((next: ReadonlySet<string>) => {
         redactedItemIdsRef.current = next;
+        setCalendarScheduleCacheSecurityFence(
+            removedItemIdsRef.current,
+            next
+        );
         setRedactedItemIds(next);
     }, []);
     const dispatch = useCallback((action: ScheduleAction) => {

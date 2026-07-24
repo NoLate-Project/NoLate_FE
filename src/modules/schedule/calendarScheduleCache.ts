@@ -35,6 +35,7 @@ const monthCache = new Map<string, CalendarScheduleCacheEntry>();
 const inFlightRanges = new Map<string, Promise<void>>();
 const invalidationListeners = new Set<() => void>();
 let cacheRevision = 0;
+let securityBlockedScheduleIds = new Set<string>();
 
 function monthKey(year: number, monthIndex: number): string {
     return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
@@ -131,10 +132,19 @@ function writeRange(
     items: ScheduleItem[],
     fetchedAt: number,
 ): void {
+    const writableItems = items.filter(
+        (item) => !securityBlockedScheduleIds.has(item.id)
+    );
     descriptors.forEach((descriptor) => {
         monthCache.set(descriptor.key, {
             items: dedupeCalendarSchedules(
-                items.filter((item) => overlapsRange(item, descriptor.startAt, descriptor.endAt)),
+                writableItems.filter(
+                    (item) => overlapsRange(
+                        item,
+                        descriptor.startAt,
+                        descriptor.endAt
+                    )
+                ),
             ),
             fetchedAt,
             lastAccessedAt: fetchedAt,
@@ -213,6 +223,7 @@ export async function refreshCalendarScheduleCache(
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
     cacheRevision += 1;
+    if (securityBlockedScheduleIds.has(item.id)) return;
     monthCache.forEach((entry, key) => {
         const range = getMonthRange(`${key}-01`);
         const nextItems = entry.items.filter((cachedItem) => cachedItem.id !== item.id);
@@ -220,6 +231,32 @@ export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
             nextItems.push(item);
         }
         entry.items = dedupeCalendarSchedules(nextItems);
+        entry.lastAccessedAt = Date.now();
+    });
+}
+
+export function setCalendarScheduleCacheSecurityFence(
+    removedScheduleIds: ReadonlySet<string>,
+    redactedScheduleIds: ReadonlySet<string>
+): void {
+    const nextBlockedScheduleIds = new Set([
+        ...removedScheduleIds,
+        ...redactedScheduleIds,
+    ]);
+    const changed = (
+        nextBlockedScheduleIds.size !== securityBlockedScheduleIds.size
+        || [...nextBlockedScheduleIds].some(
+            (scheduleId) => !securityBlockedScheduleIds.has(scheduleId)
+        )
+    );
+    if (!changed) return;
+
+    securityBlockedScheduleIds = nextBlockedScheduleIds;
+    cacheRevision += 1;
+    monthCache.forEach((entry) => {
+        entry.items = entry.items.filter(
+            (item) => !securityBlockedScheduleIds.has(item.id)
+        );
         entry.lastAccessedAt = Date.now();
     });
 }

@@ -2,6 +2,14 @@ import React from "react";
 import { Pressable, Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
+import {
+    clearCalendarScheduleCache,
+    readCalendarScheduleCache,
+    refreshCalendarScheduleCache,
+    setCalendarScheduleCacheSecurityFence,
+    upsertCalendarScheduleCacheItem,
+} from "../src/modules/schedule/calendarScheduleCache";
+import { getMonthRange } from "../src/modules/schedule/calendarRange";
 import { createScheduleInitialState } from "../src/modules/schedule/initialState";
 import {
     ScheduleProvider,
@@ -84,6 +92,11 @@ function Harness() {
 
 describe("ScheduleProvider deletion tombstones", () => {
     let renderer: ReactTestRenderer | undefined;
+
+    beforeEach(() => {
+        setCalendarScheduleCacheSecurityFence(new Set(), new Set());
+        clearCalendarScheduleCache();
+    });
 
     afterEach(() => {
         act(() => renderer?.unmount());
@@ -200,6 +213,49 @@ describe("ScheduleProvider deletion tombstones", () => {
         });
         expect(renderer!.root.findByProps({ testID: "state" }).props.children)
             .toBe(":private-a:");
+    });
+
+    test("provider security sets guard cache upserts across redaction, regrant, and deletion", async () => {
+        const july = getMonthRange("2099-07-01");
+        await refreshCalendarScheduleCache(
+            july.startAt,
+            july.endAt,
+            jest.fn().mockResolvedValue([privateItem])
+        );
+        const initialState = createScheduleInitialState(SYSTEM_NOW);
+        initialState.itemsById = { [privateItem.id]: privateItem };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness />
+                </ScheduleProvider>
+            );
+        });
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "redact" }).props.onPress();
+        });
+        upsertCalendarScheduleCacheItem(privateItem);
+        expect(
+            readCalendarScheduleCache(july.startAt, july.endAt).items
+        ).toEqual([]);
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "restore" }).props.onPress();
+        });
+        upsertCalendarScheduleCacheItem(privateItem);
+        expect(
+            readCalendarScheduleCache(july.startAt, july.endAt)
+                .items.map((item) => item.id)
+        ).toEqual([privateItem.id]);
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "delete" }).props.onPress();
+        });
+        upsertCalendarScheduleCacheItem(privateItem);
+        expect(
+            readCalendarScheduleCache(july.startAt, july.endAt).items
+        ).toEqual([]);
     });
 });
 
