@@ -17,11 +17,13 @@ import {
     snsSignUpMember,
 } from "../src/api/member";
 import {
+    prepareExplicitAuthenticationRequest,
     saveAuthenticatedSession,
 } from "../src/modules/auth/authStorage";
 import {
     registerAuthSessionTransitionBarrier,
     registerSocialAuthTransitionBarrier,
+    waitForAuthSessionTransition,
 } from "../src/modules/auth/authSessionEpoch";
 import {
     loginWithNaverSdk,
@@ -151,6 +153,7 @@ jest.mock("../src/modules/auth/authStorage", () => ({
     clearAuthTokens: jest.fn().mockResolvedValue(true),
     clearRestorableAuthSessionIfCurrent: jest.fn().mockResolvedValue(false),
     getAuthMember: jest.fn().mockResolvedValue(null),
+    prepareExplicitAuthenticationRequest: jest.fn(),
     saveAuthenticatedSession: jest.fn().mockResolvedValue(undefined),
 }));
 
@@ -187,6 +190,8 @@ const mockedSnsSignUpMember = jest.mocked(snsSignUpMember);
 const mockedLoginWithNaverSdk = jest.mocked(loginWithNaverSdk);
 const mockedSaveAuthenticatedSession =
     jest.mocked(saveAuthenticatedSession);
+const mockedPrepareExplicitAuthenticationRequest =
+    jest.mocked(prepareExplicitAuthenticationRequest);
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -220,6 +225,9 @@ describe("public auth screen transition call sites", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockedPrepareExplicitAuthenticationRequest.mockImplementation(
+            () => waitForAuthSessionTransition(),
+        );
         mockSyncAuthentication.mockResolvedValue(true);
         mockedGetSnsRegistrationStatus.mockResolvedValue({
             registered: false,

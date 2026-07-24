@@ -11,7 +11,10 @@ import {
     invalidateAuthSession,
     isAuthSessionEpochCurrent,
     isAuthSessionRestorable,
+    holdAuthSessionTransition,
+    replaceFailedAuthSessionTransition,
     registerAuthSessionTransitionBarrier,
+    type AuthSessionTransitionHold,
     waitForAuthSessionTransition,
 } from "./authSessionEpoch";
 
@@ -33,10 +36,16 @@ const AUTH_INVALID_SESSION_VALUE = "invalidated";
 const AUTH_APP_GROUP_SESSION_INVALIDATED = "invalidated";
 const AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX = "active:";
 const AUTH_APP_GROUP_SESSION_STAGING_PREFIX = "staging:";
+const AUTH_APP_GROUP_SESSION_PUBLISHING_PREFIX = "publishing:";
 const AUTH_MEMBER_SESSION_IDENTITY_KEY = "authSessionIdentity";
 let currentAuthApiBaseUrl: string | null = null;
 let hasInMemoryInvalidSessionMarker = false;
 let authSessionCommitSequence = 0;
+const preparedAuthRestoreContexts = new Set<string>();
+let failedAuthInvalidation: {
+    epoch: number;
+    hold: AuthSessionTransitionHold;
+} | null = null;
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
@@ -62,6 +71,8 @@ export function configureSharedAuthApiBaseUrl(apiBaseUrl: string) {
 export function __resetAuthStorageInvalidSessionForTests(): void {
     if (process.env.NODE_ENV === "test") {
         hasInMemoryInvalidSessionMarker = false;
+        failedAuthInvalidation = null;
+        preparedAuthRestoreContexts.clear();
     }
 }
 
@@ -79,6 +90,9 @@ type SharedAuthModule = {
     getAppGroupSessionState?(): Promise<string | null>;
     setAppGroupSessionState?(value: string): Promise<boolean>;
     setAppGroupSessionStateSync?(value: string): SharedAuthSyncWriteResult;
+    beginAppGroupSessionTransitionSync?(
+        stagingValue: string,
+    ): SharedAuthSyncWriteResult;
     compareAndSetAppGroupSessionStateSync?(
         expectedValue: string,
         value: string,
@@ -87,9 +101,45 @@ type SharedAuthModule = {
 
 type SharedAuthSyncWriteResult = {
     success?: boolean;
+    status?: "success" | "mismatch" | "partial" | "failure";
     mismatch?: boolean;
     error?: string;
+    currentValue?: string | null;
+    rollbackSucceeded?: boolean;
 };
+
+type AppGroupSessionCasResult =
+    | { status: "success" }
+    | { status: "mismatch"; currentValue: string | null }
+    | {
+        status: "partial";
+        rollbackSucceeded: boolean;
+        error?: string;
+    }
+    | { status: "failure"; error?: string };
+
+class AppGroupSessionPublishError extends Error {
+    constructor(
+        readonly result: Exclude<AppGroupSessionCasResult, {
+            status: "success";
+        }>,
+        readonly phase: "transition" | "reservation" | "publication",
+    ) {
+        super(
+            result.status === "mismatch"
+                ? "공유 확장 인증 세션이 더 새로운 세대로 변경되었습니다."
+                : "공유 확장 인증 세션 공개에 실패했습니다.",
+        );
+        this.name = "AppGroupSessionPublishError";
+    }
+}
+
+class AuthSessionOwnershipChangedError extends Error {
+    constructor() {
+        super("인증 세션 소유권이 변경되었습니다.");
+        this.name = "AuthSessionOwnershipChangedError";
+    }
+}
 
 const sharedAuth = Platform.OS === "ios"
     ? NativeModules.NoLateShareAuth as SharedAuthModule | undefined
@@ -148,18 +198,64 @@ function setAppGroupSessionStateSynchronously(value: string): boolean {
     }
 }
 
+function normalizeAppGroupCasResult(
+    result: SharedAuthSyncWriteResult | undefined,
+): AppGroupSessionCasResult {
+    if (!result) {
+        return {
+            status: "failure",
+            error: "app_group_cas_unavailable",
+        };
+    }
+    if (result.success === true || result.status === "success") {
+        return { status: "success" };
+    }
+    if (result.status === "mismatch" || result.mismatch === true) {
+        return {
+            status: "mismatch",
+            currentValue:
+                typeof result.currentValue === "string"
+                    ? result.currentValue
+                    : null,
+        };
+    }
+    if (result.status === "partial") {
+        return {
+            status: "partial",
+            rollbackSucceeded: result.rollbackSucceeded === true,
+            error: result.error,
+        };
+    }
+    return { status: "failure", error: result.error };
+}
+
+function beginAppGroupSessionTransitionSynchronously(
+    stagingValue: string,
+): AppGroupSessionCasResult {
+    if (!sharedAuth) return { status: "success" };
+    try {
+        return normalizeAppGroupCasResult(
+            sharedAuth.beginAppGroupSessionTransitionSync?.(stagingValue),
+        );
+    } catch {
+        return { status: "failure", error: "app_group_begin_threw" };
+    }
+}
+
 function compareAndSetAppGroupSessionStateSynchronously(
     expectedValue: string,
     value: string,
-): boolean {
-    if (!sharedAuth) return true;
+): AppGroupSessionCasResult {
+    if (!sharedAuth) return { status: "success" };
     try {
-        return sharedAuth.compareAndSetAppGroupSessionStateSync?.(
-            expectedValue,
-            value,
-        ).success === true;
+        return normalizeAppGroupCasResult(
+            sharedAuth.compareAndSetAppGroupSessionStateSync?.(
+                expectedValue,
+                value,
+            ),
+        );
     } catch {
-        return false;
+        return { status: "failure", error: "app_group_cas_threw" };
     }
 }
 
@@ -293,6 +389,10 @@ export type AuthRestoreContext = {
     expectedEpoch: number;
     expectedRefreshToken: string;
 };
+
+function authRestoreContextKey(context: AuthRestoreContext): string {
+    return `${context.expectedEpoch}:${context.expectedRefreshToken}`;
+}
 
 function normalizeAuthMember(member: StoredAuthMember | null | undefined): StoredAuthMember | null {
     if (!member) return null;
@@ -453,11 +553,13 @@ async function deleteAuthStorageWithinMutation(): Promise<
 type InvalidSessionMarkerWriteResult = {
     anySucceeded: boolean;
     allSucceeded: boolean;
+    extensionVisibleSucceeded: boolean;
     results: PromiseSettledResult<unknown>[];
 };
 
 async function persistInvalidSessionMarkerWithinMutation(
     appGroupState = AUTH_APP_GROUP_SESSION_INVALIDATED,
+    options: { appGroupAlreadyWritten?: boolean } = {},
 ): Promise<
     InvalidSessionMarkerWriteResult
 > {
@@ -471,7 +573,7 @@ async function persistInvalidSessionMarkerWithinMutation(
             AUTH_INVALID_SESSION_VALUE,
         ),
     ];
-    if (sharedAuth) {
+    if (sharedAuth && options.appGroupAlreadyWritten !== true) {
         writes.push(setSharedItemStrict(
             AUTH_INVALID_SESSION_KEY,
             AUTH_INVALID_SESSION_VALUE,
@@ -486,16 +588,24 @@ async function persistInvalidSessionMarkerWithinMutation(
         ));
     }
     const results = await Promise.allSettled(writes);
+    const extensionVisibleSucceeded = !sharedAuth || (
+        results[2]?.status === "fulfilled" ||
+        (
+            options.appGroupAlreadyWritten !== true &&
+            results[3]?.status === "fulfilled"
+        )
+    );
     return {
         anySucceeded: results.some((result) => result.status === "fulfilled"),
         allSucceeded: results.every((result) => result.status === "fulfilled"),
+        extensionVisibleSucceeded,
         results,
     };
 }
 
 async function publishCommittedSessionWithinMutation(
     authSessionIdentity: string,
-    stagingState: string,
+    publishingState: string,
     isCurrent: () => boolean,
 ): Promise<void> {
     // Keep the independent App Group state invalidated until every marker that
@@ -523,15 +633,30 @@ async function publishCommittedSessionWithinMutation(
     // No await is allowed between the final epoch check and native CAS.
     // Logout writes "invalidated" synchronously, so a stale commit can never
     // replace that value with active:A after marker removals.
-    if (!compareAndSetAppGroupSessionStateSynchronously(
-        stagingState,
+    const publication = compareAndSetAppGroupSessionStateSynchronously(
+        publishingState,
         activeState,
-    )) {
+    );
+    if (publication.status !== "success") {
+        if (publication.status === "mismatch") {
+            // Under the supported single main-JS writer/read-only-extension
+            // model, nothing may replace this attempt's publishing state.
+            // Preserve the native result so the outer commit can fail closed
+            // instead of treating this as a harmless pre-write reservation
+            // loss.
+            throw new AppGroupSessionPublishError(
+                publication,
+                "publication",
+            );
+        }
         const fenced = setAppGroupSessionStateSynchronously(
             AUTH_APP_GROUP_SESSION_INVALIDATED,
         );
         await ensureExtensionVisibleInvalidationFenceWithinMutation(fenced);
-        throw new Error("공유 확장 인증 세션 공개에 실패했습니다.");
+        throw new AppGroupSessionPublishError(
+            publication,
+            "publication",
+        );
     }
     if (!isCurrent()) {
         const fenced = setAppGroupSessionStateSynchronously(
@@ -594,37 +719,82 @@ async function commitAuthenticatedSessionWithinMutation(options: {
     const stagingState =
         `${AUTH_APP_GROUP_SESSION_STAGING_PREFIX}` +
         `${authSessionCommitSequence}:${record.authSessionIdentity}`;
+    const publishingState =
+        `${AUTH_APP_GROUP_SESSION_PUBLISHING_PREFIX}` +
+        `${authSessionCommitSequence}:${record.authSessionIdentity}`;
     hasInMemoryInvalidSessionMarker = true;
-    const marker = await persistInvalidSessionMarkerWithinMutation(
-        stagingState,
-    );
-    if (!marker.allSucceeded) {
-        await deleteAuthStorageWithinMutation();
-        throw new Error("인증 세션 차단 상태를 모든 저장소에 기록하지 못했습니다.");
-    }
-    if (!options.isCurrent()) return false;
-
     try {
+        const transition = beginAppGroupSessionTransitionSynchronously(
+            stagingState,
+        );
+        if (transition.status !== "success") {
+            throw new AppGroupSessionPublishError(
+                transition,
+                "transition",
+            );
+        }
+        const marker = await persistInvalidSessionMarkerWithinMutation(
+            stagingState,
+            { appGroupAlreadyWritten: true },
+        );
+        if (!marker.allSucceeded) {
+            throw new Error(
+                "인증 세션 차단 상태를 모든 저장소에 기록하지 못했습니다.",
+            );
+        }
+        if (!options.isCurrent()) {
+            throw new AuthSessionOwnershipChangedError();
+        }
+        const reservation = compareAndSetAppGroupSessionStateSynchronously(
+            stagingState,
+            publishingState,
+        );
+        if (reservation.status !== "success") {
+            throw new AppGroupSessionPublishError(
+                reservation,
+                "reservation",
+            );
+        }
+        if (!options.isCurrent()) {
+            throw new AuthSessionOwnershipChangedError();
+        }
         await writeAuthTokensStrict(
             options.accessToken,
             options.refreshToken,
         );
         await writeAuthMemberRecordStrict(record);
-        if (!options.isCurrent()) return false;
+        if (!options.isCurrent()) {
+            throw new AuthSessionOwnershipChangedError();
+        }
         await verifyAuthenticatedSessionWithinMutation({
             accessToken: options.accessToken,
             refreshToken: options.refreshToken,
             record,
         });
-        if (!options.isCurrent()) return false;
+        if (!options.isCurrent()) {
+            throw new AuthSessionOwnershipChangedError();
+        }
         await publishCommittedSessionWithinMutation(
             record.authSessionIdentity,
-            stagingState,
+            publishingState,
             options.isCurrent,
         );
         hasInMemoryInvalidSessionMarker = false;
         return true;
     } catch (error) {
+        if (
+            error instanceof AppGroupSessionPublishError &&
+            error.result.status === "mismatch" &&
+            error.phase !== "publication" &&
+            error.result.currentValue !==
+                AUTH_APP_GROUP_SESSION_INVALIDATED
+        ) {
+            // Main JS's mutation queue is the only production credential
+            // writer and the Share Extension is read-only. Only transition or
+            // reservation mismatches occur before this attempt may write
+            // credentials, so an observed newer state is left untouched.
+            throw error;
+        }
         // Publication may already have removed every marker or partially put
         // active:A into UserDefaults before reporting failure. Re-establish an
         // extension-visible fence first, then all remaining marker channels,
@@ -654,13 +824,26 @@ async function commitAuthenticatedSessionWithinMutation(options: {
 
 type AuthStorageInvalidationResult = {
     succeeded: boolean;
+    extensionVisibleFenceSucceeded: boolean;
     deletionResults: PromiseSettledResult<unknown>[];
     markerResults: PromiseSettledResult<unknown>[];
 };
 
-async function invalidateAuthStorageWithinMutation(): Promise<
+async function invalidateAuthStorageWithinMutation(
+    synchronousFenceReady = false,
+): Promise<
     AuthStorageInvalidationResult
 > {
+    let extensionFallbackSucceeded = synchronousFenceReady;
+    if (!extensionFallbackSucceeded) {
+        try {
+            await ensureExtensionVisibleInvalidationFenceWithinMutation(false);
+            extensionFallbackSucceeded = true;
+        } catch {
+            // The named marker writes below retry every durable channel and
+            // preserve their individual results for the caller/recovery gate.
+        }
+    }
     const marker = await persistInvalidSessionMarkerWithinMutation();
     const deletionResults = await deleteAuthStorageWithinMutation();
     const deletionSucceeded = deletionResults.every(
@@ -673,9 +856,98 @@ async function invalidateAuthStorageWithinMutation(): Promise<
             marker.anySucceeded &&
             marker.allSucceeded &&
             deletionSucceeded,
+        extensionVisibleFenceSucceeded:
+            extensionFallbackSucceeded ||
+            marker.extensionVisibleSucceeded,
         deletionResults,
         markerResults: marker.results,
     };
+}
+
+function settleAuthInvalidationTransition(
+    epoch: number,
+    hold: AuthSessionTransitionHold,
+    result: AuthStorageInvalidationResult,
+): void {
+    if (result.extensionVisibleFenceSucceeded) {
+        hold.release();
+        if (failedAuthInvalidation?.hold === hold) {
+            failedAuthInvalidation = null;
+        }
+        return;
+    }
+    hold.fail();
+    failedAuthInvalidation = { epoch, hold };
+}
+
+async function recoverFailedAuthInvalidation(): Promise<void> {
+    const failed = failedAuthInvalidation;
+    if (!failed) return;
+    if (!isAuthSessionEpochCurrent(failed.epoch)) {
+        throw new Error(
+            "인증 세션 소유권이 변경되어 이전 로그아웃 정리를 재시도할 수 없습니다.",
+        );
+    }
+    const replacement = replaceFailedAuthSessionTransition(failed.hold);
+    if (replacement === failed.hold) {
+        throw new Error("로그아웃 보안 정리를 다시 시작하지 못했습니다.");
+    }
+    failedAuthInvalidation = {
+        epoch: failed.epoch,
+        hold: replacement,
+    };
+    const synchronousFenceReady = setAppGroupSessionStateSynchronously(
+        AUTH_APP_GROUP_SESSION_INVALIDATED,
+    );
+    const result = await runAuthTokenMutation(() =>
+        invalidateAuthStorageWithinMutation(synchronousFenceReady)
+    );
+    reportAuthInvalidationFailures(result);
+    settleAuthInvalidationTransition(
+        failed.epoch,
+        replacement,
+        result,
+    );
+    if (!result.extensionVisibleFenceSucceeded) {
+        throw new Error(
+            "이전 계정의 공유 확장 로그아웃 상태를 확인하지 못했습니다.",
+        );
+    }
+}
+
+export async function prepareExplicitAuthenticationRequest(): Promise<void> {
+    await recoverFailedAuthInvalidation();
+    await waitForAuthSessionTransition();
+    const expectedEpoch = getAuthSessionEpoch();
+    hasInMemoryInvalidSessionMarker = true;
+    const synchronousFenceReady = setAppGroupSessionStateSynchronously(
+        AUTH_APP_GROUP_SESSION_INVALIDATED,
+    );
+    const result = await runAuthTokenMutation(async () => {
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) {
+            throw new AuthSessionOwnershipChangedError();
+        }
+        let extensionVisibleFenceSucceeded = synchronousFenceReady;
+        if (!extensionVisibleFenceSucceeded) {
+            await ensureExtensionVisibleInvalidationFenceWithinMutation(false);
+            extensionVisibleFenceSucceeded = true;
+        }
+        const marker = await persistInvalidSessionMarkerWithinMutation();
+        if (
+            !extensionVisibleFenceSucceeded &&
+            !marker.extensionVisibleSucceeded
+        ) {
+            throw new Error(
+                "공유 확장에 로그인 전 보안 상태를 기록하지 못했습니다.",
+            );
+        }
+        return marker;
+    });
+    if (!result.extensionVisibleSucceeded && !synchronousFenceReady) {
+        throw new Error(
+            "공유 확장에 로그인 전 보안 상태를 기록하지 못했습니다.",
+        );
+    }
 }
 
 async function notifyAuthInvalidationListeners(): Promise<void> {
@@ -752,6 +1024,17 @@ export async function isAuthRefreshContextCurrent(options: {
     expectedRefreshToken: string;
 }): Promise<boolean> {
     if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
+    if (preparedAuthRestoreContexts.has(authRestoreContextKey(options))) {
+        return runAuthTokenMutation(async () => {
+            const currentRefreshToken = await getAuthTokenWithinMutation(
+                REFRESH_TOKEN_KEY,
+                options.expectedEpoch,
+                false,
+            );
+            return isAuthSessionEpochCurrent(options.expectedEpoch) &&
+                currentRefreshToken === options.expectedRefreshToken;
+        });
+    }
     const currentRefreshToken = await getRefreshToken();
     return isAuthSessionEpochCurrent(options.expectedEpoch) &&
         currentRefreshToken === options.expectedRefreshToken;
@@ -766,7 +1049,12 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
     try {
         return await runAuthTokenMutation(async () => {
             if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
-            if (await hasInvalidSessionMarkerWithinMutation()) return false;
+            const restoreKey = authRestoreContextKey(options);
+            const prepared = preparedAuthRestoreContexts.has(restoreKey);
+            if (
+                !prepared &&
+                await hasInvalidSessionMarkerWithinMutation()
+            ) return false;
             const currentRefreshToken = await getAuthTokenWithinMutation(
                 REFRESH_TOKEN_KEY,
                 options.expectedEpoch,
@@ -785,15 +1073,18 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
             if (!currentRecord) return false;
             const normalizedMember = normalizeAuthMember(currentRecord);
             if (!normalizedMember?.id) return false;
-            return commitAuthenticatedSessionWithinMutation({
+            const committed = await commitAuthenticatedSessionWithinMutation({
                 accessToken: options.accessToken.trim(),
                 refreshToken: options.refreshToken.trim(),
                 normalizedMember,
                 isCurrent: () =>
                     isAuthSessionEpochCurrent(options.expectedEpoch),
             });
+            if (committed) preparedAuthRestoreContexts.delete(restoreKey);
+            return committed;
         });
     } catch {
+        preparedAuthRestoreContexts.delete(authRestoreContextKey(options));
         if (isAuthSessionEpochCurrent(options.expectedEpoch)) {
             invalidateAuthSession();
         }
@@ -814,6 +1105,36 @@ export async function captureAuthRestoreContext(): Promise<
     return { expectedEpoch, expectedRefreshToken };
 }
 
+export async function prepareAuthRestoreRequest(
+    context: AuthRestoreContext,
+): Promise<boolean> {
+    await recoverFailedAuthInvalidation();
+    await waitForAuthSessionTransition();
+    return runAuthTokenMutation(async () => {
+        if (!isAuthSessionRestorable(context.expectedEpoch)) return false;
+        const currentRefreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            context.expectedEpoch,
+            false,
+        );
+        if (
+            !isAuthSessionRestorable(context.expectedEpoch) ||
+            currentRefreshToken !== context.expectedRefreshToken
+        ) return false;
+        hasInMemoryInvalidSessionMarker = true;
+        const synchronousFenceReady = setAppGroupSessionStateSynchronously(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        if (!synchronousFenceReady) {
+            await ensureExtensionVisibleInvalidationFenceWithinMutation(false);
+        }
+        await persistInvalidSessionMarkerWithinMutation();
+        if (!isAuthSessionRestorable(context.expectedEpoch)) return false;
+        preparedAuthRestoreContexts.add(authRestoreContextKey(context));
+        return true;
+    });
+}
+
 export async function saveRestoredAuthSessionIfCurrent(options: {
     context: AuthRestoreContext;
     member: AuthenticatedSession;
@@ -826,7 +1147,12 @@ export async function saveRestoredAuthSessionIfCurrent(options: {
     try {
         return await runAuthTokenMutation(async () => {
             if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
-            if (await hasInvalidSessionMarkerWithinMutation()) return false;
+            const restoreKey = authRestoreContextKey(options.context);
+            const prepared = preparedAuthRestoreContexts.has(restoreKey);
+            if (
+                !prepared &&
+                await hasInvalidSessionMarkerWithinMutation()
+            ) return false;
             const currentRefreshToken = await getAuthTokenWithinMutation(
                 REFRESH_TOKEN_KEY,
                 options.context.expectedEpoch,
@@ -847,12 +1173,16 @@ export async function saveRestoredAuthSessionIfCurrent(options: {
                             options.context.expectedEpoch,
                         ),
                 });
+            if (committed) preparedAuthRestoreContexts.delete(restoreKey);
             return committed &&
                 activateAuthSessionIfCurrent(
                     options.context.expectedEpoch,
                 );
         });
     } catch {
+        preparedAuthRestoreContexts.delete(
+            authRestoreContextKey(options.context),
+        );
         if (isAuthSessionEpochCurrent(options.context.expectedEpoch)) {
             invalidateAuthSession();
         }
@@ -1015,9 +1345,12 @@ export function clearRestorableAuthSessionIfCurrent(
     context: AuthRestoreContext,
     options: { notifyListeners?: boolean } = {},
 ): Promise<boolean> {
+    const transitionHold = holdAuthSessionTransition();
     const completion = (async () => {
         const result = await runAuthTokenMutation(async () => {
-            if (!isAuthSessionRestorable(context.expectedEpoch)) return null;
+            if (!isAuthSessionRestorable(context.expectedEpoch)) {
+                return null;
+            }
             if (await hasInvalidSessionMarkerWithinMutation()) return null;
             const currentRefreshToken = await getAuthTokenWithinMutation(
                 REFRESH_TOKEN_KEY,
@@ -1031,17 +1364,37 @@ export function clearRestorableAuthSessionIfCurrent(
 
             // The final identity check and invalidation are synchronous within the
             // shared mutation queue. A newer login cannot slip between them.
-            invalidateAuthSession();
+            const invalidationEpoch = invalidateAuthSession();
             hasInMemoryInvalidSessionMarker = true;
-            return invalidateAuthStorageWithinMutation();
+            const synchronousFenceReady =
+                setAppGroupSessionStateSynchronously(
+                    AUTH_APP_GROUP_SESSION_INVALIDATED,
+                );
+            return {
+                invalidationEpoch,
+                result: await invalidateAuthStorageWithinMutation(
+                    synchronousFenceReady,
+                ),
+            };
         });
-        if (!result) return false;
-        reportAuthInvalidationFailures(result);
+        if (!result) {
+            transitionHold.release();
+            return false;
+        }
+        reportAuthInvalidationFailures(result.result);
         if (options.notifyListeners !== false) {
             await notifyAuthInvalidationListeners();
         }
-        return result.succeeded;
-    })();
+        settleAuthInvalidationTransition(
+            result.invalidationEpoch,
+            transitionHold,
+            result.result,
+        );
+        return result.result.succeeded;
+    })().catch((error) => {
+        transitionHold.fail();
+        throw error;
+    });
     registerAuthSessionTransitionBarrier(completion);
     return completion;
 }
@@ -1050,21 +1403,32 @@ export function clearAuthTokens(
     { notifyListeners = true } = {},
 ): Promise<boolean> {
     // Invalidate pending account-owned async work before any storage deletion awaits.
-    invalidateAuthSession();
+    const invalidationEpoch = invalidateAuthSession();
     hasInMemoryInvalidSessionMarker = true;
-    setAppGroupSessionStateSynchronously(
+    const synchronousFenceReady = setAppGroupSessionStateSynchronously(
         AUTH_APP_GROUP_SESSION_INVALIDATED,
     );
+    const transitionHold = holdAuthSessionTransition();
     const completion = (async () => {
         const result = await runAuthTokenMutation(
-            invalidateAuthStorageWithinMutation,
+            () => invalidateAuthStorageWithinMutation(
+                synchronousFenceReady,
+            ),
         );
         reportAuthInvalidationFailures(result);
         if (notifyListeners) {
             await notifyAuthInvalidationListeners();
         }
+        settleAuthInvalidationTransition(
+            invalidationEpoch,
+            transitionHold,
+            result,
+        );
         return result.succeeded;
-    })();
+    })().catch((error) => {
+        transitionHold.fail();
+        throw error;
+    });
     registerAuthSessionTransitionBarrier(completion);
     return completion;
 }

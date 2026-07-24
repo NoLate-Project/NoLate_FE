@@ -63,6 +63,9 @@ import {
     updateMyScheduleCalendarPreferences,
     updateScheduleCalendar,
 } from "../src/api/scheduleCalendars";
+import {
+    prepareExplicitAuthenticationRequest,
+} from "../src/modules/auth/authStorage";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -72,11 +75,19 @@ jest.mock("../src/api/api", () => ({
     apiPut: jest.fn(),
 }));
 
+jest.mock("../src/modules/auth/authStorage", () => ({
+    prepareExplicitAuthenticationRequest: jest.fn().mockResolvedValue(
+        undefined,
+    ),
+}));
+
 const mockedApiDelete = jest.mocked(apiDelete);
 const mockedApiGet = jest.mocked(apiGet);
 const mockedApiPatch = jest.mocked(apiPatch);
 const mockedApiPost = jest.mocked(apiPost);
 const mockedApiPut = jest.mocked(apiPut);
+const mockedPrepareExplicitAuthenticationRequest =
+    jest.mocked(prepareExplicitAuthenticationRequest);
 
 describe("member api wrappers", () => {
     afterEach(() => {
@@ -135,6 +146,12 @@ describe("member api wrappers", () => {
             consents,
         });
 
+        expect(mockedPrepareExplicitAuthenticationRequest)
+            .toHaveBeenCalledTimes(3);
+        expect(
+            mockedPrepareExplicitAuthenticationRequest.mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(mockedApiPost.mock.invocationCallOrder[0]);
         expect(mockedApiPost).toHaveBeenNthCalledWith(1, "/api/member/auth/sign-up", {
             name: "user",
             email: "user@test.com",

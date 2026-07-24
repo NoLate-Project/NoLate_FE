@@ -163,29 +163,107 @@ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:(NSString *)v
   return [self writeAppGroupSessionStateSynchronously:value];
 }
 
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(beginAppGroupSessionTransitionSync:
+                                       (NSString *)stagingValue)
+{
+  NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
+  if (defaults == nil) {
+    return @{
+      @"success": @NO,
+      @"status": @"failure",
+      @"error": @"app_group_unavailable",
+    };
+  }
+  id currentValue = [defaults objectForKey:NoLateAppGroupSessionStateKey];
+  if (currentValue != nil && ![currentValue isKindOfClass:[NSString class]]) {
+    return @{
+      @"success": @NO,
+      @"status": @"failure",
+      @"error": @"app_group_invalid_value",
+    };
+  }
+  if ([(NSString *)currentValue isEqualToString:stagingValue]) {
+    return @{@"success": @YES, @"status": @"success"};
+  }
+  if (
+    [(NSString *)currentValue hasPrefix:@"staging:"] ||
+    [(NSString *)currentValue hasPrefix:@"publishing:"]
+  ) {
+    return @{
+      @"success": @NO,
+      @"status": @"mismatch",
+      @"mismatch": @YES,
+      @"currentValue": currentValue,
+    };
+  }
+
+  NSDictionary *result =
+    [self writeAppGroupSessionStateSynchronously:stagingValue];
+  if (![result[@"success"] boolValue]) {
+    NSDictionary *rollback;
+    if (currentValue == nil) {
+      [defaults removeObjectForKey:NoLateAppGroupSessionStateKey];
+      rollback = @{@"success": @([defaults synchronize])};
+    } else {
+      rollback =
+        [self writeAppGroupSessionStateSynchronously:(NSString *)currentValue];
+    }
+    return @{
+      @"success": @NO,
+      @"status": @"partial",
+      @"error": result[@"error"] ?: @"app_group_write_failed",
+      @"rollbackSucceeded": @([rollback[@"success"] boolValue]),
+    };
+  }
+  return @{@"success": @YES, @"status": @"success"};
+}
+
 RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:
                                        (NSString *)expectedValue
                                        value:(NSString *)value)
 {
   NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
   if (defaults == nil) {
-    return @{@"success": @NO, @"error": @"app_group_unavailable"};
+    return @{
+      @"success": @NO,
+      @"status": @"failure",
+      @"error": @"app_group_unavailable",
+    };
   }
   id currentValue = [defaults objectForKey:NoLateAppGroupSessionStateKey];
   if (currentValue != nil && ![currentValue isKindOfClass:[NSString class]]) {
-    return @{@"success": @NO, @"error": @"app_group_invalid_value"};
+    return @{
+      @"success": @NO,
+      @"status": @"failure",
+      @"error": @"app_group_invalid_value",
+    };
   }
   if (![(NSString *)currentValue isEqualToString:expectedValue]) {
-    return @{@"success": @NO, @"mismatch": @YES};
+    // A mismatch can mean another process already published a newer session.
+    // Report it without writing anything so JS can fail only this attempt and
+    // must not invalidate active:B.
+    return @{
+      @"success": @NO,
+      @"status": @"mismatch",
+      @"mismatch": @YES,
+      @"currentValue": currentValue ?: [NSNull null],
+    };
   }
   NSDictionary *result = [self writeAppGroupSessionStateSynchronously:value];
   if (![result[@"success"] boolValue]) {
     // setObject can update the process-local defaults cache even when
     // synchronize reports failure. Never leave a partial active publication
     // behind after a failed CAS.
-    [self writeAppGroupSessionStateSynchronously:@"invalidated"];
+    NSDictionary *rollback =
+      [self writeAppGroupSessionStateSynchronously:@"invalidated"];
+    return @{
+      @"success": @NO,
+      @"status": @"partial",
+      @"error": result[@"error"] ?: @"app_group_write_failed",
+      @"rollbackSucceeded": @([rollback[@"success"] boolValue]),
+    };
   }
-  return result;
+  return @{@"success": @YES, @"status": @"success"};
 }
 
 @end

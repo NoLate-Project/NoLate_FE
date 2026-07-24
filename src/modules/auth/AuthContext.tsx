@@ -36,8 +36,10 @@ import { isDefinitiveAuthRejection } from "./refreshPolicy";
 import { restoreAuthSessionIfCurrent } from "./conditionalAuthRestore";
 import {
     holdAuthSessionTransition,
+    replaceFailedAuthSessionTransition,
     registerAuthSessionTransitionBarrier,
     registerSocialAuthTransitionBarrier,
+    type AuthSessionTransitionHold,
     type SocialAuthProvider,
     waitForAuthSessionTransition,
 } from "./authSessionEpoch";
@@ -68,10 +70,10 @@ function beginStandaloneAccountExit(): {
     intentPromise: Promise<AuthLogoutIntent>;
     credentialClearPromise: Promise<boolean>;
     cleanupPromise: Promise<void>;
-    releaseTransition: () => void;
+    transitionHold: AuthSessionTransitionHold;
 } {
     cancelPendingPushRegistration();
-    const releaseTransition = holdAuthSessionTransition();
+    const transitionHold = holdAuthSessionTransition();
     const intentPromise = beginAuthLogoutIntent();
     const credentialClearPromise = intentPromise.then((intent) =>
         clearAuthTokensIfCurrent(intent.epoch, { notifyListeners: false })
@@ -85,7 +87,7 @@ function beginStandaloneAccountExit(): {
         intentPromise,
         credentialClearPromise,
         cleanupPromise,
-        releaseTransition,
+        transitionHold,
     };
 }
 
@@ -122,7 +124,7 @@ const fallbackAuthContext: AuthContextValue = {
                 operation.credentialClearPromise,
                 operation.cleanupPromise,
             ]);
-            operation.releaseTransition();
+            operation.transitionHold.release();
             await remoteCleanupPromise;
             if (logoutIntent.refreshToken) {
                 await logoutMember({ refreshToken: logoutIntent.refreshToken })
@@ -131,6 +133,7 @@ const fallbackAuthContext: AuthContextValue = {
             const cleared = await operation.credentialClearPromise;
             return cleared && remoteSucceeded;
         } catch {
+            operation.transitionHold.fail();
             return false;
         }
     },
@@ -144,7 +147,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
         null,
     );
     const authenticationSequenceRef = useRef(0);
-    const accountExitTransitionReleaseRef = useRef<(() => void) | undefined>(
+    const accountExitTransitionHoldRef = useRef<
+        AuthSessionTransitionHold | undefined
+    >(
         undefined,
     );
     const lastAccountExitOptionsRef = useRef<AccountExitOptions | undefined>(
@@ -154,7 +159,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         intentPromise: Promise<AuthLogoutIntent>;
         localCredentialClearPromise: Promise<boolean>;
         localCleanupPromise: Promise<void>;
-        releaseTransition: () => void;
+        transitionHold: AuthSessionTransitionHold;
         completionPromise?: Promise<boolean>;
     } | undefined>(undefined);
 
@@ -302,9 +307,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const intentPromise = beginAuthLogoutIntent();
         setAccountExitError(null);
         setIsLoading(true);
-        if (!accountExitTransitionReleaseRef.current) {
-            accountExitTransitionReleaseRef.current =
-                holdAuthSessionTransition();
+        if (!accountExitTransitionHoldRef.current) {
+            accountExitTransitionHoldRef.current = holdAuthSessionTransition();
+        } else if (accountExitTransitionHoldRef.current.failed) {
+            accountExitTransitionHoldRef.current =
+                replaceFailedAuthSessionTransition(
+                    accountExitTransitionHoldRef.current,
+                );
         }
         const operation = {
             intentPromise,
@@ -314,7 +323,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
                 })
             ).catch(() => false),
             localCleanupPromise: clearAccountScopedLocalData(),
-            releaseTransition: accountExitTransitionReleaseRef.current,
+            transitionHold: accountExitTransitionHoldRef.current,
         };
         registerAuthSessionTransitionBarrier(Promise.allSettled([
             operation.localCredentialClearPromise,
@@ -348,6 +357,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
                     logoutIntent = await intentPromise;
                 } catch (error) {
                     if (accountExitRef.current === operation) {
+                        operation.transitionHold.fail();
                         setAccountExitError(
                             "공유 확장에 로그아웃 보안 상태를 기록하지 못했어요. " +
                             "다시 시도해 주세요. 계속되면 앱을 완전히 종료한 뒤 다시 열어 주세요.",
@@ -382,12 +392,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
                 await Promise.allSettled([
                     operation.localCleanupPromise,
                 ]);
-                operation.releaseTransition();
+                operation.transitionHold.release();
                 if (
-                    accountExitTransitionReleaseRef.current ===
-                    operation.releaseTransition
+                    accountExitTransitionHoldRef.current ===
+                    operation.transitionHold
                 ) {
-                    accountExitTransitionReleaseRef.current = undefined;
+                    accountExitTransitionHoldRef.current = undefined;
                 }
                 await remoteCleanupPromise;
                 if (logoutIntent.refreshToken) {

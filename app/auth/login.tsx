@@ -33,6 +33,7 @@ import {
     clearAuthTokens,
     clearRestorableAuthSessionIfCurrent,
     getAuthMember,
+    prepareExplicitAuthenticationRequest,
     saveAuthenticatedSession,
 } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
@@ -221,7 +222,7 @@ export default function Login() {
 
         try {
             setSubmitting(true);
-            await waitForAuthSessionTransition();
+            await prepareExplicitAuthenticationRequest();
             const member = await loginMember({ email, password });
             await finishAuthentication(member);
         } catch (error) {
@@ -243,6 +244,7 @@ export default function Login() {
 
         try {
             setSocialSubmittingProvider(provider);
+            await prepareExplicitAuthenticationRequest();
             await waitForSocialAuthTransition(provider);
 
             const profile =
@@ -296,13 +298,12 @@ export default function Login() {
         let accountCreated = false;
         try {
             setSocialSignupSubmitting(true);
+            await prepareExplicitAuthenticationRequest();
             const provider = getSocialAuthProvider(
                 pendingSocialProfile.loginType,
             );
             if (provider) {
                 await waitForSocialAuthTransition(provider);
-            } else {
-                await waitForAuthSessionTransition();
             }
             const member = await snsSignUpMember({
                 loginType: pendingSocialProfile.loginType,

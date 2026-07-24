@@ -9,6 +9,7 @@ jest.mock("react-native", () => {
                 getAppGroupSessionState: jest.fn(),
                 setAppGroupSessionState: jest.fn(),
                 setAppGroupSessionStateSync: jest.fn(),
+                beginAppGroupSessionTransitionSync: jest.fn(),
                 compareAndSetAppGroupSessionStateSync: jest.fn(),
             },
         },
@@ -33,6 +34,7 @@ import * as LocalStorage from "../src/modules/storage/secureStorage";
 import { NativeModules } from "react-native";
 import { createAuthEpochAbortController } from "../src/modules/auth/authEpochAbortController";
 import {
+    __resetAuthSessionTransitionsForTests,
     registerAuthSessionTransitionBarrier,
     waitForAuthSessionTransition,
 } from "../src/modules/auth/authSessionEpoch";
@@ -50,6 +52,7 @@ import {
     getAuthSessionEpoch,
     getRefreshToken,
     isAuthRefreshContextCurrent,
+    prepareExplicitAuthenticationRequest,
     saveAuthenticatedSession,
     saveRefreshedAuthTokensIfCurrent,
     saveAuthCurationCompletedForSession,
@@ -66,11 +69,33 @@ const mockSharedAuth = NativeModules.NoLateShareAuth as {
     getAppGroupSessionState: jest.Mock<Promise<string | null>, []>;
     setAppGroupSessionState: jest.Mock<Promise<boolean>, [string]>;
     setAppGroupSessionStateSync: jest.Mock<
-        { success: boolean; mismatch?: boolean },
+        {
+            success: boolean;
+            status?: "success" | "mismatch" | "partial" | "failure";
+            mismatch?: boolean;
+            currentValue?: string | null;
+            rollbackSucceeded?: boolean;
+        },
+        [string]
+    >;
+    beginAppGroupSessionTransitionSync: jest.Mock<
+        {
+            success: boolean;
+            status?: "success" | "mismatch" | "partial" | "failure";
+            mismatch?: boolean;
+            currentValue?: string | null;
+            rollbackSucceeded?: boolean;
+        },
         [string]
     >;
     compareAndSetAppGroupSessionStateSync: jest.Mock<
-        { success: boolean; mismatch?: boolean },
+        {
+            success: boolean;
+            status?: "success" | "mismatch" | "partial" | "failure";
+            mismatch?: boolean;
+            currentValue?: string | null;
+            rollbackSucceeded?: boolean;
+        },
         [string, string]
     >;
 };
@@ -130,6 +155,23 @@ function installMemoryAuthStores(options: {
         appGroupSessionState = value;
         return { success: true };
     });
+    mockSharedAuth.beginAppGroupSessionTransitionSync.mockImplementation(
+        (stagingValue) => {
+            if (
+                appGroupSessionState?.startsWith("staging:") ||
+                appGroupSessionState?.startsWith("publishing:")
+            ) {
+                return {
+                    success: false,
+                    status: "mismatch",
+                    mismatch: true,
+                    currentValue: appGroupSessionState,
+                };
+            }
+            appGroupSessionState = stagingValue;
+            return { success: true, status: "success" };
+        },
+    );
     mockSharedAuth.compareAndSetAppGroupSessionStateSync.mockImplementation(
         (expectedValue, value) => {
             if (appGroupSessionState !== expectedValue) {
@@ -161,6 +203,7 @@ function installMemoryAuthStores(options: {
 describe("authStorage shared Keychain session", () => {
     beforeEach(async () => {
         await AsyncStorage.clear();
+        __resetAuthSessionTransitionsForTests();
         __resetAuthStorageInvalidSessionForTests();
         jest.clearAllMocks();
         configureSharedAuthApiBaseUrl("http://127.0.0.1:5522");
@@ -171,6 +214,10 @@ describe("authStorage shared Keychain session", () => {
         mockSharedAuth.setAppGroupSessionState.mockResolvedValue(true);
         mockSharedAuth.setAppGroupSessionStateSync.mockReturnValue({
             success: true,
+        });
+        mockSharedAuth.beginAppGroupSessionTransitionSync.mockReturnValue({
+            success: true,
+            status: "success",
         });
         mockSharedAuth.compareAndSetAppGroupSessionStateSync.mockReturnValue({
             success: true,
@@ -609,7 +656,7 @@ describe("authStorage shared Keychain session", () => {
         expect(await AsyncStorage.getItem("nolate_auth_invalid_session"))
             .toBe("invalidated");
         expect(stores.appGroupSessionState).toMatch(
-            /^staging:\d+:sha256:B-refresh$/,
+            /^publishing:\d+:sha256:B-refresh$/,
         );
 
         failMemberWrite.resolve();
@@ -641,6 +688,68 @@ describe("authStorage shared Keychain session", () => {
         expect(await getAuthMember()).toMatchObject({ id: 2, name: "B" });
     });
 
+    test("CAS mismatch의 newer active B와 credential을 A 실패 정리가 손상하지 않는다", async () => {
+        const stores = installMemoryAuthStores();
+        const bMember = JSON.stringify({
+            id: 2,
+            name: "B",
+            authSessionIdentity: "sha256:B-refresh",
+        });
+        mockSharedAuth.compareAndSetAppGroupSessionStateSync.mockImplementation(
+            (expectedValue, nextValue) => {
+                if (!nextValue.startsWith("publishing:")) {
+                    throw new Error(
+                        `unexpected final CAS ${expectedValue} -> ${nextValue}`,
+                    );
+                }
+                // Model B becoming active after A acquired staging but before
+                // A reserves credential publication. A must stop before any A
+                // access/refresh/member row can overwrite B.
+                stores.secure.set("nolte_access_token", "B-access");
+                stores.secure.set("nolte_refresh_token", "B-refresh");
+                stores.secure.set("nolate_auth_member", bMember);
+                stores.shared.set("nolte_access_token", "B-access");
+                stores.shared.set("nolte_refresh_token", "B-refresh");
+                stores.shared.set("nolate_auth_member", bMember);
+                stores.setAppGroupSessionState("active:sha256:B-refresh");
+                return {
+                    success: false,
+                    status: "mismatch",
+                    mismatch: true,
+                    currentValue: "active:sha256:B-refresh",
+                };
+            },
+        );
+        mockSharedAuth.setAppGroupSessionStateSync.mockClear();
+
+        await expect(saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        )).rejects.toThrow(
+            "공유 확장 인증 세션이 더 새로운 세대로 변경되었습니다.",
+        );
+
+        expect(stores.appGroupSessionState)
+            .toBe("active:sha256:B-refresh");
+        expect(stores.secure.get("nolte_access_token")).toBe("B-access");
+        expect(stores.secure.get("nolte_refresh_token")).toBe("B-refresh");
+        expect(stores.secure.get("nolate_auth_member")).toBe(bMember);
+        expect(stores.shared.get("nolte_access_token")).toBe("B-access");
+        expect(stores.shared.get("nolte_refresh_token")).toBe("B-refresh");
+        expect(stores.shared.get("nolate_auth_member")).toBe(bMember);
+        expect(mockSharedAuth.setAppGroupSessionStateSync)
+            .not.toHaveBeenCalled();
+        expect(mockLocalStorage.setItemAsync).not.toHaveBeenCalledWith(
+            "nolte_access_token",
+            "A-access",
+        );
+        expect(mockSharedAuth.setItem).not.toHaveBeenCalledWith(
+            "nolte_refresh_token",
+            "A-refresh",
+        );
+    });
+
     test("A commit marker 제거 중 logout intent가 끼면 staging을 active로 공개하지 않는다", async () => {
         const stores = installMemoryAuthStores();
         const markerDeleteStarted = deferred<void>();
@@ -666,7 +775,7 @@ describe("authStorage shared Keychain session", () => {
         );
         await markerDeleteStarted.promise;
         expect(stores.appGroupSessionState).toMatch(
-            /^staging:\d+:sha256:A-refresh$/,
+            /^publishing:\d+:sha256:A-refresh$/,
         );
 
         const logoutIntent = beginAuthLogoutIntent();
@@ -682,7 +791,13 @@ describe("authStorage shared Keychain session", () => {
         });
         expect(
             mockSharedAuth.compareAndSetAppGroupSessionStateSync,
-        ).not.toHaveBeenCalled();
+        ).toHaveBeenCalledTimes(1);
+        expect(
+            mockSharedAuth.compareAndSetAppGroupSessionStateSync,
+        ).not.toHaveBeenCalledWith(
+            expect.stringMatching(/^publishing:/),
+            expect.stringMatching(/^active:/),
+        );
         expect(stores.appGroupSessionState).toBe("invalidated");
         expect(stores.secure.get("nolte_access_token")).toBeUndefined();
         expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
@@ -693,7 +808,11 @@ describe("authStorage shared Keychain session", () => {
         mockSharedAuth.compareAndSetAppGroupSessionStateSync.mockImplementation(
             (_expectedValue, activeValue) => {
                 stores.setAppGroupSessionState(activeValue);
-                return { success: false };
+                return {
+                    success: false,
+                    status: "partial",
+                    rollbackSucceeded: false,
+                };
             },
         );
         mockLocalStorage.deleteItemAsync.mockImplementation(async (key) => {
@@ -709,11 +828,46 @@ describe("authStorage shared Keychain session", () => {
             { id: 1, name: "A" },
         )).rejects.toThrow("공유 확장 인증 세션 공개에 실패했습니다.");
 
-        expect(stores.secure.get("nolte_refresh_token")).toBe("A-refresh");
+        expect(stores.secure.get("nolte_refresh_token")).toBeUndefined();
         expect(stores.appGroupSessionState).toBe("invalidated");
         __resetAuthStorageInvalidSessionForTests();
         expect(await getRefreshToken()).toBeNull();
         expect(await getAuthMember()).toBeNull();
+    });
+
+    test("credential 기록 뒤 publication mismatch는 예약 전 mismatch로 오인하지 않고 fail-closed 정리한다", async () => {
+        const stores = installMemoryAuthStores();
+        mockSharedAuth.compareAndSetAppGroupSessionStateSync.mockImplementation(
+            (_expectedValue, nextValue) => {
+                if (nextValue.startsWith("publishing:")) {
+                    stores.setAppGroupSessionState(nextValue);
+                    return { success: true, status: "success" };
+                }
+                stores.setAppGroupSessionState("active:unexpected-writer");
+                return {
+                    success: false,
+                    status: "mismatch",
+                    mismatch: true,
+                    currentValue: "active:unexpected-writer",
+                };
+            },
+        );
+
+        await expect(saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        )).rejects.toThrow(
+            "공유 확장 인증 세션이 더 새로운 세대로 변경되었습니다.",
+        );
+
+        expect(stores.appGroupSessionState).toBe("invalidated");
+        expect(stores.secure.get("nolte_access_token")).toBeUndefined();
+        expect(stores.secure.get("nolte_refresh_token")).toBeUndefined();
+        expect(stores.secure.get("nolate_auth_member")).toBeUndefined();
+        expect(stores.shared.get("nolte_access_token")).toBeUndefined();
+        expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
+        expect(stores.shared.get("nolate_auth_member")).toBeUndefined();
     });
 
     test("logout은 App Group durable fence를 먼저 기다리고 실패할 때 shared marker로 fallback한다", async () => {
@@ -757,17 +911,115 @@ describe("authStorage shared Keychain session", () => {
         );
     });
 
-    test("App Group staging marker write 실패는 credential write 전에 fresh login을 fail closed한다", async () => {
+    test("공용 clear의 extension fence 실패는 B network를 막고 같은 프로세스 retry로 복구한다", async () => {
         const stores = installMemoryAuthStores();
+        await saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        );
+        mockSharedAuth.setAppGroupSessionStateSync.mockReturnValue({
+            success: false,
+        });
         mockSharedAuth.setAppGroupSessionState.mockRejectedValue(
             new Error("app group unavailable"),
         );
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            if (key === "nolate_auth_invalid_session") {
+                throw new Error("shared marker unavailable");
+            }
+            stores.shared.set(key, value);
+            return true;
+        });
+        mockSharedAuth.deleteItem.mockImplementation(async (key) => {
+            if (key === "nolte_refresh_token") {
+                throw new Error("shared A refresh delete unavailable");
+            }
+            stores.shared.delete(key);
+            return true;
+        });
+
+        await expect(clearAuthTokens()).resolves.toBe(false);
+        expect(stores.appGroupSessionState)
+            .toBe("active:sha256:A-refresh");
+        expect(stores.shared.get("nolte_refresh_token")).toBe("A-refresh");
+
+        const bNetwork = jest.fn(async () => "B-session");
+        await expect(
+            prepareExplicitAuthenticationRequest().then(bNetwork),
+        ).rejects.toThrow("공유 확장");
+        expect(bNetwork).not.toHaveBeenCalled();
+
+        mockSharedAuth.setAppGroupSessionStateSync.mockImplementation(
+            (value) => {
+                stores.setAppGroupSessionState(value);
+                return { success: true };
+            },
+        );
+        mockSharedAuth.setAppGroupSessionState.mockImplementation(
+            async (value) => {
+                stores.setAppGroupSessionState(value);
+                return true;
+            },
+        );
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            stores.shared.set(key, value);
+            return true;
+        });
+        mockSharedAuth.deleteItem.mockImplementation(async (key) => {
+            stores.shared.delete(key);
+            return true;
+        });
+
+        await expect(
+            prepareExplicitAuthenticationRequest().then(bNetwork),
+        ).resolves.toBe("B-session");
+        expect(bNetwork).toHaveBeenCalledTimes(1);
+        expect(stores.appGroupSessionState).toBe("invalidated");
+        expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
+    });
+
+    test("명시적 B 인증 network 전에 old active A를 durable invalidated로 전환한다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        );
+        const response = deferred<void>();
+        const bNetwork = jest.fn(async () => {
+            expect(stores.appGroupSessionState).toBe("invalidated");
+            expect(
+                stores.shared.get("nolate_auth_invalid_session"),
+            ).toBe("invalidated");
+            await response.promise;
+            return "B-response";
+        });
+
+        const request = prepareExplicitAuthenticationRequest()
+            .then(bNetwork);
+        while (bNetwork.mock.calls.length === 0) await Promise.resolve();
+
+        // A process kill here can leave old credentials, but both main app and
+        // extension observe the durable invalidation before B's response.
+        __resetAuthStorageInvalidSessionForTests();
+        expect(await getRefreshToken()).toBeNull();
+        response.resolve();
+        await expect(request).resolves.toBe("B-response");
+    });
+
+    test("App Group staging marker write 실패는 credential write 전에 fresh login을 fail closed한다", async () => {
+        const stores = installMemoryAuthStores();
+        mockSharedAuth.beginAppGroupSessionTransitionSync.mockReturnValue({
+            success: false,
+            status: "failure",
+        });
 
         await expect(saveTestSession(
             "B-access",
             "B-refresh",
             { id: 2, name: "B" },
-        )).rejects.toThrow("모든 저장소");
+        )).rejects.toThrow("공유 확장 인증 세션 공개에 실패했습니다.");
 
         expect(mockSharedAuth.setItem).not.toHaveBeenCalledWith(
             "nolte_access_token",

@@ -1,8 +1,13 @@
 import {
+    __resetAuthSessionTransitionsForTests,
     activateAuthSessionIfCurrent,
     beginAuthLoginSession,
+    beginAuthLogoutSession,
+    holdAuthSessionTransition,
+    isAuthSessionActive,
     registerAuthSessionTransitionBarrier,
     registerSocialAuthTransitionBarrier,
+    replaceFailedAuthSessionTransition,
     waitForAuthSessionTransition,
     waitForSocialAuthTransition,
 } from "../src/modules/auth/authSessionEpoch";
@@ -20,6 +25,7 @@ function deferred<T>() {
 describe("account-exit authentication start gate", () => {
     beforeEach(() => {
         jest.useRealTimers();
+        __resetAuthSessionTransitionsForTests();
         const epoch = beginAuthLoginSession();
         activateAuthSessionIfCurrent(epoch);
     });
@@ -147,6 +153,56 @@ describe("account-exit authentication start gate", () => {
         await expect(waitForAuthSessionTransition({
             timeoutMs: 1_000,
         })).resolves.toBeUndefined();
+    });
+
+    test("timeout 뒤 terminal failure hold를 새 세대 retry로 교체해 재시작 없이 복구한다", async () => {
+        jest.useFakeTimers();
+        const failedHold = holdAuthSessionTransition();
+        const firstNetwork = jest.fn(async () => "unsafe-A");
+        const firstAttempt = waitForAuthSessionTransition({
+            timeoutMs: 1_000,
+        }).then(firstNetwork);
+        let firstFailure: unknown;
+        const observedFirst = firstAttempt.catch((error) => {
+            firstFailure = error;
+        });
+
+        await jest.advanceTimersByTimeAsync(1_000);
+        await observedFirst;
+        expect(firstFailure).toMatchObject({
+            code: "AUTH_SESSION_TRANSITION_PENDING",
+        });
+        expect(firstNetwork).not.toHaveBeenCalled();
+
+        const logoutEpoch = beginAuthLogoutSession();
+        expect(isAuthSessionActive(logoutEpoch)).toBe(false);
+        failedHold.fail();
+        await expect(waitForAuthSessionTransition({
+            timeoutMs: 1_000,
+        })).rejects.toMatchObject({
+            code: "AUTH_SESSION_TRANSITION_PENDING",
+        });
+
+        const retryHold = replaceFailedAuthSessionTransition(failedHold);
+        expect(retryHold.id).not.toBe(failedHold.id);
+        const bNetwork = jest.fn(async () => "B-session");
+        const retry = waitForAuthSessionTransition({
+            timeoutMs: 1_000,
+        }).then(async () => {
+            const bEpoch = beginAuthLoginSession();
+            expect(activateAuthSessionIfCurrent(bEpoch)).toBe(true);
+            return bNetwork();
+        });
+        await Promise.resolve();
+        expect(bNetwork).not.toHaveBeenCalled();
+
+        retryHold.release();
+        // A stale owner cannot fail or release the replacement hold.
+        failedHold.fail();
+        failedHold.release();
+        await expect(retry).resolves.toBe("B-session");
+        expect(bNetwork).toHaveBeenCalledTimes(1);
+        expect(isAuthSessionActive()).toBe(true);
     });
 
     test("same-provider SDK cleanup timeout은 SDK login을 시작하지 않고 이후 재시도할 수 있다", async () => {

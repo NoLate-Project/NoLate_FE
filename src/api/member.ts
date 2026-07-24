@@ -1,5 +1,8 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
+import {
+    prepareExplicitAuthenticationRequest,
+} from "../modules/auth/authStorage";
 
 const CURATION_STATUS_BOOTSTRAP_TIMEOUT_MS = 3_500;
 
@@ -86,16 +89,19 @@ export type WithdrawPayload = {
 };
 
 export async function signUpMember(payload: SignUpPayload): Promise<MemberDto> {
+    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SignUpPayload>("/api/member/auth/sign-up", payload);
     return unwrapApiResponse(response);
 }
 
 export async function loginMember(payload: LoginPayload): Promise<MemberDto> {
+    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, LoginPayload>("/api/member/auth/login", payload);
     return unwrapApiResponse(response);
 }
 
 export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDto> {
+    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SnsLoginPayload>("/api/member/auth/sns-login", payload);
     return unwrapApiResponse(response);
 }
@@ -103,6 +109,7 @@ export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDt
 export async function getSnsRegistrationStatus(
     payload: SnsRegistrationPayload
 ): Promise<SnsRegistrationStatusDto> {
+    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<SnsRegistrationStatusDto>, SnsRegistrationPayload>(
         "/api/member/auth/sns-registration",
         payload
@@ -111,6 +118,7 @@ export async function getSnsRegistrationStatus(
 }
 
 export async function snsSignUpMember(payload: SnsSignUpPayload): Promise<MemberDto> {
+    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SnsSignUpPayload>(
         "/api/member/auth/sns-sign-up",
         payload

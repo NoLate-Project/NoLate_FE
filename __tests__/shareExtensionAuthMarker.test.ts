@@ -38,6 +38,23 @@ describe("iOS share extension auth invalidation contract", () => {
         expect(source).toContain("workflow: workflow");
     });
 
+    test("workflow access JWT를 고정하고 signed sg generation을 Authorization으로 전송한다", () => {
+        expect(source).toContain("let accessToken: String");
+        expect(source).toContain("accessToken: accessToken");
+        expect(source).toContain(
+            '"Bearer \\(workflow.accessToken)"',
+        );
+        expect(source).toContain(
+            'forHTTPHeaderField: "Authorization"',
+        );
+        expect(source).toContain(
+            "server-signed access JWT `sg` generation",
+        );
+        expect(source).not.toContain(
+            "let token = normalizedCredential(storedAccessToken)",
+        );
+    });
+
     test("rotating refresh token을 소비하거나 갱신 자격을 저장하지 않는다", () => {
         expect(source).not.toContain("ShareTokenRefreshCoordinator");
         expect(source).not.toContain("refreshTokens(");
@@ -83,10 +100,26 @@ describe("iOS share extension auth invalidation contract", () => {
             "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
         );
         expect(nativeAuthSource).toContain(
+            "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(beginAppGroupSessionTransitionSync:",
+        );
+        expect(nativeAuthSource).toContain(
             "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
         );
         expect(nativeAuthSource).toMatch(
             /compareAndSetAppGroupSessionStateSync:[\s\S]*?if \(!\[\(NSString \*\)currentValue isEqualToString:expectedValue\]\)[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
+        );
+        expect(nativeAuthSource).toContain('@"status": @"mismatch"');
+        expect(nativeAuthSource).toContain('@"status": @"partial"');
+        expect(nativeAuthSource).toContain('@"status": @"failure"');
+        expect(nativeAuthSource).toContain(
+            'hasPrefix:@"publishing:"',
+        );
+        const mismatchBranch = nativeAuthSource.match(
+            /if \(!\[\(NSString \*\)currentValue isEqualToString:expectedValue\]\) \{([\s\S]*?)\n {2}\}/,
+        )?.[1];
+        expect(mismatchBranch).toContain('@"status": @"mismatch"');
+        expect(mismatchBranch).not.toContain(
+            "writeAppGroupSessionStateSynchronously",
         );
     });
 });

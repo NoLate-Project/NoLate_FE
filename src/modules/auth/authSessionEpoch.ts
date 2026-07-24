@@ -7,12 +7,21 @@ let sessionPhase:
     | "LOGGING_OUT"
     | "SIGNED_OUT" = "BOOTSTRAPPING";
 let authSessionTransitionBarrier: Promise<void> = Promise.resolve();
+let authSessionTransitionHoldSequence = 0;
+const failedAuthSessionTransitionHoldIds = new Set<number>();
 export type SocialAuthProvider = "naver" | "kakao" | "apple";
 const socialAuthTransitionBarriers = new Map<
     SocialAuthProvider,
     Promise<void>
 >();
 export const AUTH_SESSION_TRANSITION_WAIT_MS = 8_000;
+
+export function __resetAuthSessionTransitionsForTests(): void {
+    if (process.env.NODE_ENV !== "test") return;
+    authSessionTransitionBarrier = Promise.resolve();
+    failedAuthSessionTransitionHoldIds.clear();
+    socialAuthTransitionBarriers.clear();
+}
 
 export class AuthSessionTransitionPendingError extends Error {
     readonly code = "AUTH_SESSION_TRANSITION_PENDING";
@@ -67,18 +76,53 @@ export function registerAuthSessionTransitionBarrier(
     }).catch(() => undefined);
 }
 
-export function holdAuthSessionTransition(): () => void {
+export type AuthSessionTransitionHold = {
+    readonly id: number;
+    readonly failed: boolean;
+    release: () => void;
+    fail: () => void;
+};
+
+function createAuthSessionTransitionHold(): AuthSessionTransitionHold {
+    const id = ++authSessionTransitionHoldSequence;
     let releaseBarrier!: () => void;
     const barrier = new Promise<void>((resolve) => {
         releaseBarrier = resolve;
     });
     registerAuthSessionTransitionBarrier(barrier);
-    let released = false;
-    return () => {
-        if (released) return;
-        released = true;
+    let terminalState: "ACTIVE" | "RELEASED" | "FAILED" = "ACTIVE";
+    const settle = (failed: boolean) => {
+        if (terminalState !== "ACTIVE") return;
+        terminalState = failed ? "FAILED" : "RELEASED";
+        if (failed) failedAuthSessionTransitionHoldIds.add(id);
+        else failedAuthSessionTransitionHoldIds.delete(id);
         releaseBarrier();
     };
+    return {
+        id,
+        get failed() {
+            return terminalState === "FAILED";
+        },
+        release: () => settle(false),
+        fail: () => settle(true),
+    };
+}
+
+export function holdAuthSessionTransition(): AuthSessionTransitionHold {
+    return createAuthSessionTransitionHold();
+}
+
+export function replaceFailedAuthSessionTransition(
+    failedHold: AuthSessionTransitionHold,
+): AuthSessionTransitionHold {
+    if (
+        !failedHold.failed ||
+        !failedAuthSessionTransitionHoldIds.has(failedHold.id)
+    ) {
+        return failedHold;
+    }
+    failedAuthSessionTransitionHoldIds.delete(failedHold.id);
+    return createAuthSessionTransitionHold();
 }
 
 export function registerSocialAuthTransitionBarrier(
@@ -102,6 +146,9 @@ export function registerSocialAuthTransitionBarrier(
 export async function waitForAuthSessionTransition(options: {
     timeoutMs?: number;
 } = {}): Promise<void> {
+    if (failedAuthSessionTransitionHoldIds.size > 0) {
+        throw new AuthSessionTransitionPendingError();
+    }
     const timeoutMs =
         options.timeoutMs ?? AUTH_SESSION_TRANSITION_WAIT_MS;
     const deadline = Date.now() + Math.max(0, timeoutMs);
@@ -109,6 +156,9 @@ export async function waitForAuthSessionTransition(options: {
         () => authSessionTransitionBarrier,
         deadline,
     );
+    if (failedAuthSessionTransitionHoldIds.size > 0) {
+        throw new AuthSessionTransitionPendingError();
+    }
 }
 
 export async function waitForSocialAuthTransition(

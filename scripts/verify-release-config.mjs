@@ -152,12 +152,23 @@ assert.ok(mainShareAuth.includes(
   "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
 ));
 assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(beginAppGroupSessionTransitionSync:",
+));
+assert.ok(mainShareAuth.includes(
   "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
 ));
 assert.match(
   mainShareAuth,
   /compareAndSetAppGroupSessionStateSync:[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
   "A failed App Group active-session CAS must synchronously roll back to invalidated",
+);
+assert.ok(mainShareAuth.includes('@"status": @"mismatch"'));
+assert.ok(mainShareAuth.includes('@"status": @"partial"'));
+assert.ok(mainShareAuth.includes('hasPrefix:@"publishing:"'));
+assert.match(
+  shareExtension,
+  /"Bearer \\\(workflow\.accessToken\)"[\s\S]*?forHTTPHeaderField: "Authorization"/,
+  "Share Extension must send the workflow-captured signed access JWT generation",
 );
 assert.match(
   mainShareAuth,

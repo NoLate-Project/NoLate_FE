@@ -95,6 +95,7 @@ private enum ShareAPIError: LocalizedError {
 
 private struct ShareWorkflowSession: Sendable, Equatable {
   let generation: String
+  let accessToken: String
   let refreshToken: String
 }
 
@@ -139,6 +140,8 @@ private final class ShareAPIClient {
   func captureWorkflowSession() -> ShareWorkflowSession? {
     guard case .value(let marker) = readKeychainStrict(invalidSessionKey),
           marker == nil,
+          case .value(let accessValue) = readKeychainStrict(accessTokenKey),
+          let accessToken = normalizedCredential(accessValue),
           case .value(let refreshValue) = readKeychainStrict(refreshTokenKey),
           let refreshToken = normalizedCredential(refreshValue),
           case .value(let appGroupState) = readAppGroupSessionStateStrict(),
@@ -149,6 +152,7 @@ private final class ShareAPIClient {
     }
     return ShareWorkflowSession(
       generation: generation,
+      accessToken: accessToken,
       refreshToken: refreshToken
     )
   }
@@ -192,13 +196,8 @@ private final class ShareAPIClient {
     guard isWorkflowCurrent(workflow) else {
       throw ShareAPIError.loginRequired
     }
-    guard case .value(let storedAccessToken) = readKeychainStrict(accessTokenKey),
-          let token = normalizedCredential(storedAccessToken)
-    else {
-      throw ShareAPIError.loginRequired
-    }
-    // If B committed while this workflow was reading the shared credential,
-    // never send A's URL/body with B's token.
+    // The workflow keeps the access JWT captured with its App Group identity.
+    // It must never re-read and attach B's token to A's URL/body.
     guard isWorkflowCurrent(workflow) else {
       throw ShareAPIError.loginRequired
     }
@@ -207,7 +206,14 @@ private final class ShareAPIClient {
     request.httpMethod = method
     request.httpBody = body
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    // The unavoidable final local-check -> URLSession handoff race is closed
+    // by the server transaction, not by this client check. Authorization
+    // carries the server-signed access JWT `sg` generation; the local
+    // refresh-token fingerprint is not a trusted server generation.
+    request.setValue(
+      "Bearer \(workflow.accessToken)",
+      forHTTPHeaderField: "Authorization"
+    )
     let (data, response) = try await session.data(for: request)
     guard isWorkflowCurrent(workflow) else {
       throw ShareAPIError.loginRequired

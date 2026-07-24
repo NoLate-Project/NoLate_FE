@@ -17,12 +17,12 @@ import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import {
     clearAuthTokens,
+    prepareExplicitAuthenticationRequest,
     saveAuthenticatedSession,
 } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import {
     isAuthSessionTransitionPendingError,
-    waitForAuthSessionTransition,
 } from "../../src/modules/auth/authSessionEpoch";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
@@ -126,7 +126,7 @@ export default function SignUp() {
 
         try {
             setSubmitting(true);
-            await waitForAuthSessionTransition();
+            await prepareExplicitAuthenticationRequest();
             await signUpMember({
                 name: normalizedName,
                 email: normalizedEmail,
@@ -135,7 +135,6 @@ export default function SignUp() {
             });
             accountCreated = true;
 
-            await waitForAuthSessionTransition();
             const member = requireAuthenticatedMember(await loginMember({
                 email: normalizedEmail,
                 password: pwd,

@@ -10,6 +10,7 @@ jest.mock("react-native", () => {
                 getAppGroupSessionState: jest.fn(),
                 setAppGroupSessionState: jest.fn(),
                 setAppGroupSessionStateSync: jest.fn(),
+                beginAppGroupSessionTransitionSync: jest.fn(),
                 compareAndSetAppGroupSessionStateSync: jest.fn(),
             },
         },
@@ -53,6 +54,7 @@ import {
     __resetAuthStorageInvalidSessionForTests,
 } from "../src/modules/auth/authStorage";
 import {
+    __resetAuthSessionTransitionsForTests,
     activateAuthSessionIfCurrent,
     beginAuthLoginSession,
     isAuthSessionActive,
@@ -73,6 +75,10 @@ const sharedAuth = NativeModules.NoLateShareAuth as {
     compareAndSetAppGroupSessionStateSync: jest.Mock<
         { success: boolean },
         [string, string]
+    >;
+    beginAppGroupSessionTransitionSync: jest.Mock<
+        { success: boolean },
+        [string]
     >;
 };
 const secureStorage = {
@@ -129,6 +135,7 @@ describe("account-exit extension-visible durable fence", () => {
 
     beforeEach(async () => {
         await AsyncStorage.clear();
+        __resetAuthSessionTransitionsForTests();
         __resetAuthStorageInvalidSessionForTests();
         jest.clearAllMocks();
         const epoch = beginAuthLoginSession();
@@ -178,6 +185,9 @@ describe("account-exit extension-visible durable fence", () => {
             return { success: true };
         });
         sharedAuth.compareAndSetAppGroupSessionStateSync.mockReturnValue({
+            success: true,
+        });
+        sharedAuth.beginAppGroupSessionTransitionSync.mockReturnValue({
             success: true,
         });
     });

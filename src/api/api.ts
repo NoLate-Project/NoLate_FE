@@ -11,6 +11,7 @@ import {
     isAuthRefreshContextCurrent,
     isAuthSessionEpochCurrent,
     isAuthSessionRestorable,
+    prepareAuthRestoreRequest,
     saveRefreshedAuthTokensIfCurrent,
     subscribeAuthSessionEpoch,
 } from "../modules/auth/authStorage";
@@ -142,11 +143,18 @@ async function runAuthRefreshForSession(
     if (authRefreshFlight?.key === key) return authRefreshFlight.promise;
 
     const generation = authRefreshGeneration;
-    const promise = requestRefreshedAuthTokens(
-        expectedEpoch,
-        refreshToken,
-        generation,
-    ).finally(() => {
+    const promise = (async () => {
+        const prepared = await prepareAuthRestoreRequest({
+            expectedEpoch,
+            expectedRefreshToken: refreshToken,
+        });
+        if (!prepared) return null;
+        return requestRefreshedAuthTokens(
+            expectedEpoch,
+            refreshToken,
+            generation,
+        );
+    })().finally(() => {
         if (authRefreshFlight?.promise === promise) authRefreshFlight = null;
     });
     authRefreshFlight = { key, promise };
