@@ -17,13 +17,17 @@ import {
     getCalendarSchedules,
     getDailySchedules,
     getDepartureReadySchedules,
+    getSchedule,
     getScheduleDepartureStatus,
+    getScheduleForDepartureHome,
+    getSchedules,
     getUpcomingSchedules,
     importCalendarSchedule,
     markScheduleDeparted,
     searchSchedules,
     sendScheduleDepartureNudge,
 } from "../src/api/schedule";
+import * as calendarScheduleCache from "../src/modules/schedule/calendarScheduleCache";
 import {
     createScheduleCategoryToApi,
     deleteScheduleCategoryFromApi,
@@ -214,6 +218,7 @@ describe("schedule query api wrappers", () => {
     test("calendar daily upcoming search and departure endpoints normalize ids", async () => {
         mockedApiGet.mockResolvedValue({ success: true, data: [scheduleDto] });
 
+        await expect(getSchedules()).resolves.toMatchObject([{ id: "10" }]);
         await expect(getCalendarSchedules("2026-07-01T00:00:00Z", "2026-07-31T23:59:59Z")).resolves.toMatchObject([
             { id: "10" },
         ]);
@@ -222,6 +227,7 @@ describe("schedule query api wrappers", () => {
         await expect(searchSchedules({ keyword: "sync" })).resolves.toMatchObject([{ id: "10" }]);
         await expect(getDepartureReadySchedules()).resolves.toMatchObject([{ id: "10" }]);
 
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules");
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/calendar", {
             params: { startAt: "2026-07-01T00:00:00Z", endAt: "2026-07-31T23:59:59Z" },
         });
@@ -330,6 +336,64 @@ describe("schedule query api wrappers", () => {
 
         await expect(getScheduleDepartureStatus("10")).rejects.toThrow(
             "출발 상태의 일정 정보가 요청과 일치하지 않습니다."
+        );
+    });
+
+    test("home reads accept abort signals and detail verification leaves the calendar cache untouched", async () => {
+        const controller = new AbortController();
+        const cacheSpy = jest.spyOn(
+            calendarScheduleCache,
+            "upsertCalendarScheduleCacheItem"
+        ).mockImplementation(() => undefined);
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: scheduleDto,
+        });
+
+        await expect(getScheduleForDepartureHome(
+            "10",
+            { signal: controller.signal }
+        )).resolves.toMatchObject({ id: "10" });
+        expect(cacheSpy).not.toHaveBeenCalled();
+        expect(mockedApiGet).toHaveBeenLastCalledWith(
+            "/api/schedules/10",
+            { signal: controller.signal }
+        );
+
+        await expect(getSchedule("10")).resolves.toMatchObject({ id: "10" });
+        expect(cacheSpy).toHaveBeenCalledTimes(1);
+        expect(mockedApiGet).toHaveBeenLastCalledWith("/api/schedules/10");
+        cacheSpy.mockRestore();
+    });
+
+    test("all-schedules and departure-status reads forward abort signals", async () => {
+        const controller = new AbortController();
+        mockedApiGet
+            .mockResolvedValueOnce({ success: true, data: [scheduleDto] })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    scheduleId: 10,
+                    source: "SELECTED_ROUTE",
+                    stale: false,
+                },
+            });
+
+        await getSchedules({ signal: controller.signal });
+        await getScheduleDepartureStatus(
+            "10",
+            { signal: controller.signal }
+        );
+
+        expect(mockedApiGet).toHaveBeenNthCalledWith(
+            1,
+            "/api/schedules",
+            { signal: controller.signal }
+        );
+        expect(mockedApiGet).toHaveBeenNthCalledWith(
+            2,
+            "/api/schedules/10/departure-status",
+            { signal: controller.signal }
         );
     });
 

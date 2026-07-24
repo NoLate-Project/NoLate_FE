@@ -92,6 +92,10 @@ type ScheduleDepartureStatusDto = Partial<Omit<ScheduleDepartureStatus, "schedul
     scheduleId?: unknown;
 };
 
+type ScheduleReadOptions = {
+    signal?: AbortSignal;
+};
+
 let observedCalendarCacheRevision: number | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
@@ -105,8 +109,13 @@ function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     };
 }
 
-export async function getSchedules(): Promise<ScheduleItem[]> {
-    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
+export async function getSchedules(options?: ScheduleReadOptions): Promise<ScheduleItem[]> {
+    const response = options?.signal
+        ? await apiGet<ApiEnvelope<ScheduleDto[]>>(
+            "/api/schedules",
+            { signal: options.signal }
+        )
+        : await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
     return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
@@ -163,11 +172,16 @@ export async function getDepartureReadySchedules(fromAt?: string, toAt?: string)
 }
 
 export async function getScheduleDepartureStatus(
-    scheduleId: string
+    scheduleId: string,
+    options?: ScheduleReadOptions
 ): Promise<ScheduleDepartureStatus> {
-    const response = await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(
-        `/api/schedules/${scheduleId}/departure-status`
-    );
+    const path = `/api/schedules/${scheduleId}/departure-status`;
+    const response = options?.signal
+        ? await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(
+            path,
+            { signal: options.signal }
+        )
+        : await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(path);
     const status = unwrapApiResponse(response);
     const responseScheduleId = status.scheduleId === null || status.scheduleId === undefined
         ? ""
@@ -238,10 +252,32 @@ function isDepartureStatusConfidence(
     return value === "HIGH" || value === "MEDIUM" || value === "LOW";
 }
 
+async function readSchedule(
+    scheduleId: string,
+    options?: ScheduleReadOptions
+): Promise<ScheduleItem> {
+    const path = `/api/schedules/${scheduleId}`;
+    const response = options?.signal
+        ? await apiGet<ApiEnvelope<ScheduleDto>>(path, { signal: options.signal })
+        : await apiGet<ApiEnvelope<ScheduleDto>>(path);
+    return normalizeSchedule(unwrapApiResponse(response));
+}
+
 export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
-    const response = await apiGet<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}`);
-    const item = normalizeSchedule(unwrapApiResponse(response));
+    const item = await readSchedule(scheduleId);
     upsertCalendarScheduleCacheItem(item);
+    return item;
+}
+
+/**
+ * 홈 후보 검증은 화면 수명보다 늦게 끝날 수 있으므로 전역 월 캘린더 캐시를
+ * 변경하지 않는다. 상세 화면의 기존 getSchedule 캐시 동작과 의도적으로 분리한다.
+ */
+export async function getScheduleForDepartureHome(
+    scheduleId: string,
+    options?: ScheduleReadOptions
+): Promise<ScheduleItem> {
+    const item = await readSchedule(scheduleId, options);
     return item;
 }
 

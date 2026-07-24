@@ -2,41 +2,57 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 
 import {
-    getDepartureReadySchedules,
-    getSchedule,
     getScheduleDepartureStatus,
+    getScheduleForDepartureHome,
+    getSchedules,
     type ScheduleDepartureStatus,
 } from "../../api/schedule";
 import { ApiResponseError } from "../../api/response";
-import { getAuthMember } from "../auth/authStorage";
+import {
+    getAuthMember,
+    subscribeAuthInvalidation,
+} from "../auth/authStorage";
 import type { ScheduleItem } from "./types";
 import {
     getDepartureStatusRefreshAt,
     getDepartureVerificationItems,
+    isDepartureCandidateEligible,
+    isDepartureStatusFresh,
     NEXT_DEPARTURE_STATUS_MAX_AGE_MS,
 } from "./nextDeparture";
 
-export const DEPARTURE_HOME_LOOKBACK_MS = 24 * 60 * 60_000;
-export const DEPARTURE_HOME_LOOKAHEAD_MS = 14 * 24 * 60 * 60_000;
 export const DEPARTURE_HOME_REQUEST_CONCURRENCY = 4;
-const DEPARTURE_HOME_RETRY_MS = 60_000;
-const DEPARTURE_HOME_MIN_REFRESH_DELAY_MS = 15_000;
+export const DEPARTURE_HOME_RETRY_BACKOFF_MS = [
+    60_000,
+    2 * 60_000,
+    5 * 60_000,
+] as const;
+const DEPARTURE_HOME_MIN_REFRESH_DELAY_MS = 1_000;
 
-type DepartureHomeSource = "loading" | "departures" | "calendar-fallback";
+type DepartureHomeSource = "loading" | "schedules" | "calendar-fallback";
 export type DepartureHomeConnectionIssue = "offline" | "error";
+export type DepartureHomeDetailIssue =
+    | DepartureHomeConnectionIssue
+    | "verification";
 
 type DepartureHomeSnapshot = {
     source: DepartureHomeSource;
     items: ScheduleItem[];
+    candidateItems: ScheduleItem[];
     statusesByScheduleId: Record<string, ScheduleDepartureStatus | undefined>;
     statusIssuesByScheduleId: Record<
         string,
         DepartureHomeConnectionIssue | undefined
     >;
+    detailIssuesByScheduleId: Record<
+        string,
+        DepartureHomeDetailIssue | undefined
+    >;
     currentMemberId?: number;
     loading: boolean;
     connectionIssue: DepartureHomeConnectionIssue | null;
     refreshedAt: number | null;
+    retryDelayMs: number | null;
 };
 
 type CandidateRequest =
@@ -48,16 +64,70 @@ type CandidateRequestResult = CandidateRequest & {
     error?: unknown;
 };
 
-function getConnectionIssue(error: unknown): DepartureHomeConnectionIssue {
-    const message = error instanceof Error ? error.message : String(error);
-    return /network|timeout|offline|connection|internet/i.test(message)
-        ? "offline"
-        : "error";
+type RetryState = {
+    accountKey: string;
+    fingerprint: string | null;
+    consecutive: number;
+};
+
+function getMemberId(member: { id?: number } | null): number | undefined {
+    return Number.isSafeInteger(member?.id) && (member?.id ?? 0) > 0
+        ? member?.id
+        : undefined;
+}
+
+function hasNetworkMetadata(error: unknown, seen = new Set<unknown>()): boolean {
+    if (!error || (typeof error !== "object" && typeof error !== "function")) {
+        return false;
+    }
+    if (seen.has(error)) return false;
+    seen.add(error);
+
+    const candidate = error as {
+        code?: unknown;
+        errorCode?: unknown;
+        name?: unknown;
+        cause?: unknown;
+        isAxiosError?: unknown;
+        response?: unknown;
+    };
+    const codes = [candidate.code, candidate.errorCode]
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.toUpperCase());
+    if (codes.some((code) => (
+        code === "ERR_NETWORK"
+        || code === "ECONNABORTED"
+        || code === "ETIMEDOUT"
+        || code === "ENETUNREACH"
+        || code === "ECONNRESET"
+    ))) {
+        return true;
+    }
+    if (candidate.name === "TimeoutError") return true;
+    if (candidate.isAxiosError === true && candidate.response === undefined) {
+        return codes.length > 0;
+    }
+    return hasNetworkMetadata(candidate.cause, seen);
+}
+
+export function getDepartureHomeConnectionIssue(
+    error: unknown
+): DepartureHomeConnectionIssue {
+    if (error instanceof ApiResponseError && error.status !== undefined) {
+        return "error";
+    }
+    return hasNetworkMetadata(error) ? "offline" : "error";
 }
 
 function isRolloutUnavailable(error: unknown): boolean {
     return error instanceof ApiResponseError
         && (error.status === 404 || error.status === 501);
+}
+
+function isAuthoritativeDetailFailure(error: unknown): boolean {
+    return error instanceof ApiResponseError
+        && error.status !== undefined
+        && [400, 401, 403, 404, 410, 422].includes(error.status);
 }
 
 function mergeConnectionIssue(
@@ -67,34 +137,27 @@ function mergeConnectionIssue(
     return current === "offline" || next === "offline" ? "offline" : "error";
 }
 
-export function getDepartureHomeRange(now: Date): {
-    fromAt: string;
-    toAt: string;
-} {
-    return {
-        fromAt: new Date(now.getTime() - DEPARTURE_HOME_LOOKBACK_MS).toISOString(),
-        toAt: new Date(now.getTime() + DEPARTURE_HOME_LOOKAHEAD_MS).toISOString(),
-    };
-}
-
 async function mapWithConcurrency<T, R>(
     values: T[],
     concurrency: number,
+    signal: AbortSignal,
+    isCurrent: () => boolean,
     mapper: (value: T) => Promise<R>
 ): Promise<R[]> {
-    const results = new Array<R>(values.length);
+    const results = new Array<R | undefined>(values.length);
     let nextIndex = 0;
     const workerCount = Math.min(Math.max(1, concurrency), values.length);
 
     await Promise.all(Array.from({ length: workerCount }, async () => {
-        while (nextIndex < values.length) {
+        while (!signal.aborted && isCurrent() && nextIndex < values.length) {
             const index = nextIndex;
             nextIndex += 1;
+            if (signal.aborted || !isCurrent()) return;
             results[index] = await mapper(values[index]!);
         }
     }));
 
-    return results;
+    return results.filter((result): result is R => result !== undefined);
 }
 
 function getFallbackRevision(items: ScheduleItem[]): string {
@@ -109,6 +172,9 @@ function getFallbackRevision(items: ScheduleItem[]): string {
             item.departAt ?? "",
             item.myDepartedAt ?? "",
             item.departedAt ?? "",
+            item.departureParticipants?.map((participant) => (
+                `${participant.memberId}:${participant.departed ? 1 : 0}`
+            )).join(",") ?? "",
             item.travelMinutes ?? "",
             item.travelCollaborationEnabled ?? "",
             item.routeSetupRequired ?? "",
@@ -116,19 +182,84 @@ function getFallbackRevision(items: ScheduleItem[]): string {
             item.locationName ?? "",
             item.destination?.name ?? "",
             item.destination?.address ?? "",
-            item.route ? "route" : "",
-            item.myTravelPlan?.updatedAt ?? "",
+            item.route === null ? "route:null" : item.route ? "route:set" : "",
+            item.myTravelPlan === null
+                ? "plan:null"
+                : item.myTravelPlan?.updatedAt ?? "",
             item.myTravelPlan?.departAt ?? "",
             item.myTravelPlan?.status ?? "",
         ].join("|"))
         .join(";");
 }
 
+function mergeScheduleItems(
+    currentItems: ScheduleItem[],
+    fallbackItems: ScheduleItem[]
+): ScheduleItem[] {
+    const merged = new Map(currentItems.map((item) => [item.id, item]));
+    fallbackItems.forEach((item) => {
+        merged.set(item.id, {
+            ...(merged.get(item.id) ?? {}),
+            ...item,
+        } as ScheduleItem);
+    });
+    return Array.from(merged.values());
+}
+
+function markStatusesStale(
+    statuses: DepartureHomeSnapshot["statusesByScheduleId"]
+): DepartureHomeSnapshot["statusesByScheduleId"] {
+    return Object.fromEntries(
+        Object.entries(statuses).map(([scheduleId, status]) => [
+            scheduleId,
+            status ? { ...status, stale: true } : status,
+        ])
+    );
+}
+
+function getRetryFingerprint({
+    connectionIssue,
+    statusesByScheduleId,
+    statusIssuesByScheduleId,
+    detailIssuesByScheduleId,
+}: Pick<
+    DepartureHomeSnapshot,
+    | "connectionIssue"
+    | "statusesByScheduleId"
+    | "statusIssuesByScheduleId"
+    | "detailIssuesByScheduleId"
+>, now: Date): string | null {
+    if (connectionIssue) return `list:${connectionIssue}`;
+
+    const parts = [
+        ...Object.entries(statusIssuesByScheduleId).map(
+            ([id, issue]) => `status:${id}:${issue}`
+        ),
+        ...Object.entries(detailIssuesByScheduleId).map(
+            ([id, issue]) => `detail:${id}:${issue}`
+        ),
+        ...Object.values(statusesByScheduleId)
+            .filter((status): status is ScheduleDepartureStatus => (
+                Boolean(status) && !isDepartureStatusFresh(status!, now)
+            ))
+            .map((status) => [
+                "stale",
+                status.scheduleId,
+                status.source ?? "unknown",
+                status.evaluatedAt ?? "",
+                status.liveFetchedAt ?? "",
+                status.nextCheckAt ?? "",
+                status.failureReason ?? "",
+            ].join(":")),
+    ].sort();
+    return parts.length > 0 ? parts.join("|") : null;
+}
+
 function getRefreshDelay(snapshot: DepartureHomeSnapshot, now: number): number {
-    const hasIssue = snapshot.connectionIssue !== null
-        || Object.keys(snapshot.statusIssuesByScheduleId).length > 0;
+    if (snapshot.retryDelayMs !== null) return snapshot.retryDelayMs;
+
     const fallbackTarget = (snapshot.refreshedAt ?? now)
-        + (hasIssue ? DEPARTURE_HOME_RETRY_MS : NEXT_DEPARTURE_STATUS_MAX_AGE_MS);
+        + NEXT_DEPARTURE_STATUS_MAX_AGE_MS;
     const statusTargets = Object.values(snapshot.statusesByScheduleId)
         .filter((status): status is ScheduleDepartureStatus => Boolean(status))
         .map((status) => getDepartureStatusRefreshAt(status, new Date(now)));
@@ -139,6 +270,21 @@ function getRefreshDelay(snapshot: DepartureHomeSnapshot, now: number): number {
     );
 }
 
+function createInitialSnapshot(): DepartureHomeSnapshot {
+    return {
+        source: "loading",
+        items: [],
+        candidateItems: [],
+        statusesByScheduleId: {},
+        statusIssuesByScheduleId: {},
+        detailIssuesByScheduleId: {},
+        loading: true,
+        connectionIssue: null,
+        refreshedAt: null,
+        retryDelayMs: null,
+    };
+}
+
 export function useNextDepartureHome({
     fallbackItems,
     focused,
@@ -147,65 +293,137 @@ export function useNextDepartureHome({
     focused: boolean;
 }) {
     const requestSequenceRef = useRef(0);
-    const pendingFallbackRefreshRef = useRef(false);
+    const activeControllerRef = useRef<AbortController | null>(null);
+    const focusedRef = useRef(focused);
+    const pendingRefreshRef = useRef(false);
+    const fallbackItemsRef = useRef(fallbackItems);
+    fallbackItemsRef.current = fallbackItems;
     const fallbackRevision = useMemo(
         () => getFallbackRevision(fallbackItems),
         [fallbackItems]
     );
     const observedFallbackRevisionRef = useRef(fallbackRevision);
-    const [snapshot, setSnapshot] = useState<DepartureHomeSnapshot>({
-        source: "loading",
-        items: [],
-        statusesByScheduleId: {},
-        statusIssuesByScheduleId: {},
-        loading: true,
-        connectionIssue: null,
-        refreshedAt: null,
+    const retryStateRef = useRef<RetryState>({
+        accountKey: "anonymous",
+        fingerprint: null,
+        consecutive: 0,
     });
+    const [snapshot, setSnapshot] = useState<DepartureHomeSnapshot>(
+        createInitialSnapshot
+    );
+    const snapshotRef = useRef(snapshot);
+    snapshotRef.current = snapshot;
+
+    const commitSnapshot = useCallback((next: DepartureHomeSnapshot) => {
+        snapshotRef.current = next;
+        setSnapshot(next);
+    }, []);
+
+    const getRetryDelay = useCallback((
+        accountKey: string,
+        fingerprint: string | null
+    ): number | null => {
+        const current = retryStateRef.current;
+        if (current.accountKey !== accountKey || fingerprint === null) {
+            retryStateRef.current = {
+                accountKey,
+                fingerprint,
+                consecutive: fingerprint ? 1 : 0,
+            };
+        } else if (current.fingerprint === fingerprint) {
+            retryStateRef.current = {
+                ...current,
+                consecutive: current.consecutive + 1,
+            };
+        } else {
+            retryStateRef.current = {
+                accountKey,
+                fingerprint,
+                consecutive: 1,
+            };
+        }
+
+        const consecutive = retryStateRef.current.consecutive;
+        if (!fingerprint || consecutive === 0) return null;
+        return DEPARTURE_HOME_RETRY_BACKOFF_MS[
+            Math.min(
+                consecutive - 1,
+                DEPARTURE_HOME_RETRY_BACKOFF_MS.length - 1
+            )
+        ];
+    }, []);
 
     const refresh = useCallback(async () => {
+        if (!focusedRef.current) return;
+
+        activeControllerRef.current?.abort();
+        const controller = new AbortController();
+        activeControllerRef.current = controller;
         const requestSequence = requestSequenceRef.current + 1;
         requestSequenceRef.current = requestSequence;
-        setSnapshot((current) => ({
-            ...current,
+        const isCurrent = () => (
+            focusedRef.current
+            && requestSequence === requestSequenceRef.current
+            && !controller.signal.aborted
+        );
+
+        const currentSnapshot = snapshotRef.current;
+        commitSnapshot({
+            ...currentSnapshot,
             loading: true,
-            statusesByScheduleId: Object.fromEntries(
-                Object.entries(current.statusesByScheduleId).map(
-                    ([scheduleId, status]) => [
-                        scheduleId,
-                        status ? { ...status, stale: true } : status,
-                    ]
-                )
-            ),
-        }));
+        });
 
         const requestedAt = new Date();
-        const range = getDepartureHomeRange(requestedAt);
         const memberPromise = getAuthMember().catch(() => null);
 
         let items: ScheduleItem[];
         try {
-            items = await getDepartureReadySchedules(range.fromAt, range.toAt);
+            items = await getSchedules({ signal: controller.signal });
         } catch (error) {
-            if (requestSequence !== requestSequenceRef.current) return;
-            const issue = getConnectionIssue(error);
-            setSnapshot((current) => ({
-                ...current,
-                source: current.source === "departures"
-                    ? "departures"
-                    : "calendar-fallback",
-                items: current.source === "departures" ? current.items : [],
+            const currentMemberId = getMemberId(await memberPromise);
+            if (!isCurrent()) return;
+
+            const previous = snapshotRef.current;
+            const sameAccount = previous.currentMemberId === currentMemberId;
+            const mergedItems = sameAccount && previous.source === "schedules"
+                ? mergeScheduleItems(previous.items, fallbackItemsRef.current)
+                : fallbackItemsRef.current;
+            const statusesByScheduleId = sameAccount
+                ? markStatusesStale(previous.statusesByScheduleId)
+                : {};
+            const issue = getDepartureHomeConnectionIssue(error);
+            const partial: DepartureHomeSnapshot = {
+                source: "calendar-fallback",
+                items: mergedItems,
+                candidateItems: getDepartureVerificationItems(
+                    mergedItems,
+                    requestedAt,
+                    currentMemberId
+                ),
+                statusesByScheduleId,
+                statusIssuesByScheduleId: {},
+                detailIssuesByScheduleId: {},
+                currentMemberId,
                 loading: false,
                 connectionIssue: issue,
                 refreshedAt: Date.now(),
-            }));
+                retryDelayMs: null,
+            };
+            const fingerprint = getRetryFingerprint(partial, requestedAt);
+            commitSnapshot({
+                ...partial,
+                retryDelayMs: getRetryDelay(
+                    String(currentMemberId ?? "anonymous"),
+                    fingerprint
+                ),
+            });
             return;
         }
 
         const storedMember = await memberPromise;
-        const currentMemberId = Number.isSafeInteger(storedMember?.id)
-            ? storedMember?.id
-            : undefined;
+        const currentMemberId = getMemberId(storedMember);
+        if (!isCurrent()) return;
+
         const verificationItems = getDepartureVerificationItems(
             items,
             requestedAt,
@@ -218,19 +436,60 @@ export function useNextDepartureHome({
         const results = await mapWithConcurrency(
             requests,
             DEPARTURE_HOME_REQUEST_CONCURRENCY,
+            controller.signal,
+            isCurrent,
             async (request): Promise<CandidateRequestResult> => {
+                if (!isCurrent()) return request;
                 try {
                     const value = request.kind === "detail"
-                        ? await getSchedule(request.item.id)
-                        : await getScheduleDepartureStatus(request.item.id);
+                        ? await getScheduleForDepartureHome(
+                            request.item.id,
+                            { signal: controller.signal }
+                        )
+                        : await getScheduleDepartureStatus(
+                            request.item.id,
+                            { signal: controller.signal }
+                        );
                     return { ...request, value };
                 } catch (error) {
                     return { ...request, error };
                 }
             }
         );
-        if (requestSequence !== requestSequenceRef.current) return;
+        if (!isCurrent()) return;
 
+        const latestMemberId = getMemberId(
+            await getAuthMember().catch(() => null)
+        );
+        if (!isCurrent()) return;
+        if (latestMemberId !== currentMemberId) {
+            controller.abort();
+            requestSequenceRef.current += 1;
+            retryStateRef.current = {
+                accountKey: String(latestMemberId ?? "anonymous"),
+                fingerprint: null,
+                consecutive: 0,
+            };
+            pendingRefreshRef.current = focusedRef.current;
+            commitSnapshot({
+                ...createInitialSnapshot(),
+                source: "calendar-fallback",
+                items: fallbackItemsRef.current,
+                candidateItems: getDepartureVerificationItems(
+                    fallbackItemsRef.current,
+                    requestedAt,
+                    latestMemberId
+                ),
+                currentMemberId: latestMemberId,
+                loading: false,
+            });
+            return;
+        }
+
+        const previous = snapshotRef.current;
+        const previousStatuses = previous.currentMemberId === currentMemberId
+            ? previous.statusesByScheduleId
+            : {};
         const detailsByScheduleId: Record<string, ScheduleItem | undefined> = {};
         const statusesByScheduleId: Record<
             string,
@@ -240,6 +499,11 @@ export function useNextDepartureHome({
             string,
             DepartureHomeConnectionIssue | undefined
         > = {};
+        const detailIssuesByScheduleId: Record<
+            string,
+            DepartureHomeDetailIssue | undefined
+        > = {};
+        const excludedScheduleIds = new Set<string>();
 
         results.forEach((result) => {
             const scheduleId = result.item.id;
@@ -249,56 +513,82 @@ export function useNextDepartureHome({
                     if (detail.id === scheduleId) {
                         detailsByScheduleId[scheduleId] = detail;
                     } else {
-                        statusIssuesByScheduleId[scheduleId] = "error";
+                        detailIssuesByScheduleId[scheduleId] = "verification";
+                        excludedScheduleIds.add(scheduleId);
                     }
                 } else if (result.error) {
-                    statusIssuesByScheduleId[scheduleId] = mergeConnectionIssue(
-                        statusIssuesByScheduleId[scheduleId],
-                        getConnectionIssue(result.error)
-                    );
+                    if (isAuthoritativeDetailFailure(result.error)) {
+                        detailIssuesByScheduleId[scheduleId] = "verification";
+                        excludedScheduleIds.add(scheduleId);
+                    } else {
+                        detailIssuesByScheduleId[scheduleId] =
+                            getDepartureHomeConnectionIssue(result.error);
+                    }
                 }
                 return;
             }
 
             if (result.value) {
-                const departureStatus = result.value as ScheduleDepartureStatus;
-                statusesByScheduleId[scheduleId] = departureStatus;
+                statusesByScheduleId[scheduleId] =
+                    result.value as ScheduleDepartureStatus;
                 return;
             }
             if (result.error && !isRolloutUnavailable(result.error)) {
                 statusIssuesByScheduleId[scheduleId] = mergeConnectionIssue(
                     statusIssuesByScheduleId[scheduleId],
-                    getConnectionIssue(result.error)
+                    getDepartureHomeConnectionIssue(result.error)
                 );
+                const previousStatus = previousStatuses[scheduleId];
+                if (previousStatus) {
+                    statusesByScheduleId[scheduleId] = {
+                        ...previousStatus,
+                        stale: true,
+                    };
+                }
             }
         });
 
-        const verifiedItems = verificationItems.map((item) => {
-            const detail = detailsByScheduleId[item.id];
-            if (!detail) return item;
-            return {
-                ...item,
-                ...detail,
-                route: detail.route ?? item.route,
-                myTravelPlan: detail.myTravelPlan ?? item.myTravelPlan,
-            };
-        });
-        setSnapshot({
-            source: "departures",
-            items: verifiedItems,
+        const verifiedAllItems = items.map(
+            (item) => detailsByScheduleId[item.id] ?? item
+        );
+        const verifiedCandidateItems = verificationItems
+            .filter((item) => !excludedScheduleIds.has(item.id))
+            .map((item) => detailsByScheduleId[item.id] ?? item)
+            .filter((item) => isDepartureCandidateEligible(
+                item,
+                requestedAt.getTime(),
+                currentMemberId
+            ));
+        const partial: DepartureHomeSnapshot = {
+            source: "schedules",
+            items: verifiedAllItems,
+            candidateItems: verifiedCandidateItems,
             statusesByScheduleId,
             statusIssuesByScheduleId,
+            detailIssuesByScheduleId,
             currentMemberId,
             loading: false,
             connectionIssue: null,
             refreshedAt: Date.now(),
+            retryDelayMs: null,
+        };
+        const fingerprint = getRetryFingerprint(partial, new Date());
+        commitSnapshot({
+            ...partial,
+            retryDelayMs: getRetryDelay(
+                String(currentMemberId ?? "anonymous"),
+                fingerprint
+            ),
         });
-    }, []);
+    }, [commitSnapshot, getRetryDelay]);
 
     useEffect(() => {
+        focusedRef.current = focused;
         if (!focused) {
             requestSequenceRef.current += 1;
-            pendingFallbackRefreshRef.current = false;
+            activeControllerRef.current?.abort();
+            activeControllerRef.current = null;
+            pendingRefreshRef.current = false;
             return undefined;
         }
 
@@ -307,10 +597,30 @@ export function useNextDepartureHome({
             if (nextState === "active") refresh();
         });
         return () => {
+            focusedRef.current = false;
             requestSequenceRef.current += 1;
+            activeControllerRef.current?.abort();
+            activeControllerRef.current = null;
             subscription?.remove();
         };
     }, [focused, refresh]);
+
+    useEffect(() => subscribeAuthInvalidation(() => {
+        requestSequenceRef.current += 1;
+        activeControllerRef.current?.abort();
+        activeControllerRef.current = null;
+        pendingRefreshRef.current = false;
+        retryStateRef.current = {
+            accountKey: "anonymous",
+            fingerprint: null,
+            consecutive: 0,
+        };
+        commitSnapshot({
+            ...createInitialSnapshot(),
+            source: "calendar-fallback",
+            loading: false,
+        });
+    }), [commitSnapshot]);
 
     useEffect(() => {
         if (!focused || snapshot.loading || snapshot.refreshedAt === null) return;
@@ -326,30 +636,41 @@ export function useNextDepartureHome({
         observedFallbackRevisionRef.current = fallbackRevision;
         if (!focused) return;
         if (snapshot.loading) {
-            pendingFallbackRefreshRef.current = true;
+            pendingRefreshRef.current = true;
             return;
         }
+
+        const current = snapshotRef.current;
+        const mergedItems = mergeScheduleItems(
+            current.items,
+            fallbackItemsRef.current
+        );
+        commitSnapshot({
+            ...current,
+            items: mergedItems,
+            candidateItems: getDepartureVerificationItems(
+                mergedItems,
+                new Date(),
+                current.currentMemberId
+            ),
+        });
         refresh();
-    }, [fallbackRevision, focused, refresh, snapshot.loading]);
+    }, [
+        commitSnapshot,
+        fallbackRevision,
+        focused,
+        refresh,
+        snapshot.loading,
+    ]);
 
     useEffect(() => {
-        if (
-            !focused
-            || snapshot.loading
-            || !pendingFallbackRefreshRef.current
-        ) return;
-        pendingFallbackRefreshRef.current = false;
+        if (!focused || snapshot.loading || !pendingRefreshRef.current) return;
+        pendingRefreshRef.current = false;
         refresh();
     }, [focused, refresh, snapshot.loading]);
 
-    const effectiveItems = snapshot.source === "calendar-fallback"
-        || snapshot.source === "loading"
-        ? fallbackItems
-        : snapshot.items;
-
     return useMemo(() => ({
         ...snapshot,
-        items: effectiveItems,
         refresh,
-    }), [effectiveItems, refresh, snapshot]);
+    }), [refresh, snapshot]);
 }

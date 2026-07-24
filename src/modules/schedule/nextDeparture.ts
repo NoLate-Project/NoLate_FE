@@ -84,7 +84,7 @@ export function hasCurrentMemberDeparted(
     return item.ownerMemberId === currentMemberId && Boolean(item.departedAt);
 }
 
-function isDepartureEligible(
+export function isDepartureCandidateEligible(
     item: ScheduleItem,
     nowMs: number,
     currentMemberId?: number
@@ -98,17 +98,24 @@ function isDepartureEligible(
     );
 }
 
-function hasDepartureMeaning(candidate: NextDepartureCandidate): boolean {
-    const { item } = candidate;
+function hasStoredDepartureMeaning(item: ScheduleItem): boolean {
     return Boolean(
-        candidate.recommendedDepartureAt
-        || candidate.travelMinutes !== null
+        getSavedDepartureAt(item)
+        || getSavedTravelMinutes(item) !== null
         || item.route
         || item.myTravelPlan?.route
         || item.myTravelPlan?.status === "READY"
         || item.myTravelPlan?.status === "STALE"
         || item.routeSetupRequired
         || item.notificationEnabled
+    );
+}
+
+function hasDepartureMeaning(candidate: NextDepartureCandidate): boolean {
+    return Boolean(
+        candidate.recommendedDepartureAt
+        || candidate.travelMinutes !== null
+        || hasStoredDepartureMeaning(candidate.item)
     );
 }
 
@@ -148,7 +155,7 @@ export function rankNextDepartures(
     if (!Number.isFinite(nowMs)) return [];
 
     const candidates = items
-        .filter((item) => isDepartureEligible(item, nowMs, currentMemberId))
+        .filter((item) => isDepartureCandidateEligible(item, nowMs, currentMemberId))
         .map((item) => buildNextDepartureCandidate(item, statusesByScheduleId[item.id]))
         .filter(hasDepartureMeaning);
 
@@ -187,7 +194,10 @@ export function getDepartureVerificationItems(
 ): ScheduleItem[] {
     const nowMs = now.getTime();
     if (!Number.isFinite(nowMs)) return [];
-    return items.filter((item) => isDepartureEligible(item, nowMs, currentMemberId));
+    return items.filter((item) => (
+        isDepartureCandidateEligible(item, nowMs, currentMemberId)
+        && hasStoredDepartureMeaning(item)
+    ));
 }
 
 function formatKoreanClock(date: Date, timeZone: string | null): string {
@@ -244,7 +254,8 @@ function getRemainingLabel(
     const differenceMinutes = (departureAt.getTime() - now.getTime()) / 60_000;
 
     if (phase === "PAST") {
-        return `추천 출발 시각이 ${formatDuration(Math.ceil(Math.abs(differenceMinutes)))} 지났어요`;
+        const elapsedMinutes = Math.max(1, Math.floor(Math.abs(differenceMinutes)));
+        return `추천 출발 시각이 ${formatDuration(elapsedMinutes)} 지났어요`;
     }
 
     const remaining = formatDuration(Math.max(1, Math.ceil(differenceMinutes)));
@@ -259,18 +270,28 @@ function getEtaLabel(
     connectionIssue: "offline" | "error" | null,
     now: Date
 ): string {
-    if (connectionIssue === "offline") return "오프라인 · 저장된 정보";
-    if (connectionIssue === "error") return "업데이트 실패 · 저장된 정보";
     if (phase === "NO_ETA") return "ETA 없음";
 
     const status = candidate.departureStatus;
-    if (!candidate.recommendationFromStatus) return "저장된 ETA";
-    if (!status || !isDepartureStatusFresh(status, now)) {
-        return "업데이트 지연";
+    if (!candidate.recommendationFromStatus || !status) {
+        if (connectionIssue === "offline") return "저장된 ETA · 오프라인";
+        if (connectionIssue === "error") return "저장된 ETA · 업데이트 실패";
+        return "저장된 ETA";
     }
-    if (status.source === "LIVE_PROVIDER") return "실시간 ETA";
-    if (status.source === "SELECTED_ROUTE") return "선택 경로 ETA";
-    return "저장된 ETA";
+
+    const baseLabel = status.source === "LIVE_PROVIDER"
+        ? status.liveFetchedAt ? "실시간 ETA" : "교통 제공자 ETA"
+        : status.source === "SELECTED_ROUTE"
+            ? "선택 경로 ETA"
+            : status.source === "SAVED_FALLBACK"
+                ? "저장 ETA"
+                : "출처 확인 불가";
+    const suffixes: string[] = [];
+    if (!isDepartureStatusFresh(status, now)) suffixes.push("갱신 지연");
+    if (connectionIssue === "offline") suffixes.push("오프라인");
+    if (connectionIssue === "error") suffixes.push("업데이트 실패");
+
+    return [baseLabel, ...suffixes].join(" · ");
 }
 
 export function getDepartureStatusRefreshAt(
@@ -280,8 +301,9 @@ export function getDepartureStatusRefreshAt(
     const nowMs = now.getTime();
     const nextCheckAt = parseDate(status.nextCheckAt)?.getTime();
     const freshnessReference = (
-        parseDate(status.liveFetchedAt)
-        ?? parseDate(status.evaluatedAt)
+        status.source === "LIVE_PROVIDER"
+            ? parseDate(status.liveFetchedAt)
+            : parseDate(status.evaluatedAt)
     )?.getTime();
     const refreshTargets = [
         nextCheckAt,
@@ -309,8 +331,9 @@ export function isDepartureStatusFresh(
     const nextCheckAt = parseDate(status.nextCheckAt);
     if (nextCheckAt && nextCheckAt.getTime() <= nowMs) return false;
 
-    const freshnessReference = parseDate(status.liveFetchedAt)
-        ?? parseDate(status.evaluatedAt);
+    const freshnessReference = status.source === "LIVE_PROVIDER"
+        ? parseDate(status.liveFetchedAt)
+        : parseDate(status.evaluatedAt);
     if (!freshnessReference) return status.source !== "LIVE_PROVIDER";
     return nowMs - freshnessReference.getTime() <= NEXT_DEPARTURE_STATUS_MAX_AGE_MS;
 }

@@ -82,7 +82,6 @@ import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetup
 import {
     createSchedule,
     getCalendarSchedules,
-    getSchedules,
     parseScheduleText,
     searchSchedules,
     synchronizeCalendarScheduleCacheRevision,
@@ -453,7 +452,6 @@ export default function ScheduleIndex() {
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-    const [routeSetupItems, setRouteSetupItems] = useState<ScheduleItem[]>([]);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
@@ -1750,14 +1748,14 @@ export default function ScheduleIndex() {
     });
     const nextDepartureCandidate = useMemo(
         () => selectNextDeparture(
-            departureHome.items,
+            departureHome.candidateItems,
             departureHome.statusesByScheduleId,
             departureNow,
             departureHome.currentMemberId
         ),
         [
             departureHome.currentMemberId,
-            departureHome.items,
+            departureHome.candidateItems,
             departureHome.statusesByScheduleId,
             departureNow,
         ]
@@ -1780,34 +1778,12 @@ export default function ScheduleIndex() {
             nextDepartureCandidate,
         ]
     );
-    const loadRouteSetupItems = useCallback(async () => {
-        const items = await getSchedules();
-        return items.filter((item) => item.routeSetupRequired === true);
-    }, []);
-    useEffect(() => {
-        if (!isFocused) return;
-
-        let cancelled = false;
-        const refresh = () => {
-            loadRouteSetupItems()
-                .then((items) => {
-                    if (!cancelled) setRouteSetupItems(items);
-                })
-                .catch(() => {
-                    // 후속 설정 배너는 보조 UI이므로 조회 실패가 캘린더 사용을 막지 않는다.
-                    if (!cancelled) setRouteSetupItems([]);
-                });
-        };
-
-        refresh();
-        const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") refresh();
-        });
-        return () => {
-            cancelled = true;
-            subscription.remove();
-        };
-    }, [isFocused, loadRouteSetupItems]);
+    const routeSetupItems = useMemo(
+        () => departureHome.items.filter(
+            (item) => item.routeSetupRequired === true
+        ),
+        [departureHome.items]
+    );
     const writableCategories = useMemo(
         () => getWritableScheduleCategories(state.categories),
         [state.categories]

@@ -60,6 +60,43 @@ export function getNextDepartureAccentColor(
     }
 }
 
+function getPhaseAnnouncement(phase: NextDeparturePhase): string {
+    switch (phase) {
+        case "SOON":
+            return "다음 출발이 임박했습니다";
+        case "DUE":
+            return "지금 출발할 시간입니다";
+        case "PAST":
+            return "추천 출발 시각이 지났습니다";
+        case "ENDED":
+            return "일정이 종료되었습니다";
+        case "NO_ETA":
+            return "추천 출발 시각을 확인할 수 없습니다";
+        default:
+            return "다음 출발이 예정되어 있습니다";
+    }
+}
+
+const NextDeparturePhaseAnnouncement = React.memo(
+    function NextDeparturePhaseAnnouncement({
+        phase,
+    }: {
+        phase: NextDeparturePhase;
+    }) {
+        const announcement = getPhaseAnnouncement(phase);
+        return (
+            <Text
+                testID="next-departure-phase-announcement"
+                accessibilityLiveRegion="polite"
+                accessibilityLabel={announcement}
+                style={styles.screenReaderAnnouncement}
+            >
+                {announcement}
+            </Text>
+        );
+    }
+);
+
 function NextDepartureEmptyState({
     loading,
     connectionIssue,
@@ -156,35 +193,39 @@ export default function NextDepartureHero({
     }
 
     const accent = getNextDepartureAccentColor(model.phase, mode);
-    const etaDotColor = model.etaLabel === "실시간 ETA"
-        || model.etaLabel === "선택 경로 ETA"
-        ? accent
-        : model.etaLabel === "업데이트 지연"
-            ? mode === "dark" ? "#FF9F0A" : "#8A4B00"
-            : colors.textSecondary;
+    const etaIsDelayed = model.etaLabel.includes("갱신 지연")
+        || model.etaLabel.includes("오프라인")
+        || model.etaLabel.includes("업데이트 실패");
+    const etaIsCurrentRoute = model.departureStatus?.source === "LIVE_PROVIDER"
+        || model.departureStatus?.source === "SELECTED_ROUTE";
+    const etaDotColor = etaIsDelayed
+        ? mode === "dark" ? "#FF9F0A" : "#8A4B00"
+        : etaIsCurrentRoute ? accent : colors.textSecondary;
     const confidenceIsLow = model.departureStatus?.confidence === "LOW";
 
     return (
-        <Pressable
-            testID="next-departure-hero"
-            accessibilityRole="button"
-            accessibilityLabel={model.accessibilityLabel}
-            accessibilityHint="일정 상세에서 경로와 기존 출발 액션을 확인합니다"
-            onPress={() => onPressSchedule(model.item.id)}
-            style={({ pressed }) => [
-                styles.card,
-                {
-                    backgroundColor: mode === "dark"
-                        ? "rgba(28,28,30,0.96)"
-                        : "rgba(247,247,248,0.98)",
-                    borderColor: mode === "dark"
-                        ? "rgba(255,255,255,0.11)"
-                        : "rgba(60,60,67,0.12)",
-                    opacity: pressed ? 0.72 : 1,
-                    transform: [{ scale: pressed ? 0.992 : 1 }],
-                },
-            ]}
-        >
+        <>
+            <NextDeparturePhaseAnnouncement phase={model.phase} />
+            <Pressable
+                testID="next-departure-hero"
+                accessibilityRole="button"
+                accessibilityLabel={model.accessibilityLabel}
+                accessibilityHint="일정 상세에서 경로와 기존 출발 액션을 확인합니다"
+                onPress={() => onPressSchedule(model.item.id)}
+                style={({ pressed }) => [
+                    styles.card,
+                    {
+                        backgroundColor: mode === "dark"
+                            ? "rgba(28,28,30,0.96)"
+                            : "rgba(247,247,248,0.98)",
+                        borderColor: mode === "dark"
+                            ? "rgba(255,255,255,0.11)"
+                            : "rgba(60,60,67,0.12)",
+                        opacity: pressed ? 0.72 : 1,
+                        transform: [{ scale: pressed ? 0.992 : 1 }],
+                    },
+                ]}
+            >
             <View pointerEvents="none" style={[styles.accentRail, { backgroundColor: accent }]} />
 
             <View style={styles.headerRow}>
@@ -238,7 +279,6 @@ export default function NextDepartureHero({
                 </View>
                 <View style={styles.remainingColumn}>
                     <Text
-                        accessibilityLiveRegion="polite"
                         numberOfLines={2}
                         style={[styles.remainingText, { color: accent }]}
                     >
@@ -301,11 +341,19 @@ export default function NextDepartureHero({
                     color={colors.textSecondary}
                 />
             </View>
-        </Pressable>
+            </Pressable>
+        </>
     );
 }
 
 const styles = StyleSheet.create({
+    screenReaderAnnouncement: {
+        position: "absolute",
+        width: 1,
+        height: 1,
+        overflow: "hidden",
+        opacity: 0.01,
+    },
     card: {
         minHeight: 178,
         borderWidth: StyleSheet.hairlineWidth,

@@ -213,4 +213,32 @@ describe("NextDepartureHero", () => {
             "#ECECEE"
         )).toBeGreaterThanOrEqual(4.5);
     });
+
+    test("TalkBack live region announces phase changes instead of minute-by-minute copy", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <NextDepartureHero
+                        model={model}
+                        loading={false}
+                        connectionIssue={null}
+                        onPressSchedule={jest.fn()}
+                        onPressRetry={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        const announcement = renderer!.root.findByProps({
+            testID: "next-departure-phase-announcement",
+        });
+        expect(announcement.props.accessibilityLiveRegion).toBe("polite");
+        expect(announcement.props.accessibilityLabel)
+            .toBe("다음 출발이 예정되어 있습니다");
+
+        const remaining = renderer!.root.findAllByType(Text).find(
+            (node) => node.props.children === model.remainingLabel
+        );
+        expect(remaining?.props.accessibilityLiveRegion).toBeUndefined();
+    });
 });

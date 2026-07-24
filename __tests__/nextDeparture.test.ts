@@ -200,11 +200,23 @@ describe("next departure selection", () => {
             myDepartedAt: "2026-07-24T08:55:00+09:00",
             departAt: "2026-07-24T09:12:00+09:00",
         });
+        const participantDeparted = {
+            ...schedule("participant-departed", {
+                ownerMemberId: 1,
+                departAt: "2026-07-24T09:14:00+09:00",
+            }),
+            departureParticipants: [{
+                memberId: 2,
+                role: "SHARED" as const,
+                departed: true,
+            }],
+        };
 
         expect(selectNextDeparture([ownerDeparted], {}, now, 1)).toBeNull();
         expect(selectNextDeparture([ownerDeparted], {}, now, 2)?.item.id)
             .toBe("owner-departed");
         expect(selectNextDeparture([sharedDeparted], {}, now, 2)).toBeNull();
+        expect(selectNextDeparture([participantDeparted], {}, now, 2)).toBeNull();
     });
 
     test("disabled travel collaboration and location-only events cannot displace a valid ETA", () => {
@@ -290,12 +302,26 @@ describe("next departure presentation", () => {
         expect(modelAt("2026-07-24T09:30:00+09:00").etaLabel).toBe("실시간 ETA");
         expect(modelAt("2026-07-24T09:30:00+09:00", {
             stale: true,
-        }).etaLabel).toBe("업데이트 지연");
+        }).etaLabel).toBe("실시간 ETA · 갱신 지연");
+        expect(modelAt("2026-07-24T09:30:00+09:00", {
+            source: "SELECTED_ROUTE",
+            stale: true,
+        }).etaLabel).toBe("선택 경로 ETA · 갱신 지연");
         expect(modelAt("2026-07-24T09:30:00+09:00", {
             source: "SAVED_FALLBACK",
+            stale: true,
             liveFetchedAt: null,
             failureReason: "provider unavailable",
-        }).etaLabel).toBe("저장된 ETA");
+        }).etaLabel).toBe("저장 ETA · 갱신 지연");
+        expect(modelAt("2026-07-24T09:30:00+09:00", {
+            source: null,
+        }).etaLabel).toBe("출처 확인 불가");
+        const liveWithoutFetch = modelAt("2026-07-24T09:30:00+09:00", {
+            source: "LIVE_PROVIDER",
+            liveFetchedAt: null,
+        }).etaLabel;
+        expect(liveWithoutFetch).toBe("교통 제공자 ETA · 갱신 지연");
+        expect(liveWithoutFetch).not.toContain("실시간");
         expect(modelAt(null, {
             source: "LIVE_PROVIDER",
             liveFetchedAt: null,
@@ -315,18 +341,18 @@ describe("next departure presentation", () => {
             savedCandidate,
             now,
             "offline"
-        ).etaLabel).toBe("오프라인 · 저장된 정보");
+        ).etaLabel).toBe("저장된 ETA · 오프라인");
         expect(buildNextDepartureHeroModel(
             savedCandidate,
             now,
             "error"
-        ).etaLabel).toBe("업데이트 실패 · 저장된 정보");
+        ).etaLabel).toBe("저장된 ETA · 업데이트 실패");
     });
 
     test("a live snapshot downgrades when nextCheckAt or maximum age has passed", () => {
         expect(modelAt("2026-07-24T09:30:00+09:00", {
             nextCheckAt: "2026-07-24T08:59:59+09:00",
-        }).etaLabel).toBe("업데이트 지연");
+        }).etaLabel).toBe("실시간 ETA · 갱신 지연");
         expect(buildNextDepartureHeroModel(
             buildNextDepartureCandidate(
                 schedule("aged", {
@@ -340,7 +366,14 @@ describe("next departure presentation", () => {
                 })
             ),
             now
-        ).etaLabel).toBe("업데이트 지연");
+        ).etaLabel).toBe("실시간 ETA · 갱신 지연");
+    });
+
+    test("past elapsed minutes use floor with a minimum of one", () => {
+        expect(modelAt("2026-07-24T08:58:59.999+09:00")).toMatchObject({
+            phase: "PAST",
+            remainingLabel: "추천 출발 시각이 1분 지났어요",
+        });
     });
 
     test("traffic change and low confidence are included in the accessible summary", () => {
