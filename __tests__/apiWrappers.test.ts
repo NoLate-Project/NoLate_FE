@@ -276,6 +276,63 @@ describe("schedule query api wrappers", () => {
         );
     });
 
+    test("departure status wrapper safely normalizes nullable rollout fields", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: "10",
+                travelMinutes: -3,
+                recommendedDepartureAt: "not-a-date",
+                evaluatedAt: null,
+                liveFetchedAt: undefined,
+                source: "UNKNOWN_SOURCE",
+                stale: null,
+                confidence: "UNKNOWN",
+                failureReason: "  ",
+                lastTrafficChangeMinutes: Number.NaN,
+                nextCheckAt: "invalid",
+                preparationMinutes: -1,
+                safetyBufferMinutes: undefined,
+                timeZone: "  ",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("10")).resolves.toEqual({
+            scheduleId: "10",
+            travelMinutes: null,
+            recommendedDepartureAt: null,
+            evaluatedAt: null,
+            liveFetchedAt: null,
+            source: null,
+            stale: true,
+            confidence: null,
+            failureReason: null,
+            lastTrafficChangeMinutes: null,
+            lastChangedAt: null,
+            nextCheckAt: null,
+            preparationMinutes: null,
+            preparationStartAt: null,
+            safetyBufferMinutes: null,
+            timeZone: null,
+        });
+    });
+
+    test("departure status wrapper rejects a response for another schedule", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 99,
+                source: "LIVE_PROVIDER",
+                confidence: "HIGH",
+                stale: false,
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("10")).rejects.toThrow(
+            "출발 상태의 일정 정보가 요청과 일치하지 않습니다."
+        );
+    });
+
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {
         mockedApiPost.mockResolvedValue({
             success: true,

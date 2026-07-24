@@ -1752,25 +1752,31 @@ export default function ScheduleIndex() {
         () => selectNextDeparture(
             departureHome.items,
             departureHome.statusesByScheduleId,
-            departureNow
+            departureNow,
+            departureHome.currentMemberId
         ),
         [
+            departureHome.currentMemberId,
             departureHome.items,
             departureHome.statusesByScheduleId,
             departureNow,
         ]
     );
+    const nextDepartureConnectionIssue = departureHome.connectionIssue
+        ?? (nextDepartureCandidate
+            ? departureHome.statusIssuesByScheduleId[nextDepartureCandidate.item.id] ?? null
+            : null);
     const nextDepartureModel = useMemo(
         () => nextDepartureCandidate
             ? buildNextDepartureHeroModel(
                 nextDepartureCandidate,
                 departureNow,
-                departureHome.connectionIssue
+                nextDepartureConnectionIssue
             )
             : null,
         [
-            departureHome.connectionIssue,
             departureNow,
+            nextDepartureConnectionIssue,
             nextDepartureCandidate,
         ]
     );
@@ -3060,15 +3066,15 @@ export default function ScheduleIndex() {
         <NextDepartureHero
             model={nextDepartureModel}
             loading={departureHome.loading}
-            connectionIssue={departureHome.connectionIssue}
+            connectionIssue={nextDepartureConnectionIssue}
             onPressSchedule={handleOpenScheduleFromDayDisplay}
             onPressRetry={departureHome.refresh}
         />
     ), [
-        departureHome.connectionIssue,
         departureHome.loading,
         departureHome.refresh,
         handleOpenScheduleFromDayDisplay,
+        nextDepartureConnectionIssue,
         nextDepartureModel,
     ]);
 

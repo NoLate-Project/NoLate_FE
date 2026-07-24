@@ -1,5 +1,10 @@
 import { apiDelete, apiGet, apiPost, apiPut } from "./api";
-import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
+import {
+    ApiResponseError,
+    assertApiSuccess,
+    type ApiEnvelope,
+    unwrapApiResponse,
+} from "./response";
 import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 import {
@@ -42,9 +47,9 @@ export type ScheduleDepartureStatus = {
     recommendedDepartureAt: string | null;
     evaluatedAt: string | null;
     liveFetchedAt: string | null;
-    source: DepartureStatusSource;
+    source: DepartureStatusSource | null;
     stale: boolean;
-    confidence: DepartureStatusConfidence;
+    confidence: DepartureStatusConfidence | null;
     failureReason: string | null;
     lastTrafficChangeMinutes: number | null;
     lastChangedAt: string | null;
@@ -83,8 +88,8 @@ type CalendarCacheRevisionDto = {
     revision: number;
 };
 
-type ScheduleDepartureStatusDto = Omit<ScheduleDepartureStatus, "scheduleId"> & {
-    scheduleId: number | string;
+type ScheduleDepartureStatusDto = Partial<Omit<ScheduleDepartureStatus, "scheduleId">> & {
+    scheduleId?: unknown;
 };
 
 let observedCalendarCacheRevision: number | null = null;
@@ -164,10 +169,73 @@ export async function getScheduleDepartureStatus(
         `/api/schedules/${scheduleId}/departure-status`
     );
     const status = unwrapApiResponse(response);
+    const responseScheduleId = status.scheduleId === null || status.scheduleId === undefined
+        ? ""
+        : String(status.scheduleId);
+    if (responseScheduleId !== scheduleId) {
+        throw new ApiResponseError("출발 상태의 일정 정보가 요청과 일치하지 않습니다.", {
+            errorCode: "DEPARTURE_STATUS_SCHEDULE_MISMATCH",
+        });
+    }
+
     return {
-        ...status,
-        scheduleId: String(status.scheduleId),
+        scheduleId: responseScheduleId,
+        travelMinutes: normalizeNullableNonNegativeNumber(status.travelMinutes),
+        recommendedDepartureAt: normalizeNullableDateTime(status.recommendedDepartureAt),
+        evaluatedAt: normalizeNullableDateTime(status.evaluatedAt),
+        liveFetchedAt: normalizeNullableDateTime(status.liveFetchedAt),
+        source: isDepartureStatusSource(status.source) ? status.source : null,
+        stale: typeof status.stale === "boolean" ? status.stale : true,
+        confidence: isDepartureStatusConfidence(status.confidence)
+            ? status.confidence
+            : null,
+        failureReason: normalizeNullableText(status.failureReason),
+        lastTrafficChangeMinutes: normalizeNullableFiniteNumber(
+            status.lastTrafficChangeMinutes
+        ),
+        lastChangedAt: normalizeNullableDateTime(status.lastChangedAt),
+        nextCheckAt: normalizeNullableDateTime(status.nextCheckAt),
+        preparationMinutes: normalizeNullableNonNegativeNumber(
+            status.preparationMinutes
+        ),
+        preparationStartAt: normalizeNullableDateTime(status.preparationStartAt),
+        safetyBufferMinutes: normalizeNullableNonNegativeNumber(
+            status.safetyBufferMinutes
+        ),
+        timeZone: normalizeNullableText(status.timeZone),
     };
+}
+
+function normalizeNullableFiniteNumber(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeNullableNonNegativeNumber(value: unknown): number | null {
+    const normalized = normalizeNullableFiniteNumber(value);
+    return normalized !== null && normalized >= 0 ? normalized : null;
+}
+
+function normalizeNullableDateTime(value: unknown): string | null {
+    if (typeof value !== "string" || !value.trim()) return null;
+    const normalized = value.trim();
+    return Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
+}
+
+function normalizeNullableText(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    return value.trim() || null;
+}
+
+function isDepartureStatusSource(value: unknown): value is DepartureStatusSource {
+    return value === "LIVE_PROVIDER"
+        || value === "SELECTED_ROUTE"
+        || value === "SAVED_FALLBACK";
+}
+
+function isDepartureStatusConfidence(
+    value: unknown
+): value is DepartureStatusConfidence {
+    return value === "HIGH" || value === "MEDIUM" || value === "LOW";
 }
 
 export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {

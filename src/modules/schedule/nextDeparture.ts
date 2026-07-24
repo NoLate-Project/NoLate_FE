@@ -2,6 +2,7 @@ import type { ScheduleDepartureStatus } from "../../api/schedule";
 import type { ScheduleItem } from "./types";
 
 export const NEXT_DEPARTURE_SOON_MINUTES = 15;
+export const NEXT_DEPARTURE_STATUS_MAX_AGE_MS = 5 * 60_000;
 
 export type NextDeparturePhase =
     | "BEFORE"
@@ -66,19 +67,48 @@ function getDestinationLabel(item: ScheduleItem): string {
         || "목적지 미지정";
 }
 
-function isDepartureCompleted(item: ScheduleItem): boolean {
-    return Boolean(item.myDepartedAt || item.departedAt);
+export function hasCurrentMemberDeparted(
+    item: ScheduleItem,
+    currentMemberId?: number
+): boolean {
+    if (item.myDepartedAt) return true;
+    if (!Number.isSafeInteger(currentMemberId) || (currentMemberId ?? 0) <= 0) {
+        return false;
+    }
+
+    const currentParticipant = item.departureParticipants?.find(
+        (participant) => participant.memberId === currentMemberId
+    );
+    if (currentParticipant?.departed) return true;
+
+    return item.ownerMemberId === currentMemberId && Boolean(item.departedAt);
 }
 
-function hasDepartureMeaning(item: ScheduleItem): boolean {
-    if (item.allDay || !parseDate(item.startAt) || !parseDate(item.endAt)) return false;
+function isDepartureEligible(
+    item: ScheduleItem,
+    nowMs: number,
+    currentMemberId?: number
+): boolean {
+    return (
+        item.allDay !== true
+        && item.travelCollaborationEnabled !== false
+        && !hasCurrentMemberDeparted(item, currentMemberId)
+        && Boolean(parseDate(item.startAt))
+        && (parseDate(item.endAt)?.getTime() ?? Number.NEGATIVE_INFINITY) > nowMs
+    );
+}
+
+function hasDepartureMeaning(candidate: NextDepartureCandidate): boolean {
+    const { item } = candidate;
     return Boolean(
-        getSavedDepartureAt(item)
-        || getSavedTravelMinutes(item) !== null
-        || item.destination?.name?.trim()
-        || item.destination?.address?.trim()
-        || item.locationName?.trim()
+        candidate.recommendedDepartureAt
+        || candidate.travelMinutes !== null
+        || item.route
+        || item.myTravelPlan?.route
+        || item.myTravelPlan?.status === "READY"
+        || item.myTravelPlan?.status === "STALE"
         || item.routeSetupRequired
+        || item.notificationEnabled
     );
 }
 
@@ -111,18 +141,16 @@ export function buildNextDepartureCandidate(
 export function rankNextDepartures(
     items: ScheduleItem[],
     statusesByScheduleId: Readonly<Record<string, ScheduleDepartureStatus | undefined>>,
-    now: Date
+    now: Date,
+    currentMemberId?: number
 ): NextDepartureCandidate[] {
     const nowMs = now.getTime();
     if (!Number.isFinite(nowMs)) return [];
 
     const candidates = items
-        .filter((item) => (
-            !isDepartureCompleted(item)
-            && hasDepartureMeaning(item)
-            && (parseDate(item.endAt)?.getTime() ?? Number.NEGATIVE_INFINITY) > nowMs
-        ))
-        .map((item) => buildNextDepartureCandidate(item, statusesByScheduleId[item.id]));
+        .filter((item) => isDepartureEligible(item, nowMs, currentMemberId))
+        .map((item) => buildNextDepartureCandidate(item, statusesByScheduleId[item.id]))
+        .filter(hasDepartureMeaning);
 
     candidates.sort((left, right) => {
         const leftStart = parseDate(left.item.startAt)?.getTime() ?? Number.POSITIVE_INFINITY;
@@ -141,9 +169,25 @@ export function rankNextDepartures(
 export function selectNextDeparture(
     items: ScheduleItem[],
     statusesByScheduleId: Readonly<Record<string, ScheduleDepartureStatus | undefined>>,
-    now: Date
+    now: Date,
+    currentMemberId?: number
 ): NextDepartureCandidate | null {
-    return rankNextDepartures(items, statusesByScheduleId, now)[0] ?? null;
+    return rankNextDepartures(
+        items,
+        statusesByScheduleId,
+        now,
+        currentMemberId
+    )[0] ?? null;
+}
+
+export function getDepartureVerificationItems(
+    items: ScheduleItem[],
+    now: Date,
+    currentMemberId?: number
+): ScheduleItem[] {
+    const nowMs = now.getTime();
+    if (!Number.isFinite(nowMs)) return [];
+    return items.filter((item) => isDepartureEligible(item, nowMs, currentMemberId));
 }
 
 function formatKoreanClock(date: Date, timeZone: string | null): string {
@@ -212,18 +256,63 @@ function getRemainingLabel(
 function getEtaLabel(
     candidate: NextDepartureCandidate,
     phase: NextDeparturePhase,
-    connectionIssue: "offline" | "error" | null
+    connectionIssue: "offline" | "error" | null,
+    now: Date
 ): string {
-    if (phase === "NO_ETA") return "ETA 없음";
     if (connectionIssue === "offline") return "오프라인 · 저장된 정보";
-    if (connectionIssue === "error") return "저장된 정보";
+    if (connectionIssue === "error") return "업데이트 실패 · 저장된 정보";
+    if (phase === "NO_ETA") return "ETA 없음";
 
     const status = candidate.departureStatus;
     if (!candidate.recommendationFromStatus) return "저장된 ETA";
-    if (status?.stale) return "업데이트 지연";
-    if (status?.source === "LIVE_PROVIDER") return "실시간 ETA";
-    if (status?.source === "SELECTED_ROUTE") return "선택 경로 ETA";
+    if (!status || !isDepartureStatusFresh(status, now)) {
+        return "업데이트 지연";
+    }
+    if (status.source === "LIVE_PROVIDER") return "실시간 ETA";
+    if (status.source === "SELECTED_ROUTE") return "선택 경로 ETA";
     return "저장된 ETA";
+}
+
+export function getDepartureStatusRefreshAt(
+    status: ScheduleDepartureStatus,
+    now: Date
+): number {
+    const nowMs = now.getTime();
+    const nextCheckAt = parseDate(status.nextCheckAt)?.getTime();
+    const freshnessReference = (
+        parseDate(status.liveFetchedAt)
+        ?? parseDate(status.evaluatedAt)
+    )?.getTime();
+    const refreshTargets = [
+        nextCheckAt,
+        freshnessReference === undefined
+            ? undefined
+            : freshnessReference + NEXT_DEPARTURE_STATUS_MAX_AGE_MS,
+    ].filter((value): value is number => (
+        typeof value === "number" && Number.isFinite(value)
+    ));
+
+    return refreshTargets.length > 0
+        ? Math.min(...refreshTargets)
+        : nowMs + NEXT_DEPARTURE_STATUS_MAX_AGE_MS;
+}
+
+export function isDepartureStatusFresh(
+    status: ScheduleDepartureStatus,
+    now: Date
+): boolean {
+    if (status.stale) return false;
+    if (status.source === "LIVE_PROVIDER" && status.failureReason) return false;
+    const nowMs = now.getTime();
+    if (!Number.isFinite(nowMs)) return false;
+
+    const nextCheckAt = parseDate(status.nextCheckAt);
+    if (nextCheckAt && nextCheckAt.getTime() <= nowMs) return false;
+
+    const freshnessReference = parseDate(status.liveFetchedAt)
+        ?? parseDate(status.evaluatedAt);
+    if (!freshnessReference) return status.source !== "LIVE_PROVIDER";
+    return nowMs - freshnessReference.getTime() <= NEXT_DEPARTURE_STATUS_MAX_AGE_MS;
 }
 
 function getTrafficChangeLabel(candidate: NextDepartureCandidate): string | null {
@@ -247,7 +336,7 @@ export function buildNextDepartureHeroModel(
     const travelLabel = candidate.travelMinutes === null
         ? "이동시간 없음"
         : `이동 ${formatDuration(candidate.travelMinutes)}`;
-    const etaLabel = getEtaLabel(candidate, phase, connectionIssue);
+    const etaLabel = getEtaLabel(candidate, phase, connectionIssue, now);
     const trafficChangeLabel = getTrafficChangeLabel(candidate);
     const confidenceLabel = candidate.departureStatus?.confidence === "LOW"
         ? "참고용"

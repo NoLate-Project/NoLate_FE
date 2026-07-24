@@ -22,7 +22,12 @@ function schedule(
         travelMinutes,
         destination = "서울역",
         departedAt,
+        myDepartedAt,
+        ownerMemberId,
         allDay,
+        routeSetupRequired,
+        route,
+        travelCollaborationEnabled,
     }: {
         startAt?: string;
         endAt?: string;
@@ -30,7 +35,12 @@ function schedule(
         travelMinutes?: number;
         destination?: string;
         departedAt?: string;
+        myDepartedAt?: string;
+        ownerMemberId?: number;
         allDay?: boolean;
+        routeSetupRequired?: boolean;
+        route?: unknown;
+        travelCollaborationEnabled?: boolean;
     } = {}
 ): ScheduleItem {
     return {
@@ -41,7 +51,12 @@ function schedule(
         departAt,
         travelMinutes,
         departedAt,
+        myDepartedAt,
+        ownerMemberId,
         allDay,
+        routeSetupRequired,
+        route,
+        travelCollaborationEnabled,
         destination: destination ? { name: destination } : undefined,
         category,
     };
@@ -121,7 +136,7 @@ describe("next departure selection", () => {
         });
         const departed = schedule("departed", {
             departAt: "2026-07-24T09:01:00+09:00",
-            departedAt: "2026-07-24T08:58:00+09:00",
+            myDepartedAt: "2026-07-24T08:58:00+09:00",
         });
         const allDay = schedule("all-day", {
             allDay: true,
@@ -145,6 +160,7 @@ describe("next departure selection", () => {
             departAt: undefined,
             travelMinutes: undefined,
             destination: "광화문",
+            routeSetupRequired: true,
         });
         const candidate = selectNextDeparture([noEta], {}, now);
 
@@ -171,6 +187,47 @@ describe("next departure selection", () => {
         expect(selectNextDeparture([b, a], {}, now)?.item.id).toBe("a");
         expect(selectNextDeparture([a, b], {}, now)?.item.id).toBe("a");
     });
+
+    test("owner departedAt is trusted only for the owner, while shared users require their own state", () => {
+        const ownerDeparted = schedule("owner-departed", {
+            ownerMemberId: 1,
+            departedAt: "2026-07-24T08:50:00+09:00",
+            departAt: "2026-07-24T09:10:00+09:00",
+        });
+        const sharedDeparted = schedule("shared-departed", {
+            ownerMemberId: 1,
+            departedAt: "2026-07-24T08:50:00+09:00",
+            myDepartedAt: "2026-07-24T08:55:00+09:00",
+            departAt: "2026-07-24T09:12:00+09:00",
+        });
+
+        expect(selectNextDeparture([ownerDeparted], {}, now, 1)).toBeNull();
+        expect(selectNextDeparture([ownerDeparted], {}, now, 2)?.item.id)
+            .toBe("owner-departed");
+        expect(selectNextDeparture([sharedDeparted], {}, now, 2)).toBeNull();
+    });
+
+    test("disabled travel collaboration and location-only events cannot displace a valid ETA", () => {
+        const disabled = schedule("disabled", {
+            departAt: "2026-07-24T09:01:00+09:00",
+            travelCollaborationEnabled: false,
+        });
+        const locationOnly = schedule("location-only", {
+            startAt: "2026-07-24T09:05:00+09:00",
+            departAt: undefined,
+            travelMinutes: undefined,
+            destination: "가까운 장소",
+        });
+        const valid = schedule("valid", {
+            departAt: "2026-07-24T09:20:00+09:00",
+        });
+
+        expect(rankNextDepartures(
+            [disabled, locationOnly, valid],
+            {},
+            now
+        ).map(({ item }) => item.id)).toEqual(["valid"]);
+    });
 });
 
 describe("next departure presentation", () => {
@@ -190,6 +247,10 @@ describe("next departure presentation", () => {
                 destination: itemOverrides.destination?.name,
                 departedAt: itemOverrides.departedAt,
                 allDay: itemOverrides.allDay,
+                routeSetupRequired: itemOverrides.routeSetupRequired,
+                route: itemOverrides.route,
+                travelCollaborationEnabled:
+                    itemOverrides.travelCollaborationEnabled ?? undefined,
             }),
             ...itemOverrides,
         };
@@ -259,7 +320,27 @@ describe("next departure presentation", () => {
             savedCandidate,
             now,
             "error"
-        ).etaLabel).toBe("저장된 정보");
+        ).etaLabel).toBe("업데이트 실패 · 저장된 정보");
+    });
+
+    test("a live snapshot downgrades when nextCheckAt or maximum age has passed", () => {
+        expect(modelAt("2026-07-24T09:30:00+09:00", {
+            nextCheckAt: "2026-07-24T08:59:59+09:00",
+        }).etaLabel).toBe("업데이트 지연");
+        expect(buildNextDepartureHeroModel(
+            buildNextDepartureCandidate(
+                schedule("aged", {
+                    departAt: "2026-07-24T09:30:00+09:00",
+                }),
+                status("aged", {
+                    recommendedDepartureAt: "2026-07-24T09:30:00+09:00",
+                    evaluatedAt: "2026-07-24T08:54:00+09:00",
+                    liveFetchedAt: "2026-07-24T08:54:00+09:00",
+                    nextCheckAt: null,
+                })
+            ),
+            now
+        ).etaLabel).toBe("업데이트 지연");
     });
 
     test("traffic change and low confidence are included in the accessible summary", () => {

@@ -2,7 +2,10 @@ import React from "react";
 import { ScrollView, Text } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
-import NextDepartureHero from "../src/modules/schedule/components/list/NextDepartureHero";
+import NextDepartureHero, {
+    getNextDepartureAccentColor,
+    NEXT_DEPARTURE_LIGHT_STATUS_TEXT,
+} from "../src/modules/schedule/components/list/NextDepartureHero";
 import {
     buildNextDepartureCandidate,
     buildNextDepartureHeroModel,
@@ -173,5 +176,41 @@ describe("NextDepartureHero", () => {
             return ancestor?.type === ScrollView;
         })).toBe(true);
         expect(textContent(renderer!)).toContain("프로젝트 발표");
+    });
+
+    test("light-theme status colors keep at least WCAG 4.5:1 contrast", () => {
+        const relativeLuminance = (hex: string) => {
+            const channels = hex.slice(1).match(/../g)!.map((value) => (
+                Number.parseInt(value, 16) / 255
+            )).map((value) => (
+                value <= 0.04045
+                    ? value / 12.92
+                    : ((value + 0.055) / 1.055) ** 2.4
+            ));
+            return 0.2126 * channels[0]!
+                + 0.7152 * channels[1]!
+                + 0.0722 * channels[2]!;
+        };
+        const contrast = (foreground: string, background: string) => {
+            const foregroundLuminance = relativeLuminance(foreground);
+            const backgroundLuminance = relativeLuminance(background);
+            return (
+                Math.max(foregroundLuminance, backgroundLuminance) + 0.05
+            ) / (
+                Math.min(foregroundLuminance, backgroundLuminance) + 0.05
+            );
+        };
+
+        const phases = ["BEFORE", "SOON", "DUE", "PAST", "ENDED", "NO_ETA"] as const;
+        phases.forEach((phase) => {
+            expect(contrast(
+                getNextDepartureAccentColor(phase, "light"),
+                "#F7F7F8"
+            )).toBeGreaterThanOrEqual(4.5);
+        });
+        expect(contrast(
+            NEXT_DEPARTURE_LIGHT_STATUS_TEXT,
+            "#ECECEE"
+        )).toBeGreaterThanOrEqual(4.5);
     });
 });

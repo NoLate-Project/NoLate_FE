@@ -8,8 +8,14 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
-import { useTheme } from "../../../theme/ThemeContext";
-import type { NextDepartureHeroModel } from "../../nextDeparture";
+import {
+    useTheme,
+    type ColorMode,
+} from "../../../theme/ThemeContext";
+import type {
+    NextDepartureHeroModel,
+    NextDeparturePhase,
+} from "../../nextDeparture";
 
 type NextDepartureHeroProps = {
     model: NextDepartureHeroModel | null;
@@ -19,8 +25,28 @@ type NextDepartureHeroProps = {
     onPressRetry: () => void;
 };
 
-function getAccentColor(model: NextDepartureHeroModel): string {
-    switch (model.phase) {
+export const NEXT_DEPARTURE_LIGHT_STATUS_TEXT = "#4F5358";
+
+export function getNextDepartureAccentColor(
+    phase: NextDeparturePhase,
+    mode: ColorMode
+): string {
+    if (mode === "light") {
+        switch (phase) {
+            case "PAST":
+            case "ENDED":
+                return "#B42318";
+            case "DUE":
+            case "SOON":
+                return "#8A4B00";
+            case "NO_ETA":
+                return "#5F6368";
+            default:
+                return "#1B6E2B";
+        }
+    }
+
+    switch (phase) {
         case "PAST":
         case "ENDED":
             return "#FF453A";
@@ -129,7 +155,13 @@ export default function NextDepartureHero({
         );
     }
 
-    const accent = getAccentColor(model);
+    const accent = getNextDepartureAccentColor(model.phase, mode);
+    const etaDotColor = model.etaLabel === "실시간 ETA"
+        || model.etaLabel === "선택 경로 ETA"
+        ? accent
+        : model.etaLabel === "업데이트 지연"
+            ? mode === "dark" ? "#FF9F0A" : "#8A4B00"
+            : colors.textSecondary;
     const confidenceIsLow = model.departureStatus?.confidence === "LOW";
 
     return (
@@ -171,10 +203,17 @@ export default function NextDepartureHero({
                         mode === "dark" ? styles.etaBadgeDark : styles.etaBadgeLight,
                     ]}
                 >
-                    <View style={[styles.etaDot, { backgroundColor: accent }]} />
+                    <View style={[styles.etaDot, { backgroundColor: etaDotColor }]} />
                     <Text
                         numberOfLines={1}
-                        style={[styles.etaBadgeText, { color: colors.textSecondary }]}
+                        style={[
+                            styles.etaBadgeText,
+                            {
+                                color: mode === "dark"
+                                    ? colors.textSecondary
+                                    : NEXT_DEPARTURE_LIGHT_STATUS_TEXT,
+                            },
+                        ]}
                     >
                         {model.etaLabel}
                     </Text>
