@@ -1,8 +1,11 @@
 const INTERNAL_EVENT_KEY = "__nolateNotificationEventKey";
-const EVENT_ID_FIELDS = [
-    INTERNAL_EVENT_KEY,
+const LOGICAL_EVENT_ID_FIELDS = [
+    "logicalEventKey",
+    "eventKey",
     "eventId",
     "notificationId",
+] as const;
+const PROVIDER_EVENT_ID_FIELDS = [
     "messageId",
     "google.message_id",
     "gcm.message_id",
@@ -25,15 +28,29 @@ export function createCanonicalNotificationEventKey(
     data?: Record<string, unknown>,
     providerEventId?: string,
 ): string | undefined {
-    for (const field of EVENT_ID_FIELDS) {
+    for (const field of LOGICAL_EVENT_ID_FIELDS) {
         const value = data?.[field];
         if (typeof value === "string" && value.trim()) {
-            return field === INTERNAL_EVENT_KEY
-                ? value.trim()
-                : `event:${value.trim()}`;
+            return `logical:${value.trim()}`;
         }
         if (typeof value === "number" && Number.isFinite(value)) {
-            return `event:${value}`;
+            return `logical:${value}`;
+        }
+    }
+
+    const internalEventKey = data?.[INTERNAL_EVENT_KEY];
+    if (typeof internalEventKey === "string" && internalEventKey.trim()) {
+        return internalEventKey.trim();
+    }
+
+    if (providerEventId?.trim()) {
+        return `provider:${providerEventId.trim()}`;
+    }
+
+    for (const field of PROVIDER_EVENT_ID_FIELDS) {
+        const value = data?.[field];
+        if (typeof value === "string" && value.trim()) {
+            return `provider:${value.trim()}`;
         }
     }
 
@@ -42,9 +59,7 @@ export function createCanonicalNotificationEventKey(
         return `payload:${entries.map(([key, value]) => `${key}=${value}`).join("&")}`;
     }
 
-    return providerEventId?.trim()
-        ? `provider:${providerEventId.trim()}`
-        : undefined;
+    return undefined;
 }
 
 export function withCanonicalNotificationEventKey(
@@ -86,4 +101,37 @@ export function createNotificationEventConsumer(options: {
             return true;
         },
     };
+}
+
+export function getExpoNotificationProviderMessageId(response: unknown): string | undefined {
+    if (!response || typeof response !== "object") return undefined;
+    const notification = (response as {
+        notification?: {
+            request?: {
+                trigger?: unknown;
+            };
+        };
+    }).notification;
+    const trigger = notification?.request?.trigger;
+    if (!trigger || typeof trigger !== "object") return undefined;
+
+    const triggerRecord = trigger as {
+        remoteMessage?: { messageId?: unknown };
+        payload?: {
+            messageId?: unknown;
+            "google.message_id"?: unknown;
+            "gcm.message_id"?: unknown;
+        };
+    };
+    const candidates = [
+        triggerRecord.remoteMessage?.messageId,
+        triggerRecord.payload?.messageId,
+        triggerRecord.payload?.["google.message_id"],
+        triggerRecord.payload?.["gcm.message_id"],
+    ];
+    const messageId = candidates.find(
+        (candidate): candidate is string =>
+            typeof candidate === "string" && candidate.trim().length > 0,
+    );
+    return messageId?.trim();
 }

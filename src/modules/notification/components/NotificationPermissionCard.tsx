@@ -1,13 +1,23 @@
 import React from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
+import {
+    ActivityIndicator,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
 import { useTheme } from "../../theme/ThemeContext";
+import { getMinimumTouchTarget } from "../../../ui/minimumTouchTarget";
 import type { NotificationPermissionState } from "../notificationPermission";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
 }
+
+const MIN_TOUCH_TARGET = getMinimumTouchTarget(Platform.OS);
 
 export type NotificationPermissionCardProps = {
     state: NotificationPermissionState;
@@ -106,6 +116,7 @@ export default function NotificationPermissionCard({
                     style={({ pressed }) => [
                         styles.action,
                         {
+                            minHeight: MIN_TOUCH_TARGET,
                             borderColor: accent,
                             opacity: pressed || pending ? 0.55 : 1,
                         },
@@ -155,7 +166,7 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     action: {
-        minHeight: 36,
+        minWidth: 88,
         maxWidth: 92,
         borderWidth: 1,
         borderRadius: 10,

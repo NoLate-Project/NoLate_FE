@@ -265,7 +265,7 @@ describe("schedule query api wrappers", () => {
             evaluatedAt: null,
             liveFetchedAt: "2026-07-24T08:58:00+09:00",
             source: "LIVE_PROVIDER",
-            stale: false,
+            stale: null,
             confidence: "HIGH",
             failureReason: null,
             lastTrafficChangeMinutes: -4,
@@ -291,7 +291,23 @@ describe("schedule query api wrappers", () => {
             source: null,
             confidence: null,
             travelMinutes: null,
-            stale: false,
+            stale: null,
+        });
+    });
+
+    test("departure status rejects a response for another schedule", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 99,
+                travelMinutes: 12,
+                stale: false,
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("42")).rejects.toMatchObject({
+            name: "ApiResponseError",
+            errorCode: "DEPARTURE_STATUS_SCHEDULE_MISMATCH",
         });
     });
 

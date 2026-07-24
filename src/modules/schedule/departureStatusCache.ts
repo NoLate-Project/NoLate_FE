@@ -5,16 +5,22 @@ type DepartureStatusInvalidationListener = () => void;
 const cache = new Map<string, ScheduleDepartureStatus>();
 const listeners = new Map<string, Set<DepartureStatusInvalidationListener>>();
 
+function cacheKey(ownerKey: string, scheduleId: string): string {
+    return `${ownerKey}:${scheduleId}`;
+}
+
 export function getCachedScheduleDepartureStatus(
+    ownerKey: string,
     scheduleId: string,
 ): ScheduleDepartureStatus | undefined {
-    return cache.get(scheduleId);
+    return cache.get(cacheKey(ownerKey, scheduleId));
 }
 
 export function setCachedScheduleDepartureStatus(
+    ownerKey: string,
     status: ScheduleDepartureStatus,
 ): void {
-    cache.set(status.scheduleId, status);
+    cache.set(cacheKey(ownerKey, status.scheduleId), status);
 }
 
 /**

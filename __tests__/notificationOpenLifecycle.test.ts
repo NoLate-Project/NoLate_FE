@@ -1,6 +1,7 @@
 import {
     createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
+    getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "../src/modules/notification/notificationEventKey";
 import { configureNotificationOpenLifecycle } from "../src/modules/notification/notificationOpenLifecycle";
@@ -16,15 +17,27 @@ type FirebaseMessage = {
 };
 
 describe("notification canonical event consumption", () => {
-    test("Expo와 Firebase 식별자가 달라도 동일 payload navigation은 한 번만 소비한다", () => {
-        const data = { type: "SCHEDULE_TRAFFIC", scheduleId: "42", sentAt: "2026-07-24T09:00:00Z" };
-        const expoKey = createCanonicalNotificationEventKey(data, "expo-request");
-        const firebaseKey = createCanonicalNotificationEventKey(data, "firebase-message");
+    test("provider message ID가 같으면 Expo/Firebase payload shape가 달라도 한 번만 소비한다", () => {
+        const expoData = { type: "SCHEDULE_TRAFFIC", scheduleId: "42", extra: "local" };
+        const firebaseData = { type: "SCHEDULE_TRAFFIC", scheduleId: "42", sentAt: "server" };
+        const expoKey = createCanonicalNotificationEventKey(expoData, "firebase-message");
+        const firebaseKey = createCanonicalNotificationEventKey(firebaseData, "firebase-message");
         const consumer = createNotificationEventConsumer();
 
         expect(expoKey).toBe(firebaseKey);
         expect(consumer.consume(expoKey, 1_000)).toBe(true);
         expect(consumer.consume(firebaseKey, 1_001)).toBe(false);
+    });
+
+    test("backend logical event key는 provider ID보다 우선한다", () => {
+        expect(createCanonicalNotificationEventKey(
+            { logicalEventKey: "traffic-42-v2" },
+            "provider-1",
+        )).toBe("logical:traffic-42-v2");
+        expect(createCanonicalNotificationEventKey(
+            { logicalEventKey: "traffic-42-v2", extra: "different" },
+            "provider-2",
+        )).toBe("logical:traffic-42-v2");
     });
 
     test("foreground에서 local Expo 알림에 심은 canonical key도 Firebase 원본과 같다", () => {
@@ -33,6 +46,18 @@ describe("notification canonical event consumption", () => {
         const localData = withCanonicalNotificationEventKey(data, "firebase-message");
 
         expect(createCanonicalNotificationEventKey(localData, "expo-request")).toBe(firebaseKey);
+    });
+
+    test("Expo Android trigger의 Firebase messageId를 canonical provider id로 읽는다", () => {
+        expect(getExpoNotificationProviderMessageId({
+            notification: {
+                request: {
+                    trigger: {
+                        remoteMessage: { messageId: "provider-42" },
+                    },
+                },
+            },
+        })).toBe("provider-42");
     });
 });
 describe("background and terminated notification open lifecycle", () => {
@@ -71,11 +96,16 @@ describe("background and terminated notification open lifecycle", () => {
         expect(removeFirebase).toHaveBeenCalledTimes(1);
     });
 
-    test("terminated 초기 Expo와 Firebase 동일 이벤트를 모두 소비·정리하되 navigation은 한 번이다", async () => {
-        const data = {
+    test("terminated Firebase initial을 우선하고 stale Expo response는 정리만 한다", async () => {
+        const firebaseData = {
             type: "SCHEDULE_TRAFFIC",
             scheduleId: "42",
-            eventId: "traffic-42-100",
+            eventId: "current-42",
+        };
+        const staleExpoData = {
+            type: "SCHEDULE_TRAFFIC",
+            scheduleId: "7",
+            eventId: "stale-7",
         };
         const openSchedule = jest.fn();
         const clearLastExpoResponse = jest.fn();
@@ -88,8 +118,8 @@ describe("background and terminated notification open lifecycle", () => {
 
         const unsubscribe = await configureNotificationOpenLifecycle<ExpoResponse, FirebaseMessage>({
             onFirebaseOpened: () => jest.fn(),
-            getInitialFirebase: async () => ({ messageId: "firebase-id", data }),
-            getLastExpoResponse: () => ({ id: "expo-id", data }),
+            getInitialFirebase: async () => ({ messageId: "firebase-id", data: firebaseData }),
+            getLastExpoResponse: () => ({ id: "expo-id", data: staleExpoData }),
             clearLastExpoResponse,
         }, {
             handleExpoResponse: (response) => handle(response.data, response.id),

@@ -20,8 +20,13 @@ import {
 import {
     createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
+    getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "./notificationEventKey";
+import {
+    createNotificationActionDedupe,
+    executeNotificationActionOnce,
+} from "./notificationActionDedupe";
 import { configureNotificationOpenLifecycle } from "./notificationOpenLifecycle";
 import {
     createPushActionFailureGate,
@@ -117,9 +122,8 @@ export async function configurePushNavigation(
 ): Promise<() => void> {
     const Notifications = await getNotifications();
     const messaging = getMessaging();
-    let lastDepartNowActionKey: string | undefined;
-    let lastSnoozeActionKey: string | undefined;
     const openedEventConsumer = createNotificationEventConsumer();
+    const actionDedupe = createNotificationActionDedupe();
     const actionFailureGate = createPushActionFailureGate(
         onActionFailure,
         AppState.currentState === "active",
@@ -156,7 +160,7 @@ export async function configurePushNavigation(
 
     const markDepartedFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        responseId?: string,
+        providerEventId?: string,
     ) => {
         const scheduleId = getScheduleIdFromNotificationData(data);
 
@@ -169,13 +173,19 @@ export async function configurePushNavigation(
             return;
         }
 
-        const actionKey = `${scheduleId}:${responseId ?? ""}`;
-        // iOS는 앱 활성화 직후 마지막 응답을 다시 읽을 수 있어 같은 액션의 중복 API 호출을 방지한다.
-        if (actionKey === lastDepartNowActionKey) return;
-        lastDepartNowActionKey = actionKey;
-
+        const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
+            ?? `schedule:${scheduleId}`;
         try {
-            await markScheduleDeparted(scheduleId);
+            const executed = await executeNotificationActionOnce(
+                actionDedupe,
+                `departNow:${eventKey}`,
+                () => markScheduleDeparted(scheduleId),
+                () => refreshForegroundPushCaches({
+                    type: "SCHEDULE_PARTICIPANT_DEPARTED",
+                    scheduleId,
+                }),
+            );
+            if (!executed) return;
             logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] depart-now action failed", error);
@@ -189,7 +199,7 @@ export async function configurePushNavigation(
 
     const snoozeFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        responseId?: string,
+        providerEventId?: string,
     ) => {
         const scheduleId = getScheduleIdFromNotificationData(data);
 
@@ -202,13 +212,19 @@ export async function configurePushNavigation(
             return;
         }
 
-        const actionKey = `${scheduleId}:${responseId ?? ""}`;
-        // 동일 알림 응답이 재전달되어도 서버 재예약을 여러 번 밀지 않도록 막는다.
-        if (actionKey === lastSnoozeActionKey) return;
-        lastSnoozeActionKey = actionKey;
-
+        const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
+            ?? `schedule:${scheduleId}`;
         try {
-            await snoozeScheduleDepartureReminder(scheduleId);
+            const executed = await executeNotificationActionOnce(
+                actionDedupe,
+                `snooze:${eventKey}`,
+                () => snoozeScheduleDepartureReminder(scheduleId),
+                () => refreshForegroundPushCaches({
+                    type: "SCHEDULE_DEPARTURE_REMINDER",
+                    scheduleId,
+                }),
+            );
+            if (!executed) return;
             logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] snooze action failed", error);
@@ -222,18 +238,19 @@ export async function configurePushNavigation(
 
     const handleNotificationResponse = (response: NotificationResponse) => {
         const request = response.notification.request;
+        const providerEventId = getExpoNotificationProviderMessageId(response);
 
         if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
-            markDepartedFromData(request.content.data, request.identifier).catch(() => undefined);
+            markDepartedFromData(request.content.data, providerEventId).catch(() => undefined);
             return;
         }
 
         if (response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER) {
-            snoozeFromData(request.content.data, request.identifier).catch(() => undefined);
+            snoozeFromData(request.content.data, providerEventId).catch(() => undefined);
             return;
         }
 
-        openFromData(request.content.data, request.identifier);
+        openFromData(request.content.data, providerEventId);
     };
 
     const appStateSubscription = Notifications

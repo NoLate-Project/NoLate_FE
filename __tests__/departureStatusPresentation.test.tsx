@@ -5,8 +5,10 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import type { ScheduleDepartureStatus } from "../src/api/schedule";
 import DepartureStatusCard from "../src/modules/schedule/components/detail/DepartureStatusCard";
 import {
+    formatDepartureStatusClock,
     getDepartureLifecyclePresentation,
     getDepartureStatusMetadataPresentation,
+    getUnavailableDepartureStatusMetadata,
 } from "../src/modules/schedule/departureStatusPresentation";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
@@ -43,12 +45,12 @@ function lifecycleAt(
     recommendedDepartureAt: string | null = "2026-07-24T09:30:00+09:00",
     scheduleEndAt = "2026-07-24T11:00:00+09:00",
 ) {
-    jest.setSystemTime(new Date(now));
     return getDepartureLifecyclePresentation({
         recommendedDepartureAt,
+        scheduleStartAt: "2026-07-24T10:00:00+09:00",
         scheduleEndAt,
         scheduleHasEndTime: true,
-        nowMs: Date.now(),
+        nowMs: Date.parse(now),
     });
 }
 
@@ -100,6 +102,77 @@ describe("departure countdown lifecycle", () => {
             value: "ETA 없음",
         });
     });
+
+    test("종료 시각 없는 point event는 시작 후 유예 시간 뒤 종료한다", () => {
+        const beforeEnd = getDepartureLifecyclePresentation({
+            recommendedDepartureAt: "2026-07-24T09:30:00+09:00",
+            scheduleStartAt: "2026-07-24T10:00:00+09:00",
+            scheduleEndAt: "2026-07-24T10:00:00+09:00",
+            scheduleHasEndTime: false,
+            nowMs: Date.parse("2026-07-24T10:30:00+09:00"),
+        });
+        const afterEnd = getDepartureLifecyclePresentation({
+            recommendedDepartureAt: "2026-07-24T09:30:00+09:00",
+            scheduleStartAt: "2026-07-24T10:00:00+09:00",
+            scheduleEndAt: "2026-07-24T10:00:00+09:00",
+            scheduleHasEndTime: false,
+            nowMs: Date.parse("2026-07-24T11:00:00+09:00"),
+        });
+
+        expect(beforeEnd.phase).toBe("past");
+        expect(afterEnd.phase).toBe("ended");
+    });
+
+    test("zero-duration legacy all-day는 시작 자정이 아니라 다음 자정에 종료한다", () => {
+        const options = {
+            recommendedDepartureAt: null,
+            scheduleStartAt: "2026-07-24T00:00:00+09:00",
+            scheduleEndAt: "2026-07-24T00:00:00+09:00",
+            scheduleHasEndTime: true,
+            scheduleAllDay: true,
+        };
+
+        expect(getDepartureLifecyclePresentation({
+            ...options,
+            nowMs: Date.parse("2026-07-24T12:00:00+09:00"),
+        }).phase).toBe("missing");
+        expect(getDepartureLifecyclePresentation({
+            ...options,
+            nowMs: Date.parse("2026-07-25T00:00:00+09:00"),
+        }).phase).toBe("ended");
+    });
+
+    test("point/all-day 종료 판정을 상세 카드에 실제 렌더링한다", async () => {
+        const endedPoint = getDepartureLifecyclePresentation({
+            recommendedDepartureAt: "2026-07-24T09:30:00+09:00",
+            scheduleStartAt: "2026-07-24T10:00:00+09:00",
+            scheduleEndAt: "2026-07-24T10:00:00+09:00",
+            scheduleHasEndTime: false,
+            nowMs: Date.parse("2026-07-24T11:00:00+09:00"),
+        });
+        let renderer: ReactTestRenderer | undefined;
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <DepartureStatusCard
+                        lifecycle={endedPoint}
+                        metadata={getUnavailableDepartureStatusMetadata()}
+                        loadState="unavailable"
+                        onRetry={jest.fn()}
+                    />
+                </ThemeProvider>,
+            );
+        });
+
+        const text = renderer!.root.findAllByType(Text)
+            .map((node) => node.props.children)
+            .flat(Infinity)
+            .join(" ");
+        expect(text).toContain("종료");
+        expect(text).toContain("종료된 일정이에요");
+        await act(async () => renderer?.unmount());
+    });
 });
 
 describe("departure source and stale presentation", () => {
@@ -132,6 +205,31 @@ describe("departure source and stale presentation", () => {
         });
     });
 
+    test("stale 누락과 liveFetchedAt 없는 LIVE를 최신 실시간으로 표현하지 않는다", () => {
+        expect(getDepartureStatusMetadataPresentation(status({
+            stale: null,
+            source: "LIVE_PROVIDER",
+            liveFetchedAt: null,
+        }))).toMatchObject({
+            sourceLabel: "실시간 교통 출처",
+            freshnessLabel: "최신 여부 알 수 없음",
+            freshnessTone: "unknown",
+            etaLabel: "확인된 ETA 35분",
+            liveFetchedLabel: undefined,
+        });
+    });
+
+    test("metadata 시각은 status timeZone을 사용하고 잘못된 zone은 안전하게 fallback한다", () => {
+        expect(formatDepartureStatusClock(
+            "2026-07-24T00:00:00Z",
+            "Asia/Seoul",
+        )).toBe("09:00");
+        expect(formatDepartureStatusClock(
+            "2026-07-24T00:00:00Z",
+            "Invalid/NoLate",
+        )).toMatch(/^\d{2}:\d{2}$/);
+    });
+
     test("fallback UI를 LIVE로 표현하지 않고 stale/failure를 실제 렌더링한다", async () => {
         let renderer: ReactTestRenderer | undefined;
         const fallbackStatus = status({
@@ -142,6 +240,7 @@ describe("departure source and stale presentation", () => {
         });
         const lifecycle = getDepartureLifecyclePresentation({
             recommendedDepartureAt: fallbackStatus.recommendedDepartureAt,
+            scheduleStartAt: "2026-07-24T10:00:00+09:00",
             scheduleEndAt: "2026-07-24T11:00:00+09:00",
             scheduleHasEndTime: true,
             nowMs: Date.parse("2026-07-24T09:00:00+09:00"),
@@ -179,6 +278,7 @@ describe("departure source and stale presentation", () => {
         const currentStatus = status({ stale: true });
         const lifecycle = getDepartureLifecyclePresentation({
             recommendedDepartureAt: currentStatus.recommendedDepartureAt,
+            scheduleStartAt: "2026-07-24T10:00:00+09:00",
             scheduleEndAt: "2026-07-24T11:00:00+09:00",
             scheduleHasEndTime: true,
             nowMs: Date.parse("2026-07-24T09:00:00+09:00"),
@@ -222,9 +322,42 @@ describe("departure source and stale presentation", () => {
         await act(async () => retry.props.onPress());
 
         expect(onRetry).toHaveBeenCalledTimes(1);
+        expect(retry.props.accessibilityLiveRegion).toBeUndefined();
+        const retryStyle = retry.props.style({ pressed: false });
+        expect(retryStyle[1].minHeight).toBeGreaterThanOrEqual(44);
         expect(renderer!.root.findAllByType(Text)
             .map((node) => node.props.children)
             .join(" ")).toContain("네트워크를 확인해 주세요");
+
+        await act(async () => renderer?.unmount());
+    });
+
+    test("이동 정보 공유가 꺼진 일정은 unavailable 설명만 표시하고 재시도를 노출하지 않는다", async () => {
+        let renderer: ReactTestRenderer | undefined;
+        const lifecycle = lifecycleAt("2026-07-24T09:00:00+09:00");
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <DepartureStatusCard
+                        lifecycle={lifecycle}
+                        metadata={getUnavailableDepartureStatusMetadata(35)}
+                        loadState="unavailable"
+                        onRetry={jest.fn()}
+                    />
+                </ThemeProvider>,
+            );
+        });
+
+        const text = renderer!.root.findAllByType(Text)
+            .map((node) => node.props.children)
+            .flat(Infinity)
+            .join(" ");
+        expect(text).toContain("개인 이동 정보 비공개");
+        expect(text).toContain("이동 정보 공유가 꺼져");
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "최신 출발 상태 다시 불러오기",
+        })).toHaveLength(0);
 
         await act(async () => renderer?.unmount());
     });

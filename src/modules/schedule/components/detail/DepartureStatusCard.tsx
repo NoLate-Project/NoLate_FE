@@ -1,6 +1,7 @@
 import React from "react";
 import {
     ActivityIndicator,
+    Platform,
     Pressable,
     StyleSheet,
     Text,
@@ -12,6 +13,7 @@ import NotificationPermissionCard, {
     type NotificationPermissionCardProps,
 } from "../../../notification/components/NotificationPermissionCard";
 import { useTheme } from "../../../theme/ThemeContext";
+import { getMinimumTouchTarget } from "../../../../ui/minimumTouchTarget";
 import type {
     DepartureLifecyclePresentation,
     DepartureStatusMetadataPresentation,
@@ -21,7 +23,14 @@ function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
 }
 
-export type DepartureStatusLoadState = "loading" | "ready" | "legacy" | "error";
+export type DepartureStatusLoadState =
+    | "loading"
+    | "ready"
+    | "legacy"
+    | "unavailable"
+    | "error";
+
+const MIN_TOUCH_TARGET = getMinimumTouchTarget(Platform.OS);
 
 type Props = {
     lifecycle: DepartureLifecyclePresentation;
@@ -61,7 +70,8 @@ export default function DepartureStatusCard({
             : lifecycle.phase === "ended" || lifecycle.phase === "missing"
                 ? colors.textSecondary
                 : mode === "dark" ? "#78B4FF" : "#2979FF";
-    const stale = metadata.freshnessLabel === "오래된 정보" || loadState === "error";
+    const freshnessNeedsAttention =
+        metadata.freshnessTone !== "fresh" || loadState === "error";
 
     return (
         <View style={styles.section}>
@@ -87,7 +97,11 @@ export default function DepartureStatusCard({
             >
                 {showHero ? (
                     <>
-                        <View style={styles.hero}>
+                        <View
+                            accessible
+                            accessibilityLabel={`${lifecycle.label}, ${lifecycle.value}. ${lifecycle.detail}`}
+                            style={styles.hero}
+                        >
                             <View style={[styles.heroIcon, { backgroundColor: `${accent}1C` }]}>
                                 <Ionicons name={lifecycleIcon(lifecycle.phase)} size={20} color={accent} />
                             </View>
@@ -96,7 +110,6 @@ export default function DepartureStatusCard({
                                     {lifecycle.label}
                                 </Text>
                                 <Text
-                                    accessibilityLiveRegion="polite"
                                     style={[styles.heroValue, { color: colors.textPrimary }]}
                                 >
                                     {lifecycle.value}
@@ -127,13 +140,17 @@ export default function DepartureStatusCard({
                     <View
                         style={[
                             styles.badge,
-                            { backgroundColor: stale ? "rgba(249,115,22,0.14)" : "rgba(34,197,94,0.13)" },
+                            {
+                                backgroundColor: freshnessNeedsAttention
+                                    ? "rgba(249,115,22,0.14)"
+                                    : "rgba(34,197,94,0.13)",
+                            },
                         ]}
                     >
                         <Text
                             style={[
                                 styles.badgeText,
-                                { color: stale ? "#F97316" : "#22A559" },
+                                { color: freshnessNeedsAttention ? "#F97316" : "#22A559" },
                             ]}
                         >
                             {metadata.freshnessLabel}
@@ -189,7 +206,11 @@ export default function DepartureStatusCard({
                             onPress={onRetry}
                             style={({ pressed }) => [
                                 styles.retryButton,
-                                { borderColor: accent, opacity: pressed ? 0.55 : 1 },
+                                {
+                                    minHeight: MIN_TOUCH_TARGET,
+                                    borderColor: accent,
+                                    opacity: pressed ? 0.55 : 1,
+                                },
                             ]}
                         >
                             <Ionicons name="refresh" size={14} color={accent} />
@@ -344,7 +365,6 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     retryButton: {
-        minHeight: 34,
         borderWidth: 1,
         borderRadius: 10,
         paddingHorizontal: 9,

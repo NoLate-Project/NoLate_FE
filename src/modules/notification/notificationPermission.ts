@@ -17,11 +17,22 @@ type PermissionSnapshot = {
     status?: string;
     granted?: boolean;
     canAskAgain?: boolean;
+    ios?: {
+        status?: number;
+    };
 };
 
 export function normalizeNotificationPermissionState(
     permission: PermissionSnapshot,
 ): NotificationPermissionState {
+    // Expo iOS authorization: 2=authorized, 3=provisional, 4=ephemeral.
+    if (
+        permission.ios?.status === 2 ||
+        permission.ios?.status === 3 ||
+        permission.ios?.status === 4
+    ) {
+        return "granted";
+    }
     if (permission.granted || permission.status === "granted") return "granted";
     if (permission.status === "undetermined") return "undetermined";
     if (permission.status === "denied") {
@@ -49,10 +60,6 @@ async function getNotificationsModule() {
 }
 
 export async function getNotificationPermissionState(): Promise<NotificationPermissionState> {
-    if (Platform.OS === "android" && Number(Platform.Version) < 33) {
-        return "granted";
-    }
-
     const Notifications = await getNotificationsModule();
     if (!Notifications) return "unavailable";
 

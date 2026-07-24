@@ -31,10 +31,15 @@ export async function configureNotificationOpenLifecycle<TExpoResponse, TFirebas
     const initialFirebase = await source.getInitialFirebase();
     const initialExpo = source.getLastExpoResponse?.() ?? null;
 
-    if (initialFirebase) handlers.handleFirebaseMessage(initialFirebase);
+    if (initialFirebase) {
+        handlers.handleFirebaseMessage(initialFirebase);
+    }
     if (initialExpo) {
         source.clearLastExpoResponse?.();
-        handlers.handleExpoResponse(initialExpo);
+        // A Firebase initial message is the current launch intent. Expo can retain
+        // an older response from a previous process, so never let it overwrite the
+        // current target. When Firebase has no initial event, Expo remains the source.
+        if (!initialFirebase) handlers.handleExpoResponse(initialExpo);
     }
 
     return () => {

@@ -8,6 +8,7 @@ import {
     shouldAutomaticallyRequestNotificationPermission,
 } from "../src/modules/notification/notificationPermission";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
+import { getMinimumTouchTarget } from "../src/ui/minimumTouchTarget";
 
 jest.mock("@expo/vector-icons", () => ({
     Ionicons: () => null,
@@ -24,6 +25,11 @@ jest.mock("../src/modules/storage/secureStorage", () => ({
 }));
 
 describe("notification permission state", () => {
+    test("iOS/Android 최소 터치 타깃을 각각 44pt/48dp로 유지한다", () => {
+        expect(getMinimumTouchTarget("ios")).toBe(44);
+        expect(getMinimumTouchTarget("android")).toBe(48);
+    });
+
     test("granted, denied, blocked 상태를 시스템 응답에서 구분한다", () => {
         expect(normalizeNotificationPermissionState({
             status: "granted",
@@ -48,6 +54,29 @@ describe("notification permission state", () => {
         expect(shouldAutomaticallyRequestNotificationPermission("denied", false)).toBe(false);
         expect(shouldAutomaticallyRequestNotificationPermission("blocked", false)).toBe(false);
         expect(shouldAutomaticallyRequestNotificationPermission("granted", false)).toBe(false);
+    });
+
+    test("iOS provisional/ephemeral은 실제 수신 가능한 granted로 취급한다", () => {
+        expect(normalizeNotificationPermissionState({
+            status: "undetermined",
+            granted: false,
+            canAskAgain: true,
+            ios: { status: 3 },
+        })).toBe("granted");
+        expect(normalizeNotificationPermissionState({
+            status: "undetermined",
+            granted: false,
+            canAskAgain: true,
+            ios: { status: 4 },
+        })).toBe("granted");
+    });
+
+    test("Android 13 미만도 OS notifications-enabled 응답이 denied면 허용으로 꾸미지 않는다", () => {
+        expect(normalizeNotificationPermissionState({
+            status: "denied",
+            granted: false,
+            canAskAgain: false,
+        })).toBe("blocked");
     });
 });
 
@@ -104,5 +133,7 @@ describe("NotificationPermissionCard", () => {
 
         expect(onOpenSettings).toHaveBeenCalledTimes(1);
         expect(onRequest).not.toHaveBeenCalled();
+        const style = settings.props.style({ pressed: false });
+        expect(style[1].minHeight).toBeGreaterThanOrEqual(44);
     });
 });

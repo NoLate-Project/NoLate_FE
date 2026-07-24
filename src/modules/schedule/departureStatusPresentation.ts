@@ -5,7 +5,9 @@ import type {
 } from "../../api/schedule";
 
 const SECOND_MS = 1_000;
+const DAY_MS = 24 * 60 * 60 * SECOND_MS;
 const IMMINENT_THRESHOLD_MS = 10 * 60 * SECOND_MS;
+const POINT_EVENT_ACTIVE_WINDOW_MS = 60 * 60 * SECOND_MS;
 
 export type DepartureLifecyclePhase =
     | "upcoming"
@@ -26,6 +28,7 @@ export type DepartureStatusMetadataPresentation = {
     sourceDetail: string;
     confidenceLabel: string;
     freshnessLabel: string;
+    freshnessTone: "fresh" | "stale" | "unknown";
     etaLabel: string;
     evaluatedLabel?: string;
     liveFetchedLabel?: string;
@@ -56,15 +59,33 @@ function formatCountdown(milliseconds: number): string {
         : `${pad2(totalHours)}:${pad2(minutes)}:${pad2(seconds)}`;
 }
 
-function formatClock(value?: string | null): string | undefined {
+export function formatDepartureStatusClock(
+    value?: string | null,
+    timeZone?: string | null,
+): string | undefined {
     const timestamp = parseTime(value);
     if (timestamp === undefined) return undefined;
+
+    if (timeZone) {
+        try {
+            return new Intl.DateTimeFormat("en-GB", {
+                timeZone,
+                hour: "2-digit",
+                minute: "2-digit",
+                hourCycle: "h23",
+            }).format(new Date(timestamp));
+        } catch {
+            // Invalid/unsupported IANA zones fall back to the device clock below.
+        }
+    }
+
     const date = new Date(timestamp);
     return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 export function getDepartureLifecyclePresentation(options: {
     recommendedDepartureAt?: string | null;
+    scheduleStartAt: string;
     scheduleEndAt: string;
     scheduleHasEndTime: boolean;
     scheduleAllDay?: boolean;
@@ -73,16 +94,37 @@ export function getDepartureLifecyclePresentation(options: {
 }): DepartureLifecyclePresentation {
     const {
         recommendedDepartureAt,
+        scheduleStartAt,
         scheduleEndAt,
         scheduleHasEndTime,
         scheduleAllDay,
         departedAt,
         nowMs,
     } = options;
-    const scheduleEndMs = parseTime(scheduleEndAt);
-    const hasReliableEnd = scheduleAllDay || scheduleHasEndTime;
+    const scheduleStartMs = parseTime(scheduleStartAt);
+    const rawScheduleEndMs = parseTime(scheduleEndAt);
+    let lifecycleEndMs: number | undefined;
 
-    if (hasReliableEnd && scheduleEndMs !== undefined && nowMs >= scheduleEndMs) {
+    if (scheduleAllDay && scheduleStartMs !== undefined) {
+        if (rawScheduleEndMs !== undefined && rawScheduleEndMs > scheduleStartMs) {
+            lifecycleEndMs = rawScheduleEndMs;
+        } else {
+            // Legacy all-day rows stored identical start/end midnights. The
+            // schedule carries no IANA zone, so use the encoded midnight plus one
+            // calendar-day window instead of the device zone's midnight.
+            lifecycleEndMs = scheduleStartMs + DAY_MS;
+        }
+    } else if (scheduleHasEndTime) {
+        lifecycleEndMs = rawScheduleEndMs ?? scheduleStartMs;
+    } else {
+        // Point-in-time events have no explicit duration. Keep the departure action
+        // useful through a short attendance window, then retire it deterministically.
+        lifecycleEndMs = scheduleStartMs === undefined
+            ? undefined
+            : scheduleStartMs + POINT_EVENT_ACTIVE_WINDOW_MS;
+    }
+
+    if (lifecycleEndMs !== undefined && nowMs >= lifecycleEndMs) {
         return {
             phase: "ended",
             label: "일정 상태",
@@ -92,7 +134,7 @@ export function getDepartureLifecyclePresentation(options: {
     }
 
     if (departedAt) {
-        const departedClock = formatClock(departedAt);
+        const departedClock = formatDepartureStatusClock(departedAt);
         return {
             phase: "past",
             label: "출발 상태",
@@ -134,20 +176,28 @@ export function getDepartureLifecyclePresentation(options: {
         phase: "upcoming",
         label: "추천 출발까지",
         value: formatCountdown(remainingMs),
-        detail: `${formatClock(recommendedDepartureAt) ?? "계산된 시각"} 출발 권장`,
+        detail: `${formatDepartureStatusClock(recommendedDepartureAt) ?? "계산된 시각"} 출발 권장`,
     };
 }
 
-function sourcePresentation(source: ScheduleDepartureStatusSource | null): {
+function sourcePresentation(
+    source: ScheduleDepartureStatusSource | null,
+    hasLiveFetchedAt: boolean,
+): {
     label: string;
     detail: string;
 } {
     switch (source) {
         case "LIVE_PROVIDER":
-            return {
-                label: "실시간 교통 조회",
-                detail: "교통 제공자의 최신 ETA를 반영했어요",
-            };
+            return hasLiveFetchedAt
+                ? {
+                    label: "실시간 교통 조회",
+                    detail: "교통 제공자의 확인된 ETA를 반영했어요",
+                }
+                : {
+                    label: "실시간 교통 출처",
+                    detail: "실시간 확인 시각이 없어 최신 여부를 확인할 수 없어요",
+                };
         case "SELECTED_ROUTE":
             return {
                 label: "선택한 경로 기준",
@@ -185,12 +235,18 @@ function formatTrafficChange(change: number | null): string | undefined {
 export function getDepartureStatusMetadataPresentation(
     status: ScheduleDepartureStatus,
 ): DepartureStatusMetadataPresentation {
-    const source = sourcePresentation(status.source);
-    const evaluatedClock = formatClock(status.evaluatedAt);
-    const liveFetchedClock = formatClock(status.liveFetchedAt);
-    const lastChangedClock = formatClock(status.lastChangedAt);
-    const preparationClock = formatClock(status.preparationStartAt);
-    const nextCheckClock = formatClock(status.nextCheckAt);
+    const evaluatedClock = formatDepartureStatusClock(status.evaluatedAt, status.timeZone);
+    const liveFetchedClock = formatDepartureStatusClock(status.liveFetchedAt, status.timeZone);
+    const lastChangedClock = formatDepartureStatusClock(status.lastChangedAt, status.timeZone);
+    const preparationClock = formatDepartureStatusClock(status.preparationStartAt, status.timeZone);
+    const nextCheckClock = formatDepartureStatusClock(status.nextCheckAt, status.timeZone);
+    const source = sourcePresentation(status.source, liveFetchedClock !== undefined);
+    const freshnessTone = status.stale === true
+        ? "stale"
+        : status.stale === null ||
+            (status.source === "LIVE_PROVIDER" && liveFetchedClock === undefined)
+            ? "unknown"
+            : "fresh";
     const preparationParts = [
         preparationClock ? `${preparationClock} 준비 시작` : undefined,
         status.preparationMinutes !== null ? `준비 ${status.preparationMinutes}분` : undefined,
@@ -203,13 +259,18 @@ export function getDepartureStatusMetadataPresentation(
             ? "마지막으로 확인된 교통 제공자 ETA예요"
             : source.detail,
         confidenceLabel: confidenceLabel(status.confidence),
-        freshnessLabel: status.stale ? "오래된 정보" : "최신 상태",
+        freshnessLabel: freshnessTone === "stale"
+            ? "오래된 정보"
+            : freshnessTone === "unknown"
+                ? "최신 여부 알 수 없음"
+                : "최신 상태",
+        freshnessTone,
         etaLabel: status.travelMinutes === null
             ? "최신 ETA 없음"
-            : `최신 ETA ${Math.max(0, Math.round(status.travelMinutes))}분`,
+            : `${freshnessTone === "fresh" ? "최신" : freshnessTone === "stale" ? "마지막" : "확인된"} ETA ${Math.max(0, Math.round(status.travelMinutes))}분`,
         evaluatedLabel: evaluatedClock ? `상태 계산 ${evaluatedClock}` : undefined,
         liveFetchedLabel: status.source === "LIVE_PROVIDER" && liveFetchedClock
-            ? `${status.stale ? "마지막 " : ""}실시간 확인 ${liveFetchedClock}`
+            ? `${status.stale === true ? "마지막 " : ""}실시간 확인 ${liveFetchedClock}`
             : undefined,
         trafficChangeLabel: formatTrafficChange(status.lastTrafficChangeMinutes)
             ? [
@@ -235,8 +296,19 @@ export function getLegacyDepartureStatusMetadata(
         sourceDetail: "최신 출발 상태 API를 사용할 수 없어 일정 저장값을 사용해요",
         confidenceLabel: "신뢰도 정보 없음",
         freshnessLabel: "실시간 아님",
+        freshnessTone: "unknown",
         etaLabel: typeof travelMinutes === "number"
             ? `저장된 ETA ${Math.max(0, Math.round(travelMinutes))}분`
             : "ETA 없음",
+    };
+}
+
+export function getUnavailableDepartureStatusMetadata(
+    travelMinutes?: number,
+): DepartureStatusMetadataPresentation {
+    return {
+        ...getLegacyDepartureStatusMetadata(travelMinutes),
+        sourceLabel: "개인 이동 정보 비공개",
+        sourceDetail: "이 공유 일정은 참여자별 이동 정보 공유가 꺼져 있어 저장된 일정 정보만 표시해요",
     };
 }

@@ -34,4 +34,16 @@ describe("foreground traffic push refresh", () => {
         expect(clearCalendarScheduleCache).toHaveBeenCalledTimes(1);
         expect(invalidateScheduleDepartureStatus).not.toHaveBeenCalled();
     });
+
+    test.each([
+        "SCHEDULE_TRAFFIC",
+        "SCHEDULE_DEPARTURE_REMINDER",
+        "SCHEDULE_PARTICIPANT_DEPARTED",
+        "SCHEDULE_DEPARTURE_NUDGE",
+    ])("%s는 일정 store와 departure status를 함께 갱신한다", (type) => {
+        refreshForegroundPushCaches({ type, scheduleId: "42" });
+
+        expect(clearCalendarScheduleCache).toHaveBeenCalledTimes(1);
+        expect(invalidateScheduleDepartureStatus).toHaveBeenCalledWith("42");
+    });
 });

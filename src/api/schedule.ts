@@ -1,5 +1,10 @@
 import { apiDelete, apiGet, apiPost, apiPut } from "./api";
-import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
+import {
+    ApiResponseError,
+    assertApiSuccess,
+    type ApiEnvelope,
+    unwrapApiResponse,
+} from "./response";
 import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 import {
@@ -43,7 +48,7 @@ export type ScheduleDepartureStatus = {
     evaluatedAt: string | null;
     liveFetchedAt: string | null;
     source: ScheduleDepartureStatusSource | null;
-    stale: boolean;
+    stale: boolean | null;
     confidence: ScheduleDepartureStatusConfidence | null;
     failureReason: string | null;
     lastTrafficChangeMinutes: number | null;
@@ -138,16 +143,24 @@ function normalizeScheduleDepartureStatus(
         ? dto.confidence
         : null;
 
+    const responseScheduleId = dto.scheduleId === undefined || dto.scheduleId === null
+        ? requestedScheduleId
+        : String(dto.scheduleId).trim();
+    if (responseScheduleId !== requestedScheduleId) {
+        throw new ApiResponseError(
+            "출발 상태 응답의 일정 정보가 요청과 일치하지 않습니다.",
+            { errorCode: "DEPARTURE_STATUS_SCHEDULE_MISMATCH" },
+        );
+    }
+
     return {
-        scheduleId: dto.scheduleId === undefined || dto.scheduleId === null
-            ? requestedScheduleId
-            : String(dto.scheduleId),
+        scheduleId: requestedScheduleId,
         travelMinutes: finiteNumberOrNull(dto.travelMinutes),
         recommendedDepartureAt: stringOrNull(dto.recommendedDepartureAt),
         evaluatedAt: stringOrNull(dto.evaluatedAt),
         liveFetchedAt: stringOrNull(dto.liveFetchedAt),
         source,
-        stale: dto.stale === true,
+        stale: typeof dto.stale === "boolean" ? dto.stale : null,
         confidence,
         failureReason: stringOrNull(dto.failureReason),
         lastTrafficChangeMinutes: finiteNumberOrNull(dto.lastTrafficChangeMinutes),

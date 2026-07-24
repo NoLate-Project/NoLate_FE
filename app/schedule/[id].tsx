@@ -101,6 +101,7 @@ import {
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
 import {
     getCachedScheduleDepartureStatus,
+    invalidateScheduleDepartureStatus,
     setCachedScheduleDepartureStatus,
     subscribeScheduleDepartureStatusInvalidation,
 } from "../../src/modules/schedule/departureStatusCache";
@@ -108,7 +109,13 @@ import {
     getDepartureLifecyclePresentation,
     getDepartureStatusMetadataPresentation,
     getLegacyDepartureStatusMetadata,
+    getUnavailableDepartureStatusMetadata,
 } from "../../src/modules/schedule/departureStatusPresentation";
+import {
+    createDepartureStatusRefreshController,
+    handleDepartureStatusAppStateChange,
+    shouldFetchDepartureStatus,
+} from "../../src/modules/schedule/departureStatusRefresh";
 import {
     getNotificationPermissionState,
     requestNotificationPermission,
@@ -291,10 +298,19 @@ function ScheduleDetail() {
         useState<DepartureStatusLoadState>("loading");
     const [departureStatusError, setDepartureStatusError] = useState<string | null>(null);
     const [departureStatusRetryKey, setDepartureStatusRetryKey] = useState(0);
+    const [departureCacheOwnerKey, setDepartureCacheOwnerKey] =
+        useState<string | null | undefined>(undefined);
     const [notificationPermission, setNotificationPermission] =
         useState<NotificationPermissionState>("unavailable");
     const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
     const departureStatusRequestRef = useRef(0);
+    const departureRefreshControllerRef = useRef<ReturnType<
+        typeof createDepartureStatusRefreshController
+    > | null>(null);
+    const appStateRef = useRef(AppState.currentState);
+    if (!departureRefreshControllerRef.current) {
+        departureRefreshControllerRef.current = createDepartureStatusRefreshController();
+    }
     const {
         minHeight: sheetMinHeight,
         maxHeight: sheetMaxHeight,
@@ -344,6 +360,8 @@ function ScheduleDetail() {
     const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
+    const departureStatusScheduleId = item?.id;
+    const travelCollaborationEnabled = item?.travelCollaborationEnabled;
     const canManageSchedule = useMemo(() => {
         if (!item) return false;
         if (typeof item.ownerMemberId !== "number") return true;
@@ -382,11 +400,8 @@ function ScheduleDetail() {
     useEffect(() => {
         currentLocationRequestGuardRef.current.invalidate();
         currentLocationPendingRef.current = false;
-        const cachedDepartureStatus = id
-            ? getCachedScheduleDepartureStatus(id)
-            : undefined;
-        setDepartureStatus(cachedDepartureStatus);
-        setDepartureStatusLoadState(cachedDepartureStatus ? "ready" : "loading");
+        setDepartureStatus(undefined);
+        setDepartureStatusLoadState("loading");
         setDepartureStatusError(null);
         setParticipantsExpanded(false);
         setExpandedContentHeight(0);
@@ -401,24 +416,44 @@ function ScheduleDetail() {
         if (!id) return;
         return subscribeScheduleDepartureStatusInvalidation(id, () => {
             setNowMs(Date.now());
+            setRetryKey((value) => value + 1);
             setDepartureStatusRetryKey((value) => value + 1);
         });
     }, [id]);
 
     useEffect(() => {
-        if (!id) return;
+        if (
+            !id ||
+            departureStatusScheduleId !== id ||
+            departureCacheOwnerKey === undefined
+        ) return;
         const requestId = departureStatusRequestRef.current + 1;
         departureStatusRequestRef.current = requestId;
-        const cachedStatus = getCachedScheduleDepartureStatus(id);
+        const cachedStatus = departureCacheOwnerKey
+            ? getCachedScheduleDepartureStatus(departureCacheOwnerKey, id)
+            : undefined;
 
-        if (cachedStatus) setDepartureStatus(cachedStatus);
+        if (!shouldFetchDepartureStatus({
+            scheduleLoaded: true,
+            authResolved: true,
+            travelCollaborationEnabled,
+        })) {
+            setDepartureStatus(undefined);
+            setDepartureStatusLoadState("unavailable");
+            setDepartureStatusError(null);
+            return;
+        }
+
+        setDepartureStatus(cachedStatus);
         setDepartureStatusLoadState("loading");
         setDepartureStatusError(null);
 
         getScheduleDepartureStatus(id)
             .then((status) => {
                 if (requestId !== departureStatusRequestRef.current) return;
-                setCachedScheduleDepartureStatus(status);
+                if (departureCacheOwnerKey) {
+                    setCachedScheduleDepartureStatus(departureCacheOwnerKey, status);
+                }
                 setDepartureStatus(status);
                 setDepartureStatusLoadState("ready");
             })
@@ -445,7 +480,25 @@ function ScheduleDetail() {
                 departureStatusRequestRef.current += 1;
             }
         };
-    }, [departureStatusRetryKey, id]);
+    }, [
+        departureCacheOwnerKey,
+        departureStatusRetryKey,
+        departureStatusScheduleId,
+        id,
+        travelCollaborationEnabled,
+    ]);
+
+    useEffect(() => {
+        const controller = departureRefreshControllerRef.current;
+        controller?.schedule(departureStatus?.nextCheckAt, () => {
+            setDepartureStatusRetryKey((value) => value + 1);
+        });
+        return () => controller?.cancel();
+    }, [departureStatus?.nextCheckAt, departureStatusRetryKey]);
+
+    useEffect(() => () => {
+        departureRefreshControllerRef.current?.dispose();
+    }, []);
 
     useEffect(() => () => {
         currentLocationRequestGuardRef.current.invalidate();
@@ -456,10 +509,18 @@ function ScheduleDetail() {
 
         getAuthMember()
             .then((member) => {
-                if (!cancelled) setCurrentMemberId(member?.id ?? null);
+                if (!cancelled) {
+                    setCurrentMemberId(member?.id ?? null);
+                    setDepartureCacheOwnerKey(
+                        typeof member?.id === "number" ? `member:${member.id}` : null,
+                    );
+                }
             })
             .catch(() => {
-                if (!cancelled) setCurrentMemberId(null);
+                if (!cancelled) {
+                    setCurrentMemberId(null);
+                    setDepartureCacheOwnerKey(null);
+                }
             });
 
         return () => {
@@ -476,7 +537,16 @@ function ScheduleDetail() {
     useEffect(() => {
         refreshNotificationPermission();
         const subscription = AppState.addEventListener("change", (nextAppState) => {
-            if (nextAppState === "active") refreshNotificationPermission();
+            appStateRef.current = handleDepartureStatusAppStateChange(
+                appStateRef.current,
+                nextAppState,
+                () => {
+                    refreshNotificationPermission();
+                    setNowMs(Date.now());
+                    setRetryKey((value) => value + 1);
+                    setDepartureStatusRetryKey((value) => value + 1);
+                },
+            );
         });
         return () => subscription.remove();
     }, [refreshNotificationPermission]);
@@ -900,6 +970,7 @@ function ScheduleDetail() {
                     departureParticipants: updated.departureParticipants ?? item?.departureParticipants,
                 },
             });
+            invalidateScheduleDepartureStatus(id);
         } catch (error) {
             Alert.alert("출발 완료 실패", getErrorMessage(error));
         } finally {
@@ -1048,6 +1119,7 @@ function ScheduleDetail() {
         const saveRoute = saveScheduleRouteAsMyTravelPlan(item, payload, {
             upsertMyTravelPlan: upsertMyScheduleTravelPlan,
             reloadSchedule: getSchedule,
+            invalidateDepartureStatus: invalidateScheduleDepartureStatus,
         });
 
         saveRoute
@@ -1171,6 +1243,7 @@ function ScheduleDetail() {
     );
     const departureLifecycle = getDepartureLifecyclePresentation({
         recommendedDepartureAt: recommendedDepartureAt?.toISOString(),
+        scheduleStartAt: item.startAt,
         scheduleEndAt: item.endAt,
         scheduleHasEndTime: item.hasEndTime !== false,
         scheduleAllDay: item.allDay,
@@ -1183,7 +1256,9 @@ function ScheduleDetail() {
             stale: departureStatus.stale || departureStatusLoadState === "error",
         }
         : undefined;
-    const departureMetadata = metadataStatus
+    const departureMetadata = departureStatusLoadState === "unavailable"
+        ? getUnavailableDepartureStatusMetadata(item.travelMinutes)
+        : metadataStatus
         ? getDepartureStatusMetadataPresentation(metadataStatus)
         : {
             ...getLegacyDepartureStatusMetadata(item.travelMinutes),
