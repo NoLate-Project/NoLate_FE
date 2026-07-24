@@ -29,6 +29,32 @@ export type NotificationSendResult = {
     removedTokenCount: number;
 };
 
+export type DepartureStatusSource =
+    | "LIVE_PROVIDER"
+    | "SELECTED_ROUTE"
+    | "SAVED_FALLBACK";
+
+export type DepartureStatusConfidence = "HIGH" | "MEDIUM" | "LOW";
+
+export type ScheduleDepartureStatus = {
+    scheduleId: string;
+    travelMinutes: number | null;
+    recommendedDepartureAt: string | null;
+    evaluatedAt: string | null;
+    liveFetchedAt: string | null;
+    source: DepartureStatusSource;
+    stale: boolean;
+    confidence: DepartureStatusConfidence;
+    failureReason: string | null;
+    lastTrafficChangeMinutes: number | null;
+    lastChangedAt: string | null;
+    nextCheckAt: string | null;
+    preparationMinutes: number | null;
+    preparationStartAt: string | null;
+    safetyBufferMinutes: number | null;
+    timeZone: string | null;
+};
+
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -55,6 +81,10 @@ type CalendarImportResultDto = {
 
 type CalendarCacheRevisionDto = {
     revision: number;
+};
+
+type ScheduleDepartureStatusDto = Omit<ScheduleDepartureStatus, "scheduleId"> & {
+    scheduleId: number | string;
 };
 
 let observedCalendarCacheRevision: number | null = null;
@@ -125,6 +155,19 @@ export async function getDepartureReadySchedules(fromAt?: string, toAt?: string)
         params: { fromAt, toAt },
     });
     return unwrapApiResponse(response).map(normalizeSchedule);
+}
+
+export async function getScheduleDepartureStatus(
+    scheduleId: string
+): Promise<ScheduleDepartureStatus> {
+    const response = await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(
+        `/api/schedules/${scheduleId}/departure-status`
+    );
+    const status = unwrapApiResponse(response);
+    return {
+        ...status,
+        scheduleId: String(status.scheduleId),
+    };
 }
 
 export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {

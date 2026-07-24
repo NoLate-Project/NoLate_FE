@@ -65,6 +65,7 @@ import {
     MonthAgendaList,
     SelectedDayAgendaPanel,
 } from "../../src/modules/schedule/components/list/ScheduleAgendaViews";
+import NextDepartureHero from "../../src/modules/schedule/components/list/NextDepartureHero";
 import ScheduleNewModal, {
     type ScheduleAddMorphPresenter,
 } from "../../src/modules/schedule/components/form/ScheduleAddModal";
@@ -158,6 +159,11 @@ import {
     resolveQuickScheduleParseInput,
     type QuickScheduleMediaInput,
 } from "../../src/modules/schedule/quickInputExtraction";
+import {
+    buildNextDepartureHeroModel,
+    selectNextDeparture,
+} from "../../src/modules/schedule/nextDeparture";
+import { useNextDepartureHome } from "../../src/modules/schedule/useNextDepartureHome";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const getErrorMessage = (error: unknown) => {
@@ -221,9 +227,6 @@ const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = ADD_MENU_SOURCE.nativeWidth;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = ADD_MENU_SOURCE.nativeHeight;
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
-// The view-mode menu still needs the wider 251pt host. The add menu itself is
-// 238pt wide and stays aligned to this canvas' trailing edge.
-const LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH = 251;
 const SHARE_ATTENTION_REFRESH_MS = 45_000;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
@@ -571,6 +574,7 @@ export default function ScheduleIndex() {
     const selectedDayRef = useRef(selectedDay);
     selectedDayRef.current = selectedDay;
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
+    const [departureNow, setDepartureNow] = useState(() => new Date());
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
     const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
     const [calendarDaysByDate, setCalendarDaysByDate] = useState<
@@ -1456,7 +1460,11 @@ export default function ScheduleIndex() {
     useEffect(() => {
         let minuteTimer: ReturnType<typeof setInterval> | null = null;
         let alignmentTimer: ReturnType<typeof setTimeout> | null = null;
-        const refreshToday = () => setTodayKey(toYmd(new Date()));
+        const refreshToday = () => {
+            const now = new Date();
+            setTodayKey(toYmd(now));
+            setDepartureNow(now);
+        };
         const alignToNextMinute = () => {
             const delay = 60_000 - (Date.now() % 60_000) + 24;
             alignmentTimer = setTimeout(() => {
@@ -1735,6 +1743,36 @@ export default function ScheduleIndex() {
     const itemsArray = useMemo(
         () => Object.values(state.itemsById),
         [state.itemsById]
+    );
+    const departureHome = useNextDepartureHome({
+        fallbackItems: itemsArray,
+        focused: isFocused,
+    });
+    const nextDepartureCandidate = useMemo(
+        () => selectNextDeparture(
+            departureHome.items,
+            departureHome.statusesByScheduleId,
+            departureNow
+        ),
+        [
+            departureHome.items,
+            departureHome.statusesByScheduleId,
+            departureNow,
+        ]
+    );
+    const nextDepartureModel = useMemo(
+        () => nextDepartureCandidate
+            ? buildNextDepartureHeroModel(
+                nextDepartureCandidate,
+                departureNow,
+                departureHome.connectionIssue
+            )
+            : null,
+        [
+            departureHome.connectionIssue,
+            departureNow,
+            nextDepartureCandidate,
+        ]
     );
     const loadRouteSetupItems = useCallback(async () => {
         const items = await getSchedules();
@@ -3018,6 +3056,22 @@ export default function ScheduleIndex() {
         shareBadgeCount,
     ]);
 
+    const nextDepartureHero = useMemo(() => (
+        <NextDepartureHero
+            model={nextDepartureModel}
+            loading={departureHome.loading}
+            connectionIssue={departureHome.connectionIssue}
+            onPressSchedule={handleOpenScheduleFromDayDisplay}
+            onPressRetry={departureHome.refresh}
+        />
+    ), [
+        departureHome.connectionIssue,
+        departureHome.loading,
+        departureHome.refresh,
+        handleOpenScheduleFromDayDisplay,
+        nextDepartureModel,
+    ]);
+
     const renderMonthAgendaPanelContent = (panelKind: MonthAgendaPanelKind) => (
         panelKind === "detail" ? (
             <MemoizedSelectedDayAgendaPanel
@@ -3031,6 +3085,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         ) : (
             <MemoizedMonthAgendaList
@@ -3044,6 +3099,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         )
     );

@@ -74,6 +74,7 @@ type AgendaStateProps = {
     onOpenSchedule: (id: string) => void;
     routeSetupRequiredCount?: number;
     onOpenRouteSetup?: () => void;
+    nextDepartureHero?: React.ReactNode;
 };
 
 type SelectedDayAgendaPanelProps = AgendaStateProps & {
@@ -387,6 +388,7 @@ export function SelectedDayAgendaPanel({
     onOpenSchedule,
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
+    nextDepartureHero,
     onRequestViewMode,
 }: SelectedDayAgendaPanelProps) {
     const { colors, mode } = useTheme();
@@ -429,6 +431,7 @@ export function SelectedDayAgendaPanel({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
+                {nextDepartureHero}
                 <RouteSetupInlineNotice
                     count={routeSetupRequiredCount}
                     onPress={onOpenRouteSetup}
@@ -490,6 +493,7 @@ export function MonthAgendaList({
     onOpenSchedule,
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
+    nextDepartureHero,
     onRequestViewMode,
 }: MonthAgendaListProps) {
     const { colors, mode } = useTheme();
@@ -637,6 +641,7 @@ export function MonthAgendaList({
                 ]}
                 showsVerticalScrollIndicator={false}
             >
+                {nextDepartureHero}
                 <RouteSetupInlineNotice
                     count={routeSetupRequiredCount}
                     onPress={onOpenRouteSetup}

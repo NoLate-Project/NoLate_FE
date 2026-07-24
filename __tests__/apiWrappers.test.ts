@@ -17,6 +17,7 @@ import {
     getCalendarSchedules,
     getDailySchedules,
     getDepartureReadySchedules,
+    getScheduleDepartureStatus,
     getUpcomingSchedules,
     importCalendarSchedule,
     markScheduleDeparted,
@@ -240,6 +241,39 @@ describe("schedule query api wrappers", () => {
         await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
+    });
+
+    test("departure status wrapper uses the planned endpoint and normalizes scheduleId", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 10,
+                travelMinutes: 31,
+                recommendedDepartureAt: "2026-07-01T00:29:00Z",
+                evaluatedAt: "2026-07-01T00:00:00Z",
+                liveFetchedAt: "2026-07-01T00:00:00Z",
+                source: "LIVE_PROVIDER",
+                stale: false,
+                confidence: "HIGH",
+                failureReason: null,
+                lastTrafficChangeMinutes: 4,
+                lastChangedAt: "2026-06-30T23:59:00Z",
+                nextCheckAt: "2026-07-01T00:05:00Z",
+                preparationMinutes: 10,
+                preparationStartAt: "2026-07-01T00:19:00Z",
+                safetyBufferMinutes: 5,
+                timeZone: "Asia/Seoul",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("10")).resolves.toMatchObject({
+            scheduleId: "10",
+            travelMinutes: 31,
+            source: "LIVE_PROVIDER",
+        });
+        expect(mockedApiGet).toHaveBeenCalledWith(
+            "/api/schedules/10/departure-status"
+        );
     });
 
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {
