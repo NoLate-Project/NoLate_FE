@@ -41,7 +41,16 @@ const AUTH_MEMBER_SESSION_IDENTITY_KEY = "authSessionIdentity";
 let currentAuthApiBaseUrl: string | null = null;
 let hasInMemoryInvalidSessionMarker = false;
 let authSessionCommitSequence = 0;
-const preparedAuthRestoreContexts = new Set<string>();
+const AUTH_RESTORE_CONTEXT_TTL_MS = 2 * 60 * 1000;
+const AUTH_RESTORE_CONTEXT_MAX_NETWORK_ATTEMPTS = 3;
+type PreparedAuthRestoreContext = {
+    context: AuthRestoreContext;
+    preparedAt: number;
+    expiresAt: number;
+    networkAttempts: number;
+};
+const preparedAuthRestoreContexts =
+    new Map<string, PreparedAuthRestoreContext>();
 let failedAuthInvalidation: {
     epoch: number;
     hold: AuthSessionTransitionHold;
@@ -392,6 +401,49 @@ export type AuthRestoreContext = {
 
 function authRestoreContextKey(context: AuthRestoreContext): string {
     return `${context.expectedEpoch}:${context.expectedRefreshToken}`;
+}
+
+function prunePreparedAuthRestoreContexts(now = Date.now()): void {
+    preparedAuthRestoreContexts.forEach((prepared, key) => {
+        if (
+            prepared.expiresAt <= now ||
+            !isAuthSessionRestorable(prepared.context.expectedEpoch)
+        ) {
+            preparedAuthRestoreContexts.delete(key);
+        }
+    });
+}
+
+async function getPreparedAuthRestoreContextWithinMutation(
+    expectedEpoch: number,
+): Promise<AuthRestoreContext | undefined> {
+    prunePreparedAuthRestoreContexts();
+    if (!isAuthSessionRestorable(expectedEpoch)) return undefined;
+
+    const prepared = Array.from(preparedAuthRestoreContexts.values())
+        .find((candidate) =>
+            candidate.context.expectedEpoch === expectedEpoch
+        );
+    if (!prepared) return undefined;
+
+    // This is the sole marker-bypassing credential read. The context was
+    // captured before the durable marker was raised, remains bounded in memory,
+    // and must still match the exact raw refresh credential without repair.
+    const storedRefreshToken = await getAuthTokenWithinMutation(
+        REFRESH_TOKEN_KEY,
+        expectedEpoch,
+        false,
+    );
+    if (
+        !isAuthSessionRestorable(expectedEpoch) ||
+        storedRefreshToken !== prepared.context.expectedRefreshToken
+    ) {
+        preparedAuthRestoreContexts.delete(
+            authRestoreContextKey(prepared.context),
+        );
+        return undefined;
+    }
+    return prepared.context;
 }
 
 function normalizeAuthMember(member: StoredAuthMember | null | undefined): StoredAuthMember | null {
@@ -1024,8 +1076,13 @@ export async function isAuthRefreshContextCurrent(options: {
     expectedRefreshToken: string;
 }): Promise<boolean> {
     if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
+    prunePreparedAuthRestoreContexts();
     if (preparedAuthRestoreContexts.has(authRestoreContextKey(options))) {
         return runAuthTokenMutation(async () => {
+            prunePreparedAuthRestoreContexts();
+            if (!preparedAuthRestoreContexts.has(
+                authRestoreContextKey(options),
+            )) return false;
             const currentRefreshToken = await getAuthTokenWithinMutation(
                 REFRESH_TOKEN_KEY,
                 options.expectedEpoch,
@@ -1050,6 +1107,7 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
         return await runAuthTokenMutation(async () => {
             if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
             const restoreKey = authRestoreContextKey(options);
+            prunePreparedAuthRestoreContexts();
             const prepared = preparedAuthRestoreContexts.has(restoreKey);
             if (
                 !prepared &&
@@ -1096,13 +1154,31 @@ export async function captureAuthRestoreContext(): Promise<
     AuthRestoreContext | undefined
 > {
     const expectedEpoch = getAuthSessionEpoch();
+    return captureAuthRestoreContextForEpoch(expectedEpoch);
+}
+
+export async function captureAuthRestoreContextForEpoch(
+    expectedEpoch: number,
+): Promise<AuthRestoreContext | undefined> {
     if (!isAuthSessionRestorable(expectedEpoch)) return undefined;
-    const expectedRefreshToken = await getRefreshToken();
-    if (
-        !expectedRefreshToken ||
-        !isAuthSessionRestorable(expectedEpoch)
-    ) return undefined;
-    return { expectedEpoch, expectedRefreshToken };
+    return runAuthTokenMutation(async () => {
+        if (!isAuthSessionRestorable(expectedEpoch)) return undefined;
+        if (await hasInvalidSessionMarkerWithinMutation()) {
+            return getPreparedAuthRestoreContextWithinMutation(
+                expectedEpoch,
+            );
+        }
+        const expectedRefreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            expectedEpoch,
+            true,
+        );
+        if (
+            !expectedRefreshToken ||
+            !isAuthSessionRestorable(expectedEpoch)
+        ) return undefined;
+        return { expectedEpoch, expectedRefreshToken };
+    });
 }
 
 export async function prepareAuthRestoreRequest(
@@ -1111,7 +1187,21 @@ export async function prepareAuthRestoreRequest(
     await recoverFailedAuthInvalidation();
     await waitForAuthSessionTransition();
     return runAuthTokenMutation(async () => {
+        prunePreparedAuthRestoreContexts();
         if (!isAuthSessionRestorable(context.expectedEpoch)) return false;
+        const restoreKey = authRestoreContextKey(context);
+        const existing = preparedAuthRestoreContexts.get(restoreKey);
+        const hasInvalidMarker =
+            await hasInvalidSessionMarkerWithinMutation();
+        if (hasInvalidMarker && !existing) return false;
+        if (
+            existing &&
+            existing.networkAttempts >=
+                AUTH_RESTORE_CONTEXT_MAX_NETWORK_ATTEMPTS
+        ) {
+            preparedAuthRestoreContexts.delete(restoreKey);
+            return false;
+        }
         const currentRefreshToken = await getAuthTokenWithinMutation(
             REFRESH_TOKEN_KEY,
             context.expectedEpoch,
@@ -1130,7 +1220,15 @@ export async function prepareAuthRestoreRequest(
         }
         await persistInvalidSessionMarkerWithinMutation();
         if (!isAuthSessionRestorable(context.expectedEpoch)) return false;
-        preparedAuthRestoreContexts.add(authRestoreContextKey(context));
+        const preparedAt = existing?.preparedAt ?? Date.now();
+        preparedAuthRestoreContexts.set(restoreKey, {
+            context,
+            preparedAt,
+            expiresAt:
+                existing?.expiresAt ??
+                preparedAt + AUTH_RESTORE_CONTEXT_TTL_MS,
+            networkAttempts: (existing?.networkAttempts ?? 0) + 1,
+        });
         return true;
     });
 }
@@ -1148,6 +1246,7 @@ export async function saveRestoredAuthSessionIfCurrent(options: {
         return await runAuthTokenMutation(async () => {
             if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
             const restoreKey = authRestoreContextKey(options.context);
+            prunePreparedAuthRestoreContexts();
             const prepared = preparedAuthRestoreContexts.has(restoreKey);
             if (
                 !prepared &&
@@ -1351,12 +1450,20 @@ export function clearRestorableAuthSessionIfCurrent(
             if (!isAuthSessionRestorable(context.expectedEpoch)) {
                 return null;
             }
-            if (await hasInvalidSessionMarkerWithinMutation()) return null;
-            const currentRefreshToken = await getAuthTokenWithinMutation(
-                REFRESH_TOKEN_KEY,
-                context.expectedEpoch,
-                false,
-            );
+            const hasInvalidMarker =
+                await hasInvalidSessionMarkerWithinMutation();
+            const prepared = hasInvalidMarker
+                ? await getPreparedAuthRestoreContextWithinMutation(
+                    context.expectedEpoch,
+                )
+                : undefined;
+            const currentRefreshToken = hasInvalidMarker
+                ? prepared?.expectedRefreshToken
+                : await getAuthTokenWithinMutation(
+                    REFRESH_TOKEN_KEY,
+                    context.expectedEpoch,
+                    false,
+                );
             if (
                 !isAuthSessionRestorable(context.expectedEpoch) ||
                 currentRefreshToken !== context.expectedRefreshToken

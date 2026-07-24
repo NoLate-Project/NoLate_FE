@@ -177,6 +177,96 @@ test("same epoch concurrent 401s share one rotating refresh and retry once each"
     await expect(getRefreshToken()).resolves.toBe("A-refresh-v2");
 });
 
+test("transient 401 refresh failure keeps only the bounded prepared context and retries the exact old token", async () => {
+    const firstConfig = await authenticatedConfig("get");
+    mockRawPost
+        .mockRejectedValueOnce({
+            isAxiosError: true,
+            message: "offline",
+        })
+        .mockResolvedValueOnce({
+            data: {
+                success: true,
+                data: {
+                    accessToken: "A-access-v2",
+                    refreshToken: "A-refresh-v2",
+                },
+            },
+        });
+
+    await expect(errorHandler(unauthorized(firstConfig))).rejects.toMatchObject({
+        status: 401,
+    });
+    expect(mockRawPost).toHaveBeenCalledTimes(1);
+    expect(mockRawPost.mock.calls[0][1]).toEqual({
+        refreshToken: "A-refresh",
+    });
+    // Generic reads remain fail-closed behind the durable marker, while the
+    // raw credential remains available only to the exact prepared context.
+    await expect(getRefreshToken()).resolves.toBeNull();
+    expect(mockSecureValues.get("nolte_refresh_token")).toBe("A-refresh");
+
+    const secondConfig = await authenticatedConfig("get");
+    await expect(
+        errorHandler(unauthorized(secondConfig)),
+    ).resolves.toBeDefined();
+
+    expect(mockRawPost).toHaveBeenCalledTimes(2);
+    expect(mockRawPost.mock.calls[1][1]).toEqual({
+        refreshToken: "A-refresh",
+    });
+    expect(mockApiClient).toHaveBeenCalledTimes(1);
+    await expect(getAccessToken()).resolves.toBe("A-access-v2");
+    await expect(getRefreshToken()).resolves.toBe("A-refresh-v2");
+});
+
+test("transient A refresh 뒤 B generation이 들어오면 old prepared retry와 commit을 모두 폐기한다", async () => {
+    const firstConfig = await authenticatedConfig("get");
+    const staleSecondConfig = await authenticatedConfig("post");
+    mockRawPost.mockRejectedValueOnce({
+        isAxiosError: true,
+        message: "timeout",
+    });
+
+    await expect(errorHandler(unauthorized(firstConfig))).rejects.toBeDefined();
+    expect(mockRawPost).toHaveBeenCalledTimes(1);
+
+    await saveAuthenticatedSession({
+        id: 2,
+        name: "B",
+        accessToken: "B-access",
+        refreshToken: "B-refresh",
+    });
+    await expect(
+        errorHandler(unauthorized(staleSecondConfig)),
+    ).rejects.toMatchObject({
+        errorCode: "AUTH_SESSION_CHANGED",
+    });
+
+    expect(mockRawPost).toHaveBeenCalledTimes(1);
+    await expect(getAccessToken()).resolves.toBe("B-access");
+    await expect(getRefreshToken()).resolves.toBe("B-refresh");
+});
+
+test("definitive refresh rejection clears the prepared context and stored credentials", async () => {
+    const config = await authenticatedConfig("get");
+    mockRawPost.mockRejectedValueOnce({
+        isAxiosError: true,
+        message: "refresh rejected",
+        response: { status: 401 },
+    });
+
+    await expect(errorHandler(unauthorized(config))).rejects.toMatchObject({
+        errorCode: "AUTH_SESSION_CHANGED",
+    });
+
+    expect(mockRawPost).toHaveBeenCalledTimes(1);
+    expect(mockSecureValues.has("nolte_access_token")).toBe(false);
+    expect(mockSecureValues.has("nolte_refresh_token")).toBe(false);
+    expect(mockSecureValues.has("nolate_auth_member")).toBe(false);
+    await expect(getRefreshToken()).resolves.toBeNull();
+});
+
 test("B refresh detaches from aborted A flight and late A failure cannot clear B", async () => {
     const aConfig = await authenticatedConfig("get");
     const aRefresh = deferred<never>();

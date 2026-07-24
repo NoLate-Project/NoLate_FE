@@ -4,10 +4,10 @@ import { resolveApiBaseUrl } from "./apiBaseUrl";
 import { getEnv } from "./env";
 import {
     clearAuthTokens,
+    captureAuthRestoreContextForEpoch,
     configureSharedAuthApiBaseUrl,
     getAccessToken,
     getAuthSessionEpoch,
-    getRefreshToken,
     isAuthRefreshContextCurrent,
     isAuthSessionEpochCurrent,
     isAuthSessionRestorable,
@@ -117,8 +117,11 @@ async function requestRefreshedAuthTokens(
         return saved ? refreshedTokens : null;
     } catch (error) {
         // A connection loss, timeout, rate limit, or server outage does not mean the
-        // refresh token is invalid. Keep the local session so the user can retry when
-        // connectivity recovers; clear it only when the auth server definitively rejects it.
+        // refresh token is invalid. Keep the bounded same-epoch prepared context so
+        // connectivity recovery can retry exactly that credential; clear it only
+        // when the auth server definitively rejects it. A response-loss after server
+        // rotation therefore fails closed on a later rejection instead of mixing
+        // unknown rotated credentials into local storage.
         if (isDefinitiveRefreshRejection(error) && await contextIsCurrent()) {
             await clearAuthTokens();
         }
@@ -132,22 +135,22 @@ async function runAuthRefreshForSession(
     expectedEpoch: number,
 ): Promise<RefreshedAuthTokens | null> {
     if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-    const refreshToken = await getRefreshToken();
+    const restoreContext = await captureAuthRestoreContextForEpoch(
+        expectedEpoch,
+    );
     if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-    if (!refreshToken) {
+    if (!restoreContext) {
         await clearAuthTokens();
         return null;
     }
+    const refreshToken = restoreContext.expectedRefreshToken;
 
     const key = `${expectedEpoch}:${refreshToken}`;
     if (authRefreshFlight?.key === key) return authRefreshFlight.promise;
 
     const generation = authRefreshGeneration;
     const promise = (async () => {
-        const prepared = await prepareAuthRestoreRequest({
-            expectedEpoch,
-            expectedRefreshToken: refreshToken,
-        });
+        const prepared = await prepareAuthRestoreRequest(restoreContext);
         if (!prepared) return null;
         return requestRefreshedAuthTokens(
             expectedEpoch,

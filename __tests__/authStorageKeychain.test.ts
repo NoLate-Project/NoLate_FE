@@ -1526,6 +1526,133 @@ describe("authStorage shared Keychain session", () => {
         expect(stores.shared.get("nolate_auth_member")).toBeUndefined();
     });
 
+    test("transient restore 뒤 같은 process만 exact prepared refresh를 재사용하고 cold restart는 차단한다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        );
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) throw new Error("restore context should exist");
+
+        await expect(restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: async () => {
+                throw new Error("temporary outage");
+            },
+        })).rejects.toThrow("temporary outage");
+
+        await expect(getRefreshToken()).resolves.toBeNull();
+        await expect(captureAuthRestoreContext()).resolves.toEqual(
+            restoreContext,
+        );
+        expect(stores.secure.get("nolte_refresh_token")).toBe("A-refresh");
+
+        // A process restart loses the in-memory capability while the durable
+        // marker remains, so stale credentials are never exposed cold.
+        __resetAuthStorageInvalidSessionForTests();
+        await expect(captureAuthRestoreContext()).resolves.toBeUndefined();
+        await expect(getRefreshToken()).resolves.toBeNull();
+        expect(stores.secure.get("nolte_refresh_token")).toBe("A-refresh");
+        const coldTokenLogin = jest.fn();
+        await expect(restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: coldTokenLogin,
+        })).resolves.toBeUndefined();
+        expect(coldTokenLogin).not.toHaveBeenCalled();
+    });
+
+    test("prepared restore capability는 network attempt와 수명 모두 제한한다", async () => {
+        installMemoryAuthStores();
+        await saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        );
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) throw new Error("restore context should exist");
+        const tokenLogin = jest.fn(async () => {
+            throw new Error("temporary outage");
+        });
+
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            await expect(restoreAuthSessionIfCurrent({
+                context: restoreContext,
+                tokenLogin,
+            })).rejects.toThrow("temporary outage");
+        }
+        await expect(restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin,
+        })).resolves.toBeUndefined();
+        expect(tokenLogin).toHaveBeenCalledTimes(3);
+        await expect(captureAuthRestoreContext()).resolves.toBeUndefined();
+
+        __resetAuthStorageInvalidSessionForTests();
+        await AsyncStorage.clear();
+        const stores = installMemoryAuthStores();
+        await saveTestSession(
+            "A-access-2",
+            "A-refresh-2",
+            { id: 1, name: "A" },
+        );
+        const expiringContext = await captureAuthRestoreContext();
+        if (!expiringContext) throw new Error("restore context should exist");
+        const now = Date.now();
+        const nowSpy = jest.spyOn(Date, "now").mockReturnValue(now);
+        try {
+            await expect(restoreAuthSessionIfCurrent({
+                context: expiringContext,
+                tokenLogin: async () => {
+                    throw new Error("temporary outage");
+                },
+            })).rejects.toThrow("temporary outage");
+            nowSpy.mockReturnValue(now + 2 * 60 * 1000 + 1);
+            await expect(captureAuthRestoreContext()).resolves.toBeUndefined();
+            expect(stores.secure.get("nolte_refresh_token"))
+                .toBe("A-refresh-2");
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    test("transient restore 뒤 logout이 끼면 old context retry network와 commit은 모두 0이다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveTestSession(
+            "A-access",
+            "A-refresh",
+            { id: 1, name: "A" },
+        );
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) throw new Error("restore context should exist");
+        await expect(restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: async () => {
+                throw new Error("temporary outage");
+            },
+        })).rejects.toThrow("temporary outage");
+
+        const intent = await beginAuthLogoutIntent();
+        await clearAuthTokensIfCurrent(intent.epoch, {
+            notifyListeners: false,
+        });
+        const staleRetry = jest.fn(async () => ({
+            id: 1,
+            accessToken: "late-A-access",
+            refreshToken: "late-A-refresh",
+        }));
+        await expect(restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: staleRetry,
+        })).resolves.toBeUndefined();
+
+        expect(staleRetry).not.toHaveBeenCalled();
+        expect(stores.secure.get("nolte_access_token")).toBeUndefined();
+        expect(stores.secure.get("nolte_refresh_token")).toBeUndefined();
+        expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
+    });
+
     test("late definitive restore failure는 새 B session을 clear하지 않는다", async () => {
         const stores = installMemoryAuthStores();
         await saveTestSession(

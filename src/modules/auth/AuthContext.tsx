@@ -17,6 +17,7 @@ import {
 import {
     activateAuthSessionIfCurrent,
     beginAuthLogoutIntent,
+    captureAuthRestoreContextForEpoch,
     clearAuthTokens,
     clearAuthTokensIfCurrent,
     clearRestorableAuthSessionIfCurrent,
@@ -181,15 +182,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
             let curationCompleted = storedMember?.curationCompleted === true;
             let restoreContext: AuthRestoreContext | undefined;
 
-            // Member metadata is a cache, not an authentication credential. A
-            // Keychain migration or interrupted write can leave a valid refresh
-            // token without that cache; rebuild it from the server before deciding
-            // to discard the session.
-            if (!authenticated && refreshToken) {
-                restoreContext = {
-                    expectedEpoch: restoreEpoch,
-                    expectedRefreshToken: refreshToken,
-                };
+            // Member metadata is a cache, not an authentication credential.
+            // A Keychain migration, interrupted write, or same-process transient
+            // restore may leave generic reads fail-closed behind a durable
+            // marker. Only the bounded epoch+refresh context prepared by that
+            // exact restore may recover the raw refresh token for another try.
+            if (!authenticated) {
+                restoreContext = await captureAuthRestoreContextForEpoch(
+                    restoreEpoch,
+                );
+            }
+            if (!authenticated && restoreContext) {
+                refreshToken = restoreContext.expectedRefreshToken;
                 try {
                     const restoredMember = await restoreAuthSessionIfCurrent({
                         context: restoreContext,

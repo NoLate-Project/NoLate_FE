@@ -213,6 +213,102 @@ describe("AuthProvider", () => {
         expect(renderer?.root.findByType(Text).props.children).toBe("authenticated-complete");
     });
 
+    it("bootstrap transient tokenLogin failure retries the same prepared refresh in-process", async () => {
+        const values = new Map<string, string>([
+            ["nolte_refresh_token", "refresh-token"],
+        ]);
+        mockedGetItemAsync.mockImplementation(async (key) =>
+            values.get(key) ?? null
+        );
+        mockedSetItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+        mockedDeleteItemAsync.mockImplementation(async (key) => {
+            values.delete(key);
+        });
+        mockedTokenLoginMember
+            .mockRejectedValueOnce(new Error("temporary outage"))
+            .mockResolvedValueOnce({
+                id: 1,
+                name: "복구 사용자",
+                accessToken: "restored-access",
+                refreshToken: "restored-refresh",
+                curationCompleted: true,
+            });
+        mockedGetMemberCurationStatus.mockResolvedValue({
+            curationCompleted: true,
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                    <SyncAuthenticationButton />
+                </AuthProvider>,
+            );
+        });
+
+        expect(mockedTokenLoginMember).toHaveBeenCalledTimes(1);
+        expect(values.get("nolte_refresh_token")).toBe("refresh-token");
+        expect(mockedDeleteItemAsync).not.toHaveBeenCalledWith(
+            "nolte_refresh_token",
+        );
+        expect(renderer?.root.findAllByType(Text).some(
+            (node) => node.props.children === "unauthenticated",
+        )).toBe(true);
+
+        const retry = renderer?.root.findAllByType(Text).find(
+            (node) => node.props.children === "sync-authentication",
+        );
+        await act(async () => {
+            await retry?.props.onPress();
+        });
+
+        expect(mockedTokenLoginMember).toHaveBeenCalledTimes(2);
+        expect(mockedTokenLoginMember).toHaveBeenNthCalledWith(2, {
+            refreshToken: "refresh-token",
+        });
+        expect(values.get("nolte_refresh_token")).toBe("restored-refresh");
+        expect(renderer?.root.findAllByType(Text).some(
+            (node) => node.props.children === "authenticated-complete",
+        )).toBe(true);
+    });
+
+    it("bootstrap definitive tokenLogin rejection clears the exact prepared session", async () => {
+        const values = new Map<string, string>([
+            ["nolte_refresh_token", "refresh-token"],
+        ]);
+        mockedGetItemAsync.mockImplementation(async (key) =>
+            values.get(key) ?? null
+        );
+        mockedSetItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+        mockedDeleteItemAsync.mockImplementation(async (key) => {
+            values.delete(key);
+        });
+        mockedTokenLoginMember.mockRejectedValue(
+            new ApiResponseError("expired", { status: 401 }),
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                </AuthProvider>,
+            );
+        });
+
+        expect(mockedTokenLoginMember).toHaveBeenCalledTimes(1);
+        expect(mockedDeleteItemAsync).toHaveBeenCalledWith(
+            "nolte_refresh_token",
+        );
+        expect(values.has("nolte_refresh_token")).toBe(false);
+        await expect(getRefreshToken()).resolves.toBeNull();
+        expect(renderer?.root.findByType(Text).props.children)
+            .toBe("unauthenticated");
+    });
+
     it("uses the server curation state after authentication", async () => {
         mockStoredSession(false);
         mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: true });

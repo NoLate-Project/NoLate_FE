@@ -11,6 +11,11 @@ export async function restoreAuthSessionIfCurrent(options: {
 }): Promise<MemberDto | undefined> {
     const prepared = await prepareAuthRestoreRequest(options.context);
     if (!prepared) return undefined;
+    // Transient transport/5xx failures deliberately leave this bounded
+    // in-memory context prepared so the same process can retry the exact old
+    // refresh credential. If the server rotated it but the response was lost,
+    // a later definitive rejection clears the session; no response token is
+    // guessed or mixed with the stored credential.
     const member = await options.tokenLogin(
         options.context.expectedRefreshToken,
     );
