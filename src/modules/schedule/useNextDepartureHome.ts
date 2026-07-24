@@ -1132,9 +1132,10 @@ export function useNextDepartureHome({
     useEffect(() => subscribeAuthSessionEpoch((nextAuthEpoch) => {
         if (authEpochRef.current === nextAuthEpoch) return;
         // The shared auth generation is the security boundary for every
-        // callback and request. Abort old-account work synchronously, before
-        // authStorage cleanup or the next React render can be delayed.
-        authEpochRef.current = nextAuthEpoch;
+        // callback and request. This hook remains permanently bound to its
+        // mount epoch; the keyed ScheduleProvider creates a new hook for the
+        // next account. Abort old-account work synchronously before that
+        // React remount or authStorage cleanup can be delayed.
         requestSequenceRef.current += 1;
         collectionEpochRef.current += 1;
         activeControllerRef.current?.abort();

@@ -980,7 +980,7 @@ describe("useNextDepartureHome", () => {
 
         await act(async () => {
             renderer = TestRenderer.create(
-                <Harness fallbackItems={accountAItems} />
+                <Harness key="account-a" fallbackItems={accountAItems} />
             );
             await flushAsyncWork();
         });
@@ -990,7 +990,9 @@ describe("useNextDepartureHome", () => {
         await act(async () => {
             const authEpoch = beginAuthLoginSession();
             activateAuthSessionIfCurrent(authEpoch);
-            renderer!.update(<Harness fallbackItems={[accountBItem]} />);
+            renderer!.update(
+                <Harness key="account-b" fallbackItems={[accountBItem]} />
+            );
             await flushAsyncWork();
         });
 
@@ -1536,6 +1538,7 @@ describe("useNextDepartureHome", () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <Harness
+                    key="account-a"
                     redactedScheduleIds={accountARedactions}
                     onScheduleRestored={restored}
                 />
@@ -1552,6 +1555,7 @@ describe("useNextDepartureHome", () => {
             activateAuthSessionIfCurrent(authEpoch);
             renderer!.update(
                 <Harness
+                    key="account-b"
                     redactedScheduleIds={accountBRedactions}
                     onScheduleRestored={restored}
                 />
@@ -1768,6 +1772,7 @@ describe("useNextDepartureHome", () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <Harness
+                    key="account-a"
                     fallbackItems={[accountAItem]}
                     onScheduleAccessRevoked={revoked}
                 />
@@ -1781,6 +1786,7 @@ describe("useNextDepartureHome", () => {
             activateAuthSessionIfCurrent(authEpoch);
             renderer!.update(
                 <Harness
+                    key="account-b"
                     fallbackItems={[accountBItem]}
                     onScheduleAccessRevoked={revoked}
                 />
