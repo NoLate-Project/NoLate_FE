@@ -40,3 +40,10 @@ export async function executeNotificationActionForActiveSession<TResult>(
     }
     return result;
 }
+
+export function shouldReportNotificationFailureForSession(
+    receivedEpoch: number,
+    isAuthSessionActive: (epoch: number) => boolean,
+): boolean {
+    return isAuthSessionActive(receivedEpoch);
+}

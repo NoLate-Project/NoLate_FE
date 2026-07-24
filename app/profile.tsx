@@ -174,7 +174,7 @@ export default function ProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
-    const { beginAccountExit, signOut } = useAuth();
+    const { signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
     const [account, setAccount] = useState<StoredAuthMember | null>(null);
     const [calendarConnection, setCalendarConnection] = useState<CalendarConnectionSnapshot | null>(null);
@@ -345,22 +345,26 @@ export default function ProfileScreen() {
                     if (signingOutRef.current) return;
                     signingOutRef.current = true;
                     setSigningOut(true);
-                    beginAccountExit().catch((error) => {
-                        console.warn("[profile] local account exit failed", error);
-                    });
                     try {
-                        const localSignOut = signOut();
-                        if (isNaverAccount) {
-                            await logoutFromNaverSdk().catch((error) => {
-                                console.warn("[naver] sdk logout failed", error);
-                            });
-                        }
-                        if (isKakaoAccount) {
-                            await logoutFromKakaoSdk().catch((error) => {
-                                console.warn("[kakao] sdk logout failed", error);
-                            });
-                        }
-                        await localSignOut;
+                        await signOut({
+                            remoteScope: isNaverAccount
+                                ? "naver"
+                                : isKakaoAccount ? "kakao" : undefined,
+                            remoteCleanup: isNaverAccount || isKakaoAccount
+                                ? async () => {
+                                    if (isNaverAccount) {
+                                        await logoutFromNaverSdk().catch((error) => {
+                                            console.warn("[naver] sdk logout failed", error);
+                                        });
+                                    }
+                                    if (isKakaoAccount) {
+                                        await logoutFromKakaoSdk().catch((error) => {
+                                            console.warn("[kakao] sdk logout failed", error);
+                                        });
+                                    }
+                                }
+                                : undefined,
+                        });
                     } finally {
                         signingOutRef.current = false;
                         setSigningOut(false);
@@ -368,7 +372,7 @@ export default function ProfileScreen() {
                 },
             },
         ]);
-    }, [beginAccountExit, isKakaoAccount, isNaverAccount, signOut]);
+    }, [isKakaoAccount, isNaverAccount, signOut]);
 
     const handleWithdraw = useCallback(() => {
         if (!account?.loginType) {
@@ -393,36 +397,37 @@ export default function ProfileScreen() {
                     onPress: async () => {
                         if (withdrawingRef.current) return;
                         withdrawingRef.current = true;
-                        let exitEpoch: number | undefined;
+                        setWithdrawing(true);
                         try {
-                            const exitIntent = await beginAccountExit();
-                            exitEpoch = exitIntent.epoch;
-                            setWithdrawing(true);
-                            await withdrawMember(undefined, {
-                                accessToken: exitIntent.accessToken,
+                            await signOut({
+                                remoteScope: "authentication",
+                                remoteCleanup: async (exitIntent) => {
+                                    try {
+                                        await withdrawMember(undefined, {
+                                            accessToken: exitIntent.accessToken,
+                                        });
+                                        if (isNaverAccount) {
+                                            await unlinkNaverSdk().catch((error) => {
+                                                console.warn("[naver] sdk unlink failed", error);
+                                            });
+                                        }
+                                        if (isKakaoAccount) {
+                                            await unlinkKakaoSdk().catch((error) => {
+                                                console.warn("[kakao] sdk unlink failed", error);
+                                            });
+                                        }
+                                    } catch (error) {
+                                        console.warn("[profile] account withdrawal failed", error);
+                                        reportAccountExitFailure({
+                                            authEpoch: exitIntent.epoch,
+                                            message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
+                                        });
+                                        throw error;
+                                    }
+                                },
                             });
-                            if (isNaverAccount) {
-                                await unlinkNaverSdk().catch((error) => {
-                                    console.warn("[naver] sdk unlink failed", error);
-                                });
-                            }
-                            if (isKakaoAccount) {
-                                await unlinkKakaoSdk().catch((error) => {
-                                    console.warn("[kakao] sdk unlink failed", error);
-                                });
-                            }
-                            await signOut();
-                        } catch (error) {
-                            console.warn("[profile] account withdrawal failed", error);
-                            if (exitEpoch !== undefined) {
-                                reportAccountExitFailure({
-                                    authEpoch: exitEpoch,
-                                    message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
-                                });
-                            }
-                            await signOut();
-                            setWithdrawing(false);
                         } finally {
+                            setWithdrawing(false);
                             withdrawingRef.current = false;
                         }
                     },
@@ -431,7 +436,6 @@ export default function ProfileScreen() {
         );
     }, [
         account?.loginType,
-        beginAccountExit,
         isKakaoAccount,
         isNaverAccount,
         signOut,
@@ -444,32 +448,33 @@ export default function ProfileScreen() {
             return;
         }
 
-        let exitEpoch: number | undefined;
         try {
             withdrawingRef.current = true;
             setWithdrawing(true);
-            const exitIntent = await beginAccountExit();
-            exitEpoch = exitIntent.epoch;
-            await withdrawMember(
-                { password: withdrawalPassword },
-                { accessToken: exitIntent.accessToken },
-            );
-            setWithdrawalModalOpen(false);
-            await signOut();
-        } catch (error) {
-            console.warn("[profile] account withdrawal failed", error);
-            if (exitEpoch !== undefined) {
-                reportAccountExitFailure({
-                    authEpoch: exitEpoch,
-                    message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
-                });
-            }
-            await signOut();
+            const completed = await signOut({
+                remoteScope: "authentication",
+                remoteCleanup: async (exitIntent) => {
+                    try {
+                        await withdrawMember(
+                            { password: withdrawalPassword },
+                            { accessToken: exitIntent.accessToken },
+                        );
+                    } catch (error) {
+                        console.warn("[profile] account withdrawal failed", error);
+                        reportAccountExitFailure({
+                            authEpoch: exitIntent.epoch,
+                            message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
+                        });
+                        throw error;
+                    }
+                },
+            });
+            if (completed) setWithdrawalModalOpen(false);
         } finally {
             withdrawingRef.current = false;
             setWithdrawing(false);
         }
-    }, [beginAccountExit, signOut, withdrawalPassword]);
+    }, [signOut, withdrawalPassword]);
 
     const openPasswordChange = useCallback(() => {
         setCurrentPassword("");

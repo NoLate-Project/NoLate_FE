@@ -1,6 +1,7 @@
 import {
     executeNotificationActionForActiveSession,
     resolveActiveNotificationAccountBinding,
+    shouldReportNotificationFailureForSession,
 } from "../src/modules/notification/notificationSessionFence";
 
 const LOGICAL_EVENT_KEY = `key:${"a".repeat(64)}`;
@@ -59,5 +60,30 @@ describe("notification open/action logout fence", () => {
             action,
         )).rejects.toThrow("AUTH_SESSION_CHANGED");
         expect(action).toHaveBeenCalledTimes(1);
+    });
+
+    test("A binding lookup 실패가 B 전환 뒤 끝나도 B failure Alert를 예약하지 않는다", () => {
+        const failureGate = jest.fn();
+        const currentEpoch = 2;
+        const receivedAEpoch = 1;
+
+        if (shouldReportNotificationFailureForSession(
+            receivedAEpoch,
+            (epoch) => epoch === currentEpoch,
+        )) failureGate();
+
+        expect(failureGate).not.toHaveBeenCalled();
+    });
+
+    test("현재 B action의 binding 실패만 B failure Alert를 한 번 허용한다", () => {
+        const failureGate = jest.fn();
+        const currentEpoch = 2;
+
+        if (shouldReportNotificationFailureForSession(
+            currentEpoch,
+            (epoch) => epoch === currentEpoch,
+        )) failureGate();
+
+        expect(failureGate).toHaveBeenCalledTimes(1);
     });
 });

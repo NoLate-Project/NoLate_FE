@@ -3,7 +3,7 @@ import { getMonthRange } from "./calendarRange";
 import type { ScheduleItem } from "./types";
 import {
     getAuthSessionEpoch,
-    isAuthSessionEpochCurrent,
+    isAuthSessionActive,
 } from "../auth/authSessionEpoch";
 
 // 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
@@ -48,12 +48,12 @@ export function mutateCalendarScheduleCacheIfAuthSessionCurrent(
     expectedAuthEpoch: number,
     mutation: () => void,
 ): boolean {
-    if (!isAuthSessionEpochCurrent(expectedAuthEpoch)) return false;
+    if (!isAuthSessionActive(expectedAuthEpoch)) return false;
     // Cache mutations are synchronous, so the epoch check and write form one JS
     // critical section. An auth invalidation that follows will clear this write;
     // an invalidation that already happened prevents it entirely.
     mutation();
-    return isAuthSessionEpochCurrent(expectedAuthEpoch);
+    return isAuthSessionActive(expectedAuthEpoch);
 }
 
 function monthKey(year: number, monthIndex: number): string {

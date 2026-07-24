@@ -190,7 +190,10 @@ describe("member api wrappers", () => {
         mockedApiDelete.mockResolvedValue({ success: true });
 
         await changePassword({ currentPassword: "old-password", newPassword: "new-password" });
-        await withdrawMember({ password: "password" });
+        await withdrawMember(
+            { password: "password" },
+            { accessToken: "A-access-snapshot" },
+        );
 
         expect(mockedApiPatch).toHaveBeenCalledWith("/api/member/password", {
             currentPassword: "old-password",
@@ -199,7 +202,18 @@ describe("member api wrappers", () => {
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
             data: { password: "password" },
             _allowDuringAccountExit: true,
+            headers: {
+                Authorization: "Bearer A-access-snapshot",
+            },
         });
+    });
+
+    test("withdrawal without the account-exit access snapshot fails before API mutation", async () => {
+        await expect(withdrawMember(
+            { password: "password" },
+            { accessToken: null },
+        )).rejects.toThrow("인증 snapshot");
+        expect(mockedApiDelete).not.toHaveBeenCalled();
     });
 
     test("account-exit withdrawal keeps the snapshotted A Authorization after local clear", async () => {

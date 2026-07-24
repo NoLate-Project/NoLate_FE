@@ -17,6 +17,10 @@ import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import {
+    isAuthSessionTransitionPendingError,
+    waitForAuthSessionTransition,
+} from "../../src/modules/auth/authSessionEpoch";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
 import {
@@ -119,6 +123,7 @@ export default function SignUp() {
 
         try {
             setSubmitting(true);
+            await waitForAuthSessionTransition();
             await signUpMember({
                 name: normalizedName,
                 email: normalizedEmail,
@@ -127,6 +132,7 @@ export default function SignUp() {
             });
             accountCreated = true;
 
+            await waitForAuthSessionTransition();
             const member = requireAuthenticatedMember(await loginMember({
                 email: normalizedEmail,
                 password: pwd,
@@ -150,6 +156,10 @@ export default function SignUp() {
                 router.replace("/onboarding/calendar-import");
             }
         } catch (error) {
+            if (isAuthSessionTransitionPendingError(error)) {
+                Alert.alert("로그아웃 정리 중", error.message);
+                return;
+            }
             if (accountCreated) {
                 // The account already exists at this point. Keeping the user on
                 // the agreement step would make the next tap submit sign-up

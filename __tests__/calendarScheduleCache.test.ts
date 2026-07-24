@@ -1,14 +1,21 @@
 import {
     clearCalendarScheduleCache,
+    captureCalendarScheduleCacheAuthEpoch,
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
     refreshCalendarScheduleCache,
     removeCalendarScheduleCacheItem,
     subscribeCalendarScheduleCacheInvalidated,
     upsertCalendarScheduleCacheItem,
+    mutateCalendarScheduleCacheIfAuthSessionCurrent,
 } from "../src/modules/schedule/calendarScheduleCache";
 import { getMonthRange } from "../src/modules/schedule/calendarRange";
 import type { ScheduleItem } from "../src/modules/schedule/types";
+import {
+    activateAuthSessionIfCurrent,
+    beginAuthLoginSession,
+    beginAuthLogoutSession,
+} from "../src/modules/auth/authSessionEpoch";
 
 function schedule(id: string, startAt: Date, endAt = startAt): ScheduleItem {
     return {
@@ -26,7 +33,26 @@ function localDate(year: number, monthIndex: number, day: number): Date {
 
 describe("calendar schedule month cache", () => {
     beforeEach(() => {
+        const epoch = beginAuthLoginSession();
+        activateAuthSessionIfCurrent(epoch);
         clearCalendarScheduleCache();
+    });
+
+    test("logout intent epoch에서는 새 calendar cache mutation을 허용하지 않는다", () => {
+        const activeEpoch = captureCalendarScheduleCacheAuthEpoch();
+        beginAuthLogoutSession();
+        const mutation = jest.fn();
+
+        expect(mutateCalendarScheduleCacheIfAuthSessionCurrent(
+            activeEpoch,
+            mutation,
+        )).toBe(false);
+        expect(mutation).not.toHaveBeenCalled();
+        expect(mutateCalendarScheduleCacheIfAuthSessionCurrent(
+            captureCalendarScheduleCacheAuthEpoch(),
+            mutation,
+        )).toBe(false);
+        expect(mutation).not.toHaveBeenCalled();
     });
 
     test("첫 3개월 조회는 한 요청으로 받고 월별 캐시로 나눈다", async () => {

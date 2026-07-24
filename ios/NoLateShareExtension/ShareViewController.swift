@@ -117,6 +117,8 @@ private final class ShareAPIClient {
   private let accessTokenKey = "nolte_access_token"
   private let refreshTokenKey = "nolte_refresh_token"
   private let apiBaseURLKey = "nolate_auth_api_base_url"
+  private let invalidSessionKey = "nolate_auth_invalid_session"
+  private let invalidSessionValue = "invalidated"
 
   init() {
     let configured = Bundle.main.object(forInfoDictionaryKey: "NoLateAPIBaseURL") as? String
@@ -130,7 +132,9 @@ private final class ShareAPIClient {
        isAllowedAPIBaseURL(url) {
       baseURL = url
     }
-    accessToken = normalizedCredential(readKeychain(accessTokenKey))
+    accessToken = isSessionInvalidated
+      ? nil
+      : normalizedCredential(readKeychain(accessTokenKey))
   }
 
   private func isAllowedAPIBaseURL(_ url: URL) -> Bool {
@@ -142,7 +146,9 @@ private final class ShareAPIClient {
   }
 
   var isLoggedIn: Bool {
-    accessToken != nil || normalizedCredential(readKeychain(refreshTokenKey)) != nil
+    guard !isSessionInvalidated else { return false }
+    return normalizedCredential(readKeychain(accessTokenKey)) != nil
+      || normalizedCredential(readKeychain(refreshTokenKey)) != nil
   }
 
   func get<Value: Decodable>(_ path: String) async throws -> Value {
@@ -170,6 +176,13 @@ private final class ShareAPIClient {
     body: Data?,
     retrying: Bool
   ) async throws -> Value {
+    guard !isSessionInvalidated else {
+      accessToken = nil
+      throw ShareAPIError.loginRequired
+    }
+    // The extension process may outlive an A logout and B login. Reload the
+    // current shared credential instead of reusing an in-memory A access token.
+    accessToken = normalizedCredential(readKeychain(accessTokenKey))
     guard let token = accessToken else {
       if retrying, await refreshTokens() {
         return try await request(url: url, method: method, body: body, retrying: false)
@@ -206,6 +219,10 @@ private final class ShareAPIClient {
   }
 
   private func refreshTokens() async -> Bool {
+    guard !isSessionInvalidated else {
+      accessToken = nil
+      return false
+    }
     guard let refreshToken = normalizedCredential(readKeychain(refreshTokenKey)) else { return false }
     let refreshURL = baseURL.appendingPathComponent("api/member/auth/refresh")
     let session = session
@@ -222,7 +239,9 @@ private final class ShareAPIClient {
       return envelope.data
     }) else { return false }
 
-    guard let accessToken = normalizedCredential(tokens.accessToken),
+    guard !isSessionInvalidated,
+          normalizedCredential(readKeychain(refreshTokenKey)) == refreshToken,
+          let accessToken = normalizedCredential(tokens.accessToken),
           let refreshToken = normalizedCredential(tokens.refreshToken) else { return false }
     let accessSaved = writeKeychain(accessToken, key: accessTokenKey)
     let refreshSaved = writeKeychain(refreshToken, key: refreshTokenKey)
@@ -244,6 +263,11 @@ private final class ShareAPIClient {
     guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
           !normalized.isEmpty else { return nil }
     return normalized
+  }
+
+  private var isSessionInvalidated: Bool {
+    normalizedCredential(readKeychain(invalidSessionKey))
+      == invalidSessionValue
   }
 
   private func keychainQuery(_ key: String, service: String) -> [String: Any] {

@@ -211,6 +211,17 @@ apiClient.interceptors.request.use(
         if (!isRequestAuthSessionCurrent(requestConfig)) {
             throw createAuthSessionChangedError();
         }
+        if (requestConfig._allowDuringAccountExit === true) {
+            // Logout has already made normal token reads fail closed. The sole
+            // account-exit request must carry the operation-owned access-token
+            // snapshot explicitly; never fall back to ambient storage.
+            if (!/^Bearer\s+\S+$/.test(
+                getRequestAuthorization(requestConfig) ?? "",
+            )) {
+                throw createAuthSessionChangedError();
+            }
+            return config;
+        }
         const accessToken = await getAccessToken();
         if (!isRequestAuthSessionCurrent(requestConfig)) {
             throw createAuthSessionChangedError();

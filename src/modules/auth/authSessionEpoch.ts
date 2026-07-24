@@ -7,6 +7,21 @@ let sessionPhase:
     | "LOGGING_OUT"
     | "SIGNED_OUT" = "BOOTSTRAPPING";
 let authSessionTransitionBarrier: Promise<void> = Promise.resolve();
+export type SocialAuthProvider = "naver" | "kakao" | "apple";
+const socialAuthTransitionBarriers = new Map<
+    SocialAuthProvider,
+    Promise<void>
+>();
+export const AUTH_SESSION_TRANSITION_WAIT_MS = 8_000;
+
+export class AuthSessionTransitionPendingError extends Error {
+    readonly code = "AUTH_SESSION_TRANSITION_PENDING";
+
+    constructor() {
+        super("이전 계정의 로그아웃을 안전하게 마무리하고 있어요. 잠시 후 다시 시도해 주세요.");
+        this.name = "AuthSessionTransitionPendingError";
+    }
+}
 
 export function getAuthSessionEpoch(): number {
     return currentEpoch;
@@ -38,10 +53,10 @@ export function registerAuthSessionTransitionBarrier(
     transition: Promise<unknown>,
 ): void {
     const previousBarrier = authSessionTransitionBarrier;
-    const barrier = Promise.all([previousBarrier, transition]).then(
-        () => undefined,
-        () => undefined,
-    );
+    const barrier = Promise.allSettled([
+        previousBarrier,
+        transition,
+    ]).then(() => undefined);
     authSessionTransitionBarrier = barrier;
     barrier.finally(() => {
         if (authSessionTransitionBarrier === barrier) {
@@ -50,8 +65,118 @@ export function registerAuthSessionTransitionBarrier(
     }).catch(() => undefined);
 }
 
-export async function waitForAuthSessionTransition(): Promise<void> {
-    await authSessionTransitionBarrier;
+export function registerSocialAuthTransitionBarrier(
+    provider: SocialAuthProvider,
+    transition: Promise<unknown>,
+): void {
+    const previousBarrier =
+        socialAuthTransitionBarriers.get(provider) ?? Promise.resolve();
+    const barrier = Promise.allSettled([
+        previousBarrier,
+        transition,
+    ]).then(() => undefined);
+    socialAuthTransitionBarriers.set(provider, barrier);
+    barrier.finally(() => {
+        if (socialAuthTransitionBarriers.get(provider) === barrier) {
+            socialAuthTransitionBarriers.delete(provider);
+        }
+    }).catch(() => undefined);
+}
+
+export async function waitForAuthSessionTransition(options: {
+    timeoutMs?: number;
+} = {}): Promise<void> {
+    const timeoutMs =
+        options.timeoutMs ?? AUTH_SESSION_TRANSITION_WAIT_MS;
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    await waitForStableTransitionBarrier(
+        () => authSessionTransitionBarrier,
+        deadline,
+    );
+}
+
+export async function waitForSocialAuthTransition(
+    provider: SocialAuthProvider,
+    options: { timeoutMs?: number } = {},
+): Promise<void> {
+    const timeoutMs =
+        options.timeoutMs ?? AUTH_SESSION_TRANSITION_WAIT_MS;
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (true) {
+        await waitForStableTransitionBarrier(
+            () => authSessionTransitionBarrier,
+            deadline,
+        );
+        const observedProviderBarrier =
+            socialAuthTransitionBarriers.get(provider) ?? Promise.resolve();
+        await waitForTransitionBarrier(
+            observedProviderBarrier,
+            remainingTransitionMs(deadline),
+        );
+        await waitForStableTransitionBarrier(
+            () => authSessionTransitionBarrier,
+            deadline,
+        );
+        if (
+            (socialAuthTransitionBarriers.get(provider) ??
+                observedProviderBarrier) === observedProviderBarrier
+        ) return;
+    }
+}
+
+async function waitForStableTransitionBarrier(
+    getBarrier: () => Promise<void>,
+    deadline: number,
+): Promise<void> {
+    while (true) {
+        const observedBarrier = getBarrier();
+        await waitForTransitionBarrier(
+            observedBarrier,
+            remainingTransitionMs(deadline),
+        );
+        // A remote cleanup can be registered while a waiter is already blocked
+        // on the local cleanup. Do not let that waiter slip past the newer tail.
+        if (getBarrier() === observedBarrier) return;
+    }
+}
+
+function remainingTransitionMs(deadline: number): number {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new AuthSessionTransitionPendingError();
+    return remainingMs;
+}
+
+function waitForTransitionBarrier(
+    barrier: Promise<void>,
+    timeoutMs: number,
+): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new AuthSessionTransitionPendingError());
+        }, timeoutMs);
+        barrier.then(
+            () => {
+                clearTimeout(timer);
+                resolve();
+            },
+            () => {
+                clearTimeout(timer);
+                resolve();
+            },
+        );
+    });
+}
+
+export function isAuthSessionTransitionPendingError(
+    error: unknown,
+): error is AuthSessionTransitionPendingError {
+    return error instanceof AuthSessionTransitionPendingError ||
+        (
+            typeof error === "object" &&
+            error !== null &&
+            (error as { code?: unknown }).code ===
+                "AUTH_SESSION_TRANSITION_PENDING"
+        );
 }
 
 export function beginAuthLoginSession(): number {
@@ -103,6 +228,13 @@ export function subscribeAuthSessionEpoch(
  */
 export function advanceAuthSessionEpoch(): number {
     currentEpoch += 1;
-    listeners.forEach((listener) => listener(currentEpoch));
+    listeners.forEach((listener) => {
+        try {
+            listener(currentEpoch);
+        } catch {
+            // One UI subscriber must not prevent the synchronous security fence
+            // or the remaining session owners from observing the transition.
+        }
+    });
     return currentEpoch;
 }

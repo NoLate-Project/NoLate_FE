@@ -162,19 +162,19 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
 }
 
 export async function withdrawMember(
-    payload?: WithdrawPayload,
-    accountExit?: { accessToken?: string | null },
+    payload: WithdrawPayload | undefined,
+    accountExit: { accessToken: string | null },
 ): Promise<void> {
+    const accessToken = accountExit.accessToken?.trim();
+    if (!accessToken) {
+        throw new Error("회원탈퇴 요청의 인증 snapshot을 확인하지 못했습니다.");
+    }
     const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", {
         data: payload ?? {},
         _allowDuringAccountExit: true,
-        ...(accountExit?.accessToken
-            ? {
-                headers: {
-                    Authorization: `Bearer ${accountExit.accessToken}`,
-                },
-            }
-            : {}),
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+        },
     });
     assertApiSuccess(response);
 }

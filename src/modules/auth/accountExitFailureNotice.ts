@@ -7,6 +7,7 @@ import {
 
 export type AccountExitFailureNotice = {
     authEpoch: number;
+    title?: string;
     message: string;
 };
 

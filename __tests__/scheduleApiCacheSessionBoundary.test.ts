@@ -9,7 +9,11 @@ import {
     synchronizeCalendarScheduleCacheRevision,
     updateSchedule,
 } from "../src/api/schedule";
-import { advanceAuthSessionEpoch } from "../src/modules/auth/authSessionEpoch";
+import {
+    activateAuthSessionIfCurrent,
+    advanceAuthSessionEpoch,
+    beginAuthLoginSession,
+} from "../src/modules/auth/authSessionEpoch";
 import {
     clearCalendarScheduleCache,
     readCalendarScheduleCache,
@@ -71,6 +75,8 @@ function cachedTitle(): string | undefined {
 }
 
 beforeEach(() => {
+    const epoch = beginAuthLoginSession();
+    activateAuthSessionIfCurrent(epoch);
     clearCalendarScheduleCache();
     jest.clearAllMocks();
 });

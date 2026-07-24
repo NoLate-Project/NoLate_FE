@@ -48,6 +48,7 @@ import {
 import {
     executeNotificationActionForActiveSession,
     resolveActiveNotificationAccountBinding,
+    shouldReportNotificationFailureForSession,
 } from "./notificationSessionFence";
 import { SCHEDULE_PUSH_CHANNEL_ID } from "./notificationPermission";
 import { emitScheduleDepartureMutation } from "../schedule/scheduleDepartureMutationEvents";
@@ -226,7 +227,10 @@ export async function configurePushNavigation(
 
         const binding = await getValidatedMember(data);
         if (!binding) {
-            if (!isAuthSessionActive()) return;
+            if (!shouldReportNotificationFailureForSession(
+                receivedEpoch,
+                isAuthSessionActive,
+            )) return;
             actionFailureGate.report({
                 action: "departNow",
                 scheduleId,
@@ -308,7 +312,10 @@ export async function configurePushNavigation(
 
         const binding = await getValidatedMember(data);
         if (!binding) {
-            if (!isAuthSessionActive()) return;
+            if (!shouldReportNotificationFailureForSession(
+                receivedEpoch,
+                isAuthSessionActive,
+            )) return;
             actionFailureGate.report({
                 action: "snooze",
                 scheduleId,

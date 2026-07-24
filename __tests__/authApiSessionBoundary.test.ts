@@ -218,7 +218,9 @@ test("withdrawal만 logout-pending epoch에 명시적으로 허용하고 계정 
     const withdrawalConfig = await requestHandler({
         method: "delete",
         url: "/api/member/withdraw",
-        headers: {},
+        headers: {
+            Authorization: `Bearer ${intent.accessToken}`,
+        },
         _allowDuringAccountExit: true,
     });
     expect(withdrawalConfig.headers).toMatchObject({
@@ -232,4 +234,18 @@ test("withdrawal만 logout-pending epoch에 명시적으로 허용하고 계정 
         data: { success: true },
     })).rejects.toMatchObject({ errorCode: "AUTH_SESSION_CHANGED" });
     expect(intent.refreshToken).toBe("A-refresh");
+});
+
+test("logout-pending withdrawal도 operation-owned access snapshot이 없으면 adapter 전에 거부한다", async () => {
+    await beginAuthLogoutIntent();
+
+    await expect(requestHandler({
+        method: "delete",
+        url: "/api/member/withdraw",
+        headers: {},
+        _allowDuringAccountExit: true,
+    })).rejects.toMatchObject({
+        errorCode: "AUTH_SESSION_CHANGED",
+    });
+    expect(mockApiClient).not.toHaveBeenCalled();
 });
