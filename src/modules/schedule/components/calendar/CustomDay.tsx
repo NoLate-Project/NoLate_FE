@@ -17,6 +17,10 @@ import {
 } from "../../calendarMetadata";
 import type { TravelMode } from "../../types";
 import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
+import type {
+    StackDayPresentation,
+    StackEventPresentation,
+} from "./stackCalendarLayout";
 
 type Period = {
     startingDay?: boolean;
@@ -63,7 +67,12 @@ type Props = {
     onPress?: (date: CalendarDate) => void;
     viewMode: CalendarViewMode;
     animatedCellHeight?: SharedValue<number>;
+    stackPresentation?: StackDayPresentation;
+    stackEventTop?: number;
+    hideStackEventLabels?: boolean;
 };
+
+const DETAIL_EVENT_MARKER_LIMIT = 3;
 
 function travelIconName(mode: TravelMode): keyof typeof Ionicons.glyphMap {
     if (mode === "TRANSIT") return "bus-outline";
@@ -100,13 +109,89 @@ export default function CustomDay({
     onPress,
     viewMode,
     animatedCellHeight,
+    stackPresentation,
+    stackEventTop,
+    hideStackEventLabels = false,
 }: Props) {
     const { colors, mode } = useTheme();
     const cellHeight = CALENDAR_DAY_HEIGHTS[viewMode];
+    const usesResponsiveDetailGeometry = viewMode === "detail" && Boolean(animatedCellHeight);
+    const hasResponsiveHoliday = (dayMetadata?.holidays?.length ?? 0) > 0;
     const [pressedSelection, setPressedSelection] = React.useState(false);
     const animatedCellStyle = useAnimatedStyle(() => ({
-        height: animatedCellHeight ? animatedCellHeight.value : cellHeight,
-    }), [animatedCellHeight, cellHeight]);
+        height: animatedCellHeight
+            ? viewMode === "detail"
+                ? Math.max(32, animatedCellHeight.value)
+                : animatedCellHeight.value
+            : cellHeight,
+    }), [animatedCellHeight, cellHeight, viewMode]);
+    const animatedDayCircleStyle = useAnimatedStyle(() => {
+        if (!usesResponsiveDetailGeometry) return {};
+
+        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
+        const size = 16 + 24 * progress;
+        return {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            marginTop: 1 + 7 * progress,
+        };
+    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    const animatedDayTextStyle = useAnimatedStyle(() => {
+        if (!usesResponsiveDetailGeometry) return {};
+
+        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
+        return {
+            fontSize: 10 + 8 * progress,
+            lineHeight: 10 + 10 * progress,
+        };
+    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    const animatedLunarTextStyle = useAnimatedStyle(() => {
+        if (!usesResponsiveDetailGeometry) return {};
+
+        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
+        return {
+            maxWidth: 14 + 24 * progress,
+            fontSize: 4.5 + 3.5 * progress,
+            lineHeight: 5 + 4 * progress,
+        };
+    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    const animatedHolidayStyle = useAnimatedStyle(() => {
+        if (!usesResponsiveDetailGeometry) return {};
+
+        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
+        const circleTop = 1 + 7 * progress;
+        const circleSize = 16 + 24 * progress;
+        return {
+            top: circleTop + circleSize + 1,
+            fontSize: 5.5 + 3 * progress,
+            lineHeight: 6 + 4 * progress,
+        };
+    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    const animatedDetailMarkersStyle = useAnimatedStyle(() => {
+        if (!usesResponsiveDetailGeometry) return {};
+
+        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
+        const circleTop = 1 + 7 * progress;
+        const circleSize = 16 + 24 * progress;
+        const holidayLineHeight = 5 + 5 * progress;
+        const desiredTop = circleTop
+            + circleSize
+            + (hasResponsiveHoliday ? holidayLineHeight + 2 : 3);
+        return {
+            top: Math.min(height - 8, desiredTop),
+        };
+    }, [
+        animatedCellHeight,
+        cellHeight,
+        hasResponsiveHoliday,
+        usesResponsiveDetailGeometry,
+    ]);
 
     React.useEffect(() => {
         if (!pressedSelection) return;
@@ -144,10 +229,25 @@ export default function CustomDay({
     const hasPeriods = !!(marking?.periods && marking.periods.length > 0);
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
     const events = marking?.events ?? [];
-    const visibleCompactEvents = events.slice(0, 3);
-    const compactOverflowCount = Math.max(0, events.length - visibleCompactEvents.length);
-    const visibleStackEvents = events.slice(0, 3);
-    const stackOverflowCount = Math.max(0, events.length - visibleStackEvents.length);
+    const detailMarkerEvents = events.slice(0, DETAIL_EVENT_MARKER_LIMIT);
+    const detailOverflowCount = Math.max(
+        0,
+        events.length - DETAIL_EVENT_MARKER_LIMIT
+    );
+    const fallbackStackPresentation: StackDayPresentation = {
+        lanes: events.slice(0, 2).map((event, lane): StackEventPresentation => ({
+            ...event,
+            lane,
+            position: "single",
+            connectsBefore: false,
+            connectsAfter: false,
+            showsLabel: true,
+        })),
+        overflowCount: Math.max(0, events.length - 2),
+    };
+    const resolvedStackPresentation = stackPresentation ?? fallbackStackPresentation;
+    const hasStackPresentation = resolvedStackPresentation.lanes.some(Boolean)
+        || resolvedStackPresentation.overflowCount > 0;
     const showDots = viewMode === "week" || viewMode === "list";
     const markerTop = (
         viewMode === "list" ? 47 : viewMode === "week" ? 54 : 53
@@ -191,20 +291,25 @@ export default function CustomDay({
                 accessibilityState={{ selected: Boolean(isSelected), disabled: isDisabled }}
                 style={({ pressed }) => [
                     styles.cell,
-                    { height: cellHeight },
+                    {
+                        height: cellHeight,
+                        paddingTop: usesResponsiveDetailGeometry ? 0 : 8,
+                    },
                     { opacity: pressed ? 0.55 : 1 },
                 ]}
             >
-            <View
+            <Reanimated.View
+                testID="calendar-day-circle"
                 style={[
                     styles.dayCircle,
                     {
                         backgroundColor: showsFilledCircle ? selectedCircleColor : "transparent",
                         borderColor: selectedBorderColor,
                     },
+                    animatedDayCircleStyle,
                 ]}
             >
-                <Text
+                <Reanimated.Text
                     style={[
                         styles.dayText,
                         {
@@ -214,12 +319,13 @@ export default function CustomDay({
                                 : defaultTextColor,
                             opacity: isDisabled ? 0.28 : 1,
                         },
+                        animatedDayTextStyle,
                     ]}
                 >
                     {date.day}
-                </Text>
+                </Reanimated.Text>
                 {lunarText && (
-                    <Text
+                    <Reanimated.Text
                         testID="calendar-lunar-date"
                         numberOfLines={1}
                         style={[
@@ -232,15 +338,16 @@ export default function CustomDay({
                                     : colors.textSecondary,
                                 opacity: isDisabled ? 0.28 : 0.88,
                             },
+                            animatedLunarTextStyle,
                         ]}
                     >
                         {lunarText}
-                    </Text>
+                    </Reanimated.Text>
                 )}
-            </View>
+            </Reanimated.View>
 
             {hasHoliday && (
-                <Text
+                <Reanimated.Text
                     testID="calendar-holiday-name"
                     numberOfLines={1}
                     ellipsizeMode="tail"
@@ -250,51 +357,38 @@ export default function CustomDay({
                             color: holidayAccent,
                             opacity: isDisabled ? 0.28 : 1,
                         },
+                        animatedHolidayStyle,
                     ]}
                 >
                     {holidayText}
-                </Text>
+                </Reanimated.Text>
             )}
 
-            {viewMode === "compact" && events.length > 0 && (
-                <View
-                    testID="compact-event-markers"
-                    style={[styles.compactEvents, { top: markerTop }]}
-                >
-                    {visibleCompactEvents.map((event) => (
-                        <View
-                            key={event.id}
-                            testID="compact-event-bar"
-                            style={[styles.compactBar, { backgroundColor: event.color }]}
-                        />
-                    ))}
-                    {compactOverflowCount > 0 && (
-                        <Text
-                            testID="compact-event-overflow"
-                            numberOfLines={1}
-                            style={[styles.compactMoreText, { color: colors.textSecondary }]}
-                        >
-                            +{compactOverflowCount}개
-                        </Text>
-                    )}
-                </View>
-            )}
-
-            {viewMode === "stack" && events.length > 0 && (
+            {viewMode === "stack" && hasStackPresentation && (
                 <View
                     testID="stack-event-chips"
                     style={[
                         styles.stackEventChips,
-                        hasHoliday && styles.stackEventChipsWithHoliday,
+                        {
+                            top: stackEventTop
+                                ?? (hasHoliday ? 62 : 52),
+                        },
                     ]}
                 >
-                    {visibleStackEvents.map((event) => (
+                    {resolvedStackPresentation.lanes.map((event, lane) => event ? (
                         <View
                             key={event.id}
-                            testID="stack-event-chip"
+                            testID={`stack-event-chip-${event.id}`}
                             style={[
                                 styles.stackEventChip,
                                 {
+                                    top: lane * 18,
+                                    left: event.connectsBefore ? 0 : 2,
+                                    right: event.connectsAfter ? 0 : 2,
+                                    borderTopLeftRadius: event.connectsBefore ? 0 : 5,
+                                    borderBottomLeftRadius: event.connectsBefore ? 0 : 5,
+                                    borderTopRightRadius: event.connectsAfter ? 0 : 5,
+                                    borderBottomRightRadius: event.connectsAfter ? 0 : 5,
                                     backgroundColor: colorWithOpacity(
                                         event.color,
                                         mode === "dark" ? 0.30 : 0.14
@@ -302,7 +396,7 @@ export default function CustomDay({
                                 },
                             ]}
                         >
-                            {event.travelMode ? (
+                            {!hideStackEventLabels && event.showsLabel && event.travelMode ? (
                                 <Ionicons
                                     accessible={false}
                                     name={travelIconName(event.travelMode)}
@@ -311,43 +405,46 @@ export default function CustomDay({
                                     style={styles.stackEventIcon}
                                 />
                             ) : null}
-                            <Text
-                                testID="stack-event-title"
-                                numberOfLines={1}
-                                ellipsizeMode="tail"
-                                style={[styles.stackEventTitle, { color: event.color }]}
-                            >
-                                {event.title}
-                            </Text>
+                            {!hideStackEventLabels && event.showsLabel ? (
+                                <Text
+                                    testID="stack-event-title"
+                                    numberOfLines={1}
+                                    ellipsizeMode="tail"
+                                    style={[styles.stackEventTitle, { color: event.color }]}
+                                >
+                                    {event.title}
+                                </Text>
+                            ) : null}
                         </View>
-                    ))}
-                    {stackOverflowCount > 0 && (
+                    ) : null)}
+                    {resolvedStackPresentation.overflowCount > 0 && (
                         <Text
                             testID="stack-event-overflow"
                             numberOfLines={1}
                             style={[styles.stackEventMore, { color: colors.textSecondary }]}
                         >
-                            +{stackOverflowCount}개
+                            +{resolvedStackPresentation.overflowCount}개
                         </Text>
                     )}
                 </View>
             )}
 
             {viewMode === "detail" && events.length > 0 && (
-                <View
+                <Reanimated.View
                     testID="detail-event-markers"
                     style={[
                         styles.detailMarkers,
                         hasHoliday && styles.detailMarkersWithHoliday,
+                        animatedDetailMarkersStyle,
                     ]}
                 >
-                    {events.slice(0, 3).map((event) => (
+                    {detailMarkerEvents.map((event) => (
                         event.travelMode ? (
                             <Ionicons
                                 accessible={false}
                                 key={event.id}
                                 name={travelIconName(event.travelMode)}
-                                size={10}
+                                size={8}
                                 color={event.color}
                                 style={styles.detailTravelMarker}
                             />
@@ -358,10 +455,23 @@ export default function CustomDay({
                             />
                         )
                     ))}
-                </View>
+                    {detailOverflowCount > 0 ? (
+                        <Text
+                            accessible={false}
+                            testID="detail-event-overflow"
+                            numberOfLines={1}
+                            style={[
+                                styles.detailEventMore,
+                                { color: colors.textSecondary },
+                            ]}
+                        >
+                            +{detailOverflowCount}개
+                        </Text>
+                    ) : null}
+                </Reanimated.View>
             )}
 
-            {viewMode !== "compact" && viewMode !== "stack" && viewMode !== "detail" && hasPeriods && (
+            {viewMode !== "stack" && viewMode !== "detail" && hasPeriods && (
                 <View
                     testID="calendar-period-markers"
                     style={[
@@ -469,41 +579,18 @@ const styles = StyleSheet.create({
         justifyContent: "center",
         gap: 3,
     },
-    compactEvents: {
+    stackEventChips: {
         position: "absolute",
         left: 0,
         right: 0,
-        alignItems: "center",
-        gap: 2,
-    },
-    compactBar: {
-        width: 40,
-        height: 5,
-        borderRadius: 3,
-    },
-    compactMoreText: {
-        width: 40,
-        fontSize: 9,
-        lineHeight: 11,
-        fontWeight: "700",
-        textAlign: "center",
-    },
-    stackEventChips: {
-        position: "absolute",
-        top: 52,
-        left: 2,
-        right: 2,
-        gap: 2,
+        height: 49,
         overflow: "hidden",
     },
-    stackEventChipsWithHoliday: {
-        top: 62,
-    },
     stackEventChip: {
+        position: "absolute",
         minWidth: 0,
         height: 16,
         paddingHorizontal: 3,
-        borderRadius: 5,
         flexDirection: "row",
         alignItems: "center",
         overflow: "hidden",
@@ -521,6 +608,10 @@ const styles = StyleSheet.create({
         letterSpacing: -0.1,
     },
     stackEventMore: {
+        position: "absolute",
+        top: 36,
+        left: 2,
+        right: 2,
         height: 13,
         paddingHorizontal: 3,
         fontSize: 9,
@@ -532,7 +623,7 @@ const styles = StyleSheet.create({
         top: 51,
         left: 2,
         right: 2,
-        minHeight: 10,
+        minHeight: 8,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "center",
@@ -547,7 +638,14 @@ const styles = StyleSheet.create({
         borderRadius: 3,
     },
     detailTravelMarker: {
-        width: 10,
-        height: 10,
+        width: 8,
+        height: 8,
+    },
+    detailEventMore: {
+        flexShrink: 0,
+        fontSize: 7,
+        lineHeight: 8,
+        fontWeight: "800",
+        letterSpacing: -0.3,
     },
 });

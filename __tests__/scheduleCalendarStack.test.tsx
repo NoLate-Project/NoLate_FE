@@ -8,6 +8,7 @@ import TestRenderer, {
 import ScheduleCalendar from "../src/modules/schedule/components/calendar/ScheduleCalendar";
 import type { TodayFocusTarget } from "../src/modules/schedule/components/calendar/ScheduleCalendar";
 import type { CalendarViewMode } from "../src/modules/schedule/components/calendar/viewMode";
+import type { ScheduleItem } from "../src/modules/schedule/types";
 
 jest.mock("@expo/vector-icons", () => ({
     Ionicons: () => null,
@@ -37,6 +38,7 @@ type StackMonthTestItem = {
     dateString: string;
     dayHeight: number;
     headerHeight: number;
+    height: number;
 };
 
 type StackMonthLayout = {
@@ -78,13 +80,14 @@ describe("ScheduleCalendar stack month navigation", () => {
     function calendarElement(
         viewMode: CalendarViewMode,
         focusedMonth: string,
-        scrollRequest: number
+        scrollRequest: number,
+        items: ScheduleItem[] = []
     ) {
         return (
             <ScheduleCalendar
                 selectedDay="2026-07-14"
                 focusedMonth={focusedMonth}
-                items={[]}
+                items={items}
                 onSelectDay={jest.fn()}
                 onOpenDay={jest.fn()}
                 viewMode={viewMode}
@@ -98,11 +101,12 @@ describe("ScheduleCalendar stack month navigation", () => {
     async function renderCalendar(
         viewMode: CalendarViewMode,
         focusedMonth = "2026-07",
-        scrollRequest = 0
+        scrollRequest = 0,
+        items: ScheduleItem[] = []
     ) {
         await act(async () => {
             renderer = TestRenderer.create(
-                calendarElement(viewMode, focusedMonth, scrollRequest)
+                calendarElement(viewMode, focusedMonth, scrollRequest, items)
             );
         });
 
@@ -112,10 +116,11 @@ describe("ScheduleCalendar stack month navigation", () => {
     async function updateCalendar(
         viewMode: CalendarViewMode,
         focusedMonth: string,
-        scrollRequest: number
+        scrollRequest: number,
+        items: ScheduleItem[] = []
     ) {
         await act(async () => {
-            renderer?.update(calendarElement(viewMode, focusedMonth, scrollRequest));
+            renderer?.update(calendarElement(viewMode, focusedMonth, scrollRequest, items));
         });
 
         return renderer!.root;
@@ -160,11 +165,8 @@ describe("ScheduleCalendar stack month navigation", () => {
         });
     }
 
-    test.each([
-        ["compact", 102],
-        ["stack", 130],
-    ] as const)("%s 보기에서 과거부터 미래까지 이어지는 세로 월 목록을 사용한다", async (viewMode, dayHeight) => {
-        const root = await renderCalendar(viewMode);
+    test("스택형에서 과거부터 미래까지 이어지는 130pt 고정 월 목록을 사용한다", async () => {
+        const root = await renderCalendar("stack");
         const list = root.findByType(FlatList);
         const data = list.props.data as StackMonthTestItem[];
         const julyIndex = data.findIndex((month) => month.key === "2026-07");
@@ -173,7 +175,8 @@ describe("ScheduleCalendar stack month navigation", () => {
         expect(julyIndex).toBeGreaterThan(0);
         expect(data[julyIndex - 1].key).toBe("2026-06");
         expect(data[julyIndex + 1].key).toBe("2026-08");
-        expect(data[julyIndex].dayHeight).toBe(dayHeight);
+        expect(data[julyIndex].dayHeight).toBe(130);
+        expect(data[julyIndex].height).toBeGreaterThan(600);
     });
 
     test("상세형과 목록형은 연속 월 목록을 사용하지 않는다", async () => {
@@ -200,42 +203,77 @@ describe("ScheduleCalendar stack month navigation", () => {
         }
     });
 
-    test.each(["compact", "stack"] as const)(
-        "%s에서 콘텐츠를 위로 올려 아래쪽을 보면 다음 달로 이동한다",
-        async (viewMode) => {
-            await renderCalendar(viewMode);
+    test("스택형에서 콘텐츠를 위로 올려 아래쪽을 보면 다음 달로 이동한다", async () => {
+            await renderCalendar("stack");
 
             scrollSwitchLineToMonth("2026-08");
 
             expect(onVisibleMonthChange).toHaveBeenLastCalledWith("2026-08-01");
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s에서 콘텐츠를 아래로 당겨 위쪽을 보면 이전 달로 이동한다",
-        async (viewMode) => {
-            await renderCalendar(viewMode);
+    test("스택형에서 콘텐츠를 아래로 당겨 위쪽을 보면 이전 달로 이동한다", async () => {
+            await renderCalendar("stack");
 
             scrollSwitchLineToMonth("2026-06");
 
             expect(onVisibleMonthChange).toHaveBeenLastCalledWith("2026-06-01");
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s 진입 시 선택일보다 현재 보고 있는 달을 우선한다",
-        async (viewMode) => {
-            await renderCalendar(viewMode, "2026-08");
+    test("스택형 진입 시 선택일보다 현재 보고 있는 달을 우선한다", async () => {
+            await renderCalendar("stack", "2026-08");
             const list = getStackList();
             const data = list.props.data as StackMonthTestItem[];
 
             expect(data[list.props.initialScrollIndex].key).toBe("2026-08");
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s Today target은 스크롤 RAF 직후 ACK한다",
-        async (viewMode) => {
+    test("스택형 초기 뷰포트가 측정되기 전 scroll event로 직전 달을 보고하지 않는다", async () => {
+        await renderCalendar("stack", "2026-07");
+        const list = getStackList();
+        const data = list.props.data as StackMonthTestItem[];
+        const julyIndex = data.findIndex((month) => month.key === "2026-07");
+        const getItemLayout = list.props.getItemLayout as (
+            data: StackMonthTestItem[] | null,
+            index: number
+        ) => StackMonthLayout;
+        const julyLayout = getItemLayout(data, julyIndex);
+
+        act(() => {
+            list.props.onScroll({
+                nativeEvent: {
+                    contentOffset: {
+                        x: 0,
+                        // Native layout rounding can put the first event a
+                        // fraction before the requested July item offset.
+                        y: julyLayout.offset - 0.25,
+                    },
+                    layoutMeasurement: { width: 393, height: 0 },
+                },
+            });
+        });
+
+        expect(onVisibleMonthChange).not.toHaveBeenCalledWith("2026-06-01");
+    });
+
+    test("같은 달의 일정 데이터가 갱신돼도 월 시작으로 다시 스크롤하지 않는다", async () => {
+        await renderCalendar("stack", "2026-07");
+        flushAnimationFrame();
+        scrollToOffsetSpy.mockClear();
+
+        const item: ScheduleItem = {
+            id: "refresh-item",
+            title: "갱신된 일정",
+            startAt: new Date(2026, 6, 23, 9).toISOString(),
+            endAt: new Date(2026, 6, 23, 10).toISOString(),
+            category: { id: "work", title: "업무", color: "#ff3b30" },
+        };
+        await updateCalendar("stack", "2026-07", 0, [item]);
+        flushAnimationFrame();
+
+        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+    });
+
+    test("스택형 Today target은 스크롤 RAF 직후 ACK한다", async () => {
             const target: TodayFocusTarget = {
                 day: "2026-08-16",
                 requiresMonthChange: true,
@@ -250,7 +288,7 @@ describe("ScheduleCalendar stack month navigation", () => {
                         items={[]}
                         onSelectDay={jest.fn()}
                         onOpenDay={jest.fn()}
-                        viewMode={viewMode}
+                        viewMode="stack"
                         firstDay={0}
                         scrollRequest={1}
                         onVisibleMonthChange={onVisibleMonthChange}
@@ -264,34 +302,28 @@ describe("ScheduleCalendar stack month navigation", () => {
             act(() => jest.runOnlyPendingTimers());
             expect(onTodayFocusReady).toHaveBeenCalledTimes(1);
             expect(onTodayFocusReady).toHaveBeenCalledWith(target.day);
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s 자연 스크롤로 보고한 focusedMonth를 부모가 돌려줘도 월 시작으로 되감지 않는다",
-        async (viewMode) => {
-            await renderCalendar(viewMode);
+    test("스택형 자연 스크롤 focusedMonth 응답은 월 시작으로 되감지 않는다", async () => {
+            await renderCalendar("stack");
             flushAnimationFrame();
             scrollToOffsetSpy.mockClear();
 
             scrollSwitchLineToMonth("2026-08");
             expect(onVisibleMonthChange).toHaveBeenLastCalledWith("2026-08-01");
 
-            await updateCalendar(viewMode, "2026-08", 0);
+            await updateCalendar("stack", "2026-08", 0);
             flushAnimationFrame();
 
             expect(scrollToOffsetSpy).not.toHaveBeenCalled();
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s 명시적 scrollRequest는 대상 월 제목을 지나 날짜 그리드로 이동한다",
-        async (viewMode) => {
-            await renderCalendar(viewMode);
+    test("스택형 명시적 scrollRequest는 대상 월 제목을 지나 날짜 그리드로 이동한다", async () => {
+            await renderCalendar("stack");
             flushAnimationFrame();
             scrollToOffsetSpy.mockClear();
 
-            await updateCalendar(viewMode, "2026-08", 1);
+            await updateCalendar("stack", "2026-08", 1);
             const list = getStackList();
             const data = list.props.data as StackMonthTestItem[];
             const targetIndex = data.findIndex((month) => month.key === "2026-08");
@@ -308,17 +340,14 @@ describe("ScheduleCalendar stack month navigation", () => {
                 offset: targetLayout.offset + data[targetIndex].headerHeight,
                 animated: false,
             });
-        }
-    );
+    });
 
-    test.each(["compact", "stack"] as const)(
-        "%s 범위를 벗어난 명시적 월 이동은 대상 월을 중심으로 목록을 다시 만든다",
-        async (viewMode) => {
-            await renderCalendar(viewMode);
+    test("스택형 범위 밖 명시적 월 이동은 대상 월을 중심으로 목록을 다시 만든다", async () => {
+            await renderCalendar("stack");
             flushAnimationFrame();
             scrollToOffsetSpy.mockClear();
 
-            await updateCalendar(viewMode, "2032-01", 1);
+            await updateCalendar("stack", "2032-01", 1);
             const list = getStackList();
             const data = list.props.data as StackMonthTestItem[];
             const targetIndex = data.findIndex((month) => month.key === "2032-01");
@@ -329,31 +358,6 @@ describe("ScheduleCalendar stack month navigation", () => {
 
             flushAnimationFrame();
             expect(scrollToOffsetSpy).toHaveBeenCalledTimes(1);
-        }
-    );
+    });
 
-    test.each([
-        ["compact", "stack"],
-        ["stack", "compact"],
-    ] as const)(
-        "%s에서 %s로 바꿀 때 현재 월을 새 목록의 중복 없는 기준점으로 유지한다",
-        async (fromMode, toMode) => {
-            await renderCalendar(fromMode);
-            flushAnimationFrame();
-
-            scrollSwitchLineToMonth("2026-08");
-            await updateCalendar(fromMode, "2026-08", 0);
-            flushAnimationFrame();
-
-            await updateCalendar(toMode, "2026-08", 0);
-            const list = getStackList();
-            const data = list.props.data as StackMonthTestItem[];
-            const targetIndex = data.findIndex((month) => month.key === "2026-08");
-
-            expect(data[list.props.initialScrollIndex].key).toBe("2026-08");
-            expect(data[targetIndex].headerHeight).toBe(0);
-            expect(data[targetIndex - 1].key).toBe("2026-07");
-            expect(data[targetIndex - 1].headerHeight).toBeGreaterThan(0);
-        }
-    );
 });

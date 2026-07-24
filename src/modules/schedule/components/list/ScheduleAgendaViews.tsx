@@ -4,7 +4,9 @@ import {
     ActionSheetIOS,
     Alert,
     Animated,
+    type GestureResponderEvent,
     PanResponder,
+    type PanResponderGestureState,
     Platform,
     Pressable,
     ScrollView,
@@ -198,7 +200,7 @@ function RouteSetupInlineNotice({
     );
 }
 
-function MonthAgendaPanelHandle({
+function MonthAgendaPanelGestureHandle({
     panelKind,
     onRequestViewMode,
 }: {
@@ -207,7 +209,18 @@ function MonthAgendaPanelHandle({
 }) {
     const { mode } = useTheme();
     const handleDragY = useRef(new Animated.Value(0)).current;
+    const gestureInvalidatedByMultitouchRef = useRef(false);
     const handlePanResponder = useMemo(() => {
+        const hasMultipleTouches = (
+            event: GestureResponderEvent,
+            gestureState?: PanResponderGestureState
+        ) => {
+            const reportedTouchCount = event.nativeEvent?.touches?.length ?? 0;
+            const activeTouchCount = reportedTouchCount > 0
+                ? reportedTouchCount
+                : (gestureState?.numberActiveTouches ?? 0);
+            return activeTouchCount > 1;
+        };
         const settleHandle = () => {
             Animated.spring(handleDragY, {
                 toValue: 0,
@@ -217,16 +230,58 @@ function MonthAgendaPanelHandle({
                 useNativeDriver: true,
             }).start();
         };
+        const prepareGesture = (
+            event: GestureResponderEvent,
+            gestureState: PanResponderGestureState
+        ) => {
+            gestureInvalidatedByMultitouchRef.current = hasMultipleTouches(
+                event,
+                gestureState
+            );
+            return false;
+        };
+        const shouldClaimGesture = (
+            event: GestureResponderEvent,
+            gestureState: PanResponderGestureState
+        ) => {
+            if (hasMultipleTouches(event, gestureState)) {
+                gestureInvalidatedByMultitouchRef.current = true;
+                return false;
+            }
+            if (gestureInvalidatedByMultitouchRef.current) return false;
+            return shouldClaimMonthAgendaGesture(
+                gestureState.dx,
+                gestureState.dy
+            );
+        };
+        const cancelGesture = () => {
+            gestureInvalidatedByMultitouchRef.current = false;
+            settleHandle();
+        };
 
         return PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
-            onMoveShouldSetPanResponder: (_, gestureState) => (
-                shouldClaimMonthAgendaGesture(gestureState.dx, gestureState.dy)
-            ),
-            onPanResponderGrant: () => {
+            onStartShouldSetPanResponder: prepareGesture,
+            onStartShouldSetPanResponderCapture: prepareGesture,
+            onMoveShouldSetPanResponder: shouldClaimGesture,
+            onMoveShouldSetPanResponderCapture: shouldClaimGesture,
+            onPanResponderGrant: (event, gestureState) => {
+                if (
+                    gestureInvalidatedByMultitouchRef.current
+                    || hasMultipleTouches(event, gestureState)
+                ) {
+                    gestureInvalidatedByMultitouchRef.current = true;
+                    settleHandle();
+                    return;
+                }
                 handleDragY.stopAnimation();
             },
-            onPanResponderMove: (_, gestureState) => {
+            onPanResponderMove: (event, gestureState) => {
+                if (hasMultipleTouches(event, gestureState)) {
+                    gestureInvalidatedByMultitouchRef.current = true;
+                    settleHandle();
+                    return;
+                }
+                if (gestureInvalidatedByMultitouchRef.current) return;
                 const translatedY = Math.max(
                     -MONTH_AGENDA_GESTURE.handleTravel,
                     Math.min(
@@ -236,7 +291,15 @@ function MonthAgendaPanelHandle({
                 );
                 handleDragY.setValue(translatedY);
             },
-            onPanResponderRelease: (_, gestureState) => {
+            onPanResponderRelease: (event, gestureState) => {
+                if (
+                    gestureInvalidatedByMultitouchRef.current
+                    || hasMultipleTouches(event, gestureState)
+                ) {
+                    gestureInvalidatedByMultitouchRef.current = false;
+                    settleHandle();
+                    return;
+                }
                 const target = getMonthAgendaSteppedTarget(
                     panelKind,
                     gestureState.dy,
@@ -245,7 +308,7 @@ function MonthAgendaPanelHandle({
                 settleHandle();
                 if (target) onRequestViewMode(target);
             },
-            onPanResponderTerminate: settleHandle,
+            onPanResponderTerminate: cancelGesture,
             onPanResponderTerminationRequest: () => false,
         });
     }, [handleDragY, onRequestViewMode, panelKind]);
@@ -276,34 +339,40 @@ function MonthAgendaPanelHandle({
     };
 
     return (
-        <Animated.View
+        <View
+            testID={`month-agenda-${panelKind}-gesture-handle`}
             {...handlePanResponder.panHandlers}
-            accessible
-            accessibilityRole="adjustable"
-            accessibilityLabel="일정 보기 방식"
-            accessibilityHint={isDetail
-                ? "위로 밀면 목록형, 아래로 당기면 스택형으로 전환됩니다"
-                : "아래로 당기면 상세형으로 전환됩니다"}
-            accessibilityValue={{ text: isDetail ? "상세형" : "목록형" }}
-            accessibilityActions={accessibilityActions}
-            onAccessibilityAction={({ nativeEvent }) => (
-                handleAccessibilityAction(nativeEvent.actionName)
-            )}
-            hitSlop={{ top: 8, right: 12, bottom: 8, left: 12 }}
-            style={[
-                styles.panelHandleHitArea,
-                { transform: [{ translateY: handleDragY }] },
-            ]}
+            style={styles.panelGestureHandle}
         >
-            <View
+            <Animated.View
+                testID="month-agenda-panel-handle"
+                accessible
+                accessibilityRole="adjustable"
+                accessibilityLabel="일정 보기 방식"
+                accessibilityHint={isDetail
+                    ? "위로 밀면 목록형, 아래로 당기면 스택형으로 전환됩니다"
+                    : "아래로 당기면 상세형으로 전환됩니다"}
+                accessibilityValue={{ text: isDetail ? "상세형" : "목록형" }}
+                accessibilityActions={accessibilityActions}
+                onAccessibilityAction={({ nativeEvent }) => (
+                    handleAccessibilityAction(nativeEvent.actionName)
+                )}
+                hitSlop={{ top: 8, right: 12, bottom: 8, left: 12 }}
                 style={[
-                    styles.panelHandle,
-                    mode === "dark"
-                        ? styles.panelHandleDark
-                        : styles.panelHandleLight,
+                    styles.panelHandleHitArea,
+                    { transform: [{ translateY: handleDragY }] },
                 ]}
-            />
-        </Animated.View>
+            >
+                <View
+                    style={[
+                        styles.panelHandle,
+                        mode === "dark"
+                            ? styles.panelHandleDark
+                            : styles.panelHandleLight,
+                    ]}
+                />
+            </Animated.View>
+        </View>
     );
 }
 
@@ -320,7 +389,7 @@ export function SelectedDayAgendaPanel({
     onOpenRouteSetup,
     onRequestViewMode,
 }: SelectedDayAgendaPanelProps) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const selectedItems = useMemo(
         () => getSelectedDayAgendaItems(items, selectedDay),
         [items, selectedDay]
@@ -336,11 +405,10 @@ export function SelectedDayAgendaPanel({
                 },
             ]}
         >
-            <MonthAgendaPanelHandle
+            <MonthAgendaPanelGestureHandle
                 panelKind="detail"
                 onRequestViewMode={onRequestViewMode}
             />
-
             <View style={[styles.selectedDayHeader, { borderBottomColor: colors.border }]}>
                 <Text
                     numberOfLines={1}
@@ -373,13 +441,38 @@ export function SelectedDayAgendaPanel({
                         onPressRetry={onPressRetry}
                     />
                 ) : (
-                    selectedItems.map((item) => (
-                        <ScheduleAgendaCard
-                            key={item.id}
-                            item={item}
-                            onPress={() => onOpenSchedule(item.id)}
-                        />
-                    ))
+                    <View
+                        testID="selected-day-agenda-group"
+                        style={[
+                            styles.selectedDayGroup,
+                            {
+                                backgroundColor: mode === "dark"
+                                    ? colors.surface
+                                    : colors.surface2,
+                                borderColor: colors.border,
+                            },
+                        ]}
+                    >
+                        {selectedItems.map((item, index) => (
+                            <React.Fragment key={item.id}>
+                                {index > 0 ? (
+                                    <View
+                                        testID="selected-day-agenda-divider"
+                                        style={[
+                                            styles.selectedDayGroupDivider,
+                                            { backgroundColor: colors.border },
+                                        ]}
+                                    />
+                                ) : null}
+                                <ScheduleAgendaCard
+                                    item={item}
+                                    groupRow
+                                    showMultiDaySummary
+                                    onPress={() => onOpenSchedule(item.id)}
+                                />
+                            </React.Fragment>
+                        ))}
+                    </View>
                 )}
             </ScrollView>
         </View>
@@ -489,11 +582,10 @@ export function MonthAgendaList({
                 },
             ]}
         >
-            <MonthAgendaPanelHandle
+            <MonthAgendaPanelGestureHandle
                 panelKind="list"
                 onRequestViewMode={onRequestViewMode}
             />
-
             <View
                 style={[
                     styles.agendaFilterBar,
@@ -626,10 +718,12 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 18,
         overflow: "hidden",
     },
+    panelGestureHandle: {
+        flexShrink: 0,
+    },
     panelHandleHitArea: {
-        width: 64,
+        width: "100%",
         height: 28,
-        alignSelf: "center",
         alignItems: "center",
         justifyContent: "center",
     },
@@ -675,8 +769,18 @@ const styles = StyleSheet.create({
     },
     selectedDayContent: {
         paddingHorizontal: 14,
-        paddingTop: 7,
-        gap: 6,
+        paddingTop: 6,
+        gap: 10,
+    },
+    selectedDayGroup: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 5,
+        overflow: "hidden",
+    },
+    selectedDayGroupDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginLeft: 18,
+        marginRight: 12,
     },
     agendaFilterBar: {
         height: 44,

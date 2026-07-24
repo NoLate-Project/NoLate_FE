@@ -6,11 +6,13 @@ import {
     CALENDAR_TODAY_FOCUS_MOTION,
     CALENDAR_TRANSITION_DURATION_MS,
     CURRENT_TIME_MOTION,
+    DETAIL_MONTH_PANEL_LAYOUT,
     DETAIL_MONTH_SWIPE_GESTURE,
     DETAIL_MONTH_SWIPE_MOTION,
     MONTH_AGENDA_GESTURE,
     MONTH_AGENDA_MOTION,
     formatCalendarCurrentTime,
+    getCalendarMonthWeekCount,
     getDetailMonthSwipeFollowOffset,
     getDetailMonthSwipeFollowOpacity,
     getDetailMonthSwipeGestureDirection,
@@ -21,6 +23,7 @@ import {
     getMonthAgendaTransition,
     resolveMonthAgendaViewportLayout,
     resolveCalendarPrimaryPillLayout,
+    resolveDetailMonthPanelLayout,
     shouldClaimDetailMonthSwipeGesture,
     shouldClaimMonthAgendaGesture,
     shouldAnimateCurrentTimeStep,
@@ -220,6 +223,8 @@ describe("calendar depth motion", () => {
 
     test.each([
         ["month", "2026년", 138, true],
+        ["month", "2026년 7월", 144, true],
+        ["month", "2026년 12월", 156, true],
         ["day", "7월", 84, true],
         ["day", "10월", 102, true],
         ["year", "2026년", 0, false],
@@ -275,11 +280,66 @@ describe("month agenda panel motion", () => {
         expandedListTop: 127,
     };
 
+    test("상세형 패널은 5주·6주 달 모두 실제 월 화면의 최소 45%를 확보한다", () => {
+        for (const weekCount of [5, 6]) {
+            const layout = resolveDetailMonthPanelLayout({
+                viewportHeight: 900,
+                fixedChromeHeight: 200,
+                weekCount,
+                defaultDayHeight: 72,
+            });
+
+            expect(layout.calendarHeight).toBeCloseTo(495, 10);
+            expect(layout.panelHeight).toBeCloseTo(405, 10);
+            expect(layout.panelHeight / 900).toBeCloseTo(
+                DETAIL_MONTH_PANEL_LAYOUT.minimumPanelRatio
+            );
+            expect(layout.dayHeight).toBeCloseTo((495 - 200) / weekCount, 10);
+            expect(
+                200 + layout.dayHeight * weekCount
+            ).toBeCloseTo(layout.calendarHeight, 10);
+        }
+    });
+
+    test("충분히 큰 화면에서는 날짜 행을 불필요하게 확대하지 않는다", () => {
+        expect(resolveDetailMonthPanelLayout({
+            viewportHeight: 1_400,
+            fixedChromeHeight: 200,
+            weekCount: 5,
+            defaultDayHeight: 72,
+        })).toEqual({
+            calendarHeight: 560,
+            dayHeight: 72,
+            panelHeight: 840,
+        });
+    });
+
+    test("작은 화면의 6주 달도 패널 비율을 지키며 모든 행에 같은 높이를 배분한다", () => {
+        const layout = resolveDetailMonthPanelLayout({
+            viewportHeight: 667,
+            fixedChromeHeight: 170,
+            weekCount: 6,
+            defaultDayHeight: 72,
+        });
+
+        expect(layout.panelHeight).toBeCloseTo(667 * 0.45, 10);
+        expect(layout.dayHeight).toBeCloseTo((667 * 0.55 - 170) / 6, 10);
+        expect(170 + layout.dayHeight * 6).toBeCloseTo(
+            layout.calendarHeight,
+            10
+        );
+    });
+
+    test("월별 주 수는 시작 요일을 반영한다", () => {
+        expect(getCalendarMonthWeekCount("2026-07-22", 0)).toBe(5);
+        expect(getCalendarMonthWeekCount("2026-08-01", 0)).toBe(6);
+        expect(getCalendarMonthWeekCount("invalid", 0)).toBe(6);
+    });
+
     test("상세형과 목록형만 월간 하단 패널을 연다", () => {
         expect(getMonthAgendaPanelKind("detail")).toBe("detail");
         expect(getMonthAgendaPanelKind("list")).toBe("list");
         expect(getMonthAgendaPanelKind("week")).toBe("list");
-        expect(getMonthAgendaPanelKind("compact")).toBeNull();
         expect(getMonthAgendaPanelKind("stack")).toBeNull();
     });
 
@@ -288,7 +348,6 @@ describe("month agenda panel motion", () => {
         ["detail", true, 433, "detail"],
         ["week", true, 433, "list"],
         ["stack", true, 911, null],
-        ["compact", true, 911, null],
     ] as const)(
         "%s 모드의 안정 viewport는 달력 노출=%s, 높이=%s, 패널=%s이다",
         (mode, calendarVisible, calendarTargetHeight, panelKind) => {
@@ -349,13 +408,13 @@ describe("month agenda panel motion", () => {
     });
 
     test.each([
-        ["compact", "detail", "enter"],
+        ["stack", "detail", "enter"],
         ["stack", "list", "enter"],
-        ["list", "compact", "exit"],
+        ["list", "stack", "exit"],
         ["detail", "stack", "exit"],
         ["detail", "list", "swap"],
         ["list", "detail", "swap"],
-        ["compact", "stack", "none"],
+        ["stack", "stack", "none"],
         ["detail", "detail", "none"],
     ] as const)("%s -> %s 전환을 %s으로 분류한다", (from, to, expected) => {
         expect(getMonthAgendaTransition(from, to)).toBe(expected);

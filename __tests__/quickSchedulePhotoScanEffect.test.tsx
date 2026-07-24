@@ -76,21 +76,68 @@ describe("QuickSchedulePhotoScanEffect", () => {
         expect(overlay.props.accessibilityRole).toBe("progressbar");
         expect(overlay.props.accessibilityLabel).toBe("사진에서 일정 문장 인식 중");
         expect(overlay.props.accessibilityState).toEqual({ busy: true });
-        expect(withTiming).toHaveBeenCalledWith(1, expect.objectContaining({ duration: 1650 }));
-        expect(withRepeat).toHaveBeenCalledWith(expect.anything(), -1, false);
+        expect(withTiming).toHaveBeenCalledWith(1, expect.objectContaining({ duration: 1400 }));
+        expect(withRepeat).toHaveBeenCalledWith(expect.anything(), -1, true);
+        const reveal = renderer!.root.findByProps({
+            testID: "quick-schedule-photo-scan-reveal",
+        });
+        const revealStyle = StyleSheet.flatten(reveal.props.style);
+        expect(revealStyle.height).toBeUndefined();
+        expect(revealStyle.transform).toEqual([
+            { scaleY: expect.any(Number) },
+        ]);
+        expect(renderer!.root.findByProps({
+            testID: "quick-schedule-photo-scan-corners",
+        })).toBeDefined();
+        expect(renderer!.root.findByProps({
+            testID: "quick-schedule-photo-scan-band",
+        })).toBeDefined();
     });
 
-    test("동작 줄이기 설정에서는 스캔 밴드를 고정하고 반복 애니메이션을 시작하지 않는다", async () => {
+    test("동작 줄이기 설정에서는 정적인 포커스만 남기고 반복 애니메이션을 시작하지 않는다", async () => {
         jest.mocked(useReducedMotion).mockReturnValue(true);
 
         await renderEffect(true);
         await layoutFrame(92);
 
-        expect(renderer!.root.findByProps({
+        expect(renderer!.root.findAllByProps({
             testID: "quick-schedule-photo-scan-band",
+        })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({
+            testID: "quick-schedule-photo-scan-reveal",
+        })).toHaveLength(0);
+        expect(renderer!.root.findByProps({
+            testID: "quick-schedule-photo-scan-corners",
         })).toBeDefined();
         expect(withTiming).not.toHaveBeenCalled();
         expect(withRepeat).not.toHaveBeenCalled();
+    });
+
+    test("활성 상태가 끝나면 스캔 레이어와 애니메이션을 즉시 정리한다", async () => {
+        await renderEffect(true);
+        await layoutFrame(92);
+        const cancellationCountBeforeStop = jest.mocked(cancelAnimation).mock.calls.length;
+
+        await act(async () => {
+            renderer!.update(
+                <ThemeProvider>
+                    <QuickSchedulePhotoScanEffect
+                        active={false}
+                        borderRadius={20}
+                        style={{ width: 92, height: 92 }}
+                    >
+                        <View testID="photo-content" style={StyleSheet.absoluteFillObject} />
+                    </QuickSchedulePhotoScanEffect>
+                </ThemeProvider>
+            );
+        });
+
+        expect(renderer!.root.findAllByProps({
+            testID: "quick-schedule-photo-scan-overlay",
+        })).toHaveLength(0);
+        expect(jest.mocked(cancelAnimation).mock.calls.length).toBeGreaterThan(
+            cancellationCountBeforeStop
+        );
     });
 
     test("언마운트할 때 진행 중인 무한 애니메이션을 취소한다", async () => {
@@ -112,8 +159,8 @@ describe("QuickSchedulePhotoScanEffect", () => {
         expect(shouldAnimatePhotoScan(true, true, 92)).toBe(false);
         expect(shouldAnimatePhotoScan(true, false, 0)).toBe(false);
 
-        expect(resolvePhotoScanTranslateY(-1, 92)).toBe(-30);
-        expect(resolvePhotoScanTranslateY(0.5, 92)).toBe(31);
+        expect(resolvePhotoScanTranslateY(-1, 92)).toBe(-48);
+        expect(resolvePhotoScanTranslateY(0.5, 92)).toBe(22);
         expect(resolvePhotoScanTranslateY(2, 92)).toBe(92);
     });
 
@@ -135,13 +182,12 @@ describe("QuickSchedulePhotoScanEffect", () => {
     }
 
     async function layoutFrame(height: number) {
-        const frame = renderer!.root.findAllByType(View).find((node) => (
-            StyleSheet.flatten(node.props.style)?.position === "relative"
-        ));
-        expect(frame).toBeDefined();
+        const frame = renderer!.root.findByProps({
+            testID: "quick-schedule-photo-scan-frame",
+        });
 
         await act(async () => {
-            frame!.props.onLayout({ nativeEvent: { layout: { height } } });
+            frame.props.onLayout({ nativeEvent: { layout: { height } } });
         });
     }
 });

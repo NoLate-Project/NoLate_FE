@@ -2,6 +2,11 @@ import { apiDelete, apiGet, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
+import {
+    clearCalendarScheduleCache,
+    removeCalendarScheduleCacheItem,
+    upsertCalendarScheduleCacheItem,
+} from "../modules/schedule/calendarScheduleCache";
 
 export type SchedulePayload = Omit<ScheduleItem, "id" | "updatedAt">;
 
@@ -48,6 +53,12 @@ type CalendarImportResultDto = {
     created: boolean;
 };
 
+type CalendarCacheRevisionDto = {
+    revision: number;
+};
+
+let observedCalendarCacheRevision: number | null = null;
+
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
         throw new Error("일정 id가 응답에 없습니다.");
@@ -69,6 +80,20 @@ export async function getCalendarSchedules(startAt: string, endAt: string): Prom
         params: { startAt, endAt },
     });
     return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
+}
+
+export async function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
+    const response = await apiGet<ApiEnvelope<CalendarCacheRevisionDto>>(
+        "/api/schedules/calendar-cache/revision",
+    );
+    const revision = unwrapApiResponse(response).revision;
+    const changed = observedCalendarCacheRevision !== null &&
+        observedCalendarCacheRevision !== revision;
+    observedCalendarCacheRevision = revision;
+    if (changed) {
+        clearCalendarScheduleCache();
+    }
+    return changed;
 }
 
 export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
@@ -104,13 +129,17 @@ export async function getDepartureReadySchedules(fromAt?: string, toAt?: string)
 
 export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
     const response = await apiGet<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}`);
-    return normalizeSchedule(unwrapApiResponse(response));
+    const item = normalizeSchedule(unwrapApiResponse(response));
+    upsertCalendarScheduleCacheItem(item);
+    return item;
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {
     const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload);
     const item = normalizeSchedule(unwrapApiResponse(response));
-    return { ...item, route: item.route ?? payload.route };
+    const cachedItem = { ...item, route: item.route ?? payload.route };
+    upsertCalendarScheduleCacheItem(cachedItem);
+    return cachedItem;
 }
 
 export async function importCalendarSchedule(
@@ -123,10 +152,15 @@ export async function importCalendarSchedule(
     >("/api/schedules/import", { schedule: payload, source });
     const result = unwrapApiResponse(response);
     const item = normalizeSchedule(result.schedule);
+    const cachedItem = {
+        ...item,
+        // 기존 일정을 반환받은 경우에는 이번 시도에서 계산한 경로를 저장된 값처럼 섞지 않는다.
+        route: item.route ?? (result.created ? payload.route : undefined),
+    };
+    upsertCalendarScheduleCacheItem(cachedItem);
 
     return {
-        // 기존 일정을 반환받은 경우에는 이번 시도에서 계산한 경로를 저장된 값처럼 섞지 않는다.
-        item: { ...item, route: item.route ?? (result.created ? payload.route : undefined) },
+        item: cachedItem,
         created: result.created,
     };
 }
@@ -142,18 +176,23 @@ export async function parseScheduleText(payload: ParseScheduleTextPayload): Prom
 export async function updateSchedule(scheduleId: string, payload: SchedulePayload): Promise<ScheduleItem> {
     const response = await apiPut<ApiEnvelope<ScheduleDto>, SchedulePayload>(`/api/schedules/${scheduleId}`, payload);
     const item = normalizeSchedule(unwrapApiResponse(response));
-    return { ...item, route: item.route ?? payload.route };
+    const cachedItem = { ...item, route: item.route ?? payload.route };
+    upsertCalendarScheduleCacheItem(cachedItem);
+    return cachedItem;
 }
 
 export async function deleteSchedule(scheduleId: string): Promise<void> {
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}`);
     assertApiSuccess(response);
+    removeCalendarScheduleCacheItem(scheduleId);
 }
 
 export async function markScheduleDeparted(scheduleId: string): Promise<ScheduleItem> {
     // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
     const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
-    return normalizeSchedule(unwrapApiResponse(response));
+    const item = normalizeSchedule(unwrapApiResponse(response));
+    upsertCalendarScheduleCacheItem(item);
+    return item;
 }
 
 export async function sendScheduleDepartureNudge(

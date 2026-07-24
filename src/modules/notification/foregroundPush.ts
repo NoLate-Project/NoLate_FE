@@ -11,6 +11,7 @@ import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
 import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
+import { clearCalendarScheduleCache } from "../schedule/calendarScheduleCache";
 import {
     getNotificationActionCategoryFromData,
     getPushNavigationTargetFromNotificationData,
@@ -274,12 +275,25 @@ async function showForegroundNotification(
     // 서버는 push 공급자 호출 전에 앱 알림을 저장한다. 수신 직후 배지 구독자에게
     // 다시 조회하도록 알려 포그라운드 화면에서도 놓친 알림 개수가 즉시 보이게 한다.
     emitAppNotificationReceived();
+    if (isScheduleVisibilityChange(message.data)) {
+        clearCalendarScheduleCache();
+    }
 
     await showLocalNotification({
         title,
         body,
         data: message.data ?? {},
     });
+}
+
+function isScheduleVisibilityChange(
+    data?: FirebaseMessagingTypes.RemoteMessage["data"],
+): boolean {
+    const type = data?.type;
+    return type === "SCHEDULE_SHARE_RECEIVED" ||
+        type === "CATEGORY_SHARE_RECEIVED" ||
+        type === "CALENDAR_SHARE_RECEIVED" ||
+        type === "SCHEDULE_CACHE_INVALIDATED";
 }
 
 async function showLocalNotification(notification: LocalPushNotification): Promise<void> {

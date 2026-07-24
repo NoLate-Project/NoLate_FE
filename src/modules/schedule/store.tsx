@@ -2,6 +2,7 @@ import React, {createContext, useContext, useEffect, useMemo, useReducer} from "
 import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
+import { clearCalendarScheduleCache } from "./calendarScheduleCache";
 
 type Action =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -56,13 +57,23 @@ function reducer(state: ScheduleState, action: Action): ScheduleState {
                 acc[item.id] = item;
                 return acc;
             }, {});
+            const currentIds = Object.keys(state.itemsById);
+            const nextIds = Object.keys(itemsById);
+            if (
+                currentIds.length === nextIds.length &&
+                nextIds.every((id) => state.itemsById[id] === itemsById[id])
+            ) {
+                return state;
+            }
             return {...state, itemsById};
         }
 
         case "SET_LOADING":
+            if (state.loading === action.loading) return state;
             return {...state, loading: action.loading};
 
         case "SET_ERROR":
+            if (state.error === action.error) return state;
             return {...state, error: action.error};
 
         case "ADD_ITEM":
@@ -102,6 +113,8 @@ export function ScheduleProvider({
 }) {
     const [state, dispatch] = useReducer(reducer, initialState);
     useEffect(() => subscribeAuthInvalidation(() => {
+        // 계정이 바뀌면 이전 회원의 월별 일정 캐시도 상태와 함께 제거한다.
+        clearCalendarScheduleCache();
         dispatch({ type: "RESET", state: initialState });
     }), [initialState]);
     const value = useMemo(() => ({state, dispatch}), [state]);

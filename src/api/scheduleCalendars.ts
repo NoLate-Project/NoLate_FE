@@ -1,5 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
+import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
 
 export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
 export type ScheduleCalendarRole = "VIEWER" | "EDITOR" | "OWNER";
@@ -64,12 +65,15 @@ export async function updateScheduleCalendar(
         `/api/schedule-calendars/${calendarId}`,
         payload,
     );
-    return unwrapApiResponse(response);
+    const calendar = unwrapApiResponse(response);
+    clearCalendarScheduleCache();
+    return calendar;
 }
 
 export async function archiveScheduleCalendar(calendarId: number | string): Promise<void> {
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}`);
     assertApiSuccess(response);
+    clearCalendarScheduleCache();
 }
 
 export async function getScheduleCalendarMembers(
@@ -137,6 +141,7 @@ export async function removeScheduleCalendarMember(
 export async function leaveScheduleCalendar(calendarId: number | string): Promise<void> {
     const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}/leave`);
     assertApiSuccess(response);
+    clearCalendarScheduleCache();
 }
 
 export async function transferScheduleCalendarOwnership(

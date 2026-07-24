@@ -1,6 +1,10 @@
 import {
     buildMonthAgendaSections,
+    formatAgendaDetailScheduleTime,
+    formatAgendaDetailTimeColumn,
+    formatAgendaMultiDayTimeRange,
     formatAgendaSectionHeader,
+    getAgendaMultiDaySummary,
     getSelectedDayAgendaItems,
     getVisibleMonthAgendaItems,
 } from "../src/modules/schedule/agendaLayout";
@@ -131,6 +135,214 @@ describe("agenda layout", () => {
 
         expect(getSelectedDayAgendaItems([point], "2026-07-12")).toEqual([point]);
         expect(getSelectedDayAgendaItems([point], "2026-07-13")).toEqual([]);
+    });
+
+    test("연속 일정은 end-exclusive 로컬 날짜 범위와 N박 N일을 계산한다", () => {
+        const summary = getAgendaMultiDaySummary(item(
+            "trip",
+            localIso(2026, 7, 14),
+            localIso(2026, 7, 17)
+        ));
+
+        expect(summary).toEqual({
+            dayCount: 3,
+            nightCount: 2,
+            stayLabel: "2박 3일",
+            dateRangeLabel: "7월 14일–16일",
+        });
+    });
+
+    test("당일·자정 종료·잘못된 범위에는 숙박 정보를 만들지 않는다", () => {
+        expect(getAgendaMultiDaySummary(item(
+            "same-day",
+            localIso(2026, 7, 14, 9),
+            localIso(2026, 7, 14, 10)
+        ))).toBeNull();
+        expect(getAgendaMultiDaySummary(item(
+            "ends-at-midnight",
+            localIso(2026, 7, 14, 23),
+            localIso(2026, 7, 15, 0)
+        ))).toBeNull();
+        expect(getAgendaMultiDaySummary(item(
+            "invalid",
+            "invalid",
+            "also-invalid"
+        ))).toBeNull();
+        expect(getAgendaMultiDaySummary(item(
+            "reversed",
+            localIso(2026, 7, 15),
+            localIso(2026, 7, 14)
+        ))).toBeNull();
+    });
+
+    test("월·연도 경계에서도 전체 날짜 범위를 유지한다", () => {
+        expect(getAgendaMultiDaySummary(item(
+            "month-boundary",
+            localIso(2026, 7, 31, 10),
+            localIso(2026, 8, 2, 10)
+        ))).toMatchObject({
+            stayLabel: "2박 3일",
+            dateRangeLabel: "7월 31일–8월 2일",
+        });
+        expect(getAgendaMultiDaySummary(item(
+            "year-boundary",
+            localIso(2026, 12, 31, 10),
+            localIso(2027, 1, 2, 10)
+        ))).toMatchObject({
+            stayLabel: "2박 3일",
+            dateRangeLabel: "2026년 12월 31일–2027년 1월 2일",
+        });
+    });
+
+    test("날짜를 넘기는 시간 일정은 양쪽 날짜와 오전·오후를 함께 표시한다", () => {
+        expect(formatAgendaMultiDayTimeRange(item(
+            "overnight-timed",
+            localIso(2026, 7, 14, 23, 55),
+            localIso(2026, 7, 15, 0, 10)
+        ))).toBe("7월 14일 오후 11:55 → 7월 15일 오전 12:10");
+
+        expect(formatAgendaMultiDayTimeRange(item(
+            "ends-at-midnight",
+            localIso(2026, 7, 14, 23),
+            localIso(2026, 7, 15, 0)
+        ))).toBe("7월 14일 오후 11:00 → 7월 15일 오전 12:00");
+
+        expect(formatAgendaMultiDayTimeRange(item(
+            "year-boundary-timed",
+            localIso(2026, 12, 31, 23, 30),
+            localIso(2027, 1, 1, 0, 30)
+        ))).toBe("2026년 12월 31일 오후 11:30 → 2027년 1월 1일 오전 12:30");
+    });
+
+    test("당일·종일·종료 미설정 일정은 다일 시간 범위를 만들지 않는다", () => {
+        expect(formatAgendaMultiDayTimeRange(item(
+            "same-day-timed",
+            localIso(2026, 7, 14, 9),
+            localIso(2026, 7, 14, 10)
+        ))).toBeNull();
+        expect(formatAgendaMultiDayTimeRange({
+            ...item(
+                "all-day",
+                localIso(2026, 7, 14),
+                localIso(2026, 7, 16)
+            ),
+            allDay: true,
+        })).toBeNull();
+        expect(formatAgendaMultiDayTimeRange({
+            ...item(
+                "no-end",
+                localIso(2026, 7, 14, 9),
+                localIso(2026, 7, 16, 9)
+            ),
+            hasEndTime: false,
+        })).toBeNull();
+        expect(getAgendaMultiDaySummary({
+            ...item(
+                "no-end-summary",
+                localIso(2026, 7, 14, 9),
+                localIso(2026, 7, 16, 9)
+            ),
+            hasEndTime: false,
+        })).toBeNull();
+    });
+
+    test("상세형 카드의 5가지 일정 유형을 한 줄 날짜·시간 문구로 정리한다", () => {
+        expect(formatAgendaDetailScheduleTime({
+            ...item(
+                "start-only",
+                localIso(2026, 7, 14, 15, 20),
+                localIso(2026, 7, 14, 16, 20)
+            ),
+            hasEndTime: false,
+        })).toBe("7월 14일 오후 3:20");
+
+        expect(formatAgendaDetailScheduleTime(item(
+            "same-day-timed",
+            localIso(2026, 7, 14, 15, 40),
+            localIso(2026, 7, 14, 16, 10)
+        ))).toBe("7월 14일 오후 3:40 → 오후 4:10");
+
+        expect(formatAgendaDetailScheduleTime(item(
+            "multi-day-timed",
+            localIso(2026, 7, 14, 23, 55),
+            localIso(2026, 7, 15, 0, 10)
+        ))).toBe("7월 14일 오후 11:55 → 7월 15일 오전 12:10");
+
+        expect(formatAgendaDetailScheduleTime({
+            ...item(
+                "single-all-day",
+                localIso(2026, 7, 17),
+                localIso(2026, 7, 18)
+            ),
+            allDay: true,
+        })).toBe("7월 17일 · 종일");
+
+        expect(formatAgendaDetailScheduleTime({
+            ...item(
+                "multi-all-day",
+                localIso(2026, 7, 18),
+                localIso(2026, 7, 21)
+            ),
+            allDay: true,
+        })).toBe("7월 18일–20일 · 종일");
+    });
+
+    test("상세형 우측 시간열은 당일은 시각만, 다일은 날짜와 시각을 나눈다", () => {
+        expect(formatAgendaDetailTimeColumn(item(
+            "same-day",
+            localIso(2026, 7, 14, 15, 40),
+            localIso(2026, 7, 14, 16, 10)
+        ))).toEqual({
+            startLabel: "오후 3:40",
+            endLabel: "오후 4:10",
+        });
+
+        expect(formatAgendaDetailTimeColumn(item(
+            "multi-day",
+            localIso(2026, 7, 14, 23, 55),
+            localIso(2026, 7, 15, 0, 10)
+        ))).toEqual({
+            startLabel: "7/14 오후 11:55",
+            endLabel: "7/15 오전 12:10",
+        });
+
+        expect(formatAgendaDetailTimeColumn({
+            ...item(
+                "start-only",
+                localIso(2026, 7, 14, 15, 20),
+                localIso(2026, 7, 14, 16, 20)
+            ),
+            hasEndTime: false,
+        })).toEqual({
+            startLabel: "오후 3:20",
+            endLabel: null,
+        });
+    });
+
+    test("상세형 우측 시간열은 종일 일정의 단일일·기간을 구분한다", () => {
+        expect(formatAgendaDetailTimeColumn({
+            ...item(
+                "single-all-day",
+                localIso(2026, 7, 17),
+                localIso(2026, 7, 18)
+            ),
+            allDay: true,
+        })).toEqual({
+            startLabel: "종일",
+            endLabel: null,
+        });
+
+        expect(formatAgendaDetailTimeColumn({
+            ...item(
+                "multi-all-day",
+                localIso(2026, 7, 18),
+                localIso(2026, 7, 21)
+            ),
+            allDay: true,
+        })).toEqual({
+            startLabel: "7/18 시작",
+            endLabel: "7/20 종료",
+        });
     });
 
     test("한국어 header와 잘못된 날짜 입력을 안정적으로 처리한다", () => {

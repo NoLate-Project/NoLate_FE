@@ -61,6 +61,7 @@ import {
     type ScheduleCalendar,
 } from "../../../api/scheduleCalendars";
 import { getWritableScheduleCalendars } from "../calendarPermissions";
+import { canDeletePresentedSchedule } from "../schedulePermissions";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -93,6 +94,7 @@ export default function ScheduleEdit() {
     const { state, dispatch } = useScheduleStore();
 
     const item = id ? state.itemsById[id] : undefined;
+    const canDeleteSchedule = canDeletePresentedSchedule(item);
 
     const [title,           setTitle]           = useState(item?.title ?? "");
     const [notes,           setNotes]           = useState(item?.notes ?? "");
@@ -1125,24 +1127,26 @@ export default function ScheduleEdit() {
                     </Text>
                 </Pressable>
 
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="일정 삭제"
-                    accessibilityState={{ disabled: detailLoading || mutationPending, busy: mutationPending }}
-                    disabled={detailLoading || mutationPending}
-                    onPress={remove}
-                    style={[
-                        styles.deleteBtn,
-                        {
-                            backgroundColor: mode === "dark"
-                                ? "rgba(239,68,68,0.12)"
-                                : "rgba(239,68,68,0.08)",
-                            borderColor: "rgba(239,68,68,0.34)",
-                        },
-                    ]}
-                >
-                    <Text style={styles.deleteBtnText}>삭제</Text>
-                </Pressable>
+                {canDeleteSchedule ? (
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 삭제"
+                        accessibilityState={{ disabled: detailLoading || mutationPending, busy: mutationPending }}
+                        disabled={detailLoading || mutationPending}
+                        onPress={remove}
+                        style={[
+                            styles.deleteBtn,
+                            {
+                                backgroundColor: mode === "dark"
+                                    ? "rgba(239,68,68,0.12)"
+                                    : "rgba(239,68,68,0.08)",
+                                borderColor: "rgba(239,68,68,0.34)",
+                            },
+                        ]}
+                    >
+                        <Text style={styles.deleteBtnText}>삭제</Text>
+                    </Pressable>
+                ) : null}
             </View>
             </CalendarGlassSurface>
         </ScrollView>

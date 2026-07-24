@@ -6,6 +6,7 @@ import {
     type ScheduleCalendarMember,
     type ScheduleShareContentMode,
 } from "./scheduleCalendars";
+import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
 
 export type ShareResourceType = "SCHEDULE" | "CATEGORY" | "CALENDAR";
 export type ShareInvitationStatus = "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED";
@@ -266,5 +267,8 @@ export async function acceptShareInvitation(token: string): Promise<ScheduleShar
     const response = await apiPost<ApiEnvelope<ScheduleShareInvitationAcceptResult>>(
         `/api/share-invitations/${encodeURIComponent(token)}/accept`
     );
-    return unwrapApiResponse(response);
+    const result = unwrapApiResponse(response);
+    // 초대로 새롭게 보이게 된 일정은 기존 월 캐시에 없으므로 다음 캘린더 진입에서 다시 조회한다.
+    clearCalendarScheduleCache();
+    return result;
 }

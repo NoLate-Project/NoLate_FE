@@ -14,7 +14,6 @@ type Props = {
 };
 
 const FALLBACK_ICON_BY_MODE: Record<CalendarViewMode, IconName> = {
-    compact: "albums-outline",
     stack: "calendar-clear-outline",
     detail: "reader-outline",
     week: "calendar-outline",
@@ -37,18 +36,6 @@ export default function CalendarViewModeGlyph({
 
     if (toolbar) {
         return <Ionicons accessible={false} name="albums-outline" size={size} color={color} />;
-    }
-
-    if (mode === "compact") {
-        return (
-            <View
-                pointerEvents="none"
-                style={[styles.container, { width: size, height: size }]}
-            >
-                <View style={[styles.compactBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
-                <View style={[styles.compactBar, roundedLine, { width: 24 * unit, height: 8 * unit }]} />
-            </View>
-        );
     }
 
     if (mode === "stack") {
@@ -95,9 +82,6 @@ const styles = StyleSheet.create({
     container: {
         alignItems: "center",
         justifyContent: "center",
-    },
-    compactBar: {
-        marginVertical: 2,
     },
     detailBar: {
         alignItems: "center",

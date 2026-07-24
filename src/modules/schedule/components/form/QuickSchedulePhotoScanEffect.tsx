@@ -19,8 +19,8 @@ import Reanimated, {
 
 import { useTheme } from "../../../theme/ThemeContext";
 
-const SCAN_DURATION_MS = 1_650;
-const SCAN_BAND_HEIGHT = 30;
+const SCAN_DURATION_MS = 1_400;
+const SCAN_BAND_HEIGHT = 48;
 const DEFAULT_RADIUS = 20;
 
 type Props = {
@@ -75,8 +75,8 @@ export default function QuickSchedulePhotoScanEffect({
         }
 
         if (!shouldAnimatePhotoScan(active, reduceMotionEnabled, frameHeight)) {
-            // 동작 줄이기에서는 스캔 위치만 고정해 진행 상태를 시각적으로 남긴다.
-            scanProgress.value = 0.5;
+            // 동작 줄이기에서는 레이저를 멈춰 두는 대신 정적인 포커스만 남긴다.
+            scanProgress.value = 0;
             return () => cancelAnimation(scanProgress);
         }
 
@@ -87,20 +87,29 @@ export default function QuickSchedulePhotoScanEffect({
                 easing: Easing.inOut(Easing.cubic),
             }),
             -1,
-            false
+            true
         );
 
         return () => cancelAnimation(scanProgress);
     }, [active, frameHeight, reduceMotionEnabled, scanProgress]);
 
     const scanBandAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: reduceMotionEnabled
-            ? 0.72
-            : interpolate(scanProgress.value, [0, 0.08, 0.9, 1], [0, 1, 1, 0]),
+        opacity: interpolate(scanProgress.value, [0, 0.06, 0.94, 1], [0, 1, 1, 0]),
         transform: [{
             translateY: resolvePhotoScanTranslateY(scanProgress.value, frameHeight),
         }],
-    }), [frameHeight, reduceMotionEnabled]);
+    }), [frameHeight]);
+
+    const scanRevealAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(scanProgress.value, [0, 0.18, 1], [0, 0.52, 0.16]),
+        transform: [{ scaleY: Math.max(0.001, scanProgress.value) }],
+    }), []);
+
+    const focusCornersAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: reduceMotionEnabled
+            ? 0.78
+            : interpolate(scanProgress.value, [0, 0.5, 1], [0.66, 1, 0.66]),
+    }), [reduceMotionEnabled]);
 
     const handleLayout = (event: LayoutChangeEvent) => {
         const nextHeight = Math.max(0, event.nativeEvent.layout.height);
@@ -111,6 +120,7 @@ export default function QuickSchedulePhotoScanEffect({
 
     return (
         <View
+            testID="quick-schedule-photo-scan-frame"
             onLayout={handleLayout}
             style={[styles.frame, { borderRadius }, style]}
         >
@@ -132,28 +142,74 @@ export default function QuickSchedulePhotoScanEffect({
                         style={[styles.tint, { backgroundColor: palette.tint }]}
                     />
 
-                    <View style={[styles.focusFrame, { borderColor: palette.frame }]} />
+                    {!reduceMotionEnabled && (
+                        <Reanimated.View
+                            testID="quick-schedule-photo-scan-reveal"
+                            style={[
+                                styles.scanReveal,
+                                { backgroundColor: palette.reveal },
+                                scanRevealAnimatedStyle,
+                            ]}
+                        />
+                    )}
 
                     <Reanimated.View
-                        testID="quick-schedule-photo-scan-band"
-                        style={[
-                            styles.scanBand,
-                            { backgroundColor: palette.band },
-                            scanBandAnimatedStyle,
-                        ]}
+                        testID="quick-schedule-photo-scan-corners"
+                        style={[styles.focusCorners, focusCornersAnimatedStyle]}
                     >
-                        <View style={[styles.scanGlowWide, { backgroundColor: palette.glowWide }]} />
-                        <View style={[styles.scanGlowNear, { backgroundColor: palette.glowNear }]} />
                         <View
                             style={[
-                                styles.scanLine,
-                                {
-                                    backgroundColor: palette.line,
-                                    shadowColor: palette.line,
-                                },
+                                styles.focusCorner,
+                                styles.focusCornerTopLeft,
+                                { borderColor: palette.frame },
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.focusCorner,
+                                styles.focusCornerTopRight,
+                                { borderColor: palette.frame },
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.focusCorner,
+                                styles.focusCornerBottomLeft,
+                                { borderColor: palette.frame },
+                            ]}
+                        />
+                        <View
+                            style={[
+                                styles.focusCorner,
+                                styles.focusCornerBottomRight,
+                                { borderColor: palette.frame },
                             ]}
                         />
                     </Reanimated.View>
+
+                    {!reduceMotionEnabled && (
+                        <Reanimated.View
+                            testID="quick-schedule-photo-scan-band"
+                            style={[
+                                styles.scanBand,
+                                scanBandAnimatedStyle,
+                            ]}
+                        >
+                            <View style={[styles.scanGlowFar, { backgroundColor: palette.glowFar }]} />
+                            <View style={[styles.scanGlowWide, { backgroundColor: palette.glowWide }]} />
+                            <View style={[styles.scanGlowNear, { backgroundColor: palette.glowNear }]} />
+                            <View
+                                style={[
+                                    styles.scanLine,
+                                    {
+                                        backgroundColor: palette.line,
+                                        shadowColor: palette.line,
+                                    },
+                                ]}
+                            />
+                            <View style={[styles.scanLineCore, { backgroundColor: palette.lineCore }]} />
+                        </Reanimated.View>
+                    )}
                 </View>
             )}
         </View>
@@ -161,21 +217,25 @@ export default function QuickSchedulePhotoScanEffect({
 }
 
 const DARK_PALETTE = {
-    tint: "rgba(4, 13, 24, 0.20)",
-    frame: "rgba(103, 228, 255, 0.42)",
-    band: "rgba(56, 164, 255, 0.08)",
-    glowWide: "rgba(103, 228, 255, 0.12)",
-    glowNear: "rgba(103, 228, 255, 0.28)",
+    tint: "rgba(4, 13, 24, 0.12)",
+    reveal: "rgba(63, 183, 255, 0.12)",
+    frame: "rgba(126, 236, 255, 0.86)",
+    glowFar: "rgba(74, 183, 255, 0.06)",
+    glowWide: "rgba(96, 215, 255, 0.13)",
+    glowNear: "rgba(126, 236, 255, 0.30)",
     line: "#8CEBFF",
+    lineCore: "rgba(255,255,255,0.92)",
 };
 
 const LIGHT_PALETTE = {
-    tint: "rgba(20, 83, 166, 0.07)",
-    frame: "rgba(36, 107, 254, 0.36)",
-    band: "rgba(36, 107, 254, 0.06)",
-    glowWide: "rgba(36, 107, 254, 0.10)",
-    glowNear: "rgba(36, 107, 254, 0.22)",
+    tint: "rgba(20, 83, 166, 0.045)",
+    reveal: "rgba(36, 107, 254, 0.085)",
+    frame: "rgba(112, 225, 255, 0.92)",
+    glowFar: "rgba(36, 107, 254, 0.05)",
+    glowWide: "rgba(54, 155, 255, 0.12)",
+    glowNear: "rgba(94, 215, 247, 0.28)",
     line: "#5ED7F7",
+    lineCore: "rgba(255,255,255,0.94)",
 };
 
 const styles = StyleSheet.create({
@@ -190,14 +250,46 @@ const styles = StyleSheet.create({
     tint: {
         ...StyleSheet.absoluteFillObject,
     },
-    focusFrame: {
+    scanReveal: {
+        ...StyleSheet.absoluteFillObject,
+        transformOrigin: [0, 0, 0],
+    },
+    focusCorners: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 2,
+    },
+    focusCorner: {
         position: "absolute",
-        top: 5,
-        right: 5,
-        bottom: 5,
-        left: 5,
-        borderRadius: 15,
-        borderWidth: StyleSheet.hairlineWidth,
+        width: 22,
+        height: 22,
+    },
+    focusCornerTopLeft: {
+        top: 8,
+        left: 8,
+        borderTopWidth: 2,
+        borderLeftWidth: 2,
+        borderTopLeftRadius: 8,
+    },
+    focusCornerTopRight: {
+        top: 8,
+        right: 8,
+        borderTopWidth: 2,
+        borderRightWidth: 2,
+        borderTopRightRadius: 8,
+    },
+    focusCornerBottomLeft: {
+        bottom: 8,
+        left: 8,
+        borderBottomWidth: 2,
+        borderLeftWidth: 2,
+        borderBottomLeftRadius: 8,
+    },
+    focusCornerBottomRight: {
+        right: 8,
+        bottom: 8,
+        borderRightWidth: 2,
+        borderBottomWidth: 2,
+        borderBottomRightRadius: 8,
     },
     scanBand: {
         position: "absolute",
@@ -206,24 +298,49 @@ const styles = StyleSheet.create({
         left: 0,
         height: SCAN_BAND_HEIGHT,
         justifyContent: "center",
+        zIndex: 1,
+    },
+    scanGlowFar: {
+        position: "absolute",
+        top: 2,
+        right: 0,
+        left: 0,
+        height: 44,
+        borderRadius: 22,
     },
     scanGlowWide: {
         position: "absolute",
+        top: 12,
         right: 0,
         left: 0,
-        height: 18,
+        height: 24,
+        borderRadius: 12,
     },
     scanGlowNear: {
         position: "absolute",
+        top: 19.5,
         right: 0,
         left: 0,
-        height: 7,
+        height: 9,
+        borderRadius: 4.5,
     },
     scanLine: {
+        position: "absolute",
+        top: 23,
         alignSelf: "stretch",
-        height: 1.5,
+        right: 0,
+        left: 0,
+        height: 2,
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.85,
-        shadowRadius: 6,
+        shadowRadius: 8,
+    },
+    scanLineCore: {
+        position: "absolute",
+        top: 24,
+        right: 0,
+        left: 0,
+        alignSelf: "stretch",
+        height: StyleSheet.hairlineWidth,
     },
 });

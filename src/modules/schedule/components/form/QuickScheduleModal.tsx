@@ -121,13 +121,24 @@ type TabLayout = {
 };
 const QUICK_TEXT_LIMIT = 300;
 const PHOTO_RECOGNITION_TIMEOUT_MILLIS = 15_000;
-const PHOTO_PREVIEW_STAGE_HEIGHT = 144;
+const PHOTO_PREVIEW_STAGE_HEIGHT = 164;
+const PHOTO_PREVIEW_MIN_ASPECT_RATIO = 0.55;
+const PHOTO_PREVIEW_MAX_ASPECT_RATIO = 2.2;
 
 function limitRecognizedText(value: string) {
     return {
         text: value.slice(0, QUICK_TEXT_LIMIT),
         truncated: value.length > QUICK_TEXT_LIMIT,
     };
+}
+
+export function resolvePhotoPreviewAspectRatio(value?: number | null) {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return 1;
+
+    return Math.max(
+        PHOTO_PREVIEW_MIN_ASPECT_RATIO,
+        Math.min(PHOTO_PREVIEW_MAX_ASPECT_RATIO, value)
+    );
 }
 
 const BLUE = "#246BFE";
@@ -154,15 +165,23 @@ const CARD_SIZE_SPRING = {
 };
 const CARD_HEIGHT_BY_MODE: Record<InputMode, number> = {
     text: 420,
-    photo: 620,
-    voice: 480,
+    photo: 560,
+    voice: 560,
 };
 const LOW_RECOGNITION_CONFIDENCE = 0.65;
-// 실시간 음량 샘플을 짧은 가로 파형으로 보여준다.
+// 실제 음량 샘플은 반원만큼만 보관하고 화면에서는 반대편에 미러링한다.
+// 원형 파형의 무게 중심이 한쪽으로 쏠리지 않아 작은 화면에서도 안정적으로 보인다.
 const VOICE_SPECTRUM_SAMPLE_COUNT = 24;
+const VOICE_SPECTRUM_BAR_COUNT = VOICE_SPECTRUM_SAMPLE_COUNT * 2;
+const VOICE_SPECTRUM_BARS = Array.from({ length: VOICE_SPECTRUM_BAR_COUNT }, (_, index) => index);
+const VOICE_SPECTRUM_SIZE = 142;
+const VOICE_SPECTRUM_INNER_RADIUS = 41;
 const VOICE_SPECTRUM_ATTACK_MS = 82;
 const VOICE_SPECTRUM_RELEASE_MS = 250;
+const VOICE_SPECTRUM_HALO_ATTACK_MS = 110;
+const VOICE_SPECTRUM_HALO_RELEASE_MS = 320;
 const VOICE_SPECTRUM_MOTION_EASING = ReanimatedEasing.bezier(0.2, 0.72, 0.24, 1);
+const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"];
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
@@ -217,7 +236,15 @@ function appendVoiceMeterHistory(history: number[], level: number) {
     return [...source.slice(1), smoothed];
 }
 
-function VoiceWaveformBar({ level, active }: { level: number; active: boolean }) {
+function VoiceSpectrumBar({
+    angle,
+    color,
+    level,
+}: {
+    angle: string;
+    color: string;
+    level: number;
+}) {
     const normalizedLevel = Math.max(0, Math.min(1, level));
     const animatedLevel = useSharedValue(normalizedLevel);
     const previousLevelRef = useRef(normalizedLevel);
@@ -232,21 +259,66 @@ function VoiceWaveformBar({ level, active }: { level: number; active: boolean })
     }, [animatedLevel, normalizedLevel]);
 
     const animatedStyle = useAnimatedStyle(() => {
-        const height = Math.max(4, Math.min(32, 4 + animatedLevel.value * 28));
+        const height = Math.max(3, Math.min(20, 3 + animatedLevel.value * 17));
         return {
             height,
-            opacity: active ? 0.34 + animatedLevel.value * 0.66 : 0.18,
+            opacity: 0.3 + animatedLevel.value * 0.7,
         };
-    }, [active]);
+    });
 
     return (
-        <Reanimated.View
+        <View
+            testID="quick-schedule-voice-spectrum-bar"
             style={[
-                styles.voiceWaveformBar,
-                { backgroundColor: BLUE },
-                animatedStyle,
+                styles.voiceSpectrumBarSlot,
+                { transform: [{ rotate: angle }] },
             ]}
-        />
+        >
+            <Reanimated.View
+                style={[
+                    styles.voiceSpectrumBar,
+                    { backgroundColor: color, shadowColor: color },
+                    animatedStyle,
+                ]}
+            />
+        </View>
+    );
+}
+
+function VoiceSpectrumHalo({ energy }: { energy: number }) {
+    const normalizedEnergy = Math.max(0, Math.min(1, energy));
+    const animatedEnergy = useSharedValue(normalizedEnergy);
+    const previousEnergyRef = useRef(normalizedEnergy);
+
+    useEffect(() => {
+        const rising = normalizedEnergy >= previousEnergyRef.current;
+        previousEnergyRef.current = normalizedEnergy;
+        animatedEnergy.value = withTiming(normalizedEnergy, {
+            duration: rising ? VOICE_SPECTRUM_HALO_ATTACK_MS : VOICE_SPECTRUM_HALO_RELEASE_MS,
+            easing: VOICE_SPECTRUM_MOTION_EASING,
+        });
+    }, [animatedEnergy, normalizedEnergy]);
+
+    const outerAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: 0.1 + animatedEnergy.value * 0.2,
+        transform: [{ scale: 1 + animatedEnergy.value * 0.1 }],
+    }));
+    const innerAnimatedStyle = useAnimatedStyle(() => ({
+        opacity: 0.12 + animatedEnergy.value * 0.24,
+        transform: [{ scale: 1 + animatedEnergy.value * 0.055 }],
+    }));
+
+    return (
+        <>
+            <Reanimated.View
+                pointerEvents="none"
+                style={[styles.voiceSpectrumHaloOuter, outerAnimatedStyle]}
+            />
+            <Reanimated.View
+                pointerEvents="none"
+                style={[styles.voiceSpectrumHaloInner, innerAnimatedStyle]}
+            />
+        </>
     );
 }
 
@@ -666,7 +738,7 @@ export default function QuickScheduleModal({
     const cardTop = sourceTop;
     const baseCardHeight = flowStep === "input"
         ? inputMode === "photo" && !selectedPhoto
-            ? 420
+            ? 378
             : CARD_HEIGHT_BY_MODE[inputMode]
         : FLOW_CARD_HEIGHT_BY_STEP[flowStep];
     const targetCardHeight = baseCardHeight + (categoryError && onRetryCategories ? 58 : 0);
@@ -1678,7 +1750,21 @@ export default function QuickScheduleModal({
             return;
         }
 
-        void pickPhotoFromLibrary();
+        Alert.alert(
+            "사진으로 일정 만들기",
+            undefined,
+            [
+                {
+                    text: "사진 찍기",
+                    onPress: () => schedulePhotoAction(operation, () => void capturePhoto()),
+                },
+                {
+                    text: "사진 앱에서 선택",
+                    onPress: () => schedulePhotoAction(operation, () => void pickPhotoFromLibrary()),
+                },
+                { text: "취소", style: "cancel" },
+            ]
+        );
     }, [
         capturePhoto,
         cancelPendingPhotoAction,
@@ -2315,18 +2401,81 @@ export default function QuickScheduleModal({
     const voiceDurationText = formatVoiceDuration(
         recorderState.isRecording ? recorderState.durationMillis : voiceDurationMillis
     );
-    const photoLabel = selectedPhoto?.fileName ?? selectedPhoto?.uri.split("/").pop();
+    const voiceSpectrumEnergy = recorderState.isRecording
+        ? voiceMeterHistory[voiceMeterHistory.length - 1] ?? 0
+        : 0;
+    const voiceControlTitle = recorderState.isRecording
+        ? "녹음 중"
+        : isVoiceFinalizing
+            ? "확인 중"
+            : voiceTranscript.trim() || voiceUri
+                ? "완료"
+                : "말하기";
+    const voiceControlMeta = recorderState.isRecording
+        ? voiceDurationText
+        : isVoiceFinalizing
+            ? "잠시만 기다려 주세요"
+            : voiceTranscript.trim() || voiceUri
+                ? voiceDurationText
+                : voiceStatusMessage || "눌러서 시작";
     const selectedPhotoAspectRatio = selectedPhoto?.width && selectedPhoto.height
         ? selectedPhoto.width / selectedPhoto.height
         : 1;
-    const safePhotoAspectRatio = Number.isFinite(selectedPhotoAspectRatio) && selectedPhotoAspectRatio > 0
-        ? selectedPhotoAspectRatio
-        : 1;
-    const photoPreviewContentWidth = cardWidth - 38;
+    const photoPreviewAspectRatio = resolvePhotoPreviewAspectRatio(selectedPhotoAspectRatio);
+    const photoPreviewContentWidth = cardWidth - 46;
     const photoScanFrameStyle = {
-        width: Math.min(photoPreviewContentWidth, PHOTO_PREVIEW_STAGE_HEIGHT * safePhotoAspectRatio),
-        height: Math.min(PHOTO_PREVIEW_STAGE_HEIGHT, photoPreviewContentWidth / safePhotoAspectRatio),
+        width: Math.min(photoPreviewContentWidth, PHOTO_PREVIEW_STAGE_HEIGHT * photoPreviewAspectRatio),
+        height: Math.min(PHOTO_PREVIEW_STAGE_HEIGHT, photoPreviewContentWidth / photoPreviewAspectRatio),
     };
+    const photoRecognitionState = isPhotoRecognizing
+        ? "scanning"
+        : photoRecognitionError
+            ? "error"
+            : photoTranscript.trim()
+                ? "ready"
+                : "selected";
+    const photoStatusColor = photoRecognitionState === "scanning"
+        ? "#7BE7FF"
+        : photoRecognitionState === "ready"
+            ? "#72E5A6"
+            : photoRecognitionState === "error"
+                ? "#FFD166"
+                : "#FFFFFF";
+    const photoStatusBackground = photoRecognitionState === "scanning"
+        ? "rgba(10, 52, 78, 0.86)"
+        : photoRecognitionState === "ready"
+            ? "rgba(9, 62, 43, 0.84)"
+            : photoRecognitionState === "error"
+                ? "rgba(76, 50, 8, 0.86)"
+                : "rgba(8, 13, 22, 0.78)";
+    const photoStatusText = photoRecognitionState === "scanning"
+        ? "일정 정보 읽는 중"
+        : photoRecognitionState === "ready"
+            ? "읽기 완료"
+            : photoRecognitionState === "error"
+                ? "내용 확인 필요"
+                : "선택한 사진";
+    const photoStatusAccessibilityLabel = photoRecognitionState === "ready"
+        ? "사진 읽기 완료"
+        : photoRecognitionState === "error"
+            ? "일정 내용을 찾지 못했어요"
+            : photoStatusText;
+    const photoStatusIcon: keyof typeof Ionicons.glyphMap = photoRecognitionState === "ready"
+        ? "checkmark-circle"
+        : photoRecognitionState === "error"
+            ? "alert-circle"
+            : "image-outline";
+    const photoNeedsReview = !isPhotoRecognizing
+        && photoRecognitionConfidence !== undefined
+        && photoRecognitionConfidence < LOW_RECOGNITION_CONFIDENCE;
+    const photoErrorSurface = mode === "dark"
+        ? "rgba(255,69,58,0.13)"
+        : "rgba(239,68,68,0.065)";
+    const photoErrorBorder = mode === "dark"
+        ? "rgba(255,138,132,0.30)"
+        : "rgba(217,74,74,0.18)";
+    const photoErrorTitleColor = mode === "dark" ? "#FF8A84" : "#B42318";
+    const photoErrorTextColor = mode === "dark" ? "#FFB2AD" : "#9F3A36";
     const canSubmit = (
         inputMode === "text"
             ? text.trim().length > 0
@@ -2357,7 +2506,7 @@ export default function QuickScheduleModal({
     const inputModeDescription = inputMode === "photo"
         ? "사진을 고르면 날짜와 장소를 자동으로 읽습니다."
         : inputMode === "voice"
-            ? "말하는 내용을 실시간 일정 문장으로 바꿉니다."
+            ? "마이크를 누르고 일정을 말해 주세요."
             : "날짜·시간·장소를 한 문장으로 입력하세요.";
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
@@ -2513,73 +2662,87 @@ export default function QuickScheduleModal({
                     <View style={styles.photoModeContent}>
                     {selectedPhoto?.uri ? (
                         <View
+                            testID="quick-schedule-photo-preview"
                             style={[
                                 styles.photoPreviewButton,
                                 {
-                                    backgroundColor: mode === "dark" ? "#090A0D" : "#EEF0F4",
-                                    borderColor: colors.border,
+                                    backgroundColor: mode === "dark" ? "#060A12" : "#0A1220",
+                                    borderColor: isPhotoRecognizing
+                                        ? "rgba(94,215,247,0.58)"
+                                        : colors.border,
                                 },
                             ]}
                         >
+                            <Image
+                                accessible={false}
+                                source={{ uri: selectedPhoto.uri }}
+                                resizeMode="cover"
+                                style={styles.photoImageBackdrop}
+                            />
+                            <View pointerEvents="none" style={styles.photoImageBackdropScrim} />
+                            <View style={styles.photoImageStage}>
+                                <QuickSchedulePhotoScanEffect
+                                    active={isPhotoRecognizing}
+                                    accessibilityLabel={isPhotoRecognizing
+                                        ? "사진에서 일정 문장 인식 중"
+                                        : undefined}
+                                    borderRadius={14}
+                                    style={[styles.photoScanFrame, photoScanFrameStyle]}
+                                >
+                                    <Image
+                                        source={{ uri: selectedPhoto.uri }}
+                                        resizeMode="contain"
+                                        style={styles.photoImage}
+                                    />
+                                </QuickSchedulePhotoScanEffect>
+                            </View>
+
+                            <View
+                                pointerEvents="none"
+                                testID="quick-schedule-photo-status"
+                                accessible={!isPhotoRecognizing}
+                                accessibilityLabel={!isPhotoRecognizing
+                                    ? photoStatusAccessibilityLabel
+                                    : undefined}
+                                accessibilityLiveRegion={photoRecognitionState === "ready"
+                                    || photoRecognitionState === "error"
+                                    ? "polite"
+                                    : undefined}
+                                style={[
+                                    styles.photoStatusPill,
+                                    { backgroundColor: photoStatusBackground },
+                                ]}
+                            >
+                                {isPhotoRecognizing ? (
+                                    <ActivityIndicator color={photoStatusColor} size="small" />
+                                ) : (
+                                    <Ionicons
+                                        accessible={false}
+                                        name={photoStatusIcon}
+                                        size={15}
+                                        color={photoStatusColor}
+                                    />
+                                )}
+                                <Text numberOfLines={1} style={[styles.photoStatusText, { color: photoStatusColor }]}>
+                                    {photoStatusText}
+                                </Text>
+                            </View>
+
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="선택한 사진 변경"
                                 accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
                                 disabled={submitting || isVoiceFinalizing}
                                 onPress={() => void openPhotoActionSheet()}
+                                hitSlop={4}
                                 style={({ pressed }) => [
-                                    styles.photoImageStage,
-                                    { opacity: pressed ? 0.86 : 1 },
+                                    styles.photoChangeButton,
+                                    { opacity: pressed ? 0.72 : 1 },
                                 ]}
                             >
-                                <QuickSchedulePhotoScanEffect
-                                    active={isPhotoRecognizing}
-                                    borderRadius={10}
-                                    style={[styles.photoScanFrame, photoScanFrameStyle]}
-                                >
-                                    <Image
-                                        source={{ uri: selectedPhoto.uri }}
-                                        resizeMode="cover"
-                                        style={styles.photoImage}
-                                    />
-                                </QuickSchedulePhotoScanEffect>
+                                <Ionicons accessible={false} name="images-outline" size={15} color="#FFFFFF" />
+                                <Text style={styles.photoChangeButtonText}>사진 바꾸기</Text>
                             </Pressable>
-                            {isPhotoRecognizing ? (
-                                <View
-                                    pointerEvents="none"
-                                    accessible
-                                    accessibilityRole="progressbar"
-                                    accessibilityLabel="사진에서 일정 문장 인식 중"
-                                    accessibilityLiveRegion="polite"
-                                    accessibilityState={{ busy: true }}
-                                    accessibilityValue={{ text: "진행 중" }}
-                                    style={styles.photoImageMetaRow}
-                                >
-                                    <>
-                                        <ActivityIndicator color="#FFFFFF" size="small" />
-                                        <Text numberOfLines={1} style={styles.photoImageFile}>사진에서 일정 정보를 읽고 있어요</Text>
-                                    </>
-                                </View>
-                            ) : (
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="선택한 사진 정보 및 변경"
-                                    accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
-                                    disabled={submitting || isVoiceFinalizing}
-                                    onPress={() => void openPhotoActionSheet()}
-                                    style={({ pressed }) => [
-                                        styles.photoImageMetaRow,
-                                        { opacity: pressed ? 0.78 : 1 },
-                                    ]}
-                                >
-                                    <>
-                                        <Text numberOfLines={1} style={styles.photoImageFile}>
-                                            {photoLabel ?? "선택한 사진"}
-                                        </Text>
-                                        <Text style={styles.photoChangeHint}>변경</Text>
-                                    </>
-                                </Pressable>
-                            )}
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="선택한 사진 제거"
@@ -2590,13 +2753,14 @@ export default function QuickScheduleModal({
                                     { opacity: pressed ? 0.72 : 1 },
                                 ]}
                             >
-                                <Ionicons accessible={false} name="close" size={16} color="#fff" />
+                                <Ionicons accessible={false} name="trash-outline" size={17} color="#FFFFFF" />
                             </Pressable>
                         </View>
                     ) : (
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel="사진 선택"
+                            accessibilityHint="사진 촬영 또는 사진 앱 선택 메뉴가 열립니다"
                             accessibilityState={{ disabled: submitting || isVoiceFinalizing }}
                             disabled={submitting || isVoiceFinalizing}
                             onPress={() => void openPhotoActionSheet()}
@@ -2622,117 +2786,161 @@ export default function QuickScheduleModal({
                         </Pressable>
                     )}
 
-                    <View style={styles.photoActions}>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="카메라로 일정 사진 촬영"
-                            disabled={submitting || isVoiceFinalizing}
-                            onPress={() => void capturePhoto()}
-                            style={({ pressed }) => [
-                                styles.photoSourceButton,
-                                {
-                                    backgroundColor: mediaPanelBackground,
-                                    borderColor: colors.border,
-                                    opacity: pressed ? 0.72 : 1,
-                                },
-                            ]}
-                        >
-                            <Ionicons accessible={false} name="camera-outline" size={17} color={BLUE} />
-                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 촬영</Text>
-                        </Pressable>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="사진 앱에서 일정 사진 선택"
-                            disabled={submitting || isVoiceFinalizing}
-                            onPress={() => void pickPhotoFromLibrary()}
-                            style={({ pressed }) => [
-                                styles.photoSourceButton,
-                                {
-                                    backgroundColor: mediaPanelBackground,
-                                    borderColor: colors.border,
-                                    opacity: pressed ? 0.72 : 1,
-                                },
-                            ]}
-                        >
-                            <Ionicons accessible={false} name="images-outline" size={17} color={BLUE} />
-                            <Text style={[styles.photoSourceButtonText, { color: colors.textPrimary }]}>사진 선택</Text>
-                        </Pressable>
-                    </View>
-
                     {selectedPhoto && (
                         <View
                             style={[
                                 styles.photoTranscriptWrap,
                                 {
-                                    backgroundColor: inputBackground,
+                                    backgroundColor: mode === "dark" ? "#151821" : "#F8FAFD",
                                     borderColor: colors.inputBorder,
                                 },
                             ]}
                         >
-                        <View style={styles.photoTranscriptHeader}>
-                            <Text style={[styles.photoTranscriptLabel, { color: colors.textSecondary }]}>
-                                인식된 문장
-                            </Text>
-                            {photoTranscriptTruncated ? (
-                                <Text style={[styles.photoConfidence, styles.truncatedRecognitionText]}>
-                                    일정 관련 문장 우선 표시
-                                </Text>
-                            ) : photoRecognitionConfidence !== undefined && (
-                                <Text style={[styles.photoConfidence, { color: colors.textSecondary }]}>
-                                    인식 {Math.round(photoRecognitionConfidence * 100)}%
-                                </Text>
-                            )}
-                        </View>
-
-                        {photoRecognitionError && !isPhotoRecognizing && (
-                            <View style={styles.photoRecognitionErrorWrap}>
-                                <Text style={styles.photoRecognitionErrorText}>{photoRecognitionError}</Text>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="사진 텍스트 다시 인식"
-                                    onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
-                                    style={({ pressed }) => [
-                                        styles.photoRecognitionRetry,
-                                        { opacity: pressed ? 0.72 : 1 },
+                            <View style={styles.photoTranscriptHeader}>
+                                <View
+                                    style={[
+                                        styles.photoResultIcon,
+                                        {
+                                            backgroundColor: isPhotoRecognizing
+                                                ? "rgba(36,107,254,0.12)"
+                                                : photoRecognitionError
+                                                    ? "rgba(239,68,68,0.10)"
+                                                    : "rgba(16,185,129,0.10)",
+                                        },
                                     ]}
                                 >
-                                    <Ionicons accessible={false} name="refresh" size={14} color={BLUE} />
-                                    <Text style={styles.photoRecognitionRetryText}>다시 인식</Text>
-                                </Pressable>
+                                    <Ionicons
+                                        accessible={false}
+                                        name={isPhotoRecognizing
+                                            ? "scan-outline"
+                                            : photoRecognitionError
+                                                ? "alert-circle-outline"
+                                                : "document-text-outline"}
+                                        size={18}
+                                        color={isPhotoRecognizing
+                                            ? BLUE
+                                            : photoRecognitionError
+                                                ? "#D94A4A"
+                                                : "#0D9F6E"}
+                                    />
+                                </View>
+                                <View style={styles.photoResultTitleWrap}>
+                                    <Text
+                                        style={[styles.photoTranscriptLabel, { color: colors.textPrimary }]}
+                                    >
+                                        {isPhotoRecognizing ? "사진을 읽고 있어요" : "읽어온 내용"}
+                                    </Text>
+                                    {isPhotoRecognizing && (
+                                        <Text
+                                            style={[styles.photoResultMeta, { color: colors.textSecondary }]}
+                                        >
+                                            날짜·시간·장소를 찾고 있어요
+                                        </Text>
+                                    )}
+                                </View>
+                                {photoTranscriptTruncated ? (
+                                    <View style={styles.truncatedRecognitionBadge}>
+                                        <Text style={[styles.photoConfidence, styles.truncatedRecognitionText]}>
+                                            일부만 표시
+                                        </Text>
+                                    </View>
+                                ) : photoNeedsReview && (
+                                    <View style={styles.photoReviewBadge}>
+                                        <Text style={styles.photoReviewBadgeText}>확인 필요</Text>
+                                    </View>
+                                )}
                             </View>
-                        )}
-                        <TextInput
-                            accessibilityLabel="사진 OCR 인식 텍스트"
-                            editable={!submitting && !isPhotoRecognizing}
-                            multiline
-                            maxLength={QUICK_TEXT_LIMIT}
-                            value={photoTranscript}
-                            onChangeText={(value) => {
-                                setPhotoTranscript(value);
-                                setPhotoTranscriptTruncated(false);
-                                setPhotoRecognitionConfidence(undefined);
-                                setPhotoRecognitionError("");
-                            }}
-                            placeholder={isPhotoRecognizing
-                                ? "인식 결과가 여기에 표시됩니다."
-                                : photoRecognitionError
-                                    ? "인식하지 못한 내용을 직접 입력해 주세요."
-                                    : "인식된 문장을 확인하고 수정할 수 있어요."}
-                            placeholderTextColor={colors.inputPlaceholder}
-                            selectionColor={BLUE}
-                            style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
-                        />
 
-                        {!isPhotoRecognizing
-                            && photoRecognitionConfidence !== undefined
-                            && photoRecognitionConfidence < LOW_RECOGNITION_CONFIDENCE && (
-                            <View style={styles.lowConfidenceNotice}>
-                                <Ionicons accessible={false} name="alert-circle-outline" size={14} color="#F59E0B" />
-                                <Text style={styles.lowConfidenceNoticeText}>
-                                    인식이 불확실해요. 날짜·시간·장소를 확인해 주세요.
-                                </Text>
-                            </View>
-                        )}
+                            {isPhotoRecognizing ? (
+                                <View
+                                    pointerEvents="none"
+                                    testID="quick-schedule-photo-reading-placeholder"
+                                    style={styles.photoReadingPlaceholder}
+                                >
+                                    <View style={[styles.photoReadingLine, styles.photoReadingLineLong]} />
+                                    <View style={[styles.photoReadingLine, styles.photoReadingLineMedium]} />
+                                    <View style={[styles.photoReadingLine, styles.photoReadingLineShort]} />
+                                </View>
+                            ) : (
+                                <>
+                                    {photoRecognitionError && (
+                                        <View
+                                            style={[
+                                                styles.photoRecognitionErrorWrap,
+                                                {
+                                                    backgroundColor: photoErrorSurface,
+                                                    borderColor: photoErrorBorder,
+                                                },
+                                            ]}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.photoRecognitionErrorTitle,
+                                                    { color: photoErrorTitleColor },
+                                                ]}
+                                            >
+                                                일정 내용을 찾지 못했어요
+                                            </Text>
+                                            <Text
+                                                style={[
+                                                    styles.photoRecognitionErrorText,
+                                                    { color: photoErrorTextColor },
+                                                ]}
+                                            >
+                                                날짜나 시간이 선명한 사진으로 바꾸거나 직접 입력해 주세요.
+                                            </Text>
+                                            <Pressable
+                                                accessibilityRole="button"
+                                                accessibilityLabel="사진 텍스트 다시 인식"
+                                                onPress={() => setPhotoRecognitionAttempt((current) => current + 1)}
+                                                style={({ pressed }) => [
+                                                    styles.photoRecognitionRetry,
+                                                    { opacity: pressed ? 0.72 : 1 },
+                                                ]}
+                                            >
+                                                <Ionicons accessible={false} name="refresh" size={15} color={BLUE} />
+                                                <Text style={styles.photoRecognitionRetryText}>다시 읽기</Text>
+                                            </Pressable>
+                                        </View>
+                                    )}
+
+                                    <View style={styles.photoTranscriptInputWrap}>
+                                        <Text
+                                            style={[styles.photoTranscriptInputLabel, { color: colors.textSecondary }]}
+                                        >
+                                            {photoRecognitionError ? "직접 입력" : "일정 문장"}
+                                        </Text>
+                                        <TextInput
+                                            accessibilityLabel="사진 OCR 인식 텍스트"
+                                            editable={!submitting}
+                                            multiline
+                                            maxLength={QUICK_TEXT_LIMIT}
+                                            value={photoTranscript}
+                                            onChangeText={(value) => {
+                                                setPhotoTranscript(value);
+                                                setPhotoTranscriptTruncated(false);
+                                                setPhotoRecognitionConfidence(undefined);
+                                                setPhotoRecognitionError("");
+                                            }}
+                                            placeholder={photoRecognitionError
+                                                ? "인식하지 못한 내용을 직접 입력해 주세요."
+                                                : "인식된 문장을 확인하고 수정할 수 있어요."}
+                                            placeholderTextColor={colors.inputPlaceholder}
+                                            selectionColor={BLUE}
+                                            style={[styles.photoTranscriptInput, { color: colors.textPrimary }]}
+                                        />
+                                    </View>
+
+                                    {photoNeedsReview && (
+                                        <View style={styles.lowConfidenceNotice}>
+                                            <Ionicons accessible={false} name="alert-circle-outline" size={14} color="#F59E0B" />
+                                            <Text style={styles.lowConfidenceNoticeText}>
+                                                인식이 불확실해요. 날짜·시간·장소를 확인해 주세요.
+                                            </Text>
+                                        </View>
+                                    )}
+                                </>
+                            )}
                         </View>
                     )}
                     </View>
@@ -2748,7 +2956,6 @@ export default function QuickScheduleModal({
                             },
                         ]}
                     >
-                    <View style={styles.voiceControlRow}>
                         <Pressable
                             accessibilityRole="button"
                             accessibilityLabel={recorderState.isRecording
@@ -2767,105 +2974,119 @@ export default function QuickScheduleModal({
                             }}
                             disabled={submitting || isVoiceFinalizing}
                             style={({ pressed }) => [
-                                styles.voiceRecordButton,
+                                styles.voiceRecordControl,
+                                { opacity: pressed ? 0.78 : isVoiceFinalizing ? 0.5 : 1 },
+                            ]}
+                        >
+                            <View style={styles.voiceOrbWrap}>
+                                <VoiceSpectrumHalo energy={voiceSpectrumEnergy} />
+                                <View
+                                    pointerEvents="none"
+                                    testID="quick-schedule-voice-spectrum"
+                                    style={styles.voiceSpectrum}
+                                >
+                                    {VOICE_SPECTRUM_BARS.map((barIndex) => {
+                                        const angle = `${(360 / VOICE_SPECTRUM_BAR_COUNT) * barIndex}deg`;
+                                        const historyIndex = barIndex < VOICE_SPECTRUM_SAMPLE_COUNT
+                                            ? barIndex
+                                            : VOICE_SPECTRUM_BAR_COUNT - 1 - barIndex;
+                                        const texture = 0.78 + ((Math.sin(barIndex * 1.73) + 1) / 2) * 0.22;
+                                        const level = recorderState.isRecording
+                                            ? (voiceMeterHistory[historyIndex] ?? 0) * texture
+                                            : 0;
+                                        const colorIndex = Math.min(
+                                            VOICE_SPECTRUM_COLORS.length - 1,
+                                            Math.floor(
+                                                historyIndex
+                                                / VOICE_SPECTRUM_SAMPLE_COUNT
+                                                * VOICE_SPECTRUM_COLORS.length
+                                            )
+                                        );
+
+                                        return (
+                                            <VoiceSpectrumBar
+                                                key={barIndex}
+                                                angle={angle}
+                                                color={VOICE_SPECTRUM_COLORS[colorIndex]}
+                                                level={level}
+                                            />
+                                        );
+                                    })}
+                                </View>
+                                <View
+                                    style={[
+                                        styles.voiceOrb,
+                                        {
+                                            backgroundColor: recorderState.isRecording ? BLUE : colors.surface,
+                                            borderColor: recorderState.isRecording || voiceTranscript.trim() || voiceUri
+                                                ? BLUE
+                                                : colors.border,
+                                        },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        accessible={false}
+                                        name={recorderState.isRecording
+                                            ? "stop"
+                                            : voiceTranscript.trim() || voiceUri
+                                                ? "checkmark"
+                                                : "mic-outline"}
+                                        size={30}
+                                        color={recorderState.isRecording ? "#FFFFFF" : BLUE}
+                                    />
+                                </View>
+                            </View>
+                            <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
+                                {voiceControlTitle}
+                            </Text>
+                            <Text numberOfLines={2} style={[styles.voiceMeta, { color: colors.textSecondary }]}>
+                                {voiceControlMeta}
+                            </Text>
+                        </Pressable>
+
+                        <View
+                            style={[
+                                styles.voiceTranscriptWrap,
                                 {
-                                    backgroundColor: recorderState.isRecording ? BLUE : colors.surface,
-                                    borderColor: recorderState.isRecording ? BLUE : colors.border,
-                                    opacity: pressed ? 0.74 : isVoiceFinalizing ? 0.5 : 1,
+                                    backgroundColor: inputBackground,
+                                    borderColor: colors.inputBorder,
                                 },
                             ]}
                         >
-                            <Ionicons
-                                accessible={false}
-                                name={recorderState.isRecording ? "stop" : "mic-outline"}
-                                size={23}
-                                color={recorderState.isRecording ? "#FFFFFF" : BLUE}
-                            />
-                        </Pressable>
-                        <View style={styles.voiceStatusTextWrap}>
-                            <Text style={[styles.voiceTitle, { color: colors.textPrimary }]}>
-                                {recorderState.isRecording
-                                    ? "듣고 있어요"
-                                    : isVoiceFinalizing
-                                        ? "음성을 정리하고 있어요"
-                                        : voiceTranscript.trim()
-                                            ? "인식 완료"
-                                            : voiceUri
-                                                ? "녹음 완료"
-                                                : "말하기 시작"}
-                            </Text>
-                            <Text numberOfLines={2} style={[styles.voiceMeta, { color: colors.textSecondary }]}>
-                                {voiceStatusMessage || (
-                                    recorderState.isRecording || isVoiceFinalizing || voiceTranscript.trim() || voiceUri
-                                        ? voiceDurationText
-                                        : "버튼을 누르면 실시간 텍스트가 표시됩니다."
+                            <View style={styles.voiceTranscriptHeader}>
+                                <Text style={[styles.voiceTranscriptLabel, { color: colors.textSecondary }]}>말한 내용</Text>
+                                {voiceTranscriptTruncated ? (
+                                    <Text style={[styles.voiceConfidence, styles.truncatedRecognitionText]}>
+                                        앞 300자만 표시
+                                    </Text>
+                                ) : voiceRecognitionConfidence !== undefined && (
+                                    <Text style={[styles.voiceConfidence, { color: colors.textSecondary }]}>
+                                        인식 {Math.round(voiceRecognitionConfidence * 100)}%
+                                    </Text>
                                 )}
-                            </Text>
-                        </View>
-                    </View>
-
-                    <View
-                        pointerEvents="none"
-                        accessible={false}
-                        style={[
-                            styles.voiceWaveform,
-                            { backgroundColor: inputBackground, borderColor: colors.inputBorder },
-                        ]}
-                    >
-                        {voiceMeterHistory.map((level, index) => (
-                            <VoiceWaveformBar
-                                key={index}
-                                level={recorderState.isRecording ? level : 0}
-                                active={recorderState.isRecording}
+                            </View>
+                            <TextInput
+                                accessibilityLabel="실시간 음성 인식 텍스트"
+                                editable={!submitting && !recorderState.isRecording && !isVoiceFinalizing}
+                                multiline
+                                maxLength={QUICK_TEXT_LIMIT}
+                                value={voiceTranscript}
+                                onChangeText={(value) => {
+                                    setVoiceTranscript(value);
+                                    setVoiceTranscriptTruncated(false);
+                                    setVoiceRecognitionConfidence(undefined);
+                                    setVoiceStatusMessage("");
+                                }}
+                                placeholder={recorderState.isRecording
+                                    ? "말한 내용이 여기에 표시됩니다."
+                                    : voiceUri
+                                        ? "필요하면 내용을 직접 적어 주세요."
+                                        : "직접 입력해도 됩니다."}
+                                placeholderTextColor={colors.inputPlaceholder}
+                                selectionColor={BLUE}
+                                style={[styles.voiceTranscriptInput, { color: colors.textPrimary }]}
                             />
-                        ))}
-                    </View>
-
-                    <View
-                        style={[
-                            styles.voiceTranscriptWrap,
-                            {
-                                backgroundColor: inputBackground,
-                                borderColor: colors.inputBorder,
-                            },
-                        ]}
-                    >
-                        <View style={styles.voiceTranscriptHeader}>
-                            <Text style={[styles.voiceTranscriptLabel, { color: colors.textSecondary }]}>
-                                인식된 문장
-                            </Text>
-                            {voiceTranscriptTruncated ? (
-                                <Text style={[styles.voiceConfidence, styles.truncatedRecognitionText]}>
-                                    앞 300자만 표시
-                                </Text>
-                            ) : voiceRecognitionConfidence !== undefined && (
-                                <Text style={[styles.voiceConfidence, { color: colors.textSecondary }]}>
-                                    인식 {Math.round(voiceRecognitionConfidence * 100)}%
-                                </Text>
-                            )}
                         </View>
-                        <TextInput
-                            accessibilityLabel="실시간 음성 인식 텍스트"
-                            editable={!submitting && !recorderState.isRecording && !isVoiceFinalizing}
-                            multiline
-                            maxLength={QUICK_TEXT_LIMIT}
-                            value={voiceTranscript}
-                            onChangeText={(value) => {
-                                setVoiceTranscript(value);
-                                setVoiceTranscriptTruncated(false);
-                                setVoiceRecognitionConfidence(undefined);
-                                setVoiceStatusMessage("");
-                            }}
-                            placeholder={recorderState.isRecording
-                                ? "말씀해 주세요…"
-                                : voiceUri
-                                    ? "일정 미리보기를 누르면 녹음을 인식합니다."
-                                    : "인식 후 문장을 직접 수정할 수 있어요."}
-                            placeholderTextColor={colors.inputPlaceholder}
-                            selectionColor={BLUE}
-                            style={[styles.voiceTranscriptInput, { color: colors.textPrimary }]}
-                        />
-                    </View>
                     </View>
                 )}
             </ScrollView>
@@ -3833,47 +4054,79 @@ const styles = StyleSheet.create({
         marginBottom: 14,
     },
     photoPreviewButton: {
-        height: 178,
-        borderRadius: 15,
+        height: 190,
+        borderRadius: 18,
         borderWidth: 1,
         overflow: "hidden",
     },
+    photoImageBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        width: "100%",
+        height: "100%",
+        opacity: 0.32,
+        transform: [{ scale: 1.08 }],
+    },
+    photoImageBackdropScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: "rgba(5,10,18,0.50)",
+    },
     photoImageStage: {
-        height: PHOTO_PREVIEW_STAGE_HEIGHT,
+        height: "100%",
         alignItems: "center",
         justifyContent: "center",
+        zIndex: 1,
     },
     photoScanFrame: {
         alignSelf: "center",
+        backgroundColor: "#070B13",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.16)",
     },
     photoImage: {
         width: "100%",
         height: "100%",
     },
-    photoImageMetaRow: {
+    photoStatusPill: {
         position: "absolute",
-        right: 0,
-        bottom: 0,
-        left: 0,
+        top: 12,
+        left: 12,
+        maxWidth: 186,
         minHeight: 34,
+        borderRadius: 17,
         flexDirection: "row",
         alignItems: "center",
-        gap: 10,
+        gap: 7,
         paddingHorizontal: 11,
-        backgroundColor: "rgba(0,0,0,0.66)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.16)",
+        zIndex: 3,
     },
-    photoImageFile: {
-        flex: 1,
+    photoStatusText: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    photoChangeButton: {
+        position: "absolute",
+        right: 12,
+        bottom: 12,
+        minHeight: 44,
+        borderRadius: 22,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        paddingHorizontal: 13,
+        backgroundColor: "rgba(8,13,22,0.80)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.18)",
+        zIndex: 3,
+    },
+    photoChangeButtonText: {
         color: "#FFFFFF",
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "600",
-    },
-    photoChangeHint: {
-        color: "rgba(255,255,255,0.78)",
-        fontSize: 11,
-        lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "800",
     },
     photoEmptyPanel: {
         minHeight: 144,
@@ -3909,91 +4162,153 @@ const styles = StyleSheet.create({
         position: "absolute",
         top: 12,
         right: 12,
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        width: 38,
+        height: 38,
+        borderRadius: 19,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "rgba(0,0,0,0.52)",
-    },
-    photoActions: {
-        width: "100%",
-        flexDirection: "row",
-        gap: 9,
-        marginTop: 10,
-    },
-    photoSourceButton: {
-        flex: 1,
-        minHeight: 42,
-        borderRadius: 12,
-        borderWidth: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 7,
-    },
-    photoSourceButtonText: {
-        fontSize: 13,
-        fontWeight: "700",
+        backgroundColor: "rgba(8,13,22,0.78)",
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: "rgba(255,255,255,0.18)",
+        zIndex: 3,
     },
     photoTranscriptWrap: {
-        minHeight: 112,
-        marginTop: 10,
-        borderRadius: 12,
+        minHeight: 128,
+        marginTop: 12,
+        borderRadius: 16,
         borderWidth: 1,
-        paddingHorizontal: 12,
-        paddingTop: 9,
-        paddingBottom: 9,
+        paddingHorizontal: 13,
+        paddingTop: 12,
+        paddingBottom: 12,
     },
     photoTranscriptHeader: {
-        minHeight: 18,
+        minHeight: 38,
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
-        gap: 8,
+        gap: 10,
+    },
+    photoResultIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    photoResultTitleWrap: {
+        flex: 1,
+        minWidth: 0,
     },
     photoTranscriptLabel: {
-        fontSize: 11,
-        lineHeight: 15,
-        fontWeight: "700",
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    photoResultMeta: {
+        marginTop: 1,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "600",
     },
     photoConfidence: {
-        fontSize: 11,
-        lineHeight: 15,
-        fontWeight: "700",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+    },
+    truncatedRecognitionBadge: {
+        minHeight: 26,
+        borderRadius: 13,
+        justifyContent: "center",
+        paddingHorizontal: 9,
+        backgroundColor: "rgba(245,158,11,0.11)",
     },
     truncatedRecognitionText: {
         color: "#F59E0B",
     },
+    photoReviewBadge: {
+        minHeight: 26,
+        borderRadius: 13,
+        justifyContent: "center",
+        paddingHorizontal: 9,
+        backgroundColor: "rgba(245,158,11,0.12)",
+    },
+    photoReviewBadgeText: {
+        color: "#D97706",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+    },
+    photoReadingPlaceholder: {
+        minHeight: 72,
+        justifyContent: "center",
+        gap: 9,
+        marginTop: 10,
+        paddingHorizontal: 3,
+    },
+    photoReadingLine: {
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: "rgba(126,145,171,0.14)",
+    },
+    photoReadingLineLong: {
+        width: "92%",
+    },
+    photoReadingLineMedium: {
+        width: "72%",
+    },
+    photoReadingLineShort: {
+        width: "46%",
+    },
+    photoTranscriptInputWrap: {
+        marginTop: 10,
+        paddingTop: 9,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: "rgba(126,145,171,0.22)",
+    },
+    photoTranscriptInputLabel: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+    },
     photoTranscriptInput: {
-        minHeight: 60,
+        minHeight: 54,
         maxHeight: 92,
         padding: 0,
-        marginTop: 4,
+        marginTop: 5,
         fontSize: 14,
         lineHeight: 20,
         fontWeight: "400",
         textAlignVertical: "top",
     },
     photoRecognitionErrorWrap: {
-        minHeight: 56,
+        marginTop: 10,
         alignItems: "flex-start",
         justifyContent: "center",
-        gap: 8,
+        gap: 4,
+        borderRadius: 13,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 11,
+        paddingTop: 10,
+        paddingBottom: 9,
     },
-    photoRecognitionErrorText: {
-        color: "#EF4444",
+    photoRecognitionErrorTitle: {
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "700",
+        fontWeight: "800",
+    },
+    photoRecognitionErrorText: {
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "600",
     },
     photoRecognitionRetry: {
-        minHeight: 30,
-        borderRadius: 12,
+        minHeight: 44,
+        borderRadius: 14,
         flexDirection: "row",
         alignItems: "center",
+        justifyContent: "center",
         gap: 5,
-        paddingHorizontal: 9,
+        marginTop: 4,
+        paddingHorizontal: 12,
         backgroundColor: "rgba(36,107,254,0.12)",
     },
     photoRecognitionRetryText: {
@@ -4018,7 +4333,7 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     voicePanel: {
-        minHeight: 248,
+        minHeight: 322,
         borderRadius: 15,
         borderWidth: 1,
         paddingHorizontal: 13,
@@ -4026,50 +4341,85 @@ const styles = StyleSheet.create({
         marginBottom: 14,
         overflow: "hidden",
     },
-    voiceControlRow: {
-        minHeight: 52,
-        flexDirection: "row",
+    voiceRecordControl: {
+        width: "100%",
         alignItems: "center",
-        gap: 12,
     },
-    voiceRecordButton: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        borderWidth: 1,
+    voiceOrbWrap: {
+        width: 150,
+        height: 146,
         alignItems: "center",
         justifyContent: "center",
     },
-    voiceStatusTextWrap: {
-        flex: 1,
-        minWidth: 0,
+    voiceSpectrum: {
+        position: "absolute",
+        width: VOICE_SPECTRUM_SIZE,
+        height: VOICE_SPECTRUM_SIZE,
+        borderRadius: VOICE_SPECTRUM_SIZE / 2,
     },
-    voiceWaveform: {
-        height: 58,
-        borderRadius: 12,
+    voiceSpectrumHaloOuter: {
+        position: "absolute",
+        width: 112,
+        height: 112,
+        borderRadius: 56,
         borderWidth: 1,
-        flexDirection: "row",
+        borderColor: "rgba(88,215,247,0.48)",
+    },
+    voiceSpectrumHaloInner: {
+        position: "absolute",
+        width: 88,
+        height: 88,
+        borderRadius: 44,
+        borderWidth: 1,
+        borderColor: "rgba(36,107,254,0.38)",
+        backgroundColor: "rgba(36,107,254,0.13)",
+        shadowColor: BLUE,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.24,
+        shadowRadius: 20,
+    },
+    voiceSpectrumBarSlot: {
+        position: "absolute",
+        left: VOICE_SPECTRUM_SIZE / 2 - 1,
+        top: 0,
+        width: 2,
+        height: VOICE_SPECTRUM_SIZE,
+        alignItems: "center",
+    },
+    voiceSpectrumBar: {
+        position: "absolute",
+        bottom: VOICE_SPECTRUM_SIZE / 2 + VOICE_SPECTRUM_INNER_RADIUS,
+        width: 2,
+        minHeight: 3,
+        borderRadius: 1,
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+    },
+    voiceOrb: {
+        width: 62,
+        height: 62,
+        borderRadius: 31,
+        borderWidth: 1,
         alignItems: "center",
         justifyContent: "center",
-        gap: 5,
-        marginTop: 12,
-        paddingHorizontal: 10,
-    },
-    voiceWaveformBar: {
-        width: 3,
-        minHeight: 4,
-        borderRadius: 1.5,
+        shadowColor: BLUE,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.14,
+        shadowRadius: 18,
     },
     voiceTitle: {
-        fontSize: 15,
-        lineHeight: 20,
+        fontSize: 16,
+        lineHeight: 21,
         fontWeight: "800",
+        textAlign: "center",
     },
     voiceMeta: {
         marginTop: 3,
         fontSize: 12,
         lineHeight: 17,
         fontWeight: "500",
+        textAlign: "center",
     },
     voiceTranscriptWrap: {
         minHeight: 96,
