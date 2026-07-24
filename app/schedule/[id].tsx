@@ -19,6 +19,7 @@ import {
 } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -28,7 +29,6 @@ import {
     sendScheduleDepartureNudge,
     type ScheduleDepartureStatus,
 } from "../../src/api/schedule";
-import { ApiResponseError } from "../../src/api/response";
 import {
     getScheduleTravelPlan,
     upsertMyScheduleTravelPlan,
@@ -86,7 +86,12 @@ import {
 import { isRouteSetupEntryRequested } from "../../src/modules/schedule/routeSetupNavigation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
-import { getAuthMember } from "../../src/modules/auth/authStorage";
+import {
+    getAuthMember,
+    getAuthSessionEpoch,
+} from "../../src/modules/auth/authStorage";
+import { createAsyncAuthGuard } from "../../src/modules/auth/asyncAuthGuard";
+import { createAuthEpochAbortController } from "../../src/modules/auth/authEpochAbortController";
 import BrandedLoader, { BrandedLoadingState } from "../../src/ui/BrandedLoader";
 import {
     buildDepartureParticipantPresentations,
@@ -102,6 +107,7 @@ import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/sche
 import {
     getCachedScheduleDepartureStatus,
     invalidateScheduleDepartureStatus,
+    removeCachedScheduleDepartureStatus,
     setCachedScheduleDepartureStatus,
     subscribeScheduleDepartureStatusInvalidation,
 } from "../../src/modules/schedule/departureStatusCache";
@@ -122,6 +128,20 @@ import {
     type NotificationPermissionState,
 } from "../../src/modules/notification/notificationPermission";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
+import {
+    emitScheduleDepartureMutation,
+    subscribeScheduleDepartureMutation,
+} from "../../src/modules/schedule/scheduleDepartureMutationEvents";
+import {
+    removeCalendarScheduleCacheItem,
+    upsertCalendarScheduleCacheItem,
+} from "../../src/modules/schedule/calendarScheduleCache";
+import { getMinimumTouchTarget } from "../../src/ui/minimumTouchTarget";
+import {
+    getScheduleDetailUnavailableReason,
+    getDepartureStatusFailureMode,
+    type ScheduleDetailUnavailableReason,
+} from "../../src/modules/schedule/scheduleDetailAccess";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -138,6 +158,7 @@ const SECOND_MS = 1000;
 const DEPARTURE_COUNTDOWN_REFRESH_MS = SECOND_MS;
 const APP_ACCENT_BLUE = "#2979FF";
 const SHEET_HANDLE_HEIGHT = 32;
+const MIN_TOUCH_TARGET = getMinimumTouchTarget(Platform.OS);
 
 async function openDeviceLocationSettings(preferServiceSettings = false) {
     try {
@@ -170,11 +191,6 @@ type DepartureDisplayState =
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
-
-function isDepartureStatusApiUnavailable(error: unknown): boolean {
-    return error instanceof ApiResponseError &&
-        (error.status === 404 || error.status === 405 || error.status === 501);
-}
 
 function mapCoordFromUnknown(value: unknown): { latitude: number; longitude: number } | undefined {
     if (!value || typeof value !== "object") return undefined;
@@ -279,6 +295,7 @@ function ScheduleDetail() {
         openRouteSetup?: string | string[];
     }>();
     const pathname = usePathname();
+    const isFocused = useIsFocused();
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
@@ -293,6 +310,9 @@ function ScheduleDetail() {
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [retryKey, setRetryKey] = useState(0);
+    const [mainDetailAuthorized, setMainDetailAuthorized] = useState(false);
+    const [detailUnavailableReason, setDetailUnavailableReason] =
+        useState<ScheduleDetailUnavailableReason | null>(null);
     const [departureStatus, setDepartureStatus] = useState<ScheduleDepartureStatus>();
     const [departureStatusLoadState, setDepartureStatusLoadState] =
         useState<DepartureStatusLoadState>("loading");
@@ -304,10 +324,17 @@ function ScheduleDetail() {
         useState<NotificationPermissionState>("unavailable");
     const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
     const departureStatusRequestRef = useRef(0);
+    const mainDetailRequestRef = useRef(0);
+    const departureStatusAbortControllerRef = useRef<AbortController | null>(null);
+    const mainDetailAbortControllerRef = useRef<AbortController | null>(null);
     const departureRefreshControllerRef = useRef<ReturnType<
         typeof createDepartureStatusRefreshController
     > | null>(null);
     const appStateRef = useRef(AppState.currentState);
+    const asyncAuthGuardRef = useRef(createAsyncAuthGuard(getAuthSessionEpoch));
+    const mutationAbortControllersRef = useRef(new Set<ReturnType<
+        typeof createAuthEpochAbortController
+    >>());
     if (!departureRefreshControllerRef.current) {
         departureRefreshControllerRef.current = createDepartureStatusRefreshController();
     }
@@ -386,6 +413,19 @@ function ScheduleDetail() {
     const departureDisplayState: DepartureDisplayState = item
         ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
         : { kind: "status", text: "", tone: "default" };
+    const departureLifecycleForPolling = item
+        ? getDepartureLifecyclePresentation({
+            recommendedDepartureAt: recommendedDepartureAt?.toISOString(),
+            scheduleStartAt: item.startAt,
+            scheduleEndAt: item.endAt,
+            scheduleHasEndTime: item.hasEndTime !== false,
+            scheduleAllDay: item.allDay,
+            departedAt: currentMemberDepartedAt,
+            timeZone: departureStatus?.timeZone,
+            nowMs,
+        })
+        : undefined;
+    const departurePollingPhase = departureLifecycleForPolling?.phase;
 
     useEffect(() => {
         const intervalId = setInterval(() => {
@@ -398,11 +438,15 @@ function ScheduleDetail() {
     }, []);
 
     useEffect(() => {
+        asyncAuthGuardRef.current.invalidate();
+        departureRefreshControllerRef.current?.reset();
         currentLocationRequestGuardRef.current.invalidate();
         currentLocationPendingRef.current = false;
         setDepartureStatus(undefined);
         setDepartureStatusLoadState("loading");
         setDepartureStatusError(null);
+        setMainDetailAuthorized(false);
+        setDetailUnavailableReason(null);
         setParticipantsExpanded(false);
         setExpandedContentHeight(0);
         setCurrentLocationCoord(undefined);
@@ -425,7 +469,8 @@ function ScheduleDetail() {
         if (
             !id ||
             departureStatusScheduleId !== id ||
-            departureCacheOwnerKey === undefined
+            departureCacheOwnerKey === undefined ||
+            !mainDetailAuthorized
         ) return;
         const requestId = departureStatusRequestRef.current + 1;
         departureStatusRequestRef.current = requestId;
@@ -444,13 +489,21 @@ function ScheduleDetail() {
             return;
         }
 
+        const authToken = asyncAuthGuardRef.current.capture();
+        const abortController = new AbortController();
+        departureStatusAbortControllerRef.current = abortController;
+        if (cachedStatus) departureRefreshControllerRef.current?.seed(cachedStatus);
         setDepartureStatus(cachedStatus);
         setDepartureStatusLoadState("loading");
         setDepartureStatusError(null);
 
-        getScheduleDepartureStatus(id)
+        getScheduleDepartureStatus(id, { signal: abortController.signal })
             .then((status) => {
-                if (requestId !== departureStatusRequestRef.current) return;
+                if (
+                    requestId !== departureStatusRequestRef.current ||
+                    !asyncAuthGuardRef.current.isCurrent(authToken)
+                ) return;
+                departureRefreshControllerRef.current?.recordSuccess(status);
                 if (departureCacheOwnerKey) {
                     setCachedScheduleDepartureStatus(departureCacheOwnerKey, status);
                 }
@@ -458,8 +511,23 @@ function ScheduleDetail() {
                 setDepartureStatusLoadState("ready");
             })
             .catch((error) => {
-                if (requestId !== departureStatusRequestRef.current) return;
-                if (isDepartureStatusApiUnavailable(error)) {
+                if (
+                    abortController.signal.aborted ||
+                    requestId !== departureStatusRequestRef.current ||
+                    !asyncAuthGuardRef.current.isCurrent(authToken)
+                ) return;
+                departureRefreshControllerRef.current?.recordFailure();
+                const failureMode = getDepartureStatusFailureMode(
+                    error,
+                    mainDetailAuthorized,
+                );
+                if (failureMode === "unavailable") {
+                    setDepartureStatus(undefined);
+                    setDepartureStatusLoadState("unavailable");
+                    setDepartureStatusError(null);
+                    return;
+                }
+                if (failureMode === "legacy") {
                     setDepartureStatus(undefined);
                     setDepartureStatusLoadState("legacy");
                     setDepartureStatusError(null);
@@ -476,6 +544,10 @@ function ScheduleDetail() {
             });
 
         return () => {
+            abortController.abort();
+            if (departureStatusAbortControllerRef.current === abortController) {
+                departureStatusAbortControllerRef.current = null;
+            }
             if (departureStatusRequestRef.current === requestId) {
                 departureStatusRequestRef.current += 1;
             }
@@ -485,19 +557,64 @@ function ScheduleDetail() {
         departureStatusRetryKey,
         departureStatusScheduleId,
         id,
+        mainDetailAuthorized,
         travelCollaborationEnabled,
     ]);
 
     useEffect(() => {
         const controller = departureRefreshControllerRef.current;
-        controller?.schedule(departureStatus?.nextCheckAt, () => {
-            setDepartureStatusRetryKey((value) => value + 1);
+        controller?.schedule({
+            nextCheckAt: departureStatus?.nextCheckAt,
+            active: Boolean(
+                isFocused &&
+                (departureStatus || departureStatusLoadState === "error") &&
+                departureStatusLoadState !== "loading" &&
+                departureStatusLoadState !== "unavailable" &&
+                departurePollingPhase &&
+                departurePollingPhase !== "ended" &&
+                !currentMemberDepartedAt
+            ),
+            refresh: () => setDepartureStatusRetryKey((value) => value + 1),
         });
         return () => controller?.cancel();
-    }, [departureStatus?.nextCheckAt, departureStatusRetryKey]);
+    }, [
+        currentMemberDepartedAt,
+        departurePollingPhase,
+        departureStatus,
+        departureStatusLoadState,
+        isFocused,
+    ]);
+
+    useEffect(() => {
+        if (!id) return;
+        return subscribeScheduleDepartureMutation((event) => {
+            if (event.scheduleId !== id) return;
+            mainDetailRequestRef.current += 1;
+            mainDetailAbortControllerRef.current?.abort();
+            departureStatusRequestRef.current += 1;
+            departureStatusAbortControllerRef.current?.abort();
+            if (event.status) {
+                departureRefreshControllerRef.current?.recordSuccess(event.status);
+                if (departureCacheOwnerKey) {
+                    setCachedScheduleDepartureStatus(departureCacheOwnerKey, event.status);
+                }
+                setDepartureStatus(event.status);
+                setDepartureStatusLoadState("ready");
+                setDepartureStatusError(null);
+            } else if (event.refreshing) {
+                setDepartureStatusLoadState((current) =>
+                    current === "unavailable" ? current : "loading"
+                );
+                setDepartureStatusRetryKey((value) => value + 1);
+            }
+        });
+    }, [departureCacheOwnerKey, id]);
 
     useEffect(() => () => {
         departureRefreshControllerRef.current?.dispose();
+        asyncAuthGuardRef.current.dispose();
+        mutationAbortControllersRef.current.forEach((controller) => controller.abort());
+        mutationAbortControllersRef.current.clear();
     }, []);
 
     useEffect(() => () => {
@@ -506,10 +623,11 @@ function ScheduleDetail() {
 
     useEffect(() => {
         let cancelled = false;
+        const authEpoch = getAuthSessionEpoch();
 
         getAuthMember()
             .then((member) => {
-                if (!cancelled) {
+                if (!cancelled && getAuthSessionEpoch() === authEpoch) {
                     setCurrentMemberId(member?.id ?? null);
                     setDepartureCacheOwnerKey(
                         typeof member?.id === "number" ? `member:${member.id}` : null,
@@ -517,7 +635,7 @@ function ScheduleDetail() {
                 }
             })
             .catch(() => {
-                if (!cancelled) {
+                if (!cancelled && getAuthSessionEpoch() === authEpoch) {
                     setCurrentMemberId(null);
                     setDepartureCacheOwnerKey(null);
                 }
@@ -553,9 +671,11 @@ function ScheduleDetail() {
 
     const requestDepartureNotificationPermission = useCallback(async () => {
         if (notificationPermissionPending) return;
+        const authToken = asyncAuthGuardRef.current.capture();
         setNotificationPermissionPending(true);
         try {
             const nextPermission = await requestNotificationPermission();
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             setNotificationPermission(nextPermission);
             if (nextPermission === "granted" && currentMemberId) {
                 registerPushAfterLogin(currentMemberId).catch((error) => {
@@ -563,9 +683,12 @@ function ScheduleDetail() {
                 });
             }
         } catch {
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             setNotificationPermission("unavailable");
         } finally {
-            setNotificationPermissionPending(false);
+            if (asyncAuthGuardRef.current.isCurrent(authToken)) {
+                setNotificationPermissionPending(false);
+            }
         }
     }, [currentMemberId, notificationPermissionPending]);
 
@@ -684,26 +807,84 @@ function ScheduleDetail() {
     );
 
     useEffect(() => {
-        if (!id || routePlannerSessionId || routeSavePending) return;
+        if (
+            !id ||
+            departureCacheOwnerKey === undefined ||
+            routePlannerSessionId ||
+            routeSavePending
+        ) return;
         let cancelled = false;
+        const requestId = mainDetailRequestRef.current + 1;
+        mainDetailRequestRef.current = requestId;
+        const authToken = asyncAuthGuardRef.current.capture();
+        const abortController = new AbortController();
+        mainDetailAbortControllerRef.current = abortController;
         setLoading(true);
         setLoadError(null);
-        getSchedule(id)
+        getSchedule(id, { signal: abortController.signal, cache: false })
             .then((detail) => {
-                if (!cancelled) dispatch({ type: "UPDATE_ITEM", item: detail });
+                if (
+                    cancelled ||
+                    requestId !== mainDetailRequestRef.current ||
+                    !asyncAuthGuardRef.current.isCurrent(authToken)
+                ) return;
+                upsertCalendarScheduleCacheItem(detail);
+                dispatch({ type: "UPDATE_ITEM", item: detail });
+                setMainDetailAuthorized(true);
+                setDetailUnavailableReason(null);
             })
             .catch((error) => {
+                if (
+                    abortController.signal.aborted ||
+                    cancelled ||
+                    requestId !== mainDetailRequestRef.current ||
+                    !asyncAuthGuardRef.current.isCurrent(authToken)
+                ) return;
                 const routeFlowActive = pathname === "/schedule/route-select" || pathname === "/schedule/route-planner";
-                if (!cancelled && !routeFlowActive) setLoadError(getErrorMessage(error));
+                const unavailableReason = getScheduleDetailUnavailableReason(error);
+                if (unavailableReason) {
+                    dispatch({ type: "DELETE_ITEM", id });
+                    departureStatusRequestRef.current += 1;
+                    removeCalendarScheduleCacheItem(id);
+                    if (departureCacheOwnerKey) {
+                        removeCachedScheduleDepartureStatus(departureCacheOwnerKey, id);
+                    }
+                    setDepartureStatus(undefined);
+                    setDepartureStatusLoadState("unavailable");
+                    setMainDetailAuthorized(false);
+                    setDetailUnavailableReason(unavailableReason);
+                    setLoadError(null);
+                } else if (!routeFlowActive) {
+                    setLoadError(getErrorMessage(error));
+                }
             })
             .finally(() => {
-                if (!cancelled) setLoading(false);
+                if (
+                    !cancelled &&
+                    requestId === mainDetailRequestRef.current &&
+                    asyncAuthGuardRef.current.isCurrent(authToken)
+                ) setLoading(false);
             });
 
         return () => {
             cancelled = true;
+            if (mainDetailRequestRef.current === requestId) {
+                mainDetailRequestRef.current += 1;
+            }
+            abortController.abort();
+            if (mainDetailAbortControllerRef.current === abortController) {
+                mainDetailAbortControllerRef.current = null;
+            }
         };
-    }, [dispatch, id, pathname, retryKey, routePlannerSessionId, routeSavePending]);
+    }, [
+        departureCacheOwnerKey,
+        dispatch,
+        id,
+        pathname,
+        retryKey,
+        routePlannerSessionId,
+        routeSavePending,
+    ]);
 
     const displayRoute = inspectedTravelPlan?.route ?? item?.route;
     const displayOrigin = inspectedTravelPlan?.origin ?? item?.origin;
@@ -957,33 +1138,58 @@ function ScheduleDetail() {
     const completeDeparture = useCallback(async () => {
         if (!id || departureActionPending) return;
 
+        const authToken = asyncAuthGuardRef.current.capture();
+        const authAbort = createAuthEpochAbortController(authToken.epoch);
+        mutationAbortControllersRef.current.add(authAbort);
         setDepartureActionPending(true);
         try {
             const completedAt = new Date().toISOString();
-            const updated = await markScheduleDeparted(id);
-            dispatch({
-                type: "UPDATE_ITEM",
+            const result = await markScheduleDeparted(id, { signal: authAbort.signal });
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
+            const updated = {
+                ...result.item!,
+                myDepartedAt: result.item?.myDepartedAt ?? completedAt,
+                departedAt: canManageSchedule
+                    ? (result.item?.departedAt ?? completedAt)
+                    : result.item?.departedAt,
+                departureParticipants:
+                    result.item?.departureParticipants ?? item?.departureParticipants,
+            };
+            emitScheduleDepartureMutation({
+                kind: "departed",
+                scheduleId: id,
                 item: {
                     ...updated,
-                    myDepartedAt: updated.myDepartedAt ?? completedAt,
-                    departedAt: canManageSchedule ? (updated.departedAt ?? completedAt) : updated.departedAt,
-                    departureParticipants: updated.departureParticipants ?? item?.departureParticipants,
+                    id,
                 },
+                status: result.status,
+                refreshing: result.refreshing,
             });
-            invalidateScheduleDepartureStatus(id);
+            if (!result.status) setDepartureStatusRetryKey((value) => value + 1);
         } catch (error) {
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             Alert.alert("출발 완료 실패", getErrorMessage(error));
         } finally {
-            setDepartureActionPending(false);
+            authAbort.dispose();
+            mutationAbortControllersRef.current.delete(authAbort);
+            if (asyncAuthGuardRef.current.isCurrent(authToken)) {
+                setDepartureActionPending(false);
+            }
         }
-    }, [canManageSchedule, departureActionPending, dispatch, id, item?.departureParticipants]);
+    }, [canManageSchedule, departureActionPending, id, item?.departureParticipants]);
 
     const requestDepartureNudge = useCallback(async (targetMemberId: number, targetLabel: string) => {
         if (!id || departureNudgePendingMemberId !== undefined) return;
 
+        const authToken = asyncAuthGuardRef.current.capture();
+        const authAbort = createAuthEpochAbortController(authToken.epoch);
+        mutationAbortControllersRef.current.add(authAbort);
         setDepartureNudgePendingMemberId(targetMemberId);
         try {
-            const result = await sendScheduleDepartureNudge(id, targetMemberId);
+            const result = await sendScheduleDepartureNudge(id, targetMemberId, {
+                signal: authAbort.signal,
+            });
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             if (result.sentCount > 0) {
                 Alert.alert("알림을 보냈어요", `${targetLabel}님에게 출발 확인 알림을 보냈습니다.`);
                 return;
@@ -997,9 +1203,14 @@ function ScheduleDetail() {
             }
             Alert.alert("알림 전송 실패", "잠시 후 다시 시도해 주세요.");
         } catch (error) {
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             Alert.alert("알림 전송 실패", getErrorMessage(error));
         } finally {
-            setDepartureNudgePendingMemberId(undefined);
+            authAbort.dispose();
+            mutationAbortControllersRef.current.delete(authAbort);
+            if (asyncAuthGuardRef.current.isCurrent(authToken)) {
+                setDepartureNudgePendingMemberId(undefined);
+            }
         }
     }, [departureNudgePendingMemberId, id]);
 
@@ -1031,17 +1242,22 @@ function ScheduleDetail() {
         }
         if (!canOpenParticipantTravelPlan(participant, currentMemberId)) return;
 
+        const authToken = asyncAuthGuardRef.current.capture();
         setTravelPlanDetailPendingMemberId(participant.memberId);
         try {
             const plan = await getScheduleTravelPlan(id, participant.memberId);
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             setInspectedTravelPlan(plan);
             setFocusedLegIndex(undefined);
             setSelectedTransitStop(undefined);
             snapSheet("compact");
         } catch (error) {
+            if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
             Alert.alert("이동 계획을 불러오지 못했어요", getErrorMessage(error));
         } finally {
-            setTravelPlanDetailPendingMemberId(undefined);
+            if (asyncAuthGuardRef.current.isCurrent(authToken)) {
+                setTravelPlanDetailPendingMemberId(undefined);
+            }
         }
     }, [currentMemberId, id, snapSheet, travelPlanDetailPendingMemberId]);
 
@@ -1116,22 +1332,28 @@ function ScheduleDetail() {
         if (!payload) return;
 
         setRouteSavePending(true);
+        const authToken = asyncAuthGuardRef.current.capture();
         const saveRoute = saveScheduleRouteAsMyTravelPlan(item, payload, {
             upsertMyTravelPlan: upsertMyScheduleTravelPlan,
-            reloadSchedule: getSchedule,
-            invalidateDepartureStatus: invalidateScheduleDepartureStatus,
+            reloadSchedule: (scheduleId) => getSchedule(scheduleId, { cache: false }),
         });
 
         saveRoute
             .then((updated) => {
+                if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
                 setInspectedTravelPlan(undefined);
+                upsertCalendarScheduleCacheItem(updated);
                 dispatch({ type: "UPDATE_ITEM", item: updated });
+                invalidateScheduleDepartureStatus(updated.id);
             })
             .catch((error) => {
+                if (!asyncAuthGuardRef.current.isCurrent(authToken)) return;
                 Alert.alert("경로 저장 실패", getErrorMessage(error));
             })
             .finally(() => {
-                setRouteSavePending(false);
+                if (asyncAuthGuardRef.current.isCurrent(authToken)) {
+                    setRouteSavePending(false);
+                }
             });
     }, [dispatch, item, pathname, routePlannerSessionId]);
 
@@ -1174,9 +1396,19 @@ function ScheduleDetail() {
         return (
             <View style={[styles.missingScreen, { backgroundColor: colors.background, paddingTop: insets.top + 16 }]}>
                 <Ionicons name="calendar-outline" size={36} color={colors.textSecondary} />
-                <Text style={[styles.missingTitle, { color: colors.textPrimary }]}>일정을 불러오지 못했어요</Text>
+                <Text style={[styles.missingTitle, { color: colors.textPrimary }]}>
+                    {detailUnavailableReason === "revoked"
+                        ? "일정 접근 권한이 변경됐어요"
+                        : detailUnavailableReason === "notFound"
+                            ? "삭제된 일정이에요"
+                            : "일정을 불러오지 못했어요"}
+                </Text>
                 <Text style={[styles.missingCaption, { color: colors.textSecondary }]}>
-                    {loadError ?? "삭제되었거나 접근할 수 없는 일정이에요."}
+                    {detailUnavailableReason === "revoked"
+                        ? "현재 계정으로는 이 일정의 제목, 위치, 참여자와 출발 정보를 볼 수 없어요."
+                        : detailUnavailableReason === "notFound"
+                            ? "일정이 삭제되어 더 이상 상세 정보를 표시하지 않아요."
+                            : loadError ?? "삭제되었거나 접근할 수 없는 일정이에요."}
                 </Text>
                 <View style={styles.missingActions}>
                     <Pressable
@@ -1187,15 +1419,17 @@ function ScheduleDetail() {
                     >
                         <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>돌아가기</Text>
                     </Pressable>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="일정 다시 불러오기"
-                        onPress={() => setRetryKey((value) => value + 1)}
-                        style={styles.missingRetryButton}
-                    >
-                        <Ionicons name="refresh" size={17} color="#FFFFFF" />
-                        <Text style={styles.missingRetryText}>다시 시도</Text>
-                    </Pressable>
+                    {!detailUnavailableReason ? (
+                        <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="일정 다시 불러오기"
+                            onPress={() => setRetryKey((value) => value + 1)}
+                            style={styles.missingRetryButton}
+                        >
+                            <Ionicons name="refresh" size={17} color="#FFFFFF" />
+                            <Text style={styles.missingRetryText}>다시 시도</Text>
+                        </Pressable>
+                    ) : null}
                 </View>
             </View>
         );
@@ -1241,15 +1475,7 @@ function ScheduleDetail() {
         item.hasEndTime !== false,
         item.allDay === true,
     );
-    const departureLifecycle = getDepartureLifecyclePresentation({
-        recommendedDepartureAt: recommendedDepartureAt?.toISOString(),
-        scheduleStartAt: item.startAt,
-        scheduleEndAt: item.endAt,
-        scheduleHasEndTime: item.hasEndTime !== false,
-        scheduleAllDay: item.allDay,
-        departedAt: currentMemberDepartedAt,
-        nowMs,
-    });
+    const departureLifecycle = departureLifecycleForPolling!;
     const metadataStatus = departureStatus && departureStatusLoadState !== "legacy"
         ? {
             ...departureStatus,
@@ -1259,7 +1485,10 @@ function ScheduleDetail() {
     const departureMetadata = departureStatusLoadState === "unavailable"
         ? getUnavailableDepartureStatusMetadata(item.travelMinutes)
         : metadataStatus
-        ? getDepartureStatusMetadataPresentation(metadataStatus)
+        ? getDepartureStatusMetadataPresentation(metadataStatus, {
+            nowMs,
+            refreshing: departureStatusLoadState === "loading",
+        })
         : {
             ...getLegacyDepartureStatusMetadata(item.travelMinutes),
             sourceDetail: departureStatusLoadState === "loading"
@@ -1336,7 +1565,7 @@ function ScheduleDetail() {
         loadState: departureStatusLoadState,
         loadError: departureStatusError,
         onRetry: () => setDepartureStatusRetryKey((value) => value + 1),
-        permission: {
+        permission: departureStatusLoadState === "unavailable" ? undefined : {
             state: notificationPermission,
             pending: notificationPermissionPending,
             onRequest: () => {
@@ -2220,7 +2449,7 @@ const styles = StyleSheet.create({
     missingCaption: { fontSize: 14, fontWeight: "600", lineHeight: 21, textAlign: "center" },
     missingActions: { flexDirection: "row", gap: 10, marginTop: 12 },
     missingSecondaryButton: {
-        minHeight: 46,
+        minHeight: MIN_TOUCH_TARGET,
         paddingHorizontal: 18,
         borderWidth: 1,
         borderRadius: 14,
@@ -2228,7 +2457,7 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     missingRetryButton: {
-        minHeight: 46,
+        minHeight: MIN_TOUCH_TARGET,
         paddingHorizontal: 18,
         borderRadius: 14,
         backgroundColor: APP_ACCENT_BLUE,
@@ -2310,7 +2539,7 @@ const styles = StyleSheet.create({
         right: 16,
         zIndex: 20,
         elevation: 18,
-        height: 44,
+        minHeight: MIN_TOUCH_TARGET,
         borderRadius: 22,
         borderWidth: StyleSheet.hairlineWidth,
         paddingHorizontal: 14,
@@ -2362,8 +2591,8 @@ const styles = StyleSheet.create({
         gap: 8,
     },
     topHeaderIconButton: {
-        width: 44,
-        height: 44,
+        width: MIN_TOUCH_TARGET,
+        height: MIN_TOUCH_TARGET,
         borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
@@ -2505,9 +2734,9 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     departureParticipantNudgeButton: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
+        width: MIN_TOUCH_TARGET,
+        height: MIN_TOUCH_TARGET,
+        borderRadius: 24,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -2687,8 +2916,8 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     sheetScheduleCollapse: {
-        width: 44,
-        height: 44,
+        width: MIN_TOUCH_TARGET,
+        height: MIN_TOUCH_TARGET,
         borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
@@ -2701,7 +2930,7 @@ const styles = StyleSheet.create({
     },
     sheetParticipantDisclosure: {
         width: "100%",
-        minHeight: 44,
+        minHeight: MIN_TOUCH_TARGET,
         marginTop: 6,
         borderTopWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
@@ -2746,7 +2975,7 @@ const styles = StyleSheet.create({
     },
     sheetDepartureActionButton: {
         minWidth: 96,
-        height: 44,
+        minHeight: MIN_TOUCH_TARGET,
         borderRadius: 14,
         paddingHorizontal: 14,
         alignItems: "center",
@@ -2827,8 +3056,8 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     inspectedPlanClose: {
-        width: 32,
-        height: 32,
+        width: MIN_TOUCH_TARGET,
+        height: MIN_TOUCH_TARGET,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -2837,7 +3066,7 @@ const styles = StyleSheet.create({
         borderTopWidth: StyleSheet.hairlineWidth,
     },
     plainTravelPlanDisclosure: {
-        minHeight: 46,
+        minHeight: MIN_TOUCH_TARGET,
         paddingHorizontal: 4,
         flexDirection: "row",
         alignItems: "center",
@@ -2921,8 +3150,8 @@ const styles = StyleSheet.create({
         gap: 9,
     },
     sheetRouteMapButton: {
-        width: 38,
-        height: 38,
+        width: MIN_TOUCH_TARGET,
+        height: MIN_TOUCH_TARGET,
         borderRadius: 19,
         alignItems: "center",
         justifyContent: "center",

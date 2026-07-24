@@ -3,6 +3,7 @@ import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
 import { clearCalendarScheduleCache } from "./calendarScheduleCache";
+import { subscribeScheduleDepartureMutation } from "./scheduleDepartureMutationEvents";
 
 type Action =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -117,6 +118,9 @@ export function ScheduleProvider({
         clearCalendarScheduleCache();
         dispatch({ type: "RESET", state: initialState });
     }), [initialState]);
+    useEffect(() => subscribeScheduleDepartureMutation((event) => {
+        if (event.item) dispatch({ type: "UPDATE_ITEM", item: event.item });
+    }), []);
     const value = useMemo(() => ({state, dispatch}), [state]);
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }

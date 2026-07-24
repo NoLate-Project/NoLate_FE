@@ -15,7 +15,9 @@ import {
     tokenLoginMember,
 } from "../../api/member";
 import {
+    beginAuthLogoutIntent,
     clearAuthTokens,
+    clearAuthTokensIfCurrent,
     getAccessToken,
     getAuthMember,
     getRefreshToken,
@@ -172,15 +174,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         // this account's devices, otherwise a late registration could add the
         // just-signed-out device again after logout.
         cancelPendingPushRegistration();
-        const refreshToken = await getRefreshToken().catch(() => null);
+        const logoutIntent = await beginAuthLogoutIntent();
 
-        if (refreshToken) {
-            await logoutMember({ refreshToken }).catch(() => undefined);
+        if (logoutIntent.refreshToken) {
+            await logoutMember({ refreshToken: logoutIntent.refreshToken }).catch(() => undefined);
         }
 
+        // A newer login/account-switch intent owns storage now. A slow A logout
+        // must never clear B's credentials or authentication state.
+        if (!await clearAuthTokensIfCurrent(logoutIntent.epoch)) return;
         // clearAuthTokens awaits the async invalidation listener below, so cache
         // cleanup is complete before another account can enter the app.
-        await clearAuthTokens();
         setIsAuthenticated(false);
         setIsCurationCompleted(false);
         setIsLoading(false);

@@ -103,6 +103,15 @@ export function createNotificationEventConsumer(options: {
     };
 }
 
+export function consumeNotificationEventAfterValidation(
+    consumer: ReturnType<typeof createNotificationEventConsumer>,
+    key: string | undefined,
+    valid: boolean,
+    nowMs = Date.now(),
+): boolean {
+    return valid && consumer.consume(key, nowMs);
+}
+
 export function getExpoNotificationProviderMessageId(response: unknown): string | undefined {
     if (!response || typeof response !== "object") return undefined;
     const notification = (response as {

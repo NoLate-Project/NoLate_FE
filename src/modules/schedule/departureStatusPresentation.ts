@@ -8,6 +8,8 @@ const SECOND_MS = 1_000;
 const DAY_MS = 24 * 60 * 60 * SECOND_MS;
 const IMMINENT_THRESHOLD_MS = 10 * 60 * SECOND_MS;
 const POINT_EVENT_ACTIVE_WINDOW_MS = 60 * 60 * SECOND_MS;
+const STATUS_MAX_AGE_MS = 15 * 60 * SECOND_MS;
+const LIVE_MAX_AGE_MS = 10 * 60 * SECOND_MS;
 
 export type DepartureLifecyclePhase =
     | "upcoming"
@@ -90,6 +92,7 @@ export function getDepartureLifecyclePresentation(options: {
     scheduleHasEndTime: boolean;
     scheduleAllDay?: boolean;
     departedAt?: string | null;
+    timeZone?: string | null;
     nowMs: number;
 }): DepartureLifecyclePresentation {
     const {
@@ -99,6 +102,7 @@ export function getDepartureLifecyclePresentation(options: {
         scheduleHasEndTime,
         scheduleAllDay,
         departedAt,
+        timeZone,
         nowMs,
     } = options;
     const scheduleStartMs = parseTime(scheduleStartAt);
@@ -134,7 +138,7 @@ export function getDepartureLifecyclePresentation(options: {
     }
 
     if (departedAt) {
-        const departedClock = formatDepartureStatusClock(departedAt);
+        const departedClock = formatDepartureStatusClock(departedAt, timeZone);
         return {
             phase: "past",
             label: "출발 상태",
@@ -176,7 +180,7 @@ export function getDepartureLifecyclePresentation(options: {
         phase: "upcoming",
         label: "추천 출발까지",
         value: formatCountdown(remainingMs),
-        detail: `${formatDepartureStatusClock(recommendedDepartureAt) ?? "계산된 시각"} 출발 권장`,
+        detail: `${formatDepartureStatusClock(recommendedDepartureAt, timeZone) ?? "계산된 시각"} 출발 권장`,
     };
 }
 
@@ -234,6 +238,7 @@ function formatTrafficChange(change: number | null): string | undefined {
 
 export function getDepartureStatusMetadataPresentation(
     status: ScheduleDepartureStatus,
+    options: { nowMs?: number; refreshing?: boolean } = {},
 ): DepartureStatusMetadataPresentation {
     const evaluatedClock = formatDepartureStatusClock(status.evaluatedAt, status.timeZone);
     const liveFetchedClock = formatDepartureStatusClock(status.liveFetchedAt, status.timeZone);
@@ -241,10 +246,24 @@ export function getDepartureStatusMetadataPresentation(
     const preparationClock = formatDepartureStatusClock(status.preparationStartAt, status.timeZone);
     const nextCheckClock = formatDepartureStatusClock(status.nextCheckAt, status.timeZone);
     const source = sourcePresentation(status.source, liveFetchedClock !== undefined);
-    const freshnessTone = status.stale === true
+    const evaluatedMs = parseTime(status.evaluatedAt);
+    const liveFetchedMs = parseTime(status.liveFetchedAt);
+    const nextCheckMs = parseTime(status.nextCheckAt);
+    const ageChecked = options.nowMs !== undefined;
+    const temporallyStale = ageChecked && (
+        (evaluatedMs !== undefined && options.nowMs! - evaluatedMs > STATUS_MAX_AGE_MS) ||
+        (nextCheckMs !== undefined && options.nowMs! >= nextCheckMs) ||
+        (status.source === "LIVE_PROVIDER" &&
+            liveFetchedMs !== undefined &&
+            options.nowMs! - liveFetchedMs > LIVE_MAX_AGE_MS)
+    );
+    const freshnessUnknown =
+        status.stale === null ||
+        evaluatedMs === undefined ||
+        (status.source === "LIVE_PROVIDER" && liveFetchedClock === undefined);
+    const freshnessTone = options.refreshing || status.stale === true || temporallyStale
         ? "stale"
-        : status.stale === null ||
-            (status.source === "LIVE_PROVIDER" && liveFetchedClock === undefined)
+        : freshnessUnknown
             ? "unknown"
             : "fresh";
     const preparationParts = [
@@ -259,7 +278,9 @@ export function getDepartureStatusMetadataPresentation(
             ? "마지막으로 확인된 교통 제공자 ETA예요"
             : source.detail,
         confidenceLabel: confidenceLabel(status.confidence),
-        freshnessLabel: freshnessTone === "stale"
+        freshnessLabel: options.refreshing
+            ? "최신 상태 확인 중"
+            : freshnessTone === "stale"
             ? "오래된 정보"
             : freshnessTone === "unknown"
                 ? "최신 여부 알 수 없음"

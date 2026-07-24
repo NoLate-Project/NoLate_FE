@@ -14,6 +14,7 @@ import NotificationPermissionCard, {
 } from "../../../notification/components/NotificationPermissionCard";
 import { useTheme } from "../../../theme/ThemeContext";
 import { getMinimumTouchTarget } from "../../../../ui/minimumTouchTarget";
+import { LIGHT_DEPARTURE_BADGE_COLORS } from "../../../../ui/colorContrast";
 import type {
     DepartureLifecyclePresentation,
     DepartureStatusMetadataPresentation,
@@ -72,6 +73,33 @@ export default function DepartureStatusCard({
                 : mode === "dark" ? "#78B4FF" : "#2979FF";
     const freshnessNeedsAttention =
         metadata.freshnessTone !== "fresh" || loadState === "error";
+    const freshnessTextColor = mode === "dark"
+        ? freshnessNeedsAttention ? "#FDBA74" : "#86EFAC"
+        : freshnessNeedsAttention
+            ? LIGHT_DEPARTURE_BADGE_COLORS.attentionText
+            : LIGHT_DEPARTURE_BADGE_COLORS.freshText;
+    const freshnessBackgroundColor = mode === "dark"
+        ? freshnessNeedsAttention
+            ? "rgba(249,115,22,0.14)"
+            : "rgba(34,197,94,0.13)"
+        : freshnessNeedsAttention
+            ? LIGHT_DEPARTURE_BADGE_COLORS.attentionBackground
+            : LIGHT_DEPARTURE_BADGE_COLORS.freshBackground;
+    const accentNeedsContrast = lifecycle.phase === "imminent" || lifecycle.phase === "past";
+    const sourceBadgeTextColor = mode === "dark"
+        ? accent
+        : accentNeedsContrast
+            ? LIGHT_DEPARTURE_BADGE_COLORS.attentionText
+            : lifecycle.phase === "upcoming"
+                ? LIGHT_DEPARTURE_BADGE_COLORS.infoText
+                : colors.textSecondary;
+    const sourceBadgeBackground = mode === "dark"
+        ? `${accent}16`
+        : accentNeedsContrast
+            ? LIGHT_DEPARTURE_BADGE_COLORS.attentionBackground
+            : lifecycle.phase === "upcoming"
+                ? LIGHT_DEPARTURE_BADGE_COLORS.infoBackground
+                : colors.background;
 
     return (
         <View style={styles.section}>
@@ -100,6 +128,7 @@ export default function DepartureStatusCard({
                         <View
                             accessible
                             accessibilityLabel={`${lifecycle.label}, ${lifecycle.value}. ${lifecycle.detail}`}
+                            accessibilityLiveRegion="none"
                             style={styles.hero}
                         >
                             <View style={[styles.heroIcon, { backgroundColor: `${accent}1C` }]}>
@@ -132,8 +161,8 @@ export default function DepartureStatusCard({
                 ) : null}
 
                 <View style={styles.badges}>
-                    <View style={[styles.badge, { backgroundColor: `${accent}16` }]}>
-                        <Text style={[styles.badgeText, { color: accent }]}>
+                    <View style={[styles.badge, { backgroundColor: sourceBadgeBackground }]}>
+                        <Text style={[styles.badgeText, { color: sourceBadgeTextColor }]}>
                             {metadata.sourceLabel}
                         </Text>
                     </View>
@@ -141,16 +170,14 @@ export default function DepartureStatusCard({
                         style={[
                             styles.badge,
                             {
-                                backgroundColor: freshnessNeedsAttention
-                                    ? "rgba(249,115,22,0.14)"
-                                    : "rgba(34,197,94,0.13)",
+                                backgroundColor: freshnessBackgroundColor,
                             },
                         ]}
                     >
                         <Text
                             style={[
                                 styles.badgeText,
-                                { color: freshnessNeedsAttention ? "#F97316" : "#22A559" },
+                                { color: freshnessTextColor },
                             ]}
                         >
                             {metadata.freshnessLabel}
@@ -187,8 +214,23 @@ export default function DepartureStatusCard({
 
                 {metadata.failureLabel ? (
                     <View style={styles.warningRow}>
-                        <Ionicons name="warning-outline" size={15} color="#F97316" />
-                        <Text style={styles.warningText}>{metadata.failureLabel}</Text>
+                        <Ionicons
+                            name="warning-outline"
+                            size={15}
+                            color={mode === "dark" ? "#FDBA74" : LIGHT_DEPARTURE_BADGE_COLORS.attentionText}
+                        />
+                        <Text
+                            style={[
+                                styles.warningText,
+                                {
+                                    color: mode === "dark"
+                                        ? "#FDBA74"
+                                        : LIGHT_DEPARTURE_BADGE_COLORS.attentionText,
+                                },
+                            ]}
+                        >
+                            {metadata.failureLabel}
+                        </Text>
                     </View>
                 ) : null}
 
@@ -345,7 +387,6 @@ const styles = StyleSheet.create({
     },
     warningText: {
         flex: 1,
-        color: "#F97316",
         fontSize: 10,
         lineHeight: 15,
         fontWeight: "800",

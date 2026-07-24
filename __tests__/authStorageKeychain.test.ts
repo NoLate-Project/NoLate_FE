@@ -19,12 +19,18 @@ jest.mock("../src/modules/storage/secureStorage", () => ({
 
 import * as LocalStorage from "../src/modules/storage/secureStorage";
 import { NativeModules } from "react-native";
+import { createAuthEpochAbortController } from "../src/modules/auth/authEpochAbortController";
 
 import {
+    beginAuthLogoutIntent,
     clearAuthTokens,
+    clearAuthTokensIfCurrent,
     configureSharedAuthApiBaseUrl,
     getAccessToken,
+    getAuthSessionEpoch,
     getRefreshToken,
+    isAuthRefreshContextCurrent,
+    saveRefreshedAuthTokensIfCurrent,
     saveAuthTokens,
 } from "../src/modules/auth/authStorage";
 
@@ -107,5 +113,139 @@ describe("authStorage shared Keychain session", () => {
         expect(mockLocalStorage.deleteItemAsync).toHaveBeenCalledWith("nolate_auth_member");
         expect(mockSharedAuth.deleteItem).toHaveBeenCalledWith("nolte_access_token");
         expect(mockSharedAuth.deleteItem).toHaveBeenCalledWith("nolte_refresh_token");
+    });
+
+    test("logout 뒤 늦은 A refresh가 token을 부활시키지 않는다", async () => {
+        const values = new Map<string, string>();
+        mockSharedAuth.getItem.mockImplementation(async (key) => values.get(key) ?? null);
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            values.set(key, value);
+            return true;
+        });
+        mockSharedAuth.deleteItem.mockImplementation(async (key) => {
+            values.delete(key);
+            return true;
+        });
+        mockLocalStorage.getItemAsync.mockImplementation(async (key) => values.get(key) ?? null);
+        mockLocalStorage.setItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+        mockLocalStorage.deleteItemAsync.mockImplementation(async (key) => {
+            values.delete(key);
+        });
+
+        await saveAuthTokens("A-access", "A-refresh");
+        const epoch = getAuthSessionEpoch();
+        await clearAuthTokens();
+        await expect(saveRefreshedAuthTokensIfCurrent({
+            accessToken: "late-A-access",
+            refreshToken: "rotated-A-refresh",
+            expectedEpoch: epoch,
+            expectedRefreshToken: "A-refresh",
+        })).resolves.toBe(false);
+        await expect(getRefreshToken()).resolves.toBeNull();
+    });
+
+    test("logout 의도는 서버 요청 전에 진행 중 refresh/mutation AbortSignal을 즉시 취소한다", async () => {
+        const controller = createAuthEpochAbortController(getAuthSessionEpoch());
+        expect(controller.signal.aborted).toBe(false);
+        const intentPromise = beginAuthLogoutIntent();
+        expect(controller.signal.aborted).toBe(true);
+        const intent = await intentPromise;
+        await clearAuthTokensIfCurrent(intent.epoch, { notifyListeners: false });
+        controller.dispose();
+    });
+
+    test("느린 A logout cleanup은 뒤에 시작한 B 로그인의 token을 지우지 않는다", async () => {
+        const values = new Map<string, string>();
+        mockSharedAuth.getItem.mockImplementation(async (key) => values.get(key) ?? null);
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            values.set(key, value);
+            return true;
+        });
+        mockSharedAuth.deleteItem.mockImplementation(async (key) => {
+            values.delete(key);
+            return true;
+        });
+        mockLocalStorage.getItemAsync.mockImplementation(async (key) => values.get(key) ?? null);
+        mockLocalStorage.setItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+        mockLocalStorage.deleteItemAsync.mockImplementation(async (key) => {
+            values.delete(key);
+        });
+
+        await saveAuthTokens("A-access", "A-refresh");
+        const logoutIntent = await beginAuthLogoutIntent();
+        await saveAuthTokens("B-access", "B-refresh");
+
+        await expect(clearAuthTokensIfCurrent(
+            logoutIntent.epoch,
+            { notifyListeners: false },
+        )).resolves.toBe(false);
+        await expect(getAccessToken()).resolves.toBe("B-access");
+        await expect(getRefreshToken()).resolves.toBe("B-refresh");
+    });
+
+    test("B 로그인과 A refresh 응답 경합에서 B token을 보존한다", async () => {
+        const values = new Map<string, string>();
+        mockSharedAuth.getItem.mockImplementation(async (key) => values.get(key) ?? null);
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            values.set(key, value);
+            return true;
+        });
+        mockSharedAuth.deleteItem.mockImplementation(async (key) => {
+            values.delete(key);
+            return true;
+        });
+        mockLocalStorage.getItemAsync.mockImplementation(async (key) => values.get(key) ?? null);
+        mockLocalStorage.setItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+        mockLocalStorage.deleteItemAsync.mockImplementation(async (key) => {
+            values.delete(key);
+        });
+
+        await saveAuthTokens("A-access", "A-refresh");
+        const aEpoch = getAuthSessionEpoch();
+        await saveAuthTokens("B-access", "B-refresh");
+        await expect(saveRefreshedAuthTokensIfCurrent({
+            accessToken: "late-A-access",
+            refreshToken: "rotated-A-refresh",
+            expectedEpoch: aEpoch,
+            expectedRefreshToken: "A-refresh",
+        })).resolves.toBe(false);
+        await expect(getAccessToken()).resolves.toBe("B-access");
+        await expect(getRefreshToken()).resolves.toBe("B-refresh");
+        // A의 늦은 definitive failure도 이 false guard 때문에 B session을 clear하지 않는다.
+        await expect(isAuthRefreshContextCurrent({
+            expectedEpoch: aEpoch,
+            expectedRefreshToken: "A-refresh",
+        })).resolves.toBe(false);
+    });
+
+    test("refresh 시작 token identity가 rotation으로 바뀌면 늦은 응답을 저장하지 않는다", async () => {
+        const values = new Map<string, string>();
+        mockSharedAuth.getItem.mockImplementation(async (key) => values.get(key) ?? null);
+        mockSharedAuth.setItem.mockImplementation(async (key, value) => {
+            values.set(key, value);
+            return true;
+        });
+        mockLocalStorage.getItemAsync.mockImplementation(async (key) => values.get(key) ?? null);
+        mockLocalStorage.setItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
+        });
+
+        await saveAuthTokens("A-access", "A-refresh-v1");
+        const epoch = getAuthSessionEpoch();
+        values.set("nolte_refresh_token", "A-refresh-v2");
+
+        await expect(saveRefreshedAuthTokensIfCurrent({
+            accessToken: "late-access",
+            refreshToken: "late-refresh",
+            expectedEpoch: epoch,
+            expectedRefreshToken: "A-refresh-v1",
+        })).resolves.toBe(false);
+        await expect(getRefreshToken()).resolves.toBe("A-refresh-v2");
     });
 });

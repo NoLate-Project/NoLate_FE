@@ -23,6 +23,7 @@ import {
     markScheduleDeparted,
     searchSchedules,
     sendScheduleDepartureNudge,
+    snoozeScheduleDepartureReminder,
 } from "../src/api/schedule";
 import {
     createScheduleCategoryToApi,
@@ -314,9 +315,49 @@ describe("schedule query api wrappers", () => {
     test("markScheduleDeparted posts depart-now action and normalizes response id", async () => {
         mockedApiPost.mockResolvedValue({ success: true, data: scheduleDto });
 
-        await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
+        await expect(markScheduleDeparted("10")).resolves.toMatchObject({
+            item: { id: "10" },
+            refreshing: true,
+        });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
+    });
+
+    test("depart/snooze response의 authoritative status를 파싱한다", async () => {
+        mockedApiPost
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    schedule: scheduleDto,
+                    departureStatus: {
+                        scheduleId: 10,
+                        travelMinutes: 25,
+                        nextCheckAt: "2026-07-24T09:10:00+09:00",
+                        stale: false,
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    status: {
+                        scheduleId: 10,
+                        travelMinutes: 25,
+                        nextCheckAt: "2026-07-24T09:20:00+09:00",
+                        stale: false,
+                    },
+                },
+            });
+
+        await expect(markScheduleDeparted("10")).resolves.toMatchObject({
+            item: { id: "10" },
+            status: { scheduleId: "10", nextCheckAt: "2026-07-24T09:10:00+09:00" },
+            refreshing: false,
+        });
+        await expect(snoozeScheduleDepartureReminder("10")).resolves.toMatchObject({
+            status: { scheduleId: "10", nextCheckAt: "2026-07-24T09:20:00+09:00" },
+            refreshing: false,
+        });
     });
 
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {

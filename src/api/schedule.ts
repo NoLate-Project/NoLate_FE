@@ -60,6 +60,12 @@ export type ScheduleDepartureStatus = {
     timeZone: string | null;
 };
 
+export type ScheduleDepartureMutationResult = {
+    item?: ScheduleItem;
+    status?: ScheduleDepartureStatus;
+    refreshing: boolean;
+};
+
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -230,19 +236,27 @@ export async function getDepartureReadySchedules(fromAt?: string, toAt?: string)
     return unwrapApiResponse(response).map(normalizeSchedule);
 }
 
-export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
-    const response = await apiGet<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}`);
+export async function getSchedule(
+    scheduleId: string,
+    options: { signal?: AbortSignal; cache?: boolean } = {},
+): Promise<ScheduleItem> {
+    const url = `/api/schedules/${scheduleId}`;
+    const response = options.signal
+        ? await apiGet<ApiEnvelope<ScheduleDto>>(url, { signal: options.signal })
+        : await apiGet<ApiEnvelope<ScheduleDto>>(url);
     const item = normalizeSchedule(unwrapApiResponse(response));
-    upsertCalendarScheduleCacheItem(item);
+    if (options.cache !== false) upsertCalendarScheduleCacheItem(item);
     return item;
 }
 
 export async function getScheduleDepartureStatus(
     scheduleId: string,
+    options: { signal?: AbortSignal } = {},
 ): Promise<ScheduleDepartureStatus> {
-    const response = await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(
-        `/api/schedules/${scheduleId}/departure-status`,
-    );
+    const url = `/api/schedules/${scheduleId}/departure-status`;
+    const response = options.signal
+        ? await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(url, { signal: options.signal })
+        : await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(url);
     return normalizeScheduleDepartureStatus(
         unwrapApiResponse(response),
         scheduleId,
@@ -302,26 +316,66 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
     removeCalendarScheduleCacheItem(scheduleId);
 }
 
-export async function markScheduleDeparted(scheduleId: string): Promise<ScheduleItem> {
+function normalizeDepartureMutationResult(
+    data: unknown,
+    scheduleId: string,
+): ScheduleDepartureMutationResult {
+    if (!data || typeof data !== "object") return { refreshing: true };
+    const record = data as {
+        schedule?: ScheduleDto;
+        departureStatus?: ScheduleDepartureStatusDto;
+        status?: ScheduleDepartureStatusDto;
+        id?: unknown;
+    };
+    const itemDto = record.schedule ?? (record.id !== undefined ? record as ScheduleDto : undefined);
+    const statusDto = record.departureStatus ?? record.status;
+    return {
+        item: itemDto ? normalizeSchedule(itemDto) : undefined,
+        status: statusDto
+            ? normalizeScheduleDepartureStatus(statusDto, scheduleId)
+            : undefined,
+        refreshing: !statusDto,
+    };
+}
+
+export async function markScheduleDeparted(
+    scheduleId: string,
+    options: { signal?: AbortSignal } = {},
+): Promise<ScheduleDepartureMutationResult> {
     // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
-    const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
-    const item = normalizeSchedule(unwrapApiResponse(response));
-    upsertCalendarScheduleCacheItem(item);
-    return item;
+    const url = `/api/schedules/${scheduleId}/depart-now`;
+    const response = options.signal
+        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, { signal: options.signal })
+        : await apiPost<ApiEnvelope<unknown>>(url);
+    const result = normalizeDepartureMutationResult(unwrapApiResponse(response), scheduleId);
+    if (!result.item) throw new ApiResponseError("출발 완료 응답에 일정 정보가 없습니다.");
+    return result;
 }
 
 export async function sendScheduleDepartureNudge(
     scheduleId: string,
-    targetMemberId: number
+    targetMemberId: number,
+    options: { signal?: AbortSignal } = {},
 ): Promise<NotificationSendResult> {
-    const response = await apiPost<ApiEnvelope<NotificationSendResult>>(
-        `/api/schedules/${scheduleId}/departure-nudges/${targetMemberId}`
-    );
+    const url = `/api/schedules/${scheduleId}/departure-nudges/${targetMemberId}`;
+    const response = options.signal
+        ? await apiPost<ApiEnvelope<NotificationSendResult>>(
+            url,
+            undefined,
+            { signal: options.signal },
+        )
+        : await apiPost<ApiEnvelope<NotificationSendResult>>(url);
     return unwrapApiResponse(response);
 }
 
-export async function snoozeScheduleDepartureReminder(scheduleId: string): Promise<void> {
-    // 푸시 액션의 재알림 요청은 화면 상태를 바꾸지 않고 서버 job의 nextCheckAt만 갱신한다.
-    const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}/departure-reminder/snooze`);
+export async function snoozeScheduleDepartureReminder(
+    scheduleId: string,
+    options: { signal?: AbortSignal } = {},
+): Promise<ScheduleDepartureMutationResult> {
+    const url = `/api/schedules/${scheduleId}/departure-reminder/snooze`;
+    const response = options.signal
+        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, { signal: options.signal })
+        : await apiPost<ApiEnvelope<unknown>>(url);
     assertApiSuccess(response);
+    return normalizeDepartureMutationResult(response.data, scheduleId);
 }

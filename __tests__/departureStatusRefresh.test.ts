@@ -1,6 +1,5 @@
 import {
     createDepartureStatusRefreshController,
-    getDepartureStatusRefreshDelay,
     handleDepartureStatusAppStateChange,
     shouldFetchDepartureStatus,
     shouldRefreshDepartureStatusOnAppStateChange,
@@ -9,14 +8,6 @@ import {
 describe("departure status scheduled refresh", () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
-
-    test("nextCheckAt을 안전한 15초~15분 범위로 제한한다", () => {
-        const now = Date.parse("2026-07-24T00:00:00Z");
-        expect(getDepartureStatusRefreshDelay("2026-07-23T23:00:00Z", now)).toBe(15_000);
-        expect(getDepartureStatusRefreshDelay("2026-07-24T00:05:00Z", now)).toBe(300_000);
-        expect(getDepartureStatusRefreshDelay("2026-07-24T02:00:00Z", now)).toBe(900_000);
-        expect(getDepartureStatusRefreshDelay("invalid", now)).toBeUndefined();
-    });
 
     test("background/inactive에서 active로 복귀할 때만 새로고침한다", () => {
         expect(shouldRefreshDepartureStatusOnAppStateChange("background", "active")).toBe(true);
@@ -57,8 +48,8 @@ describe("departure status scheduled refresh", () => {
         const controller = createDepartureStatusRefreshController();
         const now = Date.parse("2026-07-24T00:00:00Z");
 
-        controller.schedule("2026-07-24T00:01:00Z", refresh, now);
-        controller.schedule("2026-07-24T00:02:00Z", refresh, now);
+        controller.schedule({ nextCheckAt: "2026-07-24T00:01:00Z", active: true, refresh, nowMs: now });
+        controller.schedule({ nextCheckAt: "2026-07-24T00:02:00Z", active: true, refresh, nowMs: now });
         jest.advanceTimersByTime(120_000);
 
         expect(refresh).toHaveBeenCalledTimes(1);
@@ -69,12 +60,63 @@ describe("departure status scheduled refresh", () => {
         const controller = createDepartureStatusRefreshController();
         const now = Date.parse("2026-07-24T00:00:00Z");
 
-        controller.schedule("2026-07-24T00:01:00Z", refresh, now);
+        controller.schedule({ nextCheckAt: "2026-07-24T00:01:00Z", active: true, refresh, nowMs: now });
         controller.dispose();
         jest.runOnlyPendingTimers();
-        controller.schedule("2026-07-24T00:02:00Z", refresh, now);
+        controller.schedule({ nextCheckAt: "2026-07-24T00:02:00Z", active: true, refresh, nowMs: now });
         jest.runOnlyPendingTimers();
 
+        expect(refresh).not.toHaveBeenCalled();
+    });
+
+    test("cached past nextCheck와 offline 실패는 1m→2m→5m→15m으로 제한한다", () => {
+        const refresh = jest.fn();
+        const controller = createDepartureStatusRefreshController();
+        const now = Date.parse("2026-07-24T00:00:00Z");
+        const schedulePast = () => controller.schedule({
+            nextCheckAt: "2026-07-23T23:59:00Z",
+            active: true,
+            refresh,
+            nowMs: now,
+        });
+
+        schedulePast();
+        jest.advanceTimersByTime(59_999);
+        expect(refresh).toHaveBeenCalledTimes(0);
+        jest.advanceTimersByTime(1);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        controller.recordFailure();
+        schedulePast();
+        jest.advanceTimersByTime(60_000);
+        expect(refresh).toHaveBeenCalledTimes(2);
+
+        controller.recordFailure();
+        schedulePast();
+        jest.advanceTimersByTime(2 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(3);
+
+        controller.recordFailure();
+        schedulePast();
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(4);
+
+        controller.recordFailure();
+        schedulePast();
+        jest.advanceTimersByTime(15 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(5);
+    });
+
+    test("inactive/종료 상태는 timer를 중단한다", () => {
+        const refresh = jest.fn();
+        const controller = createDepartureStatusRefreshController();
+        controller.schedule({
+            nextCheckAt: "2026-07-23T23:59:00Z",
+            active: false,
+            refresh,
+            nowMs: Date.parse("2026-07-24T00:00:00Z"),
+        });
+        jest.runOnlyPendingTimers();
         expect(refresh).not.toHaveBeenCalled();
     });
 });

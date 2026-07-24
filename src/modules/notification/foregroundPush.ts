@@ -12,6 +12,12 @@ import { AppState, Platform } from "react-native";
 
 import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
 import {
+    getAuthMember,
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+} from "../auth/authStorage";
+import { createAuthEpochAbortController } from "../auth/authEpochAbortController";
+import {
     getNotificationActionCategoryFromData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
@@ -20,6 +26,7 @@ import {
 import {
     createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
+    consumeNotificationEventAfterValidation,
     getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "./notificationEventKey";
@@ -34,10 +41,17 @@ import {
 } from "./pushActionFailureGate";
 import { emitAppNotificationReceived } from "./appNotificationEvents";
 import { refreshForegroundPushCaches } from "./foregroundTrafficRefresh";
+import { validateNotificationAccountBinding } from "./notificationAccountBinding";
+import { SCHEDULE_PUSH_CHANNEL_ID } from "./notificationPermission";
+import { emitScheduleDepartureMutation } from "../schedule/scheduleDepartureMutationEvents";
+import {
+    invalidateScheduleDepartureStatus,
+    setCachedScheduleDepartureStatus,
+} from "../schedule/departureStatusCache";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
-const ANDROID_CHANNEL_ID = "schedule-push";
+const ANDROID_CHANNEL_ID = SCHEDULE_PUSH_CHANNEL_ID;
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
 const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
 
@@ -133,20 +147,39 @@ export async function configurePushNavigation(
         await ensureNotificationPresentation(Notifications);
     }
 
-    const openFromData = (
+    const getValidatedMember = async (
+        data: Record<string, unknown> | undefined,
+        requireRecipient: boolean,
+    ) => {
+        const epoch = getAuthSessionEpoch();
+        const member = await getAuthMember();
+        if (!isAuthSessionEpochCurrent(epoch)) return undefined;
+        if (!validateNotificationAccountBinding({
+            data,
+            currentMemberId: member?.id,
+            requireRecipient,
+        })) return undefined;
+        return { epoch, memberId: member?.id };
+    };
+
+    const openFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         providerEventId?: string,
     ) => {
-        const eventKey = createCanonicalNotificationEventKey(data, providerEventId);
-        // Expo request identifier와 FCM messageId가 달라도 payload 기반 canonical key로
-        // 동일 사용자 터치를 한 번만 소비한다.
-        if (!openedEventConsumer.consume(eventKey)) return;
-
         const target = getPushNavigationTargetFromNotificationData(data);
         if (!target) {
             logPushDevelopment("info", "[push] notification has no navigation target", data);
             return;
         }
+        const validated = await getValidatedMember(data, false);
+        if (!validated) return;
+        const eventKey = createCanonicalNotificationEventKey(data, providerEventId);
+        // Consume only after target and optional account binding are valid.
+        if (!consumeNotificationEventAfterValidation(
+            openedEventConsumer,
+            eventKey,
+            true,
+        )) return;
 
         if (target.kind === "scheduleDetail") {
             logPushDevelopment("info", "[push] opening schedule from notification", target.scheduleId);
@@ -175,15 +208,49 @@ export async function configurePushNavigation(
 
         const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
             ?? `schedule:${scheduleId}`;
+        const binding = await getValidatedMember(data, true);
+        if (!binding?.memberId) {
+            actionFailureGate.report({
+                action: "departNow",
+                scheduleId,
+                message: "이 알림은 현재 로그인한 계정의 알림이 아니에요. 현재 계정에서 일정을 다시 열어 주세요.",
+            });
+            return;
+        }
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
                 `departNow:${eventKey}`,
-                () => markScheduleDeparted(scheduleId),
-                () => refreshForegroundPushCaches({
-                    type: "SCHEDULE_PARTICIPANT_DEPARTED",
-                    scheduleId,
-                }),
+                async () => {
+                    const abort = createAuthEpochAbortController(binding.epoch);
+                    try {
+                        const result = await markScheduleDeparted(scheduleId, {
+                            signal: abort.signal,
+                        });
+                        if (!isAuthSessionEpochCurrent(binding.epoch)) {
+                            throw new Error("AUTH_SESSION_CHANGED");
+                        }
+                        return result;
+                    } finally {
+                        abort.dispose();
+                    }
+                },
+                (result) => {
+                    if (result.status) {
+                        setCachedScheduleDepartureStatus(
+                            `member:${binding.memberId}`,
+                            result.status,
+                        );
+                    }
+                    emitScheduleDepartureMutation({
+                        kind: "departed",
+                        scheduleId,
+                        item: result.item,
+                        status: result.status,
+                        refreshing: result.refreshing,
+                    });
+                    if (!result.status) invalidateScheduleDepartureStatus(scheduleId);
+                },
             );
             if (!executed) return;
             logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
@@ -214,15 +281,49 @@ export async function configurePushNavigation(
 
         const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
             ?? `schedule:${scheduleId}`;
+        const binding = await getValidatedMember(data, true);
+        if (!binding?.memberId) {
+            actionFailureGate.report({
+                action: "snooze",
+                scheduleId,
+                message: "이 알림은 현재 로그인한 계정의 알림이 아니에요. 현재 계정에서 일정을 다시 열어 주세요.",
+            });
+            return;
+        }
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
                 `snooze:${eventKey}`,
-                () => snoozeScheduleDepartureReminder(scheduleId),
-                () => refreshForegroundPushCaches({
-                    type: "SCHEDULE_DEPARTURE_REMINDER",
-                    scheduleId,
-                }),
+                async () => {
+                    const abort = createAuthEpochAbortController(binding.epoch);
+                    try {
+                        const result = await snoozeScheduleDepartureReminder(scheduleId, {
+                            signal: abort.signal,
+                        });
+                        if (!isAuthSessionEpochCurrent(binding.epoch)) {
+                            throw new Error("AUTH_SESSION_CHANGED");
+                        }
+                        return result;
+                    } finally {
+                        abort.dispose();
+                    }
+                },
+                (result) => {
+                    if (result.status) {
+                        setCachedScheduleDepartureStatus(
+                            `member:${binding.memberId}`,
+                            result.status,
+                        );
+                    }
+                    emitScheduleDepartureMutation({
+                        kind: "snoozed",
+                        scheduleId,
+                        item: result.item,
+                        status: result.status,
+                        refreshing: result.refreshing,
+                    });
+                    if (!result.status) invalidateScheduleDepartureStatus(scheduleId);
+                },
             );
             if (!executed) return;
             logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
@@ -250,7 +351,7 @@ export async function configurePushNavigation(
             return;
         }
 
-        openFromData(request.content.data, providerEventId);
+        openFromData(request.content.data, providerEventId).catch(() => undefined);
     };
 
     const appStateSubscription = Notifications
@@ -281,8 +382,19 @@ export async function configurePushNavigation(
     }, {
         handleExpoResponse: handleNotificationResponse,
         handleFirebaseMessage: (message) => {
-            openFromData(message.data, message.messageId);
+            openFromData(message.data, message.messageId).catch(() => undefined);
         },
+        getExpoEventKey: (response) => createCanonicalNotificationEventKey(
+            response.notification.request.content.data,
+            getExpoNotificationProviderMessageId(response),
+        ),
+        getFirebaseEventKey: (message) => createCanonicalNotificationEventKey(
+            message.data,
+            message.messageId,
+        ),
+        isExpoAction: (response) =>
+            response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER ||
+            response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER,
     });
 
     return () => {

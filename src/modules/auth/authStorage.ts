@@ -9,6 +9,39 @@ let currentAuthApiBaseUrl: string | null = null;
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
+const authSessionEpochListeners = new Set<(epoch: number) => void>();
+let authSessionEpoch = 0;
+let authTokenMutationTail: Promise<void> = Promise.resolve();
+
+function bumpAuthSessionEpoch(): number {
+    authSessionEpoch += 1;
+    authSessionEpochListeners.forEach((listener) => listener(authSessionEpoch));
+    return authSessionEpoch;
+}
+
+function runAuthTokenMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = authTokenMutationTail.then(operation, operation);
+    authTokenMutationTail = result.then(() => undefined, () => undefined);
+    return result;
+}
+
+export function getAuthSessionEpoch(): number {
+    return authSessionEpoch;
+}
+
+export function isAuthSessionEpochCurrent(epoch: number): boolean {
+    return authSessionEpoch === epoch;
+}
+
+export function subscribeAuthSessionEpoch(listener: (epoch: number) => void): () => void {
+    authSessionEpochListeners.add(listener);
+    return () => authSessionEpochListeners.delete(listener);
+}
+
+export type AuthLogoutIntent = {
+    epoch: number;
+    refreshToken: string | null;
+};
 
 export function configureSharedAuthApiBaseUrl(apiBaseUrl: string) {
     const normalized = apiBaseUrl.trim().replace(/\/$/, "");
@@ -115,7 +148,7 @@ function normalizeAuthMember(member: StoredAuthMember | null | undefined): Store
     return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
-export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
+async function writeAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
     const writes: Promise<unknown>[] = [syncSharedApiBaseUrl()];
 
     if (accessToken) {
@@ -135,23 +168,57 @@ export async function saveAuthTokens(accessToken?: string | null, refreshToken?:
     await Promise.all(writes);
 }
 
+export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
+    // Explicit login/account restoration is a new intent and invalidates any
+    // refresh response captured for the previous session.
+    bumpAuthSessionEpoch();
+    await runAuthTokenMutation(() => writeAuthTokens(accessToken, refreshToken));
+}
+
+export async function isAuthRefreshContextCurrent(options: {
+    expectedEpoch: number;
+    expectedRefreshToken: string;
+}): Promise<boolean> {
+    if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
+    const currentRefreshToken = await getRefreshToken();
+    return isAuthSessionEpochCurrent(options.expectedEpoch) &&
+        currentRefreshToken === options.expectedRefreshToken;
+}
+
+export async function saveRefreshedAuthTokensIfCurrent(options: {
+    accessToken: string;
+    refreshToken: string;
+    expectedEpoch: number;
+    expectedRefreshToken: string;
+}): Promise<boolean> {
+    return runAuthTokenMutation(async () => {
+        if (!await isAuthRefreshContextCurrent(options)) return false;
+        await writeAuthTokens(options.accessToken, options.refreshToken);
+        return isAuthSessionEpochCurrent(options.expectedEpoch);
+    });
+}
+
 export async function saveAuthMember(member?: StoredAuthMember | null) {
+    const expectedEpoch = getAuthSessionEpoch();
     const normalized = normalizeAuthMember(member);
+    await runAuthTokenMutation(async () => {
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) return;
+        if (!normalized) {
+            await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
+            await deleteSharedItem(AUTH_MEMBER_KEY);
+            return;
+        }
 
-    if (!normalized) {
-        await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
-        await deleteSharedItem(AUTH_MEMBER_KEY);
-        return;
-    }
-
-    const serialized = JSON.stringify(normalized);
-    await Promise.all([
-        SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
-        saveSharedItem(AUTH_MEMBER_KEY, serialized),
-    ]);
+        const serialized = JSON.stringify(normalized);
+        await Promise.all([
+            SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
+            saveSharedItem(AUTH_MEMBER_KEY, serialized),
+        ]);
+    });
 }
 
 export async function getAuthMember(): Promise<StoredAuthMember | null> {
+    const expectedEpoch = getAuthSessionEpoch();
     const [sharedRaw, storedRaw] = await Promise.all([
         readSharedItem(AUTH_MEMBER_KEY),
         SecureStore.getItemAsync(AUTH_MEMBER_KEY),
@@ -162,6 +229,7 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
     try {
         const normalized = normalizeAuthMember(JSON.parse(raw) as StoredAuthMember);
         if (!normalized) {
+            if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
             await Promise.all([
                 SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
                 deleteSharedItem(AUTH_MEMBER_KEY),
@@ -170,6 +238,7 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
         }
 
         const serialized = JSON.stringify(normalized);
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
         if (sharedRaw) {
             if (storedRaw !== serialized) await SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized);
         } else {
@@ -177,6 +246,7 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
         }
         return normalized;
     } catch {
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
         await Promise.all([
             SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
             deleteSharedItem(AUTH_MEMBER_KEY),
@@ -186,7 +256,9 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
 }
 
 export async function saveAuthCurationCompleted(curationCompleted: boolean): Promise<void> {
+    const expectedEpoch = getAuthSessionEpoch();
     const current = await getAuthMember();
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return;
     await saveAuthMember({
         ...(current ?? {}),
         curationCompleted,
@@ -201,16 +273,35 @@ export async function getRefreshToken(): Promise<string | null> {
     return getAuthToken(REFRESH_TOKEN_KEY);
 }
 
+export async function beginAuthLogoutIntent(): Promise<AuthLogoutIntent> {
+    // Abort refresh and other account-owned work at the moment the user chooses
+    // logout, before the best-effort server logout request can block.
+    const epoch = bumpAuthSessionEpoch();
+    const refreshToken = await runAuthTokenMutation(() => getRefreshToken());
+    return { epoch, refreshToken };
+}
+
+export async function clearAuthTokensIfCurrent(
+    expectedEpoch: number,
+    options: { notifyListeners?: boolean } = {},
+): Promise<boolean> {
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return false;
+    await clearAuthTokens(options);
+    return true;
+}
+
 export async function clearAuthTokens({ notifyListeners = true } = {}) {
-    const deletionResults = await Promise.allSettled([
-        SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
-        SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
-        SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
-        deleteSharedItem(ACCESS_TOKEN_KEY),
-        deleteSharedItem(REFRESH_TOKEN_KEY),
-        deleteSharedItem(AUTH_MEMBER_KEY),
-        deleteSharedItem(AUTH_API_BASE_URL_KEY),
-    ]);
+    // Invalidate pending account-owned async work before any storage deletion awaits.
+    bumpAuthSessionEpoch();
+    const deletionResults = await runAuthTokenMutation(() => Promise.allSettled([
+            SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
+            SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
+            SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
+            deleteSharedItem(ACCESS_TOKEN_KEY),
+            deleteSharedItem(REFRESH_TOKEN_KEY),
+            deleteSharedItem(AUTH_MEMBER_KEY),
+            deleteSharedItem(AUTH_API_BASE_URL_KEY),
+        ]));
     if (__DEV__ && process.env.NODE_ENV !== "test") {
         deletionResults.forEach((result) => {
             if (result.status === "rejected") {

@@ -5,6 +5,7 @@ import { Platform } from "react-native";
 import * as SecureStorage from "../storage/secureStorage";
 
 const PUSH_PERMISSION_REQUESTED_KEY = "nolate_push_permission_requested_v1";
+export const SCHEDULE_PUSH_CHANNEL_ID = "schedule-push";
 
 export type NotificationPermissionState =
     | "granted"
@@ -48,6 +49,16 @@ export function shouldAutomaticallyRequestNotificationPermission(
     return state === "undetermined" && !wasRequested;
 }
 
+export function applyAndroidNotificationChannelState(
+    globalState: NotificationPermissionState,
+    importance?: number | null,
+): NotificationPermissionState {
+    return globalState === "granted" &&
+        importance === 2
+        ? "blocked"
+        : globalState;
+}
+
 async function getNotificationsModule() {
     if (Platform.OS === "ios" && !Device.isDevice) return null;
     if (!requireOptionalNativeModule("ExpoPushTokenManager")) return null;
@@ -63,9 +74,32 @@ export async function getNotificationPermissionState(): Promise<NotificationPerm
     const Notifications = await getNotificationsModule();
     if (!Notifications) return "unavailable";
 
-    return normalizeNotificationPermissionState(
+    return resolveNotificationPermissionState(
+        Notifications,
         await Notifications.getPermissionsAsync(),
     );
+}
+
+async function resolveNotificationPermissionState(
+    Notifications: NonNullable<Awaited<ReturnType<typeof getNotificationsModule>>>,
+    permission: PermissionSnapshot,
+): Promise<NotificationPermissionState> {
+    const globalState = normalizeNotificationPermissionState(permission);
+    if (Platform.OS !== "android" || globalState !== "granted") return globalState;
+
+    try {
+        const channel = await Notifications.getNotificationChannelAsync?.(
+            SCHEDULE_PUSH_CHANNEL_ID,
+        );
+        // NONE(2) means the user explicitly blocked this channel. A missing
+        // channel or unsupported API falls back to the app-wide permission.
+        return applyAndroidNotificationChannelState(
+            globalState,
+            channel?.importance,
+        );
+    } catch {
+        return globalState;
+    }
 }
 
 export async function requestNotificationPermission(): Promise<NotificationPermissionState> {
@@ -80,7 +114,7 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
         },
     });
     await markNotificationPermissionRequested();
-    return normalizeNotificationPermissionState(permission);
+    return resolveNotificationPermissionState(Notifications, permission);
 }
 
 export async function wasNotificationPermissionRequested(): Promise<boolean> {

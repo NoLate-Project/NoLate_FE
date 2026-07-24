@@ -1,6 +1,7 @@
 import {
     createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
+    consumeNotificationEventAfterValidation,
     getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "../src/modules/notification/notificationEventKey";
@@ -9,6 +10,7 @@ import { configureNotificationOpenLifecycle } from "../src/modules/notification/
 type ExpoResponse = {
     id: string;
     data: Record<string, unknown>;
+    actionIdentifier?: string;
 };
 
 type FirebaseMessage = {
@@ -58,6 +60,13 @@ describe("notification canonical event consumption", () => {
                 },
             },
         })).toBe("provider-42");
+    });
+
+    test("malformed/stale payload는 key를 소비하지 않아 정상 Firebase가 같은 key를 사용할 수 있다", () => {
+        const consumer = createNotificationEventConsumer();
+        const key = "logical:valid-after-malformed";
+        expect(consumeNotificationEventAfterValidation(consumer, key, false, 1)).toBe(false);
+        expect(consumeNotificationEventAfterValidation(consumer, key, true, 2)).toBe(true);
     });
 });
 describe("background and terminated notification open lifecycle", () => {
@@ -131,5 +140,86 @@ describe("background and terminated notification open lifecycle", () => {
         expect(clearLastExpoResponse).toHaveBeenCalledTimes(1);
 
         unsubscribe();
+    });
+
+    test("same-key terminated Expo action은 1회 실행하고 Firebase navigation도 전달한다", async () => {
+        const handleExpoResponse = jest.fn();
+        const handleFirebaseMessage = jest.fn();
+        const data = { logicalEventKey: "reminder-42", scheduleId: "42" };
+
+        await configureNotificationOpenLifecycle<ExpoResponse, FirebaseMessage>({
+            onFirebaseOpened: () => jest.fn(),
+            getInitialFirebase: async () => ({ messageId: "fcm", data }),
+            getLastExpoResponse: () => ({
+                id: "expo",
+                data,
+                actionIdentifier: "depart",
+            }),
+            clearLastExpoResponse: jest.fn(),
+        }, {
+            handleExpoResponse,
+            handleFirebaseMessage,
+            getExpoEventKey: (response) =>
+                createCanonicalNotificationEventKey(response.data, response.id),
+            getFirebaseEventKey: (message) =>
+                createCanonicalNotificationEventKey(message.data, message.messageId),
+            isExpoAction: (response) => response.actionIdentifier === "depart",
+        });
+
+        expect(handleExpoResponse).toHaveBeenCalledTimes(1);
+        expect(handleFirebaseMessage).toHaveBeenCalledTimes(1);
+    });
+
+    test("different stale Expo action은 Firebase initial이 있으면 폐기한다", async () => {
+        const handleExpoResponse = jest.fn();
+        const handleFirebaseMessage = jest.fn();
+
+        await configureNotificationOpenLifecycle<ExpoResponse, FirebaseMessage>({
+            onFirebaseOpened: () => jest.fn(),
+            getInitialFirebase: async () => ({
+                messageId: "fcm",
+                data: { logicalEventKey: "current", scheduleId: "42" },
+            }),
+            getLastExpoResponse: () => ({
+                id: "expo",
+                data: { logicalEventKey: "stale", scheduleId: "7" },
+                actionIdentifier: "depart",
+            }),
+        }, {
+            handleExpoResponse,
+            handleFirebaseMessage,
+            getExpoEventKey: (response) =>
+                createCanonicalNotificationEventKey(response.data, response.id),
+            getFirebaseEventKey: (message) =>
+                createCanonicalNotificationEventKey(message.data, message.messageId),
+            isExpoAction: () => true,
+        });
+
+        expect(handleExpoResponse).not.toHaveBeenCalled();
+        expect(handleFirebaseMessage).toHaveBeenCalledTimes(1);
+    });
+
+    test("Expo-only action과 Firebase-only initial은 각각 전달한다", async () => {
+        const expoHandler = jest.fn();
+        await configureNotificationOpenLifecycle<ExpoResponse, FirebaseMessage>({
+            onFirebaseOpened: () => jest.fn(),
+            getInitialFirebase: async () => null,
+            getLastExpoResponse: () => ({ id: "expo", data: {}, actionIdentifier: "depart" }),
+        }, {
+            handleExpoResponse: expoHandler,
+            handleFirebaseMessage: jest.fn(),
+        });
+        expect(expoHandler).toHaveBeenCalledTimes(1);
+
+        const firebaseHandler = jest.fn();
+        await configureNotificationOpenLifecycle<ExpoResponse, FirebaseMessage>({
+            onFirebaseOpened: () => jest.fn(),
+            getInitialFirebase: async () => ({ messageId: "fcm", data: {} }),
+            getLastExpoResponse: () => null,
+        }, {
+            handleExpoResponse: jest.fn(),
+            handleFirebaseMessage: firebaseHandler,
+        });
+        expect(firebaseHandler).toHaveBeenCalledTimes(1);
     });
 });

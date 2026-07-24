@@ -219,6 +219,19 @@ describe("departure source and stale presentation", () => {
         });
     });
 
+    test("evaluatedAt 누락은 stale=false여도 최신으로 단정하지 않는다", () => {
+        expect(getDepartureStatusMetadataPresentation(status({
+            source: "SELECTED_ROUTE",
+            stale: false,
+            evaluatedAt: null,
+        }), {
+            nowMs: Date.parse("2026-07-24T09:01:00+09:00"),
+        })).toMatchObject({
+            freshnessTone: "unknown",
+            freshnessLabel: "최신 여부 알 수 없음",
+        });
+    });
+
     test("metadata 시각은 status timeZone을 사용하고 잘못된 zone은 안전하게 fallback한다", () => {
         expect(formatDepartureStatusClock(
             "2026-07-24T00:00:00Z",
@@ -228,6 +241,49 @@ describe("departure source and stale presentation", () => {
             "2026-07-24T00:00:00Z",
             "Invalid/NoLate",
         )).toMatch(/^\d{2}:\d{2}$/);
+    });
+
+    test("추천 출발/출발 완료 clock도 status timeZone을 일관되게 사용한다", () => {
+        const upcoming = getDepartureLifecyclePresentation({
+            recommendedDepartureAt: "2026-07-24T00:30:00Z",
+            scheduleStartAt: "2026-07-24T02:00:00Z",
+            scheduleEndAt: "2026-07-24T03:00:00Z",
+            scheduleHasEndTime: true,
+            timeZone: "Asia/Seoul",
+            nowMs: Date.parse("2026-07-24T00:00:00Z"),
+        });
+        const departed = getDepartureLifecyclePresentation({
+            recommendedDepartureAt: "2026-07-24T00:30:00Z",
+            scheduleStartAt: "2026-07-24T02:00:00Z",
+            scheduleEndAt: "2026-07-24T03:00:00Z",
+            scheduleHasEndTime: true,
+            departedAt: "2026-07-24T00:10:00Z",
+            timeZone: "Asia/Seoul",
+            nowMs: Date.parse("2026-07-24T00:20:00Z"),
+        });
+        expect(upcoming.detail).toContain("09:30");
+        expect(departed.detail).toContain("09:10");
+    });
+
+    test("server stale=false도 age/nextCheck 경과 또는 cached 재검증 중이면 최신으로 두지 않는다", () => {
+        const aged = getDepartureStatusMetadataPresentation(status({
+            stale: false,
+            evaluatedAt: "2026-07-24T08:00:00+09:00",
+            liveFetchedAt: "2026-07-24T08:00:00+09:00",
+            nextCheckAt: "2026-07-24T08:10:00+09:00",
+        }), {
+            nowMs: Date.parse("2026-07-24T09:00:00+09:00"),
+        });
+        const refreshing = getDepartureStatusMetadataPresentation(status({
+            stale: false,
+        }), {
+            nowMs: Date.parse("2026-07-24T09:01:00+09:00"),
+            refreshing: true,
+        });
+        expect(aged.freshnessLabel).toBe("오래된 정보");
+        expect(aged.freshnessTone).toBe("stale");
+        expect(refreshing.freshnessLabel).toBe("최신 상태 확인 중");
+        expect(refreshing.freshnessTone).toBe("stale");
     });
 
     test("fallback UI를 LIVE로 표현하지 않고 stale/failure를 실제 렌더링한다", async () => {

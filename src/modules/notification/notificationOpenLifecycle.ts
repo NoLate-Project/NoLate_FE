@@ -20,6 +20,9 @@ export async function configureNotificationOpenLifecycle<TExpoResponse, TFirebas
     handlers: {
         handleExpoResponse: (response: TExpoResponse) => void;
         handleFirebaseMessage: (message: TFirebaseMessage) => void;
+        getExpoEventKey?: (response: TExpoResponse) => string | undefined;
+        getFirebaseEventKey?: (message: TFirebaseMessage) => string | undefined;
+        isExpoAction?: (response: TExpoResponse) => boolean;
     },
 ): Promise<() => void> {
     const expoSubscription = source.addExpoResponseListener?.(
@@ -31,15 +34,24 @@ export async function configureNotificationOpenLifecycle<TExpoResponse, TFirebas
     const initialFirebase = await source.getInitialFirebase();
     const initialExpo = source.getLastExpoResponse?.() ?? null;
 
-    if (initialFirebase) {
-        handlers.handleFirebaseMessage(initialFirebase);
-    }
     if (initialExpo) {
         source.clearLastExpoResponse?.();
-        // A Firebase initial message is the current launch intent. Expo can retain
-        // an older response from a previous process, so never let it overwrite the
-        // current target. When Firebase has no initial event, Expo remains the source.
-        if (!initialFirebase) handlers.handleExpoResponse(initialExpo);
+    }
+
+    if (initialFirebase && initialExpo) {
+        const expoKey = handlers.getExpoEventKey?.(initialExpo);
+        const firebaseKey = handlers.getFirebaseEventKey?.(initialFirebase);
+        const sameEvent = Boolean(expoKey && firebaseKey && expoKey === firebaseKey);
+        if (sameEvent && handlers.isExpoAction?.(initialExpo)) {
+            // Explicit actions mutate first. Firebase may still provide the launch
+            // navigation intent; its consumer will navigate at most once.
+            handlers.handleExpoResponse(initialExpo);
+        }
+        handlers.handleFirebaseMessage(initialFirebase);
+    } else if (initialFirebase) {
+        handlers.handleFirebaseMessage(initialFirebase);
+    } else if (initialExpo) {
+        handlers.handleExpoResponse(initialExpo);
     }
 
     return () => {

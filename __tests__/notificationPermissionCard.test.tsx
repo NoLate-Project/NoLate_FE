@@ -4,6 +4,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import NotificationPermissionCard from "../src/modules/notification/components/NotificationPermissionCard";
 import {
+    applyAndroidNotificationChannelState,
     normalizeNotificationPermissionState,
     shouldAutomaticallyRequestNotificationPermission,
 } from "../src/modules/notification/notificationPermission";
@@ -77,6 +78,14 @@ describe("notification permission state", () => {
             granted: false,
             canAskAgain: false,
         })).toBe("blocked");
+    });
+
+    test("Android schedule-push channel만 OFF여도 blocked이며 API 미지원은 app 상태로 fallback한다", () => {
+        expect(applyAndroidNotificationChannelState("granted", 2)).toBe("blocked");
+        expect(applyAndroidNotificationChannelState("granted", 5)).toBe("granted");
+        expect(applyAndroidNotificationChannelState("granted", 0)).toBe("granted");
+        expect(applyAndroidNotificationChannelState("granted", undefined)).toBe("granted");
+        expect(applyAndroidNotificationChannelState("denied", 2)).toBe("denied");
     });
 });
 

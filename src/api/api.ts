@@ -7,8 +7,12 @@ import {
     clearAuthTokens,
     configureSharedAuthApiBaseUrl,
     getAccessToken,
+    getAuthSessionEpoch,
     getRefreshToken,
-    saveAuthTokens,
+    isAuthRefreshContextCurrent,
+    isAuthSessionEpochCurrent,
+    saveRefreshedAuthTokensIfCurrent,
+    subscribeAuthSessionEpoch,
 } from "../modules/auth/authStorage";
 import { isDefinitiveRefreshStatus } from "../modules/auth/refreshPolicy";
 import { ApiResponseError } from "./response";
@@ -44,14 +48,37 @@ type RefreshedAuthTokens = {
 };
 
 const runAuthRefresh = createSingleFlightRunner<RefreshedAuthTokens | null>();
+let authRefreshGeneration = 0;
+let activeAuthRefreshController: AbortController | undefined;
+
+subscribeAuthSessionEpoch(() => {
+    authRefreshGeneration += 1;
+    activeAuthRefreshController?.abort();
+    activeAuthRefreshController = undefined;
+});
 
 async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null> {
+    const startedEpoch = getAuthSessionEpoch();
     const refreshToken = await getRefreshToken();
 
+    if (!isAuthSessionEpochCurrent(startedEpoch)) return null;
     if (!refreshToken) {
         await clearAuthTokens();
         return null;
     }
+    const generation = authRefreshGeneration;
+    const controller = new AbortController();
+    activeAuthRefreshController = controller;
+    const contextIsCurrent = async () => (
+        !controller.signal.aborted &&
+        generation === authRefreshGeneration &&
+        await isAuthRefreshContextCurrent({
+            expectedEpoch: startedEpoch,
+            expectedRefreshToken: refreshToken,
+        }) &&
+        generation === authRefreshGeneration &&
+        isAuthSessionEpochCurrent(startedEpoch)
+    );
 
     try {
         const refreshResponse = await axios.post<{
@@ -61,12 +88,16 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
         }>(
             `${API_BASE_URL}/api/member/auth/refresh`,
             { refreshToken },
-            { headers: { "Content-Type": "application/json" }, timeout: 10000 }
+            {
+                headers: { "Content-Type": "application/json" },
+                timeout: 10000,
+                signal: controller.signal,
+            }
         );
         const tokens = refreshResponse.data.data;
 
         if (!refreshResponse.data.success || !tokens?.accessToken || !tokens.refreshToken) {
-            await clearAuthTokens();
+            if (await contextIsCurrent()) await clearAuthTokens();
             return null;
         }
 
@@ -74,16 +105,26 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
         };
-        await saveAuthTokens(refreshedTokens.accessToken, refreshedTokens.refreshToken);
-        return refreshedTokens;
+        if (!await contextIsCurrent()) return null;
+        const saved = await saveRefreshedAuthTokensIfCurrent({
+            accessToken: refreshedTokens.accessToken,
+            refreshToken: refreshedTokens.refreshToken,
+            expectedEpoch: startedEpoch,
+            expectedRefreshToken: refreshToken,
+        });
+        return saved ? refreshedTokens : null;
     } catch (error) {
         // A connection loss, timeout, rate limit, or server outage does not mean the
         // refresh token is invalid. Keep the local session so the user can retry when
         // connectivity recovers; clear it only when the auth server definitively rejects it.
-        if (isDefinitiveRefreshRejection(error)) {
+        if (isDefinitiveRefreshRejection(error) && await contextIsCurrent()) {
             await clearAuthTokens();
         }
         return null;
+    } finally {
+        if (activeAuthRefreshController === controller) {
+            activeAuthRefreshController = undefined;
+        }
     }
 }
 

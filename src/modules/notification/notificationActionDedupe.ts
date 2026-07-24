@@ -48,18 +48,18 @@ export function createNotificationActionDedupe(options: {
     };
 }
 
-export async function executeNotificationActionOnce(
+export async function executeNotificationActionOnce<TResult>(
     dedupe: ReturnType<typeof createNotificationActionDedupe>,
     key: string,
-    action: () => Promise<unknown>,
-    onSuccess: () => void,
+    action: () => Promise<TResult>,
+    onSuccess: (result: TResult) => void | Promise<void>,
 ): Promise<boolean> {
     const lease = dedupe.begin(key);
     if (!lease) return false;
 
     try {
-        await action();
-        onSuccess();
+        const result = await action();
+        await onSuccess(result);
         lease.commit();
         return true;
     } catch (error) {
