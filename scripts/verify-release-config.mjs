@@ -145,6 +145,11 @@ assert.ok(mainShareAuth.includes('@"app:no-auth"'));
 assert.ok(shareExtension.includes('"app:no-auth"'));
 assert.ok(mainShareAuth.includes("getAppGroupSessionState"));
 assert.ok(mainShareAuth.includes("setAppGroupSessionState"));
+assert.match(
+  mainShareAuth,
+  /status = SecItemAdd\([\s\S]*?if \(status == errSecDuplicateItem\) \{[\s\S]*?status = SecItemUpdate\(/,
+  "The native shared-Keychain writer must converge an Expo/native duplicate-Add race with Update",
+);
 assert.ok(shareExtension.includes('private let appGroupSessionStateKey = "nolate_auth_session_state"'));
 assert.ok(shareExtension.includes("readAppGroupSessionStateStrict"));
 assert.ok(shareExtension.includes("captureWorkflowSession"));
@@ -153,6 +158,16 @@ assert.doesNotMatch(
   shareExtension,
   /writeKeychain\(|SecItemUpdate\(|SecItemAdd\(/,
   "Share extension must never persist a refreshed credential over a newer app session",
+);
+assert.doesNotMatch(
+  shareExtension,
+  /api\/member\/auth\/refresh|ShareTokenRefreshCoordinator|refreshTokens\(|retrying:/,
+  "Share extension must never consume the main app's single-use rotating refresh token",
+);
+assert.match(
+  shareExtension,
+  /if http\.statusCode == 401 \{[\s\S]*?throw ShareAPIError\.loginRequired\s+\}/,
+  "Share extension access-token expiry must fail closed and direct the user to the app",
 );
 assert.ok(
   shareExtension.includes('"routeSetupRequired": true'),

@@ -9,6 +9,10 @@ describe("iOS share extension auth invalidation contract", () => {
         "ios/NoLateShareExtension/ShareViewController.swift",
         "utf8",
     );
+    const nativeAuthSource = readFileSync(
+        "ios/NoLateFE/NoLateShareAuthModule.m",
+        "utf8",
+    );
 
     test("Keychain과 독립 App Group 상태를 모두 확인해야 workflow를 시작한다", () => {
         expect(source).toContain(
@@ -34,13 +38,26 @@ describe("iOS share extension auth invalidation contract", () => {
         expect(source).toContain("workflow: workflow");
     });
 
-    test("refresh는 generation+refresh identity로 dedupe하고 Keychain에 쓰지 않는다", () => {
-        expect(source).toContain(
-            '"\\(workflow.generation):\\(sessionIdentity(workflow.refreshToken))"',
-        );
-        expect(source).toContain("refreshCoordinator.refresh(key: refreshKey");
-        expect(source).toContain("refreshCoordinator.cachedTokens");
+    test("rotating refresh token을 소비하거나 갱신 자격을 저장하지 않는다", () => {
+        expect(source).not.toContain("ShareTokenRefreshCoordinator");
+        expect(source).not.toContain("refreshTokens(");
+        expect(source).not.toContain("api/member/auth/refresh");
+        expect(source).not.toContain("retrying:");
         expect(source).not.toMatch(/writeKeychain\(|SecItemUpdate\(|SecItemAdd\(/);
+    });
+
+    test("access 401은 재시도·후속 저장 없이 앱 재로그인 안내로 종료한다", () => {
+        expect(source).toMatch(
+            /if http\.statusCode == 401 \{[\s\S]*?throw ShareAPIError\.loginRequired\s+\}/,
+        );
+        expect(source).not.toMatch(
+            /if http\.statusCode == 401 \{[\s\S]*?(?:self\.)?request\(/,
+        );
+        expect(source).toContain("NoLate 앱에서 다시 로그인해 주세요");
+        expect(source).toContain("앱을 연 뒤 로그인하고 다시 공유해 주세요.");
+        expect(source).toMatch(
+            /let \(parsed, categories\) = try await \(parsedValue, categoryValues\)[\s\S]*?let _: SavedSchedule = try await api\.post/,
+        );
     });
 
     test("Keychain absent와 read/invalid-data failure를 구분해 failure를 차단한다", () => {
@@ -50,5 +67,14 @@ describe("iOS share extension auth invalidation contract", () => {
             /guard status == errSecSuccess,[\s\S]*?else \{\s+return \.failure/,
         );
         expect(source).toContain("guard let value = raw as? String else { return .failure }");
+    });
+
+    test("Expo와 native writer가 같은 신규 Keychain row를 경쟁해도 duplicate Add를 Update로 수렴한다", () => {
+        expect(nativeAuthSource).toMatch(
+            /status = SecItemAdd\([\s\S]*?if \(status == errSecDuplicateItem\) \{[\s\S]*?status = SecItemUpdate\(/,
+        );
+        expect(nativeAuthSource).toContain(
+            "NSMutableDictionary *addQuery = [query mutableCopy]",
+        );
     });
 });

@@ -71,12 +71,22 @@ RCT_REMAP_METHOD(setItem,
 {
   NSMutableDictionary *query = [self queryForKey:key];
   NSData *data = [value dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *updatedValue = @{(__bridge id)kSecValueData: data};
   OSStatus status = SecItemUpdate((__bridge CFDictionaryRef)query,
-                                  (__bridge CFDictionaryRef)@{(__bridge id)kSecValueData: data});
+                                  (__bridge CFDictionaryRef)updatedValue);
   if (status == errSecItemNotFound) {
-    query[(__bridge id)kSecValueData] = data;
-    query[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlocked;
-    status = SecItemAdd((__bridge CFDictionaryRef)query, NULL);
+    NSMutableDictionary *addQuery = [query mutableCopy];
+    addQuery[(__bridge id)kSecValueData] = data;
+    addQuery[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleWhenUnlocked;
+    status = SecItemAdd((__bridge CFDictionaryRef)addQuery, NULL);
+    if (status == errSecDuplicateItem) {
+      // Expo SecureStore and this bridge address the same signed-iOS
+      // Keychain row. If both observe a missing row, the other writer may win
+      // between our Update and Add. Retry Update so that race is an idempotent
+      // upsert instead of an intermittent session-commit failure.
+      status = SecItemUpdate((__bridge CFDictionaryRef)query,
+                             (__bridge CFDictionaryRef)updatedValue);
+    }
   }
   if (status != errSecSuccess) {
     NSError *error = [self keychainErrorWithStatus:status operation:@"저장"];
