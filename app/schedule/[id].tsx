@@ -3,6 +3,7 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
+    AppState,
     BackHandler,
     Linking,
     PanResponder,
@@ -22,15 +23,21 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     getSchedule,
+    getScheduleDepartureStatus,
     markScheduleDeparted,
     sendScheduleDepartureNudge,
+    type ScheduleDepartureStatus,
 } from "../../src/api/schedule";
+import { ApiResponseError } from "../../src/api/response";
 import {
     getScheduleTravelPlan,
     upsertMyScheduleTravelPlan,
 } from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
+import DepartureStatusCard, {
+    type DepartureStatusLoadState,
+} from "../../src/modules/schedule/components/detail/DepartureStatusCard";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import { canEditPresentedSchedule } from "../../src/modules/schedule/schedulePermissions";
@@ -85,15 +92,29 @@ import {
     buildDepartureParticipantPresentations,
     canSendDepartureNudge,
     getDepartureOverview,
-    getScheduleCountdownPresentation,
     getScheduleDetailSheetHeights,
-    resolveScheduleCountdownEndAt,
 } from "../../src/modules/schedule/detailPresentation";
 import {
     canOpenParticipantTravelPlan,
     travelPlanStatusLabel,
 } from "../../src/modules/schedule/travelPlanPresentation";
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
+import {
+    getCachedScheduleDepartureStatus,
+    setCachedScheduleDepartureStatus,
+    subscribeScheduleDepartureStatusInvalidation,
+} from "../../src/modules/schedule/departureStatusCache";
+import {
+    getDepartureLifecyclePresentation,
+    getDepartureStatusMetadataPresentation,
+    getLegacyDepartureStatusMetadata,
+} from "../../src/modules/schedule/departureStatusPresentation";
+import {
+    getNotificationPermissionState,
+    requestNotificationPermission,
+    type NotificationPermissionState,
+} from "../../src/modules/notification/notificationPermission";
+import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -142,6 +163,11 @@ type DepartureDisplayState =
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
+
+function isDepartureStatusApiUnavailable(error: unknown): boolean {
+    return error instanceof ApiResponseError &&
+        (error.status === 404 || error.status === 405 || error.status === 501);
+}
 
 function mapCoordFromUnknown(value: unknown): { latitude: number; longitude: number } | undefined {
     if (!value || typeof value !== "object") return undefined;
@@ -260,6 +286,15 @@ function ScheduleDetail() {
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [retryKey, setRetryKey] = useState(0);
+    const [departureStatus, setDepartureStatus] = useState<ScheduleDepartureStatus>();
+    const [departureStatusLoadState, setDepartureStatusLoadState] =
+        useState<DepartureStatusLoadState>("loading");
+    const [departureStatusError, setDepartureStatusError] = useState<string | null>(null);
+    const [departureStatusRetryKey, setDepartureStatusRetryKey] = useState(0);
+    const [notificationPermission, setNotificationPermission] =
+        useState<NotificationPermissionState>("unavailable");
+    const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
+    const departureStatusRequestRef = useRef(0);
     const {
         minHeight: sheetMinHeight,
         maxHeight: sheetMaxHeight,
@@ -317,10 +352,19 @@ function ScheduleDetail() {
     const canEditSchedule = canEditPresentedSchedule(item, canManageSchedule);
     const currentMemberDepartedAt = item?.myDepartedAt ?? (canManageSchedule ? item?.departedAt : undefined);
     const departureParticipants = item?.departureParticipants ?? [];
-    const recommendedDepartureAt = useMemo(
+    const legacyRecommendedDepartureAt = useMemo(
         () => item ? getRecommendedDepartureAt(item) : undefined,
         [item]
     );
+    const recommendedDepartureAt = useMemo(() => {
+        const value = departureStatus?.recommendedDepartureAt;
+        if (value) {
+            const parsed = fromISO(value);
+            if (Number.isFinite(parsed.getTime())) return parsed;
+        }
+        if (departureStatus && departureStatusLoadState !== "legacy") return undefined;
+        return legacyRecommendedDepartureAt;
+    }, [departureStatus, departureStatusLoadState, legacyRecommendedDepartureAt]);
     const departureDisplayState: DepartureDisplayState = item
         ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
         : { kind: "status", text: "", tone: "default" };
@@ -338,6 +382,12 @@ function ScheduleDetail() {
     useEffect(() => {
         currentLocationRequestGuardRef.current.invalidate();
         currentLocationPendingRef.current = false;
+        const cachedDepartureStatus = id
+            ? getCachedScheduleDepartureStatus(id)
+            : undefined;
+        setDepartureStatus(cachedDepartureStatus);
+        setDepartureStatusLoadState(cachedDepartureStatus ? "ready" : "loading");
+        setDepartureStatusError(null);
         setParticipantsExpanded(false);
         setExpandedContentHeight(0);
         setCurrentLocationCoord(undefined);
@@ -346,6 +396,56 @@ function ScheduleDetail() {
         setTravelPlanDetailPendingMemberId(undefined);
         setDepartureNudgePendingMemberId(undefined);
     }, [id]);
+
+    useEffect(() => {
+        if (!id) return;
+        return subscribeScheduleDepartureStatusInvalidation(id, () => {
+            setNowMs(Date.now());
+            setDepartureStatusRetryKey((value) => value + 1);
+        });
+    }, [id]);
+
+    useEffect(() => {
+        if (!id) return;
+        const requestId = departureStatusRequestRef.current + 1;
+        departureStatusRequestRef.current = requestId;
+        const cachedStatus = getCachedScheduleDepartureStatus(id);
+
+        if (cachedStatus) setDepartureStatus(cachedStatus);
+        setDepartureStatusLoadState("loading");
+        setDepartureStatusError(null);
+
+        getScheduleDepartureStatus(id)
+            .then((status) => {
+                if (requestId !== departureStatusRequestRef.current) return;
+                setCachedScheduleDepartureStatus(status);
+                setDepartureStatus(status);
+                setDepartureStatusLoadState("ready");
+            })
+            .catch((error) => {
+                if (requestId !== departureStatusRequestRef.current) return;
+                if (isDepartureStatusApiUnavailable(error)) {
+                    setDepartureStatus(undefined);
+                    setDepartureStatusLoadState("legacy");
+                    setDepartureStatusError(null);
+                    return;
+                }
+
+                setDepartureStatus(cachedStatus);
+                setDepartureStatusLoadState("error");
+                setDepartureStatusError(
+                    cachedStatus
+                        ? "최신 교통 상태를 확인하지 못했어요. 마지막 확인값을 오래된 정보로 표시합니다."
+                        : "최신 교통 상태를 확인하지 못했어요. 저장된 일정 정보로 표시합니다.",
+                );
+            });
+
+        return () => {
+            if (departureStatusRequestRef.current === requestId) {
+                departureStatusRequestRef.current += 1;
+            }
+        };
+    }, [departureStatusRetryKey, id]);
 
     useEffect(() => () => {
         currentLocationRequestGuardRef.current.invalidate();
@@ -365,6 +465,47 @@ function ScheduleDetail() {
         return () => {
             cancelled = true;
         };
+    }, []);
+
+    const refreshNotificationPermission = useCallback(() => {
+        getNotificationPermissionState()
+            .then(setNotificationPermission)
+            .catch(() => setNotificationPermission("unavailable"));
+    }, []);
+
+    useEffect(() => {
+        refreshNotificationPermission();
+        const subscription = AppState.addEventListener("change", (nextAppState) => {
+            if (nextAppState === "active") refreshNotificationPermission();
+        });
+        return () => subscription.remove();
+    }, [refreshNotificationPermission]);
+
+    const requestDepartureNotificationPermission = useCallback(async () => {
+        if (notificationPermissionPending) return;
+        setNotificationPermissionPending(true);
+        try {
+            const nextPermission = await requestNotificationPermission();
+            setNotificationPermission(nextPermission);
+            if (nextPermission === "granted" && currentMemberId) {
+                registerPushAfterLogin(currentMemberId).catch((error) => {
+                    console.warn("[push] token registration after permission grant failed", error);
+                });
+            }
+        } catch {
+            setNotificationPermission("unavailable");
+        } finally {
+            setNotificationPermissionPending(false);
+        }
+    }, [currentMemberId, notificationPermissionPending]);
+
+    const openNotificationSettings = useCallback(() => {
+        Linking.openSettings().catch(() => {
+            Alert.alert(
+                "설정을 열 수 없어요",
+                "기기 설정에서 NoLate의 알림 권한을 확인해 주세요.",
+            );
+        });
     }, []);
 
     const sheetQuickSummaryAnimatedStyle = useMemo(() => ({
@@ -998,7 +1139,12 @@ function ScheduleDetail() {
     const travelText = displayTravelMinutes
         ? `${travelModeLabel(displayTravelMode ?? undefined)} ${displayTravelMinutes}분`
         : travelModeLabel(displayTravelMode ?? undefined);
-    const hasDepartureInfo = Boolean(recommendedDepartureAt || currentMemberDepartedAt || typeof item.travelMinutes === "number");
+    const hasDepartureInfo = Boolean(
+        recommendedDepartureAt ||
+        currentMemberDepartedAt ||
+        typeof item.travelMinutes === "number" ||
+        typeof departureStatus?.travelMinutes === "number",
+    );
     const departureCompleted = Boolean(currentMemberDepartedAt);
     const sheetBorder = isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.11)";
     const primaryText = isDark ? "#F3F4F6" : "#111827";
@@ -1023,25 +1169,41 @@ function ScheduleDetail() {
         item.hasEndTime !== false,
         item.allDay === true,
     );
-    const scheduleCountdownEndAt = resolveScheduleCountdownEndAt({
-        startAtMs: fromISO(item.startAt).getTime(),
-        endAtMs: fromISO(item.endAt).getTime(),
-        hasEndTime: item.hasEndTime !== false,
-        allDay: item.allDay,
+    const departureLifecycle = getDepartureLifecyclePresentation({
+        recommendedDepartureAt: recommendedDepartureAt?.toISOString(),
+        scheduleEndAt: item.endAt,
+        scheduleHasEndTime: item.hasEndTime !== false,
+        scheduleAllDay: item.allDay,
+        departedAt: currentMemberDepartedAt,
+        nowMs,
     });
-    const scheduleCountdown = getScheduleCountdownPresentation(
-        fromISO(item.startAt).getTime(),
-        scheduleCountdownEndAt,
-        nowMs
-    );
-    const scheduleCountdownAccent = scheduleCountdown.phase === "active"
-        ? "#22C55E"
-        : scheduleCountdown.phase === "ended"
-            ? secondaryText
-            : topCardAccentText;
-    const scheduleCountdownOverviewLabel = scheduleCountdown.phase === "ended"
-        ? scheduleCountdown.label
-        : `${scheduleCountdown.label} 남은 시간`;
+    const metadataStatus = departureStatus && departureStatusLoadState !== "legacy"
+        ? {
+            ...departureStatus,
+            stale: departureStatus.stale || departureStatusLoadState === "error",
+        }
+        : undefined;
+    const departureMetadata = metadataStatus
+        ? getDepartureStatusMetadataPresentation(metadataStatus)
+        : {
+            ...getLegacyDepartureStatusMetadata(item.travelMinutes),
+            sourceDetail: departureStatusLoadState === "loading"
+                ? "최신 교통 상태를 확인하는 동안 일정 저장값을 사용해요"
+                : getLegacyDepartureStatusMetadata(item.travelMinutes).sourceDetail,
+        };
+    const scheduleCountdown = {
+        phase: departureLifecycle.phase,
+        label: departureLifecycle.label,
+        compactValue: departureLifecycle.value,
+    };
+    const scheduleCountdownAccent = departureLifecycle.phase === "imminent"
+        ? "#F59E0B"
+        : departureLifecycle.phase === "past"
+            ? "#F97316"
+            : departureLifecycle.phase === "ended" || departureLifecycle.phase === "missing"
+                ? secondaryText
+                : topCardAccentText;
+    const scheduleCountdownOverviewLabel = departureLifecycle.label;
     const arrivalTimeLabel = hhmmText(fromISO(item.startAt));
     const hasRenderableDetailedRoute = displayPathOverlays.some(
         (overlay) => overlay.coords.length >= 2
@@ -1087,18 +1249,27 @@ function ScheduleDetail() {
         : "미설정";
     const departureActionTitle = departureCompleted
         ? "출발 알림 완료"
-        : departureStatusMuted && departureDisplayState.kind === "status"
-            ? departureDisplayState.text
-            : recommendedDepartureAt
-                ? `권장 출발 ${hhmmText(recommendedDepartureAt)}`
-                : departureDisplayState.kind === "status"
-                    ? departureDisplayState.text
-                    : "출발 준비";
+        : departureLifecycle.detail;
     const compactDepartureSummary = [
         hasDepartureInfo ? departureActionTitle : undefined,
         departureOverview.totalCount > 0 ? `${departureCountLabel} 출발` : undefined,
         departureOverview.totalCount > 0 ? departureOverview.movingLabel : undefined,
     ].filter(Boolean).join(" · ");
+    const departureStatusCardProps = {
+        lifecycle: departureLifecycle,
+        metadata: departureMetadata,
+        loadState: departureStatusLoadState,
+        loadError: departureStatusError,
+        onRetry: () => setDepartureStatusRetryKey((value) => value + 1),
+        permission: {
+            state: notificationPermission,
+            pending: notificationPermissionPending,
+            onRequest: () => {
+                requestDepartureNotificationPermission().catch(() => undefined);
+            },
+            onOpenSettings: openNotificationSettings,
+        },
+    };
     const renderDepartureParticipantChips = () => {
         if (departureParticipants.length <= 1) return null;
 
@@ -1302,6 +1473,9 @@ function ScheduleDetail() {
                     item={item}
                     contentTopInset={insets.top + 88}
                     contentBottomInset={Math.max(insets.bottom + 32, 48)}
+                    departureContent={(
+                        <DepartureStatusCard {...departureStatusCardProps} />
+                    )}
                     travelPlan={item.routeSetupRequired === true || travelPlanParticipants.length > 1
                         ? {
                             statusLabel: travelPlanStatusLabel(item.travelPlanStatus ?? "NOT_CONFIGURED"),
@@ -1810,6 +1984,13 @@ function ScheduleDetail() {
                                     {renderTravelPlanRows()}
                                 </>
                             )}
+                        </View>
+
+                        <View style={[styles.departureDetailSection, { borderBottomColor: sheetBorder }]}>
+                            <DepartureStatusCard
+                                {...departureStatusCardProps}
+                                showHero={false}
+                            />
                         </View>
 
                         <>
@@ -2371,6 +2552,11 @@ const styles = StyleSheet.create({
         borderBottomWidth: StyleSheet.hairlineWidth,
         paddingTop: 8,
         paddingBottom: 8,
+    },
+    departureDetailSection: {
+        paddingTop: 12,
+        paddingBottom: 12,
+        borderBottomWidth: StyleSheet.hairlineWidth,
     },
     sheetStatusHero: {
         borderLeftWidth: 3,

@@ -17,6 +17,7 @@ type Props = {
     item: ScheduleItem;
     contentTopInset: number;
     contentBottomInset: number;
+    departureContent?: React.ReactNode;
     travelPlan?: {
         statusLabel: string;
         actionLabel: string;
@@ -149,6 +150,7 @@ export default function PlainScheduleDetailView({
     item,
     contentTopInset,
     contentBottomInset,
+    departureContent,
     travelPlan,
 }: Props) {
     const { colors, mode } = useTheme();
@@ -222,6 +224,12 @@ export default function PlainScheduleDetailView({
                         {presentation.location ?? "등록된 장소 없음"}
                     </Text>
                 </View>
+
+                {departureContent ? (
+                    <View style={styles.departureSection}>
+                        {departureContent}
+                    </View>
+                ) : null}
 
                 {travelPlan ? (
                     <View style={styles.travelPlanSection}>
@@ -393,6 +401,9 @@ const styles = StyleSheet.create({
         fontSize: 13,
         lineHeight: 18,
         fontWeight: "700",
+    },
+    departureSection: {
+        marginBottom: 14,
     },
     travelPlanSection: {
         marginBottom: 14,

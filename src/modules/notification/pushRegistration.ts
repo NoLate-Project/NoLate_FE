@@ -9,6 +9,7 @@ import {
     getAPNSToken,
     getMessaging,
     getToken,
+    hasPermission,
     isDeviceRegisteredForRemoteMessages,
     onTokenRefresh,
     registerDeviceForRemoteMessages,
@@ -24,6 +25,11 @@ import {
 } from "./pushRegistrationCoordinator";
 import { retryPushRegistration } from "./pushRegistrationRetry";
 import { shouldRegisterRemotePush } from "./pushRegistrationDevicePolicy";
+import {
+    markNotificationPermissionRequested,
+    shouldAutomaticallyRequestNotificationPermission,
+    wasNotificationPermissionRequested,
+} from "./notificationPermission";
 
 const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
@@ -137,15 +143,35 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     let apnsTokenType: "prod" | "sandbox" | undefined;
 
     if (Platform.OS === "android" && Platform.Version >= 33) {
-        allowed =
-            (await PermissionsAndroid.request(
+        allowed = await PermissionsAndroid.check(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        );
+        if (!allowed && shouldAutomaticallyRequestNotificationPermission(
+            "undetermined",
+            await wasNotificationPermissionRequested(),
+        )) {
+            const result = await PermissionsAndroid.request(
                 PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-            )) === PermissionsAndroid.RESULTS.GRANTED;
+            );
+            await markNotificationPermissionRequested();
+            allowed = result === PermissionsAndroid.RESULTS.GRANTED;
+        }
     } else if (Platform.OS === "ios") {
-        const permission = await requestPermission(messaging);
+        let permission = await hasPermission(messaging);
+        if (
+            permission === AuthorizationStatus.NOT_DETERMINED &&
+            shouldAutomaticallyRequestNotificationPermission(
+                "undetermined",
+                await wasNotificationPermissionRequested(),
+            )
+        ) {
+            permission = await requestPermission(messaging);
+            await markNotificationPermissionRequested();
+        }
         allowed =
             permission === AuthorizationStatus.AUTHORIZED ||
-            permission === AuthorizationStatus.PROVISIONAL;
+            permission === AuthorizationStatus.PROVISIONAL ||
+            permission === AuthorizationStatus.EPHEMERAL;
     }
 
     if (!allowed) return;

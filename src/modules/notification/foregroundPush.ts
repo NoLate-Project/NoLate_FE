@@ -11,7 +11,6 @@ import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
 import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
-import { clearCalendarScheduleCache } from "../schedule/calendarScheduleCache";
 import {
     getNotificationActionCategoryFromData,
     getPushNavigationTargetFromNotificationData,
@@ -19,10 +18,17 @@ import {
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "./pushNavigation";
 import {
+    createCanonicalNotificationEventKey,
+    createNotificationEventConsumer,
+    withCanonicalNotificationEventKey,
+} from "./notificationEventKey";
+import { configureNotificationOpenLifecycle } from "./notificationOpenLifecycle";
+import {
     createPushActionFailureGate,
     type PushActionFailure,
 } from "./pushActionFailureGate";
 import { emitAppNotificationReceived } from "./appNotificationEvents";
+import { refreshForegroundPushCaches } from "./foregroundTrafficRefresh";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -111,9 +117,9 @@ export async function configurePushNavigation(
 ): Promise<() => void> {
     const Notifications = await getNotifications();
     const messaging = getMessaging();
-    let lastOpenedMessageId: string | undefined;
     let lastDepartNowActionKey: string | undefined;
     let lastSnoozeActionKey: string | undefined;
+    const openedEventConsumer = createNotificationEventConsumer();
     const actionFailureGate = createPushActionFailureGate(
         onActionFailure,
         AppState.currentState === "active",
@@ -125,10 +131,12 @@ export async function configurePushNavigation(
 
     const openFromData = (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        messageId?: string,
+        providerEventId?: string,
     ) => {
-        // Firebase와 expo-notifications가 같은 터치 이벤트를 각각 전달할 수 있어 messageId로 중복 이동을 막는다.
-        if (messageId && messageId === lastOpenedMessageId) return;
+        const eventKey = createCanonicalNotificationEventKey(data, providerEventId);
+        // Expo request identifier와 FCM messageId가 달라도 payload 기반 canonical key로
+        // 동일 사용자 터치를 한 번만 소비한다.
+        if (!openedEventConsumer.consume(eventKey)) return;
 
         const target = getPushNavigationTargetFromNotificationData(data);
         if (!target) {
@@ -136,7 +144,6 @@ export async function configurePushNavigation(
             return;
         }
 
-        lastOpenedMessageId = messageId;
         if (target.kind === "scheduleDetail") {
             logPushDevelopment("info", "[push] opening schedule from notification", target.scheduleId);
             openSchedule(target.scheduleId);
@@ -229,7 +236,6 @@ export async function configurePushNavigation(
         openFromData(request.content.data, request.identifier);
     };
 
-    const expoSubscription = Notifications?.addNotificationResponseReceivedListener(handleNotificationResponse);
     const appStateSubscription = Notifications
         ? AppState.addEventListener("change", (state) => {
             actionFailureGate.onAppStateChange(state);
@@ -239,30 +245,33 @@ export async function configurePushNavigation(
             const response = Notifications.getLastNotificationResponse();
             if (!response) return;
 
-            handleNotificationResponse(response);
             Notifications.clearLastNotificationResponse();
+            handleNotificationResponse(response);
         })
         : undefined;
-    const firebaseUnsubscribe = onNotificationOpenedApp(messaging, (message) => {
-        openFromData(message.data, message.messageId);
+    const unsubscribeOpenLifecycle = await configureNotificationOpenLifecycle({
+        addExpoResponseListener: Notifications
+            ? (listener) => Notifications.addNotificationResponseReceivedListener(listener)
+            : undefined,
+        onFirebaseOpened: (listener) => onNotificationOpenedApp(messaging, listener),
+        getInitialFirebase: () => getInitialNotification(messaging),
+        getLastExpoResponse: Notifications
+            ? () => Notifications.getLastNotificationResponse()
+            : undefined,
+        clearLastExpoResponse: Notifications
+            ? () => Notifications.clearLastNotificationResponse()
+            : undefined,
+    }, {
+        handleExpoResponse: handleNotificationResponse,
+        handleFirebaseMessage: (message) => {
+            openFromData(message.data, message.messageId);
+        },
     });
-
-    const initialMessage = await getInitialNotification(messaging);
-    if (initialMessage) {
-        openFromData(initialMessage.data, initialMessage.messageId);
-    } else if (Notifications) {
-        const initialResponse = Notifications.getLastNotificationResponse();
-        if (initialResponse) {
-            handleNotificationResponse(initialResponse);
-            Notifications.clearLastNotificationResponse();
-        }
-    }
 
     return () => {
         actionFailureGate.dispose();
-        expoSubscription?.remove();
         appStateSubscription?.remove();
-        firebaseUnsubscribe();
+        unsubscribeOpenLifecycle();
     };
 }
 
@@ -275,25 +284,16 @@ async function showForegroundNotification(
     // 서버는 push 공급자 호출 전에 앱 알림을 저장한다. 수신 직후 배지 구독자에게
     // 다시 조회하도록 알려 포그라운드 화면에서도 놓친 알림 개수가 즉시 보이게 한다.
     emitAppNotificationReceived();
-    if (isScheduleVisibilityChange(message.data)) {
-        clearCalendarScheduleCache();
-    }
+    refreshForegroundPushCaches(message.data);
 
     await showLocalNotification({
         title,
         body,
-        data: message.data ?? {},
+        data: withCanonicalNotificationEventKey(
+            message.data ?? {},
+            message.messageId,
+        ),
     });
-}
-
-function isScheduleVisibilityChange(
-    data?: FirebaseMessagingTypes.RemoteMessage["data"],
-): boolean {
-    const type = data?.type;
-    return type === "SCHEDULE_SHARE_RECEIVED" ||
-        type === "CATEGORY_SHARE_RECEIVED" ||
-        type === "CALENDAR_SHARE_RECEIVED" ||
-        type === "SCHEDULE_CACHE_INVALIDATED";
 }
 
 async function showLocalNotification(notification: LocalPushNotification): Promise<void> {

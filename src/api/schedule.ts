@@ -29,6 +29,32 @@ export type NotificationSendResult = {
     removedTokenCount: number;
 };
 
+export type ScheduleDepartureStatusSource =
+    | "LIVE_PROVIDER"
+    | "SELECTED_ROUTE"
+    | "SAVED_FALLBACK";
+
+export type ScheduleDepartureStatusConfidence = "HIGH" | "MEDIUM" | "LOW";
+
+export type ScheduleDepartureStatus = {
+    scheduleId: string;
+    travelMinutes: number | null;
+    recommendedDepartureAt: string | null;
+    evaluatedAt: string | null;
+    liveFetchedAt: string | null;
+    source: ScheduleDepartureStatusSource | null;
+    stale: boolean;
+    confidence: ScheduleDepartureStatusConfidence | null;
+    failureReason: string | null;
+    lastTrafficChangeMinutes: number | null;
+    lastChangedAt: string | null;
+    nextCheckAt: string | null;
+    preparationMinutes: number | null;
+    preparationStartAt: string | null;
+    safetyBufferMinutes: number | null;
+    timeZone: string | null;
+};
+
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -57,6 +83,25 @@ type CalendarCacheRevisionDto = {
     revision: number;
 };
 
+type ScheduleDepartureStatusDto = {
+    scheduleId?: number | string | null;
+    travelMinutes?: number | null;
+    recommendedDepartureAt?: string | null;
+    evaluatedAt?: string | null;
+    liveFetchedAt?: string | null;
+    source?: string | null;
+    stale?: boolean | null;
+    confidence?: string | null;
+    failureReason?: string | null;
+    lastTrafficChangeMinutes?: number | null;
+    lastChangedAt?: string | null;
+    nextCheckAt?: string | null;
+    preparationMinutes?: number | null;
+    preparationStartAt?: string | null;
+    safetyBufferMinutes?: number | null;
+    timeZone?: string | null;
+};
+
 let observedCalendarCacheRevision: number | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
@@ -67,6 +112,51 @@ function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     return {
         ...dto,
         id: String(dto.id),
+    };
+}
+
+function finiteNumberOrNull(value: unknown): number | null {
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeScheduleDepartureStatus(
+    dto: ScheduleDepartureStatusDto,
+    requestedScheduleId: string,
+): ScheduleDepartureStatus {
+    const source = dto.source === "LIVE_PROVIDER" ||
+        dto.source === "SELECTED_ROUTE" ||
+        dto.source === "SAVED_FALLBACK"
+        ? dto.source
+        : null;
+    const confidence = dto.confidence === "HIGH" ||
+        dto.confidence === "MEDIUM" ||
+        dto.confidence === "LOW"
+        ? dto.confidence
+        : null;
+
+    return {
+        scheduleId: dto.scheduleId === undefined || dto.scheduleId === null
+            ? requestedScheduleId
+            : String(dto.scheduleId),
+        travelMinutes: finiteNumberOrNull(dto.travelMinutes),
+        recommendedDepartureAt: stringOrNull(dto.recommendedDepartureAt),
+        evaluatedAt: stringOrNull(dto.evaluatedAt),
+        liveFetchedAt: stringOrNull(dto.liveFetchedAt),
+        source,
+        stale: dto.stale === true,
+        confidence,
+        failureReason: stringOrNull(dto.failureReason),
+        lastTrafficChangeMinutes: finiteNumberOrNull(dto.lastTrafficChangeMinutes),
+        lastChangedAt: stringOrNull(dto.lastChangedAt),
+        nextCheckAt: stringOrNull(dto.nextCheckAt),
+        preparationMinutes: finiteNumberOrNull(dto.preparationMinutes),
+        preparationStartAt: stringOrNull(dto.preparationStartAt),
+        safetyBufferMinutes: finiteNumberOrNull(dto.safetyBufferMinutes),
+        timeZone: stringOrNull(dto.timeZone),
     };
 }
 
@@ -132,6 +222,18 @@ export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
     const item = normalizeSchedule(unwrapApiResponse(response));
     upsertCalendarScheduleCacheItem(item);
     return item;
+}
+
+export async function getScheduleDepartureStatus(
+    scheduleId: string,
+): Promise<ScheduleDepartureStatus> {
+    const response = await apiGet<ApiEnvelope<ScheduleDepartureStatusDto>>(
+        `/api/schedules/${scheduleId}/departure-status`,
+    );
+    return normalizeScheduleDepartureStatus(
+        unwrapApiResponse(response),
+        scheduleId,
+    );
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {

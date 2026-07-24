@@ -17,6 +17,7 @@ import {
     getCalendarSchedules,
     getDailySchedules,
     getDepartureReadySchedules,
+    getScheduleDepartureStatus,
     getUpcomingSchedules,
     importCalendarSchedule,
     markScheduleDeparted,
@@ -231,6 +232,66 @@ describe("schedule query api wrappers", () => {
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/search", { params: { keyword: "sync" } });
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/departures", {
             params: { fromAt: undefined, toAt: undefined },
+        });
+    });
+
+    test("departure status keeps nullable rollout fields and normalizes enums safely", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 42,
+                travelMinutes: 37,
+                recommendedDepartureAt: "2026-07-24T09:20:00+09:00",
+                evaluatedAt: null,
+                liveFetchedAt: "2026-07-24T08:58:00+09:00",
+                source: "LIVE_PROVIDER",
+                stale: null,
+                confidence: "HIGH",
+                failureReason: null,
+                lastTrafficChangeMinutes: -4,
+                lastChangedAt: null,
+                nextCheckAt: null,
+                preparationMinutes: null,
+                preparationStartAt: null,
+                safetyBufferMinutes: 5,
+                timeZone: "Asia/Seoul",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("42")).resolves.toEqual({
+            scheduleId: "42",
+            travelMinutes: 37,
+            recommendedDepartureAt: "2026-07-24T09:20:00+09:00",
+            evaluatedAt: null,
+            liveFetchedAt: "2026-07-24T08:58:00+09:00",
+            source: "LIVE_PROVIDER",
+            stale: false,
+            confidence: "HIGH",
+            failureReason: null,
+            lastTrafficChangeMinutes: -4,
+            lastChangedAt: null,
+            nextCheckAt: null,
+            preparationMinutes: null,
+            preparationStartAt: null,
+            safetyBufferMinutes: 5,
+            timeZone: "Asia/Seoul",
+        });
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/42/departure-status");
+
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                source: "UNKNOWN_FUTURE_SOURCE",
+                confidence: "VERY_HIGH",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("43")).resolves.toMatchObject({
+            scheduleId: "43",
+            source: null,
+            confidence: null,
+            travelMinutes: null,
+            stale: false,
         });
     });
 
