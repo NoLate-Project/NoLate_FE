@@ -5,6 +5,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import {
     clearCalendarScheduleCache,
     readCalendarScheduleCache,
+    resetCalendarScheduleCacheSecurityFence,
     refreshCalendarScheduleCache,
     setCalendarScheduleCacheSecurityFence,
     upsertCalendarScheduleCacheItem,
@@ -94,6 +95,7 @@ describe("ScheduleProvider deletion tombstones", () => {
     let renderer: ReactTestRenderer | undefined;
 
     beforeEach(() => {
+        resetCalendarScheduleCacheSecurityFence();
         setCalendarScheduleCacheSecurityFence(new Set(), new Set());
         clearCalendarScheduleCache();
     });

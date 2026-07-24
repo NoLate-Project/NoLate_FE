@@ -3,6 +3,8 @@ import {
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
     reconcileCalendarScheduleCacheWithFullList,
+    releaseCalendarScheduleCacheSecurityBlock,
+    resetCalendarScheduleCacheSecurityFence,
     refreshCalendarScheduleCache,
     removeCalendarScheduleCacheItem,
     setCalendarScheduleCacheSecurityFence,
@@ -36,6 +38,7 @@ function deferred<T>() {
 
 describe("calendar schedule month cache", () => {
     beforeEach(() => {
+        resetCalendarScheduleCacheSecurityFence();
         setCalendarScheduleCacheSecurityFence(new Set(), new Set());
         clearCalendarScheduleCache();
     });
@@ -222,6 +225,42 @@ describe("calendar schedule month cache", () => {
         ).toEqual([]);
     });
 
+    test("remove blocks a stale range that starts after the purge without an external fence", async () => {
+        const april = getMonthRange("2026-04-01");
+        const removed = schedule("removed-before-range", localDate(2026, 3, 12));
+
+        removeCalendarScheduleCacheItem(removed.id);
+        await refreshCalendarScheduleCache(
+            april.startAt,
+            april.endAt,
+            jest.fn().mockResolvedValue([removed]),
+        );
+
+        expect(
+            readCalendarScheduleCache(april.startAt, april.endAt).items
+        ).toEqual([]);
+    });
+
+    test("remove blocks a stale upsert that happens after the purge without an external fence", async () => {
+        const may = getMonthRange("2026-05-01");
+        const removed = schedule("removed-before-upsert", localDate(2026, 4, 12));
+        await refreshCalendarScheduleCache(
+            may.startAt,
+            may.endAt,
+            jest.fn().mockResolvedValue([removed]),
+        );
+
+        removeCalendarScheduleCacheItem(removed.id);
+        upsertCalendarScheduleCacheItem({
+            ...removed,
+            title: "stale upsert",
+        });
+
+        expect(
+            readCalendarScheduleCache(may.startAt, may.endAt).items
+        ).toEqual([]);
+    });
+
     test("range writes started after purge obey the live provider security fence", async () => {
         const january = getMonthRange("2026-01-01");
         const february = getMonthRange("2026-02-01");
@@ -232,7 +271,6 @@ describe("calendar schedule month cache", () => {
 
         removeCalendarScheduleCacheItem(accessId);
         removeCalendarScheduleCacheItem(deletedId);
-        setCalendarScheduleCacheSecurityFence(removedIds, redactedIds);
         await refreshCalendarScheduleCache(
             january.startAt,
             january.endAt,
@@ -252,6 +290,7 @@ describe("calendar schedule month cache", () => {
         // write time. Explicit deletion remains fenced.
         redactedIds.delete(accessId);
         setCalendarScheduleCacheSecurityFence(removedIds, redactedIds);
+        releaseCalendarScheduleCacheSecurityBlock(accessId);
         await refreshCalendarScheduleCache(
             february.startAt,
             february.endAt,

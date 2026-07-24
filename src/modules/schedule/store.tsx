@@ -13,6 +13,8 @@ import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
 import {
     clearCalendarScheduleCache,
+    releaseCalendarScheduleCacheSecurityBlock,
+    resetCalendarScheduleCacheSecurityFence,
     setCalendarScheduleCacheSecurityFence,
 } from "./calendarScheduleCache";
 
@@ -156,6 +158,7 @@ export function ScheduleProvider({
     }, []);
     const dispatch = useCallback((action: ScheduleAction) => {
         if (action.type === "RESET") {
+            resetCalendarScheduleCacheSecurityFence();
             updateRemovedItemIds(new Set());
             updateRedactedItemIds(new Set());
             baseDispatch(action);
@@ -184,6 +187,7 @@ export function ScheduleProvider({
                 next.delete(action.item.id);
                 updateRedactedItemIds(next);
             }
+            releaseCalendarScheduleCacheSecurityBlock(action.item.id);
             baseDispatch(action);
             return;
         }
@@ -219,6 +223,7 @@ export function ScheduleProvider({
                 next.delete(action.item.id);
                 updateRedactedItemIds(next);
             }
+            releaseCalendarScheduleCacheSecurityBlock(action.item.id);
         }
         baseDispatch(action);
     }, [updateRedactedItemIds, updateRemovedItemIds]);
