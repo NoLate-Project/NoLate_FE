@@ -15,6 +15,7 @@ import {
     getAuthMember,
     getAuthSessionEpoch,
     isAuthSessionEpochCurrent,
+    subscribeAuthSessionEpoch,
 } from "../auth/authStorage";
 import { createAuthEpochAbortController } from "../auth/authEpochAbortController";
 import {
@@ -28,7 +29,6 @@ import {
     consumeNotificationEventAfterValidation,
     getExplicitLogicalNotificationEventKey,
     getExpoNotificationProviderMessageId,
-    withCanonicalNotificationEventKey,
 } from "./notificationEventKey";
 import {
     createNotificationActionDedupe,
@@ -52,6 +52,13 @@ import {
     invalidateScheduleDepartureStatus,
     setCachedScheduleDepartureStatus,
 } from "../schedule/departureStatusCache";
+import {
+    processForegroundPushForSession,
+    type ForegroundPushPresentation,
+} from "./foregroundPushSession";
+import {
+    runNotificationPresentationMutation,
+} from "./notificationPresentationCoordinator";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -79,12 +86,6 @@ function logPushDevelopment(
     }
     console[level](message, detail);
 }
-
-type LocalPushNotification = {
-    title: string;
-    body: string;
-    data: Record<string, unknown>;
-};
 
 async function getNotifications(): Promise<ExpoNotificationsModule | null> {
     if (notificationsModule !== undefined) {
@@ -134,7 +135,10 @@ export async function configureForegroundPush(): Promise<() => void> {
 
     await ensureNotificationPresentation(Notifications);
 
-    return onMessage(getMessaging(), showForegroundNotification);
+    return onMessage(
+        getMessaging(),
+        (message) => showForegroundNotification(message, Notifications),
+    );
 }
 
 export async function configurePushNavigation(
@@ -154,6 +158,11 @@ export async function configurePushNavigation(
     if (Notifications) {
         await ensureNotificationPresentation(Notifications);
     }
+    const unsubscribeAuthSession = subscribeAuthSessionEpoch(() => {
+        openedEventConsumer.clear();
+        actionDedupe.clear();
+        actionFailureGate.clearPending();
+    });
 
     const getValidatedMember = async (
         data: Record<string, unknown> | undefined,
@@ -414,6 +423,7 @@ export async function configurePushNavigation(
     });
 
     return () => {
+        unsubscribeAuthSession();
         actionFailureGate.dispose();
         appStateSubscription?.remove();
         unsubscribeOpenLifecycle();
@@ -422,34 +432,27 @@ export async function configurePushNavigation(
 
 async function showForegroundNotification(
     message: FirebaseMessagingTypes.RemoteMessage,
+    Notifications: ExpoNotificationsModule,
 ): Promise<void> {
-    const title = message.notification?.title ?? "NoLate";
-    const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
-
-    // 서버는 push 공급자 호출 전에 앱 알림을 저장한다. 수신 직후 배지 구독자에게
-    // 다시 조회하도록 알려 포그라운드 화면에서도 놓친 알림 개수가 즉시 보이게 한다.
-    emitAppNotificationReceived();
-    refreshForegroundPushCaches(message.data);
-
-    await showLocalNotification({
-        title,
-        body,
-        data: withCanonicalNotificationEventKey(
-            message.data ?? {},
-            message.messageId,
-        ),
+    await processForegroundPushForSession({
+        message,
+        getAuthEpoch: getAuthSessionEpoch,
+        isAuthEpochCurrent: isAuthSessionEpochCurrent,
+        getCurrentMemberId: async () => (await getAuthMember())?.id,
+        emitReceived: emitAppNotificationReceived,
+        refreshCaches: refreshForegroundPushCaches,
+        present: (notification, authEpoch) =>
+            runNotificationPresentationMutation(async () => {
+                if (!isAuthSessionEpochCurrent(authEpoch)) return;
+                await showLocalNotification(Notifications, notification);
+            }),
     });
 }
 
-async function showLocalNotification(notification: LocalPushNotification): Promise<void> {
-    const Notifications = await getNotifications();
-
-    if (!Notifications) {
-        return;
-    }
-
-    await ensureNotificationPresentation(Notifications);
-
+async function showLocalNotification(
+    Notifications: ExpoNotificationsModule,
+    notification: ForegroundPushPresentation,
+): Promise<void> {
     await Notifications.scheduleNotificationAsync({
         content: {
             title: notification.title,

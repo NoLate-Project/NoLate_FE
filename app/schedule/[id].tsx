@@ -131,7 +131,7 @@ import {
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 import {
     emitScheduleDepartureMutation,
-    subscribeScheduleDepartureMutation,
+    subscribeScheduleDepartureMutationForAuthSession,
 } from "../../src/modules/schedule/scheduleDepartureMutationEvents";
 import {
     removeCalendarScheduleCacheItem,
@@ -333,6 +333,7 @@ function ScheduleDetail() {
     > | null>(null);
     const appStateRef = useRef(AppState.currentState);
     const asyncAuthGuardRef = useRef(createAsyncAuthGuard(getAuthSessionEpoch));
+    const mountedAuthEpochRef = useRef(getAuthSessionEpoch());
     const mutationAbortControllersRef = useRef(new Set<ReturnType<
         typeof createAuthEpochAbortController
     >>());
@@ -600,27 +601,30 @@ function ScheduleDetail() {
 
     useEffect(() => {
         if (!id) return;
-        return subscribeScheduleDepartureMutation((event) => {
-            if (event.scheduleId !== id) return;
-            mainDetailRequestRef.current += 1;
-            mainDetailAbortControllerRef.current?.abort();
-            departureStatusRequestRef.current += 1;
-            departureStatusAbortControllerRef.current?.abort();
-            if (event.status) {
-                departureRefreshControllerRef.current?.recordSuccess(event.status);
-                if (departureCacheOwnerKey) {
-                    setCachedScheduleDepartureStatus(departureCacheOwnerKey, event.status);
+        return subscribeScheduleDepartureMutationForAuthSession(
+            mountedAuthEpochRef.current,
+            (event) => {
+                if (event.scheduleId !== id) return;
+                mainDetailRequestRef.current += 1;
+                mainDetailAbortControllerRef.current?.abort();
+                departureStatusRequestRef.current += 1;
+                departureStatusAbortControllerRef.current?.abort();
+                if (event.status) {
+                    departureRefreshControllerRef.current?.recordSuccess(event.status);
+                    if (departureCacheOwnerKey) {
+                        setCachedScheduleDepartureStatus(departureCacheOwnerKey, event.status);
+                    }
+                    setDepartureStatus(event.status);
+                    setDepartureStatusLoadState("ready");
+                    setDepartureStatusError(null);
+                } else if (event.refreshing) {
+                    setDepartureStatusLoadState((current) =>
+                        current === "unavailable" ? current : "loading"
+                    );
+                    setDepartureStatusRetryKey((value) => value + 1);
                 }
-                setDepartureStatus(event.status);
-                setDepartureStatusLoadState("ready");
-                setDepartureStatusError(null);
-            } else if (event.refreshing) {
-                setDepartureStatusLoadState((current) =>
-                    current === "unavailable" ? current : "loading"
-                );
-                setDepartureStatusRetryKey((value) => value + 1);
-            }
-        });
+            },
+        );
     }, [departureCacheOwnerKey, id]);
 
     useEffect(() => () => {

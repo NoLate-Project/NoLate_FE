@@ -13,6 +13,7 @@ import {
     getAuthMember,
     getAuthSessionEpoch,
     isAuthSessionEpochCurrent,
+    subscribeAuthSessionEpoch,
 } from "../src/modules/auth/authStorage";
 import {
     type AccountBoundPushNavigationIntent,
@@ -60,6 +61,13 @@ export default function RootLayout() {
         }
         navigateToPushIntent(intent);
     }, [navigateToPushIntent, pendingPushNavigation]);
+
+    useEffect(
+        () => subscribeAuthSessionEpoch(() => {
+            pendingPushNavigation.clear();
+        }),
+        [pendingPushNavigation],
+    );
 
     useEffect(() => {
         const readiness = { isAuthenticated, isCurationCompleted, isLoading };

@@ -11,6 +11,7 @@ export function createNotificationActionDedupe(options: {
     const maxSize = options.maxSize ?? 100;
     const committedAt = new Map<string, number>();
     const inFlight = new Set<string>();
+    let generation = 0;
 
     const prune = (nowMs: number) => {
         committedAt.forEach((timestamp, key) => {
@@ -28,12 +29,14 @@ export function createNotificationActionDedupe(options: {
             prune(nowMs);
             if (inFlight.has(key) || committedAt.has(key)) return undefined;
             inFlight.add(key);
+            const leaseGeneration = generation;
             let settled = false;
 
             return {
                 commit(committedNowMs = Date.now()): void {
                     if (settled) return;
                     settled = true;
+                    if (leaseGeneration !== generation) return;
                     inFlight.delete(key);
                     committedAt.set(key, committedNowMs);
                     prune(committedNowMs);
@@ -41,9 +44,15 @@ export function createNotificationActionDedupe(options: {
                 rollback(): void {
                     if (settled) return;
                     settled = true;
+                    if (leaseGeneration !== generation) return;
                     inFlight.delete(key);
                 },
             };
+        },
+        clear(): void {
+            generation += 1;
+            committedAt.clear();
+            inFlight.clear();
         },
     };
 }

@@ -4,9 +4,15 @@ import {
     getCachedScheduleDepartureStatus,
     setCachedScheduleDepartureStatus,
 } from "../src/modules/schedule/departureStatusCache";
+import {
+    clearDeliveredNotificationsForAuthSession,
+} from "../src/modules/notification/notificationSessionCleanup";
 
 jest.mock("../src/modules/notification/pushRegistration", () => ({
     clearPushRegistrationAfterLogout: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../src/modules/notification/notificationSessionCleanup", () => ({
+    clearDeliveredNotificationsForAuthSession: jest.fn().mockResolvedValue(true),
 }));
 jest.mock("../src/modules/onboarding/calendarConnectionStorage", () => ({
     clearCalendarConnectionSnapshot: jest.fn().mockResolvedValue(undefined),
@@ -46,4 +52,7 @@ test("logout/auth invalidation account cleanup clears departure ETA cache synchr
     const cleanup = clearAccountScopedLocalData();
     expect(getCachedScheduleDepartureStatus("member:A", "42")).toBeUndefined();
     await cleanup;
+    expect(clearDeliveredNotificationsForAuthSession).toHaveBeenCalledWith({
+        authEpoch: expect.any(Number),
+    });
 });

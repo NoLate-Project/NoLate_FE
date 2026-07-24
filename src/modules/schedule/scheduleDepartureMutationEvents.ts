@@ -40,3 +40,16 @@ export function subscribeScheduleDepartureMutation(
     listeners.add(listener);
     return () => listeners.delete(listener);
 }
+
+export function subscribeScheduleDepartureMutationForAuthSession(
+    authEpoch: number,
+    listener: (event: ScheduleDepartureMutationEvent) => void,
+): () => void {
+    return subscribeScheduleDepartureMutation((event) => {
+        if (
+            event.authEpoch !== authEpoch ||
+            !isAuthSessionEpochCurrent(authEpoch)
+        ) return;
+        listener(event);
+    });
+}

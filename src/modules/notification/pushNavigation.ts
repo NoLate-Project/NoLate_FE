@@ -81,6 +81,9 @@ export function createPendingPushNavigationQueue() {
         peek(): AccountBoundPushNavigationIntent | undefined {
             return pendingIntent;
         },
+        clear(): void {
+            pendingIntent = undefined;
+        },
     };
 }
 

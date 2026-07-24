@@ -76,4 +76,21 @@ describe("notification action dedupe", () => {
         expect(dedupe.begin("B", 3)).toBeUndefined();
         expect(dedupe.begin("C", 3)).toBeUndefined();
     });
+
+    test("auth session cleanup은 이전 계정의 committed/in-flight key를 폐기한다", () => {
+        const dedupe = createNotificationActionDedupe();
+        dedupe.begin("departNow:logical:event:shared")?.commit();
+        const aLease = dedupe.begin("snooze:logical:event:pending");
+        expect(aLease).toBeDefined();
+
+        dedupe.clear();
+
+        expect(dedupe.begin("departNow:logical:event:shared")).toBeDefined();
+        const bLease = dedupe.begin("snooze:logical:event:pending");
+        expect(bLease).toBeDefined();
+        aLease?.rollback();
+        expect(dedupe.begin("snooze:logical:event:pending")).toBeUndefined();
+        bLease?.rollback();
+        expect(dedupe.begin("snooze:logical:event:pending")).toBeDefined();
+    });
 });

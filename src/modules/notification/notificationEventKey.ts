@@ -134,6 +134,9 @@ export function createNotificationEventConsumer(options: {
             prune(nowMs);
             return true;
         },
+        clear(): void {
+            consumedAt.clear();
+        },
     };
 }
 

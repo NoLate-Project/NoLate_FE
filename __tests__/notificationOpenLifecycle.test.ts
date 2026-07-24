@@ -72,6 +72,15 @@ describe("notification canonical event consumption", () => {
         expect(consumeNotificationEventAfterValidation(consumer, key, false, 1)).toBe(false);
         expect(consumeNotificationEventAfterValidation(consumer, key, true, 2)).toBe(true);
     });
+
+    test("auth session cleanup 뒤에는 B 계정이 같은 logical key를 새로 소비할 수 있다", () => {
+        const consumer = createNotificationEventConsumer();
+        const key = "logical:event:shared";
+
+        expect(consumer.consume(key, 1)).toBe(true);
+        consumer.clear();
+        expect(consumer.consume(key, 2)).toBe(true);
+    });
 });
 describe("background and terminated notification open lifecycle", () => {
     test("background Expo/Firebase listener를 연결하고 해제한다", async () => {

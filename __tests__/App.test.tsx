@@ -306,6 +306,25 @@ describe("schedule push navigation payload", () => {
         expect(queue.peek()).toBeUndefined();
     });
 
+    test("auth session cleanup은 navigator-ready 대기 intent를 즉시 비운다", () => {
+        const queue = createPendingPushNavigationQueue();
+        queue.defer({
+            target: { kind: "scheduleDetail", scheduleId: "42" },
+            logicalEventKey: "logical:event-a",
+            recipientMemberId: 1,
+            validationEpoch: 7,
+        });
+
+        queue.clear();
+
+        expect(queue.peek()).toBeUndefined();
+        expect(queue.consumeIfReady({
+            isLoading: false,
+            isAuthenticated: true,
+            isCurationCompleted: true,
+        })).toBeUndefined();
+    });
+
     test("대기 중 A 알림 intent는 B 계정 전환 뒤 실행 시점 검증을 통과하지 못한다", () => {
         const intent = {
             target: { kind: "scheduleDetail" as const, scheduleId: "42" },
