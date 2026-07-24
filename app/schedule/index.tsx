@@ -204,7 +204,6 @@ const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
 // The view-mode menu still needs the wider 251pt host. The add menu itself is
 // 238pt wide and stays aligned to this canvas' trailing edge.
 const LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH = 251;
-const SHARE_ATTENTION_REFRESH_MS = 45_000;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
 const DAY_WEEK_STRIP_TOP_OFFSET = LIQUID_TOOLBAR_BUTTON_SIZE + LIQUID_TOOLBAR_TOP_OFFSET + 2;
@@ -1468,11 +1467,17 @@ export default function ScheduleIndex() {
         };
 
         refresh();
-        const timer = setInterval(refresh, SHARE_ATTENTION_REFRESH_MS);
+        const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+            // 백그라운드에서는 JS가 push 도착 시점에 실행되지 않을 수 있으므로,
+            // 다시 활성화되는 순간 서버 상태를 한 번 동기화한다.
+            if (nextState === "active") refresh();
+        });
+        const unsubscribeReceived = subscribeAppNotificationReceived(refresh);
 
         return () => {
             cancelled = true;
-            clearInterval(timer);
+            appStateSubscription.remove();
+            unsubscribeReceived();
         };
     }, [isFocused, loadShareAttention]);
 
@@ -1488,7 +1493,6 @@ export default function ScheduleIndex() {
         if (!isFocused) return undefined;
 
         refreshNotificationUnreadCount();
-        const timer = setInterval(refreshNotificationUnreadCount, SHARE_ATTENTION_REFRESH_MS);
         const appStateSubscription = AppState.addEventListener("change", (nextState) => {
             if (nextState === "active") refreshNotificationUnreadCount();
         });
@@ -1497,7 +1501,6 @@ export default function ScheduleIndex() {
         );
 
         return () => {
-            clearInterval(timer);
             appStateSubscription.remove();
             unsubscribeReceived();
         };
