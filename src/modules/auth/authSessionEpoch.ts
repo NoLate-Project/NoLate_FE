@@ -67,6 +67,20 @@ export function registerAuthSessionTransitionBarrier(
     }).catch(() => undefined);
 }
 
+export function holdAuthSessionTransition(): () => void {
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+        releaseBarrier = resolve;
+    });
+    registerAuthSessionTransitionBarrier(barrier);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        releaseBarrier();
+    };
+}
+
 export function registerSocialAuthTransitionBarrier(
     provider: SocialAuthProvider,
     transition: Promise<unknown>,

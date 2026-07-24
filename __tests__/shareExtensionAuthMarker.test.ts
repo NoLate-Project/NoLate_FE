@@ -77,4 +77,16 @@ describe("iOS share extension auth invalidation contract", () => {
             "NSMutableDictionary *addQuery = [query mutableCopy]",
         );
     });
+
+    test("App Group active 공개는 sync CAS이며 실패하면 invalidated rollback을 시도한다", () => {
+        expect(nativeAuthSource).toContain(
+            "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
+        );
+        expect(nativeAuthSource).toContain(
+            "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
+        );
+        expect(nativeAuthSource).toMatch(
+            /compareAndSetAppGroupSessionStateSync:[\s\S]*?if \(!\[\(NSString \*\)currentValue isEqualToString:expectedValue\]\)[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
+        );
+    });
 });

@@ -35,6 +35,7 @@ import { cancelPendingPushRegistration } from "../notification/pushRegistrationC
 import { isDefinitiveAuthRejection } from "./refreshPolicy";
 import { restoreAuthSessionIfCurrent } from "./conditionalAuthRestore";
 import {
+    holdAuthSessionTransition,
     registerAuthSessionTransitionBarrier,
     registerSocialAuthTransitionBarrier,
     type SocialAuthProvider,
@@ -55,6 +56,8 @@ type AuthContextValue = {
     isAuthenticated: boolean;
     isCurationCompleted: boolean;
     isLoading: boolean;
+    accountExitError: string | null;
+    retryAccountExit: () => Promise<boolean>;
     syncAuthentication: () => Promise<boolean>;
     signOut: (options?: AccountExitOptions) => Promise<boolean>;
 };
@@ -65,24 +68,33 @@ function beginStandaloneAccountExit(): {
     intentPromise: Promise<AuthLogoutIntent>;
     credentialClearPromise: Promise<boolean>;
     cleanupPromise: Promise<void>;
+    releaseTransition: () => void;
 } {
     cancelPendingPushRegistration();
+    const releaseTransition = holdAuthSessionTransition();
     const intentPromise = beginAuthLogoutIntent();
     const credentialClearPromise = intentPromise.then((intent) =>
         clearAuthTokensIfCurrent(intent.epoch, { notifyListeners: false })
-    );
+    ).catch(() => false);
     const cleanupPromise = clearAccountScopedLocalData();
     registerAuthSessionTransitionBarrier(Promise.allSettled([
         credentialClearPromise,
         cleanupPromise,
     ]));
-    return { intentPromise, credentialClearPromise, cleanupPromise };
+    return {
+        intentPromise,
+        credentialClearPromise,
+        cleanupPromise,
+        releaseTransition,
+    };
 }
 
 const fallbackAuthContext: AuthContextValue = {
     isAuthenticated: false,
     isCurationCompleted: false,
     isLoading: false,
+    accountExitError: null,
+    retryAccountExit: async () => false,
     syncAuthentication: async () => {
         try {
             const [accessToken, refreshToken, member] = await Promise.all([
@@ -104,21 +116,23 @@ const fallbackAuthContext: AuthContextValue = {
             remoteSucceeded = false;
         });
         registerRemoteAccountExitBarrier(options, remoteCleanupPromise);
-        const completion = (async () => {
+        try {
             const logoutIntent = await operation.intentPromise;
             await Promise.allSettled([
                 operation.credentialClearPromise,
                 operation.cleanupPromise,
-                remoteCleanupPromise,
             ]);
+            operation.releaseTransition();
+            await remoteCleanupPromise;
             if (logoutIntent.refreshToken) {
                 await logoutMember({ refreshToken: logoutIntent.refreshToken })
                     .catch(() => undefined);
             }
-        })();
-        const cleared = await operation.credentialClearPromise;
-        await completion;
-        return cleared && remoteSucceeded;
+            const cleared = await operation.credentialClearPromise;
+            return cleared && remoteSucceeded;
+        } catch {
+            return false;
+        }
     },
 };
 
@@ -126,11 +140,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [isCurationCompleted, setIsCurationCompleted] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [accountExitError, setAccountExitError] = useState<string | null>(
+        null,
+    );
     const authenticationSequenceRef = useRef(0);
+    const accountExitTransitionReleaseRef = useRef<(() => void) | undefined>(
+        undefined,
+    );
+    const lastAccountExitOptionsRef = useRef<AccountExitOptions | undefined>(
+        undefined,
+    );
     const accountExitRef = useRef<{
         intentPromise: Promise<AuthLogoutIntent>;
         localCredentialClearPromise: Promise<boolean>;
         localCleanupPromise: Promise<void>;
+        releaseTransition: () => void;
         completionPromise?: Promise<boolean>;
     } | undefined>(undefined);
 
@@ -271,21 +295,26 @@ export function AuthProvider({ children }: PropsWithChildren) {
         // must not restore the just-removed session when it eventually finishes.
         authenticationSequenceRef.current += 1;
         cancelPendingPushRegistration();
-        setIsAuthenticated(false);
-        setIsCurationCompleted(false);
-        setIsLoading(false);
 
         // beginAuthLogoutIntent closes the central fence synchronously before
-        // its refresh-token snapshot awaits storage.
+        // its refresh-token snapshot awaits storage. Keep the protected tree
+        // hidden behind loading until an extension-visible durable fence exists.
         const intentPromise = beginAuthLogoutIntent();
+        setAccountExitError(null);
+        setIsLoading(true);
+        if (!accountExitTransitionReleaseRef.current) {
+            accountExitTransitionReleaseRef.current =
+                holdAuthSessionTransition();
+        }
         const operation = {
             intentPromise,
             localCredentialClearPromise: intentPromise.then((intent) =>
                 clearAuthTokensIfCurrent(intent.epoch, {
                     notifyListeners: false,
                 })
-            ),
+            ).catch(() => false),
             localCleanupPromise: clearAccountScopedLocalData(),
+            releaseTransition: accountExitTransitionReleaseRef.current,
         };
         registerAuthSessionTransitionBarrier(Promise.allSettled([
             operation.localCredentialClearPromise,
@@ -298,6 +327,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const signOut = useCallback((
         options: AccountExitOptions = {},
     ): Promise<boolean> => {
+        lastAccountExitOptionsRef.current = options;
         const intentPromise = beginAccountExit();
         const operation = accountExitRef.current;
         if (!operation) return Promise.resolve(false);
@@ -313,7 +343,30 @@ export function AuthProvider({ children }: PropsWithChildren) {
             });
             registerRemoteAccountExitBarrier(options, remoteCleanupPromise);
             operation.completionPromise = (async () => {
-                const logoutIntent = await intentPromise;
+                let logoutIntent: AuthLogoutIntent;
+                try {
+                    logoutIntent = await intentPromise;
+                } catch (error) {
+                    if (accountExitRef.current === operation) {
+                        setAccountExitError(
+                            "공유 확장에 로그아웃 보안 상태를 기록하지 못했어요. " +
+                            "다시 시도해 주세요. 계속되면 앱을 완전히 종료한 뒤 다시 열어 주세요.",
+                        );
+                        accountExitRef.current = undefined;
+                    }
+                    if (__DEV__) {
+                        console.warn(
+                            "[auth] extension-visible logout fence failed",
+                            error,
+                        );
+                    }
+                    return false;
+                }
+                if (accountExitRef.current === operation) {
+                    setIsAuthenticated(false);
+                    setIsCurationCompleted(false);
+                    setIsLoading(false);
+                }
                 // beginAccountExit already started local credential removal, so
                 // an external SDK/withdrawal wait cannot leave a restorable A session.
                 const cleared = await operation.localCredentialClearPromise;
@@ -328,8 +381,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
                 }
                 await Promise.allSettled([
                     operation.localCleanupPromise,
-                    remoteCleanupPromise,
                 ]);
+                operation.releaseTransition();
+                if (
+                    accountExitTransitionReleaseRef.current ===
+                    operation.releaseTransition
+                ) {
+                    accountExitTransitionReleaseRef.current = undefined;
+                }
+                await remoteCleanupPromise;
                 if (logoutIntent.refreshToken) {
                     // The backend compares the presented refresh token with the
                     // current row before invalidating it. A newer login can
@@ -338,13 +398,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
                     await logoutMember({ refreshToken: logoutIntent.refreshToken })
                         .catch(() => undefined);
                 }
-                return cleared &&
+                const completed = cleared &&
                     remoteSucceeded &&
                     !isAuthSessionActive();
+                if (accountExitRef.current === operation) {
+                    accountExitRef.current = undefined;
+                    lastAccountExitOptionsRef.current = undefined;
+                }
+                return completed;
             })();
         }
         return operation.completionPromise;
     }, [beginAccountExit]);
+
+    const retryAccountExit = useCallback(() => {
+        setAccountExitError(null);
+        return signOut(lastAccountExitOptionsRef.current ?? {});
+    }, [signOut]);
 
     useEffect(() => {
         syncAuthentication();
@@ -365,6 +435,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
             isAuthenticated,
             isCurationCompleted,
             isLoading,
+            accountExitError,
+            retryAccountExit,
             syncAuthentication,
             signOut,
         }),
@@ -372,6 +444,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
             isAuthenticated,
             isCurationCompleted,
             isLoading,
+            accountExitError,
+            retryAccountExit,
             signOut,
             syncAuthentication,
         ]

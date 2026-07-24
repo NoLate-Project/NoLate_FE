@@ -32,9 +32,11 @@ const AUTH_INVALID_SESSION_KEY = "nolate_auth_invalid_session";
 const AUTH_INVALID_SESSION_VALUE = "invalidated";
 const AUTH_APP_GROUP_SESSION_INVALIDATED = "invalidated";
 const AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX = "active:";
+const AUTH_APP_GROUP_SESSION_STAGING_PREFIX = "staging:";
 const AUTH_MEMBER_SESSION_IDENTITY_KEY = "authSessionIdentity";
 let currentAuthApiBaseUrl: string | null = null;
 let hasInMemoryInvalidSessionMarker = false;
+let authSessionCommitSequence = 0;
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
@@ -76,6 +78,17 @@ type SharedAuthModule = {
     deleteItem(key: string): Promise<boolean>;
     getAppGroupSessionState?(): Promise<string | null>;
     setAppGroupSessionState?(value: string): Promise<boolean>;
+    setAppGroupSessionStateSync?(value: string): SharedAuthSyncWriteResult;
+    compareAndSetAppGroupSessionStateSync?(
+        expectedValue: string,
+        value: string,
+    ): SharedAuthSyncWriteResult;
+};
+
+type SharedAuthSyncWriteResult = {
+    success?: boolean;
+    mismatch?: boolean;
+    error?: string;
 };
 
 const sharedAuth = Platform.OS === "ios"
@@ -124,6 +137,55 @@ async function readAppGroupSessionStateStrict(): Promise<string | null> {
         throw new Error("App Group 인증 상태 bridge를 사용할 수 없습니다.");
     }
     return sharedAuth.getAppGroupSessionState();
+}
+
+function setAppGroupSessionStateSynchronously(value: string): boolean {
+    if (!sharedAuth) return true;
+    try {
+        return sharedAuth.setAppGroupSessionStateSync?.(value).success === true;
+    } catch {
+        return false;
+    }
+}
+
+function compareAndSetAppGroupSessionStateSynchronously(
+    expectedValue: string,
+    value: string,
+): boolean {
+    if (!sharedAuth) return true;
+    try {
+        return sharedAuth.compareAndSetAppGroupSessionStateSync?.(
+            expectedValue,
+            value,
+        ).success === true;
+    } catch {
+        return false;
+    }
+}
+
+async function ensureExtensionVisibleInvalidationFenceWithinMutation(
+    synchronousFenceReady: boolean,
+): Promise<void> {
+    if (!sharedAuth || synchronousFenceReady) return;
+    try {
+        await setAppGroupSessionStateStrict(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        return;
+    } catch (appGroupError) {
+        try {
+            await setSharedItemStrict(
+                AUTH_INVALID_SESSION_KEY,
+                AUTH_INVALID_SESSION_VALUE,
+            );
+            return;
+        } catch (sharedKeychainError) {
+            throw new AggregateError(
+                [appGroupError, sharedKeychainError],
+                "공유 확장에 로그아웃 차단 상태를 기록하지 못했습니다.",
+            );
+        }
+    }
 }
 
 async function syncSharedApiBaseUrl() {
@@ -394,7 +456,9 @@ type InvalidSessionMarkerWriteResult = {
     results: PromiseSettledResult<unknown>[];
 };
 
-async function persistInvalidSessionMarkerWithinMutation(): Promise<
+async function persistInvalidSessionMarkerWithinMutation(
+    appGroupState = AUTH_APP_GROUP_SESSION_INVALIDATED,
+): Promise<
     InvalidSessionMarkerWriteResult
 > {
     const writes: Promise<unknown>[] = [
@@ -418,7 +482,7 @@ async function persistInvalidSessionMarkerWithinMutation(): Promise<
         // can still observe logout/commit staging when the shared Keychain
         // subsystem is locked or temporarily unavailable.
         writes.push(setAppGroupSessionStateStrict(
-            AUTH_APP_GROUP_SESSION_INVALIDATED,
+            appGroupState,
         ));
     }
     const results = await Promise.allSettled(writes);
@@ -431,6 +495,8 @@ async function persistInvalidSessionMarkerWithinMutation(): Promise<
 
 async function publishCommittedSessionWithinMutation(
     authSessionIdentity: string,
+    stagingState: string,
+    isCurrent: () => boolean,
 ): Promise<void> {
     // Keep the independent App Group state invalidated until every marker that
     // can block the main app has been removed. If any deletion fails, the
@@ -445,9 +511,37 @@ async function publishCommittedSessionWithinMutation(
     const results = await Promise.allSettled(removals);
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
-    await setAppGroupSessionStateStrict(
-        `${AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX}${authSessionIdentity}`,
-    );
+    if (!isCurrent()) {
+        const fenced = setAppGroupSessionStateSynchronously(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        await ensureExtensionVisibleInvalidationFenceWithinMutation(fenced);
+        throw new Error("인증 세션 소유권이 변경되었습니다.");
+    }
+    const activeState =
+        `${AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX}${authSessionIdentity}`;
+    // No await is allowed between the final epoch check and native CAS.
+    // Logout writes "invalidated" synchronously, so a stale commit can never
+    // replace that value with active:A after marker removals.
+    if (!compareAndSetAppGroupSessionStateSynchronously(
+        stagingState,
+        activeState,
+    )) {
+        const fenced = setAppGroupSessionStateSynchronously(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        await ensureExtensionVisibleInvalidationFenceWithinMutation(fenced);
+        throw new Error("공유 확장 인증 세션 공개에 실패했습니다.");
+    }
+    if (!isCurrent()) {
+        const fenced = setAppGroupSessionStateSynchronously(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        if (!fenced) {
+            await ensureExtensionVisibleInvalidationFenceWithinMutation(false);
+        }
+        throw new Error("인증 세션 소유권이 변경되었습니다.");
+    }
 }
 
 async function hasInvalidSessionMarkerWithinMutation(): Promise<boolean> {
@@ -464,13 +558,24 @@ async function hasInvalidSessionMarkerWithinMutation(): Promise<boolean> {
     // A marker store that cannot be checked is not evidence that stale
     // credentials are safe. Cold bootstrap therefore fails closed.
     if (results.some((result) => result.status === "rejected")) return true;
-    return results.some((result) =>
+    if (results.some((result) =>
         result.status === "fulfilled" &&
         (
             result.value === AUTH_INVALID_SESSION_VALUE ||
             result.value === AUTH_APP_GROUP_SESSION_INVALIDATED
         )
-    );
+    )) return true;
+    if (sharedAuth) {
+        const appGroupResult = results[results.length - 1];
+        if (
+            appGroupResult.status === "fulfilled" &&
+            appGroupResult.value &&
+            !appGroupResult.value.startsWith(
+                AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX,
+            )
+        ) return true;
+    }
+    return false;
 }
 
 async function commitAuthenticatedSessionWithinMutation(options: {
@@ -480,18 +585,25 @@ async function commitAuthenticatedSessionWithinMutation(options: {
     isCurrent: () => boolean;
 }): Promise<boolean> {
     if (!options.isCurrent()) return false;
+    const record = await createAuthMemberRecord(
+        options.normalizedMember,
+        options.refreshToken,
+    );
+    if (!options.isCurrent()) return false;
+    authSessionCommitSequence += 1;
+    const stagingState =
+        `${AUTH_APP_GROUP_SESSION_STAGING_PREFIX}` +
+        `${authSessionCommitSequence}:${record.authSessionIdentity}`;
     hasInMemoryInvalidSessionMarker = true;
-    const marker = await persistInvalidSessionMarkerWithinMutation();
+    const marker = await persistInvalidSessionMarkerWithinMutation(
+        stagingState,
+    );
     if (!marker.allSucceeded) {
         await deleteAuthStorageWithinMutation();
         throw new Error("인증 세션 차단 상태를 모든 저장소에 기록하지 못했습니다.");
     }
     if (!options.isCurrent()) return false;
 
-    const record = await createAuthMemberRecord(
-        options.normalizedMember,
-        options.refreshToken,
-    );
     try {
         await writeAuthTokensStrict(
             options.accessToken,
@@ -507,15 +619,35 @@ async function commitAuthenticatedSessionWithinMutation(options: {
         if (!options.isCurrent()) return false;
         await publishCommittedSessionWithinMutation(
             record.authSessionIdentity,
+            stagingState,
+            options.isCurrent,
         );
-        if (!options.isCurrent()) return false;
         hasInMemoryInvalidSessionMarker = false;
         return true;
     } catch (error) {
-        // The durable staging marker is intentionally retained. Cleanup is
-        // best-effort because marker visibility, not partial deletion, is the
-        // security boundary after a process kill.
+        // Publication may already have removed every marker or partially put
+        // active:A into UserDefaults before reporting failure. Re-establish an
+        // extension-visible fence first, then all remaining marker channels,
+        // and only then attempt credential cleanup without releasing the queue.
+        const fenced = setAppGroupSessionStateSynchronously(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        );
+        let fenceFailure: unknown;
+        try {
+            await ensureExtensionVisibleInvalidationFenceWithinMutation(
+                fenced,
+            );
+        } catch (extensionFenceError) {
+            fenceFailure = extensionFenceError;
+        }
+        await persistInvalidSessionMarkerWithinMutation();
         await deleteAuthStorageWithinMutation();
+        if (fenceFailure) {
+            throw new AggregateError(
+                [error, fenceFailure],
+                "인증 세션 공개 실패 뒤 공유 확장 차단 상태도 확인하지 못했습니다.",
+            );
+        }
         throw error;
     }
 }
@@ -821,22 +953,29 @@ export async function beginAuthLogoutIntent(): Promise<AuthLogoutIntent> {
     // logout, before the best-effort server logout request can block.
     const epoch = beginAuthLogoutSession();
     hasInMemoryInvalidSessionMarker = true;
+    const synchronousFenceReady = setAppGroupSessionStateSynchronously(
+        AUTH_APP_GROUP_SESSION_INVALIDATED,
+    );
     const [accessTokenResult, refreshTokenResult] =
         await runAuthTokenMutation(async () => {
-            const marker = await persistInvalidSessionMarkerWithinMutation();
-            if (!marker.allSucceeded && __DEV__ && process.env.NODE_ENV !== "test") {
-                console.warn(
-                    "[auth] 로그아웃 marker를 일부 저장소에 기록하지 못했습니다.",
+            try {
+                await ensureExtensionVisibleInvalidationFenceWithinMutation(
+                    synchronousFenceReady,
                 );
+            } catch (error) {
+                // Keep the session phase fail-closed and still attempt every
+                // available marker/delete channel before surfacing recovery UI.
+                await Promise.allSettled([
+                    persistInvalidSessionMarkerWithinMutation(),
+                    deleteAuthStorageWithinMutation(),
+                ]);
+                throw error;
             }
             return Promise.allSettled([
                 getAuthTokenWithinMutation(ACCESS_TOKEN_KEY, epoch, false),
                 getAuthTokenWithinMutation(REFRESH_TOKEN_KEY, epoch, false),
             ]);
-        }).catch(() => [
-            { status: "rejected" as const, reason: undefined },
-            { status: "rejected" as const, reason: undefined },
-        ]);
+        });
     const accessToken = accessTokenResult.status === "fulfilled"
         ? accessTokenResult.value
         : null;
@@ -913,6 +1052,9 @@ export function clearAuthTokens(
     // Invalidate pending account-owned async work before any storage deletion awaits.
     invalidateAuthSession();
     hasInMemoryInvalidSessionMarker = true;
+    setAppGroupSessionStateSynchronously(
+        AUTH_APP_GROUP_SESSION_INVALIDATED,
+    );
     const completion = (async () => {
         const result = await runAuthTokenMutation(
             invalidateAuthStorageWithinMutation,

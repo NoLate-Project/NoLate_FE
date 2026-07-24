@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import pbxTargetConfig from "./lib/pbx-target-config.cjs";
+
+const { verifyIosTargetConfigurationPolicy } = pbxTargetConfig;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
@@ -33,7 +36,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "42");
+assert.equal(app.ios.buildNumber, "45");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -107,7 +110,7 @@ for (const permission of [
   }
 }
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 42;/g) ?? []).length >= 4);
+verifyIosTargetConfigurationPolicy(iosProject, app.ios.buildNumber);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
@@ -145,6 +148,17 @@ assert.ok(mainShareAuth.includes('@"app:no-auth"'));
 assert.ok(shareExtension.includes('"app:no-auth"'));
 assert.ok(mainShareAuth.includes("getAppGroupSessionState"));
 assert.ok(mainShareAuth.includes("setAppGroupSessionState"));
+assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
+));
+assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
+));
+assert.match(
+  mainShareAuth,
+  /compareAndSetAppGroupSessionStateSync:[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
+  "A failed App Group active-session CAS must synchronously roll back to invalidated",
+);
 assert.match(
   mainShareAuth,
   /status = SecItemAdd\([\s\S]*?if \(status == errSecDuplicateItem\) \{[\s\S]*?status = SecItemUpdate\(/,

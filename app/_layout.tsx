@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
-import { Alert, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
+import {
+    Alert,
+    InteractionManager,
+    Pressable,
+    StatusBar,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
@@ -169,10 +177,66 @@ function createPushNavigationIntent(
 }
 
 function RootNavigator() {
-    const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    const {
+        isAuthenticated,
+        isCurationCompleted,
+        isLoading,
+        accountExitError,
+        retryAccountExit,
+    } = useAuth();
     const { colors, mode } = useTheme();
     const segments = useSegments();
     const routeSegments = segments as string[];
+
+    if (accountExitError) {
+        return (
+            <View
+                style={[
+                    styles.accountExitRecovery,
+                    { backgroundColor: colors.background },
+                ]}
+            >
+                <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
+                <View
+                    style={[
+                        styles.accountExitRecoveryCard,
+                        {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                        },
+                    ]}
+                >
+                    <Text
+                        accessibilityRole="header"
+                        style={[
+                            styles.accountExitRecoveryTitle,
+                            { color: colors.textPrimary },
+                        ]}
+                    >
+                        로그아웃을 안전하게 완료하지 못했어요
+                    </Text>
+                    <Text
+                        style={[
+                            styles.accountExitRecoveryMessage,
+                            { color: colors.textSecondary },
+                        ]}
+                    >
+                        {accountExitError}
+                    </Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="로그아웃 보안 정리 다시 시도"
+                        onPress={retryAccountExit}
+                        style={styles.accountExitRecoveryButton}
+                    >
+                        <Text style={styles.accountExitRecoveryButtonText}>
+                            다시 시도
+                        </Text>
+                    </Pressable>
+                </View>
+            </View>
+        );
+    }
 
     if (isLoading) {
         return (
@@ -253,5 +317,42 @@ function RootNavigator() {
 const styles = StyleSheet.create({
     bootstrap: {
         flex: 1,
+    },
+    accountExitRecovery: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 24,
+    },
+    accountExitRecoveryCard: {
+        width: "100%",
+        maxWidth: 420,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 20,
+        padding: 24,
+    },
+    accountExitRecoveryTitle: {
+        fontSize: 20,
+        fontWeight: "800",
+        lineHeight: 28,
+    },
+    accountExitRecoveryMessage: {
+        marginTop: 12,
+        fontSize: 15,
+        lineHeight: 22,
+    },
+    accountExitRecoveryButton: {
+        minHeight: 48,
+        marginTop: 24,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#2563EB",
+        paddingHorizontal: 20,
+    },
+    accountExitRecoveryButtonText: {
+        color: "#FFFFFF",
+        fontSize: 16,
+        fontWeight: "800",
     },
 });

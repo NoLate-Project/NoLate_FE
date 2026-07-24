@@ -40,6 +40,19 @@ RCT_EXPORT_MODULE();
                          userInfo:@{NSLocalizedDescriptionKey: message}];
 }
 
+- (NSDictionary *)writeAppGroupSessionStateSynchronously:(NSString *)value
+{
+  NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
+  if (defaults == nil) {
+    return @{@"success": @NO, @"error": @"app_group_unavailable"};
+  }
+  [defaults setObject:value forKey:NoLateAppGroupSessionStateKey];
+  if (![defaults synchronize]) {
+    return @{@"success": @NO, @"error": @"app_group_write_failed"};
+  }
+  return @{@"success": @YES};
+}
+
 RCT_REMAP_METHOD(getItem,
                  getItemForKey:(NSString *)key
                  resolver:(RCTPromiseResolveBlock)resolve
@@ -143,6 +156,36 @@ RCT_REMAP_METHOD(setAppGroupSessionState,
     return;
   }
   resolve(@YES);
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:(NSString *)value)
+{
+  return [self writeAppGroupSessionStateSynchronously:value];
+}
+
+RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:
+                                       (NSString *)expectedValue
+                                       value:(NSString *)value)
+{
+  NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
+  if (defaults == nil) {
+    return @{@"success": @NO, @"error": @"app_group_unavailable"};
+  }
+  id currentValue = [defaults objectForKey:NoLateAppGroupSessionStateKey];
+  if (currentValue != nil && ![currentValue isKindOfClass:[NSString class]]) {
+    return @{@"success": @NO, @"error": @"app_group_invalid_value"};
+  }
+  if (![(NSString *)currentValue isEqualToString:expectedValue]) {
+    return @{@"success": @NO, @"mismatch": @YES};
+  }
+  NSDictionary *result = [self writeAppGroupSessionStateSynchronously:value];
+  if (![result[@"success"] boolValue]) {
+    // setObject can update the process-local defaults cache even when
+    // synchronize reports failure. Never leave a partial active publication
+    // behind after a failed CAS.
+    [self writeAppGroupSessionStateSynchronously:@"invalidated"];
+  }
+  return result;
 }
 
 @end
