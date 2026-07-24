@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import pbxTargetConfig from "./lib/pbx-target-config.cjs";
+
+const { verifyIosTargetConfigurationPolicy } = pbxTargetConfig;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
@@ -33,7 +36,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "42");
+assert.equal(app.ios.buildNumber, "45");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -107,7 +110,7 @@ for (const permission of [
   }
 }
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 42;/g) ?? []).length >= 4);
+verifyIosTargetConfigurationPolicy(iosProject, app.ios.buildNumber);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
@@ -128,22 +131,76 @@ assert.match(privacyManifest, /NSPrivacyCollectedDataTypeOtherUserContent/);
 
 const sharedAccessGroupSuffix = "com.anonymous.nolatefe";
 const runtimeAccessGroup = `457QQLB6H6.${sharedAccessGroupSuffix}`;
+const sharedAppGroup = "group.com.anonymous.nolatefe.shared";
 assert.match(mainEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
 assert.match(extensionEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
+assert.ok(app.ios.entitlements["com.apple.security.application-groups"].includes(sharedAppGroup));
+assert.ok(mainEntitlements.includes(sharedAppGroup));
+assert.ok(extensionEntitlements.includes(sharedAppGroup));
 assert.ok(mainShareAuth.includes(runtimeAccessGroup));
 assert.ok(shareExtension.includes(runtimeAccessGroup));
+assert.ok(mainShareAuth.includes(sharedAppGroup));
+assert.ok(shareExtension.includes(sharedAppGroup));
 for (const key of ["nolte_access_token", "nolte_refresh_token", "nolate_auth_api_base_url"]) {
   assert.ok(shareExtension.includes(key), `Share extension is missing the native auth key: ${key}`);
 }
 assert.ok(mainShareAuth.includes('@"app:no-auth"'));
 assert.ok(shareExtension.includes('"app:no-auth"'));
+assert.ok(mainShareAuth.includes("getAppGroupSessionState"));
+assert.ok(mainShareAuth.includes("setAppGroupSessionState"));
+assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
+));
+assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(beginAppGroupSessionTransitionSync:",
+));
+assert.ok(mainShareAuth.includes(
+  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
+));
+assert.match(
+  mainShareAuth,
+  /compareAndSetAppGroupSessionStateSync:[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
+  "A failed App Group active-session CAS must synchronously roll back to invalidated",
+);
+assert.ok(mainShareAuth.includes('@"status": @"mismatch"'));
+assert.ok(mainShareAuth.includes('@"status": @"partial"'));
+assert.ok(mainShareAuth.includes('hasPrefix:@"publishing:"'));
+assert.match(
+  shareExtension,
+  /"Bearer \\\(workflow\.accessToken\)"[\s\S]*?forHTTPHeaderField: "Authorization"/,
+  "Share Extension must send the workflow-captured signed access JWT generation",
+);
+assert.match(
+  mainShareAuth,
+  /status = SecItemAdd\([\s\S]*?if \(status == errSecDuplicateItem\) \{[\s\S]*?status = SecItemUpdate\(/,
+  "The native shared-Keychain writer must converge an Expo/native duplicate-Add race with Update",
+);
+assert.ok(shareExtension.includes('private let appGroupSessionStateKey = "nolate_auth_session_state"'));
+assert.ok(shareExtension.includes("readAppGroupSessionStateStrict"));
+assert.ok(shareExtension.includes("captureWorkflowSession"));
+assert.ok(shareExtension.includes("isWorkflowCurrent(workflow)"));
+assert.doesNotMatch(
+  shareExtension,
+  /writeKeychain\(|SecItemUpdate\(|SecItemAdd\(/,
+  "Share extension must never persist a refreshed credential over a newer app session",
+);
+assert.doesNotMatch(
+  shareExtension,
+  /api\/member\/auth\/refresh|ShareTokenRefreshCoordinator|refreshTokens\(|retrying:/,
+  "Share extension must never consume the main app's single-use rotating refresh token",
+);
+assert.match(
+  shareExtension,
+  /if http\.statusCode == 401 \{[\s\S]*?throw ShareAPIError\.loginRequired\s+\}/,
+  "Share extension access-token expiry must fail closed and direct the user to the app",
+);
 assert.ok(
   shareExtension.includes('"routeSetupRequired": true'),
   "Quick-share schedules must be marked for route setup",
 );
 assert.match(
   shareExtension,
-  /let _: SavedSchedule = try await api\.post\("api\/schedules", json: payload\)/,
+  /let _: SavedSchedule = try await api\.post\([\s\S]*?"api\/schedules",[\s\S]*?workflow: workflow/,
   "The share extension must save the parsed schedule directly",
 );
 assert.match(

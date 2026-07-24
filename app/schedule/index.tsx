@@ -221,9 +221,6 @@ const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = ADD_MENU_SOURCE.nativeWidth;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = ADD_MENU_SOURCE.nativeHeight;
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
-// The view-mode menu still needs the wider 251pt host. The add menu itself is
-// 238pt wide and stays aligned to this canvas' trailing edge.
-const LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH = 251;
 const SHARE_ATTENTION_REFRESH_MS = 45_000;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;

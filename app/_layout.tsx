@@ -1,20 +1,40 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
-import { Alert, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
+import {
+    Alert,
+    InteractionManager,
+    Pressable,
+    StatusBar,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
     configureForegroundPush,
     configurePushNavigation,
+    type PushNavigationBinding,
 } from "../src/modules/notification/foregroundPush";
 import { useAuth } from "../src/modules/auth/AuthContext";
 import {
+    getAuthMember,
+    getAuthSessionEpoch,
+    isAuthSessionActive,
+    isAuthSessionEpochCurrent,
+    subscribeAuthSessionEpoch,
+} from "../src/modules/auth/authStorage";
+import {
+    type AccountBoundPushNavigationIntent,
     createPendingPushNavigationQueue,
     createScheduleDetailRoute,
+    isAccountBoundPushNavigationIntentCurrent,
     isPushNavigationReady,
-    type PushNavigationTarget,
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
+import {
+    scheduleNotificationInteractionForAuthSession,
+} from "../src/modules/notification/notificationInteractionFence";
 
 export default function RootLayout() {
     const router = useRouter();
@@ -26,23 +46,50 @@ export default function RootLayout() {
         isLoading,
     }));
 
-    const navigateToPushTarget = useCallback((target: PushNavigationTarget) => {
-        InteractionManager.runAfterInteractions(() => {
-            if (target.kind === "scheduleDetail") {
-                router.push(createScheduleDetailRoute(target.scheduleId));
-                return;
-            }
-            router.push("/share/inbox");
+    const navigateToPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
+        scheduleNotificationInteractionForAuthSession({
+            authEpoch: intent.validationEpoch,
+            isAuthSessionActive,
+            schedule: (callback) =>
+                InteractionManager.runAfterInteractions(callback),
+            action: () => {
+                (async () => {
+                    if (!isAuthSessionEpochCurrent(intent.validationEpoch)) return;
+                    const member = await getAuthMember();
+                    if (
+                        !isAuthSessionActive(intent.validationEpoch) ||
+                        !isAccountBoundPushNavigationIntentCurrent(intent, {
+                            authEpoch: getAuthSessionEpoch(),
+                            memberId: member?.id,
+                        })
+                    ) return;
+                    if (intent.target.kind === "scheduleDetail") {
+                        router.push(createScheduleDetailRoute(intent.target.scheduleId));
+                        return;
+                    }
+                    router.push("/share/inbox");
+                })().catch((error) => {
+                    console.warn("[push] queued navigation validation failed", error);
+                });
+            },
         });
     }, [router]);
 
-    const openOrDeferPushTarget = useCallback((target: PushNavigationTarget) => {
+    const openOrDeferPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
+        if (!isAuthSessionActive(intent.validationEpoch)) return;
         if (!pushNavigationReadyRef.current) {
-            pendingPushNavigation.defer(target);
+            pendingPushNavigation.defer(intent);
             return;
         }
-        navigateToPushTarget(target);
-    }, [navigateToPushTarget, pendingPushNavigation]);
+        navigateToPushIntent(intent);
+    }, [navigateToPushIntent, pendingPushNavigation]);
+
+    useEffect(
+        () => subscribeAuthSessionEpoch(() => {
+            pendingPushNavigation.clear();
+        }),
+        [pendingPushNavigation],
+    );
 
     useEffect(() => {
         const readiness = { isAuthenticated, isCurationCompleted, isLoading };
@@ -50,13 +97,13 @@ export default function RootLayout() {
         pushNavigationReadyRef.current = ready;
         if (!ready) return;
 
-        const pendingTarget = pendingPushNavigation.consumeIfReady(readiness);
-        if (pendingTarget) navigateToPushTarget(pendingTarget);
+        const pendingIntent = pendingPushNavigation.consumeIfReady(readiness);
+        if (pendingIntent) navigateToPushIntent(pendingIntent);
     }, [
         isAuthenticated,
         isCurationCompleted,
         isLoading,
-        navigateToPushTarget,
+        navigateToPushIntent,
         pendingPushNavigation,
     ]);
 
@@ -72,30 +119,32 @@ export default function RootLayout() {
                 console.warn("[push] foreground notification setup failed", error);
             });
         configurePushNavigation(
-            (scheduleId) => {
-                openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
+            (scheduleId, binding) => {
+                openOrDeferPushIntent(createPushNavigationIntent(
+                    { kind: "scheduleDetail", scheduleId },
+                    binding,
+                ));
             },
-            () => {
-                openOrDeferPushTarget({ kind: "shareInbox" });
+            (binding) => {
+                openOrDeferPushIntent(createPushNavigationIntent(
+                    { kind: "shareInbox" },
+                    binding,
+                ));
             },
-            ({ scheduleId, message }) => {
-                InteractionManager.runAfterInteractions(() => {
-                    Alert.alert(
-                        "알림 요청을 처리하지 못했어요",
-                        message,
-                        scheduleId
-                            ? [
-                                { text: "닫기", style: "cancel" },
-                                {
-                                    text: "일정 열기",
-                                    onPress: () => openOrDeferPushTarget({
-                                        kind: "scheduleDetail",
-                                        scheduleId,
-                                    }),
-                                },
-                            ]
-                            : [{ text: "확인" }],
-                    );
+            ({ message }) => {
+                const authEpoch = getAuthSessionEpoch();
+                scheduleNotificationInteractionForAuthSession({
+                    authEpoch,
+                    isAuthSessionActive,
+                    schedule: (callback) =>
+                        InteractionManager.runAfterInteractions(callback),
+                    action: () => {
+                        Alert.alert(
+                            "알림 요청을 처리하지 못했어요",
+                            message,
+                            [{ text: "확인" }],
+                        );
+                    },
                 });
             },
         )
@@ -110,16 +159,84 @@ export default function RootLayout() {
             unsubscribeForeground?.();
             unsubscribeNavigation?.();
         };
-    }, [openOrDeferPushTarget]);
+    }, [openOrDeferPushIntent]);
 
     return <RootNavigator />;
 }
 
+function createPushNavigationIntent(
+    target: AccountBoundPushNavigationIntent["target"],
+    binding: PushNavigationBinding,
+): AccountBoundPushNavigationIntent {
+    return {
+        target,
+        logicalEventKey: binding.logicalEventKey,
+        recipientMemberId: binding.recipientMemberId,
+        validationEpoch: binding.authEpoch,
+    };
+}
+
 function RootNavigator() {
-    const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    const {
+        isAuthenticated,
+        isCurationCompleted,
+        isLoading,
+        accountExitError,
+        retryAccountExit,
+    } = useAuth();
     const { colors, mode } = useTheme();
     const segments = useSegments();
     const routeSegments = segments as string[];
+
+    if (accountExitError) {
+        return (
+            <View
+                style={[
+                    styles.accountExitRecovery,
+                    { backgroundColor: colors.background },
+                ]}
+            >
+                <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
+                <View
+                    style={[
+                        styles.accountExitRecoveryCard,
+                        {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                        },
+                    ]}
+                >
+                    <Text
+                        accessibilityRole="header"
+                        style={[
+                            styles.accountExitRecoveryTitle,
+                            { color: colors.textPrimary },
+                        ]}
+                    >
+                        로그아웃을 안전하게 완료하지 못했어요
+                    </Text>
+                    <Text
+                        style={[
+                            styles.accountExitRecoveryMessage,
+                            { color: colors.textSecondary },
+                        ]}
+                    >
+                        {accountExitError}
+                    </Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="로그아웃 보안 정리 다시 시도"
+                        onPress={retryAccountExit}
+                        style={styles.accountExitRecoveryButton}
+                    >
+                        <Text style={styles.accountExitRecoveryButtonText}>
+                            다시 시도
+                        </Text>
+                    </Pressable>
+                </View>
+            </View>
+        );
+    }
 
     if (isLoading) {
         return (
@@ -200,5 +317,42 @@ function RootNavigator() {
 const styles = StyleSheet.create({
     bootstrap: {
         flex: 1,
+    },
+    accountExitRecovery: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingHorizontal: 24,
+    },
+    accountExitRecoveryCard: {
+        width: "100%",
+        maxWidth: 420,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 20,
+        padding: 24,
+    },
+    accountExitRecoveryTitle: {
+        fontSize: 20,
+        fontWeight: "800",
+        lineHeight: 28,
+    },
+    accountExitRecoveryMessage: {
+        marginTop: 12,
+        fontSize: 15,
+        lineHeight: 22,
+    },
+    accountExitRecoveryButton: {
+        minHeight: 48,
+        marginTop: 24,
+        borderRadius: 14,
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "#2563EB",
+        paddingHorizontal: 20,
+    },
+    accountExitRecoveryButtonText: {
+        color: "#FFFFFF",
+        fontSize: 16,
+        fontWeight: "800",
     },
 });

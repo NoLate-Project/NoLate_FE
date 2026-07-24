@@ -1,6 +1,10 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
-import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
+import {
+    captureCalendarScheduleCacheAuthEpoch,
+    clearCalendarScheduleCache,
+    mutateCalendarScheduleCacheIfAuthSessionCurrent,
+} from "../modules/schedule/calendarScheduleCache";
 
 export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
 export type ScheduleCalendarRole = "VIEWER" | "EDITOR" | "OWNER";
@@ -61,19 +65,27 @@ export async function updateScheduleCalendar(
     calendarId: number | string,
     payload: UpdateScheduleCalendarPayload,
 ): Promise<ScheduleCalendar> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPatch<ApiEnvelope<ScheduleCalendar>, UpdateScheduleCalendarPayload>(
         `/api/schedule-calendars/${calendarId}`,
         payload,
     );
     const calendar = unwrapApiResponse(response);
-    clearCalendarScheduleCache();
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        clearCalendarScheduleCache,
+    );
     return calendar;
 }
 
 export async function archiveScheduleCalendar(calendarId: number | string): Promise<void> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}`);
     assertApiSuccess(response);
-    clearCalendarScheduleCache();
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        clearCalendarScheduleCache,
+    );
 }
 
 export async function getScheduleCalendarMembers(
@@ -139,9 +151,13 @@ export async function removeScheduleCalendarMember(
 }
 
 export async function leaveScheduleCalendar(calendarId: number | string): Promise<void> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}/leave`);
     assertApiSuccess(response);
-    clearCalendarScheduleCache();
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        clearCalendarScheduleCache,
+    );
 }
 
 export async function transferScheduleCalendarOwnership(

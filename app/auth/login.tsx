@@ -29,13 +29,26 @@ import {
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import {
+    captureAuthRestoreContext,
     clearAuthTokens,
+    clearRestorableAuthSessionIfCurrent,
     getAuthMember,
-    getRefreshToken,
-    saveAuthMember,
-    saveAuthTokens,
+    prepareExplicitAuthenticationRequest,
+    saveAuthenticatedSession,
 } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import {
+    restoreAuthSessionIfCurrent,
+} from "../../src/modules/auth/conditionalAuthRestore";
+import {
+    isAuthSessionTransitionPendingError,
+    waitForAuthSessionTransition,
+    waitForSocialAuthTransition,
+} from "../../src/modules/auth/authSessionEpoch";
+import {
+    consumeAccountExitFailure,
+    subscribeAccountExitFailure,
+} from "../../src/modules/auth/accountExitFailureNotice";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import {
     getAuthErrorPresentation,
@@ -91,10 +104,14 @@ export default function Login() {
     const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
     const pendingShareToken = normalizeShareToken(shareToken);
 
-    const finishAuthentication = useCallback(async (member: MemberDto) => {
+    const finishAuthentication = useCallback(async (
+        member: MemberDto,
+        alreadyRestored = false,
+    ) => {
         const authenticatedMember = requireAuthenticatedMember(member);
-        await saveAuthTokens(authenticatedMember.accessToken, authenticatedMember.refreshToken);
-        await saveAuthMember(authenticatedMember);
+        if (!alreadyRestored) {
+            await saveAuthenticatedSession(authenticatedMember);
+        }
         const authenticated = await syncAuthentication();
         if (!authenticated) {
             throw new Error("로그인 상태를 저장하지 못했어요. 다시 시도해 주세요.");
@@ -135,20 +152,30 @@ export default function Login() {
 
     useEffect(() => {
         let cancelled = false;
+        let restoreContext:
+            Awaited<ReturnType<typeof captureAuthRestoreContext>>;
 
         const tryTokenLogin = async () => {
             try {
-                const refreshToken = await getRefreshToken();
-                if (!refreshToken || cancelled) return;
-
-                const member = await tokenLoginMember({ refreshToken });
+                await waitForAuthSessionTransition();
                 if (cancelled) return;
+                restoreContext = await captureAuthRestoreContext();
+                if (!restoreContext || cancelled) return;
 
-                await finishAuthentication(member);
+                const member = await restoreAuthSessionIfCurrent({
+                    context: restoreContext,
+                    tokenLogin: (refreshToken) => tokenLoginMember({
+                        refreshToken,
+                    }),
+                });
+                if (!member || cancelled) return;
+
+                await finishAuthentication(member, true);
             } catch (error) {
                 if (cancelled) return;
-                if (isDefinitiveAuthRejection(error)) {
-                    await clearAuthTokens();
+                if (isAuthSessionTransitionPendingError(error)) return;
+                if (isDefinitiveAuthRejection(error) && restoreContext) {
+                    await clearRestorableAuthSessionIfCurrent(restoreContext);
                     await syncAuthentication();
                 }
             } finally {
@@ -162,6 +189,20 @@ export default function Login() {
             cancelled = true;
         };
     }, [finishAuthentication, syncAuthentication]);
+
+    useEffect(() => {
+        const showAccountExitFailure = () => {
+            const notice = consumeAccountExitFailure();
+            if (!notice) return;
+            Alert.alert(
+                notice.title ?? "회원탈퇴 실패",
+                notice.message,
+                [{ text: "확인" }],
+            );
+        };
+        showAccountExitFailure();
+        return subscribeAccountExitFailure(showAccountExitFailure);
+    }, []);
 
     const onLogin = async () => {
         if (submitting || restoringSession || socialSubmittingProvider) return;
@@ -181,9 +222,14 @@ export default function Login() {
 
         try {
             setSubmitting(true);
+            await prepareExplicitAuthenticationRequest();
             const member = await loginMember({ email, password });
             await finishAuthentication(member);
         } catch (error) {
+            if (isAuthSessionTransitionPendingError(error)) {
+                Alert.alert("로그아웃 정리 중", error.message);
+                return;
+            }
             const presentation = getAuthErrorPresentation(error, "login");
             await clearAuthTokens();
             await syncAuthentication();
@@ -198,6 +244,8 @@ export default function Login() {
 
         try {
             setSocialSubmittingProvider(provider);
+            await prepareExplicitAuthenticationRequest();
+            await waitForSocialAuthTransition(provider);
 
             const profile =
                 provider === "kakao"
@@ -206,6 +254,7 @@ export default function Login() {
                         ? await loginWithNaverSdk()
                         : await loginWithAppleSdk();
 
+            await waitForSocialAuthTransition(provider);
             const registration = await getSnsRegistrationStatus({
                 loginType: profile.loginType,
                 providerToken: profile.providerToken,
@@ -217,6 +266,7 @@ export default function Login() {
                 return;
             }
 
+            await waitForSocialAuthTransition(provider);
             const member = await snsLoginMember({
                 loginType: profile.loginType,
                 providerToken: profile.providerToken,
@@ -227,6 +277,10 @@ export default function Login() {
             await finishAuthentication(member);
         } catch (error) {
             if (isAuthCancellation(error)) return;
+            if (isAuthSessionTransitionPendingError(error)) {
+                Alert.alert("로그아웃 정리 중", error.message);
+                return;
+            }
             const presentation = getAuthErrorPresentation(
                 error,
                 "social-login",
@@ -244,6 +298,13 @@ export default function Login() {
         let accountCreated = false;
         try {
             setSocialSignupSubmitting(true);
+            await prepareExplicitAuthenticationRequest();
+            const provider = getSocialAuthProvider(
+                pendingSocialProfile.loginType,
+            );
+            if (provider) {
+                await waitForSocialAuthTransition(provider);
+            }
             const member = await snsSignUpMember({
                 loginType: pendingSocialProfile.loginType,
                 providerToken: pendingSocialProfile.providerToken,
@@ -254,6 +315,10 @@ export default function Login() {
             accountCreated = true;
             await finishAuthentication(member);
         } catch (error) {
+            if (isAuthSessionTransitionPendingError(error)) {
+                Alert.alert("로그아웃 정리 중", error.message);
+                return;
+            }
             if (accountCreated) {
                 await clearAuthTokens().catch(() => undefined);
                 await syncAuthentication().catch(() => false);
@@ -421,6 +486,21 @@ export default function Login() {
             </View>
         </AuthScreen>
     );
+}
+
+function getSocialAuthProvider(
+    loginType: string,
+): SocialProvider | undefined {
+    switch (loginType.trim().toUpperCase()) {
+        case "NAVER":
+            return "naver";
+        case "KAKAO":
+            return "kakao";
+        case "APPLE":
+            return "apple";
+        default:
+            return undefined;
+    }
 }
 
 function normalizeShareToken(value?: string | string[]): string | null {

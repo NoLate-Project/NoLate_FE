@@ -1,3 +1,4 @@
+import type { AxiosRequestConfig } from "axios";
 import { apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, unwrapApiResponse, type ApiEnvelope } from "./response";
 
@@ -43,8 +44,20 @@ type AppNotificationMarkAllReadResponse = {
     updatedCount: number;
 };
 
-export async function registerPushToken(payload: RegisterPushTokenPayload): Promise<void> {
-    const response = await apiPost<ApiEnvelope<null>, RegisterPushTokenPayload>("/api/notifications/token", payload);
+export async function registerPushToken(
+    payload: RegisterPushTokenPayload,
+    options: Pick<AxiosRequestConfig, "signal"> = {},
+): Promise<void> {
+    const response = options.signal
+        ? await apiPost<ApiEnvelope<null>, RegisterPushTokenPayload>(
+            "/api/notifications/token",
+            payload,
+            { signal: options.signal },
+        )
+        : await apiPost<ApiEnvelope<null>, RegisterPushTokenPayload>(
+            "/api/notifications/token",
+            payload,
+        );
     assertApiSuccess(response);
 }
 

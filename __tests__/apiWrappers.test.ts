@@ -17,11 +17,13 @@ import {
     getCalendarSchedules,
     getDailySchedules,
     getDepartureReadySchedules,
+    getScheduleDepartureStatus,
     getUpcomingSchedules,
     importCalendarSchedule,
     markScheduleDeparted,
     searchSchedules,
     sendScheduleDepartureNudge,
+    snoozeScheduleDepartureReminder,
 } from "../src/api/schedule";
 import {
     createScheduleCategoryToApi,
@@ -61,6 +63,9 @@ import {
     updateMyScheduleCalendarPreferences,
     updateScheduleCalendar,
 } from "../src/api/scheduleCalendars";
+import {
+    prepareExplicitAuthenticationRequest,
+} from "../src/modules/auth/authStorage";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -70,11 +75,19 @@ jest.mock("../src/api/api", () => ({
     apiPut: jest.fn(),
 }));
 
+jest.mock("../src/modules/auth/authStorage", () => ({
+    prepareExplicitAuthenticationRequest: jest.fn().mockResolvedValue(
+        undefined,
+    ),
+}));
+
 const mockedApiDelete = jest.mocked(apiDelete);
 const mockedApiGet = jest.mocked(apiGet);
 const mockedApiPatch = jest.mocked(apiPatch);
 const mockedApiPost = jest.mocked(apiPost);
 const mockedApiPut = jest.mocked(apiPut);
+const mockedPrepareExplicitAuthenticationRequest =
+    jest.mocked(prepareExplicitAuthenticationRequest);
 
 describe("member api wrappers", () => {
     afterEach(() => {
@@ -133,6 +146,12 @@ describe("member api wrappers", () => {
             consents,
         });
 
+        expect(mockedPrepareExplicitAuthenticationRequest)
+            .toHaveBeenCalledTimes(3);
+        expect(
+            mockedPrepareExplicitAuthenticationRequest.mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(mockedApiPost.mock.invocationCallOrder[0]);
         expect(mockedApiPost).toHaveBeenNthCalledWith(1, "/api/member/auth/sign-up", {
             name: "user",
             email: "user@test.com",
@@ -188,13 +207,47 @@ describe("member api wrappers", () => {
         mockedApiDelete.mockResolvedValue({ success: true });
 
         await changePassword({ currentPassword: "old-password", newPassword: "new-password" });
-        await withdrawMember({ password: "password" });
+        await withdrawMember(
+            { password: "password" },
+            { accessToken: "A-access-snapshot" },
+        );
 
         expect(mockedApiPatch).toHaveBeenCalledWith("/api/member/password", {
             currentPassword: "old-password",
             newPassword: "new-password",
         });
-        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", { data: { password: "password" } });
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
+            data: { password: "password" },
+            _allowDuringAccountExit: true,
+            headers: {
+                Authorization: "Bearer A-access-snapshot",
+            },
+        });
+    });
+
+    test("withdrawal without the account-exit access snapshot fails before API mutation", async () => {
+        await expect(withdrawMember(
+            { password: "password" },
+            { accessToken: null },
+        )).rejects.toThrow("인증 snapshot");
+        expect(mockedApiDelete).not.toHaveBeenCalled();
+    });
+
+    test("account-exit withdrawal keeps the snapshotted A Authorization after local clear", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await withdrawMember(
+            { password: "password" },
+            { accessToken: "A-access-snapshot" },
+        );
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
+            data: { password: "password" },
+            _allowDuringAccountExit: true,
+            headers: {
+                Authorization: "Bearer A-access-snapshot",
+            },
+        });
     });
 });
 
@@ -234,13 +287,225 @@ describe("schedule query api wrappers", () => {
         });
     });
 
+    test("departure status keeps nullable rollout fields and normalizes enums safely", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 42,
+                travelMinutes: 37,
+                recommendedDepartureAt: "2026-07-24T09:20:00+09:00",
+                evaluatedAt: null,
+                liveFetchedAt: "2026-07-24T08:58:00+09:00",
+                source: "LIVE_PROVIDER",
+                stale: null,
+                confidence: "HIGH",
+                failureReason: null,
+                lastTrafficChangeMinutes: -4,
+                lastChangedAt: null,
+                nextCheckAt: null,
+                preparationMinutes: null,
+                preparationStartAt: null,
+                safetyBufferMinutes: 5,
+                timeZone: "Asia/Seoul",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("42")).resolves.toEqual({
+            scheduleId: "42",
+            travelMinutes: 37,
+            recommendedDepartureAt: "2026-07-24T09:20:00+09:00",
+            evaluatedAt: null,
+            liveFetchedAt: "2026-07-24T08:58:00+09:00",
+            source: "LIVE_PROVIDER",
+            stale: null,
+            confidence: "HIGH",
+            failureReason: null,
+            lastTrafficChangeMinutes: -4,
+            lastChangedAt: null,
+            nextCheckAt: null,
+            preparationMinutes: null,
+            preparationStartAt: null,
+            safetyBufferMinutes: 5,
+            timeZone: "Asia/Seoul",
+        });
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/42/departure-status");
+
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                source: "UNKNOWN_FUTURE_SOURCE",
+                confidence: "VERY_HIGH",
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("43")).resolves.toMatchObject({
+            scheduleId: "43",
+            source: null,
+            confidence: null,
+            travelMinutes: null,
+            stale: null,
+        });
+    });
+
+    test("departure status rejects a response for another schedule", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: {
+                scheduleId: 99,
+                travelMinutes: 12,
+                stale: false,
+            },
+        });
+
+        await expect(getScheduleDepartureStatus("42")).rejects.toMatchObject({
+            name: "ApiResponseError",
+            errorCode: "DEPARTURE_STATUS_SCHEDULE_MISMATCH",
+        });
+    });
+
     test("markScheduleDeparted posts depart-now action and normalizes response id", async () => {
         mockedApiPost.mockResolvedValue({ success: true, data: scheduleDto });
 
-        await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
+        await expect(markScheduleDeparted("10")).resolves.toMatchObject({
+            item: { id: "10" },
+            refreshing: true,
+        });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
     });
+
+    test("depart/snooze response의 authoritative status를 파싱한다", async () => {
+        mockedApiPost
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    schedule: scheduleDto,
+                    departureStatus: {
+                        scheduleId: 10,
+                        travelMinutes: 25,
+                        nextCheckAt: "2026-07-24T09:10:00+09:00",
+                        stale: false,
+                    },
+                },
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    status: {
+                        scheduleId: 10,
+                        travelMinutes: 25,
+                        nextCheckAt: "2026-07-24T09:20:00+09:00",
+                        stale: false,
+                    },
+                },
+            });
+
+        await expect(markScheduleDeparted("10")).resolves.toMatchObject({
+            item: { id: "10" },
+            status: { scheduleId: "10", nextCheckAt: "2026-07-24T09:10:00+09:00" },
+            refreshing: false,
+        });
+        await expect(snoozeScheduleDepartureReminder("10")).resolves.toMatchObject({
+            status: { scheduleId: "10", nextCheckAt: "2026-07-24T09:20:00+09:00" },
+            refreshing: false,
+        });
+    });
+
+    test("notification action idempotency key를 action API에 전달한다", async () => {
+        const hashLogicalEventKey = `key:${"b".repeat(64)}`;
+        const uuidLogicalEventKey =
+            "event:6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+        mockedApiPost
+            .mockResolvedValueOnce({ success: true, data: scheduleDto })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    status: {
+                        scheduleId: 10,
+                        stale: true,
+                    },
+                },
+            });
+
+        await markScheduleDeparted("10", {
+            idempotencyKey: `departNow:${hashLogicalEventKey}`,
+        });
+        await snoozeScheduleDepartureReminder("10", {
+            idempotencyKey: `snooze:${uuidLogicalEventKey}`,
+        });
+
+        expect(mockedApiPost).toHaveBeenNthCalledWith(
+            1,
+            "/api/schedules/10/depart-now",
+            undefined,
+            {
+                signal: undefined,
+                headers: {
+                    "Idempotency-Key": `departNow:${hashLogicalEventKey}`,
+                },
+            },
+        );
+        expect(mockedApiPost).toHaveBeenNthCalledWith(
+            2,
+            "/api/schedules/10/departure-reminder/snooze",
+            undefined,
+            {
+                signal: undefined,
+                headers: {
+                    "Idempotency-Key": `snooze:${uuidLogicalEventKey}`,
+                },
+            },
+        );
+        expect(mockedApiPost.mock.calls[0][2]?.headers).not.toEqual(
+            expect.objectContaining({
+                "Idempotency-Key": expect.stringContaining(":logical:"),
+            }),
+        );
+        expect(mockedApiPost.mock.calls[1][2]?.headers).not.toEqual(
+            expect.objectContaining({
+                "Idempotency-Key": expect.stringContaining(":logical:"),
+            }),
+        );
+    });
+
+    test.each([
+        {
+            label: "depart item",
+            call: () => markScheduleDeparted("10"),
+            response: {
+                success: true,
+                data: { ...scheduleDto, id: 11 },
+            },
+            errorCode: "DEPARTURE_MUTATION_SCHEDULE_MISMATCH",
+        },
+        {
+            label: "depart status",
+            call: () => markScheduleDeparted("10"),
+            response: {
+                success: true,
+                data: {
+                    schedule: scheduleDto,
+                    departureStatus: { scheduleId: 11, stale: true },
+                },
+            },
+            errorCode: "DEPARTURE_MUTATION_STATUS_MISMATCH",
+        },
+        {
+            label: "snooze status missing id",
+            call: () => snoozeScheduleDepartureReminder("10"),
+            response: {
+                success: true,
+                data: { status: { stale: true } },
+            },
+            errorCode: "DEPARTURE_MUTATION_STATUS_MISMATCH",
+        },
+    ])(
+        "$label mismatch는 authoritative cache/store 반영 전에 거부한다",
+        async ({ call, response, errorCode }) => {
+            mockedApiPost.mockResolvedValue(response);
+            await expect(call()).rejects.toMatchObject({ errorCode });
+        },
+    );
 
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {
         mockedApiPost.mockResolvedValue({

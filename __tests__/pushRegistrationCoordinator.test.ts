@@ -54,4 +54,29 @@ describe("push registration coordinator", () => {
         await first;
         expect(isPushRegistrationGenerationCurrent(firstGeneration)).toBe(false);
     });
+
+    test("token refresh replaces rather than sharing an older same-member bootstrap", async () => {
+        const pending = deferred();
+        let oldGeneration = -1;
+        const first = runPushRegistration(7, async (taskGeneration) => {
+            oldGeneration = taskGeneration;
+            await pending.promise;
+        });
+        const refreshedTask = jest.fn(async (taskGeneration: number) => {
+            expect(isPushRegistrationGenerationCurrent(taskGeneration)).toBe(true);
+        });
+
+        const replacement = runPushRegistration(
+            7,
+            refreshedTask,
+            { replaceExisting: true },
+        );
+
+        expect(replacement).not.toBe(first);
+        expect(isPushRegistrationGenerationCurrent(oldGeneration)).toBe(false);
+        expect(refreshedTask).toHaveBeenCalledTimes(1);
+        await replacement;
+        pending.resolve();
+        await first;
+    });
 });

@@ -15,8 +15,15 @@ import { useIsFocused } from "@react-navigation/native";
 import { loginMember, signUpMember, type SignupConsentsPayload } from "../../src/api/member";
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
-import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import {
+    clearAuthTokens,
+    prepareExplicitAuthenticationRequest,
+    saveAuthenticatedSession,
+} from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import {
+    isAuthSessionTransitionPendingError,
+} from "../../src/modules/auth/authSessionEpoch";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import { getAuthErrorPresentation } from "../../src/modules/auth/authErrorMessage";
 import {
@@ -119,6 +126,7 @@ export default function SignUp() {
 
         try {
             setSubmitting(true);
+            await prepareExplicitAuthenticationRequest();
             await signUpMember({
                 name: normalizedName,
                 email: normalizedEmail,
@@ -132,8 +140,7 @@ export default function SignUp() {
                 password: pwd,
             }));
 
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await saveAuthMember(member);
+            await saveAuthenticatedSession(member);
             const authenticated = await syncAuthentication();
             if (!authenticated) {
                 throw new Error("로그인 상태를 저장하지 못했어요. 로그인 화면에서 다시 시도해 주세요.");
@@ -150,6 +157,10 @@ export default function SignUp() {
                 router.replace("/onboarding/calendar-import");
             }
         } catch (error) {
+            if (isAuthSessionTransitionPendingError(error)) {
+                Alert.alert("로그아웃 정리 중", error.message);
+                return;
+            }
             if (accountCreated) {
                 // The account already exists at this point. Keeping the user on
                 // the agreement step would make the next tap submit sign-up
