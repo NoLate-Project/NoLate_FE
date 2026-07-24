@@ -65,6 +65,7 @@ import {
     MonthAgendaList,
     SelectedDayAgendaPanel,
 } from "../../src/modules/schedule/components/list/ScheduleAgendaViews";
+import NextDepartureHero from "../../src/modules/schedule/components/list/NextDepartureHero";
 import ScheduleNewModal, {
     type ScheduleAddMorphPresenter,
 } from "../../src/modules/schedule/components/form/ScheduleAddModal";
@@ -81,7 +82,6 @@ import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetup
 import {
     createSchedule,
     getCalendarSchedules,
-    getSchedules,
     parseScheduleText,
     searchSchedules,
     synchronizeCalendarScheduleCacheRevision,
@@ -92,10 +92,14 @@ import { getShareInbox } from "../../src/api/scheduleSharing";
 import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 import {
+    clearCalendarScheduleCache,
     hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
+    reconcileCalendarScheduleCacheWithFullList,
+    removeCalendarScheduleCacheItem,
     refreshCalendarScheduleCache,
     subscribeCalendarScheduleCacheInvalidated,
+    upsertCalendarScheduleCacheItem,
 } from "../../src/modules/schedule/calendarScheduleCache";
 import {
     getCalendarMetadataPrefetchMonthKeys,
@@ -158,6 +162,21 @@ import {
     resolveQuickScheduleParseInput,
     type QuickScheduleMediaInput,
 } from "../../src/modules/schedule/quickInputExtraction";
+import {
+    buildNextDepartureCandidate,
+    buildNextDepartureHeroModel,
+    selectNextDeparture,
+} from "../../src/modules/schedule/nextDeparture";
+import { useNextDepartureHome } from "../../src/modules/schedule/useNextDepartureHome";
+import {
+    collectScheduleIdsMissingFromFullList,
+    filterScheduleItemsBySecurityFence,
+    ScheduleSessionRequestFence,
+} from "../../src/modules/schedule/sessionRequestFence";
+import {
+    getAuthSessionEpoch,
+    isAuthSessionActive,
+} from "../../src/modules/auth/authSessionEpoch";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const getErrorMessage = (error: unknown) => {
@@ -436,7 +455,13 @@ export default function ScheduleIndex() {
     const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
     const focusDayRequest = Array.isArray(params.focusDay) ? params.focusDay[0] : params.focusDay;
     const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
-    const { state, dispatch } = useScheduleStore();
+    const {
+        state,
+        dispatch,
+        removedItemIds,
+        redactedItemIds,
+    } = useScheduleStore();
+    const scheduleAuthEpochRef = useRef(getAuthSessionEpoch());
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
@@ -447,7 +472,6 @@ export default function ScheduleIndex() {
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-    const [routeSetupItems, setRouteSetupItems] = useState<ScheduleItem[]>([]);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
@@ -458,13 +482,14 @@ export default function ScheduleIndex() {
     const [yearOverviewClosing, setYearOverviewClosing] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<ScheduleItem[]>([]);
+    const searchResultsRef = useRef(searchResults);
+    searchResultsRef.current = searchResults;
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const [searchRetryKey, setSearchRetryKey] = useState(0);
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
-    const searchSequenceRef = useRef(0);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
     const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
@@ -556,18 +581,34 @@ export default function ScheduleIndex() {
     const addHandoffClosingRef = useRef(false);
     const addHandoffNativeResetRef = useRef(false);
     const handledFocusRequestRef = useRef<string | null>(null);
-    const scheduleLoadSequenceRef = useRef(0);
+    const scheduleSessionFenceRef = useRef(
+        new ScheduleSessionRequestFence()
+    );
     const calendarMetadataMountedRef = useRef(true);
     const calendarMetadataLoadedMonthKeysRef = useRef(new Set<string>());
     const calendarMetadataInFlightMonthKeysRef = useRef(new Set<string>());
     const scheduleItemsByIdRef = useRef(state.itemsById);
     scheduleItemsByIdRef.current = state.itemsById;
+    const removedItemIdsRef = useRef(removedItemIds);
+    removedItemIdsRef.current = removedItemIds;
+    const redactedItemIdsRef = useRef(redactedItemIds);
+    redactedItemIdsRef.current = redactedItemIds;
+    const verifiedFullScheduleIdsRef = useRef<ReadonlySet<string> | null>(null);
+    useEffect(() => {
+        setSearchResults((current) => filterScheduleItemsBySecurityFence(
+            current,
+            removedItemIds,
+            redactedItemIds,
+            verifiedFullScheduleIdsRef.current
+        ));
+    }, [redactedItemIds, removedItemIds]);
 
     const [pendingSelectedDay, setPendingSelectedDay] = useState<string | null>(null);
     const selectedDay = pendingSelectedDay ?? state.selectedDay;
     const selectedDayRef = useRef(selectedDay);
     selectedDayRef.current = selectedDay;
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
+    const [departureNow, setDepartureNow] = useState(() => new Date());
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
     const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
     const [calendarDaysByDate, setCalendarDaysByDate] = useState<
@@ -1453,7 +1494,11 @@ export default function ScheduleIndex() {
     useEffect(() => {
         let minuteTimer: ReturnType<typeof setInterval> | null = null;
         let alignmentTimer: ReturnType<typeof setTimeout> | null = null;
-        const refreshToday = () => setTodayKey(toYmd(new Date()));
+        const refreshToday = () => {
+            const now = new Date();
+            setTodayKey(toYmd(now));
+            setDepartureNow(now);
+        };
         const alignToNextMinute = () => {
             const delay = 60_000 - (Date.now() % 60_000) + 24;
             alignmentTimer = setTimeout(() => {
@@ -1479,15 +1524,25 @@ export default function ScheduleIndex() {
     }, []);
 
     const loadSchedules = useCallback(async () => {
-        const requestSequence = scheduleLoadSequenceRef.current + 1;
-        scheduleLoadSequenceRef.current = requestSequence;
+        const request = scheduleSessionFenceRef.current.begin("schedule");
+        if (!request) {
+            dispatch({ type: "SET_LOADING", loading: false });
+            return;
+        }
+        const isCurrentRequest = () => (
+            scheduleSessionFenceRef.current.isCurrent(request)
+        );
         const cached = readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt);
         const hasVisibleMonthCache = hasCalendarScheduleMonthCache(fetchVisibleMonth);
 
         const hasNewCachedItems = cached.items.some(
             (item) => scheduleItemsByIdRef.current[item.id] !== item
         );
-        if (cached.cachedMonthKeys.length > 0 && hasNewCachedItems) {
+        if (
+            isCurrentRequest()
+            && cached.cachedMonthKeys.length > 0
+            && hasNewCachedItems
+        ) {
             // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
             dispatch({ type: "SET_ITEMS", items: cached.items });
         }
@@ -1498,6 +1553,7 @@ export default function ScheduleIndex() {
         // 초기 진입 또는 캐시 범위를 벗어난 월에서만 앞뒤 2개월을 한 번에 다시 채운다.
         if (hasVisibleMonthCache) {
             dispatch({ type: "SET_LOADING", loading: false });
+            scheduleSessionFenceRef.current.finish(request);
             return;
         }
 
@@ -1505,21 +1561,31 @@ export default function ScheduleIndex() {
             const refreshed = await refreshCalendarScheduleCache(
                 scheduleFetchStartAt,
                 scheduleFetchEndAt,
-                getCalendarSchedules,
+                async (startAt, endAt) => {
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    const nextItems = await getCalendarSchedules(startAt, endAt);
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    return nextItems;
+                },
             );
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
+            if (!isCurrentRequest()) return;
             dispatch({ type: "SET_ITEMS", items: refreshed.items });
         } catch (error) {
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
+            if (!isCurrentRequest()) return;
             // 화면에 표시할 월이 캐시에 있으면 프리패치 실패가 기존 일정을 가리지 않게 한다.
             if (!hasVisibleMonthCache) {
                 const message = getErrorMessage(error);
                 dispatch({ type: "SET_ERROR", error: message });
             }
         } finally {
-            if (requestSequence === scheduleLoadSequenceRef.current) {
+            if (isCurrentRequest()) {
                 dispatch({ type: "SET_LOADING", loading: false });
             }
+            scheduleSessionFenceRef.current.finish(request);
         }
     }, [dispatch, fetchVisibleMonth, scheduleFetchEndAt, scheduleFetchStartAt]);
 
@@ -1528,6 +1594,7 @@ export default function ScheduleIndex() {
             dispatch({ type: "SET_LOADING", loading: false });
             return undefined;
         }
+        const sessionFence = scheduleSessionFenceRef.current;
 
         const synchronizeAndLoad = () => {
             synchronizeCalendarScheduleCacheRevision()
@@ -1548,7 +1615,7 @@ export default function ScheduleIndex() {
             unsubscribeInvalidated();
             // 화면을 벗어나거나 조회 범위가 바뀐 뒤 도착한 응답이
             // 상세 화면의 최신 수정값을 덮지 못하도록 무효화한다.
-            scheduleLoadSequenceRef.current += 1;
+            sessionFence.invalidate("schedule");
         };
     }, [dispatch, isFocused, loadSchedules]);
 
@@ -1733,70 +1800,224 @@ export default function ScheduleIndex() {
         () => Object.values(state.itemsById),
         [state.itemsById]
     );
-    const loadRouteSetupItems = useCallback(async () => {
-        const items = await getSchedules();
-        return items.filter((item) => item.routeSetupRequired === true);
-    }, []);
-    useEffect(() => {
-        if (!isFocused) return;
-
-        let cancelled = false;
-        const refresh = () => {
-            loadRouteSetupItems()
-                .then((items) => {
-                    if (!cancelled) setRouteSetupItems(items);
-                })
-                .catch(() => {
-                    // 후속 설정 배너는 보조 UI이므로 조회 실패가 캘린더 사용을 막지 않는다.
-                    if (!cancelled) setRouteSetupItems([]);
-                });
-        };
-
-        refresh();
-        const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") refresh();
-        });
-        return () => {
-            cancelled = true;
-            subscription.remove();
-        };
-    }, [isFocused, loadRouteSetupItems]);
+    const handleScheduleAccessRevoked = useCallback((scheduleId: string) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.add(scheduleId);
+        redactedItemIdsRef.current = nextRedactedIds;
+        removeCalendarScheduleCacheItem(scheduleId);
+        setSearchResults((current) => current.filter(
+            (item) => item.id !== scheduleId
+        ));
+        setSearchLoading(settled.searchLoading);
+        setSearchError(settled.searchError);
+        dispatch({ type: "SET_LOADING", loading: settled.scheduleLoading });
+        dispatch({ type: "SET_ERROR", error: settled.scheduleError });
+        dispatch({ type: "REDACT_ITEM", id: scheduleId });
+    }, [dispatch]);
+    const handleScheduleRestored = useCallback((item: ScheduleItem) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.delete(item.id);
+        redactedItemIdsRef.current = nextRedactedIds;
+        dispatch({ type: "RESTORE_ITEM", item });
+        upsertCalendarScheduleCacheItem(item);
+        setSearchRetryKey((current) => current + 1);
+    }, [dispatch]);
+    const handleScheduleSessionRejected = useCallback(() => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        scheduleSessionFenceRef.current.rejectSession();
+        verifiedFullScheduleIdsRef.current = null;
+        setSearchResults([]);
+        setSearchLoading(false);
+        setSearchError(null);
+        dispatch({ type: "SET_ITEMS", items: [] });
+        clearCalendarScheduleCache();
+    }, [dispatch]);
+    const handleFullSchedulesVerified = useCallback((verifiedItems: ScheduleItem[]) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const authoritativeIds = new Set(
+            verifiedItems.map((item) => item.id)
+        );
+        verifiedFullScheduleIdsRef.current = authoritativeIds;
+        const displayItems = filterScheduleItemsBySecurityFence(
+            verifiedItems,
+            removedItemIdsRef.current,
+            redactedItemIdsRef.current
+        );
+        const displayIds = new Set(displayItems.map((item) => item.id));
+        scheduleSessionFenceRef.current.invalidate("schedule");
+        scheduleSessionFenceRef.current.invalidate("search");
+        setSearchLoading(false);
+        setSearchError(null);
+        setSearchResults((current) => current.filter(
+            (item) => displayIds.has(item.id)
+        ));
+        const cacheRemovedIds = reconcileCalendarScheduleCacheWithFullList(
+            displayIds,
+            {
+                items: displayItems,
+                startAt: scheduleFetchStartAt,
+                endAt: scheduleFetchEndAt,
+            }
+        );
+        const removedIds = collectScheduleIdsMissingFromFullList(
+            displayIds,
+            cacheRemovedIds,
+            Object.keys(scheduleItemsByIdRef.current),
+            searchResultsRef.current.map((item) => item.id)
+        );
+        if (removedIds.size > 0) {
+            const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+            const nextRedactedIds = new Set(redactedItemIdsRef.current);
+            removedIds.forEach((scheduleId) => {
+                nextRedactedIds.add(scheduleId);
+            });
+            redactedItemIdsRef.current = nextRedactedIds;
+            setSearchLoading(settled.searchLoading);
+            setSearchError(settled.searchError);
+            removedIds.forEach((scheduleId) => {
+                dispatch({ type: "REDACT_ITEM", id: scheduleId });
+            });
+        }
+        const verifiedRange = readCalendarScheduleCache(
+            scheduleFetchStartAt,
+            scheduleFetchEndAt
+        );
+        dispatch({ type: "SET_ITEMS", items: verifiedRange.items });
+        dispatch({ type: "SET_LOADING", loading: false });
+        dispatch({ type: "SET_ERROR", error: null });
+        scheduleSessionFenceRef.current.acceptVerifiedSession();
+        setSearchRetryKey((current) => current + 1);
+    }, [
+        dispatch,
+        scheduleFetchEndAt,
+        scheduleFetchStartAt,
+    ]);
+    const departureHome = useNextDepartureHome({
+        fallbackItems: itemsArray,
+        focused: isFocused,
+        authoritativeRemovedScheduleIds: removedItemIds,
+        authoritativeRedactedScheduleIds: redactedItemIds,
+        onScheduleAccessRevoked: handleScheduleAccessRevoked,
+        onScheduleAuthoritativelyRemoved: handleScheduleAccessRevoked,
+        onScheduleRestored: handleScheduleRestored,
+        onFullSchedulesVerified: handleFullSchedulesVerified,
+        onSessionAccessRejected: handleScheduleSessionRejected,
+    });
+    const rankedNextDepartureCandidate = useMemo(
+        () => selectNextDeparture(
+            departureHome.candidateItems,
+            departureHome.statusOrderingSafe
+                ? departureHome.statusesByScheduleId
+                : {},
+            departureNow,
+            departureHome.currentMemberId
+        ),
+        [
+            departureHome.currentMemberId,
+            departureHome.candidateItems,
+            departureHome.statusOrderingSafe,
+            departureHome.statusesByScheduleId,
+            departureNow,
+        ]
+    );
+    const nextDepartureCandidate = useMemo(
+        () => rankedNextDepartureCandidate
+            ? buildNextDepartureCandidate(
+                rankedNextDepartureCandidate.item,
+                departureHome.statusOrderingSafe
+                    ? departureHome.statusesByScheduleId[
+                        rankedNextDepartureCandidate.item.id
+                    ]
+                    : undefined
+            )
+            : null,
+        [
+            departureHome.statusOrderingSafe,
+            departureHome.statusesByScheduleId,
+            rankedNextDepartureCandidate,
+        ]
+    );
+    const nextDepartureConnectionIssue = departureHome.connectionIssue
+        ?? (nextDepartureCandidate
+            ? departureHome.statusIssuesByScheduleId[nextDepartureCandidate.item.id] ?? null
+            : null);
+    const nextDepartureModel = useMemo(
+        () => nextDepartureCandidate
+            ? buildNextDepartureHeroModel(
+                nextDepartureCandidate,
+                departureNow,
+                nextDepartureConnectionIssue
+            )
+            : null,
+        [
+            departureNow,
+            nextDepartureConnectionIssue,
+            nextDepartureCandidate,
+        ]
+    );
+    const routeSetupItems = useMemo(
+        () => departureHome.items.filter(
+            (item) => item.routeSetupRequired === true
+        ),
+        [departureHome.items]
+    );
     const writableCategories = useMemo(
         () => getWritableScheduleCategories(state.categories),
         [state.categories]
     );
     useEffect(() => {
+        const sessionFence = scheduleSessionFenceRef.current;
         const keyword = searchQuery.trim();
-        const sequence = searchSequenceRef.current + 1;
-        searchSequenceRef.current = sequence;
         if (!keyword) {
+            sessionFence.invalidate("search");
             setSearchResults([]);
             setSearchLoading(false);
             setSearchError(null);
             return undefined;
         }
+        const request = sessionFence.begin("search");
+        if (!request) {
+            setSearchResults([]);
+            setSearchLoading(false);
+            setSearchError(null);
+            return undefined;
+        }
+        const isCurrentRequest = () => (
+            sessionFence.isCurrent(request)
+        );
 
         setSearchLoading(true);
         setSearchError(null);
         const timer = setTimeout(() => {
             searchSchedules({ keyword })
                 .then((items) => {
-                    if (searchSequenceRef.current !== sequence) return;
-                    setSearchResults(items
+                    if (!isCurrentRequest()) return;
+                    setSearchResults(filterScheduleItemsBySecurityFence(
+                        items,
+                        removedItemIdsRef.current,
+                        redactedItemIdsRef.current,
+                        verifiedFullScheduleIdsRef.current
+                    )
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
                         .slice(0, 20));
                 })
                 .catch((error) => {
-                    if (searchSequenceRef.current !== sequence) return;
+                    if (!isCurrentRequest()) return;
                     setSearchResults([]);
                     setSearchError(getErrorMessage(error));
                 })
                 .finally(() => {
-                    if (searchSequenceRef.current === sequence) setSearchLoading(false);
+                    if (isCurrentRequest()) setSearchLoading(false);
                 });
         }, 300);
 
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            sessionFence.invalidate("search");
+        };
     }, [searchQuery, searchRetryKey]);
 
     // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
@@ -1808,7 +2029,7 @@ export default function ScheduleIndex() {
             const item = await createSchedule(payload);
             // 생성 요청보다 먼저 시작된 캘린더 조회는 새 일정을 포함하지 않을 수 있다.
             // 해당 응답을 무효화해 방금 저장한 일정이 화면에서 다시 사라지지 않게 한다.
-            scheduleLoadSequenceRef.current += 1;
+            scheduleSessionFenceRef.current.invalidate("schedule");
             dispatch({ type: "ADD_ITEM", item });
             dispatch({ type: "SET_LOADING", loading: false });
         } catch (error) {
@@ -3015,6 +3236,22 @@ export default function ScheduleIndex() {
         shareBadgeCount,
     ]);
 
+    const nextDepartureHero = useMemo(() => (
+        <NextDepartureHero
+            model={nextDepartureModel}
+            loading={departureHome.loading}
+            connectionIssue={nextDepartureConnectionIssue}
+            onPressSchedule={handleOpenScheduleFromDayDisplay}
+            onPressRetry={departureHome.refresh}
+        />
+    ), [
+        departureHome.loading,
+        departureHome.refresh,
+        handleOpenScheduleFromDayDisplay,
+        nextDepartureConnectionIssue,
+        nextDepartureModel,
+    ]);
+
     const renderMonthAgendaPanelContent = (panelKind: MonthAgendaPanelKind) => (
         panelKind === "detail" ? (
             <MemoizedSelectedDayAgendaPanel
@@ -3028,6 +3265,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         ) : (
             <MemoizedMonthAgendaList
@@ -3041,6 +3279,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         )
     );

@@ -67,7 +67,6 @@ export type ScheduleDepartureMutationResult = {
     status?: ScheduleDepartureStatus;
     refreshing: boolean;
 };
-
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -119,6 +118,9 @@ let observedCalendarCacheRevision: {
     authEpoch: number;
     revision: number;
 } | null = null;
+type ScheduleReadOptions = {
+    signal?: AbortSignal;
+};
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
@@ -135,8 +137,20 @@ function finiteNumberOrNull(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function stringOrNull(value: unknown): string | null {
+function nonNegativeNumberOrNull(value: unknown): number | null {
+    const normalized = finiteNumberOrNull(value);
+    return normalized !== null && normalized >= 0 ? normalized : null;
+}
+
+function textOrNull(value: unknown): string | null {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function dateTimeOrNull(value: unknown): string | null {
+    const normalized = textOrNull(value);
+    return normalized && Number.isFinite(new Date(normalized).getTime())
+        ? normalized
+        : null;
 }
 
 function normalizeScheduleDepartureStatus(
@@ -166,26 +180,31 @@ function normalizeScheduleDepartureStatus(
 
     return {
         scheduleId: requestedScheduleId,
-        travelMinutes: finiteNumberOrNull(dto.travelMinutes),
-        recommendedDepartureAt: stringOrNull(dto.recommendedDepartureAt),
-        evaluatedAt: stringOrNull(dto.evaluatedAt),
-        liveFetchedAt: stringOrNull(dto.liveFetchedAt),
+        travelMinutes: nonNegativeNumberOrNull(dto.travelMinutes),
+        recommendedDepartureAt: dateTimeOrNull(dto.recommendedDepartureAt),
+        evaluatedAt: dateTimeOrNull(dto.evaluatedAt),
+        liveFetchedAt: dateTimeOrNull(dto.liveFetchedAt),
         source,
         stale: typeof dto.stale === "boolean" ? dto.stale : null,
         confidence,
-        failureReason: stringOrNull(dto.failureReason),
+        failureReason: textOrNull(dto.failureReason),
         lastTrafficChangeMinutes: finiteNumberOrNull(dto.lastTrafficChangeMinutes),
-        lastChangedAt: stringOrNull(dto.lastChangedAt),
-        nextCheckAt: stringOrNull(dto.nextCheckAt),
-        preparationMinutes: finiteNumberOrNull(dto.preparationMinutes),
-        preparationStartAt: stringOrNull(dto.preparationStartAt),
-        safetyBufferMinutes: finiteNumberOrNull(dto.safetyBufferMinutes),
-        timeZone: stringOrNull(dto.timeZone),
+        lastChangedAt: dateTimeOrNull(dto.lastChangedAt),
+        nextCheckAt: dateTimeOrNull(dto.nextCheckAt),
+        preparationMinutes: nonNegativeNumberOrNull(dto.preparationMinutes),
+        preparationStartAt: dateTimeOrNull(dto.preparationStartAt),
+        safetyBufferMinutes: nonNegativeNumberOrNull(dto.safetyBufferMinutes),
+        timeZone: textOrNull(dto.timeZone),
     };
 }
 
-export async function getSchedules(): Promise<ScheduleItem[]> {
-    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
+export async function getSchedules(options?: ScheduleReadOptions): Promise<ScheduleItem[]> {
+    const response = options?.signal
+        ? await apiGet<ApiEnvelope<ScheduleDto[]>>(
+            "/api/schedules",
+            { signal: options.signal }
+        )
+        : await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
     return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
@@ -274,6 +293,20 @@ export async function getScheduleDepartureStatus(
         unwrapApiResponse(response),
         scheduleId,
     );
+}
+
+/**
+ * 홈 후보 검증은 화면 수명보다 늦게 끝날 수 있으므로 전역 월 캘린더 캐시를
+ * 변경하지 않는다. 상세 화면의 getSchedule 캐시 동작과 의도적으로 분리한다.
+ */
+export async function getScheduleForDepartureHome(
+    scheduleId: string,
+    options?: ScheduleReadOptions
+): Promise<ScheduleItem> {
+    return getSchedule(scheduleId, {
+        signal: options?.signal,
+        cache: false,
+    });
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {

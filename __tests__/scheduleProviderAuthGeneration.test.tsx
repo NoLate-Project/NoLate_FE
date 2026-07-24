@@ -11,6 +11,7 @@ import {
     clearCalendarScheduleCache,
     readCalendarScheduleCache,
     refreshCalendarScheduleCache,
+    upsertCalendarScheduleCacheItem,
 } from "../src/modules/schedule/calendarScheduleCache";
 import { createScheduleInitialState } from "../src/modules/schedule/initialState";
 import { emitScheduleDepartureMutation } from "../src/modules/schedule/scheduleDepartureMutationEvents";
@@ -94,9 +95,23 @@ describe("ScheduleProvider auth generation boundary", () => {
         expect(mountCount).toBe(2);
         expect(latestCacheIds).toEqual([]);
         await act(async () => {
+            await refreshCalendarScheduleCache(
+                RANGE_START,
+                RANGE_END,
+                jest.fn().mockResolvedValue([]),
+            );
+            oldDispatch({ type: "DELETE_ITEM", id: schedule.id });
+            oldDispatch({ type: "REDACT_ITEM", id: schedule.id });
+            oldDispatch({ type: "RESTORE_ITEM", item: schedule });
+            oldDispatch({ type: "SET_ITEMS", items: [schedule] });
             oldDispatch({ type: "UPDATE_ITEM", item: schedule });
         });
         expect(latestIds).toEqual([]);
+        upsertCalendarScheduleCacheItem({ ...schedule, title: "B cache" });
+        expect(
+            readCalendarScheduleCache(RANGE_START, RANGE_END)
+                .items.map((item) => item.id)
+        ).toEqual(["42"]);
 
         await act(async () => {
             latestDispatch({ type: "UPDATE_ITEM", item: { ...schedule, title: "B" } });

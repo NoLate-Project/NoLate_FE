@@ -39,6 +39,15 @@ const monthCache = new Map<string, CalendarScheduleCacheEntry>();
 const inFlightRanges = new Map<string, Promise<void>>();
 const invalidationListeners = new Set<() => void>();
 let cacheRevision = 0;
+let providerBlockedScheduleIds = new Set<string>();
+let purgeBlockedScheduleIds = new Set<string>();
+
+function isSecurityBlocked(scheduleId: string): boolean {
+    return (
+        providerBlockedScheduleIds.has(scheduleId)
+        || purgeBlockedScheduleIds.has(scheduleId)
+    );
+}
 
 export function captureCalendarScheduleCacheAuthEpoch(): number {
     return getAuthSessionEpoch();
@@ -151,10 +160,19 @@ function writeRange(
     items: ScheduleItem[],
     fetchedAt: number,
 ): void {
+    const writableItems = items.filter(
+        (item) => !isSecurityBlocked(item.id)
+    );
     descriptors.forEach((descriptor) => {
         monthCache.set(descriptor.key, {
             items: dedupeCalendarSchedules(
-                items.filter((item) => overlapsRange(item, descriptor.startAt, descriptor.endAt)),
+                writableItems.filter(
+                    (item) => overlapsRange(
+                        item,
+                        descriptor.startAt,
+                        descriptor.endAt
+                    )
+                ),
             ),
             fetchedAt,
             lastAccessedAt: fetchedAt,
@@ -238,6 +256,7 @@ export async function refreshCalendarScheduleCache(
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
     cacheRevision += 1;
+    if (isSecurityBlocked(item.id)) return;
     monthCache.forEach((entry, key) => {
         const range = getMonthRange(`${key}-01`);
         const nextItems = entry.items.filter((cachedItem) => cachedItem.id !== item.id);
@@ -249,12 +268,89 @@ export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
     });
 }
 
+export function setCalendarScheduleCacheSecurityFence(
+    removedScheduleIds: ReadonlySet<string>,
+    redactedScheduleIds: ReadonlySet<string>
+): void {
+    const nextBlockedScheduleIds = new Set([
+        ...removedScheduleIds,
+        ...redactedScheduleIds,
+    ]);
+    const changed = (
+        nextBlockedScheduleIds.size !== providerBlockedScheduleIds.size
+        || [...nextBlockedScheduleIds].some(
+            (scheduleId) => !providerBlockedScheduleIds.has(scheduleId)
+        )
+    );
+    if (!changed) return;
+
+    providerBlockedScheduleIds = nextBlockedScheduleIds;
+    cacheRevision += 1;
+    monthCache.forEach((entry) => {
+        entry.items = entry.items.filter(
+            (item) => !isSecurityBlocked(item.id)
+        );
+        entry.lastAccessedAt = Date.now();
+    });
+}
+
+export function releaseCalendarScheduleCacheSecurityBlock(
+    scheduleId: string
+): void {
+    if (!purgeBlockedScheduleIds.delete(scheduleId)) return;
+    cacheRevision += 1;
+}
+
+export function resetCalendarScheduleCacheSecurityFence(): void {
+    if (
+        providerBlockedScheduleIds.size === 0
+        && purgeBlockedScheduleIds.size === 0
+    ) {
+        return;
+    }
+    providerBlockedScheduleIds = new Set();
+    purgeBlockedScheduleIds = new Set();
+    cacheRevision += 1;
+}
+
 export function removeCalendarScheduleCacheItem(scheduleId: string): void {
+    purgeBlockedScheduleIds.add(scheduleId);
     cacheRevision += 1;
     monthCache.forEach((entry) => {
         entry.items = entry.items.filter((item) => item.id !== scheduleId);
         entry.lastAccessedAt = Date.now();
     });
+}
+
+export function reconcileCalendarScheduleCacheWithFullList(
+    authoritativeScheduleIds: ReadonlySet<string>,
+    hydration?: {
+        items: ScheduleItem[];
+        startAt: string;
+        endAt: string;
+    }
+): string[] {
+    cacheRevision += 1;
+    const removedScheduleIds = new Set<string>();
+    monthCache.forEach((entry) => {
+        entry.items.forEach((item) => {
+            if (!authoritativeScheduleIds.has(item.id)) {
+                removedScheduleIds.add(item.id);
+            }
+        });
+        entry.items = entry.items.filter(
+            (item) => authoritativeScheduleIds.has(item.id)
+        );
+        entry.lastAccessedAt = Date.now();
+    });
+    if (hydration) {
+        writeRange(
+            getMonthDescriptors(hydration.startAt, hydration.endAt),
+            hydration.items,
+            Date.now()
+        );
+    }
+    return [...removedScheduleIds];
 }
 
 export function clearCalendarScheduleCache(): void {

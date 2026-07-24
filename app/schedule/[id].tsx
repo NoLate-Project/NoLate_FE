@@ -1497,7 +1497,9 @@ function ScheduleDetail() {
     const metadataStatus = departureStatus && departureStatusLoadState !== "legacy"
         ? {
             ...departureStatus,
-            stale: departureStatus.stale || departureStatusLoadState === "error",
+            stale: departureStatusLoadState === "error"
+                ? true
+                : departureStatus.stale,
         }
         : undefined;
     const departureMetadata = departureStatusLoadState === "unavailable"
