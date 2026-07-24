@@ -16,7 +16,6 @@ import type { ScheduleItem } from "./types";
 import {
     getDepartureStatusRefreshAt,
     getDepartureVerificationItems,
-    isDepartureCandidateEligible,
     isDepartureStatusFresh,
     NEXT_DEPARTURE_STATUS_MAX_AGE_MS,
     rankNextDepartures,
@@ -26,6 +25,8 @@ export const DEPARTURE_HOME_REQUEST_CONCURRENCY = 4;
 // 최대 24개(detail + status) 요청으로 한 refresh의 비용을 제한한다.
 // 12개를 넘으면 저장 출발 시각 순서를 보수적으로 유지하고 live 값으로 재정렬하지 않는다.
 export const DEPARTURE_HOME_CANDIDATE_LIMIT = 12;
+// 보안 redaction 복구는 ETA 후보와 분리하되 한 refresh의 detail 검증 비용을 제한한다.
+export const DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT = 12;
 export const DEPARTURE_HOME_RETRY_BACKOFF_MS = [
     60_000,
     2 * 60_000,
@@ -61,7 +62,7 @@ type DepartureHomeSnapshot = {
 };
 
 type CandidateRequest =
-    | { kind: "detail"; item: ScheduleItem }
+    | { kind: "detail"; item: ScheduleItem; regrant?: boolean }
     | { kind: "status"; item: ScheduleItem };
 
 type CandidateRequestResult = CandidateRequest & {
@@ -362,6 +363,7 @@ export function useNextDepartureHome({
     fallbackItems,
     focused,
     authoritativeRemovedScheduleIds,
+    authoritativeRedactedScheduleIds,
     onScheduleAccessRevoked,
     onScheduleAuthoritativelyRemoved,
     onScheduleRestored,
@@ -371,6 +373,7 @@ export function useNextDepartureHome({
     fallbackItems: ScheduleItem[];
     focused: boolean;
     authoritativeRemovedScheduleIds?: ReadonlySet<string>;
+    authoritativeRedactedScheduleIds?: ReadonlySet<string>;
     onScheduleAccessRevoked?: (scheduleId: string) => void;
     onScheduleAuthoritativelyRemoved?: (scheduleId: string) => void;
     onScheduleRestored?: (item: ScheduleItem) => void;
@@ -383,7 +386,19 @@ export function useNextDepartureHome({
     const activeControllerRef = useRef<AbortController | null>(null);
     const focusedRef = useRef(focused);
     const pendingRefreshRef = useRef(false);
-    const redactedScheduleIdsRef = useRef(new Set<string>());
+    const authoritativeRemovedScheduleIdsRef = useRef(
+        authoritativeRemovedScheduleIds
+    );
+    authoritativeRemovedScheduleIdsRef.current =
+        authoritativeRemovedScheduleIds;
+    const authoritativeRedactedScheduleIdsRef = useRef(
+        authoritativeRedactedScheduleIds
+    );
+    authoritativeRedactedScheduleIdsRef.current =
+        authoritativeRedactedScheduleIds;
+    const redactedScheduleIdsRef = useRef(
+        new Set(authoritativeRedactedScheduleIds ?? [])
+    );
     const tombstoneScheduleIdsRef = useRef(
         new Set(authoritativeRemovedScheduleIds ?? [])
     );
@@ -415,6 +430,11 @@ export function useNextDepartureHome({
         [authoritativeRemovedScheduleIds]
     );
     const observedRemovalRevisionRef = useRef(removalRevision);
+    const redactionRevision = useMemo(
+        () => [...(authoritativeRedactedScheduleIds ?? [])].sort().join("|"),
+        [authoritativeRedactedScheduleIds]
+    );
+    const observedRedactionRevisionRef = useRef(redactionRevision);
     const retryStateRef = useRef<RetryState>({
         accountKey: "anonymous",
         fingerprint: null,
@@ -498,8 +518,12 @@ export function useNextDepartureHome({
             authEpochRef.current += 1;
             requestSequenceRef.current += 1;
             controller.abort();
-            redactedScheduleIdsRef.current.clear();
-            tombstoneScheduleIdsRef.current.clear();
+            redactedScheduleIdsRef.current = new Set(
+                authoritativeRedactedScheduleIdsRef.current ?? []
+            );
+            tombstoneScheduleIdsRef.current = new Set(
+                authoritativeRemovedScheduleIdsRef.current ?? []
+            );
             fullKnownAbsentScheduleIdsRef.current.clear();
             fullScheduleItemsRef.current = [];
             hasFullScheduleSnapshotRef.current = false;
@@ -646,21 +670,22 @@ export function useNextDepartureHome({
             ...fallbackItemsRef.current.map((item) => item.id),
             ...snapshotRef.current.items.map((item) => item.id),
         ]);
+        const regrantVerificationItems = items.filter((item) => (
+            redactedScheduleIdsRef.current.has(item.id)
+            && !tombstoneScheduleIdsRef.current.has(item.id)
+        )).slice(0, DEPARTURE_HOME_REGRANT_VERIFICATION_LIMIT);
         returnedScheduleIds.forEach((scheduleId) => {
             const restoredItem = authoritativeItemsById.get(scheduleId);
-            let shouldRestore = false;
-            if (
-                redactedScheduleIdsRef.current.has(scheduleId)
-                && !tombstoneScheduleIdsRef.current.has(scheduleId)
-            ) {
-                redactedScheduleIdsRef.current.delete(scheduleId);
-                shouldRestore = true;
-            }
             const wasKnownAbsent =
                 fullKnownAbsentScheduleIdsRef.current.has(scheduleId);
             fullKnownAbsentScheduleIdsRef.current.delete(scheduleId);
-            shouldRestore = shouldRestore || wasKnownAbsent;
-            if (shouldRestore && restoredItem && isCurrent()) {
+            if (
+                wasKnownAbsent
+                && restoredItem
+                && !redactedScheduleIdsRef.current.has(scheduleId)
+                && !tombstoneScheduleIdsRef.current.has(scheduleId)
+                && isCurrent()
+            ) {
                 onScheduleRestoredRef.current?.(restoredItem);
             }
         });
@@ -730,7 +755,11 @@ export function useNextDepartureHome({
         const requests: CandidateRequest[] = verificationItems.flatMap((item) => [
             { kind: "detail" as const, item },
             { kind: "status" as const, item },
-        ]);
+        ]).concat(regrantVerificationItems.map((item) => ({
+            kind: "detail" as const,
+            item,
+            regrant: true,
+        })));
         const previous = snapshotRef.current;
         const previousStatuses = previous.currentMemberId === currentMemberId
             ? previous.statusesByScheduleId
@@ -749,6 +778,7 @@ export function useNextDepartureHome({
             DepartureHomeDetailIssue | undefined
         > = {};
         const excludedScheduleIds = new Set<string>();
+        const verifiedRegrantScheduleIds = new Set<string>();
 
         const redactScheduleImmediately = (scheduleId: string) => {
             if (!isCurrent()) return;
@@ -837,6 +867,9 @@ export function useNextDepartureHome({
                     const detail = result.value as ScheduleItem;
                     if (detail.id === scheduleId) {
                         detailsByScheduleId[scheduleId] = detail;
+                        if (result.regrant) {
+                            verifiedRegrantScheduleIds.add(scheduleId);
+                        }
                     } else {
                         detailIssuesByScheduleId[scheduleId] = "verification";
                         excludedScheduleIds.add(scheduleId);
@@ -876,6 +909,18 @@ export function useNextDepartureHome({
             }
         });
 
+        verifiedRegrantScheduleIds.forEach((scheduleId) => {
+            const restoredItem = detailsByScheduleId[scheduleId];
+            if (
+                restoredItem
+                && redactedScheduleIdsRef.current.has(scheduleId)
+                && !tombstoneScheduleIdsRef.current.has(scheduleId)
+                && isCurrent()
+            ) {
+                redactedScheduleIdsRef.current.delete(scheduleId);
+                onScheduleRestoredRef.current?.(restoredItem);
+            }
+        });
         const hiddenScheduleIds = new Set([
             ...redactedScheduleIdsRef.current,
             ...tombstoneScheduleIdsRef.current,
@@ -889,14 +934,12 @@ export function useNextDepartureHome({
             .filter((item) => !hiddenScheduleIds.has(item.id));
         fullScheduleItemsRef.current = verifiedAllItems;
         hasFullScheduleSnapshotRef.current = true;
-        const verifiedCandidateItems = verificationItems
-            .filter((item) => !hiddenScheduleIds.has(item.id))
-            .map((item) => detailsByScheduleId[item.id] ?? item)
-            .filter((item) => isDepartureCandidateEligible(
-                item,
-                requestedAt.getTime(),
-                currentMemberId
-            ));
+        const finalCandidateWindow = getDepartureCandidateWindow(
+            verifiedAllItems,
+            requestedAt,
+            currentMemberId
+        );
+        const verifiedCandidateItems = finalCandidateWindow.items;
         const visibleStatusesByScheduleId = removeScheduleIdsFromRecord(
             statusesByScheduleId,
             hiddenScheduleIds
@@ -916,7 +959,9 @@ export function useNextDepartureHome({
             statusesByScheduleId: visibleStatusesByScheduleId,
             statusIssuesByScheduleId: visibleStatusIssuesByScheduleId,
             detailIssuesByScheduleId: visibleDetailIssuesByScheduleId,
-            statusOrderingSafe: !candidateWindow.truncated,
+            statusOrderingSafe:
+                !finalCandidateWindow.truncated
+                && verifiedRegrantScheduleIds.size === 0,
             currentMemberId,
             loading: false,
             connectionIssue: null,
@@ -1037,12 +1082,22 @@ export function useNextDepartureHome({
             observedFallbackRevisionRef.current !== fallbackRevision;
         const removalsChanged =
             observedRemovalRevisionRef.current !== removalRevision;
-        if (!fallbackChanged && !removalsChanged) return;
+        const redactionsChanged =
+            observedRedactionRevisionRef.current !== redactionRevision;
+        if (!fallbackChanged && !removalsChanged && !redactionsChanged) return;
         observedFallbackRevisionRef.current = fallbackRevision;
         observedRemovalRevisionRef.current = removalRevision;
-        tombstoneScheduleIdsRef.current = new Set(
-            authoritativeRemovedScheduleIds ?? []
-        );
+        observedRedactionRevisionRef.current = redactionRevision;
+        if (removalsChanged) {
+            tombstoneScheduleIdsRef.current = new Set(
+                authoritativeRemovedScheduleIds ?? []
+            );
+        }
+        if (redactionsChanged) {
+            redactedScheduleIdsRef.current = new Set(
+                authoritativeRedactedScheduleIds ?? []
+            );
+        }
         collectionEpochRef.current += 1;
         requestSequenceRef.current += 1;
         activeControllerRef.current?.abort();
@@ -1097,10 +1152,12 @@ export function useNextDepartureHome({
         });
         refresh();
     }, [
+        authoritativeRedactedScheduleIds,
         authoritativeRemovedScheduleIds,
         commitSnapshot,
         fallbackRevision,
         focused,
+        redactionRevision,
         refresh,
         removalRevision,
     ]);

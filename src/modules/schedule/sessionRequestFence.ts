@@ -7,6 +7,44 @@ export type ScheduleSessionRequestToken = {
     signal: AbortSignal;
 };
 
+export type ScheduleItemPurgeSettlement = {
+    searchLoading: false;
+    searchError: null;
+    scheduleLoading: false;
+    scheduleError: null;
+};
+
+export function collectScheduleIdsMissingFromFullList(
+    authoritativeScheduleIds: ReadonlySet<string>,
+    ...scheduleIdSources: ReadonlyArray<Iterable<string>>
+): Set<string> {
+    const missingScheduleIds = new Set<string>();
+    scheduleIdSources.forEach((scheduleIds) => {
+        for (const scheduleId of scheduleIds) {
+            if (!authoritativeScheduleIds.has(scheduleId)) {
+                missingScheduleIds.add(scheduleId);
+            }
+        }
+    });
+    return missingScheduleIds;
+}
+
+export function filterScheduleItemsBySecurityFence<T extends { id: string }>(
+    items: T[],
+    removedScheduleIds: ReadonlySet<string>,
+    redactedScheduleIds: ReadonlySet<string>,
+    authoritativeScheduleIds?: ReadonlySet<string> | null
+): T[] {
+    return items.filter((item) => (
+        !removedScheduleIds.has(item.id)
+        && !redactedScheduleIds.has(item.id)
+        && (
+            authoritativeScheduleIds == null
+            || authoritativeScheduleIds.has(item.id)
+        )
+    ));
+}
+
 type RequestChannel = {
     sequence: number;
     controller: AbortController | null;
@@ -66,9 +104,15 @@ export class ScheduleSessionRequestFence {
         channel.controller = null;
     }
 
-    invalidateItemPurge(): void {
+    invalidateItemPurge(): ScheduleItemPurgeSettlement {
         this.invalidate("search");
         this.invalidate("schedule");
+        return {
+            searchLoading: false,
+            searchError: null,
+            scheduleLoading: false,
+            scheduleError: null,
+        };
     }
 
     rejectSession(): void {

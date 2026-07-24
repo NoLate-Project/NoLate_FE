@@ -160,6 +160,44 @@ describe("calendar schedule month cache", () => {
         ).toEqual([]);
     });
 
+    test("a cold late range cannot blank or repopulate a hydrated authoritative agenda", async () => {
+        const january = getMonthRange("2026-01-01");
+        const visible = schedule("authoritative-visible", localDate(2026, 0, 10));
+        const omittedPrivate = schedule("late-private", localDate(2026, 0, 12));
+        const lateRange = deferred<ScheduleItem[]>();
+        const fetcher = jest.fn().mockReturnValue(lateRange.promise);
+        const pendingRefresh = refreshCalendarScheduleCache(
+            january.startAt,
+            january.endAt,
+            fetcher,
+        );
+
+        reconcileCalendarScheduleCacheWithFullList(
+            new Set([visible.id]),
+            {
+                items: [visible],
+                startAt: january.startAt,
+                endAt: january.endAt,
+            }
+        );
+
+        expect(
+            readCalendarScheduleCache(january.startAt, january.endAt)
+                .items.map((item) => item.id)
+        ).toEqual([visible.id]);
+
+        lateRange.resolve([visible, omittedPrivate]);
+        const completed = await pendingRefresh;
+
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(completed.cachedMonthKeys).toEqual(["2026-01"]);
+        expect(completed.items.map((item) => item.id)).toEqual([visible.id]);
+        expect(
+            readCalendarScheduleCache(january.startAt, january.endAt)
+                .items.map((item) => item.id)
+        ).toEqual([visible.id]);
+    });
+
     test("item access purge fences a range response that started before denial", async () => {
         const march = getMonthRange("2026-03-01");
         const privateItem = schedule(

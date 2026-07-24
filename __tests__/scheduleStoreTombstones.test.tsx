@@ -153,6 +153,36 @@ describe("ScheduleProvider deletion tombstones", () => {
         ).toBe("private-a");
     });
 
+    test("access and deletion fences remain exposed when the schedule screen child remounts", async () => {
+        const initialState = createScheduleInitialState(SYSTEM_NOW);
+        initialState.itemsById = { [privateItem.id]: privateItem };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness key="first-mount" />
+                </ScheduleProvider>
+            );
+        });
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "redact" }).props.onPress();
+            renderer!.update(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness key="second-mount" />
+                </ScheduleProvider>
+            );
+        });
+
+        expect(renderer!.root.findByProps({ testID: "state" }).props.children)
+            .toBe("::private-a");
+        expect(
+            renderer!.root.findByProps({ testID: "agenda-input" }).props.children
+        ).toBe("");
+        expect(
+            renderer!.root.findByProps({ testID: "route-target" }).props.children
+        ).toBe("none");
+    });
+
     test("a regrant cannot override an explicit user deletion tombstone", async () => {
         const initialState = createScheduleInitialState(SYSTEM_NOW);
         initialState.itemsById = { [privateItem.id]: privateItem };

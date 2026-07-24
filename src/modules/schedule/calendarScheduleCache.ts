@@ -233,7 +233,12 @@ export function removeCalendarScheduleCacheItem(scheduleId: string): void {
 }
 
 export function reconcileCalendarScheduleCacheWithFullList(
-    authoritativeScheduleIds: ReadonlySet<string>
+    authoritativeScheduleIds: ReadonlySet<string>,
+    hydration?: {
+        items: ScheduleItem[];
+        startAt: string;
+        endAt: string;
+    }
 ): string[] {
     cacheRevision += 1;
     const removedScheduleIds = new Set<string>();
@@ -248,6 +253,13 @@ export function reconcileCalendarScheduleCacheWithFullList(
         );
         entry.lastAccessedAt = Date.now();
     });
+    if (hydration) {
+        writeRange(
+            getMonthDescriptors(hydration.startAt, hydration.endAt),
+            hydration.items,
+            Date.now()
+        );
+    }
     return [...removedScheduleIds];
 }
 

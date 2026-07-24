@@ -49,6 +49,7 @@ const mockedSubscribeAuthInvalidation = jest.mocked(
 );
 const SYSTEM_NOW = new Date("2099-07-24T09:00:00+09:00");
 const NO_REMOVED_SCHEDULES = new Set<string>();
+const NO_REDACTED_SCHEDULES = new Set<string>();
 
 function item(
     id: string,
@@ -106,6 +107,7 @@ function Harness({
     fallbackItems = [],
     focused = true,
     removedScheduleIds = NO_REMOVED_SCHEDULES,
+    redactedScheduleIds = NO_REDACTED_SCHEDULES,
     onScheduleAccessRevoked,
     onScheduleAuthoritativelyRemoved,
     onScheduleRestored,
@@ -115,6 +117,7 @@ function Harness({
     fallbackItems?: ScheduleItem[];
     focused?: boolean;
     removedScheduleIds?: ReadonlySet<string>;
+    redactedScheduleIds?: ReadonlySet<string>;
     onScheduleAccessRevoked?: (scheduleId: string) => void;
     onScheduleAuthoritativelyRemoved?: (scheduleId: string) => void;
     onScheduleRestored?: (item: ScheduleItem) => void;
@@ -125,6 +128,7 @@ function Harness({
         fallbackItems,
         focused,
         authoritativeRemovedScheduleIds: removedScheduleIds,
+        authoritativeRedactedScheduleIds: redactedScheduleIds,
         onScheduleAccessRevoked,
         onScheduleAuthoritativelyRemoved,
         onScheduleRestored,
@@ -1274,8 +1278,9 @@ describe("useNextDepartureHome", () => {
         expect(restored).toHaveBeenCalledTimes(1);
         expect(restored).toHaveBeenCalledWith(restoredCandidate);
         expect(snapshot(renderer!)).toContain(
-            "schedules:access-regranted:1:connected:2:1"
+            "schedules:access-regranted:0:connected:2:1"
         );
+        expect(snapshot(renderer!)).toContain("order-saved");
         expect(
             renderer!.root.findByProps({ testID: "all-items" }).props.children
         ).toBe("access-regranted");
@@ -1370,9 +1375,135 @@ describe("useNextDepartureHome", () => {
         initialItems.forEach(({ id }) => {
             expect(mockedGetScheduleForDepartureHome.mock.calls.filter(
                 ([scheduleId]) => scheduleId === id
-            )).toHaveLength(1);
+            )).toHaveLength(2);
         });
         expect(snapshot(renderer!)).toContain("order-saved");
+    });
+
+    test("provider redaction survives a home remount and stale full lists for non-candidates", async () => {
+        const noRoute = item("remount-redacted-no-route", 20, {
+            departAt: undefined,
+            travelMinutes: undefined,
+            route: undefined,
+            routeSetupRequired: true,
+        });
+        const capOut = item("remount-redacted-cap-out", 59, {
+            routeSetupRequired: true,
+        });
+        const visibleCandidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT },
+            (_, index) => item(`remount-visible-${index + 1}`, index + 1)
+        );
+        const redactedIds = new Set([noRoute.id, capOut.id]);
+        const staleFullList = [noRoute, capOut, ...visibleCandidates];
+        mockedGetSchedules.mockResolvedValue(staleFullList);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (redactedIds.has(id)) {
+                throw new ApiResponseError("forbidden", { status: 403 });
+            }
+            return staleFullList.find((schedule) => schedule.id === id)!;
+        });
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            staleFullList.find((schedule) => schedule.id === id)!.departAt!
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness redactedScheduleIds={redactedIds} />
+            );
+            await flushAsyncWork();
+        });
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).not.toContain("remount-redacted");
+        expect(snapshot(renderer!)).not.toContain(noRoute.id);
+        expect(snapshot(renderer!)).not.toContain(capOut.id);
+
+        await act(async () => {
+            renderer!.unmount();
+            renderer = TestRenderer.create(
+                <Harness redactedScheduleIds={redactedIds} />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).not.toContain("remount-redacted");
+        expect(snapshot(renderer!)).not.toContain(noRoute.id);
+        expect(snapshot(renderer!)).not.toContain(capOut.id);
+        expect(mockedGetScheduleForDepartureHome.mock.calls.filter(
+            ([scheduleId]) => redactedIds.has(scheduleId)
+        )).toHaveLength(4);
+    });
+
+    test("a same-mount 401 keeps provider redactions fenced from a later stale full list", async () => {
+        const denied = item("session-still-redacted", 5, {
+            routeSetupRequired: true,
+        });
+        const redactedIds = new Set([denied.id]);
+        const rejectSession = jest.fn();
+        const restored = jest.fn();
+        mockedGetSchedules
+            .mockRejectedValueOnce(
+                new ApiResponseError("unauthorized", { status: 401 })
+            )
+            .mockResolvedValueOnce([denied]);
+        mockedGetScheduleForDepartureHome.mockRejectedValue(
+            new ApiResponseError("forbidden", { status: 403 })
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[denied]}
+                    redactedScheduleIds={redactedIds}
+                    onScheduleRestored={restored}
+                    onSessionAccessRejected={rejectSession}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(rejectSession).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(restored).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+        expect(snapshot(renderer!)).not.toContain(denied.id);
+    });
+
+    test("an explicit deletion fence rejects a replica-lag full list without regrant verification", async () => {
+        const deleted = item("explicit-delete-stale", 5, {
+            routeSetupRequired: true,
+        });
+        const restored = jest.fn();
+        mockedGetSchedules.mockResolvedValue([deleted]);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    fallbackItems={[deleted]}
+                    removedScheduleIds={new Set([deleted.id])}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+
+        expect(restored).not.toHaveBeenCalled();
+        expect(mockedGetScheduleForDepartureHome).not.toHaveBeenCalled();
+        expect(mockedGetScheduleDepartureStatus).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+        expect(snapshot(renderer!)).toContain("route-none");
     });
 
     test("a late pre-denial detail success cannot restore a redacted schedule", async () => {

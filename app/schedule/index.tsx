@@ -169,6 +169,8 @@ import {
 } from "../../src/modules/schedule/nextDeparture";
 import { useNextDepartureHome } from "../../src/modules/schedule/useNextDepartureHome";
 import {
+    collectScheduleIdsMissingFromFullList,
+    filterScheduleItemsBySecurityFence,
     ScheduleSessionRequestFence,
 } from "../../src/modules/schedule/sessionRequestFence";
 import BrandedLoader from "../../src/ui/BrandedLoader";
@@ -449,7 +451,12 @@ export default function ScheduleIndex() {
     const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
     const focusDayRequest = Array.isArray(params.focusDay) ? params.focusDay[0] : params.focusDay;
     const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
-    const { state, dispatch, removedItemIds } = useScheduleStore();
+    const {
+        state,
+        dispatch,
+        removedItemIds,
+        redactedItemIds,
+    } = useScheduleStore();
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
@@ -470,6 +477,8 @@ export default function ScheduleIndex() {
     const [yearOverviewClosing, setYearOverviewClosing] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<ScheduleItem[]>([]);
+    const searchResultsRef = useRef(searchResults);
+    searchResultsRef.current = searchResults;
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const [searchRetryKey, setSearchRetryKey] = useState(0);
@@ -575,6 +584,19 @@ export default function ScheduleIndex() {
     const calendarMetadataInFlightMonthKeysRef = useRef(new Set<string>());
     const scheduleItemsByIdRef = useRef(state.itemsById);
     scheduleItemsByIdRef.current = state.itemsById;
+    const removedItemIdsRef = useRef(removedItemIds);
+    removedItemIdsRef.current = removedItemIds;
+    const redactedItemIdsRef = useRef(redactedItemIds);
+    redactedItemIdsRef.current = redactedItemIds;
+    const verifiedFullScheduleIdsRef = useRef<ReadonlySet<string> | null>(null);
+    useEffect(() => {
+        setSearchResults((current) => filterScheduleItemsBySecurityFence(
+            current,
+            removedItemIds,
+            redactedItemIds,
+            verifiedFullScheduleIdsRef.current
+        ));
+    }, [redactedItemIds, removedItemIds]);
 
     const [pendingSelectedDay, setPendingSelectedDay] = useState<string | null>(null);
     const selectedDay = pendingSelectedDay ?? state.selectedDay;
@@ -1774,19 +1796,31 @@ export default function ScheduleIndex() {
         [state.itemsById]
     );
     const handleScheduleAccessRevoked = useCallback((scheduleId: string) => {
-        scheduleSessionFenceRef.current.invalidateItemPurge();
+        const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.add(scheduleId);
+        redactedItemIdsRef.current = nextRedactedIds;
         removeCalendarScheduleCacheItem(scheduleId);
         setSearchResults((current) => current.filter(
             (item) => item.id !== scheduleId
         ));
+        setSearchLoading(settled.searchLoading);
+        setSearchError(settled.searchError);
+        dispatch({ type: "SET_LOADING", loading: settled.scheduleLoading });
+        dispatch({ type: "SET_ERROR", error: settled.scheduleError });
         dispatch({ type: "REDACT_ITEM", id: scheduleId });
     }, [dispatch]);
     const handleScheduleRestored = useCallback((item: ScheduleItem) => {
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.delete(item.id);
+        redactedItemIdsRef.current = nextRedactedIds;
         upsertCalendarScheduleCacheItem(item);
         dispatch({ type: "RESTORE_ITEM", item });
+        setSearchRetryKey((current) => current + 1);
     }, [dispatch]);
     const handleScheduleSessionRejected = useCallback(() => {
         scheduleSessionFenceRef.current.rejectSession();
+        verifiedFullScheduleIdsRef.current = null;
         setSearchResults([]);
         setSearchLoading(false);
         setSearchError(null);
@@ -1794,30 +1828,69 @@ export default function ScheduleIndex() {
         clearCalendarScheduleCache();
     }, [dispatch]);
     const handleFullSchedulesVerified = useCallback((verifiedItems: ScheduleItem[]) => {
-        const verifiedIds = new Set(verifiedItems.map((item) => item.id));
-        const removedIds = new Set([
-            ...reconcileCalendarScheduleCacheWithFullList(verifiedIds),
-            ...Object.keys(scheduleItemsByIdRef.current).filter(
-                (scheduleId) => !verifiedIds.has(scheduleId)
-            ),
-        ]);
+        const authoritativeIds = new Set(
+            verifiedItems.map((item) => item.id)
+        );
+        verifiedFullScheduleIdsRef.current = authoritativeIds;
+        const displayItems = filterScheduleItemsBySecurityFence(
+            verifiedItems,
+            removedItemIdsRef.current,
+            redactedItemIdsRef.current
+        );
+        const displayIds = new Set(displayItems.map((item) => item.id));
+        scheduleSessionFenceRef.current.invalidate("schedule");
+        scheduleSessionFenceRef.current.invalidate("search");
+        setSearchLoading(false);
+        setSearchError(null);
+        setSearchResults((current) => current.filter(
+            (item) => displayIds.has(item.id)
+        ));
+        const cacheRemovedIds = reconcileCalendarScheduleCacheWithFullList(
+            displayIds,
+            {
+                items: displayItems,
+                startAt: scheduleFetchStartAt,
+                endAt: scheduleFetchEndAt,
+            }
+        );
+        const removedIds = collectScheduleIdsMissingFromFullList(
+            displayIds,
+            cacheRemovedIds,
+            Object.keys(scheduleItemsByIdRef.current),
+            searchResultsRef.current.map((item) => item.id)
+        );
         if (removedIds.size > 0) {
-            scheduleSessionFenceRef.current.invalidateItemPurge();
-            setSearchResults((current) => current.filter(
-                (item) => !removedIds.has(item.id)
-            ));
+            const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+            const nextRedactedIds = new Set(redactedItemIdsRef.current);
+            removedIds.forEach((scheduleId) => {
+                nextRedactedIds.add(scheduleId);
+            });
+            redactedItemIdsRef.current = nextRedactedIds;
+            setSearchLoading(settled.searchLoading);
+            setSearchError(settled.searchError);
             removedIds.forEach((scheduleId) => {
                 dispatch({ type: "REDACT_ITEM", id: scheduleId });
             });
         }
-        if (!scheduleSessionFenceRef.current.acceptVerifiedSession()) return;
-        dispatch({ type: "SET_ITEMS", items: verifiedItems });
+        const verifiedRange = readCalendarScheduleCache(
+            scheduleFetchStartAt,
+            scheduleFetchEndAt
+        );
+        dispatch({ type: "SET_ITEMS", items: verifiedRange.items });
+        dispatch({ type: "SET_LOADING", loading: false });
+        dispatch({ type: "SET_ERROR", error: null });
+        scheduleSessionFenceRef.current.acceptVerifiedSession();
         setSearchRetryKey((current) => current + 1);
-    }, [dispatch]);
+    }, [
+        dispatch,
+        scheduleFetchEndAt,
+        scheduleFetchStartAt,
+    ]);
     const departureHome = useNextDepartureHome({
         fallbackItems: itemsArray,
         focused: isFocused,
         authoritativeRemovedScheduleIds: removedItemIds,
+        authoritativeRedactedScheduleIds: redactedItemIds,
         onScheduleAccessRevoked: handleScheduleAccessRevoked,
         onScheduleAuthoritativelyRemoved: handleScheduleAccessRevoked,
         onScheduleRestored: handleScheduleRestored,
@@ -1913,7 +1986,12 @@ export default function ScheduleIndex() {
             searchSchedules({ keyword })
                 .then((items) => {
                     if (!isCurrentRequest()) return;
-                    setSearchResults(items
+                    setSearchResults(filterScheduleItemsBySecurityFence(
+                        items,
+                        removedItemIdsRef.current,
+                        redactedItemIdsRef.current,
+                        verifiedFullScheduleIdsRef.current
+                    )
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
                         .slice(0, 20));
                 })
