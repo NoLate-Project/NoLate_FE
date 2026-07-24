@@ -1,5 +1,6 @@
 import * as SecureStore from "../storage/secureStorage";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Crypto from "expo-crypto";
 import { NativeModules, Platform } from "react-native";
 import {
     activateAuthSessionIfCurrent,
@@ -10,7 +11,6 @@ import {
     invalidateAuthSession,
     isAuthSessionEpochCurrent,
     isAuthSessionRestorable,
-    isAuthSessionWritable,
     registerAuthSessionTransitionBarrier,
     waitForAuthSessionTransition,
 } from "./authSessionEpoch";
@@ -30,6 +30,9 @@ const AUTH_MEMBER_KEY = "nolate_auth_member";
 const AUTH_API_BASE_URL_KEY = "nolate_auth_api_base_url";
 const AUTH_INVALID_SESSION_KEY = "nolate_auth_invalid_session";
 const AUTH_INVALID_SESSION_VALUE = "invalidated";
+const AUTH_APP_GROUP_SESSION_INVALIDATED = "invalidated";
+const AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX = "active:";
+const AUTH_MEMBER_SESSION_IDENTITY_KEY = "authSessionIdentity";
 let currentAuthApiBaseUrl: string | null = null;
 let hasInMemoryInvalidSessionMarker = false;
 type AuthInvalidationListener = () => void | Promise<void>;
@@ -71,6 +74,8 @@ type SharedAuthModule = {
     getItem(key: string): Promise<string | null>;
     setItem(key: string, value: string): Promise<boolean>;
     deleteItem(key: string): Promise<boolean>;
+    getAppGroupSessionState?(): Promise<string | null>;
+    setAppGroupSessionState?(value: string): Promise<boolean>;
 };
 
 const sharedAuth = Platform.OS === "ios"
@@ -85,13 +90,6 @@ function reportSharedAuthError(operation: string, key: string, error: unknown) {
 async function saveSharedItem(key: string, value: string) {
     await sharedAuth?.setItem(key, value).catch((error) => {
         reportSharedAuthError("저장", key, error);
-        return undefined;
-    });
-}
-
-async function deleteSharedItem(key: string) {
-    await sharedAuth?.deleteItem(key).catch((error) => {
-        reportSharedAuthError("삭제", key, error);
         return undefined;
     });
 }
@@ -111,11 +109,21 @@ async function deleteSharedItemStrict(key: string): Promise<void> {
     if (!deleted) throw new Error(`공유 Keychain 삭제 실패 (${key})`);
 }
 
-async function readSharedItem(key: string): Promise<string | null> {
-    return sharedAuth?.getItem(key).catch((error) => {
-        reportSharedAuthError("조회", key, error);
-        return null;
-    }) ?? null;
+async function setAppGroupSessionStateStrict(value: string): Promise<void> {
+    if (!sharedAuth) return;
+    if (!sharedAuth.setAppGroupSessionState) {
+        throw new Error("App Group 인증 상태 bridge를 사용할 수 없습니다.");
+    }
+    const saved = await sharedAuth.setAppGroupSessionState(value);
+    if (!saved) throw new Error("App Group 인증 상태 저장 실패");
+}
+
+async function readAppGroupSessionStateStrict(): Promise<string | null> {
+    if (!sharedAuth) return null;
+    if (!sharedAuth.getAppGroupSessionState) {
+        throw new Error("App Group 인증 상태 bridge를 사용할 수 없습니다.");
+    }
+    return sharedAuth.getAppGroupSessionState();
 }
 
 async function syncSharedApiBaseUrl() {
@@ -124,28 +132,70 @@ async function syncSharedApiBaseUrl() {
     }
 }
 
-async function getAuthTokenWithinMutation(
+async function syncSharedApiBaseUrlStrict() {
+    if (currentAuthApiBaseUrl) {
+        await setSharedItemStrict(
+            AUTH_API_BASE_URL_KEY,
+            currentAuthApiBaseUrl,
+        );
+    }
+}
+
+async function getConsistentStoredValueWithinMutation(
     key: string,
     expectedEpoch: number,
     repair: boolean,
 ): Promise<string | null> {
     if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-    const sharedValue = await readSharedItem(key);
-    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-    if (sharedValue) {
-        if (repair) await syncSharedApiBaseUrl();
-        return isAuthSessionEpochCurrent(expectedEpoch) ? sharedValue : null;
-    }
+    const [secureResult, sharedResult] = await Promise.allSettled([
+        SecureStore.getItemAsync(key),
+        sharedAuth ? sharedAuth.getItem(key) : Promise.resolve(null),
+    ]);
+    if (
+        secureResult.status === "rejected" ||
+        sharedResult.status === "rejected" ||
+        !isAuthSessionEpochCurrent(expectedEpoch)
+    ) return null;
 
-    const storedValue = await SecureStore.getItemAsync(key);
-    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-    if (storedValue && repair) {
-        await Promise.all([
-            saveSharedItem(key, storedValue),
-            syncSharedApiBaseUrl(),
-        ]);
+    const secureValue = secureResult.value;
+    const sharedValue = sharedResult.value;
+    if (secureValue && sharedValue && secureValue !== sharedValue) {
+        // Never pick one account's value and repair it over the other. A
+        // conditional server restore can rebuild a coherent session instead.
+        return null;
     }
-    return isAuthSessionEpochCurrent(expectedEpoch) ? storedValue : null;
+    const value = secureValue ?? sharedValue;
+    if (!value || !repair) return value;
+
+    const repairs: Promise<unknown>[] = [];
+    if (!secureValue) {
+        repairs.push(SecureStore.setItemAsync(key, value));
+    }
+    if (sharedAuth && !sharedValue) {
+        repairs.push(setSharedItemStrict(key, value));
+    }
+    if (repairs.length > 0) {
+        try {
+            await Promise.all(repairs);
+        } catch {
+            return null;
+        }
+    }
+    return isAuthSessionEpochCurrent(expectedEpoch) ? value : null;
+}
+
+async function getAuthTokenWithinMutation(
+    key: string,
+    expectedEpoch: number,
+    repair: boolean,
+): Promise<string | null> {
+    const value = await getConsistentStoredValueWithinMutation(
+        key,
+        expectedEpoch,
+        repair,
+    );
+    if (value && repair) await syncSharedApiBaseUrl();
+    return isAuthSessionEpochCurrent(expectedEpoch) ? value : null;
 }
 
 async function getAuthToken(key: string): Promise<string | null> {
@@ -166,6 +216,15 @@ export type StoredAuthMember = {
     loginType?: string;
     snsId?: string;
     curationCompleted?: boolean;
+};
+
+type StoredAuthMemberRecord = StoredAuthMember & {
+    [AUTH_MEMBER_SESSION_IDENTITY_KEY]: string;
+};
+
+export type AuthenticatedSession = StoredAuthMember & {
+    accessToken?: string | null;
+    refreshToken?: string | null;
 };
 
 export type AuthRestoreContext = {
@@ -198,41 +257,121 @@ function normalizeAuthMember(member: StoredAuthMember | null | undefined): Store
     return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
-function parseNormalizedAuthMember(raw: string | null): StoredAuthMember | null {
+function parseAuthMemberRecord(raw: string | null): StoredAuthMemberRecord | null {
     if (!raw) return null;
     try {
-        return normalizeAuthMember(JSON.parse(raw) as StoredAuthMember);
+        const parsed = JSON.parse(raw) as StoredAuthMember & {
+            authSessionIdentity?: unknown;
+        };
+        const normalized = normalizeAuthMember(parsed);
+        const authSessionIdentity =
+            typeof parsed.authSessionIdentity === "string"
+                ? parsed.authSessionIdentity.trim()
+                : "";
+        if (!normalized?.id || !authSessionIdentity) return null;
+        return {
+            ...normalized,
+            authSessionIdentity,
+        };
     } catch {
         return null;
     }
 }
 
-async function writeAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
-    const writes: Promise<unknown>[] = [syncSharedApiBaseUrl()];
-
-    if (accessToken) {
-        writes.push(
-            SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken),
-            setSharedItemStrict(ACCESS_TOKEN_KEY, accessToken),
-        );
-    }
-
-    if (refreshToken) {
-        writes.push(
-            SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken),
-            setSharedItemStrict(REFRESH_TOKEN_KEY, refreshToken),
-        );
-    }
-
-    await Promise.all(writes);
+async function getAuthSessionIdentity(refreshToken: string): Promise<string> {
+    return Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        refreshToken,
+    );
 }
 
-async function writeNormalizedAuthMember(member: StoredAuthMember): Promise<void> {
-    const serialized = JSON.stringify(member);
+async function createAuthMemberRecord(
+    member: StoredAuthMember,
+    refreshToken: string,
+): Promise<StoredAuthMemberRecord> {
+    return {
+        ...member,
+        authSessionIdentity: await getAuthSessionIdentity(refreshToken),
+    };
+}
+
+async function writeAuthTokensStrict(
+    accessToken: string,
+    refreshToken: string,
+): Promise<void> {
+    await Promise.all([
+        syncSharedApiBaseUrlStrict(),
+        SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken),
+        setSharedItemStrict(ACCESS_TOKEN_KEY, accessToken),
+        SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken),
+        setSharedItemStrict(REFRESH_TOKEN_KEY, refreshToken),
+    ]);
+}
+
+async function writeAuthMemberRecordStrict(
+    record: StoredAuthMemberRecord,
+): Promise<void> {
+    const serialized = JSON.stringify(record);
     await Promise.all([
         SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
-        saveSharedItem(AUTH_MEMBER_KEY, serialized),
+        setSharedItemStrict(AUTH_MEMBER_KEY, serialized),
     ]);
+}
+
+async function readCurrentAuthMemberRecordWithinMutation(
+    expectedEpoch: number,
+    refreshToken: string,
+    repair: boolean,
+): Promise<StoredAuthMemberRecord | null> {
+    const raw = await getConsistentStoredValueWithinMutation(
+        AUTH_MEMBER_KEY,
+        expectedEpoch,
+        repair,
+    );
+    if (!raw || !isAuthSessionEpochCurrent(expectedEpoch)) return null;
+    const record = parseAuthMemberRecord(raw);
+    if (!record) return null;
+    const expectedIdentity = await getAuthSessionIdentity(refreshToken);
+    if (
+        !isAuthSessionEpochCurrent(expectedEpoch) ||
+        record.authSessionIdentity !== expectedIdentity
+    ) return null;
+    return record;
+}
+
+async function verifyAuthenticatedSessionWithinMutation(options: {
+    accessToken: string;
+    refreshToken: string;
+    record: StoredAuthMemberRecord;
+}): Promise<void> {
+    const serializedMember = JSON.stringify(options.record);
+    const results = await Promise.allSettled([
+        SecureStore.getItemAsync(ACCESS_TOKEN_KEY),
+        SecureStore.getItemAsync(REFRESH_TOKEN_KEY),
+        SecureStore.getItemAsync(AUTH_MEMBER_KEY),
+        sharedAuth
+            ? sharedAuth.getItem(ACCESS_TOKEN_KEY)
+            : Promise.resolve(options.accessToken),
+        sharedAuth
+            ? sharedAuth.getItem(REFRESH_TOKEN_KEY)
+            : Promise.resolve(options.refreshToken),
+        sharedAuth
+            ? sharedAuth.getItem(AUTH_MEMBER_KEY)
+            : Promise.resolve(serializedMember),
+    ]);
+    const expected = [
+        options.accessToken,
+        options.refreshToken,
+        serializedMember,
+        options.accessToken,
+        options.refreshToken,
+        serializedMember,
+    ];
+    if (results.some((result, index) =>
+        result.status === "rejected" || result.value !== expected[index]
+    )) {
+        throw new Error("인증 세션 저장 검증에 실패했습니다.");
+    }
 }
 
 async function deleteAuthStorageWithinMutation(): Promise<
@@ -274,6 +413,14 @@ async function persistInvalidSessionMarkerWithinMutation(): Promise<
             AUTH_INVALID_SESSION_VALUE,
         ));
     }
+    if (sharedAuth) {
+        // This channel is deliberately outside Keychain. The share extension
+        // can still observe logout/commit staging when the shared Keychain
+        // subsystem is locked or temporarily unavailable.
+        writes.push(setAppGroupSessionStateStrict(
+            AUTH_APP_GROUP_SESSION_INVALIDATED,
+        ));
+    }
     const results = await Promise.allSettled(writes);
     return {
         anySucceeded: results.some((result) => result.status === "fulfilled"),
@@ -282,7 +429,12 @@ async function persistInvalidSessionMarkerWithinMutation(): Promise<
     };
 }
 
-async function clearInvalidSessionMarkerWithinMutation(): Promise<void> {
+async function publishCommittedSessionWithinMutation(
+    authSessionIdentity: string,
+): Promise<void> {
+    // Keep the independent App Group state invalidated until every marker that
+    // can block the main app has been removed. If any deletion fails, the
+    // extension remains fail-closed as well.
     const removals: Promise<unknown>[] = [
         SecureStore.deleteItemAsync(AUTH_INVALID_SESSION_KEY),
         AsyncStorage.removeItem(AUTH_INVALID_SESSION_KEY),
@@ -293,6 +445,9 @@ async function clearInvalidSessionMarkerWithinMutation(): Promise<void> {
     const results = await Promise.allSettled(removals);
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
+    await setAppGroupSessionStateStrict(
+        `${AUTH_APP_GROUP_SESSION_ACTIVE_PREFIX}${authSessionIdentity}`,
+    );
 }
 
 async function hasInvalidSessionMarkerWithinMutation(): Promise<boolean> {
@@ -302,14 +457,67 @@ async function hasInvalidSessionMarkerWithinMutation(): Promise<boolean> {
         AsyncStorage.getItem(AUTH_INVALID_SESSION_KEY),
     ];
     if (sharedAuth) reads.push(sharedAuth.getItem(AUTH_INVALID_SESSION_KEY));
+    if (sharedAuth) {
+        reads.push(readAppGroupSessionStateStrict());
+    }
     const results = await Promise.allSettled(reads);
     // A marker store that cannot be checked is not evidence that stale
     // credentials are safe. Cold bootstrap therefore fails closed.
     if (results.some((result) => result.status === "rejected")) return true;
     return results.some((result) =>
         result.status === "fulfilled" &&
-        result.value === AUTH_INVALID_SESSION_VALUE
+        (
+            result.value === AUTH_INVALID_SESSION_VALUE ||
+            result.value === AUTH_APP_GROUP_SESSION_INVALIDATED
+        )
     );
+}
+
+async function commitAuthenticatedSessionWithinMutation(options: {
+    accessToken: string;
+    refreshToken: string;
+    normalizedMember: StoredAuthMember;
+    isCurrent: () => boolean;
+}): Promise<boolean> {
+    if (!options.isCurrent()) return false;
+    hasInMemoryInvalidSessionMarker = true;
+    const marker = await persistInvalidSessionMarkerWithinMutation();
+    if (!marker.allSucceeded) {
+        await deleteAuthStorageWithinMutation();
+        throw new Error("인증 세션 차단 상태를 모든 저장소에 기록하지 못했습니다.");
+    }
+    if (!options.isCurrent()) return false;
+
+    const record = await createAuthMemberRecord(
+        options.normalizedMember,
+        options.refreshToken,
+    );
+    try {
+        await writeAuthTokensStrict(
+            options.accessToken,
+            options.refreshToken,
+        );
+        await writeAuthMemberRecordStrict(record);
+        if (!options.isCurrent()) return false;
+        await verifyAuthenticatedSessionWithinMutation({
+            accessToken: options.accessToken,
+            refreshToken: options.refreshToken,
+            record,
+        });
+        if (!options.isCurrent()) return false;
+        await publishCommittedSessionWithinMutation(
+            record.authSessionIdentity,
+        );
+        if (!options.isCurrent()) return false;
+        hasInMemoryInvalidSessionMarker = false;
+        return true;
+    } catch (error) {
+        // The durable staging marker is intentionally retained. Cleanup is
+        // best-effort because marker visibility, not partial deletion, is the
+        // security boundary after a process kill.
+        await deleteAuthStorageWithinMutation();
+        throw error;
+    }
 }
 
 type AuthStorageInvalidationResult = {
@@ -372,23 +580,39 @@ function reportAuthInvalidationFailures(
     });
 }
 
-export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
-    const normalizedAccessToken = accessToken?.trim();
-    const normalizedRefreshToken = refreshToken?.trim();
-    if (!normalizedAccessToken || !normalizedRefreshToken) {
-        throw new Error("새 로그인 자격 증명이 완전하지 않습니다.");
+export async function saveAuthenticatedSession(
+    member: AuthenticatedSession,
+): Promise<void> {
+    const normalized = normalizeAuthMember(member);
+    const accessToken = member.accessToken?.trim();
+    const refreshToken = member.refreshToken?.trim();
+    if (!normalized?.id || !accessToken || !refreshToken) {
+        throw new Error("새 로그인 세션 정보가 완전하지 않습니다.");
     }
-    // Explicit login/account restoration is a new intent and invalidates any
-    // refresh response captured for the previous session.
     await waitForAuthSessionTransition();
-    beginAuthLoginSession();
-    await runAuthTokenMutation(async () => {
-        await writeAuthTokens(normalizedAccessToken, normalizedRefreshToken);
-        // Only an explicit new authentication intent may clear the durable
-        // invalid-session marker, and only after both new credentials are stored.
-        await clearInvalidSessionMarkerWithinMutation();
-        hasInMemoryInvalidSessionMarker = false;
-    });
+    const expectedEpoch = beginAuthLoginSession();
+    try {
+        const committed = await runAuthTokenMutation(() =>
+            commitAuthenticatedSessionWithinMutation({
+                accessToken,
+                refreshToken,
+                normalizedMember: normalized,
+                isCurrent: () =>
+                    isAuthSessionEpochCurrent(expectedEpoch),
+            })
+        );
+        if (
+            !committed ||
+            !activateAuthSessionIfCurrent(expectedEpoch)
+        ) {
+            throw new Error("인증 세션 소유권이 변경되었습니다.");
+        }
+    } catch (error) {
+        if (isAuthSessionEpochCurrent(expectedEpoch)) {
+            invalidateAuthSession();
+        }
+        throw error;
+    }
 }
 
 export async function isAuthRefreshContextCurrent(options: {
@@ -407,39 +631,42 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
     expectedEpoch: number;
     expectedRefreshToken: string;
 }): Promise<boolean> {
-    return runAuthTokenMutation(async () => {
-        if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
-        if (await hasInvalidSessionMarkerWithinMutation()) return false;
-        const currentRefreshToken = await getAuthTokenWithinMutation(
-            REFRESH_TOKEN_KEY,
-            options.expectedEpoch,
-            true,
-        );
-        if (
-            !isAuthSessionEpochCurrent(options.expectedEpoch) ||
-            currentRefreshToken !== options.expectedRefreshToken
-        ) return false;
-        await writeAuthTokens(options.accessToken, options.refreshToken);
-        return isAuthSessionEpochCurrent(options.expectedEpoch);
-    });
-}
-
-export async function saveAuthMember(member?: StoredAuthMember | null) {
-    const expectedEpoch = getAuthSessionEpoch();
-    if (!isAuthSessionWritable(expectedEpoch)) return;
-    const normalized = normalizeAuthMember(member);
-    await runAuthTokenMutation(async () => {
-        if (!isAuthSessionWritable(expectedEpoch)) return;
-        if (await hasInvalidSessionMarkerWithinMutation()) return;
-        if (!normalized) {
-            await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
-            await deleteSharedItem(AUTH_MEMBER_KEY);
-            return;
+    try {
+        return await runAuthTokenMutation(async () => {
+            if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
+            if (await hasInvalidSessionMarkerWithinMutation()) return false;
+            const currentRefreshToken = await getAuthTokenWithinMutation(
+                REFRESH_TOKEN_KEY,
+                options.expectedEpoch,
+                true,
+            );
+            if (
+                !isAuthSessionEpochCurrent(options.expectedEpoch) ||
+                currentRefreshToken !== options.expectedRefreshToken
+            ) return false;
+            const currentRecord =
+                await readCurrentAuthMemberRecordWithinMutation(
+                    options.expectedEpoch,
+                    options.expectedRefreshToken,
+                    true,
+                );
+            if (!currentRecord) return false;
+            const normalizedMember = normalizeAuthMember(currentRecord);
+            if (!normalizedMember?.id) return false;
+            return commitAuthenticatedSessionWithinMutation({
+                accessToken: options.accessToken.trim(),
+                refreshToken: options.refreshToken.trim(),
+                normalizedMember,
+                isCurrent: () =>
+                    isAuthSessionEpochCurrent(options.expectedEpoch),
+            });
+        });
+    } catch {
+        if (isAuthSessionEpochCurrent(options.expectedEpoch)) {
+            invalidateAuthSession();
         }
-
-        await writeNormalizedAuthMember(normalized);
-        if (normalized.id) activateAuthSessionIfCurrent(expectedEpoch);
-    });
+        return false;
+    }
 }
 
 export async function captureAuthRestoreContext(): Promise<
@@ -457,35 +684,48 @@ export async function captureAuthRestoreContext(): Promise<
 
 export async function saveRestoredAuthSessionIfCurrent(options: {
     context: AuthRestoreContext;
-    member: StoredAuthMember & {
-        accessToken?: string | null;
-        refreshToken?: string | null;
-    };
+    member: AuthenticatedSession;
 }): Promise<boolean> {
     const normalized = normalizeAuthMember(options.member);
     const accessToken = options.member.accessToken?.trim();
     const refreshToken = options.member.refreshToken?.trim();
     if (!normalized?.id || !accessToken || !refreshToken) return false;
 
-    return runAuthTokenMutation(async () => {
-        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
-        if (await hasInvalidSessionMarkerWithinMutation()) return false;
-        const currentRefreshToken = await getAuthTokenWithinMutation(
-            REFRESH_TOKEN_KEY,
-            options.context.expectedEpoch,
-            false,
-        );
-        if (
-            !isAuthSessionRestorable(options.context.expectedEpoch) ||
-            currentRefreshToken !== options.context.expectedRefreshToken
-        ) return false;
+    try {
+        return await runAuthTokenMutation(async () => {
+            if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
+            if (await hasInvalidSessionMarkerWithinMutation()) return false;
+            const currentRefreshToken = await getAuthTokenWithinMutation(
+                REFRESH_TOKEN_KEY,
+                options.context.expectedEpoch,
+                false,
+            );
+            if (
+                !isAuthSessionRestorable(options.context.expectedEpoch) ||
+                currentRefreshToken !== options.context.expectedRefreshToken
+            ) return false;
 
-        await writeAuthTokens(accessToken, refreshToken);
-        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
-        await writeNormalizedAuthMember(normalized);
-        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
-        return activateAuthSessionIfCurrent(options.context.expectedEpoch);
-    });
+            const committed =
+                await commitAuthenticatedSessionWithinMutation({
+                    accessToken,
+                    refreshToken,
+                    normalizedMember: normalized,
+                    isCurrent: () =>
+                        isAuthSessionRestorable(
+                            options.context.expectedEpoch,
+                        ),
+                });
+            return committed &&
+                activateAuthSessionIfCurrent(
+                    options.context.expectedEpoch,
+                );
+        });
+    } catch {
+        if (isAuthSessionEpochCurrent(options.context.expectedEpoch)) {
+            invalidateAuthSession();
+        }
+        return false;
+    }
 }
 
 export async function getAuthMember(): Promise<StoredAuthMember | null> {
@@ -493,34 +733,19 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
     return runAuthTokenMutation(async () => {
         if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
         if (await hasInvalidSessionMarkerWithinMutation()) return null;
-        const [sharedRaw, storedRaw] = await Promise.all([
-            readSharedItem(AUTH_MEMBER_KEY),
-            SecureStore.getItemAsync(AUTH_MEMBER_KEY),
-        ]);
-        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-        const sharedMember = parseNormalizedAuthMember(sharedRaw);
-        const storedMember = parseNormalizedAuthMember(storedRaw);
-        const normalized = sharedMember ?? storedMember;
-        if (!normalized) {
-            if (!sharedRaw && !storedRaw) return null;
-            await Promise.all([
-                SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
-                deleteSharedItem(AUTH_MEMBER_KEY),
-            ]);
-            return null;
-        }
-
-        const serialized = JSON.stringify(normalized);
-        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-        const repairs: Promise<unknown>[] = [];
-        if (storedRaw !== serialized) {
-            repairs.push(SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized));
-        }
-        if (sharedRaw !== serialized) {
-            repairs.push(saveSharedItem(AUTH_MEMBER_KEY, serialized));
-        }
-        await Promise.all(repairs);
-        return isAuthSessionEpochCurrent(expectedEpoch) ? normalized : null;
+        const refreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            expectedEpoch,
+            true,
+        );
+        if (!refreshToken) return null;
+        const record = await readCurrentAuthMemberRecordWithinMutation(
+            expectedEpoch,
+            refreshToken,
+            true,
+        );
+        if (!record || !isAuthSessionEpochCurrent(expectedEpoch)) return null;
+        return normalizeAuthMember(record);
     });
 }
 
@@ -562,20 +787,23 @@ export async function saveAuthCurationCompletedForSession(options: {
             currentRefreshToken !== options.expectedRefreshToken
         ) return false;
 
-        const [sharedRaw, storedRaw] = await Promise.all([
-            readSharedItem(AUTH_MEMBER_KEY),
-            SecureStore.getItemAsync(AUTH_MEMBER_KEY),
-        ]);
+        const currentRecord =
+            await readCurrentAuthMemberRecordWithinMutation(
+                options.expectedEpoch,
+                currentRefreshToken,
+                true,
+            );
         if (!isAuthSessionRestorable(options.expectedEpoch)) return false;
-        const currentMember =
-            parseNormalizedAuthMember(sharedRaw) ??
-            parseNormalizedAuthMember(storedRaw);
+        const currentMember = normalizeAuthMember(currentRecord);
         if (currentMember?.id !== options.expectedMemberId) return false;
 
-        await writeNormalizedAuthMember({
-            ...currentMember,
-            curationCompleted: options.curationCompleted,
-        });
+        await writeAuthMemberRecordStrict(await createAuthMemberRecord(
+            {
+                ...currentMember,
+                curationCompleted: options.curationCompleted,
+            },
+            currentRefreshToken,
+        ));
         return isAuthSessionRestorable(options.expectedEpoch);
     });
 }

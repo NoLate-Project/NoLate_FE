@@ -76,6 +76,9 @@
       "aps-environment": "$(APS_ENVIRONMENT)",
       "keychain-access-groups": [
         "$(AppIdentifierPrefix)com.anonymous.nolatefe"
+      ],
+      "com.apple.security.application-groups": [
+        "group.com.anonymous.nolatefe.shared"
       ]
     },
     "infoPlist": {

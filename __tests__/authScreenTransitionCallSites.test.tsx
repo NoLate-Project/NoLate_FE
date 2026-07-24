@@ -13,8 +13,12 @@ import {
     getSnsRegistrationStatus,
     loginMember,
     signUpMember,
+    snsLoginMember,
     snsSignUpMember,
 } from "../src/api/member";
+import {
+    saveAuthenticatedSession,
+} from "../src/modules/auth/authStorage";
 import {
     registerAuthSessionTransitionBarrier,
     registerSocialAuthTransitionBarrier,
@@ -27,6 +31,7 @@ const mockRouter = {
     push: jest.fn(),
     replace: jest.fn(),
 };
+const mockSyncAuthentication = jest.fn().mockResolvedValue(true);
 
 jest.mock("expo-router", () => ({
     useLocalSearchParams: () => ({}),
@@ -137,7 +142,7 @@ jest.mock(
 
 jest.mock("../src/modules/auth/AuthContext", () => ({
     useAuth: () => ({
-        syncAuthentication: jest.fn().mockResolvedValue(false),
+        syncAuthentication: mockSyncAuthentication,
     }),
 }));
 
@@ -146,8 +151,7 @@ jest.mock("../src/modules/auth/authStorage", () => ({
     clearAuthTokens: jest.fn().mockResolvedValue(true),
     clearRestorableAuthSessionIfCurrent: jest.fn().mockResolvedValue(false),
     getAuthMember: jest.fn().mockResolvedValue(null),
-    saveAuthMember: jest.fn().mockResolvedValue(undefined),
-    saveAuthTokens: jest.fn().mockResolvedValue(undefined),
+    saveAuthenticatedSession: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../src/modules/auth/accountExitFailureNotice", () => ({
@@ -176,10 +180,13 @@ jest.mock("../src/modules/auth/socialLogin", () => ({
 
 const mockedLoginMember = jest.mocked(loginMember);
 const mockedSignUpMember = jest.mocked(signUpMember);
+const mockedSnsLoginMember = jest.mocked(snsLoginMember);
 const mockedGetSnsRegistrationStatus =
     jest.mocked(getSnsRegistrationStatus);
 const mockedSnsSignUpMember = jest.mocked(snsSignUpMember);
 const mockedLoginWithNaverSdk = jest.mocked(loginWithNaverSdk);
+const mockedSaveAuthenticatedSession =
+    jest.mocked(saveAuthenticatedSession);
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -213,6 +220,7 @@ describe("public auth screen transition call sites", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        mockSyncAuthentication.mockResolvedValue(true);
         mockedGetSnsRegistrationStatus.mockResolvedValue({
             registered: false,
         });
@@ -254,6 +262,74 @@ describe("public auth screen transition call sites", () => {
         expect(mockedLoginMember).toHaveBeenCalledTimes(1);
     });
 
+    test("email login은 token과 normalized member를 한 full-session commit으로 저장한다", async () => {
+        mockedLoginMember.mockResolvedValue({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+            curationCompleted: true,
+        });
+        await act(async () => {
+            renderer = TestRenderer.create(<Login />);
+        });
+        await flushEffects();
+        const inputs = renderer!.root.findAllByType(TextInput);
+        act(() => {
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "이메일"
+            )?.props.onChangeText("b@example.com");
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "비밀번호"
+            )?.props.onChangeText("Password1!");
+        });
+
+        await act(async () => {
+            await findPressable(renderer!, "로그인")?.props.onPress();
+        });
+
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledTimes(1);
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 2,
+                accessToken: "B-access",
+                refreshToken: "B-refresh",
+            }),
+        );
+        expect(mockRouter.replace).toHaveBeenCalled();
+    });
+
+    test("full-session commit 실패면 email login 성공 UI나 private route를 열지 않는다", async () => {
+        mockedLoginMember.mockResolvedValue({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+        });
+        mockedSaveAuthenticatedSession.mockRejectedValueOnce(
+            new Error("shared member write failed"),
+        );
+        await act(async () => {
+            renderer = TestRenderer.create(<Login />);
+        });
+        await flushEffects();
+        const inputs = renderer!.root.findAllByType(TextInput);
+        act(() => {
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "이메일"
+            )?.props.onChangeText("b@example.com");
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "비밀번호"
+            )?.props.onChangeText("Password1!");
+        });
+
+        await act(async () => {
+            await findPressable(renderer!, "로그인")?.props.onPress();
+        });
+
+        expect(mockRouter.replace).not.toHaveBeenCalled();
+    });
+
     test("Naver login은 같은 provider SDK cleanup 전 SDK를 호출하지 않는다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(<Login />);
@@ -274,6 +350,40 @@ describe("public auth screen transition call sites", () => {
         sdkCleanup.resolve();
         await flushEffects();
         expect(mockedLoginWithNaverSdk).toHaveBeenCalledTimes(1);
+    });
+
+    test("registered Naver login도 provider 응답 전체를 한 session commit으로 저장한다", async () => {
+        mockedLoginWithNaverSdk.mockResolvedValue({
+            loginType: "NAVER",
+            providerToken: "naver-proof",
+            name: "B",
+        });
+        mockedGetSnsRegistrationStatus.mockResolvedValue({
+            registered: true,
+        });
+        mockedSnsLoginMember.mockResolvedValue({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+        });
+        await act(async () => {
+            renderer = TestRenderer.create(<Login />);
+        });
+        await flushEffects();
+
+        await act(async () => {
+            await findPressable(renderer!, "네이버로 로그인")?.props.onPress();
+        });
+
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledTimes(1);
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 2,
+                accessToken: "B-access",
+                refreshToken: "B-refresh",
+            }),
+        );
     });
 
     test("SNS signup network는 pending profile provider cleanup 뒤에만 시작한다", async () => {
@@ -343,5 +453,52 @@ describe("public auth screen transition call sites", () => {
         cleanup.resolve();
         await flushEffects();
         expect(mockedSignUpMember).toHaveBeenCalledTimes(1);
+    });
+
+    test("common signup 자동 로그인도 member 전부를 한 session commit으로 저장한다", async () => {
+        mockedSignUpMember.mockResolvedValue({
+            id: 2,
+            name: "B",
+        });
+        mockedLoginMember.mockResolvedValue({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+        });
+        await act(async () => {
+            renderer = TestRenderer.create(<SignUp />);
+        });
+        const inputs = renderer!.root.findAllByType(TextInput);
+        act(() => {
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "이름"
+            )?.props.onChangeText("B");
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "이메일"
+            )?.props.onChangeText("b@example.com");
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "비밀번호"
+            )?.props.onChangeText("Password1!");
+            inputs.find((node) =>
+                node.props.accessibilityLabel === "비밀번호 확인"
+            )?.props.onChangeText("Password1!");
+        });
+        act(() => {
+            findPressable(renderer!, "다음")?.props.onPress();
+        });
+
+        await act(async () => {
+            await findPressable(renderer!, "가입 요청 실행")?.props.onPress();
+        });
+
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledTimes(1);
+        expect(mockedSaveAuthenticatedSession).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 2,
+                accessToken: "B-access",
+                refreshToken: "B-refresh",
+            }),
+        );
     });
 });

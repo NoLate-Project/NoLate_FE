@@ -33,8 +33,7 @@ import {
     clearAuthTokens,
     clearRestorableAuthSessionIfCurrent,
     getAuthMember,
-    saveAuthMember,
-    saveAuthTokens,
+    saveAuthenticatedSession,
 } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import {
@@ -110,11 +109,7 @@ export default function Login() {
     ) => {
         const authenticatedMember = requireAuthenticatedMember(member);
         if (!alreadyRestored) {
-            await saveAuthTokens(
-                authenticatedMember.accessToken,
-                authenticatedMember.refreshToken,
-            );
-            await saveAuthMember(authenticatedMember);
+            await saveAuthenticatedSession(authenticatedMember);
         }
         const authenticated = await syncAuthentication();
         if (!authenticated) {

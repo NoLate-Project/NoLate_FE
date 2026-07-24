@@ -27,6 +27,13 @@ jest.mock("../src/modules/storage/secureStorage", () => ({
     }),
 }));
 
+jest.mock("expo-crypto", () => ({
+    CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+    digestStringAsync: jest.fn(async (_algorithm, value: string) =>
+        `sha256:${value}`
+    ),
+}));
+
 jest.mock("../src/api/env", () => ({
     getEnv: jest.fn(() => undefined),
 }));
@@ -51,8 +58,7 @@ type ErrorHandler = (error: Record<string, unknown>) => Promise<unknown>;
 
 const {
     beginAuthLogoutIntent,
-    saveAuthTokens,
-    saveAuthMember,
+    saveAuthenticatedSession,
     getAccessToken,
     getRefreshToken,
 } = require("../src/modules/auth/authStorage") as typeof import("../src/modules/auth/authStorage");
@@ -93,15 +99,24 @@ beforeEach(async () => {
     mockApiClient.mockClear();
     mockRawPost.mockReset();
     mockSecureValues.clear();
-    await saveAuthTokens("A-access", "A-refresh");
-    await saveAuthMember({ id: 1, name: "A" });
+    await saveAuthenticatedSession({
+        id: 1,
+        name: "A",
+        accessToken: "A-access",
+        refreshToken: "A-refresh",
+    });
 });
 
 test.each(["get", "post", "delete"])(
     "late A %s 401 is rejected after B login and never retried with B token",
     async (method) => {
         const config = await authenticatedConfig(method);
-        await saveAuthTokens("B-access", "B-refresh");
+        await saveAuthenticatedSession({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+        });
 
         await expect(errorHandler(unauthorized(config))).rejects.toMatchObject({
             errorCode: "AUTH_SESSION_CHANGED",
@@ -113,7 +128,12 @@ test.each(["get", "post", "delete"])(
 
 test("late A 200 is fenced before a B caller can observe its payload", async () => {
     const config = await authenticatedConfig("get");
-    await saveAuthTokens("B-access", "B-refresh");
+    await saveAuthenticatedSession({
+        id: 2,
+        name: "B",
+        accessToken: "B-access",
+        refreshToken: "B-refresh",
+    });
 
     await expect(successHandler({
         config,
@@ -173,8 +193,12 @@ test("B refresh detaches from aborted A flight and late A failure cannot clear B
     const lateA = errorHandler(unauthorized(aConfig));
     while (mockRawPost.mock.calls.length < 1) await Promise.resolve();
 
-    await saveAuthTokens("B-access", "B-refresh");
-    await saveAuthMember({ id: 2, name: "B" });
+    await saveAuthenticatedSession({
+        id: 2,
+        name: "B",
+        accessToken: "B-access",
+        refreshToken: "B-refresh",
+    });
     const bConfig = await authenticatedConfig("get");
     const bRetry = errorHandler(unauthorized(bConfig));
     while (mockRawPost.mock.calls.length < 2) await Promise.resolve();
@@ -227,8 +251,12 @@ test("withdrawal만 logout-pending epoch에 명시적으로 허용하고 계정 
         Authorization: "Bearer A-access",
     });
 
-    await saveAuthTokens("B-access", "B-refresh");
-    await saveAuthMember({ id: 2, name: "B" });
+    await saveAuthenticatedSession({
+        id: 2,
+        name: "B",
+        accessToken: "B-access",
+        refreshToken: "B-refresh",
+    });
     await expect(successHandler({
         config: withdrawalConfig,
         data: { success: true },

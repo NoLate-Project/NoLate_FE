@@ -119,8 +119,28 @@ describe("account-exit authentication start gate", () => {
         await observed;
         expect(rejection).toMatchObject({
             code: "AUTH_SESSION_TRANSITION_PENDING",
+            message: expect.stringContaining("앱을 완전히 종료"),
         });
         expect(authenticationNetwork).not.toHaveBeenCalled();
+
+        // A timed-out waiter never unlocks the security barrier. A retry while
+        // the owner is still hung is also bounded and explains recovery, rather
+        // than spinning forever or starting an unsafe authentication request.
+        const retryNetwork = jest.fn(async () => "unsafe-retry");
+        const retry = waitForAuthSessionTransition({
+            timeoutMs: 1_000,
+        }).then(retryNetwork);
+        let retryRejection: unknown;
+        const observedRetry = retry.catch((error) => {
+            retryRejection = error;
+        });
+        await jest.advanceTimersByTimeAsync(1_000);
+        await observedRetry;
+        expect(retryRejection).toMatchObject({
+            code: "AUTH_SESSION_TRANSITION_PENDING",
+            message: expect.stringContaining("다시 열어"),
+        });
+        expect(retryNetwork).not.toHaveBeenCalled();
 
         remoteCleanup.resolve();
         await Promise.resolve();

@@ -16,8 +16,7 @@ import {
     getAccessToken,
     getAuthMember,
     getRefreshToken,
-    saveAuthMember,
-    saveAuthTokens,
+    saveAuthenticatedSession,
 } from "../src/modules/auth/authStorage";
 import { clearAccountScopedLocalData } from "../src/modules/auth/accountCleanup";
 import { ApiResponseError } from "../src/api/response";
@@ -33,6 +32,13 @@ jest.mock("expo-secure-store", () => ({
     deleteItemAsync: jest.fn(),
     getItemAsync: jest.fn(),
     setItemAsync: jest.fn(),
+}));
+
+jest.mock("expo-crypto", () => ({
+    CryptoDigestAlgorithm: { SHA256: "SHA-256" },
+    digestStringAsync: jest.fn(async (_algorithm, value: string) =>
+        `sha256:${value}`
+    ),
 }));
 
 jest.mock("../src/api/member", () => ({
@@ -60,6 +66,7 @@ function mockStoredSession(curationCompleted = false) {
         if (key === "nolate_auth_member") return JSON.stringify({
             id: 1,
             curationCompleted,
+            authSessionIdentity: "sha256:refresh-token",
         });
         return null;
     });
@@ -176,9 +183,14 @@ describe("AuthProvider", () => {
     });
 
     it("restores a valid refresh session when cached member metadata is missing", async () => {
-        mockedGetItemAsync.mockImplementation(async (key) => {
-            if (key === "nolte_refresh_token") return "refresh-token";
-            return null;
+        const values = new Map<string, string>([
+            ["nolte_refresh_token", "refresh-token"],
+        ]);
+        mockedGetItemAsync.mockImplementation(async (key) =>
+            values.get(key) ?? null
+        );
+        mockedSetItemAsync.mockImplementation(async (key, value) => {
+            values.set(key, value);
         });
         mockedTokenLoginMember.mockResolvedValue({
             id: 1,
@@ -223,6 +235,7 @@ describe("AuthProvider", () => {
             if (key === "nolate_auth_member") return JSON.stringify({
                 id: 1,
                 curationCompleted: true,
+                authSessionIdentity: "sha256:refresh-token",
             });
             return null;
         });
@@ -459,8 +472,12 @@ describe("AuthProvider", () => {
             const bAuthentication = waitForAuthSessionTransition({
                 timeoutMs: 10_000,
             }).then(async () => {
-                await saveAuthTokens("B-access", "B-refresh");
-                await saveAuthMember({ id: 2, name: "B" });
+                await saveAuthenticatedSession({
+                    id: 2,
+                    name: "B",
+                    accessToken: "B-access",
+                    refreshToken: "B-refresh",
+                });
             });
             await act(async () => {
                 await Promise.resolve();
@@ -564,8 +581,12 @@ describe("AuthProvider", () => {
         });
         expect(mockedTokenLoginMember).toHaveBeenCalledTimes(1);
 
-        await saveAuthTokens("B-access", "B-refresh");
-        await saveAuthMember({ id: 2, name: "B" });
+        await saveAuthenticatedSession({
+            id: 2,
+            name: "B",
+            accessToken: "B-access",
+            refreshToken: "B-refresh",
+        });
         aRestore.reject(new ApiResponseError("expired A", { status: 401 }));
         await act(async () => {
             await Promise.resolve();
@@ -726,8 +747,12 @@ describe("AuthProvider", () => {
         const bAuthentication = waitForAuthSessionTransition({
             timeoutMs: 10_000,
         }).then(async () => {
-            await saveAuthTokens("B-access", "B-refresh");
-            await saveAuthMember({ id: 2, name: "B" });
+            await saveAuthenticatedSession({
+                id: 2,
+                name: "B",
+                accessToken: "B-access",
+                refreshToken: "B-refresh",
+            });
         });
         await act(async () => {
             await Promise.resolve();

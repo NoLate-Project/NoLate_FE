@@ -15,7 +15,10 @@ import { useIsFocused } from "@react-navigation/native";
 import { loginMember, signUpMember, type SignupConsentsPayload } from "../../src/api/member";
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
-import { clearAuthTokens, saveAuthMember, saveAuthTokens } from "../../src/modules/auth/authStorage";
+import {
+    clearAuthTokens,
+    saveAuthenticatedSession,
+} from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import {
     isAuthSessionTransitionPendingError,
@@ -138,8 +141,7 @@ export default function SignUp() {
                 password: pwd,
             }));
 
-            await saveAuthTokens(member.accessToken, member.refreshToken);
-            await saveAuthMember(member);
+            await saveAuthenticatedSession(member);
             const authenticated = await syncAuthentication();
             if (!authenticated) {
                 throw new Error("로그인 상태를 저장하지 못했어요. 로그인 화면에서 다시 시도해 주세요.");

@@ -18,7 +18,9 @@ export class AuthSessionTransitionPendingError extends Error {
     readonly code = "AUTH_SESSION_TRANSITION_PENDING";
 
     constructor() {
-        super("이전 계정의 로그아웃을 안전하게 마무리하고 있어요. 잠시 후 다시 시도해 주세요.");
+        super(
+            "이전 계정의 보안 정리가 끝나지 않았어요. 잠시 후 다시 시도하고, 계속되면 앱을 완전히 종료한 뒤 다시 열어 주세요.",
+        );
         this.name = "AuthSessionTransitionPendingError";
     }
 }

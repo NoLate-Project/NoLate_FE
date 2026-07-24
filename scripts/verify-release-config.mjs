@@ -128,22 +128,39 @@ assert.match(privacyManifest, /NSPrivacyCollectedDataTypeOtherUserContent/);
 
 const sharedAccessGroupSuffix = "com.anonymous.nolatefe";
 const runtimeAccessGroup = `457QQLB6H6.${sharedAccessGroupSuffix}`;
+const sharedAppGroup = "group.com.anonymous.nolatefe.shared";
 assert.match(mainEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
 assert.match(extensionEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
+assert.ok(app.ios.entitlements["com.apple.security.application-groups"].includes(sharedAppGroup));
+assert.ok(mainEntitlements.includes(sharedAppGroup));
+assert.ok(extensionEntitlements.includes(sharedAppGroup));
 assert.ok(mainShareAuth.includes(runtimeAccessGroup));
 assert.ok(shareExtension.includes(runtimeAccessGroup));
+assert.ok(mainShareAuth.includes(sharedAppGroup));
+assert.ok(shareExtension.includes(sharedAppGroup));
 for (const key of ["nolte_access_token", "nolte_refresh_token", "nolate_auth_api_base_url"]) {
   assert.ok(shareExtension.includes(key), `Share extension is missing the native auth key: ${key}`);
 }
 assert.ok(mainShareAuth.includes('@"app:no-auth"'));
 assert.ok(shareExtension.includes('"app:no-auth"'));
+assert.ok(mainShareAuth.includes("getAppGroupSessionState"));
+assert.ok(mainShareAuth.includes("setAppGroupSessionState"));
+assert.ok(shareExtension.includes('private let appGroupSessionStateKey = "nolate_auth_session_state"'));
+assert.ok(shareExtension.includes("readAppGroupSessionStateStrict"));
+assert.ok(shareExtension.includes("captureWorkflowSession"));
+assert.ok(shareExtension.includes("isWorkflowCurrent(workflow)"));
+assert.doesNotMatch(
+  shareExtension,
+  /writeKeychain\(|SecItemUpdate\(|SecItemAdd\(/,
+  "Share extension must never persist a refreshed credential over a newer app session",
+);
 assert.ok(
   shareExtension.includes('"routeSetupRequired": true'),
   "Quick-share schedules must be marked for route setup",
 );
 assert.match(
   shareExtension,
-  /let _: SavedSchedule = try await api\.post\("api\/schedules", json: payload\)/,
+  /let _: SavedSchedule = try await api\.post\([\s\S]*?"api\/schedules",[\s\S]*?workflow: workflow/,
   "The share extension must save the parsed schedule directly",
 );
 assert.match(

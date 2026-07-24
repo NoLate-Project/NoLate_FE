@@ -5,6 +5,8 @@
 @end
 
 static NSString * const NoLateSharedKeychainAccessGroup = @"457QQLB6H6.com.anonymous.nolatefe";
+static NSString * const NoLateSharedAppGroup = @"group.com.anonymous.nolatefe.shared";
+static NSString * const NoLateAppGroupSessionStateKey = @"nolate_auth_session_state";
 
 @implementation NoLateShareAuth
 
@@ -93,6 +95,41 @@ RCT_REMAP_METHOD(deleteItem,
   if (status != errSecSuccess && status != errSecItemNotFound) {
     NSError *error = [self keychainErrorWithStatus:status operation:@"삭제"];
     reject(@"shared_keychain_delete_failed", error.localizedDescription, error);
+    return;
+  }
+  resolve(@YES);
+}
+
+RCT_REMAP_METHOD(getAppGroupSessionState,
+                 getAppGroupSessionStateWithResolver:(RCTPromiseResolveBlock)resolve
+                 appGroupReadRejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
+  if (defaults == nil) {
+    reject(@"app_group_unavailable", @"공유 App Group 저장소를 열 수 없습니다.", nil);
+    return;
+  }
+  id value = [defaults objectForKey:NoLateAppGroupSessionStateKey];
+  if (value != nil && ![value isKindOfClass:[NSString class]]) {
+    reject(@"app_group_invalid_value", @"공유 App Group 인증 상태가 올바르지 않습니다.", nil);
+    return;
+  }
+  resolve(value);
+}
+
+RCT_REMAP_METHOD(setAppGroupSessionState,
+                 setAppGroupSessionStateValue:(NSString *)value
+                 appGroupWriteResolver:(RCTPromiseResolveBlock)resolve
+                 appGroupWriteRejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSUserDefaults *defaults = [[NSUserDefaults alloc] initWithSuiteName:NoLateSharedAppGroup];
+  if (defaults == nil) {
+    reject(@"app_group_unavailable", @"공유 App Group 저장소를 열 수 없습니다.", nil);
+    return;
+  }
+  [defaults setObject:value forKey:NoLateAppGroupSessionStateKey];
+  if (![defaults synchronize]) {
+    reject(@"app_group_write_failed", @"공유 App Group 인증 상태를 저장하지 못했습니다.", nil);
     return;
   }
   resolve(@YES);
