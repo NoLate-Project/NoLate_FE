@@ -1,5 +1,13 @@
 import React, { useMemo } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+    ActivityIndicator,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
+} from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 
 import { useTheme } from "../../../theme/ThemeContext";
@@ -8,6 +16,26 @@ import {
     type PlainScheduleDetailPresentation,
 } from "../../plainScheduleDetailPresentation";
 import type { ScheduleItem } from "../../types";
+import { getMinimumTouchTarget } from "../../../../ui/minimumTouchTarget";
+
+export const PLAIN_SCHEDULE_DETAIL_COLORS = {
+    light: {
+        accent: "#1D4ED8",
+        mutedBadgeBackground: "#E5E7EB",
+        mutedBadgeText: "#374151",
+        secondaryTextOnTint: "#68686E",
+    },
+    dark: {
+        accent: "#1D4ED8",
+        mutedBadgeBackground: "#374151",
+        mutedBadgeText: "#F3F4F6",
+        secondaryTextOnTint: "#BFC0C7",
+    },
+    actionText: "#FFFFFF",
+} as const;
+
+export const PLAIN_SCHEDULE_DETAIL_MIN_TOUCH_TARGET =
+    getMinimumTouchTarget(Platform.OS);
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -34,7 +62,7 @@ type ReadOnlyFieldProps = {
 };
 
 function ReadOnlyField({ label, value, muted = false }: ReadOnlyFieldProps) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
 
     return (
         <View style={styles.column}>
@@ -52,7 +80,14 @@ function ReadOnlyField({ label, value, muted = false }: ReadOnlyFieldProps) {
             >
                 <Text
                     numberOfLines={1}
-                    style={[styles.fieldText, { color: muted ? colors.textSecondary : colors.textPrimary }]}
+                    style={[
+                        styles.fieldText,
+                        {
+                            color: muted
+                                ? PLAIN_SCHEDULE_DETAIL_COLORS[mode].secondaryTextOnTint
+                                : colors.textPrimary,
+                        },
+                    ]}
                 >
                     {value}
                 </Text>
@@ -73,7 +108,7 @@ function SettingSummaryRow({
     highlighted: boolean;
 }) {
     const { colors, mode } = useTheme();
-    const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const palette = PLAIN_SCHEDULE_DETAIL_COLORS[mode];
 
     return (
         <View
@@ -89,12 +124,21 @@ function SettingSummaryRow({
         >
             <View style={styles.settingCopy}>
                 <Text style={[styles.settingTitle, { color: colors.textPrimary }]}>{title}</Text>
-                <Text style={[styles.settingHint, { color: colors.textSecondary }]}>{hint}</Text>
+                <Text style={[
+                    styles.settingHint,
+                    { color: palette.secondaryTextOnTint },
+                ]}>
+                    {hint}
+                </Text>
             </View>
             <View
                 style={[
                     styles.settingValue,
-                    { backgroundColor: highlighted ? accent : colors.border },
+                    {
+                        backgroundColor: highlighted
+                            ? palette.accent
+                            : palette.mutedBadgeBackground,
+                    },
                 ]}
             >
                 <Text
@@ -102,9 +146,7 @@ function SettingSummaryRow({
                         styles.settingValueText,
                         highlighted
                             ? styles.settingValueTextHighlighted
-                            : mode === "dark"
-                                ? styles.settingValueTextMutedDark
-                                : styles.settingValueTextMutedLight,
+                            : { color: palette.mutedBadgeText },
                     ]}
                 >
                     {value}
@@ -158,7 +200,7 @@ export default function PlainScheduleDetailView({
         () => buildPlainScheduleDetailPresentation(item),
         [item]
     );
-    const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const accent = PLAIN_SCHEDULE_DETAIL_COLORS[mode].accent;
 
     return (
         <ScrollView
@@ -218,7 +260,11 @@ export default function PlainScheduleDetailView({
                         numberOfLines={2}
                         style={[
                             styles.locationText,
-                            { color: presentation.location ? colors.textPrimary : colors.textSecondary },
+                            {
+                                color: presentation.location
+                                    ? colors.textPrimary
+                                    : PLAIN_SCHEDULE_DETAIL_COLORS[mode].secondaryTextOnTint,
+                            },
                         ]}
                     >
                         {presentation.location ?? "등록된 장소 없음"}
@@ -250,7 +296,13 @@ export default function PlainScheduleDetailView({
                                 <Text style={[styles.travelPlanTitle, { color: colors.textPrimary }]}>내 이동 경로</Text>
                                 <Text
                                     numberOfLines={1}
-                                    style={[styles.travelPlanStatus, { color: colors.textSecondary }]}
+                                    style={[
+                                        styles.travelPlanStatus,
+                                        {
+                                            color: PLAIN_SCHEDULE_DETAIL_COLORS[mode]
+                                                .secondaryTextOnTint,
+                                        },
+                                    ]}
                                 >
                                     {travelPlan.statusLabel}
                                 </Text>
@@ -307,7 +359,11 @@ export default function PlainScheduleDetailView({
                     <Text
                         style={[
                             styles.notesText,
-                            { color: presentation.notes ? colors.textPrimary : colors.textSecondary },
+                            {
+                                color: presentation.notes
+                                    ? colors.textPrimary
+                                    : PLAIN_SCHEDULE_DETAIL_COLORS[mode].secondaryTextOnTint,
+                            },
                         ]}
                     >
                         {presentation.notes ?? "등록된 메모 없음"}
@@ -444,7 +500,7 @@ const styles = StyleSheet.create({
     },
     travelPlanButton: {
         minWidth: 76,
-        height: 38,
+        minHeight: PLAIN_SCHEDULE_DETAIL_MIN_TOUCH_TARGET,
         borderRadius: 8,
         paddingHorizontal: 11,
         flexDirection: "row",
@@ -497,13 +553,7 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
     settingValueTextHighlighted: {
-        color: "#FFFFFF",
-    },
-    settingValueTextMutedDark: {
-        color: "#8E8E93",
-    },
-    settingValueTextMutedLight: {
-        color: "#6E6E73",
+        color: PLAIN_SCHEDULE_DETAIL_COLORS.actionText,
     },
     twoColumnRow: {
         flexDirection: "row",

@@ -2,6 +2,7 @@ import {
     createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
     consumeNotificationEventAfterValidation,
+    getExplicitLogicalNotificationEventKey,
     getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "../src/modules/notification/notificationEventKey";
@@ -40,6 +41,9 @@ describe("notification canonical event consumption", () => {
             { logicalEventKey: "traffic-42-v2", extra: "different" },
             "provider-2",
         )).toBe("logical:traffic-42-v2");
+        expect(getExplicitLogicalNotificationEventKey({
+            messageId: "provider-only",
+        })).toBeUndefined();
     });
 
     test("foreground에서 local Expo 알림에 심은 canonical key도 Firebase 원본과 같다", () => {

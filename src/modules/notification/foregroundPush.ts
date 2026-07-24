@@ -24,9 +24,9 @@ import {
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "./pushNavigation";
 import {
-    createCanonicalNotificationEventKey,
     createNotificationEventConsumer,
     consumeNotificationEventAfterValidation,
+    getExplicitLogicalNotificationEventKey,
     getExpoNotificationProviderMessageId,
     withCanonicalNotificationEventKey,
 } from "./notificationEventKey";
@@ -41,7 +41,10 @@ import {
 } from "./pushActionFailureGate";
 import { emitAppNotificationReceived } from "./appNotificationEvents";
 import { refreshForegroundPushCaches } from "./foregroundTrafficRefresh";
-import { validateNotificationAccountBinding } from "./notificationAccountBinding";
+import {
+    getValidatedNotificationAccountBinding,
+    type ValidatedNotificationAccountBinding,
+} from "./notificationAccountBinding";
 import { SCHEDULE_PUSH_CHANNEL_ID } from "./notificationPermission";
 import { emitScheduleDepartureMutation } from "../schedule/scheduleDepartureMutationEvents";
 import {
@@ -50,6 +53,10 @@ import {
 } from "../schedule/departureStatusCache";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
+
+export type PushNavigationBinding = ValidatedNotificationAccountBinding & {
+    authEpoch: number;
+};
 
 const ANDROID_CHANNEL_ID = SCHEDULE_PUSH_CHANNEL_ID;
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
@@ -130,8 +137,8 @@ export async function configureForegroundPush(): Promise<() => void> {
 }
 
 export async function configurePushNavigation(
-    openSchedule: (scheduleId: string) => void,
-    openShareInbox: () => void,
+    openSchedule: (scheduleId: string, binding: PushNavigationBinding) => void,
+    openShareInbox: (binding: PushNavigationBinding) => void,
     onActionFailure?: (failure: PushActionFailure) => void,
 ): Promise<() => void> {
     const Notifications = await getNotifications();
@@ -149,51 +156,50 @@ export async function configurePushNavigation(
 
     const getValidatedMember = async (
         data: Record<string, unknown> | undefined,
-        requireRecipient: boolean,
-    ) => {
+    ): Promise<PushNavigationBinding | undefined> => {
         const epoch = getAuthSessionEpoch();
         const member = await getAuthMember();
         if (!isAuthSessionEpochCurrent(epoch)) return undefined;
-        if (!validateNotificationAccountBinding({
+        const binding = getValidatedNotificationAccountBinding({
             data,
             currentMemberId: member?.id,
-            requireRecipient,
-        })) return undefined;
-        return { epoch, memberId: member?.id };
+        });
+        if (!binding) return undefined;
+        return { ...binding, authEpoch: epoch };
     };
 
     const openFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        providerEventId?: string,
+        _providerEventId?: string,
     ) => {
         const target = getPushNavigationTargetFromNotificationData(data);
         if (!target) {
             logPushDevelopment("info", "[push] notification has no navigation target", data);
             return;
         }
-        const validated = await getValidatedMember(data, false);
-        if (!validated) return;
-        const eventKey = createCanonicalNotificationEventKey(data, providerEventId);
-        // Consume only after target and optional account binding are valid.
+        const binding = await getValidatedMember(data);
+        if (!binding) return;
+        // New account-owned payloads must carry the backend logical key. Provider
+        // IDs and payload hashes are transport dedupe hints, not authorization.
         if (!consumeNotificationEventAfterValidation(
             openedEventConsumer,
-            eventKey,
+            binding.logicalEventKey,
             true,
         )) return;
 
         if (target.kind === "scheduleDetail") {
             logPushDevelopment("info", "[push] opening schedule from notification", target.scheduleId);
-            openSchedule(target.scheduleId);
+            openSchedule(target.scheduleId, binding);
             return;
         }
 
         logPushDevelopment("info", "[push] opening share inbox from notification");
-        openShareInbox();
+        openShareInbox(binding);
     };
 
     const markDepartedFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        providerEventId?: string,
+        _providerEventId?: string,
     ) => {
         const scheduleId = getScheduleIdFromNotificationData(data);
 
@@ -206,10 +212,8 @@ export async function configurePushNavigation(
             return;
         }
 
-        const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
-            ?? `schedule:${scheduleId}`;
-        const binding = await getValidatedMember(data, true);
-        if (!binding?.memberId) {
+        const binding = await getValidatedMember(data);
+        if (!binding) {
             actionFailureGate.report({
                 action: "departNow",
                 scheduleId,
@@ -217,17 +221,19 @@ export async function configurePushNavigation(
             });
             return;
         }
+        const actionKey = `departNow:${binding.logicalEventKey}`;
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
-                `departNow:${eventKey}`,
+                actionKey,
                 async () => {
-                    const abort = createAuthEpochAbortController(binding.epoch);
+                    const abort = createAuthEpochAbortController(binding.authEpoch);
                     try {
                         const result = await markScheduleDeparted(scheduleId, {
                             signal: abort.signal,
+                            idempotencyKey: actionKey,
                         });
-                        if (!isAuthSessionEpochCurrent(binding.epoch)) {
+                        if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
                             throw new Error("AUTH_SESSION_CHANGED");
                         }
                         return result;
@@ -236,13 +242,17 @@ export async function configurePushNavigation(
                     }
                 },
                 (result) => {
+                    if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
+                        throw new Error("AUTH_SESSION_CHANGED");
+                    }
                     if (result.status) {
                         setCachedScheduleDepartureStatus(
-                            `member:${binding.memberId}`,
+                            `member:${binding.recipientMemberId}`,
                             result.status,
                         );
                     }
                     emitScheduleDepartureMutation({
+                        authEpoch: binding.authEpoch,
                         kind: "departed",
                         scheduleId,
                         item: result.item,
@@ -256,17 +266,19 @@ export async function configurePushNavigation(
             logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] depart-now action failed", error);
-            actionFailureGate.report({
-                action: "departNow",
-                scheduleId,
-                message: "출발 상태를 변경하지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
-            });
+            if (isAuthSessionEpochCurrent(binding.authEpoch)) {
+                actionFailureGate.report({
+                    action: "departNow",
+                    scheduleId,
+                    message: "출발 상태를 변경하지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
+                });
+            }
         }
     };
 
     const snoozeFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-        providerEventId?: string,
+        _providerEventId?: string,
     ) => {
         const scheduleId = getScheduleIdFromNotificationData(data);
 
@@ -279,10 +291,8 @@ export async function configurePushNavigation(
             return;
         }
 
-        const eventKey = createCanonicalNotificationEventKey(data, providerEventId)
-            ?? `schedule:${scheduleId}`;
-        const binding = await getValidatedMember(data, true);
-        if (!binding?.memberId) {
+        const binding = await getValidatedMember(data);
+        if (!binding) {
             actionFailureGate.report({
                 action: "snooze",
                 scheduleId,
@@ -290,17 +300,19 @@ export async function configurePushNavigation(
             });
             return;
         }
+        const actionKey = `snooze:${binding.logicalEventKey}`;
         try {
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
-                `snooze:${eventKey}`,
+                actionKey,
                 async () => {
-                    const abort = createAuthEpochAbortController(binding.epoch);
+                    const abort = createAuthEpochAbortController(binding.authEpoch);
                     try {
                         const result = await snoozeScheduleDepartureReminder(scheduleId, {
                             signal: abort.signal,
+                            idempotencyKey: actionKey,
                         });
-                        if (!isAuthSessionEpochCurrent(binding.epoch)) {
+                        if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
                             throw new Error("AUTH_SESSION_CHANGED");
                         }
                         return result;
@@ -309,13 +321,17 @@ export async function configurePushNavigation(
                     }
                 },
                 (result) => {
+                    if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
+                        throw new Error("AUTH_SESSION_CHANGED");
+                    }
                     if (result.status) {
                         setCachedScheduleDepartureStatus(
-                            `member:${binding.memberId}`,
+                            `member:${binding.recipientMemberId}`,
                             result.status,
                         );
                     }
                     emitScheduleDepartureMutation({
+                        authEpoch: binding.authEpoch,
                         kind: "snoozed",
                         scheduleId,
                         item: result.item,
@@ -329,11 +345,13 @@ export async function configurePushNavigation(
             logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] snooze action failed", error);
-            actionFailureGate.report({
-                action: "snooze",
-                scheduleId,
-                message: "알림을 미루지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
-            });
+            if (isAuthSessionEpochCurrent(binding.authEpoch)) {
+                actionFailureGate.report({
+                    action: "snooze",
+                    scheduleId,
+                    message: "알림을 미루지 못했어요. 네트워크를 확인한 뒤 일정 화면에서 다시 시도해 주세요.",
+                });
+            }
         }
     };
 
@@ -384,14 +402,11 @@ export async function configurePushNavigation(
         handleFirebaseMessage: (message) => {
             openFromData(message.data, message.messageId).catch(() => undefined);
         },
-        getExpoEventKey: (response) => createCanonicalNotificationEventKey(
+        getExpoEventKey: (response) => getExplicitLogicalNotificationEventKey(
             response.notification.request.content.data,
-            getExpoNotificationProviderMessageId(response),
         ),
-        getFirebaseEventKey: (message) => createCanonicalNotificationEventKey(
-            message.data,
-            message.messageId,
-        ),
+        getFirebaseEventKey: (message) =>
+            getExplicitLogicalNotificationEventKey(message.data),
         isExpoAction: (response) =>
             response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER ||
             response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER,

@@ -2,7 +2,6 @@ import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig, ty
 import { Platform } from "react-native";
 import { resolveApiBaseUrl } from "./apiBaseUrl";
 import { getEnv } from "./env";
-import { createSingleFlightRunner } from "./singleFlight";
 import {
     clearAuthTokens,
     configureSharedAuthApiBaseUrl,
@@ -40,6 +39,7 @@ export const apiClient: AxiosInstance = axios.create({
 
 type RetryableRequestConfig = AxiosRequestConfig & {
     _retryAuth?: boolean;
+    _authSessionEpoch?: number;
 };
 
 type RefreshedAuthTokens = {
@@ -47,28 +47,27 @@ type RefreshedAuthTokens = {
     refreshToken: string;
 };
 
-const runAuthRefresh = createSingleFlightRunner<RefreshedAuthTokens | null>();
 let authRefreshGeneration = 0;
-let activeAuthRefreshController: AbortController | undefined;
+let activeAuthRefreshControllers = new Set<AbortController>();
+let authRefreshFlight: {
+    key: string;
+    promise: Promise<RefreshedAuthTokens | null>;
+} | null = null;
 
 subscribeAuthSessionEpoch(() => {
     authRefreshGeneration += 1;
-    activeAuthRefreshController?.abort();
-    activeAuthRefreshController = undefined;
+    authRefreshFlight = null;
+    activeAuthRefreshControllers.forEach((controller) => controller.abort());
+    activeAuthRefreshControllers = new Set();
 });
 
-async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null> {
-    const startedEpoch = getAuthSessionEpoch();
-    const refreshToken = await getRefreshToken();
-
-    if (!isAuthSessionEpochCurrent(startedEpoch)) return null;
-    if (!refreshToken) {
-        await clearAuthTokens();
-        return null;
-    }
-    const generation = authRefreshGeneration;
+async function requestRefreshedAuthTokens(
+    startedEpoch: number,
+    refreshToken: string,
+    generation: number,
+): Promise<RefreshedAuthTokens | null> {
     const controller = new AbortController();
-    activeAuthRefreshController = controller;
+    activeAuthRefreshControllers.add(controller);
     const contextIsCurrent = async () => (
         !controller.signal.aborted &&
         generation === authRefreshGeneration &&
@@ -122,10 +121,34 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
         }
         return null;
     } finally {
-        if (activeAuthRefreshController === controller) {
-            activeAuthRefreshController = undefined;
-        }
+        activeAuthRefreshControllers.delete(controller);
     }
+}
+
+async function runAuthRefreshForSession(
+    expectedEpoch: number,
+): Promise<RefreshedAuthTokens | null> {
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+    const refreshToken = await getRefreshToken();
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+    if (!refreshToken) {
+        await clearAuthTokens();
+        return null;
+    }
+
+    const key = `${expectedEpoch}:${refreshToken}`;
+    if (authRefreshFlight?.key === key) return authRefreshFlight.promise;
+
+    const generation = authRefreshGeneration;
+    const promise = requestRefreshedAuthTokens(
+        expectedEpoch,
+        refreshToken,
+        generation,
+    ).finally(() => {
+        if (authRefreshFlight?.promise === promise) authRefreshFlight = null;
+    });
+    authRefreshFlight = { key, promise };
+    return promise;
 }
 
 function isDefinitiveRefreshRejection(error: unknown): boolean {
@@ -157,9 +180,32 @@ function applyAccessToken(config: RetryableRequestConfig, accessToken: string): 
     };
 }
 
+function createAuthSessionChangedError(cause?: unknown): ApiResponseError {
+    return new ApiResponseError(
+        "로그인 계정이 변경되어 이전 요청 결과를 사용하지 않습니다.",
+        {
+            errorCode: "AUTH_SESSION_CHANGED",
+            cause,
+        },
+    );
+}
+
+function isRequestAuthSessionCurrent(config?: RetryableRequestConfig): boolean {
+    return typeof config?._authSessionEpoch === "number" &&
+        isAuthSessionEpochCurrent(config._authSessionEpoch);
+}
+
 apiClient.interceptors.request.use(
     async (config) => {
+        const requestConfig = config as RetryableRequestConfig;
+        if (isAuthEndpoint(config.url)) return config;
+        if (requestConfig._authSessionEpoch === undefined) {
+            requestConfig._authSessionEpoch = getAuthSessionEpoch();
+        }
         const accessToken = await getAccessToken();
+        if (!isRequestAuthSessionCurrent(requestConfig)) {
+            throw createAuthSessionChangedError();
+        }
         if (accessToken && !isAuthEndpoint(config.url)) {
             config.headers.Authorization = `Bearer ${accessToken}`;
         }
@@ -169,14 +215,32 @@ apiClient.interceptors.request.use(
 );
 
 apiClient.interceptors.response.use(
-    (response: AxiosResponse) => response,
+    (response: AxiosResponse) => {
+        const responseConfig = response.config as RetryableRequestConfig;
+        if (
+            !isAuthEndpoint(responseConfig.url) &&
+            !isRequestAuthSessionCurrent(responseConfig)
+        ) {
+            return Promise.reject(createAuthSessionChangedError());
+        }
+        return response;
+    },
     async (error: AxiosError<{
         errorMessage?: string | null;
         errorCode?: string | null;
         message?: string | null;
     }>) => {
+        if (error instanceof ApiResponseError) return Promise.reject(error);
         const originalRequest = error.config as RetryableRequestConfig | undefined;
         const requestUrl = originalRequest?.url ?? "";
+
+        if (
+            originalRequest &&
+            !isAuthEndpoint(requestUrl) &&
+            !isRequestAuthSessionCurrent(originalRequest)
+        ) {
+            return Promise.reject(createAuthSessionChangedError(error));
+        }
 
         if (
             error.response?.status === 401 &&
@@ -186,6 +250,9 @@ apiClient.interceptors.response.use(
         ) {
             originalRequest._retryAuth = true;
             const currentAccessToken = await getAccessToken();
+            if (!isRequestAuthSessionCurrent(originalRequest)) {
+                return Promise.reject(createAuthSessionChangedError(error));
+            }
 
             // 다른 동시 요청이 이미 토큰을 갱신했다면 회전된 refresh token을 다시 쓰지 않고
             // 최신 access token으로 바로 재시도한다.
@@ -197,10 +264,15 @@ apiClient.interceptors.response.use(
                 return apiClient(originalRequest);
             }
 
-            const tokens = await runAuthRefresh(requestRefreshedAuthTokens);
-            if (tokens) {
+            const tokens = await runAuthRefreshForSession(
+                originalRequest._authSessionEpoch!,
+            );
+            if (tokens && isRequestAuthSessionCurrent(originalRequest)) {
                 applyAccessToken(originalRequest, tokens.accessToken);
                 return apiClient(originalRequest);
+            }
+            if (!isRequestAuthSessionCurrent(originalRequest)) {
+                return Promise.reject(createAuthSessionChangedError(error));
             }
         }
 

@@ -29,6 +29,13 @@ export type PushNavigationTarget =
         kind: "shareInbox";
     };
 
+export type AccountBoundPushNavigationIntent = {
+    target: PushNavigationTarget;
+    logicalEventKey: string;
+    recipientMemberId: number;
+    validationEpoch: number;
+};
+
 export type ScheduleDetailRoute = {
     pathname: "/schedule/[id]";
     params: {
@@ -56,23 +63,35 @@ export function isPushNavigationReady({
  * so a cold-start notification is not lost behind login or onboarding.
  */
 export function createPendingPushNavigationQueue() {
-    let pendingTarget: PushNavigationTarget | undefined;
+    let pendingIntent: AccountBoundPushNavigationIntent | undefined;
 
     return {
-        defer(target: PushNavigationTarget) {
-            pendingTarget = target;
+        defer(intent: AccountBoundPushNavigationIntent) {
+            pendingIntent = intent;
         },
-        consumeIfReady(readiness: PushNavigationReadiness): PushNavigationTarget | undefined {
+        consumeIfReady(
+            readiness: PushNavigationReadiness,
+        ): AccountBoundPushNavigationIntent | undefined {
             if (!isPushNavigationReady(readiness)) return undefined;
 
-            const target = pendingTarget;
-            pendingTarget = undefined;
-            return target;
+            const intent = pendingIntent;
+            pendingIntent = undefined;
+            return intent;
         },
-        peek(): PushNavigationTarget | undefined {
-            return pendingTarget;
+        peek(): AccountBoundPushNavigationIntent | undefined {
+            return pendingIntent;
         },
     };
+}
+
+export function isAccountBoundPushNavigationIntentCurrent(
+    intent: AccountBoundPushNavigationIntent,
+    current: { authEpoch: number; memberId?: number | null },
+): boolean {
+    return intent.validationEpoch === current.authEpoch &&
+        intent.recipientMemberId === current.memberId &&
+        intent.logicalEventKey.startsWith("logical:") &&
+        intent.logicalEventKey.length > "logical:".length;
 }
 
 /**

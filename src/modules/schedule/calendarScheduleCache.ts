@@ -1,6 +1,10 @@
 import { dedupeCalendarSchedules } from "./calendarScheduleDedupe";
 import { getMonthRange } from "./calendarRange";
 import type { ScheduleItem } from "./types";
+import {
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+} from "../auth/authSessionEpoch";
 
 // 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
 // Redis 월 캐시 TTL과 맞춰 월 이동 중 불필요한 네트워크 요청을 막는다.
@@ -35,6 +39,22 @@ const monthCache = new Map<string, CalendarScheduleCacheEntry>();
 const inFlightRanges = new Map<string, Promise<void>>();
 const invalidationListeners = new Set<() => void>();
 let cacheRevision = 0;
+
+export function captureCalendarScheduleCacheAuthEpoch(): number {
+    return getAuthSessionEpoch();
+}
+
+export function mutateCalendarScheduleCacheIfAuthSessionCurrent(
+    expectedAuthEpoch: number,
+    mutation: () => void,
+): boolean {
+    if (!isAuthSessionEpochCurrent(expectedAuthEpoch)) return false;
+    // Cache mutations are synchronous, so the epoch check and write form one JS
+    // critical section. An auth invalidation that follows will clear this write;
+    // an invalidation that already happened prevents it entirely.
+    mutation();
+    return isAuthSessionEpochCurrent(expectedAuthEpoch);
+}
 
 function monthKey(year: number, monthIndex: number): string {
     return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
@@ -179,6 +199,7 @@ export async function refreshCalendarScheduleCache(
     fetcher: CalendarScheduleFetcher,
     now = Date.now(),
 ): Promise<CalendarScheduleCacheSnapshot> {
+    const authEpochAtStart = captureCalendarScheduleCacheAuthEpoch();
     const descriptors = getMonthDescriptors(startAt, endAt);
     const refreshGroups = groupRefreshRanges(descriptors, now);
     const revisionAtStart = cacheRevision;
@@ -189,6 +210,7 @@ export async function refreshCalendarScheduleCache(
         if (!first || !last) return;
 
         const inFlightKey = [
+            authEpochAtStart,
             revisionAtStart,
             first.startAt,
             last.endAt,
@@ -198,7 +220,10 @@ export async function refreshCalendarScheduleCache(
             inFlight = fetcher(first.startAt, last.endAt)
                 .then((items) => {
                     if (cacheRevision !== revisionAtStart) return;
-                    writeRange(group, items, Date.now());
+                    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+                        authEpochAtStart,
+                        () => writeRange(group, items, Date.now()),
+                    );
                 })
                 .finally(() => {
                     inFlightRanges.delete(inFlightKey);

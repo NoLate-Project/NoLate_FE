@@ -108,6 +108,7 @@ import {
     getCachedScheduleDepartureStatus,
     invalidateScheduleDepartureStatus,
     removeCachedScheduleDepartureStatus,
+    removeCachedDepartureStatusForAccessFailure,
     setCachedScheduleDepartureStatus,
     subscribeScheduleDepartureStatusInvalidation,
 } from "../../src/modules/schedule/departureStatusCache";
@@ -521,6 +522,18 @@ function ScheduleDetail() {
                     error,
                     mainDetailAuthorized,
                 );
+                if (
+                    failureMode === "unavailable" ||
+                    failureMode === "legacy"
+                ) {
+                    if (departureCacheOwnerKey) {
+                        removeCachedDepartureStatusForAccessFailure(
+                            departureCacheOwnerKey,
+                            id,
+                            failureMode,
+                        );
+                    }
+                }
                 if (failureMode === "unavailable") {
                     setDepartureStatus(undefined);
                     setDepartureStatusLoadState("unavailable");
@@ -1156,6 +1169,7 @@ function ScheduleDetail() {
                     result.item?.departureParticipants ?? item?.departureParticipants,
             };
             emitScheduleDepartureMutation({
+                authEpoch: authToken.epoch,
                 kind: "departed",
                 scheduleId: id,
                 item: {

@@ -4,6 +4,26 @@ import {
     shouldFetchDepartureStatus,
     shouldRefreshDepartureStatusOnAppStateChange,
 } from "../src/modules/schedule/departureStatusRefresh";
+import type { ScheduleDepartureStatus } from "../src/api/schedule";
+
+const normalStatus: ScheduleDepartureStatus = {
+    scheduleId: "42",
+    travelMinutes: 30,
+    recommendedDepartureAt: "2026-07-24T09:30:00+09:00",
+    evaluatedAt: "2026-07-24T09:00:00+09:00",
+    liveFetchedAt: null,
+    source: "SELECTED_ROUTE",
+    stale: false,
+    confidence: "MEDIUM",
+    failureReason: null,
+    lastTrafficChangeMinutes: null,
+    lastChangedAt: null,
+    nextCheckAt: "2026-07-23T23:59:00Z",
+    preparationMinutes: null,
+    preparationStartAt: null,
+    safetyBufferMinutes: null,
+    timeZone: "Asia/Seoul",
+};
 
 describe("departure status scheduled refresh", () => {
     beforeEach(() => jest.useFakeTimers());
@@ -88,23 +108,55 @@ describe("departure status scheduled refresh", () => {
 
         controller.recordFailure();
         schedulePast();
-        jest.advanceTimersByTime(60_000);
+        jest.advanceTimersByTime(2 * 60_000);
         expect(refresh).toHaveBeenCalledTimes(2);
 
         controller.recordFailure();
         schedulePast();
-        jest.advanceTimersByTime(2 * 60_000);
+        jest.advanceTimersByTime(5 * 60_000);
         expect(refresh).toHaveBeenCalledTimes(3);
 
         controller.recordFailure();
         schedulePast();
-        jest.advanceTimersByTime(5 * 60_000);
+        jest.advanceTimersByTime(15 * 60_000);
         expect(refresh).toHaveBeenCalledTimes(4);
 
         controller.recordFailure();
         schedulePast();
         jest.advanceTimersByTime(15 * 60_000);
         expect(refresh).toHaveBeenCalledTimes(5);
+    });
+
+    test("no-cache 첫 정상 status도 unchanged fingerprint에서 정확히 1m→2m→5m→15m이다", () => {
+        const refresh = jest.fn();
+        const controller = createDepartureStatusRefreshController();
+        const now = Date.parse("2026-07-24T00:00:00Z");
+        const schedulePast = () => controller.schedule({
+            nextCheckAt: normalStatus.nextCheckAt,
+            active: true,
+            refresh,
+            nowMs: now,
+        });
+
+        controller.recordSuccess(normalStatus);
+        schedulePast();
+        jest.advanceTimersByTime(60_000);
+        expect(refresh).toHaveBeenCalledTimes(1);
+
+        controller.recordSuccess(normalStatus);
+        schedulePast();
+        jest.advanceTimersByTime(2 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(2);
+
+        controller.recordSuccess(normalStatus);
+        schedulePast();
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(3);
+
+        controller.recordSuccess(normalStatus);
+        schedulePast();
+        jest.advanceTimersByTime(15 * 60_000);
+        expect(refresh).toHaveBeenCalledTimes(4);
     });
 
     test("inactive/종료 상태는 timer를 중단한다", () => {

@@ -1,5 +1,16 @@
 import * as SecureStore from "../storage/secureStorage";
 import { NativeModules, Platform } from "react-native";
+import {
+    advanceAuthSessionEpoch,
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+} from "./authSessionEpoch";
+
+export {
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+    subscribeAuthSessionEpoch,
+} from "./authSessionEpoch";
 
 const ACCESS_TOKEN_KEY = "nolte_access_token";
 const REFRESH_TOKEN_KEY = "nolte_refresh_token";
@@ -9,33 +20,16 @@ let currentAuthApiBaseUrl: string | null = null;
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
-const authSessionEpochListeners = new Set<(epoch: number) => void>();
-let authSessionEpoch = 0;
 let authTokenMutationTail: Promise<void> = Promise.resolve();
 
 function bumpAuthSessionEpoch(): number {
-    authSessionEpoch += 1;
-    authSessionEpochListeners.forEach((listener) => listener(authSessionEpoch));
-    return authSessionEpoch;
+    return advanceAuthSessionEpoch();
 }
 
 function runAuthTokenMutation<T>(operation: () => Promise<T>): Promise<T> {
     const result = authTokenMutationTail.then(operation, operation);
     authTokenMutationTail = result.then(() => undefined, () => undefined);
     return result;
-}
-
-export function getAuthSessionEpoch(): number {
-    return authSessionEpoch;
-}
-
-export function isAuthSessionEpochCurrent(epoch: number): boolean {
-    return authSessionEpoch === epoch;
-}
-
-export function subscribeAuthSessionEpoch(listener: (epoch: number) => void): () => void {
-    authSessionEpochListeners.add(listener);
-    return () => authSessionEpochListeners.delete(listener);
 }
 
 export type AuthLogoutIntent = {
@@ -97,21 +91,38 @@ async function syncSharedApiBaseUrl() {
     }
 }
 
-async function getAuthToken(key: string): Promise<string | null> {
+async function getAuthTokenWithinMutation(
+    key: string,
+    expectedEpoch: number,
+    repair: boolean,
+): Promise<string | null> {
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
     const sharedValue = await readSharedItem(key);
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
     if (sharedValue) {
-        await syncSharedApiBaseUrl();
-        return sharedValue;
+        if (repair) await syncSharedApiBaseUrl();
+        return isAuthSessionEpochCurrent(expectedEpoch) ? sharedValue : null;
     }
 
     const storedValue = await SecureStore.getItemAsync(key);
-    if (storedValue) {
+    if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+    if (storedValue && repair) {
         await Promise.all([
             saveSharedItem(key, storedValue),
             syncSharedApiBaseUrl(),
         ]);
     }
-    return storedValue;
+    return isAuthSessionEpochCurrent(expectedEpoch) ? storedValue : null;
+}
+
+async function getAuthToken(key: string): Promise<string | null> {
+    const expectedEpoch = getAuthSessionEpoch();
+    // Reads join the same queue as login/refresh/clear. This prevents a stale
+    // SecureStore snapshot from being repaired into shared Keychain after a newer
+    // write, while the epoch checks let logout invalidate an already-running read.
+    return runAuthTokenMutation(
+        () => getAuthTokenWithinMutation(key, expectedEpoch, true),
+    );
 }
 
 export type StoredAuthMember = {
@@ -192,7 +203,16 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
     expectedRefreshToken: string;
 }): Promise<boolean> {
     return runAuthTokenMutation(async () => {
-        if (!await isAuthRefreshContextCurrent(options)) return false;
+        if (!isAuthSessionEpochCurrent(options.expectedEpoch)) return false;
+        const currentRefreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            options.expectedEpoch,
+            true,
+        );
+        if (
+            !isAuthSessionEpochCurrent(options.expectedEpoch) ||
+            currentRefreshToken !== options.expectedRefreshToken
+        ) return false;
         await writeAuthTokens(options.accessToken, options.refreshToken);
         return isAuthSessionEpochCurrent(options.expectedEpoch);
     });
@@ -219,17 +239,26 @@ export async function saveAuthMember(member?: StoredAuthMember | null) {
 
 export async function getAuthMember(): Promise<StoredAuthMember | null> {
     const expectedEpoch = getAuthSessionEpoch();
-    const [sharedRaw, storedRaw] = await Promise.all([
-        readSharedItem(AUTH_MEMBER_KEY),
-        SecureStore.getItemAsync(AUTH_MEMBER_KEY),
-    ]);
-    const raw = sharedRaw ?? storedRaw;
-    if (!raw) return null;
-
-    try {
-        const normalized = normalizeAuthMember(JSON.parse(raw) as StoredAuthMember);
+    return runAuthTokenMutation(async () => {
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+        const [sharedRaw, storedRaw] = await Promise.all([
+            readSharedItem(AUTH_MEMBER_KEY),
+            SecureStore.getItemAsync(AUTH_MEMBER_KEY),
+        ]);
+        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+        const parse = (raw: string | null): StoredAuthMember | null => {
+            if (!raw) return null;
+            try {
+                return normalizeAuthMember(JSON.parse(raw) as StoredAuthMember);
+            } catch {
+                return null;
+            }
+        };
+        const sharedMember = parse(sharedRaw);
+        const storedMember = parse(storedRaw);
+        const normalized = sharedMember ?? storedMember;
         if (!normalized) {
-            if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
+            if (!sharedRaw && !storedRaw) return null;
             await Promise.all([
                 SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
                 deleteSharedItem(AUTH_MEMBER_KEY),
@@ -239,20 +268,16 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
 
         const serialized = JSON.stringify(normalized);
         if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-        if (sharedRaw) {
-            if (storedRaw !== serialized) await SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized);
-        } else {
-            await saveSharedItem(AUTH_MEMBER_KEY, serialized);
+        const repairs: Promise<unknown>[] = [];
+        if (storedRaw !== serialized) {
+            repairs.push(SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized));
         }
-        return normalized;
-    } catch {
-        if (!isAuthSessionEpochCurrent(expectedEpoch)) return null;
-        await Promise.all([
-            SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
-            deleteSharedItem(AUTH_MEMBER_KEY),
-        ]);
-        return null;
-    }
+        if (sharedRaw !== serialized) {
+            repairs.push(saveSharedItem(AUTH_MEMBER_KEY, serialized));
+        }
+        await Promise.all(repairs);
+        return isAuthSessionEpochCurrent(expectedEpoch) ? normalized : null;
+    });
 }
 
 export async function saveAuthCurationCompleted(curationCompleted: boolean): Promise<void> {
@@ -277,7 +302,9 @@ export async function beginAuthLogoutIntent(): Promise<AuthLogoutIntent> {
     // Abort refresh and other account-owned work at the moment the user chooses
     // logout, before the best-effort server logout request can block.
     const epoch = bumpAuthSessionEpoch();
-    const refreshToken = await runAuthTokenMutation(() => getRefreshToken());
+    const refreshToken = await runAuthTokenMutation(
+        () => getAuthTokenWithinMutation(REFRESH_TOKEN_KEY, epoch, false),
+    );
     return { epoch, refreshToken };
 }
 

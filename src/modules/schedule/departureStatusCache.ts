@@ -30,6 +30,16 @@ export function removeCachedScheduleDepartureStatus(
     cache.delete(cacheKey(ownerKey, scheduleId));
 }
 
+export function removeCachedDepartureStatusForAccessFailure(
+    ownerKey: string,
+    scheduleId: string,
+    failureMode: "unavailable" | "legacy" | "error",
+): boolean {
+    if (failureMode === "error") return false;
+    removeCachedScheduleDepartureStatus(ownerKey, scheduleId);
+    return true;
+}
+
 /**
  * 교통 푸시는 기존 값을 즉시 버리지 않고 재검증만 요청한다. 네트워크가 끊겨도
  * 마지막 값을 stale로 표시할 수 있어, LIVE 값을 숨긴 채 legacy 값으로 점프하지 않는다.

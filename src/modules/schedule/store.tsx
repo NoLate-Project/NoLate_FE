@@ -1,7 +1,20 @@
-import React, {createContext, useContext, useEffect, useMemo, useReducer} from "react";
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useReducer,
+    useRef,
+    useState,
+} from "react";
 import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
-import { subscribeAuthInvalidation } from "../auth/authStorage";
+import {
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+    subscribeAuthSessionEpoch,
+} from "../auth/authSessionEpoch";
 import { clearCalendarScheduleCache } from "./calendarScheduleCache";
 import { subscribeScheduleDepartureMutation } from "./scheduleDepartureMutationEvents";
 
@@ -112,16 +125,57 @@ export function ScheduleProvider({
     children: React.ReactNode;
     initialState: ScheduleState;
 }) {
-    const [state, dispatch] = useReducer(reducer, initialState);
-    useEffect(() => subscribeAuthInvalidation(() => {
-        // 계정이 바뀌면 이전 회원의 월별 일정 캐시도 상태와 함께 제거한다.
-        clearCalendarScheduleCache();
-        dispatch({ type: "RESET", state: initialState });
-    }), [initialState]);
+    const initialAuthEpochRef = useRef(getAuthSessionEpoch());
+    const [authEpoch, setAuthEpoch] = useState(initialAuthEpochRef.current);
+    const authEpochRef = useRef(authEpoch);
+
+    useEffect(() => {
+        const moveToAuthEpoch = (nextAuthEpoch: number) => {
+            if (authEpochRef.current === nextAuthEpoch) return;
+            // Clear the old account cache synchronously before React can mount the
+            // next session's child tree.
+            clearCalendarScheduleCache();
+            authEpochRef.current = nextAuthEpoch;
+            setAuthEpoch(nextAuthEpoch);
+        };
+        const unsubscribe = subscribeAuthSessionEpoch(moveToAuthEpoch);
+        moveToAuthEpoch(getAuthSessionEpoch());
+        return unsubscribe;
+    }, []);
+
+    return (
+        <ScheduleSessionProvider
+            key={authEpoch}
+            authEpoch={authEpoch}
+            initialState={initialState}
+        >
+            {children}
+        </ScheduleSessionProvider>
+    );
+}
+
+function ScheduleSessionProvider({
+    authEpoch,
+    children,
+    initialState,
+}: {
+    authEpoch: number;
+    children: React.ReactNode;
+    initialState: ScheduleState;
+}) {
+    const [state, reducerDispatch] = useReducer(reducer, initialState);
+    const dispatch = useCallback<React.Dispatch<Action>>((action) => {
+        // A component from an unmounted account subtree can still finish a
+        // promise and retain this closure. Refuse that dispatch after the epoch
+        // has moved even before React effect cleanup runs.
+        if (isAuthSessionEpochCurrent(authEpoch)) reducerDispatch(action);
+    }, [authEpoch]);
     useEffect(() => subscribeScheduleDepartureMutation((event) => {
-        if (event.item) dispatch({ type: "UPDATE_ITEM", item: event.item });
-    }), []);
-    const value = useMemo(() => ({state, dispatch}), [state]);
+        if (event.authEpoch === authEpoch && event.item) {
+            dispatch({ type: "UPDATE_ITEM", item: event.item });
+        }
+    }), [authEpoch, dispatch]);
+    const value = useMemo(() => ({state, dispatch}), [dispatch, state]);
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }
 

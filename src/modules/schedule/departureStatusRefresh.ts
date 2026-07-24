@@ -61,7 +61,7 @@ export function createDepartureStatusRefreshController() {
     const backoffDelay = () => {
         const index = Math.min(
             BACKOFF_DELAYS_MS.length - 1,
-            Math.max(0, unchangedCount + failureCount - 1),
+            Math.max(0, unchangedCount + failureCount),
         );
         return BACKOFF_DELAYS_MS[index];
     };

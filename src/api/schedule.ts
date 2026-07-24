@@ -8,7 +8,9 @@ import {
 import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 import {
+    captureCalendarScheduleCacheAuthEpoch,
     clearCalendarScheduleCache,
+    mutateCalendarScheduleCacheIfAuthSessionCurrent,
     removeCalendarScheduleCacheItem,
     upsertCalendarScheduleCacheItem,
 } from "../modules/schedule/calendarScheduleCache";
@@ -113,7 +115,10 @@ type ScheduleDepartureStatusDto = {
     timeZone?: string | null;
 };
 
-let observedCalendarCacheRevision: number | null = null;
+let observedCalendarCacheRevision: {
+    authEpoch: number;
+    revision: number;
+} | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
@@ -192,17 +197,19 @@ export async function getCalendarSchedules(startAt: string, endAt: string): Prom
 }
 
 export async function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<CalendarCacheRevisionDto>>(
         "/api/schedules/calendar-cache/revision",
     );
     const revision = unwrapApiResponse(response).revision;
-    const changed = observedCalendarCacheRevision !== null &&
-        observedCalendarCacheRevision !== revision;
-    observedCalendarCacheRevision = revision;
-    if (changed) {
-        clearCalendarScheduleCache();
-    }
-    return changed;
+    let changed = false;
+    const applied = mutateCalendarScheduleCacheIfAuthSessionCurrent(authEpoch, () => {
+        changed = observedCalendarCacheRevision?.authEpoch === authEpoch &&
+            observedCalendarCacheRevision.revision !== revision;
+        observedCalendarCacheRevision = { authEpoch, revision };
+        if (changed) clearCalendarScheduleCache();
+    });
+    return applied && changed;
 }
 
 export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
@@ -240,12 +247,18 @@ export async function getSchedule(
     scheduleId: string,
     options: { signal?: AbortSignal; cache?: boolean } = {},
 ): Promise<ScheduleItem> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const url = `/api/schedules/${scheduleId}`;
     const response = options.signal
         ? await apiGet<ApiEnvelope<ScheduleDto>>(url, { signal: options.signal })
         : await apiGet<ApiEnvelope<ScheduleDto>>(url);
     const item = normalizeSchedule(unwrapApiResponse(response));
-    if (options.cache !== false) upsertCalendarScheduleCacheItem(item);
+    if (options.cache !== false) {
+        mutateCalendarScheduleCacheIfAuthSessionCurrent(
+            authEpoch,
+            () => upsertCalendarScheduleCacheItem(item),
+        );
+    }
     return item;
 }
 
@@ -264,10 +277,14 @@ export async function getScheduleDepartureStatus(
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload);
     const item = normalizeSchedule(unwrapApiResponse(response));
     const cachedItem = { ...item, route: item.route ?? payload.route };
-    upsertCalendarScheduleCacheItem(cachedItem);
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        () => upsertCalendarScheduleCacheItem(cachedItem),
+    );
     return cachedItem;
 }
 
@@ -275,6 +292,7 @@ export async function importCalendarSchedule(
     payload: SchedulePayload,
     source: CalendarImportSourcePayload
 ): Promise<CalendarImportResult> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<
         ApiEnvelope<CalendarImportResultDto>,
         { schedule: SchedulePayload; source: CalendarImportSourcePayload }
@@ -286,7 +304,10 @@ export async function importCalendarSchedule(
         // 기존 일정을 반환받은 경우에는 이번 시도에서 계산한 경로를 저장된 값처럼 섞지 않는다.
         route: item.route ?? (result.created ? payload.route : undefined),
     };
-    upsertCalendarScheduleCacheItem(cachedItem);
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        () => upsertCalendarScheduleCacheItem(cachedItem),
+    );
 
     return {
         item: cachedItem,
@@ -303,17 +324,25 @@ export async function parseScheduleText(payload: ParseScheduleTextPayload): Prom
 }
 
 export async function updateSchedule(scheduleId: string, payload: SchedulePayload): Promise<ScheduleItem> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPut<ApiEnvelope<ScheduleDto>, SchedulePayload>(`/api/schedules/${scheduleId}`, payload);
     const item = normalizeSchedule(unwrapApiResponse(response));
     const cachedItem = { ...item, route: item.route ?? payload.route };
-    upsertCalendarScheduleCacheItem(cachedItem);
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        () => upsertCalendarScheduleCacheItem(cachedItem),
+    );
     return cachedItem;
 }
 
 export async function deleteSchedule(scheduleId: string): Promise<void> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}`);
     assertApiSuccess(response);
-    removeCalendarScheduleCacheItem(scheduleId);
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        () => removeCalendarScheduleCacheItem(scheduleId),
+    );
 }
 
 function normalizeDepartureMutationResult(
@@ -329,8 +358,28 @@ function normalizeDepartureMutationResult(
     };
     const itemDto = record.schedule ?? (record.id !== undefined ? record as ScheduleDto : undefined);
     const statusDto = record.departureStatus ?? record.status;
+    const item = itemDto ? normalizeSchedule(itemDto) : undefined;
+    if (item && item.id !== scheduleId) {
+        throw new ApiResponseError(
+            "출발 처리 응답의 일정 정보가 요청과 일치하지 않습니다.",
+            { errorCode: "DEPARTURE_MUTATION_SCHEDULE_MISMATCH" },
+        );
+    }
+    if (
+        statusDto &&
+        (
+            statusDto.scheduleId === undefined ||
+            statusDto.scheduleId === null ||
+            String(statusDto.scheduleId).trim() !== scheduleId
+        )
+    ) {
+        throw new ApiResponseError(
+            "출발 처리 응답의 상태 정보가 요청과 일치하지 않습니다.",
+            { errorCode: "DEPARTURE_MUTATION_STATUS_MISMATCH" },
+        );
+    }
     return {
-        item: itemDto ? normalizeSchedule(itemDto) : undefined,
+        item,
         status: statusDto
             ? normalizeScheduleDepartureStatus(statusDto, scheduleId)
             : undefined,
@@ -340,15 +389,28 @@ function normalizeDepartureMutationResult(
 
 export async function markScheduleDeparted(
     scheduleId: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; idempotencyKey?: string } = {},
 ): Promise<ScheduleDepartureMutationResult> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
     const url = `/api/schedules/${scheduleId}/depart-now`;
-    const response = options.signal
-        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, { signal: options.signal })
+    const requestConfig = options.signal || options.idempotencyKey
+        ? {
+            signal: options.signal,
+            headers: options.idempotencyKey
+                ? { "Idempotency-Key": options.idempotencyKey }
+                : undefined,
+        }
+        : undefined;
+    const response = requestConfig
+        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, requestConfig)
         : await apiPost<ApiEnvelope<unknown>>(url);
     const result = normalizeDepartureMutationResult(unwrapApiResponse(response), scheduleId);
     if (!result.item) throw new ApiResponseError("출발 완료 응답에 일정 정보가 없습니다.");
+    mutateCalendarScheduleCacheIfAuthSessionCurrent(
+        authEpoch,
+        () => upsertCalendarScheduleCacheItem(result.item!),
+    );
     return result;
 }
 
@@ -370,12 +432,28 @@ export async function sendScheduleDepartureNudge(
 
 export async function snoozeScheduleDepartureReminder(
     scheduleId: string,
-    options: { signal?: AbortSignal } = {},
+    options: { signal?: AbortSignal; idempotencyKey?: string } = {},
 ): Promise<ScheduleDepartureMutationResult> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const url = `/api/schedules/${scheduleId}/departure-reminder/snooze`;
-    const response = options.signal
-        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, { signal: options.signal })
+    const requestConfig = options.signal || options.idempotencyKey
+        ? {
+            signal: options.signal,
+            headers: options.idempotencyKey
+                ? { "Idempotency-Key": options.idempotencyKey }
+                : undefined,
+        }
+        : undefined;
+    const response = requestConfig
+        ? await apiPost<ApiEnvelope<unknown>>(url, undefined, requestConfig)
         : await apiPost<ApiEnvelope<unknown>>(url);
     assertApiSuccess(response);
-    return normalizeDepartureMutationResult(response.data, scheduleId);
+    const result = normalizeDepartureMutationResult(response.data, scheduleId);
+    if (result.item) {
+        mutateCalendarScheduleCacheIfAuthSessionCurrent(
+            authEpoch,
+            () => upsertCalendarScheduleCacheItem(result.item!),
+        );
+    }
+    return result;
 }

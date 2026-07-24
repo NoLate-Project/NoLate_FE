@@ -271,6 +271,7 @@ import {
     getScheduleDetailRouteFromNotificationData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
+    isAccountBoundPushNavigationIntentCurrent,
     isPushNavigationReady,
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "../src/modules/notification/pushNavigation";
@@ -278,15 +279,20 @@ import {
 describe("schedule push navigation payload", () => {
     test("인증과 온보딩이 끝날 때까지 알림 목적지를 보존한 뒤 한 번만 꺼낸다", () => {
         const queue = createPendingPushNavigationQueue();
-        const target = { kind: "scheduleDetail" as const, scheduleId: "42" };
-        queue.defer(target);
+        const intent = {
+            target: { kind: "scheduleDetail" as const, scheduleId: "42" },
+            logicalEventKey: "logical:event-a",
+            recipientMemberId: 1,
+            validationEpoch: 7,
+        };
+        queue.defer(intent);
 
         expect(queue.consumeIfReady({
             isLoading: true,
             isAuthenticated: false,
             isCurationCompleted: false,
         })).toBeUndefined();
-        expect(queue.peek()).toEqual(target);
+        expect(queue.peek()).toEqual(intent);
         expect(queue.consumeIfReady({
             isLoading: false,
             isAuthenticated: true,
@@ -296,8 +302,29 @@ describe("schedule push navigation payload", () => {
             isLoading: false,
             isAuthenticated: true,
             isCurationCompleted: true,
-        })).toEqual(target);
+        })).toEqual(intent);
         expect(queue.peek()).toBeUndefined();
+    });
+
+    test("대기 중 A 알림 intent는 B 계정 전환 뒤 실행 시점 검증을 통과하지 못한다", () => {
+        const intent = {
+            target: { kind: "scheduleDetail" as const, scheduleId: "42" },
+            logicalEventKey: "logical:event-a",
+            recipientMemberId: 1,
+            validationEpoch: 7,
+        };
+        expect(isAccountBoundPushNavigationIntentCurrent(intent, {
+            authEpoch: 7,
+            memberId: 1,
+        })).toBe(true);
+        expect(isAccountBoundPushNavigationIntentCurrent(intent, {
+            authEpoch: 8,
+            memberId: 2,
+        })).toBe(false);
+        expect(isAccountBoundPushNavigationIntentCurrent(intent, {
+            authEpoch: 7,
+            memberId: 2,
+        })).toBe(false);
     });
 
     test("보호된 화면은 인증·온보딩 완료 상태에서만 푸시 이동 준비가 된다", () => {

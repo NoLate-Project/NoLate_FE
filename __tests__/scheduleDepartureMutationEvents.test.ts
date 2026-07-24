@@ -3,6 +3,7 @@ import {
     emitScheduleDepartureMutation,
     subscribeScheduleDepartureMutation,
 } from "../src/modules/schedule/scheduleDepartureMutationEvents";
+import { getAuthSessionEpoch } from "../src/modules/auth/authSessionEpoch";
 
 const item: ScheduleItem = {
     id: "42",
@@ -22,12 +23,14 @@ test("authoritative depart 응답은 후속 status GET이 offline이어도 refre
     });
 
     emitScheduleDepartureMutation({
+        authEpoch: getAuthSessionEpoch(),
         kind: "departed",
         scheduleId: "42",
         item,
         refreshing: true,
     });
     emitScheduleDepartureMutation({
+        authEpoch: getAuthSessionEpoch(),
         kind: "snoozed",
         scheduleId: "42",
         refreshing: true,

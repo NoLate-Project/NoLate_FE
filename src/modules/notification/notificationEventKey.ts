@@ -11,6 +11,19 @@ const PROVIDER_EVENT_ID_FIELDS = [
     "gcm.message_id",
 ] as const;
 
+export function getExplicitLogicalNotificationEventKey(
+    data?: Record<string, unknown>,
+): string | undefined {
+    const value = data?.logicalEventKey;
+    if (typeof value === "string" && value.trim()) {
+        return `logical:${value.trim()}`;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return `logical:${value}`;
+    }
+    return undefined;
+}
+
 function primitiveEntries(data?: Record<string, unknown>): Array<[string, string]> {
     if (!data) return [];
 
@@ -28,7 +41,11 @@ export function createCanonicalNotificationEventKey(
     data?: Record<string, unknown>,
     providerEventId?: string,
 ): string | undefined {
+    const explicitLogicalEventKey = getExplicitLogicalNotificationEventKey(data);
+    if (explicitLogicalEventKey) return explicitLogicalEventKey;
+
     for (const field of LOGICAL_EVENT_ID_FIELDS) {
+        if (field === "logicalEventKey") continue;
         const value = data?.[field];
         if (typeof value === "string" && value.trim()) {
             return `logical:${value.trim()}`;

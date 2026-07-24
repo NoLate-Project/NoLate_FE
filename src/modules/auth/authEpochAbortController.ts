@@ -1,7 +1,7 @@
 import {
     getAuthSessionEpoch,
     subscribeAuthSessionEpoch,
-} from "./authStorage";
+} from "./authSessionEpoch";
 
 export function createAuthEpochAbortController(expectedEpoch: number) {
     const controller = new AbortController();

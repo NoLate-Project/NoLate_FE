@@ -17,7 +17,6 @@ import {
     setAPNSToken,
 } from "@react-native-firebase/messaging";
 
-import { registerPushToken } from "../../api/notification";
 import {
     cancelPendingPushRegistration,
     isPushRegistrationGenerationCurrent,
@@ -30,6 +29,11 @@ import {
     shouldAutomaticallyRequestNotificationPermission,
     wasNotificationPermissionRequested,
 } from "./notificationPermission";
+import {
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+} from "../auth/authSessionEpoch";
+import { registerPushTokenForSession } from "./pushRegistrationSession";
 
 const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
@@ -55,12 +59,30 @@ async function getOrCreateDeviceId(): Promise<string> {
     return generated;
 }
 
-async function registerToken(memberId: number, token: string): Promise<void> {
-    await registerPushToken({
+async function registerToken(
+    memberId: number,
+    token: string,
+    generation: number,
+    authEpoch: number,
+): Promise<void> {
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
+    const deviceId = await getOrCreateDeviceId();
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
+
+    await registerPushTokenForSession({
         memberId,
-        deviceId: await getOrCreateDeviceId(),
+        deviceId,
         platform: Platform.OS === "ios" ? "IOS" : "ANDROID",
         token,
+        authEpoch,
+        isRegistrationGenerationCurrent: () =>
+            isPushRegistrationGenerationCurrent(generation),
     });
 }
 
@@ -120,19 +142,27 @@ async function refreshFcmTokenIfNativeContextChanged(
 
 export function registerPushAfterLogin(memberId?: number): Promise<void> {
     if (!memberId) return Promise.resolve();
+    const authEpoch = getAuthSessionEpoch();
     return runPushRegistration(memberId, (generation) => (
         retryPushRegistration(
-            () => performPushRegistration(memberId, generation),
+            () => performPushRegistration(memberId, generation, authEpoch),
             {
                 delaysMs: PUSH_REGISTRATION_RETRY_DELAYS_MS,
-                isCurrent: () => isPushRegistrationGenerationCurrent(generation),
+                isCurrent: () =>
+                    isPushRegistrationGenerationCurrent(generation) &&
+                    isAuthSessionEpochCurrent(authEpoch),
             },
         )
     ));
 }
 
-async function performPushRegistration(memberId: number, generation: number): Promise<void> {
+async function performPushRegistration(
+    memberId: number,
+    generation: number,
+    authEpoch: number,
+): Promise<void> {
     if (!memberId) return;
+    if (!isAuthSessionEpochCurrent(authEpoch)) return;
     // expo-constants 18에서 Constants.isDevice가 제거됐다. 제거된 값을 검사하면 undefined가
     // false로 평가되어 실제 iPhone까지 시뮬레이터로 오인하고 모든 토큰 등록을 건너뛴다.
     if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
@@ -175,12 +205,18 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     }
 
     if (!allowed) return;
-    if (!isPushRegistrationGenerationCurrent(generation)) return;
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
 
     if (!isDeviceRegisteredForRemoteMessages(messaging)) {
         await registerDeviceForRemoteMessages(messaging);
     }
-    if (!isPushRegistrationGenerationCurrent(generation)) return;
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
 
     if (Platform.OS === "ios") {
         // FCM iOS 토큰은 APNs 토큰과 연결된 뒤에만 서버에서 실제 발송할 수 있다.
@@ -188,24 +224,37 @@ async function performPushRegistration(memberId: number, generation: number): Pr
         apnsTokenType = getApnsTokenType();
         await setAPNSToken(messaging, apnsToken, apnsTokenType);
     }
-    if (!isPushRegistrationGenerationCurrent(generation)) return;
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
 
     const nativeContext = createNativePushContext(apnsToken, apnsTokenType);
     await refreshFcmTokenIfNativeContextChanged(messaging, nativeContext);
 
     const token = await getToken(messaging);
-    if (!isPushRegistrationGenerationCurrent(generation)) return;
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
 
-    await registerToken(memberId, token);
-    if (!isPushRegistrationGenerationCurrent(generation)) return;
+    await registerToken(memberId, token, generation, authEpoch);
+    if (
+        !isPushRegistrationGenerationCurrent(generation) ||
+        !isAuthSessionEpochCurrent(authEpoch)
+    ) return;
     await SecureStore.setItemAsync(PUSH_NATIVE_CONTEXT_KEY, nativeContext);
 }
 
 export function subscribePushTokenRefresh(memberId?: number): () => void {
     if (!memberId) return () => undefined;
+    const subscriptionAuthEpoch = getAuthSessionEpoch();
 
     return onTokenRefresh(getMessaging(), (token) => {
-        registerToken(memberId, token).catch((error) => {
+        if (!isAuthSessionEpochCurrent(subscriptionAuthEpoch)) return;
+        runPushRegistration(memberId, (generation) => (
+            registerToken(memberId, token, generation, subscriptionAuthEpoch)
+        ), { replaceExisting: true }).catch((error) => {
             logPushDevelopment("[push] refreshed token registration failed", error);
         });
     });

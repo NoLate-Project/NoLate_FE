@@ -6,13 +6,20 @@ import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
     configureForegroundPush,
     configurePushNavigation,
+    type PushNavigationBinding,
 } from "../src/modules/notification/foregroundPush";
 import { useAuth } from "../src/modules/auth/AuthContext";
 import {
+    getAuthMember,
+    getAuthSessionEpoch,
+    isAuthSessionEpochCurrent,
+} from "../src/modules/auth/authStorage";
+import {
+    type AccountBoundPushNavigationIntent,
     createPendingPushNavigationQueue,
     createScheduleDetailRoute,
+    isAccountBoundPushNavigationIntentCurrent,
     isPushNavigationReady,
-    type PushNavigationTarget,
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 
@@ -26,23 +33,33 @@ export default function RootLayout() {
         isLoading,
     }));
 
-    const navigateToPushTarget = useCallback((target: PushNavigationTarget) => {
+    const navigateToPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
         InteractionManager.runAfterInteractions(() => {
-            if (target.kind === "scheduleDetail") {
-                router.push(createScheduleDetailRoute(target.scheduleId));
-                return;
-            }
-            router.push("/share/inbox");
+            (async () => {
+                if (!isAuthSessionEpochCurrent(intent.validationEpoch)) return;
+                const member = await getAuthMember();
+                if (!isAccountBoundPushNavigationIntentCurrent(intent, {
+                    authEpoch: getAuthSessionEpoch(),
+                    memberId: member?.id,
+                })) return;
+                if (intent.target.kind === "scheduleDetail") {
+                    router.push(createScheduleDetailRoute(intent.target.scheduleId));
+                    return;
+                }
+                router.push("/share/inbox");
+            })().catch((error) => {
+                console.warn("[push] queued navigation validation failed", error);
+            });
         });
     }, [router]);
 
-    const openOrDeferPushTarget = useCallback((target: PushNavigationTarget) => {
+    const openOrDeferPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
         if (!pushNavigationReadyRef.current) {
-            pendingPushNavigation.defer(target);
+            pendingPushNavigation.defer(intent);
             return;
         }
-        navigateToPushTarget(target);
-    }, [navigateToPushTarget, pendingPushNavigation]);
+        navigateToPushIntent(intent);
+    }, [navigateToPushIntent, pendingPushNavigation]);
 
     useEffect(() => {
         const readiness = { isAuthenticated, isCurationCompleted, isLoading };
@@ -50,13 +67,13 @@ export default function RootLayout() {
         pushNavigationReadyRef.current = ready;
         if (!ready) return;
 
-        const pendingTarget = pendingPushNavigation.consumeIfReady(readiness);
-        if (pendingTarget) navigateToPushTarget(pendingTarget);
+        const pendingIntent = pendingPushNavigation.consumeIfReady(readiness);
+        if (pendingIntent) navigateToPushIntent(pendingIntent);
     }, [
         isAuthenticated,
         isCurationCompleted,
         isLoading,
-        navigateToPushTarget,
+        navigateToPushIntent,
         pendingPushNavigation,
     ]);
 
@@ -72,29 +89,24 @@ export default function RootLayout() {
                 console.warn("[push] foreground notification setup failed", error);
             });
         configurePushNavigation(
-            (scheduleId) => {
-                openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
+            (scheduleId, binding) => {
+                openOrDeferPushIntent(createPushNavigationIntent(
+                    { kind: "scheduleDetail", scheduleId },
+                    binding,
+                ));
             },
-            () => {
-                openOrDeferPushTarget({ kind: "shareInbox" });
+            (binding) => {
+                openOrDeferPushIntent(createPushNavigationIntent(
+                    { kind: "shareInbox" },
+                    binding,
+                ));
             },
-            ({ scheduleId, message }) => {
+            ({ message }) => {
                 InteractionManager.runAfterInteractions(() => {
                     Alert.alert(
                         "알림 요청을 처리하지 못했어요",
                         message,
-                        scheduleId
-                            ? [
-                                { text: "닫기", style: "cancel" },
-                                {
-                                    text: "일정 열기",
-                                    onPress: () => openOrDeferPushTarget({
-                                        kind: "scheduleDetail",
-                                        scheduleId,
-                                    }),
-                                },
-                            ]
-                            : [{ text: "확인" }],
+                        [{ text: "확인" }],
                     );
                 });
             },
@@ -110,9 +122,21 @@ export default function RootLayout() {
             unsubscribeForeground?.();
             unsubscribeNavigation?.();
         };
-    }, [openOrDeferPushTarget]);
+    }, [openOrDeferPushIntent]);
 
     return <RootNavigator />;
+}
+
+function createPushNavigationIntent(
+    target: AccountBoundPushNavigationIntent["target"],
+    binding: PushNavigationBinding,
+): AccountBoundPushNavigationIntent {
+    return {
+        target,
+        logicalEventKey: binding.logicalEventKey,
+        recipientMemberId: binding.recipientMemberId,
+        validationEpoch: binding.authEpoch,
+    };
 }
 
 function RootNavigator() {

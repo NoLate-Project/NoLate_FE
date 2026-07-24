@@ -2,6 +2,7 @@ import type { ScheduleDepartureStatus } from "../src/api/schedule";
 import {
     clearScheduleDepartureStatusCache,
     getCachedScheduleDepartureStatus,
+    removeCachedDepartureStatusForAccessFailure,
     setCachedScheduleDepartureStatus,
 } from "../src/modules/schedule/departureStatusCache";
 
@@ -48,4 +49,17 @@ describe("account-scoped departure status cache", () => {
         expect(getCachedScheduleDepartureStatus("member:A", "42")).toBeUndefined();
         expect(getCachedScheduleDepartureStatus("member:B", "42")).toBeUndefined();
     });
+
+    test.each(["unavailable", "legacy"] as const)(
+        "status %s(403/404) 뒤 offline retry는 이전 ETA를 선표시하지 않는다",
+        (failureMode) => {
+            setCachedScheduleDepartureStatus("member:A", status);
+            expect(removeCachedDepartureStatusForAccessFailure(
+                "member:A",
+                "42",
+                failureMode,
+            )).toBe(true);
+            expect(getCachedScheduleDepartureStatus("member:A", "42")).toBeUndefined();
+        },
+    );
 });
