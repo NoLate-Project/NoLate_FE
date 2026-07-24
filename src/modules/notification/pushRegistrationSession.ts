@@ -3,7 +3,7 @@ import {
     type PushPlatform,
 } from "../../api/notification";
 import {
-    isAuthSessionEpochCurrent,
+    isAuthSessionActive,
 } from "../auth/authSessionEpoch";
 import { createAuthEpochAbortController } from "../auth/authEpochAbortController";
 
@@ -17,7 +17,7 @@ export async function registerPushTokenForSession(options: {
 }): Promise<void> {
     if (
         !options.isRegistrationGenerationCurrent() ||
-        !isAuthSessionEpochCurrent(options.authEpoch)
+        !isAuthSessionActive(options.authEpoch)
     ) return;
 
     const abort = createAuthEpochAbortController(options.authEpoch);
@@ -32,7 +32,7 @@ export async function registerPushTokenForSession(options: {
         });
         if (
             !options.isRegistrationGenerationCurrent() ||
-            !isAuthSessionEpochCurrent(options.authEpoch)
+            !isAuthSessionActive(options.authEpoch)
         ) {
             throw new Error("AUTH_SESSION_CHANGED");
         }

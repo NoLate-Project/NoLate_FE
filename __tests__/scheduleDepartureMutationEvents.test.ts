@@ -5,7 +5,9 @@ import {
     subscribeScheduleDepartureMutationForAuthSession,
 } from "../src/modules/schedule/scheduleDepartureMutationEvents";
 import {
+    activateAuthSessionIfCurrent,
     advanceAuthSessionEpoch,
+    beginAuthLoginSession,
     getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
 
@@ -17,6 +19,11 @@ const item: ScheduleItem = {
     myDepartedAt: "2026-07-24T09:20:00+09:00",
     category: { id: "1", title: "기본", color: "#2979FF" },
 };
+
+beforeEach(() => {
+    const epoch = beginAuthLoginSession();
+    activateAuthSessionIfCurrent(epoch);
+});
 
 test("authoritative depart 응답은 후속 status GET이 offline이어도 refreshing event에 지워지지 않는다", () => {
     let mountedItem: ScheduleItem | undefined;
@@ -55,7 +62,9 @@ test("A 화면 listener는 같은 scheduleId의 current B event로 cache/UI를 �
         },
     );
 
-    const bEpoch = advanceAuthSessionEpoch();
+    advanceAuthSessionEpoch();
+    const bEpoch = beginAuthLoginSession();
+    activateAuthSessionIfCurrent(bEpoch);
     expect(emitScheduleDepartureMutation({
         authEpoch: bEpoch,
         kind: "snoozed",

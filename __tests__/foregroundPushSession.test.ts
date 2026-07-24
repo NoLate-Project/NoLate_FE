@@ -19,6 +19,7 @@ function createHarness(options: {
     getCurrentMemberId?: () => Promise<number | undefined>;
 }) {
     let authEpoch = 4;
+    let sessionActive = true;
     const emitReceived = jest.fn();
     const refreshCaches = jest.fn();
     const present = jest.fn(async () => undefined);
@@ -43,10 +44,20 @@ function createHarness(options: {
         advanceEpoch: () => {
             authEpoch += 1;
         },
+        beginLogout: () => {
+            authEpoch += 1;
+            sessionActive = false;
+        },
+        login: (memberId: number) => {
+            authEpoch += 1;
+            sessionActive = true;
+            options.memberId = memberId;
+        },
         run: () => processForegroundPushForSession({
             message,
             getAuthEpoch: () => authEpoch,
-            isAuthEpochCurrent: (candidate) => candidate === authEpoch,
+            isAuthSessionActive: (candidate) =>
+                sessionActive && candidate === authEpoch,
             getCurrentMemberId:
                 options.getCurrentMemberId ??
                 (async () => options.memberId ?? 2),
@@ -78,6 +89,30 @@ describe("foreground push account session binding", () => {
         currentMember.resolve(2);
 
         await expect(pending).resolves.toBe(false);
+        expectNoForegroundSideEffects(harness);
+    });
+
+    test("logout intent 직후 새 A foreground push도 title/cache/event를 모두 차단한다", async () => {
+        const harness = createHarness({ memberId: 1 });
+        harness.beginLogout();
+
+        await expect(harness.run()).resolves.toBe(false);
+        expectNoForegroundSideEffects(harness);
+    });
+
+    test("logout 중 지연된 A member lookup은 이후 B login 뒤에도 B tray/cache를 건드리지 않는다", async () => {
+        const currentMember = deferred<number | undefined>();
+        const harness = createHarness({
+            memberId: 1,
+            getCurrentMemberId: () => currentMember.promise,
+        });
+
+        const lateA = harness.run();
+        harness.beginLogout();
+        harness.login(2);
+        currentMember.resolve(1);
+
+        await expect(lateA).resolves.toBe(false);
         expectNoForegroundSideEffects(harness);
     });
 

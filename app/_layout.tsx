@@ -12,6 +12,7 @@ import { useAuth } from "../src/modules/auth/AuthContext";
 import {
     getAuthMember,
     getAuthSessionEpoch,
+    isAuthSessionActive,
     isAuthSessionEpochCurrent,
     subscribeAuthSessionEpoch,
 } from "../src/modules/auth/authStorage";
@@ -23,6 +24,9 @@ import {
     isPushNavigationReady,
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
+import {
+    scheduleNotificationInteractionForAuthSession,
+} from "../src/modules/notification/notificationInteractionFence";
 
 export default function RootLayout() {
     const router = useRouter();
@@ -35,26 +39,36 @@ export default function RootLayout() {
     }));
 
     const navigateToPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
-        InteractionManager.runAfterInteractions(() => {
-            (async () => {
-                if (!isAuthSessionEpochCurrent(intent.validationEpoch)) return;
-                const member = await getAuthMember();
-                if (!isAccountBoundPushNavigationIntentCurrent(intent, {
-                    authEpoch: getAuthSessionEpoch(),
-                    memberId: member?.id,
-                })) return;
-                if (intent.target.kind === "scheduleDetail") {
-                    router.push(createScheduleDetailRoute(intent.target.scheduleId));
-                    return;
-                }
-                router.push("/share/inbox");
-            })().catch((error) => {
-                console.warn("[push] queued navigation validation failed", error);
-            });
+        scheduleNotificationInteractionForAuthSession({
+            authEpoch: intent.validationEpoch,
+            isAuthSessionActive,
+            schedule: (callback) =>
+                InteractionManager.runAfterInteractions(callback),
+            action: () => {
+                (async () => {
+                    if (!isAuthSessionEpochCurrent(intent.validationEpoch)) return;
+                    const member = await getAuthMember();
+                    if (
+                        !isAuthSessionActive(intent.validationEpoch) ||
+                        !isAccountBoundPushNavigationIntentCurrent(intent, {
+                            authEpoch: getAuthSessionEpoch(),
+                            memberId: member?.id,
+                        })
+                    ) return;
+                    if (intent.target.kind === "scheduleDetail") {
+                        router.push(createScheduleDetailRoute(intent.target.scheduleId));
+                        return;
+                    }
+                    router.push("/share/inbox");
+                })().catch((error) => {
+                    console.warn("[push] queued navigation validation failed", error);
+                });
+            },
         });
     }, [router]);
 
     const openOrDeferPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
+        if (!isAuthSessionActive(intent.validationEpoch)) return;
         if (!pushNavigationReadyRef.current) {
             pendingPushNavigation.defer(intent);
             return;
@@ -110,12 +124,19 @@ export default function RootLayout() {
                 ));
             },
             ({ message }) => {
-                InteractionManager.runAfterInteractions(() => {
-                    Alert.alert(
-                        "알림 요청을 처리하지 못했어요",
-                        message,
-                        [{ text: "확인" }],
-                    );
+                const authEpoch = getAuthSessionEpoch();
+                scheduleNotificationInteractionForAuthSession({
+                    authEpoch,
+                    isAuthSessionActive,
+                    schedule: (callback) =>
+                        InteractionManager.runAfterInteractions(callback),
+                    action: () => {
+                        Alert.alert(
+                            "알림 요청을 처리하지 못했어요",
+                            message,
+                            [{ text: "확인" }],
+                        );
+                    },
                 });
             },
         )

@@ -12,6 +12,7 @@ import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import {
     getAuthSessionEpoch,
+    isAuthSessionActive,
     isAuthSessionEpochCurrent,
     subscribeAuthSessionEpoch,
 } from "../auth/authSessionEpoch";
@@ -168,10 +169,17 @@ function ScheduleSessionProvider({
         // A component from an unmounted account subtree can still finish a
         // promise and retain this closure. Refuse that dispatch after the epoch
         // has moved even before React effect cleanup runs.
-        if (isAuthSessionEpochCurrent(authEpoch)) reducerDispatch(action);
+        if (
+            isAuthSessionEpochCurrent(authEpoch) &&
+            isAuthSessionActive(authEpoch)
+        ) reducerDispatch(action);
     }, [authEpoch]);
     useEffect(() => subscribeScheduleDepartureMutation((event) => {
-        if (event.authEpoch === authEpoch && event.item) {
+        if (
+            event.authEpoch === authEpoch &&
+            isAuthSessionActive(authEpoch) &&
+            event.item
+        ) {
             dispatch({ type: "UPDATE_ITEM", item: event.item });
         }
     }), [authEpoch, dispatch]);

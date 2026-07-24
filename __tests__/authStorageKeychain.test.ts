@@ -20,11 +20,16 @@ jest.mock("../src/modules/storage/secureStorage", () => ({
 import * as LocalStorage from "../src/modules/storage/secureStorage";
 import { NativeModules } from "react-native";
 import { createAuthEpochAbortController } from "../src/modules/auth/authEpochAbortController";
+import {
+    registerAuthSessionTransitionBarrier,
+} from "../src/modules/auth/authSessionEpoch";
 
 import {
     beginAuthLogoutIntent,
+    captureAuthRestoreContext,
     clearAuthTokens,
     clearAuthTokensIfCurrent,
+    clearRestorableAuthSessionIfCurrent,
     configureSharedAuthApiBaseUrl,
     getAccessToken,
     getAuthMember,
@@ -35,6 +40,9 @@ import {
     saveAuthMember,
     saveAuthTokens,
 } from "../src/modules/auth/authStorage";
+import {
+    restoreAuthSessionIfCurrent,
+} from "../src/modules/auth/conditionalAuthRestore";
 
 const mockSharedAuth = NativeModules.NoLateShareAuth as {
     getItem: jest.Mock<Promise<string | null>, [string]>;
@@ -448,5 +456,110 @@ describe("authStorage shared Keychain session", () => {
         await logout;
         expect(tokenLogin).not.toHaveBeenCalled();
         expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
+    });
+
+    test.each([
+        "AuthContext bootstrap",
+        "login automatic restore",
+        "profile legacy-member repair",
+    ])("%s writer는 invalidation 뒤 늦은 A tokenLogin 응답을 저장하지 않는다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveAuthTokens("A-access", "A-refresh");
+        await saveAuthMember({ id: 1, name: "A" });
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) throw new Error("restore context should exist");
+
+        const tokenLoginResponse = deferred<{
+            id: number;
+            name: string;
+            accessToken: string;
+            refreshToken: string;
+        }>();
+        const restore = restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: () => tokenLoginResponse.promise,
+        });
+
+        const deletionStarted = deferred<void>();
+        const releaseDeletion = deferred<void>();
+        mockLocalStorage.deleteItemAsync.mockImplementation(async (key) => {
+            if (key === "nolte_access_token") {
+                deletionStarted.resolve();
+                await releaseDeletion.promise;
+            }
+            stores.secure.delete(key);
+        });
+        const invalidation = clearAuthTokens({ notifyListeners: false });
+        await deletionStarted.promise;
+        tokenLoginResponse.resolve({
+            id: 1,
+            name: "late A",
+            accessToken: "late-A-access",
+            refreshToken: "late-A-refresh",
+        });
+        releaseDeletion.resolve();
+
+        await expect(restore).resolves.toBeUndefined();
+        await invalidation;
+        expect(stores.secure.get("nolte_access_token")).toBeUndefined();
+        expect(stores.secure.get("nolte_refresh_token")).toBeUndefined();
+        expect(stores.secure.get("nolate_auth_member")).toBeUndefined();
+        expect(stores.shared.get("nolte_access_token")).toBeUndefined();
+        expect(stores.shared.get("nolte_refresh_token")).toBeUndefined();
+        expect(stores.shared.get("nolate_auth_member")).toBeUndefined();
+    });
+
+    test("late definitive restore failure는 새 B session을 clear하지 않는다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveAuthTokens("A-access", "A-refresh");
+        await saveAuthMember({ id: 1, name: "A" });
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) throw new Error("restore context should exist");
+
+        await saveAuthTokens("B-access", "B-refresh");
+        await saveAuthMember({ id: 2, name: "B" });
+
+        const cleared = await clearRestorableAuthSessionIfCurrent(
+            restoreContext,
+            { notifyListeners: false },
+        );
+        expect(cleared).toBe(false);
+        expect(stores.secure.get("nolte_access_token")).toBe("B-access");
+        expect(stores.secure.get("nolte_refresh_token")).toBe("B-refresh");
+        expect(JSON.parse(stores.secure.get("nolate_auth_member")!)).toMatchObject({
+            id: 2,
+        });
+    });
+
+    test("B login storage write는 A account-local cleanup barrier가 끝난 뒤 시작한다", async () => {
+        const stores = installMemoryAuthStores();
+        const releaseCleanup = deferred<void>();
+        registerAuthSessionTransitionBarrier(releaseCleanup.promise);
+
+        const bSave = saveAuthTokens("B-access", "B-refresh");
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(stores.secure.get("nolte_access_token")).toBeUndefined();
+        expect(stores.secure.get("nolte_refresh_token")).toBeUndefined();
+
+        releaseCleanup.resolve();
+        await bSave;
+        expect(stores.secure.get("nolte_access_token")).toBe("B-access");
+        expect(stores.secure.get("nolte_refresh_token")).toBe("B-refresh");
+    });
+
+    test("logout-pending epoch에서 새 A member write를 시작하지 않는다", async () => {
+        const stores = installMemoryAuthStores();
+        await saveAuthTokens("A-access", "A-refresh");
+        await saveAuthMember({ id: 1, name: "A" });
+        const exitIntent = await beginAuthLogoutIntent();
+        await clearAuthTokensIfCurrent(exitIntent.epoch, {
+            notifyListeners: false,
+        });
+
+        await saveAuthMember({ id: 1, name: "late A" });
+
+        expect(stores.secure.get("nolate_auth_member")).toBeUndefined();
+        expect(stores.shared.get("nolate_auth_member")).toBeUndefined();
     });
 });

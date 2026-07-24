@@ -161,7 +161,20 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
     assertApiSuccess(response);
 }
 
-export async function withdrawMember(payload?: WithdrawPayload): Promise<void> {
-    const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", { data: payload ?? {} });
+export async function withdrawMember(
+    payload?: WithdrawPayload,
+    accountExit?: { accessToken?: string | null },
+): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", {
+        data: payload ?? {},
+        _allowDuringAccountExit: true,
+        ...(accountExit?.accessToken
+            ? {
+                headers: {
+                    Authorization: `Bearer ${accountExit.accessToken}`,
+                },
+            }
+            : {}),
+    });
     assertApiSuccess(response);
 }

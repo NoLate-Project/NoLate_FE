@@ -30,12 +30,16 @@ import {
 } from "../src/api/member";
 import { useAuth } from "../src/modules/auth/AuthContext";
 import {
+    captureAuthRestoreContext,
     getAuthMember,
-    getRefreshToken,
-    saveAuthMember,
-    saveAuthTokens,
     type StoredAuthMember,
 } from "../src/modules/auth/authStorage";
+import {
+    restoreAuthSessionIfCurrent,
+} from "../src/modules/auth/conditionalAuthRestore";
+import {
+    reportAccountExitFailure,
+} from "../src/modules/auth/accountExitFailureNotice";
 import {
     getCalendarConnectionSnapshot,
     refreshCalendarConnectionSnapshotFromDevice,
@@ -170,7 +174,7 @@ export default function ProfileScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
-    const { signOut } = useAuth();
+    const { beginAccountExit, signOut } = useAuth();
     const [profile, setProfile] = useState<MemberProfileDto | null>(null);
     const [account, setAccount] = useState<StoredAuthMember | null>(null);
     const [calendarConnection, setCalendarConnection] = useState<CalendarConnectionSnapshot | null>(null);
@@ -220,14 +224,18 @@ export default function ProfileScreen() {
             return;
         }
 
-        const refreshToken = await getRefreshToken();
-        if (!refreshToken) {
+        const restoreContext = await captureAuthRestoreContext();
+        if (!restoreContext) {
             throw new Error("로그인 계정 정보를 확인하지 못했어요. 다시 로그인해 주세요.");
         }
 
-        const member = await tokenLoginMember({ refreshToken });
-        await saveAuthTokens(member.accessToken, member.refreshToken);
-        await saveAuthMember(member);
+        const member = await restoreAuthSessionIfCurrent({
+            context: restoreContext,
+            tokenLogin: (refreshToken) => tokenLoginMember({
+                refreshToken,
+            }),
+        });
+        if (!member) return;
         setAccount(await getAuthMember());
     }, []);
 
@@ -337,7 +345,11 @@ export default function ProfileScreen() {
                     if (signingOutRef.current) return;
                     signingOutRef.current = true;
                     setSigningOut(true);
+                    beginAccountExit().catch((error) => {
+                        console.warn("[profile] local account exit failed", error);
+                    });
                     try {
+                        const localSignOut = signOut();
                         if (isNaverAccount) {
                             await logoutFromNaverSdk().catch((error) => {
                                 console.warn("[naver] sdk logout failed", error);
@@ -348,16 +360,15 @@ export default function ProfileScreen() {
                                 console.warn("[kakao] sdk logout failed", error);
                             });
                         }
-                        await signOut();
+                        await localSignOut;
                     } finally {
                         signingOutRef.current = false;
                         setSigningOut(false);
-                        router.replace("/auth/login");
                     }
                 },
             },
         ]);
-    }, [isKakaoAccount, isNaverAccount, router, signOut]);
+    }, [beginAccountExit, isKakaoAccount, isNaverAccount, signOut]);
 
     const handleWithdraw = useCallback(() => {
         if (!account?.loginType) {
@@ -382,9 +393,14 @@ export default function ProfileScreen() {
                     onPress: async () => {
                         if (withdrawingRef.current) return;
                         withdrawingRef.current = true;
+                        let exitEpoch: number | undefined;
                         try {
+                            const exitIntent = await beginAccountExit();
+                            exitEpoch = exitIntent.epoch;
                             setWithdrawing(true);
-                            await withdrawMember();
+                            await withdrawMember(undefined, {
+                                accessToken: exitIntent.accessToken,
+                            });
                             if (isNaverAccount) {
                                 await unlinkNaverSdk().catch((error) => {
                                     console.warn("[naver] sdk unlink failed", error);
@@ -396,9 +412,15 @@ export default function ProfileScreen() {
                                 });
                             }
                             await signOut();
-                            router.replace("/auth/login");
                         } catch (error) {
-                            Alert.alert("회원탈퇴 실패", getErrorMessage(error));
+                            console.warn("[profile] account withdrawal failed", error);
+                            if (exitEpoch !== undefined) {
+                                reportAccountExitFailure({
+                                    authEpoch: exitEpoch,
+                                    message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
+                                });
+                            }
+                            await signOut();
                             setWithdrawing(false);
                         } finally {
                             withdrawingRef.current = false;
@@ -407,7 +429,13 @@ export default function ProfileScreen() {
                 },
             ],
         );
-    }, [account?.loginType, isKakaoAccount, isNaverAccount, router, signOut]);
+    }, [
+        account?.loginType,
+        beginAccountExit,
+        isKakaoAccount,
+        isNaverAccount,
+        signOut,
+    ]);
 
     const confirmCommonWithdrawal = useCallback(async () => {
         if (withdrawingRef.current) return;
@@ -416,20 +444,32 @@ export default function ProfileScreen() {
             return;
         }
 
+        let exitEpoch: number | undefined;
         try {
             withdrawingRef.current = true;
             setWithdrawing(true);
-            await withdrawMember({ password: withdrawalPassword });
+            const exitIntent = await beginAccountExit();
+            exitEpoch = exitIntent.epoch;
+            await withdrawMember(
+                { password: withdrawalPassword },
+                { accessToken: exitIntent.accessToken },
+            );
             setWithdrawalModalOpen(false);
             await signOut();
-            router.replace("/auth/login");
         } catch (error) {
-            Alert.alert("회원탈퇴 실패", getErrorMessage(error));
+            console.warn("[profile] account withdrawal failed", error);
+            if (exitEpoch !== undefined) {
+                reportAccountExitFailure({
+                    authEpoch: exitEpoch,
+                    message: "계정 삭제를 완료하지 못했어요. 다시 로그인한 뒤 회원탈퇴를 재시도해 주세요.",
+                });
+            }
+            await signOut();
         } finally {
             withdrawingRef.current = false;
             setWithdrawing(false);
         }
-    }, [router, signOut, withdrawalPassword]);
+    }, [beginAccountExit, signOut, withdrawalPassword]);
 
     const openPasswordChange = useCallback(() => {
         setCurrentPassword("");

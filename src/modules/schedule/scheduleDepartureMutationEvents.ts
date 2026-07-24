@@ -1,6 +1,6 @@
 import type { ScheduleDepartureStatus } from "../../api/schedule";
 import type { ScheduleItem } from "./types";
-import { isAuthSessionEpochCurrent } from "../auth/authSessionEpoch";
+import { isAuthSessionActive } from "../auth/authSessionEpoch";
 import {
     mutateCalendarScheduleCacheIfAuthSessionCurrent,
     upsertCalendarScheduleCacheItem,
@@ -20,7 +20,7 @@ const listeners = new Set<(event: ScheduleDepartureMutationEvent) => void>();
 export function emitScheduleDepartureMutation(
     event: ScheduleDepartureMutationEvent,
 ): boolean {
-    if (!isAuthSessionEpochCurrent(event.authEpoch)) return false;
+    if (!isAuthSessionActive(event.authEpoch)) return false;
     const item = event.item;
     if (
         item &&
@@ -29,7 +29,7 @@ export function emitScheduleDepartureMutation(
             () => upsertCalendarScheduleCacheItem(item),
         )
     ) return false;
-    if (!isAuthSessionEpochCurrent(event.authEpoch)) return false;
+    if (!isAuthSessionActive(event.authEpoch)) return false;
     listeners.forEach((listener) => listener(event));
     return true;
 }
@@ -48,7 +48,7 @@ export function subscribeScheduleDepartureMutationForAuthSession(
     return subscribeScheduleDepartureMutation((event) => {
         if (
             event.authEpoch !== authEpoch ||
-            !isAuthSessionEpochCurrent(authEpoch)
+            !isAuthSessionActive(authEpoch)
         ) return;
         listener(event);
     });

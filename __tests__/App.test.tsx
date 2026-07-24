@@ -11,6 +11,11 @@ import {
 import { AuthProvider, useAuth } from "../src/modules/auth/AuthContext";
 import { clearAuthTokens } from "../src/modules/auth/authStorage";
 import { clearAccountScopedLocalData } from "../src/modules/auth/accountCleanup";
+import {
+    activateAuthSessionIfCurrent,
+    beginAuthLoginSession,
+    isAuthSessionActive,
+} from "../src/modules/auth/authSessionEpoch";
 
 jest.mock("expo-secure-store", () => ({
     deleteItemAsync: jest.fn(),
@@ -30,6 +35,7 @@ jest.mock("../src/modules/auth/accountCleanup", () => ({
 
 const mockedGetItemAsync = jest.mocked(SecureStore.getItemAsync);
 const mockedDeleteItemAsync = jest.mocked(SecureStore.deleteItemAsync);
+const mockedSetItemAsync = jest.mocked(SecureStore.setItemAsync);
 const mockedGetMemberCurationStatus = jest.mocked(getMemberCurationStatus);
 const mockedLogoutMember = jest.mocked(logoutMember);
 const mockedTokenLoginMember = jest.mocked(tokenLoginMember);
@@ -65,6 +71,21 @@ function SignOutButton() {
     return <Text onPress={signOut}>sign-out</Text>;
 }
 
+function BeginAccountExitButton() {
+    const { beginAccountExit } = useAuth();
+    return <Text onPress={beginAccountExit}>begin-account-exit</Text>;
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<T>((next, fail) => {
+        resolve = next;
+        reject = fail;
+    });
+    return { promise, resolve, reject };
+}
+
 describe("AuthProvider", () => {
     let renderer: ReactTestRenderer | undefined;
 
@@ -77,6 +98,8 @@ describe("AuthProvider", () => {
     });
 
     beforeEach(() => {
+        const epoch = beginAuthLoginSession();
+        activateAuthSessionIfCurrent(epoch);
         mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: false });
     });
 
@@ -204,6 +227,134 @@ describe("AuthProvider", () => {
         expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
         expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
         expect(mockedClearAccountScopedLocalData).toHaveBeenCalled();
+    });
+
+    it.each(["resolve", "reject"] as const)(
+        "logoutMember가 %s 대기 중이어도 UI/fence와 local privacy cleanup을 즉시 닫는다",
+        async (settlement) => {
+            mockStoredSession(true);
+            const logoutResponse = deferred<void>();
+            mockedLogoutMember.mockReturnValue(logoutResponse.promise);
+
+            await act(async () => {
+                renderer = TestRenderer.create(
+                    <AuthProvider>
+                        <AuthState />
+                        <SignOutButton />
+                    </AuthProvider>,
+                );
+            });
+            mockedClearAccountScopedLocalData.mockClear();
+            let signOutPromise!: Promise<boolean>;
+            const button = renderer?.root.findAllByType(Text).find(
+                (node) => node.props.children === "sign-out",
+            );
+            act(() => {
+                signOutPromise = button?.props.onPress();
+            });
+            await act(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            expect(isAuthSessionActive()).toBe(false);
+            expect(renderer?.root.findAllByType(Text).some(
+                (node) => node.props.children === "unauthenticated",
+            )).toBe(true);
+            expect(mockedClearAccountScopedLocalData).toHaveBeenCalled();
+            expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
+            expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
+            expect(mockedLogoutMember).toHaveBeenCalledTimes(1);
+
+            if (settlement === "resolve") logoutResponse.resolve();
+            else logoutResponse.reject(new Error("offline"));
+            await act(async () => {
+                await signOutPromise;
+            });
+            expect(isAuthSessionActive()).toBe(false);
+        },
+    );
+
+    it("social SDK 같은 외부 await 전에 beginAccountExit만 호출해도 protected state와 push fence가 닫힌다", async () => {
+        mockStoredSession(true);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                    <BeginAccountExitButton />
+                </AuthProvider>,
+            );
+        });
+        mockedClearAccountScopedLocalData.mockClear();
+        const button = renderer?.root.findAllByType(Text).find(
+            (node) => node.props.children === "begin-account-exit",
+        );
+        act(() => {
+            button?.props.onPress();
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(isAuthSessionActive()).toBe(false);
+        expect(renderer?.root.findAllByType(Text).some(
+            (node) => node.props.children === "unauthenticated",
+        )).toBe(true);
+        expect(mockedClearAccountScopedLocalData).toHaveBeenCalledTimes(1);
+        expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
+        expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
+        expect(mockedLogoutMember).not.toHaveBeenCalled();
+    });
+
+    it("bootstrap tokenLogin이 storage invalidation 뒤 끝나도 A token/member를 복원하지 않는다", async () => {
+        mockedGetItemAsync.mockImplementation(async (key) => {
+            if (key === "nolte_refresh_token") return "A-refresh";
+            return null;
+        });
+        const tokenLoginResponse = deferred<{
+            id: number;
+            accessToken: string;
+            refreshToken: string;
+        }>();
+        mockedTokenLoginMember.mockReturnValue(tokenLoginResponse.promise);
+
+        act(() => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                </AuthProvider>,
+            );
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        expect(mockedTokenLoginMember).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await clearAuthTokens();
+        });
+        tokenLoginResponse.resolve({
+            id: 1,
+            accessToken: "late-A-access",
+            refreshToken: "late-A-refresh",
+        });
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockedSetItemAsync).not.toHaveBeenCalledWith(
+            "nolte_access_token",
+            "late-A-access",
+        );
+        expect(renderer?.root.findAllByType(Text).some(
+            (node) => node.props.children === "unauthenticated",
+        )).toBe(true);
     });
 
     it("인증 인터셉터가 세션을 무효화해도 계정별 캐시를 정리한다", async () => {

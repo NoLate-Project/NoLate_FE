@@ -10,6 +10,7 @@ import {
     getRefreshToken,
     isAuthRefreshContextCurrent,
     isAuthSessionEpochCurrent,
+    isAuthSessionRestorable,
     saveRefreshedAuthTokensIfCurrent,
     subscribeAuthSessionEpoch,
 } from "../modules/auth/authStorage";
@@ -40,6 +41,7 @@ export const apiClient: AxiosInstance = axios.create({
 type RetryableRequestConfig = AxiosRequestConfig & {
     _retryAuth?: boolean;
     _authSessionEpoch?: number;
+    _allowDuringAccountExit?: boolean;
 };
 
 type RefreshedAuthTokens = {
@@ -191,8 +193,12 @@ function createAuthSessionChangedError(cause?: unknown): ApiResponseError {
 }
 
 function isRequestAuthSessionCurrent(config?: RetryableRequestConfig): boolean {
-    return typeof config?._authSessionEpoch === "number" &&
-        isAuthSessionEpochCurrent(config._authSessionEpoch);
+    if (
+        typeof config?._authSessionEpoch !== "number" ||
+        !isAuthSessionEpochCurrent(config._authSessionEpoch)
+    ) return false;
+    return config._allowDuringAccountExit === true ||
+        isAuthSessionRestorable(config._authSessionEpoch);
 }
 
 apiClient.interceptors.request.use(
@@ -201,6 +207,9 @@ apiClient.interceptors.request.use(
         if (isAuthEndpoint(config.url)) return config;
         if (requestConfig._authSessionEpoch === undefined) {
             requestConfig._authSessionEpoch = getAuthSessionEpoch();
+        }
+        if (!isRequestAuthSessionCurrent(requestConfig)) {
+            throw createAuthSessionChangedError();
         }
         const accessToken = await getAccessToken();
         if (!isRequestAuthSessionCurrent(requestConfig)) {
@@ -246,7 +255,8 @@ apiClient.interceptors.response.use(
             error.response?.status === 401 &&
             originalRequest &&
             !originalRequest._retryAuth &&
-            !isAuthEndpoint(requestUrl)
+            !isAuthEndpoint(requestUrl) &&
+            isAuthSessionRestorable(originalRequest._authSessionEpoch!)
         ) {
             originalRequest._retryAuth = true;
             const currentAccessToken = await getAccessToken();
@@ -293,27 +303,32 @@ function isAuthEndpoint(url?: string): boolean {
     return Boolean(url?.includes("/api/member/auth/"));
 }
 
-export async function apiGet<T = unknown>(url: string, config?: AxiosRequestConfig) {
+export type AuthBoundRequestConfig<D = unknown> = AxiosRequestConfig<D> & {
+    /** Only account withdrawal may finish after the synchronous logout fence closes. */
+    _allowDuringAccountExit?: boolean;
+};
+
+export async function apiGet<T = unknown>(url: string, config?: AuthBoundRequestConfig) {
     const response = await apiClient.get<T>(url, config);
     return response.data;
 }
 
-export async function apiPost<T = unknown, B = unknown>(url: string, body?: B, config?: AxiosRequestConfig<B>) {
+export async function apiPost<T = unknown, B = unknown>(url: string, body?: B, config?: AuthBoundRequestConfig<B>) {
     const response = await apiClient.post<T>(url, body, config);
     return response.data;
 }
 
-export async function apiPut<T = unknown, B = unknown>(url: string, body?: B, config?: AxiosRequestConfig<B>) {
+export async function apiPut<T = unknown, B = unknown>(url: string, body?: B, config?: AuthBoundRequestConfig<B>) {
     const response = await apiClient.put<T>(url, body, config);
     return response.data;
 }
 
-export async function apiPatch<T = unknown, B = unknown>(url: string, body?: B, config?: AxiosRequestConfig<B>) {
+export async function apiPatch<T = unknown, B = unknown>(url: string, body?: B, config?: AuthBoundRequestConfig<B>) {
     const response = await apiClient.patch<T>(url, body, config);
     return response.data;
 }
 
-export async function apiDelete<T = unknown>(url: string, config?: AxiosRequestConfig) {
+export async function apiDelete<T = unknown>(url: string, config?: AuthBoundRequestConfig) {
     const response = await apiClient.delete<T>(url, config);
     return response.data;
 }

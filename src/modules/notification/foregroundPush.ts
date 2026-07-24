@@ -14,7 +14,7 @@ import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api
 import {
     getAuthMember,
     getAuthSessionEpoch,
-    isAuthSessionEpochCurrent,
+    isAuthSessionActive,
     subscribeAuthSessionEpoch,
 } from "../auth/authStorage";
 import { createAuthEpochAbortController } from "../auth/authEpochAbortController";
@@ -43,9 +43,12 @@ import { emitAppNotificationReceived } from "./appNotificationEvents";
 import { refreshForegroundPushCaches } from "./foregroundTrafficRefresh";
 import {
     createNotificationActionKeys,
-    getValidatedNotificationAccountBinding,
     type ValidatedNotificationAccountBinding,
 } from "./notificationAccountBinding";
+import {
+    executeNotificationActionForActiveSession,
+    resolveActiveNotificationAccountBinding,
+} from "./notificationSessionFence";
 import { SCHEDULE_PUSH_CHANNEL_ID } from "./notificationPermission";
 import { emitScheduleDepartureMutation } from "../schedule/scheduleDepartureMutationEvents";
 import {
@@ -166,17 +169,13 @@ export async function configurePushNavigation(
 
     const getValidatedMember = async (
         data: Record<string, unknown> | undefined,
-    ): Promise<PushNavigationBinding | undefined> => {
-        const epoch = getAuthSessionEpoch();
-        const member = await getAuthMember();
-        if (!isAuthSessionEpochCurrent(epoch)) return undefined;
-        const binding = getValidatedNotificationAccountBinding({
+    ): Promise<PushNavigationBinding | undefined> =>
+        resolveActiveNotificationAccountBinding({
             data,
-            currentMemberId: member?.id,
+            getAuthEpoch: getAuthSessionEpoch,
+            isAuthSessionActive,
+            getCurrentMemberId: async () => (await getAuthMember())?.id,
         });
-        if (!binding) return undefined;
-        return { ...binding, authEpoch: epoch };
-    };
 
     const openFromData = async (
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
@@ -189,6 +188,7 @@ export async function configurePushNavigation(
         }
         const binding = await getValidatedMember(data);
         if (!binding) return;
+        if (!isAuthSessionActive(binding.authEpoch)) return;
         // New account-owned payloads must carry the backend logical key. Provider
         // IDs and payload hashes are transport dedupe hints, not authorization.
         if (!consumeNotificationEventAfterValidation(
@@ -211,6 +211,8 @@ export async function configurePushNavigation(
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         _providerEventId?: string,
     ) => {
+        const receivedEpoch = getAuthSessionEpoch();
+        if (!isAuthSessionActive(receivedEpoch)) return;
         const scheduleId = getScheduleIdFromNotificationData(data);
 
         if (!scheduleId) {
@@ -224,6 +226,7 @@ export async function configurePushNavigation(
 
         const binding = await getValidatedMember(data);
         if (!binding) {
+            if (!isAuthSessionActive()) return;
             actionFailureGate.report({
                 action: "departNow",
                 scheduleId,
@@ -236,23 +239,23 @@ export async function configurePushNavigation(
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
                 actionKeys.dedupeKey,
-                async () => {
-                    const abort = createAuthEpochAbortController(binding.authEpoch);
-                    try {
-                        const result = await markScheduleDeparted(scheduleId, {
-                            signal: abort.signal,
-                            idempotencyKey: actionKeys.idempotencyKey,
-                        });
-                        if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
-                            throw new Error("AUTH_SESSION_CHANGED");
+                () => executeNotificationActionForActiveSession(
+                    binding.authEpoch,
+                    isAuthSessionActive,
+                    async () => {
+                        const abort = createAuthEpochAbortController(binding.authEpoch);
+                        try {
+                            return await markScheduleDeparted(scheduleId, {
+                                signal: abort.signal,
+                                idempotencyKey: actionKeys.idempotencyKey,
+                            });
+                        } finally {
+                            abort.dispose();
                         }
-                        return result;
-                    } finally {
-                        abort.dispose();
-                    }
-                },
+                    },
+                ),
                 (result) => {
-                    if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
+                    if (!isAuthSessionActive(binding.authEpoch)) {
                         throw new Error("AUTH_SESSION_CHANGED");
                     }
                     if (result.status) {
@@ -276,7 +279,7 @@ export async function configurePushNavigation(
             logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] depart-now action failed", error);
-            if (isAuthSessionEpochCurrent(binding.authEpoch)) {
+            if (isAuthSessionActive(binding.authEpoch)) {
                 actionFailureGate.report({
                     action: "departNow",
                     scheduleId,
@@ -290,6 +293,8 @@ export async function configurePushNavigation(
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         _providerEventId?: string,
     ) => {
+        const receivedEpoch = getAuthSessionEpoch();
+        if (!isAuthSessionActive(receivedEpoch)) return;
         const scheduleId = getScheduleIdFromNotificationData(data);
 
         if (!scheduleId) {
@@ -303,6 +308,7 @@ export async function configurePushNavigation(
 
         const binding = await getValidatedMember(data);
         if (!binding) {
+            if (!isAuthSessionActive()) return;
             actionFailureGate.report({
                 action: "snooze",
                 scheduleId,
@@ -315,23 +321,23 @@ export async function configurePushNavigation(
             const executed = await executeNotificationActionOnce(
                 actionDedupe,
                 actionKeys.dedupeKey,
-                async () => {
-                    const abort = createAuthEpochAbortController(binding.authEpoch);
-                    try {
-                        const result = await snoozeScheduleDepartureReminder(scheduleId, {
-                            signal: abort.signal,
-                            idempotencyKey: actionKeys.idempotencyKey,
-                        });
-                        if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
-                            throw new Error("AUTH_SESSION_CHANGED");
+                () => executeNotificationActionForActiveSession(
+                    binding.authEpoch,
+                    isAuthSessionActive,
+                    async () => {
+                        const abort = createAuthEpochAbortController(binding.authEpoch);
+                        try {
+                            return await snoozeScheduleDepartureReminder(scheduleId, {
+                                signal: abort.signal,
+                                idempotencyKey: actionKeys.idempotencyKey,
+                            });
+                        } finally {
+                            abort.dispose();
                         }
-                        return result;
-                    } finally {
-                        abort.dispose();
-                    }
-                },
+                    },
+                ),
                 (result) => {
-                    if (!isAuthSessionEpochCurrent(binding.authEpoch)) {
+                    if (!isAuthSessionActive(binding.authEpoch)) {
                         throw new Error("AUTH_SESSION_CHANGED");
                     }
                     if (result.status) {
@@ -355,7 +361,7 @@ export async function configurePushNavigation(
             logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] snooze action failed", error);
-            if (isAuthSessionEpochCurrent(binding.authEpoch)) {
+            if (isAuthSessionActive(binding.authEpoch)) {
                 actionFailureGate.report({
                     action: "snooze",
                     scheduleId,
@@ -437,13 +443,13 @@ async function showForegroundNotification(
     await processForegroundPushForSession({
         message,
         getAuthEpoch: getAuthSessionEpoch,
-        isAuthEpochCurrent: isAuthSessionEpochCurrent,
+        isAuthSessionActive,
         getCurrentMemberId: async () => (await getAuthMember())?.id,
         emitReceived: emitAppNotificationReceived,
         refreshCaches: refreshForegroundPushCaches,
         present: (notification, authEpoch) =>
             runNotificationPresentationMutation(async () => {
-                if (!isAuthSessionEpochCurrent(authEpoch)) return;
+                if (!isAuthSessionActive(authEpoch)) return;
                 await showLocalNotification(Notifications, notification);
             }),
     });

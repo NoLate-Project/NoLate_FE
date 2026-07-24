@@ -29,13 +29,21 @@ import {
 import { AuthInput, AuthPrimaryButton, AuthScreen } from "../../src/modules/auth/components/AuthScreen";
 import SignupAgreementPanel from "../../src/modules/auth/components/SignupAgreementPanel";
 import {
+    captureAuthRestoreContext,
     clearAuthTokens,
+    clearRestorableAuthSessionIfCurrent,
     getAuthMember,
-    getRefreshToken,
     saveAuthMember,
     saveAuthTokens,
 } from "../../src/modules/auth/authStorage";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import {
+    restoreAuthSessionIfCurrent,
+} from "../../src/modules/auth/conditionalAuthRestore";
+import {
+    consumeAccountExitFailure,
+    subscribeAccountExitFailure,
+} from "../../src/modules/auth/accountExitFailureNotice";
 import { requireAuthenticatedMember } from "../../src/modules/auth/authenticatedMember";
 import {
     getAuthErrorPresentation,
@@ -91,10 +99,18 @@ export default function Login() {
     const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
     const pendingShareToken = normalizeShareToken(shareToken);
 
-    const finishAuthentication = useCallback(async (member: MemberDto) => {
+    const finishAuthentication = useCallback(async (
+        member: MemberDto,
+        alreadyRestored = false,
+    ) => {
         const authenticatedMember = requireAuthenticatedMember(member);
-        await saveAuthTokens(authenticatedMember.accessToken, authenticatedMember.refreshToken);
-        await saveAuthMember(authenticatedMember);
+        if (!alreadyRestored) {
+            await saveAuthTokens(
+                authenticatedMember.accessToken,
+                authenticatedMember.refreshToken,
+            );
+            await saveAuthMember(authenticatedMember);
+        }
         const authenticated = await syncAuthentication();
         if (!authenticated) {
             throw new Error("로그인 상태를 저장하지 못했어요. 다시 시도해 주세요.");
@@ -135,20 +151,27 @@ export default function Login() {
 
     useEffect(() => {
         let cancelled = false;
+        let restoreContext:
+            Awaited<ReturnType<typeof captureAuthRestoreContext>>;
 
         const tryTokenLogin = async () => {
             try {
-                const refreshToken = await getRefreshToken();
-                if (!refreshToken || cancelled) return;
+                restoreContext = await captureAuthRestoreContext();
+                if (!restoreContext || cancelled) return;
 
-                const member = await tokenLoginMember({ refreshToken });
-                if (cancelled) return;
+                const member = await restoreAuthSessionIfCurrent({
+                    context: restoreContext,
+                    tokenLogin: (refreshToken) => tokenLoginMember({
+                        refreshToken,
+                    }),
+                });
+                if (!member || cancelled) return;
 
-                await finishAuthentication(member);
+                await finishAuthentication(member, true);
             } catch (error) {
                 if (cancelled) return;
-                if (isDefinitiveAuthRejection(error)) {
-                    await clearAuthTokens();
+                if (isDefinitiveAuthRejection(error) && restoreContext) {
+                    await clearRestorableAuthSessionIfCurrent(restoreContext);
                     await syncAuthentication();
                 }
             } finally {
@@ -162,6 +185,20 @@ export default function Login() {
             cancelled = true;
         };
     }, [finishAuthentication, syncAuthentication]);
+
+    useEffect(() => {
+        const showAccountExitFailure = () => {
+            const notice = consumeAccountExitFailure();
+            if (!notice) return;
+            Alert.alert(
+                "회원탈퇴 실패",
+                notice.message,
+                [{ text: "확인" }],
+            );
+        };
+        showAccountExitFailure();
+        return subscribeAccountExitFailure(showAccountExitFailure);
+    }, []);
 
     const onLogin = async () => {
         if (submitting || restoringSession || socialSubmittingProvider) return;

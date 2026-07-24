@@ -1,6 +1,6 @@
 import {
-    getValidatedNotificationAccountBinding,
-} from "./notificationAccountBinding";
+    resolveActiveNotificationAccountBinding,
+} from "./notificationSessionFence";
 import { withCanonicalNotificationEventKey } from "./notificationEventKey";
 
 export type ForegroundPushMessage = {
@@ -21,7 +21,7 @@ export type ForegroundPushPresentation = {
 export async function processForegroundPushForSession(options: {
     message: ForegroundPushMessage;
     getAuthEpoch: () => number;
-    isAuthEpochCurrent: (epoch: number) => boolean;
+    isAuthSessionActive: (epoch: number) => boolean;
     getCurrentMemberId: () => Promise<number | undefined>;
     emitReceived: () => void;
     refreshCaches: (data?: Record<string, unknown>) => void;
@@ -30,15 +30,13 @@ export async function processForegroundPushForSession(options: {
         authEpoch: number,
     ) => Promise<void>;
 }): Promise<boolean> {
-    const authEpoch = options.getAuthEpoch();
-    const memberId = await options.getCurrentMemberId();
-    if (!options.isAuthEpochCurrent(authEpoch)) return false;
-
-    const binding = getValidatedNotificationAccountBinding({
+    const binding = await resolveActiveNotificationAccountBinding({
         data: options.message.data,
-        currentMemberId: memberId,
+        getAuthEpoch: options.getAuthEpoch,
+        isAuthSessionActive: options.isAuthSessionActive,
+        getCurrentMemberId: options.getCurrentMemberId,
     });
-    if (!binding || !options.isAuthEpochCurrent(authEpoch)) return false;
+    if (!binding) return false;
 
     const presentation = {
         title: options.message.notification?.title ?? "NoLate",
@@ -54,9 +52,9 @@ export async function processForegroundPushForSession(options: {
     // There is deliberately no await between the final session check and these
     // side effects. A stale account payload must not be presented, counted, or
     // allowed to invalidate the current account's caches.
-    if (!options.isAuthEpochCurrent(authEpoch)) return false;
+    if (!options.isAuthSessionActive(binding.authEpoch)) return false;
     options.emitReceived();
     options.refreshCaches(options.message.data);
-    await options.present(presentation, authEpoch);
+    await options.present(presentation, binding.authEpoch);
     return true;
 }

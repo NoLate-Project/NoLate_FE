@@ -1,14 +1,24 @@
 import * as SecureStore from "../storage/secureStorage";
 import { NativeModules, Platform } from "react-native";
 import {
-    advanceAuthSessionEpoch,
+    activateAuthSessionIfCurrent,
+    beginAuthLoginSession,
+    beginAuthLogoutSession,
+    completeAuthLogoutSession,
     getAuthSessionEpoch,
+    invalidateAuthSession,
     isAuthSessionEpochCurrent,
+    isAuthSessionRestorable,
+    isAuthSessionWritable,
+    waitForAuthSessionTransition,
 } from "./authSessionEpoch";
 
 export {
+    activateAuthSessionIfCurrent,
     getAuthSessionEpoch,
+    isAuthSessionActive,
     isAuthSessionEpochCurrent,
+    isAuthSessionRestorable,
     subscribeAuthSessionEpoch,
 } from "./authSessionEpoch";
 
@@ -22,10 +32,6 @@ type AuthInvalidationListener = () => void | Promise<void>;
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
 let authTokenMutationTail: Promise<void> = Promise.resolve();
 
-function bumpAuthSessionEpoch(): number {
-    return advanceAuthSessionEpoch();
-}
-
 function runAuthTokenMutation<T>(operation: () => Promise<T>): Promise<T> {
     const result = authTokenMutationTail.then(operation, operation);
     authTokenMutationTail = result.then(() => undefined, () => undefined);
@@ -34,6 +40,7 @@ function runAuthTokenMutation<T>(operation: () => Promise<T>): Promise<T> {
 
 export type AuthLogoutIntent = {
     epoch: number;
+    accessToken: string | null;
     refreshToken: string | null;
 };
 
@@ -134,6 +141,11 @@ export type StoredAuthMember = {
     curationCompleted?: boolean;
 };
 
+export type AuthRestoreContext = {
+    expectedEpoch: number;
+    expectedRefreshToken: string;
+};
+
 function normalizeAuthMember(member: StoredAuthMember | null | undefined): StoredAuthMember | null {
     if (!member) return null;
 
@@ -179,10 +191,52 @@ async function writeAuthTokens(accessToken?: string | null, refreshToken?: strin
     await Promise.all(writes);
 }
 
+async function writeNormalizedAuthMember(member: StoredAuthMember): Promise<void> {
+    const serialized = JSON.stringify(member);
+    await Promise.all([
+        SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
+        saveSharedItem(AUTH_MEMBER_KEY, serialized),
+    ]);
+}
+
+async function deleteAuthStorageWithinMutation(): Promise<
+    PromiseSettledResult<unknown>[]
+> {
+    return Promise.allSettled([
+        SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
+        SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
+        SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
+        deleteSharedItem(ACCESS_TOKEN_KEY),
+        deleteSharedItem(REFRESH_TOKEN_KEY),
+        deleteSharedItem(AUTH_MEMBER_KEY),
+        deleteSharedItem(AUTH_API_BASE_URL_KEY),
+    ]);
+}
+
+async function notifyAuthInvalidationListeners(): Promise<void> {
+    // Callers must not return to a login surface while member-owned caches are
+    // still being deleted, otherwise a fast account switch can race cleanup.
+    await Promise.allSettled(
+        Array.from(authInvalidationListeners, (listener) => listener()),
+    );
+}
+
+function reportAuthDeletionFailures(
+    deletionResults: PromiseSettledResult<unknown>[],
+): void {
+    if (!__DEV__ || process.env.NODE_ENV === "test") return;
+    deletionResults.forEach((result) => {
+        if (result.status === "rejected") {
+            console.warn("[auth] 로컬 인증 정보 삭제 실패", result.reason);
+        }
+    });
+}
+
 export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
     // Explicit login/account restoration is a new intent and invalidates any
     // refresh response captured for the previous session.
-    bumpAuthSessionEpoch();
+    await waitForAuthSessionTransition();
+    beginAuthLoginSession();
     await runAuthTokenMutation(() => writeAuthTokens(accessToken, refreshToken));
 }
 
@@ -220,20 +274,63 @@ export async function saveRefreshedAuthTokensIfCurrent(options: {
 
 export async function saveAuthMember(member?: StoredAuthMember | null) {
     const expectedEpoch = getAuthSessionEpoch();
+    if (!isAuthSessionWritable(expectedEpoch)) return;
     const normalized = normalizeAuthMember(member);
     await runAuthTokenMutation(async () => {
-        if (!isAuthSessionEpochCurrent(expectedEpoch)) return;
+        if (!isAuthSessionWritable(expectedEpoch)) return;
         if (!normalized) {
             await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
             await deleteSharedItem(AUTH_MEMBER_KEY);
             return;
         }
 
-        const serialized = JSON.stringify(normalized);
-        await Promise.all([
-            SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
-            saveSharedItem(AUTH_MEMBER_KEY, serialized),
-        ]);
+        await writeNormalizedAuthMember(normalized);
+        if (normalized.id) activateAuthSessionIfCurrent(expectedEpoch);
+    });
+}
+
+export async function captureAuthRestoreContext(): Promise<
+    AuthRestoreContext | undefined
+> {
+    const expectedEpoch = getAuthSessionEpoch();
+    if (!isAuthSessionRestorable(expectedEpoch)) return undefined;
+    const expectedRefreshToken = await getRefreshToken();
+    if (
+        !expectedRefreshToken ||
+        !isAuthSessionRestorable(expectedEpoch)
+    ) return undefined;
+    return { expectedEpoch, expectedRefreshToken };
+}
+
+export async function saveRestoredAuthSessionIfCurrent(options: {
+    context: AuthRestoreContext;
+    member: StoredAuthMember & {
+        accessToken?: string | null;
+        refreshToken?: string | null;
+    };
+}): Promise<boolean> {
+    const normalized = normalizeAuthMember(options.member);
+    const accessToken = options.member.accessToken?.trim();
+    const refreshToken = options.member.refreshToken?.trim();
+    if (!normalized?.id || !accessToken || !refreshToken) return false;
+
+    return runAuthTokenMutation(async () => {
+        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
+        const currentRefreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            options.context.expectedEpoch,
+            false,
+        );
+        if (
+            !isAuthSessionRestorable(options.context.expectedEpoch) ||
+            currentRefreshToken !== options.context.expectedRefreshToken
+        ) return false;
+
+        await writeAuthTokens(accessToken, refreshToken);
+        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
+        await writeNormalizedAuthMember(normalized);
+        if (!isAuthSessionRestorable(options.context.expectedEpoch)) return false;
+        return activateAuthSessionIfCurrent(options.context.expectedEpoch);
     });
 }
 
@@ -301,11 +398,14 @@ export async function getRefreshToken(): Promise<string | null> {
 export async function beginAuthLogoutIntent(): Promise<AuthLogoutIntent> {
     // Abort refresh and other account-owned work at the moment the user chooses
     // logout, before the best-effort server logout request can block.
-    const epoch = bumpAuthSessionEpoch();
-    const refreshToken = await runAuthTokenMutation(
-        () => getAuthTokenWithinMutation(REFRESH_TOKEN_KEY, epoch, false),
+    const epoch = beginAuthLogoutSession();
+    const [accessToken, refreshToken] = await runAuthTokenMutation(
+        () => Promise.all([
+            getAuthTokenWithinMutation(ACCESS_TOKEN_KEY, epoch, false),
+            getAuthTokenWithinMutation(REFRESH_TOKEN_KEY, epoch, false),
+        ]),
     );
-    return { epoch, refreshToken };
+    return { epoch, accessToken, refreshToken };
 }
 
 export async function clearAuthTokensIfCurrent(
@@ -313,34 +413,57 @@ export async function clearAuthTokensIfCurrent(
     options: { notifyListeners?: boolean } = {},
 ): Promise<boolean> {
     if (!isAuthSessionEpochCurrent(expectedEpoch)) return false;
-    await clearAuthTokens(options);
+    // Keep the logout intent's epoch stable so explicitly account-exit-bound
+    // requests can finish with snapshotted credentials. All normal work remains
+    // blocked because this session is no longer ACTIVE.
+    completeAuthLogoutSession(expectedEpoch);
+    const deletionResults = await runAuthTokenMutation(
+        deleteAuthStorageWithinMutation,
+    );
+    reportAuthDeletionFailures(deletionResults);
+    if (options.notifyListeners !== false) {
+        await notifyAuthInvalidationListeners();
+    }
+    return true;
+}
+
+export async function clearRestorableAuthSessionIfCurrent(
+    context: AuthRestoreContext,
+    options: { notifyListeners?: boolean } = {},
+): Promise<boolean> {
+    const deletionResults = await runAuthTokenMutation(async () => {
+        if (!isAuthSessionRestorable(context.expectedEpoch)) return null;
+        const currentRefreshToken = await getAuthTokenWithinMutation(
+            REFRESH_TOKEN_KEY,
+            context.expectedEpoch,
+            false,
+        );
+        if (
+            !isAuthSessionRestorable(context.expectedEpoch) ||
+            currentRefreshToken !== context.expectedRefreshToken
+        ) return null;
+
+        // The final identity check and invalidation are synchronous within the
+        // shared mutation queue. A newer login cannot slip between them.
+        invalidateAuthSession();
+        return deleteAuthStorageWithinMutation();
+    });
+    if (!deletionResults) return false;
+    reportAuthDeletionFailures(deletionResults);
+    if (options.notifyListeners !== false) {
+        await notifyAuthInvalidationListeners();
+    }
     return true;
 }
 
 export async function clearAuthTokens({ notifyListeners = true } = {}) {
     // Invalidate pending account-owned async work before any storage deletion awaits.
-    bumpAuthSessionEpoch();
-    const deletionResults = await runAuthTokenMutation(() => Promise.allSettled([
-            SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
-            SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
-            SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
-            deleteSharedItem(ACCESS_TOKEN_KEY),
-            deleteSharedItem(REFRESH_TOKEN_KEY),
-            deleteSharedItem(AUTH_MEMBER_KEY),
-            deleteSharedItem(AUTH_API_BASE_URL_KEY),
-        ]));
-    if (__DEV__ && process.env.NODE_ENV !== "test") {
-        deletionResults.forEach((result) => {
-            if (result.status === "rejected") {
-                console.warn("[auth] 로컬 인증 정보 삭제 실패", result.reason);
-            }
-        });
-    }
+    invalidateAuthSession();
+    const deletionResults = await runAuthTokenMutation(
+        deleteAuthStorageWithinMutation,
+    );
+    reportAuthDeletionFailures(deletionResults);
     if (notifyListeners) {
-        // Callers must not return to a login surface while member-owned caches are
-        // still being deleted, otherwise a fast account switch can race cleanup.
-        await Promise.allSettled(
-            Array.from(authInvalidationListeners, (listener) => listener()),
-        );
+        await notifyAuthInvalidationListeners();
     }
 }

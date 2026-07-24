@@ -2,7 +2,9 @@ import React, { useEffect } from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import {
+    activateAuthSessionIfCurrent,
     advanceAuthSessionEpoch,
+    beginAuthLoginSession,
     getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
 import {
@@ -53,6 +55,8 @@ describe("ScheduleProvider auth generation boundary", () => {
     });
 
     beforeEach(async () => {
+        const epoch = beginAuthLoginSession();
+        activateAuthSessionIfCurrent(epoch);
         mountCount = 0;
         latestIds = [];
         latestCacheIds = [];
@@ -83,6 +87,8 @@ describe("ScheduleProvider auth generation boundary", () => {
 
         await act(async () => {
             advanceAuthSessionEpoch();
+            const nextEpoch = beginAuthLoginSession();
+            activateAuthSessionIfCurrent(nextEpoch);
         });
 
         expect(mountCount).toBe(2);
@@ -102,6 +108,8 @@ describe("ScheduleProvider auth generation boundary", () => {
         const oldEpoch = getAuthSessionEpoch();
         await act(async () => {
             advanceAuthSessionEpoch();
+            const nextEpoch = beginAuthLoginSession();
+            activateAuthSessionIfCurrent(nextEpoch);
         });
 
         expect(emitScheduleDepartureMutation({

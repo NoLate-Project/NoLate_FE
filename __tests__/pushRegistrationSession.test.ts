@@ -1,6 +1,9 @@
 import { registerPushToken } from "../src/api/notification";
 import {
+    activateAuthSessionIfCurrent,
     advanceAuthSessionEpoch,
+    beginAuthLoginSession,
+    beginAuthLogoutSession,
     getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
 import { registerPushTokenForSession } from "../src/modules/notification/pushRegistrationSession";
@@ -18,6 +21,11 @@ function deferred<T>() {
     });
     return { promise, resolve };
 }
+
+beforeEach(() => {
+    const epoch = beginAuthLoginSession();
+    activateAuthSessionIfCurrent(epoch);
+});
 
 afterEach(() => jest.clearAllMocks());
 
@@ -82,4 +90,19 @@ test("same-session registration sends the auth-owned request with an AbortSignal
     }, {
         signal: expect.any(AbortSignal),
     });
+});
+
+test("logout-pending에서는 새 push 등록 요청을 시작하지 않는다", async () => {
+    const logoutEpoch = beginAuthLogoutSession();
+
+    await registerPushTokenForSession({
+        memberId: 1,
+        deviceId: "android-device",
+        platform: "ANDROID",
+        token: "late-A-token",
+        authEpoch: logoutEpoch,
+        isRegistrationGenerationCurrent: () => true,
+    });
+
+    expect(mockedRegisterPushToken).not.toHaveBeenCalled();
 });

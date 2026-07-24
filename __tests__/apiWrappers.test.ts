@@ -196,7 +196,27 @@ describe("member api wrappers", () => {
             currentPassword: "old-password",
             newPassword: "new-password",
         });
-        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", { data: { password: "password" } });
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
+            data: { password: "password" },
+            _allowDuringAccountExit: true,
+        });
+    });
+
+    test("account-exit withdrawal keeps the snapshotted A Authorization after local clear", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await withdrawMember(
+            { password: "password" },
+            { accessToken: "A-access-snapshot" },
+        );
+
+        expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
+            data: { password: "password" },
+            _allowDuringAccountExit: true,
+            headers: {
+                Authorization: "Bearer A-access-snapshot",
+            },
+        });
     });
 });
 

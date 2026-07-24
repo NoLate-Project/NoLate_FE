@@ -15,30 +15,57 @@ import {
     tokenLoginMember,
 } from "../../api/member";
 import {
+    activateAuthSessionIfCurrent,
     beginAuthLogoutIntent,
     clearAuthTokens,
     clearAuthTokensIfCurrent,
+    clearRestorableAuthSessionIfCurrent,
     getAccessToken,
     getAuthMember,
+    getAuthSessionEpoch,
     getRefreshToken,
-    saveAuthMember,
-    saveAuthTokens,
+    isAuthSessionActive,
     saveAuthCurationCompleted,
     subscribeAuthInvalidation,
+    type AuthLogoutIntent,
+    type AuthRestoreContext,
 } from "./authStorage";
 import { clearAccountScopedLocalData } from "./accountCleanup";
 import { cancelPendingPushRegistration } from "../notification/pushRegistrationCoordinator";
 import { isDefinitiveAuthRejection } from "./refreshPolicy";
+import { restoreAuthSessionIfCurrent } from "./conditionalAuthRestore";
+import {
+    registerAuthSessionTransitionBarrier,
+} from "./authSessionEpoch";
 
 type AuthContextValue = {
     isAuthenticated: boolean;
     isCurationCompleted: boolean;
     isLoading: boolean;
     syncAuthentication: () => Promise<boolean>;
-    signOut: () => Promise<void>;
+    beginAccountExit: () => Promise<AuthLogoutIntent>;
+    signOut: () => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function beginStandaloneAccountExit(): {
+    intentPromise: Promise<AuthLogoutIntent>;
+    credentialClearPromise: Promise<boolean>;
+    cleanupPromise: Promise<void>;
+} {
+    cancelPendingPushRegistration();
+    const intentPromise = beginAuthLogoutIntent();
+    const credentialClearPromise = intentPromise.then((intent) =>
+        clearAuthTokensIfCurrent(intent.epoch, { notifyListeners: false })
+    );
+    const cleanupPromise = clearAccountScopedLocalData();
+    registerAuthSessionTransitionBarrier(Promise.all([
+        credentialClearPromise,
+        cleanupPromise,
+    ]));
+    return { intentPromise, credentialClearPromise, cleanupPromise };
+}
 
 const fallbackAuthContext: AuthContextValue = {
     isAuthenticated: false,
@@ -56,13 +83,17 @@ const fallbackAuthContext: AuthContextValue = {
             return false;
         }
     },
+    beginAccountExit: () => beginStandaloneAccountExit().intentPromise,
     signOut: async () => {
-        cancelPendingPushRegistration();
-        try {
-            await clearAccountScopedLocalData();
-        } finally {
-            await clearAuthTokens({ notifyListeners: false });
+        const operation = beginStandaloneAccountExit();
+        const logoutIntent = await operation.intentPromise;
+        const cleared = await operation.credentialClearPromise;
+        await operation.cleanupPromise;
+        if (logoutIntent.refreshToken) {
+            await logoutMember({ refreshToken: logoutIntent.refreshToken })
+                .catch(() => undefined);
         }
+        return cleared;
     },
 };
 
@@ -71,6 +102,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const [isCurationCompleted, setIsCurationCompleted] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const authenticationSequenceRef = useRef(0);
+    const accountExitRef = useRef<{
+        intentPromise: Promise<AuthLogoutIntent>;
+        localCredentialClearPromise: Promise<boolean>;
+        localCleanupPromise: Promise<void>;
+        completionPromise?: Promise<boolean>;
+    } | undefined>(undefined);
 
     const syncAuthentication = useCallback(async () => {
         const sequence = authenticationSequenceRef.current + 1;
@@ -78,6 +115,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const isCurrent = () => authenticationSequenceRef.current === sequence;
 
         try {
+            const restoreEpoch = getAuthSessionEpoch();
             let [accessToken, refreshToken, storedMember] = await Promise.all([
                 getAccessToken(),
                 getRefreshToken(),
@@ -85,22 +123,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
             ]);
             let authenticated = Boolean(accessToken && refreshToken && storedMember?.id);
             let curationCompleted = storedMember?.curationCompleted === true;
+            let restoreContext: AuthRestoreContext | undefined;
 
             // Member metadata is a cache, not an authentication credential. A
             // Keychain migration or interrupted write can leave a valid refresh
             // token without that cache; rebuild it from the server before deciding
             // to discard the session.
             if (!authenticated && refreshToken) {
+                restoreContext = {
+                    expectedEpoch: restoreEpoch,
+                    expectedRefreshToken: refreshToken,
+                };
                 try {
-                    const restoredMember = await tokenLoginMember({ refreshToken });
+                    const restoredMember = await restoreAuthSessionIfCurrent({
+                        context: restoreContext,
+                        tokenLogin: (token) =>
+                            tokenLoginMember({ refreshToken: token }),
+                    });
                     if (!isCurrent()) return false;
                     if (
-                        restoredMember.id &&
+                        restoredMember?.id &&
                         restoredMember.accessToken &&
                         restoredMember.refreshToken
                     ) {
-                        await saveAuthTokens(restoredMember.accessToken, restoredMember.refreshToken);
-                        await saveAuthMember(restoredMember);
                         accessToken = restoredMember.accessToken;
                         refreshToken = restoredMember.refreshToken;
                         storedMember = restoredMember;
@@ -111,7 +156,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
                     // Do not turn a temporary network outage into a logout. The
                     // login screen can retry this token when connectivity returns.
                     if (isDefinitiveAuthRejection(error)) {
-                        await clearAuthTokens();
+                        await clearRestorableAuthSessionIfCurrent(restoreContext);
                         accessToken = null;
                         refreshToken = null;
                         storedMember = null;
@@ -150,9 +195,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
             }
 
             if (!isCurrent()) return false;
+            if (
+                authenticated &&
+                !activateAuthSessionIfCurrent(getAuthSessionEpoch())
+            ) {
+                authenticated = false;
+                curationCompleted = false;
+            }
 
             setIsAuthenticated(authenticated);
             setIsCurationCompleted(authenticated && curationCompleted);
+            if (authenticated) accountExitRef.current = undefined;
 
             return authenticated;
         } catch {
@@ -166,29 +219,58 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
     }, []);
 
-    const signOut = useCallback(async () => {
+    const beginAccountExit = useCallback(() => {
+        const existing = accountExitRef.current;
+        if (existing) return existing.intentPromise;
+
         // Any slower authentication/status request that started before logout
         // must not restore the just-removed session when it eventually finishes.
         authenticationSequenceRef.current += 1;
-        // Stop an in-flight permission/token bootstrap before the server revokes
-        // this account's devices, otherwise a late registration could add the
-        // just-signed-out device again after logout.
         cancelPendingPushRegistration();
-        const logoutIntent = await beginAuthLogoutIntent();
-
-        if (logoutIntent.refreshToken) {
-            await logoutMember({ refreshToken: logoutIntent.refreshToken }).catch(() => undefined);
-        }
-
-        // A newer login/account-switch intent owns storage now. A slow A logout
-        // must never clear B's credentials or authentication state.
-        if (!await clearAuthTokensIfCurrent(logoutIntent.epoch)) return;
-        // clearAuthTokens awaits the async invalidation listener below, so cache
-        // cleanup is complete before another account can enter the app.
         setIsAuthenticated(false);
         setIsCurationCompleted(false);
         setIsLoading(false);
+
+        // beginAuthLogoutIntent closes the central fence synchronously before
+        // its refresh-token snapshot awaits storage.
+        const intentPromise = beginAuthLogoutIntent();
+        const operation = {
+            intentPromise,
+            localCredentialClearPromise: intentPromise.then((intent) =>
+                clearAuthTokensIfCurrent(intent.epoch, {
+                    notifyListeners: false,
+                })
+            ),
+            localCleanupPromise: clearAccountScopedLocalData(),
+        };
+        registerAuthSessionTransitionBarrier(Promise.all([
+            operation.localCredentialClearPromise,
+            operation.localCleanupPromise,
+        ]));
+        accountExitRef.current = operation;
+        return operation.intentPromise;
     }, []);
+
+    const signOut = useCallback(async (): Promise<boolean> => {
+        const intentPromise = beginAccountExit();
+        const operation = accountExitRef.current;
+        if (!operation) return false;
+        if (!operation.completionPromise) {
+            operation.completionPromise = (async () => {
+                const logoutIntent = await intentPromise;
+                // beginAccountExit already started local credential removal, so
+                // an external SDK/withdrawal wait cannot leave a restorable A session.
+                const cleared = await operation.localCredentialClearPromise;
+                await operation.localCleanupPromise;
+                if (logoutIntent.refreshToken) {
+                    await logoutMember({ refreshToken: logoutIntent.refreshToken })
+                        .catch(() => undefined);
+                }
+                return cleared && !isAuthSessionActive();
+            })();
+        }
+        return operation.completionPromise;
+    }, [beginAccountExit]);
 
     useEffect(() => {
         syncAuthentication();
@@ -210,9 +292,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
             isCurationCompleted,
             isLoading,
             syncAuthentication,
+            beginAccountExit,
             signOut,
         }),
-        [isAuthenticated, isCurationCompleted, isLoading, syncAuthentication, signOut]
+        [
+            beginAccountExit,
+            isAuthenticated,
+            isCurationCompleted,
+            isLoading,
+            signOut,
+            syncAuthentication,
+        ]
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

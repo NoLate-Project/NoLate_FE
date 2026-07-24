@@ -30,7 +30,7 @@ import {
 } from "./notificationPermission";
 import {
     getAuthSessionEpoch,
-    isAuthSessionEpochCurrent,
+    isAuthSessionActive,
 } from "../auth/authSessionEpoch";
 import { registerPushTokenForSession } from "./pushRegistrationSession";
 import {
@@ -38,6 +38,7 @@ import {
     getPushTokenForNativeContext,
     writePushNativeContext,
 } from "./pushNativeTokenLifecycle";
+import { getOrCreatePushDeviceId } from "./pushDeviceId";
 
 const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
@@ -55,12 +56,13 @@ function logPushDevelopment(message: string, error?: unknown): void {
 }
 
 async function getOrCreateDeviceId(): Promise<string> {
-    const existing = await SecureStore.getItemAsync(PUSH_DEVICE_ID_KEY);
-    if (existing) return existing;
-
-    const generated = `${Platform.OS}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await SecureStore.setItemAsync(PUSH_DEVICE_ID_KEY, generated);
-    return generated;
+    return getOrCreatePushDeviceId({
+        read: () => SecureStore.getItemAsync(PUSH_DEVICE_ID_KEY),
+        write: (deviceId) =>
+            SecureStore.setItemAsync(PUSH_DEVICE_ID_KEY, deviceId),
+        generate: () =>
+            `${Platform.OS}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    });
 }
 
 async function registerToken(
@@ -71,12 +73,12 @@ async function registerToken(
 ): Promise<void> {
     if (
         !isPushRegistrationGenerationCurrent(generation) ||
-        !isAuthSessionEpochCurrent(authEpoch)
+        !isAuthSessionActive(authEpoch)
     ) return;
     const deviceId = await getOrCreateDeviceId();
     if (
         !isPushRegistrationGenerationCurrent(generation) ||
-        !isAuthSessionEpochCurrent(authEpoch)
+        !isAuthSessionActive(authEpoch)
     ) return;
 
     await registerPushTokenForSession({
@@ -96,7 +98,7 @@ function isPushRegistrationSessionCurrent(
 ): boolean {
     return (
         isPushRegistrationGenerationCurrent(generation) &&
-        isAuthSessionEpochCurrent(authEpoch)
+        isAuthSessionActive(authEpoch)
     );
 }
 
@@ -151,6 +153,7 @@ function createNativePushContext(apnsToken?: string, apnsTokenType?: string): st
 export function registerPushAfterLogin(memberId?: number): Promise<void> {
     if (!memberId) return Promise.resolve();
     const authEpoch = getAuthSessionEpoch();
+    if (!isAuthSessionActive(authEpoch)) return Promise.resolve();
     return runPushRegistration(memberId, (generation) => (
         retryPushRegistration(
             () => performPushRegistration(memberId, generation, authEpoch),
@@ -158,7 +161,7 @@ export function registerPushAfterLogin(memberId?: number): Promise<void> {
                 delaysMs: PUSH_REGISTRATION_RETRY_DELAYS_MS,
                 isCurrent: () =>
                     isPushRegistrationGenerationCurrent(generation) &&
-                    isAuthSessionEpochCurrent(authEpoch),
+                    isAuthSessionActive(authEpoch),
             },
         )
     ));
@@ -277,9 +280,10 @@ async function performPushRegistration(
 export function subscribePushTokenRefresh(memberId?: number): () => void {
     if (!memberId) return () => undefined;
     const subscriptionAuthEpoch = getAuthSessionEpoch();
+    if (!isAuthSessionActive(subscriptionAuthEpoch)) return () => undefined;
 
     return onTokenRefresh(getMessaging(), (token) => {
-        if (!isAuthSessionEpochCurrent(subscriptionAuthEpoch)) return;
+        if (!isAuthSessionActive(subscriptionAuthEpoch)) return;
         runPushRegistration(memberId, (generation) => (
             registerToken(memberId, token, generation, subscriptionAuthEpoch)
         ), { replaceExisting: true }).catch((error) => {

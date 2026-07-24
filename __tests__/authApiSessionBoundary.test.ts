@@ -50,7 +50,9 @@ type SuccessHandler = (response: {
 type ErrorHandler = (error: Record<string, unknown>) => Promise<unknown>;
 
 const {
+    beginAuthLogoutIntent,
     saveAuthTokens,
+    saveAuthMember,
     getAccessToken,
     getRefreshToken,
 } = require("../src/modules/auth/authStorage") as typeof import("../src/modules/auth/authStorage");
@@ -92,6 +94,7 @@ beforeEach(async () => {
     mockRawPost.mockReset();
     mockSecureValues.clear();
     await saveAuthTokens("A-access", "A-refresh");
+    await saveAuthMember({ id: 1, name: "A" });
 });
 
 test.each(["get", "post", "delete"])(
@@ -171,6 +174,7 @@ test("B refresh detaches from aborted A flight and late A failure cannot clear B
     while (mockRawPost.mock.calls.length < 1) await Promise.resolve();
 
     await saveAuthTokens("B-access", "B-refresh");
+    await saveAuthMember({ id: 2, name: "B" });
     const bConfig = await authenticatedConfig("get");
     const bRetry = errorHandler(unauthorized(bConfig));
     while (mockRawPost.mock.calls.length < 2) await Promise.resolve();
@@ -194,4 +198,38 @@ test("B refresh detaches from aborted A flight and late A failure cannot clear B
     expect(mockRawPost).toHaveBeenCalledTimes(2);
     await expect(getAccessToken()).resolves.toBe("B-access-v2");
     await expect(getRefreshToken()).resolves.toBe("B-refresh-v2");
+});
+
+test.each(["get", "post", "delete"])(
+    "logout-pending에서 새 일반 %s 요청은 adapter 전에 거부된다",
+    async (method) => {
+        await beginAuthLogoutIntent();
+
+        await expect(authenticatedConfig(method)).rejects.toMatchObject({
+            errorCode: "AUTH_SESSION_CHANGED",
+        });
+        expect(mockApiClient).not.toHaveBeenCalled();
+        expect(mockRawPost).not.toHaveBeenCalled();
+    },
+);
+
+test("withdrawal만 logout-pending epoch에 명시적으로 허용하고 계정 전환 시에는 폐기한다", async () => {
+    const intent = await beginAuthLogoutIntent();
+    const withdrawalConfig = await requestHandler({
+        method: "delete",
+        url: "/api/member/withdraw",
+        headers: {},
+        _allowDuringAccountExit: true,
+    });
+    expect(withdrawalConfig.headers).toMatchObject({
+        Authorization: "Bearer A-access",
+    });
+
+    await saveAuthTokens("B-access", "B-refresh");
+    await saveAuthMember({ id: 2, name: "B" });
+    await expect(successHandler({
+        config: withdrawalConfig,
+        data: { success: true },
+    })).rejects.toMatchObject({ errorCode: "AUTH_SESSION_CHANGED" });
+    expect(intent.refreshToken).toBe("A-refresh");
 });
