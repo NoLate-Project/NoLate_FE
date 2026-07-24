@@ -66,6 +66,11 @@ export class ScheduleSessionRequestFence {
         channel.controller = null;
     }
 
+    invalidateItemPurge(): void {
+        this.invalidate("search");
+        this.invalidate("schedule");
+    }
+
     rejectSession(): void {
         if (this.blocked) return;
         this.blocked = true;

@@ -160,6 +160,28 @@ describe("calendar schedule month cache", () => {
         ).toEqual([]);
     });
 
+    test("item access purge fences a range response that started before denial", async () => {
+        const march = getMonthRange("2026-03-01");
+        const privateItem = schedule(
+            "late-private",
+            localDate(2026, 2, 12)
+        );
+        const lateRange = deferred<ScheduleItem[]>();
+        const pendingRefresh = refreshCalendarScheduleCache(
+            march.startAt,
+            march.endAt,
+            jest.fn().mockReturnValue(lateRange.promise),
+        );
+
+        removeCalendarScheduleCacheItem(privateItem.id);
+        lateRange.resolve([privateItem]);
+        await pendingRefresh;
+
+        expect(
+            readCalendarScheduleCache(march.startAt, march.endAt).items
+        ).toEqual([]);
+    });
+
     test("원격 공유 변경으로 캐시를 비우면 화면 구독자에게 다시 조회하도록 알린다", () => {
         const listener = jest.fn();
         const unsubscribe = subscribeCalendarScheduleCacheInvalidated(listener);

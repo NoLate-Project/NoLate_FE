@@ -2,6 +2,14 @@ import {
     ScheduleSessionRequestFence,
 } from "../src/modules/schedule/sessionRequestFence";
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
 describe("ScheduleSessionRequestFence", () => {
     test("session rejection aborts schedule and search work and blocks stale commits", () => {
         const fence = new ScheduleSessionRequestFence();
@@ -48,5 +56,30 @@ describe("ScheduleSessionRequestFence", () => {
 
         fence.finish(newer);
         expect(fence.isCurrent(newer)).toBe(false);
+    });
+
+    test.each([
+        "detail access denial",
+        "authoritative full-list omission",
+    ])("%s aborts pending search/load and an old search result cannot recommit", async () => {
+        const fence = new ScheduleSessionRequestFence();
+        const pendingSearch = deferred<string[]>();
+        const search = fence.begin("search")!;
+        const schedule = fence.begin("schedule")!;
+        let searchResults = ["private-title"];
+        const searchCommit = pendingSearch.promise.then((items) => {
+            if (fence.isCurrent(search)) searchResults = items;
+        });
+
+        fence.invalidateItemPurge();
+        searchResults = [];
+        pendingSearch.resolve(["private-title"]);
+        await searchCommit;
+
+        expect(search.signal.aborted).toBe(true);
+        expect(schedule.signal.aborted).toBe(true);
+        expect(fence.isCurrent(search)).toBe(false);
+        expect(fence.isCurrent(schedule)).toBe(false);
+        expect(searchResults).toEqual([]);
     });
 });

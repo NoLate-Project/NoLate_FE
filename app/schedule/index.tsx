@@ -1774,6 +1774,7 @@ export default function ScheduleIndex() {
         [state.itemsById]
     );
     const handleScheduleAccessRevoked = useCallback((scheduleId: string) => {
+        scheduleSessionFenceRef.current.invalidateItemPurge();
         removeCalendarScheduleCacheItem(scheduleId);
         setSearchResults((current) => current.filter(
             (item) => item.id !== scheduleId
@@ -1801,6 +1802,7 @@ export default function ScheduleIndex() {
             ),
         ]);
         if (removedIds.size > 0) {
+            scheduleSessionFenceRef.current.invalidateItemPurge();
             setSearchResults((current) => current.filter(
                 (item) => !removedIds.has(item.id)
             ));

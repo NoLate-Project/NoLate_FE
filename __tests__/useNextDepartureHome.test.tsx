@@ -1281,6 +1281,150 @@ describe("useNextDepartureHome", () => {
         ).toBe("access-regranted");
     });
 
+    test("authoritative full-list regrant restores redacted items outside departure eligibility and cap", async () => {
+        const initialItems = [
+            item("regrant-all-day", 20),
+            item("regrant-ended", 21),
+            item("regrant-no-route", 22),
+            item("regrant-cap-out", 23),
+        ];
+        const regrantedItems = [
+            {
+                ...initialItems[0]!,
+                allDay: true,
+                routeSetupRequired: true,
+            },
+            {
+                ...initialItems[1]!,
+                startAt: "2099-07-24T07:00:00+09:00",
+                endAt: "2099-07-24T08:00:00+09:00",
+                routeSetupRequired: true,
+            },
+            {
+                ...initialItems[2]!,
+                departAt: undefined,
+                travelMinutes: undefined,
+                route: undefined,
+                routeSetupRequired: false,
+                notificationEnabled: false,
+            },
+            {
+                ...initialItems[3]!,
+                departAt: "2099-07-24T10:50:00+09:00",
+                routeSetupRequired: true,
+            },
+        ];
+        const windowCandidates = Array.from(
+            { length: DEPARTURE_HOME_CANDIDATE_LIMIT },
+            (_, index) => item(`regrant-window-${index + 1}`, index + 1)
+        );
+        const secondFullList = [...regrantedItems, ...windowCandidates];
+        const initialIds = new Set(initialItems.map(({ id }) => id));
+        const restored = jest.fn();
+        let denyInitialAccess = true;
+        mockedGetSchedules
+            .mockResolvedValueOnce(initialItems)
+            .mockResolvedValueOnce(secondFullList);
+        mockedGetScheduleForDepartureHome.mockImplementation(async (id) => {
+            if (denyInitialAccess && initialIds.has(id)) {
+                throw new ApiResponseError("forbidden", { status: 403 });
+            }
+            return secondFullList.find((candidate) => candidate.id === id)!;
+        });
+        mockedGetScheduleDepartureStatus.mockImplementation(async (id) => status(
+            id,
+            secondFullList.find((candidate) => candidate.id === id)?.departAt
+                ?? "2099-07-24T10:30:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness onScheduleRestored={restored} />
+            );
+            await flushAsyncWork();
+        });
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+
+        denyInitialAccess = false;
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+
+        expect(restored.mock.calls.map(([restoredItem]) => (
+            (restoredItem as ScheduleItem).id
+        )).sort()).toEqual([
+            "regrant-all-day",
+            "regrant-cap-out",
+            "regrant-ended",
+            "regrant-no-route",
+        ]);
+        const visibleItemIds = String(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).split(",");
+        regrantedItems.forEach(({ id }) => {
+            expect(visibleItemIds).toContain(id);
+        });
+        initialItems.forEach(({ id }) => {
+            expect(mockedGetScheduleForDepartureHome.mock.calls.filter(
+                ([scheduleId]) => scheduleId === id
+            )).toHaveLength(1);
+        });
+        expect(snapshot(renderer!)).toContain("order-saved");
+    });
+
+    test("a late pre-denial detail success cannot restore a redacted schedule", async () => {
+        const candidate = item("late-regrant-forbidden", 5, {
+            routeSetupRequired: true,
+        });
+        const oldDetail = deferred<ScheduleItem>();
+        const revoked = jest.fn();
+        const restored = jest.fn();
+        let detailCall = 0;
+        mockedGetSchedules.mockResolvedValue([candidate]);
+        mockedGetScheduleForDepartureHome.mockImplementation(async () => {
+            detailCall += 1;
+            if (detailCall === 1) return oldDetail.promise;
+            throw new ApiResponseError("forbidden", { status: 403 });
+        });
+        mockedGetScheduleDepartureStatus.mockResolvedValue(status(
+            candidate.id,
+            "2099-07-24T10:05:00+09:00"
+        ));
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <Harness
+                    onScheduleAccessRevoked={revoked}
+                    onScheduleRestored={restored}
+                />
+            );
+            await flushAsyncWork();
+        });
+        expect(snapshot(renderer!)).toContain("loading");
+
+        await act(async () => {
+            await renderer!.root.findByProps({ testID: "refresh" }).props.onPress();
+            await flushAsyncWork();
+        });
+        expect(revoked).toHaveBeenCalledTimes(1);
+        expect(restored).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+
+        await act(async () => {
+            oldDetail.resolve(candidate);
+            await flushAsyncWork();
+        });
+        expect(restored).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ testID: "all-items" }).props.children
+        ).toBe("");
+    });
+
     test("a late access denial from auth epoch A cannot purge account B", async () => {
         const accountAItem = item("account-a-private", 5);
         const accountBItem = item("account-b-current", 10, {
