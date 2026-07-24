@@ -7,6 +7,7 @@ import {
   filterShareLibraryItems,
   getScheduleGroupLabel,
   getUnseenShareCounts,
+  resolveShareLibraryOpenDestination,
 } from '../src/modules/share/shareInboxPresentation';
 
 const NOW = new Date('2026-07-23T09:00:00+09:00');
@@ -257,6 +258,25 @@ describe('share inbox presentation', () => {
 
     expect(calendarItem?.nextSchedule?.title).toBe('팀 워크숍');
     expect(calendarItem?.memberCount).toBe(4);
+    expect(resolveShareLibraryOpenDestination(calendarItem!)).toEqual({
+      kind: 'schedule',
+      id: 'next',
+    });
+  });
+
+  test('다음 일정이 없는 공유 캘린더는 캘린더 관리 화면으로 연결한다', () => {
+    const items = buildShareLibraryItems({
+      inbox: createInbox(),
+      outbox: { sharedResources: [], activeInvitations: [] },
+      schedules: [],
+      now: NOW,
+    });
+    const calendarItem = items.find(item => item.tab === 'calendar');
+
+    expect(resolveShareLibraryOpenDestination(calendarItem!)).toEqual({
+      kind: 'calendar',
+      id: '1',
+    });
   });
 
   test('날짜 그룹과 활성 필터 수를 탭 규칙에 맞게 계산한다', () => {

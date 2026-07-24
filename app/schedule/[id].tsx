@@ -63,6 +63,7 @@ import {
 } from "../../src/modules/schedule/savedRouteDetailPresentation";
 import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import type { RouteStep } from "../../src/modules/schedule/routeInfo";
+import { getScheduleDetailActionPermissions } from "../../src/modules/schedule/schedulePermissions";
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import type {
     ScheduleItem,
@@ -308,11 +309,12 @@ function ScheduleDetail() {
     const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
-    const canManageSchedule = useMemo(() => {
-        if (!item) return false;
-        if (typeof item.ownerMemberId !== "number") return true;
-        return currentMemberId === item.ownerMemberId;
-    }, [currentMemberId, item]);
+    const detailActionPermissions = useMemo(
+        () => getScheduleDetailActionPermissions(item, currentMemberId),
+        [currentMemberId, item],
+    );
+    const canManageSchedule = detailActionPermissions.canShare;
+    const canEditSchedule = detailActionPermissions.canEdit;
     const currentMemberDepartedAt = item?.myDepartedAt ?? (canManageSchedule ? item?.departedAt : undefined);
     const departureParticipants = item?.departureParticipants ?? [];
     const recommendedDepartureAt = useMemo(
@@ -1481,36 +1483,40 @@ function ScheduleDetail() {
                             </View>
                         </View>
 
-                        {canManageSchedule && (
+                        {(canManageSchedule || canEditSchedule) && (
                             <View style={styles.topHeaderActions}>
-                                <Pressable
-                                    onPress={() => setShareSheetVisible(true)}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="일정 공유"
-                                    style={({ pressed }) => [
-                                        styles.topHeaderIconButton,
-                                        {
-                                            backgroundColor: pressed ? topCardControlBg : "transparent",
-                                            opacity: pressed ? 0.58 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons name="share-social-outline" size={20} color={primaryText} />
-                                </Pressable>
-                                <Pressable
-                                    onPress={() => router.setParams({ mode: "edit" })}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="일정 수정"
-                                    style={({ pressed }) => [
-                                        styles.topHeaderIconButton,
-                                        {
-                                            backgroundColor: pressed ? topCardControlBg : "transparent",
-                                            opacity: pressed ? 0.58 : 1,
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons name="create-outline" size={20} color={primaryText} />
-                                </Pressable>
+                                {canManageSchedule ? (
+                                    <Pressable
+                                        onPress={() => setShareSheetVisible(true)}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="일정 공유"
+                                        style={({ pressed }) => [
+                                            styles.topHeaderIconButton,
+                                            {
+                                                backgroundColor: pressed ? topCardControlBg : "transparent",
+                                                opacity: pressed ? 0.58 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Ionicons name="share-social-outline" size={20} color={primaryText} />
+                                    </Pressable>
+                                ) : null}
+                                {canEditSchedule ? (
+                                    <Pressable
+                                        onPress={() => router.setParams({ mode: "edit" })}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="일정 수정"
+                                        style={({ pressed }) => [
+                                            styles.topHeaderIconButton,
+                                            {
+                                                backgroundColor: pressed ? topCardControlBg : "transparent",
+                                                opacity: pressed ? 0.58 : 1,
+                                            },
+                                        ]}
+                                    >
+                                        <Ionicons name="create-outline" size={20} color={primaryText} />
+                                    </Pressable>
+                                ) : null}
                             </View>
                         )}
                     </View>

@@ -61,6 +61,7 @@ import {
   filterShareLibraryItems,
   getScheduleGroupLabel,
   getUnseenShareCounts,
+  resolveShareLibraryOpenDestination,
   type ShareLibraryFilter,
   type ShareLibraryItem,
   type ShareLibraryRelation,
@@ -259,15 +260,16 @@ export default function ShareInboxScreen() {
         return;
       }
 
-      if (item.resourceType === 'SCHEDULE') {
+      const destination = resolveShareLibraryOpenDestination(item);
+      if (destination.kind === 'schedule') {
         router.push({
           pathname: '/schedule/[id]',
-          params: { id: item.resourceId },
+          params: { id: destination.id },
         });
-      } else if (item.resourceType === 'CALENDAR') {
+      } else if (destination.kind === 'calendar') {
         router.push({
           pathname: '/schedule/calendars',
-          params: { id: item.resourceId },
+          params: { id: destination.id },
         });
       } else {
         router.push('/schedule/categories');
@@ -1253,7 +1255,9 @@ function CalendarShareRow({
         style={[styles.shareCardRail, { backgroundColor: itemColor }]}
       />
       <ShareInboxButton
-        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}, ${nextMeta}, 열기`}
+        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}, ${nextMeta}, ${
+          item.nextSchedule ? '다음 일정 상세 열기' : '캘린더 관리 열기'
+        }`}
         onPress={onOpen}
         style={({ pressed }) => [
           styles.shareCardOpenButton,
