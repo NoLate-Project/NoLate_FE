@@ -155,6 +155,7 @@ import {
 import {
     buildShareAttentionSummary,
     readSeenShareAttentionKeys,
+    startScheduleShareAttentionPolling,
     type ShareAttentionSummary,
 } from "../../src/modules/share/shareAttention";
 import { subscribeAppNotificationReceived } from "../../src/modules/notification/appNotificationEvents";
@@ -178,6 +179,9 @@ import {
     isAuthSessionActive,
 } from "../../src/modules/auth/authSessionEpoch";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import {
+    isScheduleSharingEnabled,
+} from "../../src/modules/share/scheduleSharingPolicy";
 
 const getErrorMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -461,6 +465,7 @@ export default function ScheduleIndex() {
         removedItemIds,
         redactedItemIds,
     } = useScheduleStore();
+    const scheduleSharingEnabled = isScheduleSharingEnabled();
     const scheduleAuthEpochRef = useRef(getAuthSessionEpoch());
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
@@ -1709,37 +1714,28 @@ export default function ScheduleIndex() {
     }, [isFocused, loadCalendarMetadata]);
 
     const loadShareAttention = useCallback(async () => {
+        if (!scheduleSharingEnabled) return EMPTY_SHARE_ATTENTION;
         const [inbox, seenKeys] = await Promise.all([
             getShareInbox(),
             readSeenShareAttentionKeys(),
         ]);
 
         return buildShareAttentionSummary(inbox, seenKeys);
-    }, []);
+    }, [scheduleSharingEnabled]);
 
     useEffect(() => {
-        if (!isFocused) return;
+        if (!isFocused || !scheduleSharingEnabled) {
+            setShareAttention(EMPTY_SHARE_ATTENTION);
+            return undefined;
+        }
 
-        let cancelled = false;
-
-        const refresh = () => {
-            loadShareAttention()
-                .then((summary) => {
-                    if (!cancelled) setShareAttention(summary);
-                })
-                .catch(() => {
-                    // 공유함 알림 표시는 보조 신호라 실패해도 일정 화면 사용 흐름은 유지한다.
-                });
-        };
-
-        refresh();
-        const timer = setInterval(refresh, SHARE_ATTENTION_REFRESH_MS);
-
-        return () => {
-            cancelled = true;
-            clearInterval(timer);
-        };
-    }, [isFocused, loadShareAttention]);
+        return startScheduleShareAttentionPolling({
+            enabled: scheduleSharingEnabled,
+            intervalMs: SHARE_ATTENTION_REFRESH_MS,
+            load: loadShareAttention,
+            onSummary: setShareAttention,
+        });
+    }, [isFocused, loadShareAttention, scheduleSharingEnabled]);
 
     const refreshNotificationUnreadCount = useCallback(() => {
         getAppNotificationUnreadCount()
@@ -3197,42 +3193,50 @@ export default function ScheduleIndex() {
         router.push("/notifications");
     }, [router]);
 
-    const shareBadgeCount = shareAttention.unseenCount;
+    const shareBadgeCount = scheduleSharingEnabled
+        ? shareAttention.unseenCount
+        : 0;
 
-    const bottomRightActions = useMemo<FloatingBarAction[]>(() => [{
-        key: "notification-inbox-shortcut",
-        icon: "notifications-outline",
-        badgeCount: notificationUnreadCount,
-        emphasized: notificationUnreadCount > 0,
-        accessibilityLabel: notificationUnreadCount > 0
-            ? `알림함, 읽지 않은 알림 ${notificationUnreadCount}개`
-            : "알림함",
-        onPress: openNotificationInbox,
-    }, {
-        key: "share-inbox-shortcut",
-        icon: "mail-unread-outline",
-        badgeCount: shareBadgeCount,
-        emphasized: shareBadgeCount > 0,
-        accessibilityLabel: shareBadgeCount > 0
-            ? `공유함, 새 공유 또는 초대 ${shareBadgeCount}개`
-            : "공유함",
-        onPress: openInvitesShortcut,
-    }, {
-        key: "calendar-settings-shortcut",
-        icon: "settings-outline",
-        accessibilityLabel: "캘린더 설정",
-        onPress: openCalendarSettings,
-    }, {
-        key: "profile-shortcut",
-        icon: "person-circle-outline",
-        accessibilityLabel: "프로필",
-        onPress: openProfile,
-    }], [
+    const bottomRightActions = useMemo<FloatingBarAction[]>(() => [
+        {
+            key: "notification-inbox-shortcut",
+            icon: "notifications-outline",
+            badgeCount: notificationUnreadCount,
+            emphasized: notificationUnreadCount > 0,
+            accessibilityLabel: notificationUnreadCount > 0
+                ? `알림함, 읽지 않은 알림 ${notificationUnreadCount}개`
+                : "알림함",
+            onPress: openNotificationInbox,
+        },
+        ...(scheduleSharingEnabled ? [{
+            key: "share-inbox-shortcut",
+            icon: "mail-unread-outline" as const,
+            badgeCount: shareBadgeCount,
+            emphasized: shareBadgeCount > 0,
+            accessibilityLabel: shareBadgeCount > 0
+                ? `공유함, 새 공유 또는 초대 ${shareBadgeCount}개`
+                : "공유함",
+            onPress: openInvitesShortcut,
+        }] : []),
+        {
+            key: "calendar-settings-shortcut",
+            icon: "settings-outline",
+            accessibilityLabel: "캘린더 설정",
+            onPress: openCalendarSettings,
+        },
+        {
+            key: "profile-shortcut",
+            icon: "person-circle-outline",
+            accessibilityLabel: "프로필",
+            onPress: openProfile,
+        },
+    ], [
         notificationUnreadCount,
         openCalendarSettings,
         openInvitesShortcut,
         openNotificationInbox,
         openProfile,
+        scheduleSharingEnabled,
         shareBadgeCount,
     ]);
 
@@ -4044,13 +4048,17 @@ export default function ScheduleIndex() {
                                     onPress={openCategoryManager}
                                     colors={colors}
                                 />
-                                <View style={[styles.dropdownRowDivider, { backgroundColor: colors.border }]} />
-                                <ToolbarDropdownAction
-                                    icon="people-outline"
-                                    title="공유 캘린더"
-                                    onPress={openSharedCalendarManager}
-                                    colors={colors}
-                                />
+                                {scheduleSharingEnabled ? (
+                                    <>
+                                        <View style={[styles.dropdownRowDivider, { backgroundColor: colors.border }]} />
+                                        <ToolbarDropdownAction
+                                            icon="people-outline"
+                                            title="공유 캘린더"
+                                            onPress={openSharedCalendarManager}
+                                            colors={colors}
+                                        />
+                                    </>
+                                ) : null}
                             </View>
                         </CalendarGlassSurface>
                     </Animated.View>
@@ -4328,7 +4336,9 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
-                onManageCalendars={openSharedCalendarManager}
+                onManageCalendars={scheduleSharingEnabled
+                    ? openSharedCalendarManager
+                    : undefined}
                 presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}

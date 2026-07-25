@@ -3,6 +3,10 @@ import {
     getPushNavigationTargetFromNotificationData,
     type PushNavigationTarget,
 } from "./pushNavigation";
+import {
+    isScheduleNotificationAllowedBySharingPolicy,
+    isStoredNotificationAllowedBySharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 export type AppNotificationTone = "blue" | "green" | "orange" | "neutral";
 
@@ -21,6 +25,9 @@ export type AppNotificationVisual = {
 export function getAppNotificationNavigationTarget(
     notification: AppNotification,
 ): PushNavigationTarget | undefined {
+    if (!isStoredNotificationAllowedBySharingPolicy(notification)) {
+        return undefined;
+    }
     // 저장된 원본 payload를 우선하되, 과거 데이터에 문자열 ID가 누락된 경우 정규화된
     // DB 열을 보강한다. 알림함과 실시간 push가 같은 화면 이동 판정기를 공유하게 된다.
     const data: Record<string, unknown> = {
@@ -34,6 +41,7 @@ export function getAppNotificationNavigationTarget(
         data.categoryId = String(notification.categoryId);
     }
 
+    if (!isScheduleNotificationAllowedBySharingPolicy(data)) return undefined;
     return getPushNavigationTargetFromNotificationData(data);
 }
 

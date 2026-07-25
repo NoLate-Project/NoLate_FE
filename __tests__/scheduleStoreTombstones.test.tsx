@@ -23,6 +23,10 @@ import {
     getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
 import { emitScheduleDepartureMutation } from "../src/modules/schedule/scheduleDepartureMutationEvents";
+import * as env from "../src/api/env";
+import {
+    establishScheduleSharingSessionOwner,
+} from "../src/modules/share/scheduleSharingSessionOwner";
 
 jest.mock("../src/modules/auth/authStorage", () => ({
     subscribeAuthInvalidation: () => () => undefined,
@@ -35,6 +39,26 @@ const privateItem: ScheduleItem = {
     endAt: "2099-07-24T11:00:00+09:00",
     routeSetupRequired: true,
     category: { id: "private", title: "개인", color: "#fff" },
+};
+const receivedItem: ScheduleItem = {
+    ...privateItem,
+    id: "received-a",
+    title: "받은 공유 일정",
+    ownerMemberId: 99,
+    sharePermission: "VIEWER",
+    category: {
+        id: "received",
+        title: "받은 카테고리",
+        color: "#16A34A",
+        shared: true,
+        sharePermission: "VIEWER",
+    },
+};
+const rolloutReceivedItem: ScheduleItem = {
+    ...privateItem,
+    id: "rollout-received-a",
+    title: "플래그 없는 받은 일정",
+    ownerMemberId: 99,
 };
 
 function Harness() {
@@ -103,6 +127,23 @@ function Harness() {
                     refreshing: false,
                 })}
             />
+            <Pressable
+                testID="received-update"
+                onPress={() => dispatch({
+                    type: "UPDATE_ITEM",
+                    item: rolloutReceivedItem,
+                })}
+            />
+            <Pressable
+                testID="received-mutation-event"
+                onPress={() => emitScheduleDepartureMutation({
+                    authEpoch: getAuthSessionEpoch(),
+                    kind: "snoozed",
+                    scheduleId: receivedItem.id,
+                    item: receivedItem,
+                    refreshing: false,
+                })}
+            />
         </>
     );
 }
@@ -111,6 +152,7 @@ describe("ScheduleProvider deletion tombstones", () => {
     let renderer: ReactTestRenderer | undefined;
 
     beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         const authEpoch = beginAuthLoginSession();
         activateAuthSessionIfCurrent(authEpoch);
         resetCalendarScheduleCacheSecurityFence();
@@ -121,6 +163,40 @@ describe("ScheduleProvider deletion tombstones", () => {
     afterEach(() => {
         act(() => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
+    });
+
+    test("공유 off provider는 warm 받은 일정과 늦은 dispatch/mutation 재유입을 모두 거부한다", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
+        const initialState = createScheduleInitialState(SYSTEM_NOW);
+        initialState.itemsById = {
+            [privateItem.id]: privateItem,
+            [receivedItem.id]: receivedItem,
+            [rolloutReceivedItem.id]: rolloutReceivedItem,
+        };
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ScheduleProvider initialState={initialState}>
+                    <Harness />
+                </ScheduleProvider>,
+            );
+        });
+
+        expect(renderer!.root.findByProps({
+            testID: "agenda-input",
+        }).props.children).toBe(privateItem.id);
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "received-update" })
+                .props.onPress();
+            renderer!.root.findByProps({ testID: "received-mutation-event" })
+                .props.onPress();
+        });
+
+        expect(renderer!.root.findByProps({
+            testID: "agenda-input",
+        }).props.children).toBe(privateItem.id);
     });
 
     test("explicit removal blocks late range set/update responses from restoring private data", async () => {

@@ -6,6 +6,7 @@ import ShareInvitationSheet from "../src/modules/schedule/components/share/Share
 import { getScheduleShareInvitations } from "../src/api/scheduleSharing";
 import type { ScheduleShareInvitation } from "../src/api/scheduleSharing";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
+import * as env from "../src/api/env";
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-linking", () => ({ createURL: (path: string) => `nolate://${path}` }));
@@ -83,9 +84,14 @@ describe("ShareInvitationSheet async resource state", () => {
         ).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
+    });
+
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 

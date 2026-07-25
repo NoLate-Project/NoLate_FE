@@ -10,6 +10,10 @@ import {
     beginAuthLoginSession,
     getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
+import * as env from "../src/api/env";
+import {
+    establishScheduleSharingSessionOwner,
+} from "../src/modules/share/scheduleSharingSessionOwner";
 
 const item: ScheduleItem = {
     id: "42",
@@ -21,8 +25,34 @@ const item: ScheduleItem = {
 };
 
 beforeEach(() => {
+    jest.spyOn(env, "getEnv").mockReturnValue("true");
     const epoch = beginAuthLoginSession();
     activateAuthSessionIfCurrent(epoch);
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
+
+test("공유 off에서는 ownerMemberId만 다른 rollout mutation event도 listener/cache에 전달하지 않는다", () => {
+    jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+    const epoch = getAuthSessionEpoch();
+    establishScheduleSharingSessionOwner(epoch, 7);
+    const listener = jest.fn();
+    const unsubscribe = subscribeScheduleDepartureMutation(listener);
+
+    expect(emitScheduleDepartureMutation({
+        authEpoch: epoch,
+        kind: "departed",
+        scheduleId: "42",
+        item: {
+            ...item,
+            ownerMemberId: 9,
+        },
+        refreshing: false,
+    })).toBe(false);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
 });
 
 test("authoritative depart 응답은 후속 status GET이 offline이어도 refreshing event에 지워지지 않는다", () => {

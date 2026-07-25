@@ -73,6 +73,9 @@ import {
     handleSignupAgreementHardwareBack,
     shouldHandleSignupAgreementHardwareBack,
 } from "../../src/modules/auth/signupNavigation";
+import {
+    retainScheduleShareTokenForEnabledPolicy,
+} from "../../src/modules/share/scheduleSharingPolicy";
 
 type SocialProvider = "naver" | "kakao" | "apple";
 const ACCOUNT_SUPPORT_EMAIL = "support@nolate.jinuk.dev";
@@ -102,7 +105,11 @@ export default function Login() {
     const [socialSubmittingProvider, setSocialSubmittingProvider] = useState<SocialProvider | null>(null);
     const [pendingSocialProfile, setPendingSocialProfile] = useState<SocialSdkLoginResult | null>(null);
     const [socialSignupSubmitting, setSocialSignupSubmitting] = useState(false);
-    const pendingShareToken = normalizeShareToken(shareToken);
+    // Drop tokens from old links before authentication completes; the route
+    // guard is not the only boundary because post-auth redirects run in-place.
+    const pendingShareToken = retainScheduleShareTokenForEnabledPolicy(
+        normalizeShareToken(shareToken),
+    );
 
     const finishAuthentication = useCallback(async (
         member: MemberDto,

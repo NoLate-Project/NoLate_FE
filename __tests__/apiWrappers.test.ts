@@ -74,6 +74,7 @@ import {
     activateAuthSessionIfCurrent,
     beginAuthLoginSession,
 } from "../src/modules/auth/authSessionEpoch";
+import * as env from "../src/api/env";
 
 jest.mock("../src/api/api", () => ({
     apiDelete: jest.fn(),
@@ -84,6 +85,7 @@ jest.mock("../src/api/api", () => ({
 }));
 
 jest.mock("../src/modules/auth/authStorage", () => ({
+    getAuthMember: jest.fn().mockResolvedValue({ id: 1 }),
     prepareExplicitAuthenticationRequest: jest.fn().mockResolvedValue(
         undefined,
     ),
@@ -99,6 +101,7 @@ const mockedPrepareExplicitAuthenticationRequest =
 
 describe("member api wrappers", () => {
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 
@@ -273,6 +276,7 @@ describe("schedule query api wrappers", () => {
     });
 
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 
@@ -671,6 +675,7 @@ describe("schedule query api wrappers", () => {
     });
 
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         mockedApiPost.mockResolvedValue({
             success: true,
             data: { requestedCount: 1, sentCount: 1, failedCount: 0, removedTokenCount: 0 },
@@ -719,6 +724,7 @@ describe("schedule query api wrappers", () => {
     });
 
     test("keeps member-specific share permission metadata from schedule responses", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         mockedApiGet.mockResolvedValue({
             success: true,
             data: [{
@@ -742,6 +748,7 @@ describe("schedule query api wrappers", () => {
 
 describe("schedule category api wrappers", () => {
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 
@@ -795,6 +802,7 @@ describe("schedule category api wrappers", () => {
     });
 
     test("keeps VIEWER and EDITOR metadata for received categories", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         mockedApiGet.mockResolvedValue({
             success: true,
             data: [
@@ -891,7 +899,12 @@ describe("schedule sharing api wrappers", () => {
         acceptPath: "/api/share-invitations/plain-token/accept",
     };
 
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
+    });
+
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 
@@ -1072,7 +1085,12 @@ describe("schedule calendar api wrappers", () => {
         routeReminderEnabled: true,
     };
 
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
+    });
+
     afterEach(() => {
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 

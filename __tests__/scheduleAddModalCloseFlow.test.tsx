@@ -5,6 +5,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
+import * as env from "../src/api/env";
 
 let mockPathname = "/schedule";
 const mockRouterPush = jest.fn();
@@ -44,6 +45,12 @@ jest.mock("../src/api/scheduleCalendars", () => ({
     getScheduleCalendars: jest.fn().mockResolvedValue([]),
 }));
 
+const mockGetScheduleCalendars = (
+    jest.requireMock("../src/api/scheduleCalendars") as {
+        getScheduleCalendars: jest.Mock;
+    }
+).getScheduleCalendars;
+
 const category = { id: "work", title: "업무", color: "#FF3B30" };
 
 describe("ScheduleAddModal close flow", () => {
@@ -59,8 +66,10 @@ describe("ScheduleAddModal close flow", () => {
     });
 
     beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         mockPathname = "/schedule";
         mockRouterPush.mockReset();
+        mockGetScheduleCalendars.mockClear();
         springSpy = jest.spyOn(Animated, "spring").mockImplementation(() => ({
             start: (callback?: (result: { finished: boolean }) => void) => callback?.({ finished: true }),
             stop: jest.fn(),
@@ -113,6 +122,17 @@ describe("ScheduleAddModal close flow", () => {
 
         expect(alertSpy).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test("공유 전역 off에서는 숨겨진 캘린더 selector와 조회도 만들지 않는다", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+
+        await renderModal();
+
+        expect(mockGetScheduleCalendars).not.toHaveBeenCalled();
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "공유 캘린더 관리",
+        })).toHaveLength(0);
     });
 
     test("읽기 전용 공유 카테고리는 새 일정 저장 선택지에서 제외한다", async () => {

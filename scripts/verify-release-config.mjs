@@ -11,8 +11,15 @@ const read = (path) => readFileSync(resolve(root, path), "utf8");
 const app = JSON.parse(read("app.json"));
 const pkg = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
+const envExample = read(".env.example");
 const publicEnvSource = read("src/api/env.ts");
+const scheduleSharingPolicy = read(
+  "src/modules/share/scheduleSharingPolicy.ts",
+);
 const rootLayout = read("app/_layout.tsx");
+const loginScreen = read("app/auth/login.tsx");
+const signupScreen = read("app/auth/signup.tsx");
+const jestSetup = read("jest.setup.js");
 const scheduleDetail = read("app/schedule/[id].tsx");
 const androidGradle = read("android/app/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
@@ -48,6 +55,56 @@ assert.doesNotMatch(
   publicEnvSource,
   /EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET|EXPO_PUBLIC_NAVER_CLIENT_ID/,
   "Unused Naver secrets/legacy IDs must not be statically embedded in the client bundle",
+);
+assert.match(
+  publicEnvSource,
+  /EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED:\s*process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED/,
+  "Expo must statically embed the schedule-sharing rollout key",
+);
+assert.match(
+  envExample,
+  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=false$/m,
+  "Store/release environment defaults must keep schedule sharing off",
+);
+assert.doesNotMatch(
+  envExample,
+  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=true$/m,
+  "The checked-in release environment must never opt schedule sharing in",
+);
+assert.doesNotMatch(
+  jestSetup,
+  /process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED\s*=\s*["']true["']/,
+  "The global Jest environment must retain the default-off sharing policy",
+);
+assert.match(
+  scheduleSharingPolicy,
+  /return rawValue === ["']true["'];/,
+  "Schedule sharing must only enable for the exact literal true",
+);
+assert.match(
+  scheduleSharingPolicy,
+  /getEnv\(SCHEDULE_SHARING_ENV_KEY\)/,
+  "All sharing boundaries must use the central public rollout policy",
+);
+assert.doesNotMatch(
+  scheduleSharingPolicy,
+  /rawValue\??\.trim\(\)|String\(rawValue\)|toLowerCase\(\)/,
+  "Malformed or normalized rollout values must remain fail-closed",
+);
+for (const [name, source] of [
+  ["login", loginScreen],
+  ["signup", signupScreen],
+]) {
+  assert.match(
+    source,
+    /retainScheduleShareTokenForEnabledPolicy\(\s*normalizeShareToken\(shareToken\)/,
+    `${name} must discard old share tokens before post-auth navigation when sharing is off`,
+  );
+}
+assert.match(
+  rootLayout,
+  /getScheduleSharingRouteRedirect\(/,
+  "The root navigator must guard old sharing routes before their screens mount",
 );
 assert.doesNotMatch(
   rootLayout,

@@ -77,6 +77,9 @@ import type {
 } from '../../src/modules/schedule/types';
 import { useTheme, type AppColors } from '../../src/modules/theme/ThemeContext';
 import BrandedLoader from '../../src/ui/BrandedLoader';
+import {
+  isScheduleSharingEnabled,
+} from '../../src/modules/share/scheduleSharingPolicy';
 
 type ShareInboxViewData = {
   inbox: ShareInbox;
@@ -206,6 +209,11 @@ function resourceTypeForComposer(type: ShareResourceType) {
 }
 
 export default function ShareInboxScreen() {
+  if (!isScheduleSharingEnabled()) return null;
+  return <EnabledShareInboxScreen />;
+}
+
+function EnabledShareInboxScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();

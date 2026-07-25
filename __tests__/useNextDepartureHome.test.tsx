@@ -28,6 +28,7 @@ import {
     useNextDepartureHome,
 } from "../src/modules/schedule/useNextDepartureHome";
 import { emitScheduleDepartureMutation } from "../src/modules/schedule/scheduleDepartureMutationEvents";
+import * as env from "../src/api/env";
 
 jest.mock("../src/api/schedule", () => ({
     getSchedules: jest.fn(),
@@ -260,6 +261,8 @@ describe("useNextDepartureHome", () => {
     let renderer: ReactTestRenderer | undefined;
 
     beforeEach(() => {
+        // This legacy fan-out suite intentionally exercises received schedules.
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         const authEpoch = beginAuthLoginSession();
         activateAuthSessionIfCurrent(authEpoch);
         jest.useFakeTimers();
@@ -275,6 +278,7 @@ describe("useNextDepartureHome", () => {
         act(() => renderer?.unmount());
         renderer = undefined;
         jest.useRealTimers();
+        jest.restoreAllMocks();
         jest.clearAllMocks();
     });
 

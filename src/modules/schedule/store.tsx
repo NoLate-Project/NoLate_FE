@@ -23,6 +23,12 @@ import {
     setCalendarScheduleCacheSecurityFence,
 } from "./calendarScheduleCache";
 import { subscribeScheduleDepartureMutation } from "./scheduleDepartureMutationEvents";
+import {
+    filterScheduleCategoriesForSharingPolicy,
+    filterScheduleItemsForSharingPolicy,
+    isScheduleCategoryAllowedBySharingPolicy,
+    sanitizeScheduleItemForSharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 export type ScheduleAction =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -43,20 +49,31 @@ export type ScheduleAction =
 function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
     switch (action.type) {
         case "RESET":
-            return action.state;
+            return sanitizeScheduleStateForSharingPolicy(action.state);
         case "SET_SELECTED_DAY":
             return {...state, selectedDay: action.day};
 
         case "SET_CATEGORIES":
-            return {...state, categories: action.categories};
+            return {
+                ...state,
+                categories: filterScheduleCategoriesForSharingPolicy(
+                    action.categories,
+                ),
+            };
 
         case "ADD_CATEGORY":
+            if (!isScheduleCategoryAllowedBySharingPolicy(action.category)) {
+                return state;
+            }
             if (state.categories.some((category) => category.id === action.category.id)) {
                 return state;
             }
             return {...state, categories: [...state.categories, action.category]};
 
         case "UPSERT_CATEGORY": {
+            if (!isScheduleCategoryAllowedBySharingPolicy(action.category)) {
+                return state;
+            }
             const exists = state.categories.some((category) => category.id === action.category.id);
             return {
                 ...state,
@@ -75,7 +92,10 @@ function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
             };
 
         case "SET_ITEMS": {
-            const itemsById = action.items.reduce<Record<string, ScheduleItem>>((acc, item) => {
+            const allowedItems = filterScheduleItemsForSharingPolicy(
+                action.items,
+            );
+            const itemsById = allowedItems.reduce<Record<string, ScheduleItem>>((acc, item) => {
                 acc[item.id] = item;
                 return acc;
             }, {});
@@ -101,12 +121,14 @@ function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
         case "ADD_ITEM":
         case "UPDATE_ITEM":
         case "RESTORE_ITEM": {
+            const item = sanitizeScheduleItemForSharingPolicy(action.item);
+            if (!item) return state;
             return {
                 ...state,
                 error: null,
                 itemsById: {
                     ...state.itemsById,
-                    [action.item.id]: action.item,
+                    [item.id]: item,
                 },
             };
         }
@@ -121,6 +143,23 @@ function reducer(state: ScheduleState, action: ScheduleAction): ScheduleState {
         default:
             return state;
     }
+}
+
+function sanitizeScheduleStateForSharingPolicy(
+    state: ScheduleState,
+): ScheduleState {
+    const items = filterScheduleItemsForSharingPolicy(
+        Object.values(state.itemsById),
+    );
+    return {
+        ...state,
+        categories: filterScheduleCategoriesForSharingPolicy(
+            state.categories,
+        ),
+        itemsById: Object.fromEntries(
+            items.map((item) => [item.id, item]),
+        ),
+    };
 }
 
 const ScheduleContext = createContext<{
@@ -176,7 +215,13 @@ function ScheduleSessionProvider({
     children: React.ReactNode;
     initialState: ScheduleState;
 }) {
-    const [state, baseDispatch] = useReducer(reducer, initialState);
+    // The keyed auth provider remains the account boundary; this initializer is
+    // an additional rollout fence for received data retained by a warm old tree.
+    const [state, baseDispatch] = useReducer(
+        reducer,
+        initialState,
+        sanitizeScheduleStateForSharingPolicy,
+    );
     const removedItemIdsRef = useRef<ReadonlySet<string>>(new Set());
     const [removedItemIds, setRemovedItemIds] = useState<ReadonlySet<string>>(
         removedItemIdsRef.current
@@ -208,6 +253,22 @@ function ScheduleSessionProvider({
         if (
             !isAuthSessionEpochCurrent(authEpoch)
             || !isAuthSessionActive(authEpoch)
+        ) {
+            return;
+        }
+        if (
+            (
+                action.type === "ADD_ITEM"
+                || action.type === "UPDATE_ITEM"
+                || action.type === "RESTORE_ITEM"
+            )
+            && !sanitizeScheduleItemForSharingPolicy(action.item)
+        ) {
+            return;
+        }
+        if (
+            (action.type === "ADD_CATEGORY" || action.type === "UPSERT_CATEGORY")
+            && !isScheduleCategoryAllowedBySharingPolicy(action.category)
         ) {
             return;
         }

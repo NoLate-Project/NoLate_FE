@@ -945,8 +945,17 @@ import {
     isPushNavigationReady,
     SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "../src/modules/notification/pushNavigation";
+import * as env from "../src/api/env";
 
 describe("schedule push navigation payload", () => {
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
     test("인증과 온보딩이 끝날 때까지 알림 목적지를 보존한 뒤 한 번만 꺼낸다", () => {
         const queue = createPendingPushNavigationQueue();
         const intent = {

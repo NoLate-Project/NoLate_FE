@@ -5,6 +5,9 @@ import {
     mutateCalendarScheduleCacheIfAuthSessionCurrent,
     upsertCalendarScheduleCacheItem,
 } from "./calendarScheduleCache";
+import {
+    sanitizeScheduleItemForSharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 export type ScheduleDepartureMutationEvent = {
     authEpoch: number;
@@ -21,7 +24,13 @@ export function emitScheduleDepartureMutation(
     event: ScheduleDepartureMutationEvent,
 ): boolean {
     if (!isAuthSessionActive(event.authEpoch)) return false;
-    const item = event.item;
+    const item = event.item
+        ? sanitizeScheduleItemForSharingPolicy(event.item)
+        : undefined;
+    if (event.item && !item) return false;
+    const safeEvent = item === event.item
+        ? event
+        : { ...event, item };
     if (
         item &&
         !mutateCalendarScheduleCacheIfAuthSessionCurrent(
@@ -30,7 +39,7 @@ export function emitScheduleDepartureMutation(
         )
     ) return false;
     if (!isAuthSessionActive(event.authEpoch)) return false;
-    listeners.forEach((listener) => listener(event));
+    listeners.forEach((listener) => listener(safeEvent));
     return true;
 }
 
