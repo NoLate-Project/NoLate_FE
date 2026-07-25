@@ -21,6 +21,7 @@ import {
 import ScheduleAgendaCard from "../src/modules/schedule/components/list/ScheduleAgendaCard";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type { ScheduleItem } from "../src/modules/schedule/types";
+import * as env from "../src/api/env";
 
 jest.mock("@expo/vector-icons", () => ({
     Ionicons: "Ionicons",
@@ -127,6 +128,10 @@ describe("schedule agenda presentation", () => {
                 IS_REACT_ACT_ENVIRONMENT: boolean;
             }
         ).IS_REACT_ACT_ENVIRONMENT = true;
+    });
+
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
     });
 
     afterEach(async () => {

@@ -28,6 +28,10 @@ jest.mock("../src/api/api", () => ({
     apiPut: jest.fn(),
 }));
 
+jest.mock("../src/modules/auth/authStorage", () => ({
+    getAuthMember: jest.fn().mockResolvedValue({ id: 1 }),
+}));
+
 const mockedApiDelete = jest.mocked(apiDelete);
 const mockedApiGet = jest.mocked(apiGet);
 const mockedApiPost = jest.mocked(apiPost);
@@ -151,7 +155,7 @@ test.each([
         clearCalendarScheduleCache();
         await primeCache(item("B private"));
         response.resolve(finish);
-        await lateA;
+        await expect(lateA).rejects.toBeDefined();
 
         expect(cachedTitle()).toBe("B private");
     },

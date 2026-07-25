@@ -19,7 +19,12 @@ import {
     activateAuthSessionIfCurrent,
     beginAuthLoginSession,
     beginAuthLogoutSession,
+    getAuthSessionEpoch,
 } from "../src/modules/auth/authSessionEpoch";
+import * as env from "../src/api/env";
+import {
+    establishScheduleSharingSessionOwner,
+} from "../src/modules/share/scheduleSharingSessionOwner";
 
 function schedule(id: string, startAt: Date, endAt = startAt): ScheduleItem {
     return {
@@ -45,11 +50,112 @@ function deferred<T>() {
 
 describe("calendar schedule month cache", () => {
     beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         const epoch = beginAuthLoginSession();
         activateAuthSessionIfCurrent(epoch);
         resetCalendarScheduleCacheSecurityFence();
         setCalendarScheduleCacheSecurityFence(new Set(), new Set());
         clearCalendarScheduleCache();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    test("공유 off 전환은 warm cache의 받은 일정을 제거하고 owner 일정만 유지한다", async () => {
+        const july = getMonthRange("2026-07-01");
+        const owner = {
+            ...schedule("owner", localDate(2026, 6, 12)),
+            ownerMemberId: 7,
+            departureParticipants: [
+                { memberId: 7, role: "OWNER" as const, departed: false },
+                { memberId: 9, role: "SHARED" as const, departed: false },
+            ],
+            travelCollaborationEnabled: true,
+        };
+        const received = {
+            ...schedule("received", localDate(2026, 6, 13)),
+            ownerMemberId: 9,
+            sharePermission: "VIEWER" as const,
+            category: {
+                id: "shared",
+                title: "받은 카테고리",
+                color: "#16A34A",
+                shared: true,
+                sharePermission: "VIEWER" as const,
+            },
+        };
+
+        await refreshCalendarScheduleCache(
+            july.startAt,
+            july.endAt,
+            jest.fn().mockResolvedValue([owner, received]),
+        );
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
+
+        expect(readCalendarScheduleCache(
+            july.startAt,
+            july.endAt,
+        ).items).toEqual([
+            expect.objectContaining({
+                id: "owner",
+                departureParticipants: undefined,
+                travelCollaborationEnabled: true,
+            }),
+        ]);
+    });
+
+    test("공유 off에서 늦은 받은 일정 응답은 cache에 부활하지 않고 owner 응답은 유지된다", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
+        const august = getMonthRange("2026-08-01");
+        const owner = {
+            ...schedule("owner", localDate(2026, 7, 12)),
+            ownerMemberId: 7,
+        };
+        const received = {
+            ...schedule("received", localDate(2026, 7, 13)),
+            ownerMemberId: 9,
+            sharePermission: "EDITOR" as const,
+        };
+
+        await refreshCalendarScheduleCache(
+            august.startAt,
+            august.endAt,
+            jest.fn().mockResolvedValue([owner, received]),
+        );
+
+        expect(readCalendarScheduleCache(
+            august.startAt,
+            august.endAt,
+        ).items.map((item) => item.id)).toEqual(["owner"]);
+    });
+
+    test("off owner context rejects an ownerMemberId-only received row without rollout share flags", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
+        const september = getMonthRange("2026-09-01");
+
+        await refreshCalendarScheduleCache(
+            september.startAt,
+            september.endAt,
+            jest.fn().mockResolvedValue([
+                {
+                    ...schedule("owner", localDate(2026, 8, 12)),
+                    ownerMemberId: 7,
+                },
+                {
+                    ...schedule("received-rollout", localDate(2026, 8, 13)),
+                    ownerMemberId: 9,
+                },
+            ]),
+        );
+
+        expect(readCalendarScheduleCache(
+            september.startAt,
+            september.endAt,
+        ).items.map((item) => item.id)).toEqual(["owner"]);
     });
 
     test("logout intent epoch에서는 새 calendar cache mutation을 허용하지 않는다", () => {

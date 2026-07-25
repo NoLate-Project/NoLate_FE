@@ -1,6 +1,9 @@
 import { clearCalendarScheduleCache } from "../schedule/calendarScheduleCache";
 import { invalidateScheduleDepartureStatus } from "../schedule/departureStatusCache";
 import { getScheduleIdFromNotificationData } from "./pushNavigation";
+import {
+    isScheduleNotificationAllowedBySharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 const SCHEDULE_VISIBILITY_TYPES = new Set([
     "SCHEDULE_SHARE_RECEIVED",
@@ -18,6 +21,7 @@ const DEPARTURE_STATUS_CHANGE_TYPES = new Set([
 export function refreshForegroundPushCaches(
     data?: Record<string, unknown>,
 ): void {
+    if (!isScheduleNotificationAllowedBySharingPolicy(data)) return;
     const type = typeof data?.type === "string" ? data.type : undefined;
     if (
         (type && DEPARTURE_STATUS_CHANGE_TYPES.has(type)) ||

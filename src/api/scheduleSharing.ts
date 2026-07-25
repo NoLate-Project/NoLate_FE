@@ -11,6 +11,9 @@ import {
     clearCalendarScheduleCache,
     mutateCalendarScheduleCacheIfAuthSessionCurrent,
 } from "../modules/schedule/calendarScheduleCache";
+import {
+    assertScheduleSharingEnabled,
+} from "../modules/share/scheduleSharingPolicy";
 
 export type ShareResourceType = "SCHEDULE" | "CATEGORY" | "CALENDAR";
 export type ShareInvitationStatus = "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED";
@@ -126,11 +129,13 @@ export type ShareOutbox = {
 };
 
 export async function getShareInbox(): Promise<ShareInbox> {
+    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ShareInbox>>("/api/shares/inbox");
     return unwrapApiResponse(response);
 }
 
 export async function getShareOutbox(): Promise<ShareOutbox> {
+    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ShareOutbox>>("/api/shares/outbox");
     return unwrapApiResponse(response);
 }
@@ -139,6 +144,7 @@ export async function createScheduleShare(
     scheduleId: string,
     payload: CreateDirectSharePayload,
 ): Promise<ScheduleShare> {
+    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleShare>, CreateDirectSharePayload>(
         `/api/schedules/${scheduleId}/shares`,
         payload,
@@ -150,6 +156,7 @@ export async function createCategoryShare(
     categoryId: string,
     payload: CreateDirectSharePayload,
 ): Promise<ScheduleShare> {
+    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleShare>, CreateDirectSharePayload>(
         `/api/schedule-categories/${categoryId}/shares`,
         payload,
@@ -161,6 +168,7 @@ export async function createCalendarShare(
     calendarId: string,
     payload: CreateDirectSharePayload,
 ): Promise<ScheduleCalendarMember> {
+    assertScheduleSharingEnabled();
     return addScheduleCalendarMember(calendarId, {
         targetEmail: payload.targetEmail,
         targetAppId: payload.targetAppId,
@@ -169,6 +177,7 @@ export async function createCalendarShare(
 }
 
 export async function revokeScheduleShare(scheduleId: string, shareId: string): Promise<void> {
+    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedules/${scheduleId}/shares/${shareId}`
     );
@@ -176,6 +185,7 @@ export async function revokeScheduleShare(scheduleId: string, shareId: string): 
 }
 
 export async function revokeCategoryShare(categoryId: string, shareId: string): Promise<void> {
+    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedule-categories/${categoryId}/shares/${shareId}`
     );
@@ -183,6 +193,7 @@ export async function revokeCategoryShare(categoryId: string, shareId: string): 
 }
 
 export async function getScheduleShareInvitations(scheduleId: string): Promise<ScheduleShareInvitation[]> {
+    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleShareInvitation[]>>(
         `/api/schedules/${scheduleId}/shares/invitations`
     );
@@ -193,6 +204,7 @@ export async function createScheduleShareInvitation(
     scheduleId: string,
     payload: CreateShareInvitationPayload
 ): Promise<ScheduleShareInvitation> {
+    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleShareInvitation>, CreateShareInvitationPayload>(
         `/api/schedules/${scheduleId}/shares/invitations`,
         payload
@@ -201,6 +213,7 @@ export async function createScheduleShareInvitation(
 }
 
 export async function getCategoryShareInvitations(categoryId: string): Promise<ScheduleShareInvitation[]> {
+    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleShareInvitation[]>>(
         `/api/schedule-categories/${categoryId}/shares/invitations`
     );
@@ -211,6 +224,7 @@ export async function createCategoryShareInvitation(
     categoryId: string,
     payload: CreateShareInvitationPayload
 ): Promise<ScheduleShareInvitation> {
+    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleShareInvitation>, CreateShareInvitationPayload>(
         `/api/schedule-categories/${categoryId}/shares/invitations`,
         payload
@@ -219,6 +233,7 @@ export async function createCategoryShareInvitation(
 }
 
 export async function getCalendarShareInvitations(calendarId: string): Promise<ScheduleShareInvitation[]> {
+    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleShareInvitation[]>>(
         `/api/schedule-calendars/${calendarId}/invitations`,
     );
@@ -229,6 +244,7 @@ export async function createCalendarShareInvitation(
     calendarId: string,
     payload: CreateShareInvitationPayload,
 ): Promise<ScheduleShareInvitation> {
+    assertScheduleSharingEnabled();
     // 캘린더의 공유 범위는 초대마다 저장하지 않고 캘린더 기본 정책으로 관리한다.
     // 공유 시트가 공통 payload를 넘겨도 서버 DTO에 없는 contentMode는 전송하지 않는다.
     const calendarInvitationPayload: Omit<CreateShareInvitationPayload, "contentMode"> = {
@@ -247,6 +263,7 @@ export async function createCalendarShareInvitation(
 }
 
 export async function revokeScheduleShareInvitation(scheduleId: string, invitationId: string): Promise<void> {
+    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedules/${scheduleId}/shares/invitations/${invitationId}`
     );
@@ -254,6 +271,7 @@ export async function revokeScheduleShareInvitation(scheduleId: string, invitati
 }
 
 export async function revokeCategoryShareInvitation(categoryId: string, invitationId: string): Promise<void> {
+    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedule-categories/${categoryId}/shares/invitations/${invitationId}`
     );
@@ -261,6 +279,7 @@ export async function revokeCategoryShareInvitation(categoryId: string, invitati
 }
 
 export async function revokeCalendarShareInvitation(calendarId: string, invitationId: string): Promise<void> {
+    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedule-calendars/${calendarId}/invitations/${invitationId}`,
     );
@@ -268,6 +287,7 @@ export async function revokeCalendarShareInvitation(calendarId: string, invitati
 }
 
 export async function acceptShareInvitation(token: string): Promise<ScheduleShareInvitationAcceptResult> {
+    assertScheduleSharingEnabled();
     const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<ApiEnvelope<ScheduleShareInvitationAcceptResult>>(
         `/api/share-invitations/${encodeURIComponent(token)}/accept`

@@ -5,6 +5,7 @@ import {
     markAllAppNotificationsRead,
     markAppNotificationRead,
 } from "../src/api/notification";
+import * as env from "../src/api/env";
 
 jest.mock("../src/api/api", () => ({
     apiGet: jest.fn(),
@@ -16,8 +17,93 @@ const mockedApiGet = jest.mocked(apiGet);
 const mockedApiPatch = jest.mocked(apiPatch);
 
 describe("app notification api", () => {
+    beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
+    });
+
     afterEach(() => {
         jest.clearAllMocks();
+        jest.restoreAllMocks();
+    });
+
+    test("공유 off inbox/count는 기존 공유 title을 제거하고 owner 알림만 센다", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        const shared = {
+            id: 1,
+            type: "SCHEDULE_SHARE_RECEIVED",
+            scheduleId: 55,
+            categoryId: null,
+            title: "받은 비공개 일정",
+            body: "받은 일정 위치",
+            data: { type: "SCHEDULE_SHARE_RECEIVED", scheduleId: "55" },
+            read: false,
+            readAt: null,
+            createdAt: "2026-07-22T01:00:00Z",
+        };
+        const ownerTraffic = {
+            ...shared,
+            id: 2,
+            type: "SCHEDULE_TRAFFIC",
+            title: "내 일정 교통 변화",
+            data: {
+                type: "SCHEDULE_TRAFFIC",
+                scheduleId: "7",
+                ownerMemberId: "7",
+                recipientMemberId: "7",
+            },
+        };
+        mockedApiGet
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    items: [shared, ownerTraffic],
+                    nextCursor: null,
+                    unreadCount: 2,
+                },
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    items: Array.from({ length: 30 }, (_, index) => ({
+                        ...shared,
+                        id: 100 + index,
+                    })),
+                    nextCursor: 30,
+                    unreadCount: 31,
+                },
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                data: {
+                    items: [ownerTraffic],
+                    nextCursor: null,
+                    unreadCount: 31,
+                },
+            });
+
+        await expect(getAppNotificationInbox()).resolves.toEqual({
+            items: [ownerTraffic],
+            nextCursor: null,
+            unreadCount: 1,
+        });
+        await expect(getAppNotificationUnreadCount()).resolves.toBe(1);
+
+        expect(mockedApiGet).toHaveBeenNthCalledWith(
+            2,
+            "/api/notifications/inbox",
+            { params: { limit: 100, unreadOnly: true } },
+        );
+        expect(mockedApiGet).toHaveBeenNthCalledWith(
+            3,
+            "/api/notifications/inbox",
+            {
+                params: {
+                    cursorId: 30,
+                    limit: 100,
+                    unreadOnly: true,
+                },
+            },
+        );
     });
 
     test("loads a cursor page with an unread filter", async () => {

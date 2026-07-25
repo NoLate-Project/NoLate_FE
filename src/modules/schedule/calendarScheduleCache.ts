@@ -5,6 +5,10 @@ import {
     getAuthSessionEpoch,
     isAuthSessionActive,
 } from "../auth/authSessionEpoch";
+import {
+    filterScheduleItemsForSharingPolicy,
+    sanitizeScheduleItemForSharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 // 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
 // Redis 월 캐시 TTL과 맞춰 월 이동 중 불필요한 네트워크 요청을 막는다.
@@ -119,6 +123,10 @@ function mergeEntries(descriptors: CalendarMonthDescriptor[], now: number): Sche
         const entry = monthCache.get(key);
         if (!entry) return;
         entry.lastAccessedAt = now;
+        // Warm memory from an enabled build can survive an account/bootstrap
+        // transition. Scrub received rows at the cache read boundary so an old
+        // deep link or notification cannot make them visible again.
+        entry.items = filterScheduleItemsForSharingPolicy(entry.items);
 
         entry.items.forEach((item) => {
             const current = newestById.get(item.id);
@@ -160,7 +168,7 @@ function writeRange(
     items: ScheduleItem[],
     fetchedAt: number,
 ): void {
-    const writableItems = items.filter(
+    const writableItems = filterScheduleItemsForSharingPolicy(items).filter(
         (item) => !isSecurityBlocked(item.id)
     );
     descriptors.forEach((descriptor) => {
@@ -256,12 +264,22 @@ export async function refreshCalendarScheduleCache(
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
     cacheRevision += 1;
-    if (isSecurityBlocked(item.id)) return;
+    const writableItem = sanitizeScheduleItemForSharingPolicy(item);
+    if (!writableItem || isSecurityBlocked(item.id)) {
+        monthCache.forEach((entry) => {
+            entry.items = entry.items.filter(
+                (cachedItem) => cachedItem.id !== item.id,
+            );
+        });
+        return;
+    }
     monthCache.forEach((entry, key) => {
         const range = getMonthRange(`${key}-01`);
-        const nextItems = entry.items.filter((cachedItem) => cachedItem.id !== item.id);
-        if (overlapsRange(item, range.startAt, range.endAt)) {
-            nextItems.push(item);
+        const nextItems = filterScheduleItemsForSharingPolicy(
+            entry.items,
+        ).filter((cachedItem) => cachedItem.id !== writableItem.id);
+        if (overlapsRange(writableItem, range.startAt, range.endAt)) {
+            nextItems.push(writableItem);
         }
         entry.items = dedupeCalendarSchedules(nextItems);
         entry.lastAccessedAt = Date.now();
@@ -333,6 +351,7 @@ export function reconcileCalendarScheduleCacheWithFullList(
     cacheRevision += 1;
     const removedScheduleIds = new Set<string>();
     monthCache.forEach((entry) => {
+        entry.items = filterScheduleItemsForSharingPolicy(entry.items);
         entry.items.forEach((item) => {
             if (!authoritativeScheduleIds.has(item.id)) {
                 removedScheduleIds.add(item.id);

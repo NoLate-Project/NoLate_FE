@@ -39,6 +39,9 @@ import {
     handleSignupAgreementHardwareBack,
     shouldHandleSignupAgreementHardwareBack,
 } from "../../src/modules/auth/signupNavigation";
+import {
+    retainScheduleShareTokenForEnabledPolicy,
+} from "../../src/modules/share/scheduleSharingPolicy";
 
 const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\d)(?=.*[!@#$%^&*])[a-zA-Z\d!@#$%^&*]{8,16}$/;
 type SignUpStep = "details" | "agreements";
@@ -57,7 +60,9 @@ export default function SignUp() {
     const [confirmPwd, setConfirmPwd] = useState("");
     const [step, setStep] = useState<SignUpStep>("details");
     const [submitting, setSubmitting] = useState(false);
-    const pendingShareToken = normalizeShareToken(shareToken);
+    const pendingShareToken = retainScheduleShareTokenForEnabledPolicy(
+        normalizeShareToken(shareToken),
+    );
     const loginRoute = pendingShareToken
         ? { pathname: "/auth/login" as const, params: { shareToken: pendingShareToken } }
         : "/auth/login" as const;

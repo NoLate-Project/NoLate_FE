@@ -42,6 +42,9 @@ import {
     type ScheduleShareInvitation,
 } from "../../../../api/scheduleSharing";
 import type { ScheduleShareContentMode } from "../../../../api/scheduleCalendars";
+import {
+    isScheduleSharingEnabled,
+} from "../../../share/scheduleSharingPolicy";
 import type { ScheduleSharePermission } from "../../types";
 import { isCurrentScheduleShareRequest } from "../../shareRequestGuard";
 import { createDirectShareTarget } from "../../../share/directShareTarget";
@@ -141,6 +144,13 @@ export function createShareInviteUrl(token: string) {
 }
 
 export default function ShareInvitationSheet({
+    ...props
+}: ShareInvitationSheetProps) {
+    if (!isScheduleSharingEnabled()) return null;
+    return <EnabledShareInvitationSheet {...props} />;
+}
+
+function EnabledShareInvitationSheet({
     visible,
     resourceType,
     resourceId,

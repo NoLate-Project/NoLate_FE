@@ -35,6 +35,10 @@ import { useTheme } from "../src/modules/theme/ThemeContext";
 import {
     scheduleNotificationInteractionForAuthSession,
 } from "../src/modules/notification/notificationInteractionFence";
+import {
+    getScheduleSharingRouteRedirect,
+    isScheduleSharingEnabled,
+} from "../src/modules/share/scheduleSharingPolicy";
 
 export default function RootLayout() {
     const router = useRouter();
@@ -47,6 +51,10 @@ export default function RootLayout() {
     }));
 
     const navigateToPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
+        if (
+            !isScheduleSharingEnabled()
+            && intent.target.kind === "shareInbox"
+        ) return;
         scheduleNotificationInteractionForAuthSession({
             authEpoch: intent.validationEpoch,
             isAuthSessionActive,
@@ -63,6 +71,10 @@ export default function RootLayout() {
                             memberId: member?.id,
                         })
                     ) return;
+                    if (
+                        !isScheduleSharingEnabled()
+                        && intent.target.kind === "shareInbox"
+                    ) return;
                     if (intent.target.kind === "scheduleDetail") {
                         router.push(createScheduleDetailRoute(intent.target.scheduleId));
                         return;
@@ -77,6 +89,10 @@ export default function RootLayout() {
 
     const openOrDeferPushIntent = useCallback((intent: AccountBoundPushNavigationIntent) => {
         if (!isAuthSessionActive(intent.validationEpoch)) return;
+        if (
+            !isScheduleSharingEnabled()
+            && intent.target.kind === "shareInbox"
+        ) return;
         if (!pushNavigationReadyRef.current) {
             pendingPushNavigation.defer(intent);
             return;
@@ -187,6 +203,11 @@ function RootNavigator() {
     const { colors, mode } = useTheme();
     const segments = useSegments();
     const routeSegments = segments as string[];
+    const sharingRouteRedirect = getScheduleSharingRouteRedirect({
+        segments: routeSegments,
+        isAuthenticated,
+        isCurationCompleted,
+    });
 
     if (accountExitError) {
         return (
@@ -252,6 +273,12 @@ function RootNavigator() {
                 />
             </View>
         );
+    }
+
+    if (sharingRouteRedirect) {
+        // Redirect before a page effect mounts: old links and restored routes
+        // must not get a chance to poll or accept dormant sharing resources.
+        return <Redirect href={sharingRouteRedirect} />;
     }
 
     const isPublicRoute =

@@ -2,6 +2,9 @@ import {
     resolveActiveNotificationAccountBinding,
 } from "./notificationSessionFence";
 import { withCanonicalNotificationEventKey } from "./notificationEventKey";
+import {
+    isScheduleNotificationAllowedBySharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 export type ForegroundPushMessage = {
     data?: Record<string, unknown>;
@@ -30,6 +33,11 @@ export async function processForegroundPushForSession(options: {
         authEpoch: number,
     ) => Promise<void>;
 }): Promise<boolean> {
+    // Reject sharing payloads before member lookup or title construction. That
+    // keeps presentation, unread events, and cache invalidation at zero.
+    if (!isScheduleNotificationAllowedBySharingPolicy(options.message.data)) {
+        return false;
+    }
     const binding = await resolveActiveNotificationAccountBinding({
         data: options.message.data,
         getAuthEpoch: options.getAuthEpoch,

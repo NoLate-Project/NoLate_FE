@@ -92,6 +92,7 @@ import {
 } from "../../src/modules/auth/authStorage";
 import { createAsyncAuthGuard } from "../../src/modules/auth/asyncAuthGuard";
 import { createAuthEpochAbortController } from "../../src/modules/auth/authEpochAbortController";
+import { isScheduleSharingEnabled } from "../../src/modules/share/scheduleSharingPolicy";
 import BrandedLoader, { BrandedLoadingState } from "../../src/ui/BrandedLoader";
 import {
     buildDepartureParticipantPresentations,
@@ -301,6 +302,7 @@ function ScheduleDetail() {
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
     const { colors, mode } = useTheme();
+    const scheduleSharingEnabled = isScheduleSharingEnabled();
     const isDark = mode === "dark";
     const { state, dispatch } = useScheduleStore();
     const mapRef = useRef<TmapMapViewHandle>(null);
@@ -1981,9 +1983,9 @@ function ScheduleDetail() {
                             </View>
                         </View>
 
-                        {(canManageSchedule || canEditSchedule) && (
+                        {((scheduleSharingEnabled && canManageSchedule) || canEditSchedule) && (
                             <View style={styles.topHeaderActions}>
-                                {canManageSchedule ? (
+                                {scheduleSharingEnabled && canManageSchedule ? (
                                     <Pressable
                                         onPress={() => setShareSheetVisible(true)}
                                         accessibilityRole="button"
@@ -2444,14 +2446,16 @@ function ScheduleDetail() {
             </Animated.View>
             ) : null}
 
-            <ShareInvitationSheet
-                visible={shareSheetVisible}
-                resourceType="schedule"
-                resourceId={item.id}
-                title={item.title}
-                subtitle={formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false, item.allDay === true)}
-                onClose={() => setShareSheetVisible(false)}
-            />
+            {scheduleSharingEnabled ? (
+                <ShareInvitationSheet
+                    visible={shareSheetVisible}
+                    resourceType="schedule"
+                    resourceId={item.id}
+                    title={item.title}
+                    subtitle={formatCompactScheduleRange(item.startAt, item.endAt, item.hasEndTime !== false, item.allDay === true)}
+                    onClose={() => setShareSheetVisible(false)}
+                />
+            ) : null}
 
         </View>
     );

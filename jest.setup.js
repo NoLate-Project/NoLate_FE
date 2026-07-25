@@ -1,5 +1,9 @@
 /* global jest */
 
+// Tests inherit the store-safe default. Individual legacy sharing suites must
+// opt in explicitly so unrelated coverage cannot mask a missing rollout flag.
+delete process.env.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED;
+
 jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));

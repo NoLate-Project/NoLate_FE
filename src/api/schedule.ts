@@ -14,6 +14,17 @@ import {
     removeCalendarScheduleCacheItem,
     upsertCalendarScheduleCacheItem,
 } from "../modules/schedule/calendarScheduleCache";
+import { getAuthMember } from "../modules/auth/authStorage";
+import { isAuthSessionActive } from "../modules/auth/authSessionEpoch";
+import {
+    assertScheduleSharingEnabled,
+    filterScheduleItemsForSharingPolicy,
+    isScheduleSharingEnabled,
+    ScheduleSharingDisabledError,
+} from "../modules/share/scheduleSharingPolicy";
+import {
+    establishScheduleSharingSessionOwner,
+} from "../modules/share/scheduleSharingSessionOwner";
 
 export type SchedulePayload = Omit<ScheduleItem, "id" | "updatedAt">;
 
@@ -133,6 +144,32 @@ function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     };
 }
 
+async function applyScheduleSharingResponsePolicy(
+    items: ScheduleItem[],
+    authEpoch: number,
+): Promise<ScheduleItem[]> {
+    if (isScheduleSharingEnabled()) return items;
+
+    const member = await getAuthMember().catch(() => null);
+    if (!isAuthSessionActive(authEpoch)) return [];
+    if (typeof member?.id === "number") {
+        establishScheduleSharingSessionOwner(authEpoch, member.id);
+    }
+    return filterScheduleItemsForSharingPolicy(items, member?.id ?? null);
+}
+
+async function requireScheduleAllowedBySharingPolicy(
+    item: ScheduleItem,
+    authEpoch: number,
+): Promise<ScheduleItem> {
+    const [allowed] = await applyScheduleSharingResponsePolicy(
+        [item],
+        authEpoch,
+    );
+    if (!allowed) throw new ScheduleSharingDisabledError();
+    return allowed;
+}
+
 function finiteNumberOrNull(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -199,20 +236,30 @@ function normalizeScheduleDepartureStatus(
 }
 
 export async function getSchedules(options?: ScheduleReadOptions): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = options?.signal
         ? await apiGet<ApiEnvelope<ScheduleDto[]>>(
             "/api/schedules",
             { signal: options.signal }
         )
         : await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules");
-    return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
+    const items = await applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
+    return dedupeCalendarSchedules(items);
 }
 
 export async function getCalendarSchedules(startAt: string, endAt: string): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/calendar", {
         params: { startAt, endAt },
     });
-    return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
+    const items = await applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
+    return dedupeCalendarSchedules(items);
 }
 
 export async function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
@@ -232,17 +279,25 @@ export async function synchronizeCalendarScheduleCacheRevision(): Promise<boolea
 }
 
 export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/daily", {
         params: { date },
     });
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
 }
 
 export async function getUpcomingSchedules(fromAt?: string, limit?: number): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/upcoming", {
         params: { fromAt, limit },
     });
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
 }
 
 export async function searchSchedules(params: {
@@ -251,15 +306,23 @@ export async function searchSchedules(params: {
     startAt?: string;
     endAt?: string;
 }): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/search", { params });
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
 }
 
 export async function getDepartureReadySchedules(fromAt?: string, toAt?: string): Promise<ScheduleItem[]> {
+    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/departures", {
         params: { fromAt, toAt },
     });
-    return unwrapApiResponse(response).map(normalizeSchedule);
+    return applyScheduleSharingResponsePolicy(
+        unwrapApiResponse(response).map(normalizeSchedule),
+        authEpoch,
+    );
 }
 
 export async function getSchedule(
@@ -271,7 +334,10 @@ export async function getSchedule(
     const response = options.signal
         ? await apiGet<ApiEnvelope<ScheduleDto>>(url, { signal: options.signal })
         : await apiGet<ApiEnvelope<ScheduleDto>>(url);
-    const item = normalizeSchedule(unwrapApiResponse(response));
+    const item = await requireScheduleAllowedBySharingPolicy(
+        normalizeSchedule(unwrapApiResponse(response)),
+        authEpoch,
+    );
     if (options.cache !== false) {
         mutateCalendarScheduleCacheIfAuthSessionCurrent(
             authEpoch,
@@ -312,7 +378,10 @@ export async function getScheduleForDepartureHome(
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {
     const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<ApiEnvelope<ScheduleDto>, SchedulePayload>("/api/schedules", payload);
-    const item = normalizeSchedule(unwrapApiResponse(response));
+    const item = await requireScheduleAllowedBySharingPolicy(
+        normalizeSchedule(unwrapApiResponse(response)),
+        authEpoch,
+    );
     const cachedItem = { ...item, route: item.route ?? payload.route };
     mutateCalendarScheduleCacheIfAuthSessionCurrent(
         authEpoch,
@@ -331,7 +400,10 @@ export async function importCalendarSchedule(
         { schedule: SchedulePayload; source: CalendarImportSourcePayload }
     >("/api/schedules/import", { schedule: payload, source });
     const result = unwrapApiResponse(response);
-    const item = normalizeSchedule(result.schedule);
+    const item = await requireScheduleAllowedBySharingPolicy(
+        normalizeSchedule(result.schedule),
+        authEpoch,
+    );
     const cachedItem = {
         ...item,
         // 기존 일정을 반환받은 경우에는 이번 시도에서 계산한 경로를 저장된 값처럼 섞지 않는다.
@@ -359,7 +431,10 @@ export async function parseScheduleText(payload: ParseScheduleTextPayload): Prom
 export async function updateSchedule(scheduleId: string, payload: SchedulePayload): Promise<ScheduleItem> {
     const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPut<ApiEnvelope<ScheduleDto>, SchedulePayload>(`/api/schedules/${scheduleId}`, payload);
-    const item = normalizeSchedule(unwrapApiResponse(response));
+    const item = await requireScheduleAllowedBySharingPolicy(
+        normalizeSchedule(unwrapApiResponse(response)),
+        authEpoch,
+    );
     const cachedItem = { ...item, route: item.route ?? payload.route };
     mutateCalendarScheduleCacheIfAuthSessionCurrent(
         authEpoch,
@@ -440,6 +515,10 @@ export async function markScheduleDeparted(
         : await apiPost<ApiEnvelope<unknown>>(url);
     const result = normalizeDepartureMutationResult(unwrapApiResponse(response), scheduleId);
     if (!result.item) throw new ApiResponseError("출발 완료 응답에 일정 정보가 없습니다.");
+    result.item = await requireScheduleAllowedBySharingPolicy(
+        result.item,
+        authEpoch,
+    );
     mutateCalendarScheduleCacheIfAuthSessionCurrent(
         authEpoch,
         () => upsertCalendarScheduleCacheItem(result.item!),
@@ -452,6 +531,7 @@ export async function sendScheduleDepartureNudge(
     targetMemberId: number,
     options: { signal?: AbortSignal } = {},
 ): Promise<NotificationSendResult> {
+    assertScheduleSharingEnabled();
     const url = `/api/schedules/${scheduleId}/departure-nudges/${targetMemberId}`;
     const response = options.signal
         ? await apiPost<ApiEnvelope<NotificationSendResult>>(
@@ -483,6 +563,10 @@ export async function snoozeScheduleDepartureReminder(
     assertApiSuccess(response);
     const result = normalizeDepartureMutationResult(response.data, scheduleId);
     if (result.item) {
+        result.item = await requireScheduleAllowedBySharingPolicy(
+            result.item,
+            authEpoch,
+        );
         mutateCalendarScheduleCacheIfAuthSessionCurrent(
             authEpoch,
             () => upsertCalendarScheduleCacheItem(result.item!),

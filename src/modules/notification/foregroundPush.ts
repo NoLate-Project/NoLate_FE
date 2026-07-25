@@ -63,6 +63,9 @@ import {
 import {
     runNotificationPresentationMutation,
 } from "./notificationPresentationCoordinator";
+import {
+    isScheduleNotificationAllowedBySharingPolicy,
+} from "../share/scheduleSharingPolicy";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -212,6 +215,7 @@ export async function configurePushNavigation(
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         _providerEventId?: string,
     ) => {
+        if (!isScheduleNotificationAllowedBySharingPolicy(data)) return;
         const receivedEpoch = getAuthSessionEpoch();
         if (!isAuthSessionActive(receivedEpoch)) return;
         const scheduleId = getScheduleIdFromNotificationData(data);
@@ -297,6 +301,7 @@ export async function configurePushNavigation(
         data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
         _providerEventId?: string,
     ) => {
+        if (!isScheduleNotificationAllowedBySharingPolicy(data)) return;
         const receivedEpoch = getAuthSessionEpoch();
         if (!isAuthSessionActive(receivedEpoch)) return;
         const scheduleId = getScheduleIdFromNotificationData(data);
@@ -381,6 +386,11 @@ export async function configurePushNavigation(
     const handleNotificationResponse = (response: NotificationResponse) => {
         const request = response.notification.request;
         const providerEventId = getExpoNotificationProviderMessageId(response);
+        // An action from an already-delivered sharing notification is subject
+        // to the same gate as a normal tap and is dropped before dedupe or API use.
+        if (!isScheduleNotificationAllowedBySharingPolicy(request.content.data)) {
+            return;
+        }
 
         if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
             markDepartedFromData(request.content.data, providerEventId).catch(() => undefined);
@@ -426,10 +436,17 @@ export async function configurePushNavigation(
             openFromData(message.data, message.messageId).catch(() => undefined);
         },
         getExpoEventKey: (response) => getExplicitLogicalNotificationEventKey(
-            response.notification.request.content.data,
+            isScheduleNotificationAllowedBySharingPolicy(
+                response.notification.request.content.data,
+            )
+                ? response.notification.request.content.data
+                : undefined,
         ),
-        getFirebaseEventKey: (message) =>
-            getExplicitLogicalNotificationEventKey(message.data),
+        getFirebaseEventKey: (message) => getExplicitLogicalNotificationEventKey(
+            isScheduleNotificationAllowedBySharingPolicy(message.data)
+                ? message.data
+                : undefined,
+        ),
         isExpoAction: (response) =>
             response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER ||
             response.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER,
