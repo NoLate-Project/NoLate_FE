@@ -215,13 +215,16 @@ describe("member api wrappers", () => {
 
     test("password and withdraw wrappers use protected endpoints", async () => {
         mockedApiPatch.mockResolvedValue({ success: true });
-        mockedApiDelete.mockResolvedValue({ success: true });
+        mockedApiDelete.mockResolvedValue({
+            success: true,
+            data: { manualAppleRevocationRequired: false },
+        });
 
         await changePassword({ currentPassword: "old-password", newPassword: "new-password" });
-        await withdrawMember(
+        await expect(withdrawMember(
             { password: "password" },
             { accessToken: "A-access-snapshot" },
-        );
+        )).resolves.toEqual({ manualAppleRevocationRequired: false });
 
         expect(mockedApiPatch).toHaveBeenCalledWith("/api/member/password", {
             currentPassword: "old-password",
@@ -245,12 +248,15 @@ describe("member api wrappers", () => {
     });
 
     test("account-exit withdrawal keeps the snapshotted A Authorization after local clear", async () => {
-        mockedApiDelete.mockResolvedValue({ success: true });
+        mockedApiDelete.mockResolvedValue({
+            success: true,
+            data: { manualAppleRevocationRequired: true },
+        });
 
-        await withdrawMember(
+        await expect(withdrawMember(
             { password: "password" },
             { accessToken: "A-access-snapshot" },
-        );
+        )).resolves.toEqual({ manualAppleRevocationRequired: true });
 
         expect(mockedApiDelete).toHaveBeenCalledWith("/api/member/withdraw", {
             data: { password: "password" },
@@ -259,6 +265,15 @@ describe("member api wrappers", () => {
                 Authorization: "Bearer A-access-snapshot",
             },
         });
+    });
+
+    test("legacy success without a revocation result fails safe to manual Apple action", async () => {
+        mockedApiDelete.mockResolvedValue({ success: true });
+
+        await expect(withdrawMember(
+            undefined,
+            { accessToken: "A-access-snapshot" },
+        )).resolves.toEqual({ manualAppleRevocationRequired: true });
     });
 });
 

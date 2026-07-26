@@ -41,6 +41,9 @@ import {
     reportAccountExitFailure,
 } from "../src/modules/auth/accountExitFailureNotice";
 import {
+    getAppleRevocationNotice,
+} from "../src/modules/auth/appleRevocationNotice";
+import {
     getCalendarConnectionSnapshot,
     refreshCalendarConnectionSnapshotFromDevice,
     type CalendarConnectionSnapshot,
@@ -403,9 +406,22 @@ export default function ProfileScreen() {
                                 remoteScope: "authentication",
                                 remoteCleanup: async (exitIntent) => {
                                     try {
-                                        await withdrawMember(undefined, {
+                                        const withdrawal = await withdrawMember(undefined, {
                                             accessToken: exitIntent.accessToken,
                                         });
+                                        const appleNotice = getAppleRevocationNotice(
+                                            account.loginType,
+                                            withdrawal,
+                                        );
+                                        if (appleNotice) {
+                                            // The login route owns signed-out notices. Reuse the
+                                            // epoch-fenced handoff so a later account can never
+                                            // receive the previous account's Apple instruction.
+                                            reportAccountExitFailure({
+                                                authEpoch: exitIntent.epoch,
+                                                ...appleNotice,
+                                            });
+                                        }
                                         if (isNaverAccount) {
                                             await unlinkNaverSdk().catch((error) => {
                                                 console.warn("[naver] sdk unlink failed", error);
