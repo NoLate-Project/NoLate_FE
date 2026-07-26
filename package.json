@@ -7,8 +7,9 @@
     "ios": "expo run:ios",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "verify:toolchain": "node scripts/verify-toolchain.mjs",
     "verify:release-config": "node scripts/verify-release-config.mjs",
-    "verify": "npm run verify:release-config && npm run typecheck && npm run lint && npm test -- --runInBand --no-watchman",
+    "verify": "npm run verify:toolchain && npm run verify:release-config && npm run typecheck && npm run lint && npm test -- --runInBand --no-watchman",
     "setup:tmap-native": "bash scripts/install-tmap-native-sdk.sh all",
     "eas-build-post-install": "bash scripts/install-tmap-native-sdk.sh \"${EAS_BUILD_PLATFORM:-all}\"",
     "postinstall": "patch-package",
@@ -28,8 +29,8 @@
     "@react-navigation/native-stack": "^7.3.16",
     "@tanstack/react-query": "^5.90.21",
     "axios": "^1.18.0",
-    "babel-preset-expo": "~54.0.10",
-    "expo": "~54.0.35",
+    "babel-preset-expo": "~54.0.12",
+    "expo": "~54.0.36",
     "expo-apple-authentication": "~8.0.8",
     "expo-auth-session": "~7.0.11",
     "expo-av": "~16.0.8",
@@ -39,7 +40,7 @@
     "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.21",
     "expo-device": "~8.0.10",
-    "expo-doctor": "^1.17.14",
+    "expo-doctor": "^1.18.19",
     "expo-glass-effect": "~0.1.10",
     "expo-image-picker": "~17.0.11",
     "expo-linking": "~8.0.12",
@@ -62,12 +63,12 @@
     "sweetalert2": "^11.26.18"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.2",
-    "@babel/preset-env": "^7.25.3",
-    "@babel/runtime": "^7.25.0",
-    "@react-native-community/cli": "20.1.0",
-    "@react-native-community/cli-platform-android": "20.1.0",
-    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^7.29.7",
+    "@babel/runtime": "^7.29.7",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
     "@react-native/babel-preset": "0.84.0",
     "@react-native/eslint-config": "0.84.0",
     "@react-native/metro-config": "0.84.0",
@@ -82,7 +83,24 @@
     "react-test-renderer": "^19.1.0",
     "typescript": "^5.8.3"
   },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.13",
+    "brace-expansion@5": "5.0.8",
+    "fast-uri": "3.1.4",
+    "flatted": "3.4.3",
+    "js-yaml@3": "3.15.0",
+    "js-yaml@4": "4.3.0",
+    "lodash": "4.18.1",
+    "minimatch@3": "3.1.5",
+    "minimatch@9": "9.0.9",
+    "minimatch@10": "10.2.5",
+    "picomatch@2": "2.3.2",
+    "picomatch@4": "4.0.5",
+    "postcss": "8.5.23",
+    "ws@6": "6.2.6",
+    "ws@7": "7.5.13"
+  },
   "engines": {
-    "node": ">= 22.11.0"
+    "node": "^22.11.0 || ^24.0.0"
   }
 }
