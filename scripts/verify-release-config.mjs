@@ -22,6 +22,7 @@ const signupScreen = read("app/auth/signup.tsx");
 const jestSetup = read("jest.setup.js");
 const scheduleDetail = read("app/schedule/[id].tsx");
 const androidGradle = read("android/app/build.gradle");
+const nolateTmapAndroidGradle = read("modules/nolate-tmap/android/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
 const iosProject = read("ios/NoLateFE.xcodeproj/project.pbxproj");
 const iosInfo = read("ios/NoLateFE/Info.plist");
@@ -136,6 +137,11 @@ assert.match(androidGradle, /versionCode 41/);
 assert.match(androidGradle, /versionName "1\.2\.0"/);
 assert.match(androidGradle, /release \{\s+signingConfig signingConfigs\.release/);
 assert.match(androidGradle, /Release signing is not configured/);
+assert.match(
+  nolateTmapAndroidGradle,
+  /^\s*implementation ['"]com\.google\.android\.material:material:1\.12\.0['"]\s*$/m,
+  "The TMAP wrapper must own the MaterialComponents resources required by its local AAR",
+);
 assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
 assert.match(androidManifest, /android:allowBackup="false"/);
 assert.match(androidManifest, /android:name="\.MainActivity"[^>]+android:screenOrientation="portrait"/);
