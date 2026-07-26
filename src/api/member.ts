@@ -88,6 +88,10 @@ export type WithdrawPayload = {
     password?: string | null;
 };
 
+export type WithdrawalResult = {
+    manualAppleRevocationRequired: boolean;
+};
+
 export async function signUpMember(payload: SignUpPayload): Promise<MemberDto> {
     await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SignUpPayload>("/api/member/auth/sign-up", payload);
@@ -172,12 +176,12 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
 export async function withdrawMember(
     payload: WithdrawPayload | undefined,
     accountExit: { accessToken: string | null },
-): Promise<void> {
+): Promise<WithdrawalResult> {
     const accessToken = accountExit.accessToken?.trim();
     if (!accessToken) {
         throw new Error("회원탈퇴 요청의 인증 snapshot을 확인하지 못했습니다.");
     }
-    const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", {
+    const response = await apiDelete<ApiEnvelope<WithdrawalResult>>("/api/member/withdraw", {
         data: payload ?? {},
         _allowDuringAccountExit: true,
         headers: {
@@ -185,4 +189,10 @@ export async function withdrawMember(
         },
     });
     assertApiSuccess(response);
+    return {
+        // During a rolling deployment, an older or malformed success envelope cannot prove that
+        // Apple revocation was queued. Defaulting to manual action is the safe post-deletion path.
+        manualAppleRevocationRequired:
+            response.data?.manualAppleRevocationRequired === false ? false : true,
+    };
 }
