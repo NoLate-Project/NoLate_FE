@@ -1,5 +1,6 @@
 import React from "react";
 import {
+    ActionSheetIOS,
     PanResponder,
     ScrollView,
     StyleSheet,
@@ -257,11 +258,9 @@ describe("schedule agenda presentation", () => {
         expect(onRequestViewMode).toHaveBeenNthCalledWith(2, "stack");
         expect(renderer!.root.findByType(ScrollView).props
             .onMoveShouldSetResponderCapture).toBeUndefined();
-        const selectedDayTitle = renderer!.root.findByProps({
+        expect(renderer!.root.findAllByProps({
             children: "7월 14일 화요일",
-        });
-        expect(selectedDayTitle.parent?.props
-            .onMoveShouldSetResponderCapture).toBeUndefined();
+        })).toHaveLength(0);
     });
 
     test("목록형 핸들은 아래 드래그만 상세형 전환을 요청한다", async () => {
@@ -416,8 +415,8 @@ describe("schedule agenda presentation", () => {
         });
 
         const text = renderedText(renderer!);
-        expect(text).toContain("7월 14일 화요일");
-        expect(text).toMatch(/2\s*개의 일정/);
+        expect(text).not.toContain("7월 14일 화요일");
+        expect(text).not.toMatch(/2\s*개의 일정/);
         expect(text.indexOf("오전 일정")).toBeLessThan(text.indexOf("오후 일정"));
         expect(text).not.toContain("다른 날 일정");
         const detailCards = renderer!.root.findAllByType(ScheduleAgendaCard);
@@ -603,8 +602,7 @@ describe("schedule agenda presentation", () => {
         });
         expect(renderedNodeText(titleRow)).toContain("공유");
         expect(renderedNodeText(titleRow)).not.toContain("경로 미설정");
-        expect(renderedNodeText(timeColumn)).toContain("오후 3:40");
-        expect(renderedNodeText(timeColumn)).toContain("오후 4:10");
+        expect(renderedNodeText(timeColumn)).toContain("오후 3:40–4:10");
         expect(renderedNodeText(contextRow)).toContain("서울메디컬센터");
         expect(renderedNodeText(contextRow)).toContain("경로 미설정");
         expect(renderer!.root.findByProps({
@@ -797,6 +795,45 @@ describe("schedule agenda presentation", () => {
         ))[0];
         await act(async () => targetCard?.props.onPress());
         expect(onOpenSchedule).toHaveBeenCalledWith("same-day");
+    });
+
+    test("빈 달에서도 전체 일정 필터 pill을 열 수 있다", async () => {
+        const showActionSheet = jest
+            .spyOn(ActionSheetIOS, "showActionSheetWithOptions")
+            .mockImplementation(() => undefined);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <MonthAgendaList
+                        visibleMonth="2026-07-14"
+                        items={[]}
+                        loading={false}
+                        error={null}
+                        bottomInset={0}
+                        onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()}
+                        onRequestViewMode={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        const filterPill = renderer!.root.findByProps({
+            accessibilityLabel: "일정 필터, 전체 일정",
+        });
+        expect(filterPill.props.accessibilityState).toEqual({ disabled: false });
+
+        act(() => filterPill.props.onPress());
+
+        expect(showActionSheet).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: "표시할 일정",
+                options: ["전체 일정", "취소"],
+                cancelButtonIndex: 1,
+            }),
+            expect.any(Function)
+        );
     });
 
     test("목록형은 월이 바뀌면 스크롤을 맨 위로 되돌린다", async () => {

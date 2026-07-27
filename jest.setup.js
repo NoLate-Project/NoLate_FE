@@ -19,9 +19,61 @@ jest.mock('expo-image-picker', () => ({
 }));
 
 jest.mock('react-native-gesture-handler', () => {
+  const React = require('react');
   const { View } = require('react-native');
+  const createGesture = () => {
+    const callbacks = {};
+    const config = {};
+    const gesture = {
+      __mockCallbacks: callbacks,
+      __mockConfig: config,
+    };
+
+    [
+      'enabled',
+      'minDistance',
+      'maxPointers',
+      'cancelsTouchesInView',
+    ].forEach((method) => {
+      gesture[method] = (value) => {
+        config[method] = value;
+        return gesture;
+      };
+    });
+    gesture.withTestId = (testID) => {
+      config.testID = testID;
+      return gesture;
+    };
+    [
+      'onTouchesDown',
+      'onBegin',
+      'onUpdate',
+      'onEnd',
+      'onFinalize',
+    ].forEach((method) => {
+      gesture[method] = (callback) => {
+        callbacks[method] = callback;
+        return gesture;
+      };
+    });
+
+    return gesture;
+  };
+  const GestureDetector = ({ gesture, children }) => React.createElement(
+    View,
+    {
+      testID: gesture?.__mockConfig?.testID,
+      mockGestureCallbacks: gesture?.__mockCallbacks,
+      mockGestureConfig: gesture?.__mockConfig,
+    },
+    children
+  );
 
   return {
+    Gesture: {
+      Pan: createGesture,
+    },
+    GestureDetector,
     GestureHandlerRootView: View,
     PanGestureHandler: View,
     State: {
@@ -40,6 +92,27 @@ jest.mock('react-native-reanimated', () => {
   const { View } = require('react-native');
   const identity = (value) => value;
   const easingIdentity = (value) => value;
+  const pendingTimingCallbacks = [];
+  const pendingRunOnJSCallbacks = [];
+  let deferTimingCallbacks = false;
+  let deferRunOnJSCallbacks = false;
+  const withTiming = jest.fn((value, _config, callback) => {
+    if (callback) {
+      if (deferTimingCallbacks) {
+        pendingTimingCallbacks.push(callback);
+      } else {
+        callback(true);
+      }
+    }
+    return value;
+  });
+  const runOnJS = (callback) => (...args) => {
+    if (deferRunOnJSCallbacks) {
+      pendingRunOnJSCallbacks.push(() => callback(...args));
+      return undefined;
+    }
+    return callback(...args);
+  };
 
   return {
     __esModule: true,
@@ -81,8 +154,16 @@ jest.mock('react-native-reanimated', () => {
       Never: 'never',
       System: 'system',
     },
-    runOnJS: identity,
-    useAnimatedStyle: (factory) => factory(),
+    runOnJS,
+    useAnimatedStyle: (factory) => {
+      const style = factory();
+      Object.defineProperty(style, '__mockFactory', {
+        configurable: true,
+        enumerable: false,
+        value: factory,
+      });
+      return style;
+    },
     useReducedMotion: jest.fn(() => false),
     useSharedValue: (initialValue) => React.useRef({ value: initialValue }).current,
     withDelay: (_delay, animation) => animation,
@@ -91,9 +172,34 @@ jest.mock('react-native-reanimated', () => {
       callback?.(true);
       return value;
     },
-    withTiming: (value, _config, callback) => {
-      callback?.(true);
-      return value;
+    withTiming,
+    __setTimingCallbacksDeferred: (deferred) => {
+      deferTimingCallbacks = deferred;
     },
+    __flushTimingCallbacks: (finished = true) => {
+      const callbacks = pendingTimingCallbacks.splice(
+        0,
+        pendingTimingCallbacks.length
+      );
+      callbacks.forEach((callback) => callback(finished));
+    },
+    __resetTimingCallbacks: () => {
+      deferTimingCallbacks = false;
+      pendingTimingCallbacks.splice(0, pendingTimingCallbacks.length);
+      deferRunOnJSCallbacks = false;
+      pendingRunOnJSCallbacks.splice(0, pendingRunOnJSCallbacks.length);
+    },
+    __getPendingTimingCallbackCount: () => pendingTimingCallbacks.length,
+    __setRunOnJSCallbacksDeferred: (deferred) => {
+      deferRunOnJSCallbacks = deferred;
+    },
+    __flushRunOnJSCallbacks: () => {
+      const callbacks = pendingRunOnJSCallbacks.splice(
+        0,
+        pendingRunOnJSCallbacks.length
+      );
+      callbacks.forEach((callback) => callback());
+    },
+    __getPendingRunOnJSCallbackCount: () => pendingRunOnJSCallbacks.length,
   };
 });

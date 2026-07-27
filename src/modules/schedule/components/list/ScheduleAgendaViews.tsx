@@ -18,7 +18,6 @@ import {
 import { useTheme } from "../../../theme/ThemeContext";
 import {
     buildMonthAgendaSections,
-    formatAgendaSectionHeader,
     getSelectedDayAgendaItems,
     getVisibleMonthAgendaItems,
 } from "../../agendaLayout";
@@ -411,17 +410,6 @@ export function SelectedDayAgendaPanel({
                 panelKind="detail"
                 onRequestViewMode={onRequestViewMode}
             />
-            <View style={[styles.selectedDayHeader, { borderBottomColor: colors.border }]}>
-                <Text
-                    numberOfLines={1}
-                    style={[styles.selectedDayTitle, { color: colors.textPrimary }]}
-                >
-                    {formatAgendaSectionHeader(selectedDay)}
-                </Text>
-                <Text style={[styles.selectedDayCount, { color: colors.textSecondary }]}>
-                    {selectedItems.length}개의 일정
-                </Text>
-            </View>
 
             <ScrollView
                 style={styles.scroll}
@@ -600,8 +588,7 @@ export function MonthAgendaList({
                     accessibilityRole="button"
                     accessibilityLabel={`일정 필터, ${selectedCategoryTitle}`}
                     accessibilityHint="표시할 일정 카테고리를 선택합니다"
-                    accessibilityState={{ disabled: categoryOptions.length === 0 }}
-                    disabled={categoryOptions.length === 0}
+                    accessibilityState={{ disabled: false }}
                     onPress={openCategoryFilter}
                     style={({ pressed }) => [
                         styles.agendaFilterPill,
@@ -610,7 +597,7 @@ export function MonthAgendaList({
                             : styles.agendaFilterPillLight,
                         {
                             borderColor: colors.border,
-                            opacity: categoryOptions.length === 0 ? 0.42 : pressed ? 0.62 : 1,
+                            opacity: pressed ? 0.62 : 1,
                         },
                     ]}
                 >
@@ -742,31 +729,6 @@ const styles = StyleSheet.create({
     },
     panelHandleLight: {
         backgroundColor: "rgba(60,60,67,0.24)",
-    },
-    selectedDayHeader: {
-        minHeight: 42,
-        paddingHorizontal: 16,
-        paddingBottom: 8,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-    },
-    selectedDayTitle: {
-        flex: 1,
-        minWidth: 0,
-        fontSize: 15,
-        lineHeight: 20,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
-    selectedDayCount: {
-        flexShrink: 0,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "700",
-        letterSpacing: 0,
     },
     scroll: {
         flex: 1,

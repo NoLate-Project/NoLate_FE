@@ -28,6 +28,7 @@ RCT_EXPORT_VIEW_PROPERTY(buttonWidth, NSNumber)
 RCT_EXPORT_VIEW_PROPERTY(buttonHeight, NSNumber)
 RCT_EXPORT_VIEW_PROPERTY(disabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(colorScheme, NSString)
+RCT_EXPORT_VIEW_PROPERTY(animatesContentChanges, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(onPress, RCTBubblingEventBlock)
 
 @end

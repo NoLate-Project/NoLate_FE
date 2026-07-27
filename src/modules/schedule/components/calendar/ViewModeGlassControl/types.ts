@@ -19,4 +19,7 @@ export type ViewModeGlassControlSelectEvent = {
 
 export type ViewModeGlassControlOpenChangeEvent = {
     open: boolean;
+    search?: boolean;
+    searchGeneration?: number;
+    searchSession?: string;
 };

@@ -23,6 +23,7 @@ type NativeLiquidGlassIconButtonProps = ViewProps & {
     buttonHeight?: number;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
+    animatesContentChanges?: boolean;
     onPress?: (event: NativeSyntheticEvent<LiquidGlassIconButtonPressEvent>) => void;
 };
 
@@ -35,6 +36,7 @@ export type LiquidGlassIconButtonProps = ViewProps & {
     buttonHeight?: number;
     disabled?: boolean;
     colorScheme?: ViewModeGlassControlColorScheme;
+    animatesContentChanges?: boolean;
     accessibilityLabel?: string;
     onPress?: () => void;
 };
@@ -61,6 +63,7 @@ export default function LiquidGlassIconButton({
     buttonHeight = 58,
     disabled = false,
     colorScheme = "dark",
+    animatesContentChanges = true,
     accessibilityLabel,
     onPress,
     style,
@@ -90,6 +93,7 @@ export default function LiquidGlassIconButton({
                 buttonHeight={buttonHeight}
                 disabled={disabled}
                 colorScheme={colorScheme}
+                animatesContentChanges={animatesContentChanges}
                 onPress={handlePress}
                 pointerEvents="none"
                 style={StyleSheet.absoluteFill}

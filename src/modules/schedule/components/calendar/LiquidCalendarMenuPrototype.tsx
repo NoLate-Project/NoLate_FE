@@ -34,8 +34,11 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
     searchExpandedWidth?: number;
     searchQuery?: string;
     onSelect?: (mode: LiquidCalendarMenuSelectionMode) => void;
-    onOpenChange?: (open: boolean) => void;
-    onSearch?: () => void;
+    onOpenChange?: (
+        open: boolean,
+        context: { search: boolean; generation: number; session: string },
+    ) => void;
+    onSearch?: (context: { generation: number; session: string }) => void;
     onSearchTextChange?: (text: string) => void;
     onSearchClose?: () => void;
     onAdd?: () => void;
@@ -64,7 +67,9 @@ type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
     onOpenChange?: (
         event: NativeSyntheticEvent<ViewModeGlassControlOpenChangeEvent>
     ) => void;
-    onSearch?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
+    onSearch?: (
+        event: NativeSyntheticEvent<{ generation?: number; session?: string }>
+    ) => void;
     onSearchTextChange?: (event: NativeSyntheticEvent<{ text?: string }>) => void;
     onSearchClose?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
     onAdd?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
@@ -141,14 +146,23 @@ export default function LiquidCalendarMenuPrototype({
     const handleOpenChange = useCallback(
         (event: NativeSyntheticEvent<ViewModeGlassControlOpenChangeEvent>) => {
             const open = Boolean(event.nativeEvent.open);
-            onOpenChange?.(open);
+            onOpenChange?.(open, {
+                search: Boolean(event.nativeEvent.search),
+                generation: event.nativeEvent.searchGeneration ?? 0,
+                session: event.nativeEvent.searchSession ?? "",
+            });
         },
         [onOpenChange],
     );
 
-    const handleSearch = useCallback(() => {
+    const handleSearch = useCallback((
+        event: NativeSyntheticEvent<{ generation?: number; session?: string }>
+    ) => {
         if (!disabled) {
-            onSearch?.();
+            onSearch?.({
+                generation: event.nativeEvent.generation ?? 0,
+                session: event.nativeEvent.session ?? "",
+            });
         }
     }, [disabled, onSearch]);
 

@@ -6,6 +6,7 @@ import {
     CALENDAR_TODAY_FOCUS_MOTION,
     CALENDAR_TRANSITION_DURATION_MS,
     CURRENT_TIME_MOTION,
+    DETAIL_MONTH_HEIGHT_MOTION,
     DETAIL_MONTH_PANEL_LAYOUT,
     DETAIL_MONTH_SWIPE_GESTURE,
     DETAIL_MONTH_SWIPE_MOTION,
@@ -17,6 +18,7 @@ import {
     getDetailMonthSwipeFollowOpacity,
     getDetailMonthSwipeGestureDirection,
     getDetailMonthSwipeOffsets,
+    getDetailMonthSwipeSettleDuration,
     getMonthAgendaGestureTarget,
     getMonthAgendaPanelKind,
     getMonthAgendaSteppedTarget,
@@ -78,6 +80,14 @@ describe("calendar depth motion", () => {
         expect(Object.isFrozen(DETAIL_MONTH_SWIPE_MOTION)).toBe(true);
     });
 
+    test("5주↔6주 월 높이는 스와이프와 독립된 easing으로 보간한다", () => {
+        expect(DETAIL_MONTH_HEIGHT_MOTION.durationMs).toBe(220);
+        expect(DETAIL_MONTH_HEIGHT_MOTION.reduceMotionDurationMs).toBe(80);
+        expect(DETAIL_MONTH_HEIGHT_MOTION.bezier).toEqual([0.2, 0, 0, 1]);
+        expect(Object.isFrozen(DETAIL_MONTH_HEIGHT_MOTION)).toBe(true);
+        expect(Object.isFrozen(DETAIL_MONTH_HEIGHT_MOTION.bezier)).toBe(true);
+    });
+
     test("Today 세로 전환도 commit 프레임을 포함해 160ms 안에 끝난다", () => {
         const duration = CALENDAR_TODAY_FOCUS_MOTION.exitDurationMs
             + CALENDAR_TODAY_FOCUS_MOTION.commitFrameBudgetMs
@@ -96,8 +106,8 @@ describe("calendar depth motion", () => {
     });
 
     test.each([
-        [1, -24, 24],
-        [-1, 24, -24],
+        [1, -320, 320],
+        [-1, 320, -320],
     ] as const)(
         "상세형 월 이동 방향 %s는 outgoing=%s, incoming=%s이다",
         (direction, outgoing, incoming) => {
@@ -133,6 +143,40 @@ describe("calendar depth motion", () => {
         });
         expect(DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs).toBeLessThanOrEqual(120);
         expect(Object.isFrozen(DETAIL_MONTH_SWIPE_GESTURE)).toBe(true);
+    });
+
+    test("상세형 월 settle은 최소 시간 없이 거리·속도에 따라 줄어든다", () => {
+        const maximum = DETAIL_MONTH_SWIPE_MOTION.maxGestureSettleDurationMs;
+
+        expect(maximum).toBe(
+            CALENDAR_INTERACTION_BUDGET_MS
+                - DETAIL_MONTH_SWIPE_MOTION.commitFrameBudgetMs
+        );
+        expect(getDetailMonthSwipeSettleDuration(400, 0, 400))
+            .toBe(maximum);
+        expect(getDetailMonthSwipeSettleDuration(200, 0, 400))
+            .toBe(maximum / 2);
+        expect(getDetailMonthSwipeSettleDuration(400, 4, 400))
+            .toBe(100);
+        expect(getDetailMonthSwipeSettleDuration(1, 0, 400))
+            .toBeLessThan(1);
+        expect(getDetailMonthSwipeSettleDuration(0, 0, 400)).toBe(0);
+    });
+
+    test("상세형 월 settle은 반대·비정상 속도를 안전하게 보정한다", () => {
+        const maximum = DETAIL_MONTH_SWIPE_MOTION.maxGestureSettleDurationMs;
+
+        expect(getDetailMonthSwipeSettleDuration(400, -4, 400))
+            .toBe(maximum);
+        expect(getDetailMonthSwipeSettleDuration(500, 0, 400))
+            .toBe(maximum);
+        expect(getDetailMonthSwipeSettleDuration(
+            Number.NaN,
+            0,
+            400
+        )).toBe(0);
+        expect(getDetailMonthSwipeSettleDuration(100, 0, 0)).toBe(0);
+        expect(getDetailMonthSwipeSettleDuration(100, 0, 400, 0)).toBe(0);
     });
 
     test("가로 우세 드래그만 상세형 월 스와이프로 점유한다", () => {

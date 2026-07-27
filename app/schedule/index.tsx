@@ -141,6 +141,7 @@ import {
     CALENDAR_PILL_MOTION,
     CALENDAR_TODAY_FOCUS_MOTION,
     CURRENT_TIME_MOTION,
+    DETAIL_MONTH_HEIGHT_MOTION,
     MONTH_AGENDA_MOTION,
     formatCalendarCurrentTime,
     getCalendarMonthWeekCount,
@@ -554,8 +555,9 @@ export default function ScheduleIndex() {
     const dayModeTransition = useRef(new Animated.Value(1)).current;
     const toolbarDropdownProgress = useRef(new Animated.Value(0)).current;
     const searchToolbarProgress = useRef(new Animated.Value(0)).current;
-    const searchToolbarChromeOpacity = useRef(new Animated.Value(1)).current;
     const addHandoffToolbarOpacity = useRef(new Animated.Value(1)).current;
+    const nativeSearchGenerationRef = useRef(0);
+    const nativeSearchSessionRef = useRef<string | null>(null);
     const searchInputRef = useRef<TextInput>(null);
     const dayDisplayPrepareRef = useRef<((day: string) => void) | null>(null);
     const monthCalendarHeightRef = useRef(0);
@@ -564,7 +566,10 @@ export default function ScheduleIndex() {
     const [monthDisplayHeight, setMonthDisplayHeight] = useState(0);
     const monthViewTransitionGenerationRef = useRef(0);
     const monthViewTransitionFrameRef = useRef<number | null>(null);
+    const yearDepthTransitionFrameRef = useRef<number | null>(null);
     const monthViewCompletionAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+    const monthViewTransitionWatchdogRef =
+        useRef<ReturnType<typeof setTimeout> | null>(null);
     const todayFocusAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
     const todayFocusWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const todayFocusAnimationGenerationRef = useRef(0);
@@ -777,10 +782,13 @@ export default function ScheduleIndex() {
     const primaryPillContentWidth = primaryPillVisible
         ? primaryPillLayout.width
         : monthPrimaryPillLayout.width;
-    const primaryPillAnimatedWidth = useSharedValue(primaryPillLayout.width);
+    // Keep the host at a concrete width while the year layer hides the pill.
+    // Animating a parent from 0 while its native child uses width: "100%" can
+    // leave the SwiftUI hosting view with stale clipped bounds under Fabric.
+    const primaryPillAnimatedWidth = useSharedValue(primaryPillContentWidth);
     useEffect(() => {
         cancelReanimatedAnimation(primaryPillAnimatedWidth);
-        primaryPillAnimatedWidth.value = withTiming(primaryPillLayout.width, {
+        primaryPillAnimatedWidth.value = withTiming(primaryPillContentWidth, {
             duration: reduceMotionEnabled
                 ? CALENDAR_DEPTH_MOTION.reduceMotionDurationMs
                 : CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
@@ -790,7 +798,11 @@ export default function ScheduleIndex() {
             reduceMotion: ReduceMotion.Never,
         });
         return () => cancelReanimatedAnimation(primaryPillAnimatedWidth);
-    }, [primaryPillAnimatedWidth, primaryPillLayout.width, reduceMotionEnabled]);
+    }, [
+        primaryPillAnimatedWidth,
+        primaryPillContentWidth,
+        reduceMotionEnabled,
+    ]);
     const primaryPillAnimatedStyle = useAnimatedStyle(() => ({
         width: primaryPillAnimatedWidth.value,
     }));
@@ -829,6 +841,9 @@ export default function ScheduleIndex() {
     const monthAgendaMotionDuration = reduceMotionEnabled
         ? MONTH_AGENDA_MOTION.reduceMotionDurationMs
         : MONTH_AGENDA_MOTION.durationMs;
+    const detailMonthHeightMotionDuration = reduceMotionEnabled
+        ? DETAIL_MONTH_HEIGHT_MOTION.reduceMotionDurationMs
+        : DETAIL_MONTH_HEIGHT_MOTION.durationMs;
     const resolveMonthCalendarLayout = useCallback((viewMode: CalendarViewMode) => {
         const fullCalendarHeight = monthDisplayHeight || monthDisplayHeightRef.current;
         const targetHeaderHeight = getStickyCalendarHeaderHeight(viewMode);
@@ -948,23 +963,33 @@ export default function ScheduleIndex() {
         monthCalendarDayHeightRef.current = targetLayout.dayHeight;
         monthCalendarTargetHeight.value = targetHeight;
 
+        const liveCalendarHeight = monthCalendarAnimatedHeight.value;
+        const liveDayHeight = monthCalendarAnimatedDayHeight.value;
         const shouldAnimateResponsiveDetailLayout =
             calendarViewMode === "detail"
-            && monthCalendarAnimatedHeight.value > 0
-            && Math.abs(monthCalendarAnimatedHeight.value - targetHeight) > 0.5;
+            && !isDayTransitionActive
+            && !isYearDepthTransitionActive
+            && liveCalendarHeight > 0
+            && liveDayHeight > 0
+            && (
+                Math.abs(liveCalendarHeight - targetHeight) > 0.5
+                || Math.abs(liveDayHeight - targetLayout.dayHeight) > 0.5
+            );
         if (shouldAnimateResponsiveDetailLayout) {
             const layoutEasing = reduceMotionEnabled
                 ? ReanimatedEasing.out(ReanimatedEasing.cubic)
-                : ReanimatedEasing.bezier(...MONTH_AGENDA_MOTION.bezier);
+                : ReanimatedEasing.bezier(
+                    ...DETAIL_MONTH_HEIGHT_MOTION.bezier
+                );
             monthCalendarAnimatedHeight.value = withTiming(targetHeight, {
-                duration: monthAgendaMotionDuration,
+                duration: detailMonthHeightMotionDuration,
                 easing: layoutEasing,
                 reduceMotion: ReduceMotion.Never,
             });
             monthCalendarAnimatedDayHeight.value = withTiming(
                 targetLayout.dayHeight,
                 {
-                    duration: monthAgendaMotionDuration,
+                    duration: detailMonthHeightMotionDuration,
                     easing: layoutEasing,
                     reduceMotion: ReduceMotion.Never,
                 }
@@ -976,8 +1001,10 @@ export default function ScheduleIndex() {
         monthCalendarAnimatedDayHeight.value = targetLayout.dayHeight;
     }, [
         calendarViewMode,
+        detailMonthHeightMotionDuration,
+        isDayTransitionActive,
         isMonthViewTransitionActive,
-        monthAgendaMotionDuration,
+        isYearDepthTransitionActive,
         monthCalendarAnimatedDayHeight,
         monthCalendarAnimatedHeight,
         monthCalendarTargetHeight,
@@ -1063,12 +1090,14 @@ export default function ScheduleIndex() {
         LIQUID_TOOLBAR_ACTIONS_WIDTH,
         screenWidth - SEARCH_TOOLBAR_LEFT_INSET - searchHeaderRightInset
     );
-    // Keep the native canvas ready at its largest size. The UIKit child rejects
-    // hits outside the visible pill while collapsed, so this transparent area
-    // does not block the year pill or calendar. Search can therefore morph on
-    // the native clock immediately instead of waiting for a Fabric resize.
+    // Keep the native search width ready while collapsed, but limit the host to
+    // the search bar's height. A full-height Fabric host still wins hit-testing
+    // over calendar cells even when its UIKit child rejects the transparent
+    // area. Menus expand the canvas only after the native control reports open.
     const liquidPrototypeLayerWidth = searchHeaderTargetWidth;
-    const liquidPrototypeLayerHeight = LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT;
+    const liquidPrototypeLayerHeight = liquidPrototypeOpen
+        ? LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT
+        : LIQUID_TOOLBAR_SEARCH_HEIGHT;
     const requestCloseLiquidPrototype = useCallback(() => {
         if (!usesLiquidViewModeControl) return;
         // Swift closes its content first and then reports `onOpenChange(false)`,
@@ -1246,11 +1275,9 @@ export default function ScheduleIndex() {
         // Animated values survive Fast Refresh. Reset the visibility invariant
         // in cleanup instead of preserving a handoff's transient zero opacity.
         addHandoffToolbarOpacity.setValue(1);
-        searchToolbarChromeOpacity.setValue(1);
     }, [
         addHandoffToolbarOpacity,
         clearQuickHandoffTimer,
-        searchToolbarChromeOpacity,
     ]);
     const dropdownScaleX = toolbarDropdownProgress.interpolate({
         inputRange: [0, 1],
@@ -1420,8 +1447,16 @@ export default function ScheduleIndex() {
                 cancelAnimationFrame(monthViewTransitionFrameRef.current);
                 monthViewTransitionFrameRef.current = null;
             }
+            if (yearDepthTransitionFrameRef.current !== null) {
+                cancelAnimationFrame(yearDepthTransitionFrameRef.current);
+                yearDepthTransitionFrameRef.current = null;
+            }
             monthViewCompletionAnimationRef.current?.stop();
             monthViewCompletionAnimationRef.current = null;
+            if (monthViewTransitionWatchdogRef.current !== null) {
+                clearTimeout(monthViewTransitionWatchdogRef.current);
+                monthViewTransitionWatchdogRef.current = null;
+            }
             todayFocusAnimationGenerationRef.current += 1;
             if (todayFocusWatchdogRef.current !== null) {
                 clearTimeout(todayFocusWatchdogRef.current);
@@ -2077,7 +2112,6 @@ export default function ScheduleIndex() {
 
     const closeToolbarMenu = useCallback((afterClose?: () => void) => {
         if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {
-            Keyboard.dismiss();
             setSearchQuery("");
             setToolbarMenuClosing(true);
             requestCloseLiquidPrototype();
@@ -2120,11 +2154,7 @@ export default function ScheduleIndex() {
 
     const runToolbarAction = useCallback((action: () => void) => {
         if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {
-            Keyboard.dismiss();
-            setSearchQuery("");
             requestCloseLiquidPrototype();
-            searchToolbarChromeOpacity.stopAnimation();
-            searchToolbarChromeOpacity.setValue(1);
             setActiveToolbarMenu(null);
             setToolbarMenuClosing(false);
             requestAnimationFrame(action);
@@ -2147,7 +2177,6 @@ export default function ScheduleIndex() {
     }, [
         activeToolbarMenu,
         requestCloseLiquidPrototype,
-        searchToolbarChromeOpacity,
         toolbarDropdownProgress,
         usesLiquidViewModeControl,
     ]);
@@ -2191,54 +2220,86 @@ export default function ScheduleIndex() {
         toolbarDropdownProgress,
     ]);
 
-    const openSearchToolbar = useCallback(() => {
+    const openSearchToolbar = useCallback((nativeContext?: {
+        generation: number;
+        session: string;
+    }) => {
+        if (nativeContext) {
+            if (
+                nativeContext.session
+                && nativeSearchSessionRef.current !== nativeContext.session
+            ) {
+                nativeSearchSessionRef.current = nativeContext.session;
+                nativeSearchGenerationRef.current = nativeContext.generation;
+            } else {
+                nativeSearchGenerationRef.current = Math.max(
+                    nativeSearchGenerationRef.current,
+                    nativeContext.generation,
+                );
+            }
+        }
         setSearchQuery("");
         if (usesLiquidViewModeControl) {
             setToolbarMenuClosing(false);
             setActiveToolbarMenu("search");
-            searchToolbarChromeOpacity.stopAnimation();
-            Animated.timing(searchToolbarChromeOpacity, {
-                toValue: 0,
-                duration: 90,
-                easing: Easing.out(Easing.cubic),
-                useNativeDriver: true,
-            }).start();
             return;
         }
         openToolbarMenu("search");
     }, [
         openToolbarMenu,
-        searchToolbarChromeOpacity,
         usesLiquidViewModeControl,
     ]);
 
     const closeSearchToolbar = useCallback(() => {
-        setSearchQuery("");
         if (usesLiquidViewModeControl) {
-            // Swift owns the reverse morph. Keep the year pill visually and
-            // accessibly hidden until onOpenChange(false) confirms that the
-            // native search surface has fully collapsed.
-            Keyboard.dismiss();
-            setToolbarMenuClosing(true);
+            // Swift owns the reverse morph. Do not enqueue calendar state work
+            // ahead of its close-complete event; that previously stalled the
+            // next search tap for more than a second under repeated input.
             return;
         }
+        setSearchQuery("");
         closeToolbarMenu();
     }, [
         closeToolbarMenu,
         usesLiquidViewModeControl,
     ]);
 
-    const handleLiquidPrototypeOpenChange = useCallback((open: boolean) => {
+    const handleLiquidPrototypeOpenChange = useCallback((
+        open: boolean,
+        context: {
+            search: boolean;
+            generation: number;
+            session: string;
+        },
+    ) => {
+        if (context.search && context.session) {
+            const currentSession = nativeSearchSessionRef.current;
+            if (currentSession && currentSession !== context.session) {
+                return;
+            }
+            if (!currentSession) {
+                nativeSearchGenerationRef.current = context.generation;
+                nativeSearchSessionRef.current = context.session;
+            }
+        }
+
+        if (
+            !open
+            && context.search
+            && context.generation < nativeSearchGenerationRef.current
+        ) {
+            return;
+        }
+
         setLiquidPrototypeOpen(open);
         if (open) return;
 
-        searchToolbarChromeOpacity.stopAnimation();
-        searchToolbarChromeOpacity.setValue(1);
+        setSearchQuery("");
         setToolbarMenuClosing(false);
         setActiveToolbarMenu((currentMenu) => (
             currentMenu === "search" ? null : currentMenu
         ));
-    }, [searchToolbarChromeOpacity]);
+    }, []);
 
     useEffect(() => {
         if (!isSearchToolbarOpen || usesLiquidViewModeControl) return;
@@ -2415,15 +2476,19 @@ export default function ScheduleIndex() {
                 clearTimeout(dayTransitionCleanupTimerRef.current);
                 dayTransitionCleanupTimerRef.current = null;
             }
-            if (forceValue) {
+            if (finished || forceValue) {
                 yearOverviewProgress.stopAnimation();
                 yearOverviewProgress.setValue(toValue);
             }
-            setIsYearDepthTransitionActive(false);
             transitionStartedRef.current = false;
             if (finished || forceValue) {
-                afterAnimation?.();
+                unstable_batchedUpdates(() => {
+                    afterAnimation?.();
+                    setIsYearDepthTransitionActive(false);
+                });
+                return;
             }
+            setIsYearDepthTransitionActive(false);
         };
 
         const duration = reduceMotionEnabled
@@ -2895,6 +2960,10 @@ export default function ScheduleIndex() {
             cancelAnimationFrame(monthViewTransitionFrameRef.current);
             monthViewTransitionFrameRef.current = null;
         }
+        if (monthViewTransitionWatchdogRef.current !== null) {
+            clearTimeout(monthViewTransitionWatchdogRef.current);
+            monthViewTransitionWatchdogRef.current = null;
+        }
         monthViewCompletionAnimationRef.current?.stop();
         monthViewCompletionAnimationRef.current = null;
         const agendaTransition = getMonthAgendaTransition(calendarViewMode, nextMode);
@@ -2902,11 +2971,20 @@ export default function ScheduleIndex() {
         const targetAgendaProgress = nextAgendaPanelKind ? 1 : 0;
         const sourceLayout = resolveMonthCalendarLayout(calendarViewMode);
         const targetLayout = resolveMonthCalendarLayout(nextMode);
-        const sourceHeight = monthCalendarHeightRef.current
+        const liveCalendarHeight = monthCalendarAnimatedHeight.value;
+        const liveDayHeight = monthCalendarAnimatedDayHeight.value;
+        const sourceHeight = (
+            Number.isFinite(liveCalendarHeight) && liveCalendarHeight > 0
+        )
+            ? liveCalendarHeight
+            : monthCalendarHeightRef.current
             || sourceLayout.calendarHeight
             || monthDisplayHeightRef.current;
-        const sourceDayHeight = monthCalendarDayHeightRef.current
-            || sourceLayout.dayHeight;
+        const sourceDayHeight = (
+            Number.isFinite(liveDayHeight) && liveDayHeight > 0
+        )
+            ? liveDayHeight
+            : monthCalendarDayHeightRef.current || sourceLayout.dayHeight;
         const targetCalendarHeight = targetLayout.calendarHeight || sourceHeight;
         const targetDayHeight = targetLayout.dayHeight;
         const motionEasing = reduceMotionEnabled
@@ -2947,6 +3025,47 @@ export default function ScheduleIndex() {
             }
             setCalendarViewMode(nextMode);
         });
+
+        let transitionFinalized = false;
+        const finishMonthViewTransition = () => {
+            if (
+                transitionFinalized
+                || transitionGeneration !== monthViewTransitionGenerationRef.current
+            ) return;
+
+            transitionFinalized = true;
+            if (monthViewTransitionWatchdogRef.current !== null) {
+                clearTimeout(monthViewTransitionWatchdogRef.current);
+                monthViewTransitionWatchdogRef.current = null;
+            }
+            if (monthViewTransitionFrameRef.current !== null) {
+                cancelAnimationFrame(monthViewTransitionFrameRef.current);
+                monthViewTransitionFrameRef.current = null;
+            }
+            monthViewCompletionAnimationRef.current = null;
+            cancelReanimatedAnimation(monthCalendarAnimatedHeight);
+            monthCalendarAnimatedHeight.value = targetCalendarHeight;
+            monthCalendarTargetHeight.value = targetCalendarHeight;
+            cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
+            monthCalendarAnimatedDayHeight.value = targetDayHeight;
+            monthCalendarHeightRef.current = targetCalendarHeight;
+            monthCalendarDayHeightRef.current = targetDayHeight;
+            monthCalendarTransitionProgress.setValue(1);
+            monthAgendaProgress.setValue(targetAgendaProgress);
+            monthAgendaSwapProgress.setValue(1);
+            setOutgoingMonthAgendaPanelKind(null);
+            setIsMonthViewTransitionActive(false);
+            viewTransitioningRef.current = false;
+        };
+
+        monthViewTransitionWatchdogRef.current = setTimeout(() => {
+            if (transitionGeneration !== monthViewTransitionGenerationRef.current) return;
+
+            const activeAnimation = monthViewCompletionAnimationRef.current;
+            monthViewCompletionAnimationRef.current = null;
+            activeAnimation?.stop();
+            finishMonthViewTransition();
+        }, CALENDAR_INTERACTION_BUDGET_MS);
 
         monthViewTransitionFrameRef.current = requestAnimationFrame(() => {
             monthViewTransitionFrameRef.current = null;
@@ -2996,28 +3115,15 @@ export default function ScheduleIndex() {
 
             const completionAnimation = Animated.parallel(animations);
             monthViewCompletionAnimationRef.current = completionAnimation;
-            completionAnimation.start(({ finished }) => {
-                if (
-                    !finished ||
-                    transitionGeneration !== monthViewTransitionGenerationRef.current
-                ) {
+            completionAnimation.start(() => {
+                if (transitionGeneration !== monthViewTransitionGenerationRef.current) {
                     return;
                 }
 
-                monthViewCompletionAnimationRef.current = null;
-                cancelReanimatedAnimation(monthCalendarAnimatedHeight);
-                monthCalendarAnimatedHeight.value = targetCalendarHeight;
-                monthCalendarTargetHeight.value = targetCalendarHeight;
-                cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
-                monthCalendarAnimatedDayHeight.value = targetDayHeight;
-                monthCalendarHeightRef.current = targetCalendarHeight;
-                monthCalendarDayHeightRef.current = targetDayHeight;
-                monthCalendarTransitionProgress.setValue(1);
-                monthAgendaProgress.setValue(targetAgendaProgress);
-                monthAgendaSwapProgress.setValue(1);
-                setOutgoingMonthAgendaPanelKind(null);
-                setIsMonthViewTransitionActive(false);
-                viewTransitioningRef.current = false;
+                // A cancelled native animation still leaves nextMode committed.
+                // Always reconcile to that endpoint so toolbar hit-testing and
+                // subsequent view changes cannot remain permanently locked.
+                finishMonthViewTransition();
             });
         });
     }, [
@@ -3090,17 +3196,26 @@ export default function ScheduleIndex() {
         setYearOverviewClosing(true);
         setIsYearDepthTransitionActive(true);
 
-        animateYearDepthTransition(0, () => {
-            setCalendarDepth("month");
-            yearOverviewProgress.setValue(0);
-            calendarTransition.setValue(1);
-            setOverviewYear(year);
-            setTransitionMonthKey(null);
-            setYearOverviewVisible(false);
-            setYearOverviewClosing(false);
-            setDayTransitionContext("idle");
-            setPendingSelectedDay(targetSelection);
-            dispatch({ type: "SET_SELECTED_DAY", day: targetSelection });
+        // Let the off-screen target month commit once before starting the
+        // native slide. This avoids competing with Calendar/Fabric layout in
+        // the first visible transition frame.
+        if (yearDepthTransitionFrameRef.current !== null) {
+            cancelAnimationFrame(yearDepthTransitionFrameRef.current);
+        }
+        yearDepthTransitionFrameRef.current = requestAnimationFrame(() => {
+            yearDepthTransitionFrameRef.current = null;
+            animateYearDepthTransition(0, () => {
+                setCalendarDepth("month");
+                yearOverviewProgress.setValue(0);
+                calendarTransition.setValue(1);
+                setTransitionMonthKey(null);
+                setYearOverviewVisible(false);
+                setYearOverviewClosing(false);
+                setDayTransitionContext("idle");
+                setPendingSelectedDay(targetSelection);
+                setFetchVisibleMonth(targetSelection);
+                dispatch({ type: "SET_SELECTED_DAY", day: targetSelection });
+            });
         });
     }, [
         animateYearDepthTransition,
@@ -3371,26 +3486,23 @@ export default function ScheduleIndex() {
                 {(activeToolbarMenu !== null || toolbarMenuClosing || liquidPrototypeOpen) && (
                     <Pressable
                         accessible={false}
+                        disabled={toolbarMenuClosing}
                         style={[
                             styles.toolbarDropdownBackdrop,
                             liquidPrototypeOpen && styles.liquidToolbarBackdrop,
                         ]}
-                        onPress={() => {
-                            closeToolbarMenu();
-                            if (liquidPrototypeOpen) requestCloseLiquidPrototype();
-                        }}
+                        onPress={() => closeToolbarMenu()}
                     />
                 )}
 
                 {(
                     <Animated.View
-                        pointerEvents={isSearchToolbarOpen ? "none" : "box-none"}
+                        pointerEvents="box-none"
                         {...getScheduleAccessibilityVisibility(!isSearchToolbarOpen)}
                         style={[
                             styles.toolbarChromeLayer,
                             {
                                 paddingTop: insets.top,
-                                opacity: searchToolbarChromeOpacity,
                             },
                         ]}
                     >
@@ -3398,8 +3510,16 @@ export default function ScheduleIndex() {
                             <Reanimated.View
                                 testID="calendar-primary-pill-host"
                                 pointerEvents={primaryPillInteractionEnabled ? "box-none" : "none"}
-                                accessibilityElementsHidden={!primaryPillInteractionEnabled}
-                                importantForAccessibility={primaryPillInteractionEnabled ? "auto" : "no-hide-descendants"}
+                                accessibilityElementsHidden={
+                                    !primaryPillInteractionEnabled
+                                    || usesLiquidViewModeControl
+                                }
+                                importantForAccessibility={
+                                    primaryPillInteractionEnabled
+                                    && !usesLiquidViewModeControl
+                                        ? "auto"
+                                        : "no-hide-descendants"
+                                }
                                 style={[
                                     styles.primaryDatePillHost,
                                     primaryPillAnimatedStyle,
@@ -3443,6 +3563,7 @@ export default function ScheduleIndex() {
                                                 buttonWidth={primaryPillContentWidth}
                                                 buttonHeight={LIQUID_TOOLBAR_BUTTON_SIZE}
                                                 colorScheme={mode === "dark" ? "dark" : "light"}
+                                                animatesContentChanges={false}
                                                 accessibilityLabel={pillTargetDepth === "day" ? "월 화면으로 돌아가기" : `${visibleYear}년 전체 월 보기`}
                                                 style={StyleSheet.absoluteFill}
                                             />
@@ -3501,6 +3622,13 @@ export default function ScheduleIndex() {
                                 right: ADD_MENU_SOURCE.nativeRightInset,
                                 width: liquidPrototypeLayerWidth,
                                 height: liquidPrototypeLayerHeight,
+                                // The search morph now starts entirely on the
+                                // native UI thread. Keep that surface above the
+                                // React year pill even before the open event
+                                // reaches JS; transparent canvas hit-testing is
+                                // already limited to the compact pill.
+                                zIndex: 56,
+                                elevation: 56,
                                 opacity: addHandoffToolbarOpacity,
                             },
                         ]}
@@ -3626,7 +3754,7 @@ export default function ScheduleIndex() {
                                     )}
 
                                     <Pressable
-                                        onPress={openSearchToolbar}
+                                        onPress={() => openSearchToolbar()}
                                         accessibilityRole="button"
                                         accessibilityLabel="일정 검색"
                                         style={({ pressed }) => [
@@ -3712,6 +3840,33 @@ export default function ScheduleIndex() {
                             </CalendarGlassSurface>
                         </Animated.View>
                     </Animated.View>
+                )}
+
+                {/* The collapsed native search canvas spans the toolbar so its
+                    morph can start on the UI thread. Keep an exact React hit
+                    target above only the visible left pill; once native content
+                    opens, the native surface owns the full toolbar again. */}
+                {usesLiquidViewModeControl
+                    && !liquidPrototypeOpen
+                    && primaryPillInteractionEnabled && (
+                    <Pressable
+                        testID="calendar-primary-pill-hit-target"
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                            pillTargetDepth === "day"
+                                ? "월 화면으로 돌아가기"
+                                : `${visibleYear}년 전체 월 보기`
+                        }
+                        accessibilityState={{ disabled: false }}
+                        onPress={handlePrimaryDateButtonPress}
+                        style={[
+                            styles.yearTapOverlay,
+                            {
+                                top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
+                                width: primaryPillContentWidth,
+                            },
+                        ]}
+                    />
                 )}
 
                 {isSearchToolbarOpen && searchQuery.trim().length > 0 && (
@@ -6131,6 +6286,7 @@ const styles = StyleSheet.create({
     },
     yearTapOverlay: {
         position: "absolute",
+        left: 16,
         width: LIQUID_YEAR_PILL_WIDTH,
         height: LIQUID_TOOLBAR_BUTTON_SIZE,
         borderRadius: LIQUID_TOOLBAR_BUTTON_SIZE / 2,

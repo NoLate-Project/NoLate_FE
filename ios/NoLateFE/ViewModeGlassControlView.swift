@@ -28,12 +28,13 @@ private final class ViewModeGlassControlModel: ObservableObject {
   @Published var prototypeManualAddRequest = 0
   @Published var prototypeHostExpanded = false
   @Published var prototypeSearchHostReady = false
+  var searchOpenGeneration = 0
   @Published var searchExpandedWidth: CGFloat
   @Published var searchQuery: String
 
   let handleSelect: (String) -> Void
   let handleOpenChange: (Bool) -> Void
-  let handleSearch: () -> Void
+  let handleSearch: (Int) -> Void
   let handleSearchTextChange: (String) -> Void
   let handleSearchClose: () -> Void
   let handleAdd: () -> Void
@@ -51,7 +52,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
     searchQuery: String = "",
     handleSelect: @escaping (String) -> Void,
     handleOpenChange: @escaping (Bool) -> Void,
-    handleSearch: @escaping () -> Void = {},
+    handleSearch: @escaping (Int) -> Void = { _ in },
     handleSearchTextChange: @escaping (String) -> Void = { _ in },
     handleSearchClose: @escaping () -> Void = {},
     handleAdd: @escaping () -> Void = {},
@@ -87,6 +88,7 @@ private final class LiquidGlassIconButtonModel: ObservableObject {
   @Published var buttonHeight: CGFloat
   @Published var disabled: Bool
   @Published var colorScheme: String
+  @Published var animatesContentChanges: Bool
 
   let handlePress: () -> Void
 
@@ -99,6 +101,7 @@ private final class LiquidGlassIconButtonModel: ObservableObject {
     buttonHeight: CGFloat = 58,
     disabled: Bool,
     colorScheme: String,
+    animatesContentChanges: Bool = true,
     handlePress: @escaping () -> Void
   ) {
     self.symbolName = symbolName
@@ -109,6 +112,7 @@ private final class LiquidGlassIconButtonModel: ObservableObject {
     self.buttonHeight = buttonHeight
     self.disabled = disabled
     self.colorScheme = colorScheme
+    self.animatesContentChanges = animatesContentChanges
     self.handlePress = handlePress
   }
 }
@@ -192,6 +196,8 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   @objc var searchExpandedWidth: NSNumber = 361 {
     didSet {
       model.searchExpandedWidth = CGFloat(truncating: searchExpandedWidth)
+      setNeedsLayout()
+      updateHostReadiness()
     }
   }
 
@@ -211,6 +217,9 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   @objc var onManualAdd: (([AnyHashable: Any]) -> Void)?
   @objc var onManageCategories: (([AnyHashable: Any]) -> Void)?
 
+  private let searchSessionID = UUID().uuidString
+  private var lastSearchOpenGeneration = 0
+
   private lazy var model = ViewModeGlassControlModel(
     selectedMode: selectedMode as String,
     disabled: disabled,
@@ -223,15 +232,27 @@ final class LiquidCalendarMenuPrototypeView: UIView {
       self?.onSelect?(["mode": mode])
     },
     handleOpenChange: { [weak self] open in
+      let search = self?.prototypeSearchOpen ?? false
+      let searchGeneration = self?.lastSearchOpenGeneration ?? 0
       self?.prototypeMenuOpen = open
       if !open {
         self?.prototypeSearchOpen = false
       }
-      self?.onOpenChange?(["open": open])
+      self?.onOpenChange?([
+        "open": open,
+        "search": search,
+        "searchGeneration": searchGeneration,
+        "searchSession": self?.searchSessionID ?? "",
+      ])
     },
-    handleSearch: { [weak self] in
+    handleSearch: { [weak self] generation in
+      self?.lastSearchOpenGeneration = generation
       self?.prototypeSearchOpen = true
-      self?.onSearch?(["action": "search"])
+      self?.onSearch?([
+        "action": "search",
+        "generation": generation,
+        "session": self?.searchSessionID ?? "",
+      ])
     },
     handleSearchTextChange: { [weak self] text in
       self?.onSearchTextChange?(["text": text])
@@ -257,11 +278,11 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   private var prototypeMenuOpen = false
   private var prototypeSearchOpen = false
   private var collapsedHitSize: CGSize {
-    CGSize(width: model.showsViewModeButton ? 174 : 124, height: 44)
+    CGSize(width: model.showsViewModeButton ? 150 : 100, height: 44)
   }
   private let searchExpandedHitHeight: CGFloat = 52
   private let collapsedHitPadding = UIEdgeInsets.zero
-  private let expandedHitHeight: CGFloat = 224
+  private let expandedHitHeight: CGFloat = 180
   private let expandedHitPadding = UIEdgeInsets(top: 8, left: 0, bottom: 14, right: 0)
 
   override init(frame: CGRect) {
@@ -308,6 +329,10 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   override func layoutSubviews() {
     super.layoutSubviews()
 
+    updateHostReadiness()
+  }
+
+  private func updateHostReadiness() {
     let hostExpanded = bounds.height >= expandedHitHeight - 1
     let searchHostReady =
       bounds.height >= searchExpandedHitHeight - 1
@@ -424,6 +449,12 @@ final class LiquidGlassIconButtonView: UIView {
     }
   }
 
+  @objc var animatesContentChanges: Bool = true {
+    didSet {
+      model.animatesContentChanges = animatesContentChanges
+    }
+  }
+
   @objc var onPress: ((NSDictionary) -> Void)?
 
   private lazy var model = LiquidGlassIconButtonModel(
@@ -435,6 +466,7 @@ final class LiquidGlassIconButtonView: UIView {
     buttonHeight: CGFloat(truncating: buttonHeight),
     disabled: disabled,
     colorScheme: colorScheme as String,
+    animatesContentChanges: animatesContentChanges,
     handlePress: { [weak self] in
       self?.onPress?([:] as NSDictionary)
     }
@@ -493,12 +525,17 @@ private struct LiquidGlassIconButtonRootView: View {
 
         ZStack {
           pillContent
-            .id(contentIdentity)
-            .transition(pillContentTransition)
+            .id(model.animatesContentChanges ? contentIdentity : "static-content")
+            .transition(
+              model.animatesContentChanges ? pillContentTransition : .identity
+            )
         }
         .frame(width: model.buttonWidth, height: model.buttonHeight)
         .clipped()
-        .animation(depthPillAnimation, value: contentIdentity)
+        .animation(
+          model.animatesContentChanges ? depthPillAnimation : nil,
+          value: contentIdentity
+        )
       }
       .frame(width: model.buttonWidth, height: model.buttonHeight)
     }
@@ -848,8 +885,17 @@ private struct SharedLiquidGlassPillSurface: View {
 private struct LiquidCalendarMenuPrototypeRootView: View {
   private enum SearchOpenMotion {
     static let morphDuration = 0.14
-    static let contentDelay = 0.03
-    static let contentFadeDuration = 0.08
+    // Keep the compact glyphs visible until the search content can replace
+    // them in one transaction. Independent fades leave a briefly empty pill
+    // when rapid taps land while the liquid surface is still widening.
+    static let contentHandoffDelay = 0.025
+  }
+
+  private enum SearchCloseMotion {
+    // The close button shares its x-coordinate with the compact add button.
+    // Protect only Add from the tail of the closing touch. Search and View
+    // must be immediately reusable when the compact pill becomes visible.
+    static let addInteractionSettleDelay = 0.18
   }
 
   private enum Phase {
@@ -880,7 +926,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   @State private var readabilityVisible = false
   @State private var contentVisible = false
   @State private var collapsedContentVisible = true
+  @State private var compactAddInteractionLocked = false
+  @State private var compactAddLockGeneration = 0
   @State private var addHandoffSelectionPending = false
+  @State private var transitionGeneration = 0
   @FocusState private var searchFocused: Bool
 
   private var collapsedWidth: CGFloat {
@@ -977,6 +1026,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   @ViewBuilder
   private func liquidMenuObject(nativeSurface: Bool) -> some View {
     ZStack(alignment: .topTrailing) {
+      if activeAction == .search && phase != .collapsed {
+        searchChromeOcclusionLayer
+      }
+
       if nativeSurface {
         if #available(iOS 26.0, *) {
           nativeLiquidSurface
@@ -1003,12 +1056,24 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         .frame(
           width: targetExpandedWidth,
           height: targetExpandedHeight,
-          alignment: .top
+          // Search content already tracks `surfaceWidth`. Pinning that child to
+          // the same trailing edge as the morph mask keeps its icons visible
+          // during the first narrow frames instead of revealing an empty pill.
+          alignment: activeAction == .search ? .topTrailing : .top
         )
         .opacity(expandedContentOpacity)
         .offset(y: expandedContentOffsetY)
         .scaleEffect(expandedContentScale, anchor: .topTrailing)
-        .allowsHitTesting(phase == .expanded && !addHandoffSelectionPending)
+        // Search becomes visible before the width morph completes. Give that
+        // visible field ownership immediately so a rapid second tap cannot
+        // fall through to the dismiss backdrop and reverse the transition.
+        .allowsHitTesting(
+          (
+            phase == .expanded
+              || (activeAction == .search && phase == .expanding)
+          )
+            && !addHandoffSelectionPending
+        )
 
       if phase != .expanded {
         collapsedContent
@@ -1024,6 +1089,18 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     .contentShape(liquidShape)
     .animation(depthPillAnimation, value: model.showsViewModeButton)
     .shadow(color: shadowColor, radius: shadowRadius, x: 0, y: shadowYOffset)
+  }
+
+  private var searchChromeOcclusionLayer: some View {
+    Rectangle()
+      .fill(isDarkMode ? Color.black : Color.white)
+      .frame(
+        width: max(0, surfaceWidth - collapsedWidth),
+        height: surfaceHeight
+      )
+      .frame(width: surfaceWidth, height: surfaceHeight, alignment: .leading)
+      .clipShape(liquidShape)
+      .allowsHitTesting(false)
   }
 
   @available(iOS 26.0, *)
@@ -1277,6 +1354,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       .accessibilityHint("일정 제목이나 장소를 검색합니다")
 
       Button {
+        guard !compactAddInteractionLocked else { return }
         openMenu(.add)
       } label: {
         Image(systemName: "plus")
@@ -1284,7 +1362,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
-      .disabled(model.disabled)
+      .disabled(model.disabled || compactAddInteractionLocked)
       .accessibilityLabel("일정 추가")
       .accessibilityHint("빠른 일정 생성, 직접 입력 또는 카테고리 관리 메뉴를 엽니다")
     }
@@ -1488,7 +1566,9 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
             model.searchQuery = newValue
             model.handleSearchTextChange(newValue)
           }
-        )
+        ),
+        prompt: Text("검색")
+          .foregroundColor(collapsedGlyphColor.opacity(0.46))
       )
       .focused($searchFocused)
       .textInputAutocapitalization(.never)
@@ -1514,9 +1594,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       }
 
       Button {
-        model.searchQuery = ""
-        model.handleSearchTextChange("")
-        model.handleSearchClose()
+        closeSearchActionIfNeeded()
         closeMenu()
       } label: {
         Image(systemName: "xmark")
@@ -1789,13 +1867,15 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private func openMenu(_ action: MenuAction) {
     guard !model.disabled, phase == .collapsed, !expansionPending else { return }
+    guard action != .add || !compactAddInteractionLocked else { return }
 
     resetAddHandoffSelection()
     activeAction = action
     if action == .search {
+      model.searchOpenGeneration += 1
       model.searchQuery = ""
       model.handleSearchTextChange("")
-      model.handleSearch()
+      model.handleSearch(model.searchOpenGeneration)
     }
     readabilityVisible = false
     contentVisible = false
@@ -1803,9 +1883,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     morphProgress = 0
     expansionPending = true
 
-    // Search already owns a full-width native canvas while collapsed, so this
-    // bridge event only updates React state; it never gates the native morph.
-    // View/add still wait for the taller host when necessary.
+    // Search already owns a full-width native canvas while collapsed, so its
+    // morph begins immediately on the UI thread. The expanding opaque leading
+    // edge covers the React year pill and reveals it again on close; no JS
+    // acknowledgement participates in the visual timeline.
     model.handleOpenChange(true)
     beginPendingExpansionIfReady()
   }
@@ -1819,37 +1900,50 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     let action = activeAction
     let morphDuration = action == .search ? SearchOpenMotion.morphDuration : 0.20
     let completionDelay = morphDuration
+    transitionGeneration += 1
+    let generation = transitionGeneration
 
     expansionPending = false
     phase = .expanding
-
-    if action == .search {
-      withAnimation(.easeOut(duration: 0.055)) {
-        collapsedContentVisible = false
-      }
-    }
 
     withAnimation(morphAnimation(duration: morphDuration)) {
       morphProgress = 1
     }
 
     if action == .search {
-      DispatchQueue.main.asyncAfter(deadline: .now() + SearchOpenMotion.contentDelay) {
-        guard activeAction == action, phase == .expanding else { return }
-        withAnimation(.easeOut(duration: SearchOpenMotion.contentFadeDuration)) {
+      DispatchQueue.main.asyncAfter(deadline: .now() + SearchOpenMotion.contentHandoffDelay) {
+        guard
+          transitionGeneration == generation,
+          activeAction == action,
+          phase == .expanding
+        else { return }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          collapsedContentVisible = false
           contentVisible = true
         }
+
         // Let the field and keyboard appear while the short search-only morph
         // is still settling instead of serializing focus after its completion.
         DispatchQueue.main.async {
-          guard activeAction == action, phase == .expanding else { return }
+          guard
+            transitionGeneration == generation,
+            activeAction == action,
+            phase == .expanding
+          else { return }
           searchFocused = true
         }
       }
     }
 
     DispatchQueue.main.asyncAfter(deadline: .now() + completionDelay) {
-      guard activeAction == action, phase == .expanding else { return }
+      guard
+        transitionGeneration == generation,
+        activeAction == action,
+        phase == .expanding
+      else { return }
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) {
@@ -1866,8 +1960,14 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private func closeMenu() {
     guard phase == .expanded || phase == .expanding else { return }
     let closeDuration = activeAction == .search ? 0.17 : 0.20
+    let isSearchClose = activeAction == .search
     let isAddHandoffClose = activeAction == .add && addHandoffSelectionPending
+    transitionGeneration += 1
+    let generation = transitionGeneration
     resetAddHandoffSelection()
+    if isSearchClose {
+      lockCompactAddInteraction()
+    }
     phase = .closing
     searchFocused = false
 
@@ -1882,18 +1982,24 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       }
     }
 
-    withAnimation(.easeOut(duration: 0.07)) {
-      contentVisible = false
-      readabilityVisible = false
+    if isSearchClose {
+      withAnimation(.easeOut(duration: 0.07)) {
+        readabilityVisible = false
+      }
+    } else {
+      withAnimation(.easeOut(duration: 0.07)) {
+        contentVisible = false
+        readabilityVisible = false
+      }
     }
 
     withAnimation(morphAnimation(duration: closeDuration)) {
       morphProgress = 0
     }
 
-    if !isAddHandoffClose {
+    if !isSearchClose && !isAddHandoffClose {
       DispatchQueue.main.asyncAfter(deadline: .now() + closeDuration * 0.55) {
-        guard phase == .closing else { return }
+        guard transitionGeneration == generation, phase == .closing else { return }
         withAnimation(.easeOut(duration: 0.10)) {
           collapsedContentVisible = true
         }
@@ -1901,9 +2007,40 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
 
     DispatchQueue.main.asyncAfter(deadline: .now() + closeDuration) {
-      guard phase == .closing else { return }
-      phase = .collapsed
+      guard transitionGeneration == generation, phase == .closing else { return }
+
+      guard isSearchClose else {
+        phase = .collapsed
+        model.handleOpenChange(false)
+        return
+      }
+
+      // Swap to the compact glyphs on the exact frame the reverse morph
+      // completes. If the glyphs appear before `phase` becomes collapsed,
+      // users can see a search button that still rejects taps.
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        contentVisible = false
+        collapsedContentVisible = true
+        phase = .collapsed
+      }
       model.handleOpenChange(false)
+    }
+  }
+
+  private func lockCompactAddInteraction() {
+    compactAddLockGeneration += 1
+    let lockGeneration = compactAddLockGeneration
+    compactAddInteractionLocked = true
+
+    DispatchQueue.main.asyncAfter(
+      deadline: .now()
+        + 0.17
+        + SearchCloseMotion.addInteractionSettleDelay
+    ) {
+      guard compactAddLockGeneration == lockGeneration else { return }
+      compactAddInteractionLocked = false
     }
   }
 
@@ -1919,6 +2056,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) {
+        transitionGeneration += 1
         expansionPending = false
         resetAddHandoffSelection()
         contentVisible = false
@@ -1933,19 +2071,21 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
 
     if expansionPending {
+      transitionGeneration += 1
       expansionPending = false
       resetAddHandoffSelection()
       model.handleOpenChange(false)
       return
     }
 
-    closeSearchActionIfNeeded()
-
+    // React may enqueue another close request before its disabled backdrop
+    // state commits. The first reverse morph owns this transition; treating a
+    // repeated request as an immediate reset makes the pill visibly snap.
     if phase == .closing {
-      collapseMenuImmediately()
       return
     }
 
+    closeSearchActionIfNeeded()
     closeMenu()
   }
 
@@ -1963,22 +2103,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
 
     model.handleSearchClose()
-  }
-
-  private func collapseMenuImmediately() {
-    expansionPending = false
-    resetAddHandoffSelection()
-    contentVisible = false
-    readabilityVisible = false
-    searchFocused = false
-    phase = .collapsed
-    morphProgress = 0
-
-    withAnimation(.easeOut(duration: 0.08)) {
-      collapsedContentVisible = true
-    }
-
-    model.handleOpenChange(false)
   }
 
   private func selectMode(_ mode: String) {

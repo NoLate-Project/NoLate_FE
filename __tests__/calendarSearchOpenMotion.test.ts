@@ -6,8 +6,14 @@ export {};
 
 const SCHEDULE_SCREEN_PATH = "app/schedule/index.tsx";
 const IOS_LIQUID_MENU_PATH = "ios/NoLateFE/ViewModeGlassControlView.swift";
+const LIQUID_MENU_COMPONENT_PATH =
+    "src/modules/schedule/components/calendar/LiquidCalendarMenuPrototype.tsx";
 const scheduleSource = readFileSync(SCHEDULE_SCREEN_PATH, "utf8");
 const nativeSource = readFileSync(IOS_LIQUID_MENU_PATH, "utf8");
+const liquidMenuComponentSource = readFileSync(
+    LIQUID_MENU_COMPONENT_PATH,
+    "utf8"
+);
 
 function sourceBetween(source: string, start: string, end: string): string {
     const startIndex = source.indexOf(start);
@@ -29,7 +35,7 @@ describe("calendar search open motion", () => {
     it("opens search on the existing native liquid surface", () => {
         const modelBridge = sourceBetween(
             nativeSource,
-            "handleSearch: { [weak self] in",
+            "handleSearch: { [weak self] generation in",
             "handleSearchTextChange:"
         );
         const openMenu = sourceBetween(
@@ -39,18 +45,20 @@ describe("calendar search open motion", () => {
         );
 
         expect(modelBridge).toContain("prototypeSearchOpen = true");
-        expect(modelBridge).toContain('onSearch?(["action": "search"])');
+        expect(modelBridge).toContain('"generation": generation');
         expect(openMenu).toContain("model.handleSearchTextChange(\"\")");
-        expect(openMenu).toContain("model.handleSearch()");
+        expect(openMenu).toContain(
+            "model.handleSearch(model.searchOpenGeneration)"
+        );
         expect(openMenu).toContain("expansionPending = true");
         expect(openMenu).toContain("model.handleOpenChange(true)");
         expect(openMenu).toContain("beginPendingExpansionIfReady()");
         expect(openMenu).not.toMatch(
-            /if action == \.search \{[\s\S]*?model\.handleSearch\(\)[\s\S]*?return/
+            /model\.handleSearch\([^)]*\)\s*\n\s*return/
         );
     });
 
-    it("preallocates the native canvas instead of resizing it after the tap", () => {
+    it("preallocates search width without covering the calendar while collapsed", () => {
         const hostGeometry = sourceBetween(
             scheduleSource,
             "const liquidPrototypeLayerWidth",
@@ -66,15 +74,27 @@ describe("calendar search open motion", () => {
             "const liquidPrototypeLayerWidth = searchHeaderTargetWidth"
         );
         expect(hostGeometry).toContain(
-            "const liquidPrototypeLayerHeight = LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT"
+            "const liquidPrototypeLayerHeight = liquidPrototypeOpen"
         );
-        expect(hostGeometry).not.toContain("liquidPrototypeOpen ?");
+        expect(hostGeometry).toContain(
+            "? LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT"
+        );
+        expect(hostGeometry).toContain(
+            ": LIQUID_TOOLBAR_SEARCH_HEIGHT"
+        );
         expect(hostReadiness).toContain(
             "bounds.height >= searchExpandedHitHeight - 1"
         );
         expect(hostReadiness).toContain(
             "bounds.width >= model.searchExpandedWidth - 1"
         );
+        const searchWidthSetter = sourceBetween(
+            nativeSource,
+            "@objc var searchExpandedWidth",
+            "@objc var searchQuery"
+        );
+        expect(searchWidthSetter).toContain("setNeedsLayout()");
+        expect(searchWidthSetter).toContain("updateHostReadiness()");
     });
 
     it("lets touches pass through the preallocated transparent canvas", () => {
@@ -96,6 +116,66 @@ describe("calendar search open motion", () => {
         );
         expect(hitTesting).toContain(
             "height: min(bounds.height, searchExpandedHitHeight)"
+        );
+        expect(scheduleSource).toContain("zIndex: 56");
+        expect(scheduleSource).not.toContain(
+            "zIndex: liquidPrototypeOpen ? 56 : 49"
+        );
+        expect(scheduleSource).toContain(
+            'testID="calendar-primary-pill-hit-target"'
+        );
+        expect(scheduleSource).toContain(
+            "&& !liquidPrototypeOpen"
+        );
+    });
+
+    it("always releases the primary pill after a month view transition", () => {
+        const transition = sourceBetween(
+            scheduleSource,
+            "const handleCalendarViewModeChange",
+            "const handleDayViewMenuSelect"
+        );
+        const finalizer = sourceBetween(
+            transition,
+            "const finishMonthViewTransition",
+            "monthViewTransitionWatchdogRef.current = setTimeout"
+        );
+
+        expect(finalizer).toContain(
+            "setIsMonthViewTransitionActive(false)"
+        );
+        expect(finalizer).toContain(
+            "viewTransitioningRef.current = false"
+        );
+        expect(transition).toContain(
+            "monthViewTransitionWatchdogRef.current = setTimeout"
+        );
+        expect(transition).toContain(
+            "const liveCalendarHeight = monthCalendarAnimatedHeight.value"
+        );
+        expect(transition).toContain(
+            "const liveDayHeight = monthCalendarAnimatedDayHeight.value"
+        );
+        expect(transition).toMatch(
+            /completionAnimation\.start\(\(\) => \{[\s\S]*finishMonthViewTransition\(\)/
+        );
+    });
+
+    it("animates responsive detail rows even when only the 5/6-week day height changes", () => {
+        const responsiveLayout = sourceBetween(
+            scheduleSource,
+            "const shouldAnimateResponsiveDetailLayout",
+            "const dayPillBloomScaleX"
+        );
+
+        expect(responsiveLayout).toContain(
+            "Math.abs(liveCalendarHeight - targetHeight) > 0.5"
+        );
+        expect(responsiveLayout).toContain(
+            "Math.abs(liveDayHeight - targetLayout.dayHeight) > 0.5"
+        );
+        expect(responsiveLayout).toContain(
+            "monthCalendarAnimatedDayHeight.value = withTiming"
         );
     });
 
@@ -119,7 +199,7 @@ describe("calendar search open motion", () => {
         expect(nativeHost).not.toContain("searchQuery={searchQuery}");
     });
 
-    it("fades only the year pill while the native surface morphs", () => {
+    it("keeps the year pill independent from the JS event queue", () => {
         const openSearch = sourceBetween(
             scheduleSource,
             "const openSearchToolbar",
@@ -135,22 +215,241 @@ describe("calendar search open motion", () => {
             "const handleLiquidPrototypeOpenChange",
             "useEffect(() => {\n        if (!isSearchToolbarOpen"
         );
+        const closeToolbarMenu = sourceBetween(
+            scheduleSource,
+            "const closeToolbarMenu",
+            "const runToolbarAction"
+        );
+        const runToolbarAction = sourceBetween(
+            scheduleSource,
+            "const runToolbarAction",
+            "const openToolbarMenu"
+        );
 
         expect(openSearch).toContain("setActiveToolbarMenu(\"search\")");
-        expect(openSearch).toContain(
-            "Animated.timing(searchToolbarChromeOpacity"
+        expect(openSearch).toContain("nativeSearchGenerationRef.current");
+        expect(openSearch).toContain("nativeSearchSessionRef.current");
+        expect(openSearch).not.toContain("acknowledgeSearchChromeHidden");
+        expect(scheduleSource).not.toContain("searchToolbarChromeOpacity");
+        expect(liquidMenuComponentSource).not.toContain("setNativeProps");
+        expect(liquidMenuComponentSource).not.toContain(
+            "searchChromeAckGeneration"
         );
-        expect(openSearch).toContain("toValue: 0");
-        expect(closeSearch).toContain("Keyboard.dismiss()");
-        expect(closeSearch).not.toContain(
-            "searchToolbarChromeOpacity.setValue(1)"
-        );
+        expect(closeSearch).not.toContain("Keyboard.dismiss()");
+        expect(
+            sourceBetween(
+                closeToolbarMenu,
+                'if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {',
+                "return;"
+            )
+        ).not.toContain("Keyboard.dismiss()");
+        expect(
+            sourceBetween(
+                runToolbarAction,
+                'if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {',
+                "return;"
+            )
+        ).not.toContain("Keyboard.dismiss()");
+        expect(closeSearch).not.toContain("setToolbarMenuClosing(true)");
         expect(nativeOpenChange).toContain("if (open) return");
         expect(nativeOpenChange).toContain(
-            "searchToolbarChromeOpacity.setValue(1)"
+            "context.generation < nativeSearchGenerationRef.current"
+        );
+        expect(nativeOpenChange).toContain(
+            "currentSession !== context.session"
+        );
+        expect(nativeOpenChange).toMatch(
+            /currentSession && currentSession !== context\.session\) \{\s+return;/
+        );
+        expect(nativeOpenChange).toContain(
+            'setSearchQuery("")'
         );
         expect(nativeOpenChange).toContain(
             'currentMenu === "search" ? null : currentMenu'
+        );
+    });
+
+    it("keeps concrete primary-pill bounds while the year layer is hidden", () => {
+        const pillWidthMotion = sourceBetween(
+            scheduleSource,
+            "const primaryPillAnimatedWidth",
+            "const primaryPillAnimatedStyle"
+        );
+        const yearTransition = sourceBetween(
+            scheduleSource,
+            "const animateYearDepthTransition",
+            "const animateDayModeTransition"
+        );
+
+        expect(pillWidthMotion).toContain(
+            "useSharedValue(primaryPillContentWidth)"
+        );
+        expect(pillWidthMotion).toContain(
+            "withTiming(primaryPillContentWidth"
+        );
+        expect(pillWidthMotion).not.toContain(
+            "withTiming(primaryPillLayout.width"
+        );
+        expect(yearTransition).toContain(
+            "yearOverviewProgress.setValue(toValue)"
+        );
+        expect(yearTransition).toMatch(
+            /unstable_batchedUpdates\(\(\) => \{[\s\S]*afterAnimation\?\.\(\);[\s\S]*setIsYearDepthTransitionActive\(false\)/
+        );
+    });
+
+    it("hands search content off without an empty or overlapping pill", () => {
+        const nativeMenuSurface = sourceBetween(
+            nativeSource,
+            "private func liquidMenuObject(nativeSurface: Bool)",
+            "@available(iOS 26.0, *)\n  private var nativeLiquidSurface"
+        );
+        const nativeOpen = sourceBetween(
+            nativeSource,
+            "private func beginPendingExpansionIfReady()",
+            "private func closeMenu()"
+        );
+        const nativeSearchField = sourceBetween(
+            nativeSource,
+            "private var searchExpandedContent",
+            "private var addExpandedContent"
+        );
+        const nativeClose = sourceBetween(
+            nativeSource,
+            "private func closeMenu()",
+            "private func morphAnimation"
+        );
+
+        expect(nativeSearchField).toContain('prompt: Text("검색")');
+        expect(nativeMenuSurface).toContain(
+            "alignment: activeAction == .search ? .topTrailing : .top"
+        );
+        expect(nativeMenuSurface).toContain(
+            "searchChromeOcclusionLayer"
+        );
+        expect(nativeOpen).toContain(
+            "SearchOpenMotion.contentHandoffDelay"
+        );
+        expect(nativeOpen).not.toContain("searchChromeAckGeneration");
+        expect(nativeSource).not.toContain(
+            ".onChange(of: model.searchChromeAckGeneration)"
+        );
+        expect(nativeSource).not.toContain(
+            "SearchOpenMotion.chromeHandoffDelay"
+        );
+        expect(nativeOpen).toContain("transaction.disablesAnimations = true");
+        expect(nativeOpen).toContain(
+            "collapsedContentVisible = false\n          contentVisible = true"
+        );
+        expect(nativeOpen).not.toContain(
+            "SearchOpenMotion.contentFadeDuration"
+        );
+        expect(nativeClose).toContain(
+            "let isSearchClose = activeAction == .search"
+        );
+        expect(nativeClose).toContain(
+            "transaction.disablesAnimations = true"
+        );
+        expect(nativeClose).toContain(
+            "contentVisible = false\n        collapsedContentVisible = true"
+        );
+        expect(nativeClose).toContain(
+            "SearchCloseMotion.addInteractionSettleDelay"
+        );
+        expect(nativeClose).toContain("lockCompactAddInteraction()");
+        expect(nativeClose).not.toContain("compactInteractionLocked");
+        expect(nativeSource).toContain(
+            ".allowsHitTesting(phase == .collapsed)"
+        );
+        expect(nativeSource).toContain(
+            "activeAction == .search && phase == .expanding"
+        );
+        expect(nativeSource).toContain(
+            ".disabled(model.disabled || compactAddInteractionLocked)"
+        );
+        expect(nativeSource).toContain(
+            "guard action != .add || !compactAddInteractionLocked else { return }"
+        );
+        expect(nativeClose).not.toContain("contentHandoffDelayFraction");
+        expect(nativeClose).not.toContain("bridgeReleaseDelay");
+        expect(nativeClose).toMatch(
+            /contentVisible = false\s+collapsedContentVisible = true\s+phase = \.collapsed\s+}\s+model\.handleOpenChange\(false\)/
+        );
+        expect(nativeClose).not.toContain("contentFadeDuration");
+    });
+
+    it("coalesces repeated close requests instead of snapping the native pill", () => {
+        const backdrop = sourceBetween(
+            scheduleSource,
+            "{(activeToolbarMenu !== null || toolbarMenuClosing || liquidPrototypeOpen) && (",
+            "{(\n                    <Animated.View"
+        );
+        const nativeCloseCoordinator = sourceBetween(
+            nativeSource,
+            "private func closeOrResetMenu()",
+            "private func closeMenuFromOutsideTap()"
+        );
+
+        expect(backdrop).toContain("disabled={toolbarMenuClosing}");
+        expect(backdrop).toContain("onPress={() => closeToolbarMenu()}");
+        expect(backdrop).not.toContain(
+            "if (liquidPrototypeOpen) requestCloseLiquidPrototype()"
+        );
+        expect(nativeCloseCoordinator).toMatch(
+            /if phase == \.closing \{\s+return\s+\}/
+        );
+        expect(nativeCloseCoordinator).not.toContain(
+            "collapseMenuImmediately()"
+        );
+        expect(nativeSource).not.toContain(
+            "private func collapseMenuImmediately()"
+        );
+    });
+
+    it("invalidates delayed callbacks from earlier open and close transitions", () => {
+        const nativeState = sourceBetween(
+            nativeSource,
+            "@State private var phase",
+            "@FocusState private var searchFocused"
+        );
+        const nativeOpen = sourceBetween(
+            nativeSource,
+            "private func beginPendingExpansionIfReady()",
+            "private func closeMenu()"
+        );
+        const nativeClose = sourceBetween(
+            nativeSource,
+            "private func closeMenu()",
+            "private func morphAnimation"
+        );
+        const nativeSearchField = sourceBetween(
+            nativeSource,
+            "private var searchExpandedContent",
+            "private var addExpandedContent"
+        );
+
+        expect(nativeState).toContain(
+            "@State private var transitionGeneration = 0"
+        );
+        expect(nativeOpen).toContain("transitionGeneration += 1");
+        expect(nativeOpen).toContain("let generation = transitionGeneration");
+        expect(
+            nativeOpen.match(/transitionGeneration == generation/g)
+        ).toHaveLength(3);
+        expect(nativeClose).toContain("transitionGeneration += 1");
+        expect(nativeClose).toContain("let generation = transitionGeneration");
+        expect(
+            nativeClose.match(/transitionGeneration == generation/g)
+        ).toHaveLength(2);
+        expect(nativeClose).toContain("compactAddLockGeneration += 1");
+        expect(nativeClose).toContain(
+            "compactAddLockGeneration == lockGeneration"
+        );
+        expect(nativeSearchField).toContain(
+            "closeSearchActionIfNeeded()\n        closeMenu()"
+        );
+        expect(nativeSearchField).not.toContain(
+            "model.handleSearchClose()\n        closeMenu()"
         );
     });
 

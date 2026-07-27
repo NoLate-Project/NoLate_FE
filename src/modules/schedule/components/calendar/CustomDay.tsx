@@ -284,6 +284,7 @@ export default function CustomDay({
     return (
         <Reanimated.View style={[styles.animatedCell, animatedCellStyle]}>
             <Pressable
+                testID={`calendar-day-${date.dateString}`}
                 onPress={triggerPress}
                 disabled={isDisabled}
                 accessibilityRole="button"

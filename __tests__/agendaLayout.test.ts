@@ -287,14 +287,14 @@ describe("agenda layout", () => {
         })).toBe("7월 18일–20일 · 종일");
     });
 
-    test("상세형 우측 시간열은 당일은 시각만, 다일은 날짜와 시각을 나눈다", () => {
+    test("상세형 우측 시간열은 당일은 한 줄 범위, 다일은 날짜와 시각을 나눈다", () => {
         expect(formatAgendaDetailTimeColumn(item(
             "same-day",
             localIso(2026, 7, 14, 15, 40),
             localIso(2026, 7, 14, 16, 10)
         ))).toEqual({
-            startLabel: "오후 3:40",
-            endLabel: "오후 4:10",
+            startLabel: "오후 3:40–4:10",
+            endLabel: null,
         });
 
         expect(formatAgendaDetailTimeColumn(item(

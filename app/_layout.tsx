@@ -9,6 +9,7 @@ import {
     Text,
     View,
 } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
@@ -177,7 +178,11 @@ export default function RootLayout() {
         };
     }, [openOrDeferPushIntent]);
 
-    return <RootNavigator />;
+    return (
+        <GestureHandlerRootView style={styles.gestureRoot}>
+            <RootNavigator />
+        </GestureHandlerRootView>
+    );
 }
 
 function createPushNavigationIntent(
@@ -342,6 +347,9 @@ function RootNavigator() {
 }
 
 const styles = StyleSheet.create({
+    gestureRoot: {
+        flex: 1,
+    },
     bootstrap: {
         flex: 1,
     },
