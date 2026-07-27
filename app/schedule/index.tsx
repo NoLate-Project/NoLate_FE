@@ -155,7 +155,6 @@ import {
 import {
     buildShareAttentionSummary,
     readSeenShareAttentionKeys,
-    startScheduleShareAttentionPolling,
     type ShareAttentionSummary,
 } from "../../src/modules/share/shareAttention";
 import { subscribeAppNotificationReceived } from "../../src/modules/notification/appNotificationEvents";
@@ -244,7 +243,6 @@ const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = ADD_MENU_SOURCE.nativeWidth;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = ADD_MENU_SOURCE.nativeHeight;
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
-const SHARE_ATTENTION_REFRESH_MS = 45_000;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
 const SEARCH_TOOLBAR_LEFT_INSET = 16;
@@ -1729,12 +1727,31 @@ export default function ScheduleIndex() {
             return undefined;
         }
 
-        return startScheduleShareAttentionPolling({
-            enabled: scheduleSharingEnabled,
-            intervalMs: SHARE_ATTENTION_REFRESH_MS,
-            load: loadShareAttention,
-            onSummary: setShareAttention,
+        let cancelled = false;
+
+        const refresh = () => {
+            loadShareAttention()
+                .then((summary) => {
+                    if (!cancelled) setShareAttention(summary);
+                })
+                .catch(() => {
+                    // 공유함 알림 표시는 보조 신호라 실패해도 일정 화면 사용 흐름은 유지한다.
+                });
+        };
+
+        refresh();
+        const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+            // 백그라운드에서는 JS가 push 도착 시점에 실행되지 않을 수 있으므로,
+            // 다시 활성화되는 순간 서버 상태를 한 번 동기화한다.
+            if (nextState === "active") refresh();
         });
+        const unsubscribeReceived = subscribeAppNotificationReceived(refresh);
+
+        return () => {
+            cancelled = true;
+            appStateSubscription.remove();
+            unsubscribeReceived();
+        };
     }, [isFocused, loadShareAttention, scheduleSharingEnabled]);
 
     const refreshNotificationUnreadCount = useCallback(() => {
@@ -1749,7 +1766,6 @@ export default function ScheduleIndex() {
         if (!isFocused) return undefined;
 
         refreshNotificationUnreadCount();
-        const timer = setInterval(refreshNotificationUnreadCount, SHARE_ATTENTION_REFRESH_MS);
         const appStateSubscription = AppState.addEventListener("change", (nextState) => {
             if (nextState === "active") refreshNotificationUnreadCount();
         });
@@ -1758,7 +1774,6 @@ export default function ScheduleIndex() {
         );
 
         return () => {
-            clearInterval(timer);
             appStateSubscription.remove();
             unsubscribeReceived();
         };
