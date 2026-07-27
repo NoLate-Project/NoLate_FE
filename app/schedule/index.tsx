@@ -93,14 +93,14 @@ import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 import {
     clearCalendarScheduleCache,
-    hasCalendarScheduleMonthCache,
     readCalendarScheduleCache,
     reconcileCalendarScheduleCacheWithFullList,
     removeCalendarScheduleCacheItem,
-    refreshCalendarScheduleCache,
     subscribeCalendarScheduleCacheInvalidated,
     upsertCalendarScheduleCacheItem,
 } from "../../src/modules/schedule/calendarScheduleCache";
+import { loadCalendarScheduleWindow } from "../../src/modules/schedule/calendarScheduleWindowLoader";
+import { startCalendarCacheRevisionPolling } from "../../src/modules/schedule/calendarScheduleRevisionPolling";
 import {
     getCalendarMetadataPrefetchMonthKeys,
     getCalendarMetadataRange,
@@ -1535,36 +1535,30 @@ export default function ScheduleIndex() {
         const isCurrentRequest = () => (
             scheduleSessionFenceRef.current.isCurrent(request)
         );
-        const cached = readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt);
-        const hasVisibleMonthCache = hasCalendarScheduleMonthCache(fetchVisibleMonth);
-
-        const hasNewCachedItems = cached.items.some(
-            (item) => scheduleItemsByIdRef.current[item.id] !== item
-        );
-        if (
-            isCurrentRequest()
-            && cached.cachedMonthKeys.length > 0
-            && hasNewCachedItems
-        ) {
-            // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
-            dispatch({ type: "SET_ITEMS", items: cached.items });
-        }
-        dispatch({ type: "SET_LOADING", loading: !hasVisibleMonthCache });
+        let hasVisibleMonthCache = false;
         dispatch({ type: "SET_ERROR", error: null });
 
-        // 현재 보이는 월이 이미 준비돼 있으면 월 이동 자체로는 API를 호출하지 않는다.
-        // 초기 진입 또는 캐시 범위를 벗어난 월에서만 앞뒤 2개월을 한 번에 다시 채운다.
-        if (hasVisibleMonthCache) {
-            dispatch({ type: "SET_LOADING", loading: false });
-            scheduleSessionFenceRef.current.finish(request);
-            return;
-        }
-
         try {
-            const refreshed = await refreshCalendarScheduleCache(
-                scheduleFetchStartAt,
-                scheduleFetchEndAt,
-                async (startAt, endAt) => {
+            const { refreshed } = await loadCalendarScheduleWindow({
+                startAt: scheduleFetchStartAt,
+                endAt: scheduleFetchEndAt,
+                visibleMonth: fetchVisibleMonth,
+                onCacheRead: ({ cached, hasVisibleMonthCache: hasVisible }) => {
+                    hasVisibleMonthCache = hasVisible;
+                    const hasNewCachedItems = cached.items.some(
+                        (item) => scheduleItemsByIdRef.current[item.id] !== item
+                    );
+                    if (
+                        isCurrentRequest()
+                        && cached.cachedMonthKeys.length > 0
+                        && hasNewCachedItems
+                    ) {
+                        // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
+                        dispatch({ type: "SET_ITEMS", items: cached.items });
+                    }
+                    dispatch({ type: "SET_LOADING", loading: !hasVisible });
+                },
+                fetcher: async (startAt, endAt) => {
                     if (request.signal.aborted) {
                         throw new Error("Schedule load aborted");
                     }
@@ -1574,7 +1568,7 @@ export default function ScheduleIndex() {
                     }
                     return nextItems;
                 },
-            );
+            });
             if (!isCurrentRequest()) return;
             dispatch({ type: "SET_ITEMS", items: refreshed.items });
         } catch (error) {
@@ -1592,35 +1586,64 @@ export default function ScheduleIndex() {
         }
     }, [dispatch, fetchVisibleMonth, scheduleFetchEndAt, scheduleFetchStartAt]);
 
+    const loadSchedulesRef = useRef(loadSchedules);
+    loadSchedulesRef.current = loadSchedules;
+
     useEffect(() => {
         if (!isFocused) {
             dispatch({ type: "SET_LOADING", loading: false });
             return undefined;
         }
-        const sessionFence = scheduleSessionFenceRef.current;
+        loadSchedules();
+        return undefined;
+    }, [dispatch, isFocused, loadSchedules]);
 
-        const synchronizeAndLoad = () => {
+    useEffect(() => {
+        if (!isFocused) return undefined;
+
+        const sessionFence = scheduleSessionFenceRef.current;
+        const loadLatestScheduleWindow = () => loadSchedulesRef.current();
+        const synchronizeRevision = () => (
             synchronizeCalendarScheduleCacheRevision()
                 .then((changed) => {
                     // revision 변경 시 clear가 아래 구독자를 통해 한 번만 다시 조회한다.
-                    if (!changed) loadSchedules();
+                    return changed;
                 })
-                .catch(loadSchedules);
+                .catch(() => false)
+        );
+        const synchronizeAndLoad = () => {
+            synchronizeRevision().then((changed) => {
+                if (!changed) loadLatestScheduleWindow();
+            });
         };
-        synchronizeAndLoad();
+        // 포커스 진입 시 revision만 확인한다. 위 효과가 현재 월 범위를 이미 읽으므로
+        // revision이 같을 때 중복 조회하지 않고, 달라진 경우 clear 구독이 다시 읽는다.
+        synchronizeRevision();
+        // 공유 일정/캘린더 수정·회수는 서버 revision을 올린다. 화면을 계속
+        // 보고 있는 수신자도 포커스 전환 없이 변경을 받도록 가볍게 확인한다.
+        const stopRevisionPolling = startCalendarCacheRevisionPolling(
+            () => {
+                if (AppState.currentState === "active") {
+                    synchronizeAndLoad();
+                }
+            },
+        );
         const subscription = AppState.addEventListener("change", (nextState) => {
             if (nextState !== "active") return;
             synchronizeAndLoad();
         });
-        const unsubscribeInvalidated = subscribeCalendarScheduleCacheInvalidated(loadSchedules);
+        const unsubscribeInvalidated = subscribeCalendarScheduleCacheInvalidated(
+            loadLatestScheduleWindow,
+        );
         return () => {
+            stopRevisionPolling();
             subscription.remove();
             unsubscribeInvalidated();
             // 화면을 벗어나거나 조회 범위가 바뀐 뒤 도착한 응답이
             // 상세 화면의 최신 수정값을 덮지 못하도록 무효화한다.
             sessionFence.invalidate("schedule");
         };
-    }, [dispatch, isFocused, loadSchedules]);
+    }, [isFocused]);
 
     const loadCalendarMetadata = useCallback(async () => {
         const requestedMonths = calendarMetadataPrefetchMonthKeys.map((monthKey) => ({

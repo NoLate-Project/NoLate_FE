@@ -64,23 +64,23 @@ assert.match(
 );
 assert.match(
   envExample,
-  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=false$/m,
-  "Store/release environment defaults must keep schedule sharing off",
+  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=true$/m,
+  "Store/release environment defaults must keep schedule sharing available",
 );
 assert.doesNotMatch(
   envExample,
-  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=true$/m,
-  "The checked-in release environment must never opt schedule sharing in",
+  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=false$/m,
+  "The checked-in release environment must not silently activate the sharing kill switch",
 );
 assert.doesNotMatch(
   jestSetup,
-  /process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED\s*=\s*["']true["']/,
-  "The global Jest environment must retain the default-off sharing policy",
+  /process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED\s*=\s*["']false["']/,
+  "The global Jest environment must retain the default-on sharing policy",
 );
 assert.match(
   scheduleSharingPolicy,
-  /return rawValue === ["']true["'];/,
-  "Schedule sharing must only enable for the exact literal true",
+  /return rawValue === undefined \|\| rawValue === ["']true["'];/,
+  "Missing configuration and only the exact literal true may enable schedule sharing",
 );
 assert.match(
   scheduleSharingPolicy,
@@ -90,7 +90,7 @@ assert.match(
 assert.doesNotMatch(
   scheduleSharingPolicy,
   /rawValue\??\.trim\(\)|String\(rawValue\)|toLowerCase\(\)/,
-  "Malformed or normalized rollout values must remain fail-closed",
+  "Malformed schedule-sharing configuration must remain disabled",
 );
 for (const [name, source] of [
   ["login", loginScreen],

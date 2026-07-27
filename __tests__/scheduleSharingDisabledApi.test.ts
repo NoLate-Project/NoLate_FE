@@ -44,7 +44,7 @@ import {
 } from "../src/api/scheduleTravelPlans";
 
 jest.mock("../src/api/env", () => ({
-    getEnv: jest.fn(() => undefined),
+    getEnv: jest.fn(() => "false"),
 }));
 
 jest.mock("../src/api/api", () => ({

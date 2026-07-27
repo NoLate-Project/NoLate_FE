@@ -29,7 +29,7 @@ describe("foreground traffic push refresh", () => {
         "SCHEDULE_DEPARTURE_NUDGE",
         "SCHEDULE_CACHE_INVALIDATED",
     ])("공유 off에서 %s는 cache/status invalidation을 만들지 않는다", (type) => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         refreshForegroundPushCaches({ type, scheduleId: "42" });
 
@@ -38,7 +38,7 @@ describe("foreground traffic push refresh", () => {
     });
 
     test("공유 off에서는 owner proof가 있는 traffic만 cache/status를 갱신한다", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         refreshForegroundPushCaches({
             type: "SCHEDULE_TRAFFIC",

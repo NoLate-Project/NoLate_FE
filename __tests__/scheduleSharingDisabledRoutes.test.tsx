@@ -101,7 +101,7 @@ describe("schedule sharing disabled route and UI defenses", () => {
     let renderer: ReactTestRenderer | undefined;
 
     beforeEach(() => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
     });
 
     afterEach(() => {

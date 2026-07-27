@@ -125,7 +125,7 @@ describe("ScheduleAddModal close flow", () => {
     });
 
     test("공유 전역 off에서는 숨겨진 캘린더 selector와 조회도 만들지 않는다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         await renderModal();
 

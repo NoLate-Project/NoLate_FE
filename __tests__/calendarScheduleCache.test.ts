@@ -14,6 +14,8 @@ import {
     mutateCalendarScheduleCacheIfAuthSessionCurrent,
 } from "../src/modules/schedule/calendarScheduleCache";
 import { getMonthRange } from "../src/modules/schedule/calendarRange";
+import { shiftCalendarMonth } from "../src/modules/schedule/calendarNavigation";
+import { loadCalendarScheduleWindow } from "../src/modules/schedule/calendarScheduleWindowLoader";
 import type { ScheduleItem } from "../src/modules/schedule/types";
 import {
     activateAuthSessionIfCurrent,
@@ -38,6 +40,17 @@ function schedule(id: string, startAt: Date, endAt = startAt): ScheduleItem {
 
 function localDate(year: number, monthIndex: number, day: number): Date {
     return new Date(year, monthIndex, day, 9, 0, 0, 0);
+}
+
+function fiveMonthRange(visibleMonth: string) {
+    return {
+        startAt: getMonthRange(
+            shiftCalendarMonth(visibleMonth, -2),
+        ).startAt,
+        endAt: getMonthRange(
+            shiftCalendarMonth(visibleMonth, 2),
+        ).endAt,
+    };
 }
 
 function deferred<T>() {
@@ -91,7 +104,7 @@ describe("calendar schedule month cache", () => {
             july.endAt,
             jest.fn().mockResolvedValue([owner, received]),
         );
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
 
         expect(readCalendarScheduleCache(
@@ -107,7 +120,7 @@ describe("calendar schedule month cache", () => {
     });
 
     test("공유 off에서 늦은 받은 일정 응답은 cache에 부활하지 않고 owner 응답은 유지된다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
         const august = getMonthRange("2026-08-01");
         const owner = {
@@ -133,7 +146,7 @@ describe("calendar schedule month cache", () => {
     });
 
     test("off owner context rejects an ownerMemberId-only received row without rollout share flags", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
         const september = getMonthRange("2026-09-01");
 
@@ -175,64 +188,187 @@ describe("calendar schedule month cache", () => {
         expect(mutation).not.toHaveBeenCalled();
     });
 
-    test("첫 3개월 조회는 한 요청으로 받고 월별 캐시로 나눈다", async () => {
-        const june = getMonthRange("2026-06-01");
-        const august = getMonthRange("2026-08-01");
+    test("첫 월 화면은 앞뒤 2개월을 한 요청으로 받고 5개 월 캐시로 나눈다", async () => {
+        const julyWindow = fiveMonthRange("2026-07-15");
         const items = [
+            schedule("may", localDate(2026, 4, 10)),
             schedule("july", localDate(2026, 6, 10)),
-            schedule("august", localDate(2026, 7, 10)),
+            schedule("september", localDate(2026, 8, 10)),
         ];
         const fetcher = jest.fn().mockResolvedValue(items);
 
         const result = await refreshCalendarScheduleCache(
-            june.startAt,
-            august.endAt,
+            julyWindow.startAt,
+            julyWindow.endAt,
             fetcher,
         );
 
         expect(fetcher).toHaveBeenCalledTimes(1);
-        expect(fetcher).toHaveBeenCalledWith(june.startAt, august.endAt);
-        expect(result.requestedMonthKeys).toEqual(["2026-06", "2026-07", "2026-08"]);
-        expect(result.cachedMonthKeys).toEqual(["2026-06", "2026-07", "2026-08"]);
-        expect(result.items.map((item) => item.id)).toEqual(["july", "august"]);
-        expect(hasCalendarScheduleMonthCache("2026-08-15")).toBe(true);
-    });
-
-    test("다음 달 이동은 캐시된 두 달을 재조회하지 않고 새 한 달만 가져온다", async () => {
-        const june = getMonthRange("2026-06-01");
-        const august = getMonthRange("2026-08-01");
-        const september = getMonthRange("2026-09-01");
-        const fetcher = jest.fn()
-            .mockResolvedValueOnce([
-                schedule("july", localDate(2026, 6, 10)),
-                schedule("august", localDate(2026, 7, 10)),
-            ])
-            .mockResolvedValueOnce([
-                schedule("september", localDate(2026, 8, 10)),
-            ]);
-
-        await refreshCalendarScheduleCache(june.startAt, august.endAt, fetcher);
-        const cachedBeforeRefresh = readCalendarScheduleCache(
-            getMonthRange("2026-07-01").startAt,
-            september.endAt,
+        expect(fetcher).toHaveBeenCalledWith(
+            julyWindow.startAt,
+            julyWindow.endAt,
         );
-
-        expect(cachedBeforeRefresh.cachedMonthKeys).toEqual(["2026-07", "2026-08"]);
-        expect(cachedBeforeRefresh.items.map((item) => item.id)).toEqual(["july", "august"]);
-
-        const refreshed = await refreshCalendarScheduleCache(
-            getMonthRange("2026-07-01").startAt,
-            september.endAt,
-            fetcher,
-        );
-
-        expect(fetcher).toHaveBeenCalledTimes(2);
-        expect(fetcher).toHaveBeenLastCalledWith(september.startAt, september.endAt);
-        expect(refreshed.items.map((item) => item.id)).toEqual([
+        expect(result.requestedMonthKeys).toEqual([
+            "2026-05",
+            "2026-06",
+            "2026-07",
+            "2026-08",
+            "2026-09",
+        ]);
+        expect(result.cachedMonthKeys).toEqual(result.requestedMonthKeys);
+        expect(result.items.map((item) => item.id)).toEqual([
+            "may",
             "july",
-            "august",
             "september",
         ]);
+        expect(hasCalendarScheduleMonthCache("2026-09-15")).toBe(true);
+    });
+
+    test("다음 달 이동은 보이는 월 cache hit여도 새 우측 경계 월을 미리 채우고 반복 이동은 fetch하지 않는다", async () => {
+        const julyWindow = fiveMonthRange("2026-07-15");
+        const augustWindow = fiveMonthRange("2026-08-15");
+        const october = getMonthRange("2026-10-01");
+        const fetcher = jest.fn().mockResolvedValue([]);
+
+        await loadCalendarScheduleWindow({
+            ...julyWindow,
+            visibleMonth: "2026-07-15",
+            fetcher,
+        });
+        expect(hasCalendarScheduleMonthCache("2026-08-15")).toBe(true);
+
+        const edgeLoad = await loadCalendarScheduleWindow({
+            ...augustWindow,
+            visibleMonth: "2026-08-15",
+            fetcher,
+        });
+        expect(edgeLoad.hasVisibleMonthCache).toBe(true);
+        expect(edgeLoad.cached.cachedMonthKeys).toEqual([
+            "2026-06",
+            "2026-07",
+            "2026-08",
+            "2026-09",
+        ]);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(fetcher).toHaveBeenLastCalledWith(
+            october.startAt,
+            october.endAt,
+        );
+        expect(hasCalendarScheduleMonthCache("2026-10-15")).toBe(true);
+
+        await loadCalendarScheduleWindow({
+            ...augustWindow,
+            visibleMonth: "2026-08-15",
+            fetcher,
+        });
+        expect(fetcher).toHaveBeenCalledTimes(2);
+    });
+
+    test("앞으로 세 달을 넘겨도 매 이동에서 다음 경계를 채워 visible month가 끊기지 않는다", async () => {
+        const fetcher = jest.fn().mockResolvedValue([]);
+        const visibleMonths = [
+            "2026-07-15",
+            "2026-08-15",
+            "2026-09-15",
+            "2026-10-15",
+        ];
+
+        for (const visibleMonth of visibleMonths) {
+            const range = fiveMonthRange(visibleMonth);
+            await loadCalendarScheduleWindow({
+                ...range,
+                visibleMonth,
+                fetcher,
+            });
+            expect(hasCalendarScheduleMonthCache(visibleMonth)).toBe(true);
+        }
+
+        expect(fetcher).toHaveBeenCalledTimes(4);
+        expect(fetcher).toHaveBeenNthCalledWith(
+            2,
+            getMonthRange("2026-10-01").startAt,
+            getMonthRange("2026-10-01").endAt,
+        );
+        expect(fetcher).toHaveBeenNthCalledWith(
+            3,
+            getMonthRange("2026-11-01").startAt,
+            getMonthRange("2026-11-01").endAt,
+        );
+        expect(fetcher).toHaveBeenNthCalledWith(
+            4,
+            getMonthRange("2026-12-01").startAt,
+            getMonthRange("2026-12-01").endAt,
+        );
+    });
+
+    test("뒤로 세 달을 넘겨도 매 이동에서 이전 경계를 채워 visible month가 끊기지 않는다", async () => {
+        const fetcher = jest.fn().mockResolvedValue([]);
+        const visibleMonths = [
+            "2026-07-15",
+            "2026-06-15",
+            "2026-05-15",
+            "2026-04-15",
+        ];
+
+        for (const visibleMonth of visibleMonths) {
+            const range = fiveMonthRange(visibleMonth);
+            await loadCalendarScheduleWindow({
+                ...range,
+                visibleMonth,
+                fetcher,
+            });
+            expect(hasCalendarScheduleMonthCache(visibleMonth)).toBe(true);
+        }
+
+        expect(fetcher).toHaveBeenCalledTimes(4);
+        expect(fetcher).toHaveBeenNthCalledWith(
+            2,
+            getMonthRange("2026-04-01").startAt,
+            getMonthRange("2026-04-01").endAt,
+        );
+        expect(fetcher).toHaveBeenNthCalledWith(
+            3,
+            getMonthRange("2026-03-01").startAt,
+            getMonthRange("2026-03-01").endAt,
+        );
+        expect(fetcher).toHaveBeenNthCalledWith(
+            4,
+            getMonthRange("2026-02-01").startAt,
+            getMonthRange("2026-02-01").endAt,
+        );
+    });
+
+    test("5개월 cache hit는 네트워크를 생략하고 TTL 만료 후에만 다시 조회한다", async () => {
+        const baseNow = new Date(2026, 6, 1, 9, 0, 0, 0).getTime();
+        const ttlMs = 15 * 60 * 1000;
+        const range = fiveMonthRange("2026-07-15");
+        const fetcher = jest.fn().mockResolvedValue([]);
+        const nowSpy = jest.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        await loadCalendarScheduleWindow({
+            ...range,
+            visibleMonth: "2026-07-15",
+            fetcher,
+        });
+        nowSpy.mockReturnValue(baseNow + ttlMs - 1);
+        await loadCalendarScheduleWindow({
+            ...range,
+            visibleMonth: "2026-07-15",
+            fetcher,
+        });
+        expect(fetcher).toHaveBeenCalledTimes(1);
+
+        nowSpy.mockReturnValue(baseNow + ttlMs);
+        await loadCalendarScheduleWindow({
+            ...range,
+            visibleMonth: "2026-07-15",
+            fetcher,
+        });
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(fetcher).toHaveBeenLastCalledWith(
+            range.startAt,
+            range.endAt,
+        );
     });
 
     test("일정 수정과 삭제를 캐시된 모든 월에 즉시 반영한다", async () => {

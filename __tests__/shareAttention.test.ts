@@ -85,7 +85,7 @@ describe("share attention summary", () => {
     });
 
     test("공유 off bootstrap/read는 durable attention을 삭제하고 새 seen 값을 쓰지 않는다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         await secureStoreMock.setItemAsync(
             "nolate.shareAttention.seenKeys.v1",
             JSON.stringify(["share:old"]),

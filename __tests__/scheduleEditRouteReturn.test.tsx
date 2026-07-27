@@ -171,7 +171,7 @@ describe("ScheduleEditScreen route return", () => {
     });
 
     test("공유 전역 off에서는 수정 화면도 공유 캘린더를 조회하지 않는다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         mockGetSchedule.mockImplementation(() => new Promise(() => undefined));
         mockUpdateSchedule.mockImplementation(async (_id, payload) => ({
             ...mockItem,

@@ -65,6 +65,12 @@ describe("schedule sharing production policy", () => {
 
     test.each([
         undefined,
+        "true",
+    ])("missing config or the exact string true enables sharing: %p", (rawValue) => {
+        expect(resolveScheduleSharingEnabled(rawValue)).toBe(true);
+    });
+
+    test.each([
         null,
         false,
         true,
@@ -75,16 +81,28 @@ describe("schedule sharing production policy", () => {
         "True",
         " true ",
         "true\n",
-    ])("only the exact string true enables sharing: %p", (rawValue) => {
+        "FALSE",
+        " false ",
+    ])("provided false or malformed values disable sharing: %p", (rawValue) => {
         expect(resolveScheduleSharingEnabled(rawValue)).toBe(false);
     });
 
-    test("the exact string true is enabled", () => {
-        expect(resolveScheduleSharingEnabled("true")).toBe(true);
+    test("a missing runtime key keeps sharing UI/API available", () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+
+        expect(isScheduleSharingEnabled()).toBe(true);
+        expect(() => assertScheduleSharingEnabled()).not.toThrow();
+        expect(retainScheduleShareTokenForEnabledPolicy("default-token"))
+            .toBe("default-token");
+        expect(getScheduleSharingRouteRedirect({
+            segments: ["share", "default-token"],
+            isAuthenticated: true,
+            isCurationCompleted: true,
+        })).toBeUndefined();
     });
 
-    test("runtime policy and disabled API assertion fail closed when the key is absent", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+    test("the explicit false kill switch rejects sharing APIs", () => {
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         expect(isScheduleSharingEnabled()).toBe(false);
         expect(() => assertScheduleSharingEnabled())
@@ -92,7 +110,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("off keeps owner data but removes received rows and collaboration projections", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         expect(filterScheduleCategoriesForSharingPolicy(
             [ownerCategory, receivedCategory],
@@ -117,7 +135,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("off rejects sharing and cross-user notification families without blocking owner traffic", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         for (const type of [
             "SCHEDULE_SHARE_RECEIVED",
@@ -155,7 +173,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("old stored sharing notifications are removed before title/body presentation", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const ownerTraffic = {
             type: "SCHEDULE_TRAFFIC",
             data: {
@@ -180,7 +198,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("stored type conflicts cannot disguise a sharing notification", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const ownerProof = {
             scheduleId: "1",
             ownerMemberId: "7",
@@ -209,7 +227,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("off push parsing rejects navigation/actions before a queued intent can be retained", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const queue = createPendingPushNavigationQueue();
         const shareIntent = {
             target: { kind: "shareInbox" as const },
@@ -246,7 +264,7 @@ describe("schedule sharing production policy", () => {
             recipientMemberId: 7,
             validationEpoch: 4,
         });
-        envSpy.mockReturnValue(undefined);
+        envSpy.mockReturnValue("false");
 
         expect(queue.consumeIfReady({
             isLoading: false,
@@ -265,7 +283,7 @@ describe("schedule sharing production policy", () => {
     });
 
     test("off direct routes and post-auth tokens converge without a share redirect", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         expect(getScheduleSharingRouteRedirect({
             segments: ["share", "token"],

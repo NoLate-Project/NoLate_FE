@@ -10,7 +10,7 @@ import {
     sanitizeScheduleItemForSharingPolicy,
 } from "../share/scheduleSharingPolicy";
 
-// 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
+// 공유 grant push와 포커스/주기 revision 확인이 원격 변경을 무효화하므로
 // Redis 월 캐시 TTL과 맞춰 월 이동 중 불필요한 네트워크 요청을 막는다.
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_CACHED_MONTHS = 18;

@@ -27,7 +27,7 @@ describe("app notification api", () => {
     });
 
     test("공유 off inbox/count는 기존 공유 title을 제거하고 owner 알림만 센다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const shared = {
             id: 1,
             type: "SCHEDULE_SHARE_RECEIVED",

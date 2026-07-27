@@ -37,12 +37,13 @@ type StoredNotificationLike = {
 };
 
 /**
- * Store builds keep schedule sharing dormant by default. Only the exact public
- * value "true" opens the feature; missing or misspelled rollout values must
- * not let an old deep link, notification, or hidden call site bypass the gate.
+ * Schedule sharing is part of the normal product surface, so a missing key
+ * keeps it available. Explicit configuration remains fail-closed: only the
+ * exact public value "true" enables it and every other provided value closes
+ * all sharing boundaries.
  */
 export function resolveScheduleSharingEnabled(rawValue: unknown): boolean {
-    return rawValue === "true";
+    return rawValue === undefined || rawValue === "true";
 }
 
 export function isScheduleSharingEnabled(): boolean {

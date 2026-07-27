@@ -1,4 +1,5 @@
 import { apiDelete, apiGet, apiPost, apiPut } from "../src/api/api";
+import * as env from "../src/api/env";
 import {
     createSchedule,
     deleteSchedule,
@@ -79,10 +80,15 @@ function cachedTitle(): string | undefined {
 }
 
 beforeEach(() => {
+    jest.spyOn(env, "getEnv").mockReturnValue("false");
     const epoch = beginAuthLoginSession();
     activateAuthSessionIfCurrent(epoch);
     clearCalendarScheduleCache();
     jest.clearAllMocks();
+});
+
+afterEach(() => {
+    jest.restoreAllMocks();
 });
 
 test.each([

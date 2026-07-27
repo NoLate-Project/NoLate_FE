@@ -167,7 +167,7 @@ describe("ScheduleProvider deletion tombstones", () => {
     });
 
     test("공유 off provider는 warm 받은 일정과 늦은 dispatch/mutation 재유입을 모두 거부한다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         establishScheduleSharingSessionOwner(getAuthSessionEpoch(), 7);
         const initialState = createScheduleInitialState(SYSTEM_NOW);
         initialState.itemsById = {

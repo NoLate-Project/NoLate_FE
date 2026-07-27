@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 test("공유 off에서는 ownerMemberId만 다른 rollout mutation event도 listener/cache에 전달하지 않는다", () => {
-    jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+    jest.spyOn(env, "getEnv").mockReturnValue("false");
     const epoch = getAuthSessionEpoch();
     establishScheduleSharingSessionOwner(epoch, 7);
     const listener = jest.fn();

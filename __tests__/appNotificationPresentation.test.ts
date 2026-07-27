@@ -39,7 +39,7 @@ describe("app notification presentation", () => {
         "SCHEDULE_DEPARTURE_NUDGE",
         "SCHEDULE_CACHE_INVALIDATED",
     ])("공유 off에서는 저장된 %s 알림을 resource route로 열지 않는다", (type) => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         expect(getAppNotificationNavigationTarget(notification({
             type,
@@ -48,7 +48,7 @@ describe("app notification presentation", () => {
     });
 
     test("off stored top-level share type cannot be disguised by an owner data type", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
 
         expect(getAppNotificationNavigationTarget(notification({
             type: "SCHEDULE_SHARE_RECEIVED",

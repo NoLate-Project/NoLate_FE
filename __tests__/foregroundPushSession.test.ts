@@ -96,7 +96,7 @@ describe("foreground push account session binding", () => {
         "SCHEDULE_DEPARTURE_NUDGE",
         "SCHEDULE_CACHE_INVALIDATED",
     ])("공유 off에서 %s는 계정 조회 전 표시/cache/event를 모두 거부한다", async (type) => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const harness = createHarness({
             memberId: 2,
             message: {
@@ -119,7 +119,7 @@ describe("foreground push account session binding", () => {
     });
 
     test("공유 off에서 unknown cross-user type도 fail-closed로 표시하지 않는다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const harness = createHarness({
             memberId: 2,
             message: {
@@ -143,7 +143,7 @@ describe("foreground push account session binding", () => {
     });
 
     test("공유 off에서도 owner proof가 있는 일반 traffic 알림은 정상 처리한다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const harness = createHarness({
             memberId: 2,
             message: {
@@ -169,7 +169,7 @@ describe("foreground push account session binding", () => {
     });
 
     test("공유 off의 owner proof 없는 old traffic은 표시/cache/event를 만들지 않는다", async () => {
-        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        jest.spyOn(env, "getEnv").mockReturnValue("false");
         const harness = createHarness({
             memberId: 2,
             message: {
