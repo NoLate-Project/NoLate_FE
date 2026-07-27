@@ -20,8 +20,8 @@ export const CALENDAR_DEPTH_MOTION = Object.freeze({
 export type DetailMonthSwipeDirection = -1 | 1;
 
 /**
- * 상세형 월 스와이프는 달력 셀을 한 벌만 유지한 채 midpoint에서 월을 교체한다.
- * React commit을 위한 한 프레임까지 포함해 160ms 전환 예산 안에 정착한다.
+ * 상세형 가로 월 이동은 미리 렌더한 양옆 page를 160ms 안에 보여준 뒤
+ * 뒤에서 pager anchor를 교체한다. 세로 이동과 reduce motion은 짧은 fade를 쓴다.
  */
 export const DETAIL_MONTH_SWIPE_MOTION = Object.freeze({
     exitDurationMs: 48,
@@ -29,6 +29,10 @@ export const DETAIL_MONTH_SWIPE_MOTION = Object.freeze({
     commitWatchdogMs: 120,
     enterDurationMs: 96,
     travel: 24,
+    // Button-driven month changes swap the controlled Calendar at the motion
+    // midpoint. Keeping a visible floor prevents a delayed ACK (or a queued
+    // second press) from ever leaving the whole month grid fully transparent.
+    buttonOpacityFloor: 0.72,
     reduceMotionExitDurationMs: 24,
     reduceMotionEnterDurationMs: 40,
     reduceMotionTravel: 0,
@@ -164,6 +168,7 @@ export type CalendarPrimaryPillLayout = {
 export const CALENDAR_PRIMARY_PILL_LAYOUT = Object.freeze({
     chromeWidth: 48,
     estimatedCharacterWidth: 18,
+    combinedMonthEstimatedCharacterWidth: 12,
     monthMinWidth: 132,
     dayMinWidth: 84,
     viewportReservedWidth: 172,
@@ -183,9 +188,14 @@ export function resolveCalendarPrimaryPillLayout(
         return { visible: false, width: 0 };
     }
 
-    const characterCount = Array.from(label.trim()).length;
+    const trimmedLabel = label.trim();
+    const characterCount = Array.from(trimmedLabel).length;
+    const estimatedCharacterWidth =
+        depth === "month" && /년\s+\d{1,2}월$/.test(trimmedLabel)
+            ? CALENDAR_PRIMARY_PILL_LAYOUT.combinedMonthEstimatedCharacterWidth
+            : CALENDAR_PRIMARY_PILL_LAYOUT.estimatedCharacterWidth;
     const contentWidth = Math.ceil(
-        characterCount * CALENDAR_PRIMARY_PILL_LAYOUT.estimatedCharacterWidth
+        characterCount * estimatedCharacterWidth
     ) + CALENDAR_PRIMARY_PILL_LAYOUT.chromeWidth;
     const minimumWidth = depth === "day"
         ? CALENDAR_PRIMARY_PILL_LAYOUT.dayMinWidth
@@ -220,6 +230,81 @@ export type MonthAgendaViewportMetrics = {
     panelCalendarHeight: number;
     expandedListTop: number;
 };
+
+export type DetailMonthPanelLayout = {
+    calendarHeight: number;
+    dayHeight: number;
+    panelHeight: number;
+};
+
+export type DetailMonthPanelMetrics = {
+    viewportHeight: number;
+    fixedChromeHeight: number;
+    weekCount: number;
+    defaultDayHeight: number;
+};
+
+/** 상세형은 빈 일정에서도 선택일 패널이 실제 월 화면의 45%를 차지한다. */
+export const DETAIL_MONTH_PANEL_LAYOUT = Object.freeze({
+    minimumPanelRatio: 0.45,
+    maximumCalendarRatio: 0.55,
+});
+
+/**
+ * 월별 주 수에 맞춰 남은 달력 공간을 날짜 행에 균등 배분한다.
+ * calendarHeight와 panelHeight의 합은 항상 실제 월 화면 높이와 같다.
+ */
+export function resolveDetailMonthPanelLayout(
+    metrics: DetailMonthPanelMetrics
+): DetailMonthPanelLayout {
+    const viewportHeight = Number.isFinite(metrics.viewportHeight)
+        ? Math.max(0, metrics.viewportHeight)
+        : 0;
+    const fixedChromeHeight = Number.isFinite(metrics.fixedChromeHeight)
+        ? Math.max(0, metrics.fixedChromeHeight)
+        : 0;
+    const weekCount = Number.isFinite(metrics.weekCount)
+        ? Math.max(1, Math.round(metrics.weekCount))
+        : 6;
+    const defaultDayHeight = Number.isFinite(metrics.defaultDayHeight)
+        ? Math.max(0, metrics.defaultDayHeight)
+        : 0;
+
+    if (viewportHeight === 0) {
+        return { calendarHeight: 0, dayHeight: 0, panelHeight: 0 };
+    }
+
+    const maximumCalendarHeight = viewportHeight * Math.min(
+        DETAIL_MONTH_PANEL_LAYOUT.maximumCalendarRatio,
+        1 - DETAIL_MONTH_PANEL_LAYOUT.minimumPanelRatio
+    );
+    const naturalCalendarHeight = fixedChromeHeight + weekCount * defaultDayHeight;
+    const calendarHeight = Math.min(maximumCalendarHeight, naturalCalendarHeight);
+    const panelHeight = viewportHeight - calendarHeight;
+    const dayHeight = Math.max(
+        0,
+        (calendarHeight - fixedChromeHeight) / weekCount
+    );
+
+    return { calendarHeight, dayHeight, panelHeight };
+}
+
+export function getCalendarMonthWeekCount(
+    month: string,
+    firstDay: 0 | 1
+): number {
+    const [yearText, monthText] = month.slice(0, 7).split("-");
+    const year = Number(yearText);
+    const monthNumber = Number(monthText);
+    if (!Number.isFinite(year) || !Number.isFinite(monthNumber)) return 6;
+
+    const monthIndex = monthNumber - 1;
+    const leadingBlankCount = (
+        new Date(year, monthIndex, 1).getDay() - firstDay + 7
+    ) % 7;
+    const dayCount = new Date(year, monthIndex + 1, 0).getDate();
+    return Math.ceil((leadingBlankCount + dayCount) / 7);
+}
 
 /** 월간 달력과 하단 일정 패널이 한 덩어리처럼 움직이도록 공유하는 모션 값. */
 export const MONTH_AGENDA_MOTION = Object.freeze({

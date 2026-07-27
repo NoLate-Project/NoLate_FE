@@ -1,5 +1,7 @@
 import {
     formatLunarCalendarDay,
+    getCalendarMetadataPrefetchMonthKeys,
+    getCalendarMetadataPrefetchRange,
     getCalendarMetadataRange,
     indexCalendarDays,
     type CalendarDayMetadata,
@@ -14,6 +16,18 @@ describe("calendar metadata presentation", () => {
         expect(getCalendarMetadataRange("2026-07-14", 1)).toEqual({
             startDate: "2026-06-29",
             endDate: "2026-08-02",
+        });
+    });
+
+    test("상세 월 이동 전에 이전·현재·다음 달의 메타데이터 범위를 준비한다", () => {
+        expect(getCalendarMetadataPrefetchMonthKeys("2026-07-14")).toEqual([
+            "2026-06",
+            "2026-07",
+            "2026-08",
+        ]);
+        expect(getCalendarMetadataPrefetchRange("2026-07-14", 0)).toEqual({
+            startDate: "2026-05-31",
+            endDate: "2026-09-05",
         });
     });
 
@@ -45,4 +59,3 @@ describe("calendar metadata presentation", () => {
         expect(indexCalendarDays([day])).toEqual({ "2026-08-15": day });
     });
 });
-

@@ -3,6 +3,7 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
+import * as env from "../src/api/env";
 
 const mockCategory = { id: "work", title: "업무", color: "#FF3B30" };
 const mockOriginalRoute = {
@@ -32,6 +33,8 @@ const mockItem = {
     hasEndTime: true,
     allDay: false,
     category: mockCategory,
+    calendarId: 77,
+    calendarContentModeOverride: "SCHEDULE_AND_TRAVEL" as const,
     origin: { name: "집", lat: 37.5, lng: 126.9 },
     destination: { name: "회사", lat: 37.51, lng: 127.02 },
     travelMode: "TRANSIT" as const,
@@ -75,6 +78,11 @@ jest.mock("react-native-calendars", () => ({ Calendar: "Calendar" }));
 jest.mock("../src/api/scheduleCalendars", () => ({
     getScheduleCalendars: jest.fn().mockResolvedValue([]),
 }));
+const mockGetScheduleCalendars = (
+    jest.requireMock("../src/api/scheduleCalendars") as {
+        getScheduleCalendars: jest.Mock;
+    }
+).getScheduleCalendars;
 jest.mock("../src/modules/schedule/store", () => ({
     useScheduleStore: () => ({
         state: mockState,
@@ -146,17 +154,52 @@ describe("ScheduleEditScreen route return", () => {
     });
 
     beforeEach(() => {
+        jest.spyOn(env, "getEnv").mockReturnValue("true");
         mockPathname = "/schedule/1";
         mockRouterPush.mockReset();
         mockRouterSetParams.mockReset();
         mockDispatch.mockReset();
         mockGetSchedule.mockReset();
         mockUpdateSchedule.mockReset();
+        mockGetScheduleCalendars.mockClear();
     });
 
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
+    });
+
+    test("공유 전역 off에서는 수정 화면도 공유 캘린더를 조회하지 않는다", async () => {
+        jest.spyOn(env, "getEnv").mockReturnValue(undefined);
+        mockGetSchedule.mockImplementation(() => new Promise(() => undefined));
+        mockUpdateSchedule.mockImplementation(async (_id, payload) => ({
+            ...mockItem,
+            ...payload,
+        }));
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+        });
+
+        expect(mockGetScheduleCalendars).not.toHaveBeenCalled();
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "공유 캘린더 관리",
+        })).toHaveLength(0);
+
+        await act(async () => {
+            await renderer!.root.findByProps({
+                accessibilityLabel: "일정 수정 저장",
+            }).props.onPress();
+        });
+        expect(mockUpdateSchedule).toHaveBeenCalledWith(
+            "1",
+            expect.objectContaining({
+                calendarId: 77,
+                calendarContentModeOverride: "SCHEDULE_AND_TRAVEL",
+            }),
+        );
     });
 
     test("느린 상세 재조회와 무관하게 경로 변경 직후 저장할 수 있다", async () => {

@@ -2,9 +2,11 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Audio } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
-import { Alert } from "react-native";
+import { ActionSheetIOS, Alert } from "react-native";
 
-import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
+import QuickScheduleModal, {
+    resolvePhotoPreviewAspectRatio,
+} from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type { ScheduleParseResult } from "../src/modules/schedule/types";
 
@@ -116,6 +118,7 @@ describe("QuickScheduleModal photo OCR", () => {
             canceled: true,
             assets: null,
         });
+        jest.spyOn(ActionSheetIOS, "showActionSheetWithOptions").mockImplementation(() => undefined);
     });
 
     afterEach(async () => {
@@ -124,6 +127,13 @@ describe("QuickScheduleModal photo OCR", () => {
         jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
+    });
+
+    test("긴 영수증과 가로 파노라마도 포커스가 겹치지 않는 미리보기 비율로 제한한다", () => {
+        expect(resolvePhotoPreviewAspectRatio(0.2)).toBe(0.55);
+        expect(resolvePhotoPreviewAspectRatio(4 / 3)).toBe(4 / 3);
+        expect(resolvePhotoPreviewAspectRatio(4)).toBe(2.2);
+        expect(resolvePhotoPreviewAspectRatio(Number.NaN)).toBe(1);
     });
 
     async function renderQuickScheduleModal(
@@ -166,10 +176,26 @@ describe("QuickScheduleModal photo OCR", () => {
             }],
         });
 
+        await choosePhotoSource(1);
+    }
+
+    async function choosePhotoSource(buttonIndex: 0 | 1) {
+        const emptyPhotoButton = renderer!.root.findAllByProps({ accessibilityLabel: "사진 선택" })[0];
+        const photoChangeButton = renderer!.root.findAllByProps({ accessibilityLabel: "선택한 사진 변경" })[0];
+
         await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
-                .props.onPress();
+            (emptyPhotoButton ?? photoChangeButton).props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const actionSheetCallback = (ActionSheetIOS.showActionSheetWithOptions as jest.Mock)
+            .mock.calls.at(-1)?.[1] as ((selectedIndex: number) => void) | undefined;
+        expect(actionSheetCallback).toEqual(expect.any(Function));
+
+        await act(async () => {
+            actionSheetCallback?.(buttonIndex);
+            await jest.advanceTimersByTimeAsync(360);
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
@@ -187,14 +213,7 @@ describe("QuickScheduleModal photo OCR", () => {
             }],
         });
 
-        await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "카메라로 일정 사진 촬영" })
-                .props.onPress();
-            await Promise.resolve();
-            await Promise.resolve();
-            await Promise.resolve();
-        });
+        await choosePhotoSource(0);
     }
 
     function hasPhotoScanOverlay() {
@@ -212,6 +231,12 @@ describe("QuickScheduleModal photo OCR", () => {
 
         await renderQuickScheduleModal();
         await enterPhotoMode();
+        expect(
+            renderer!.root.findAllByProps({ accessibilityLabel: "카메라로 일정 사진 촬영" })
+        ).toHaveLength(0);
+        expect(
+            renderer!.root.findAllByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
+        ).toHaveLength(0);
         await captureCameraPhoto("file:///tmp/camera-schedule.jpg");
 
         expect(ImagePicker.requestCameraPermissionsAsync).toHaveBeenCalledTimes(1);
@@ -222,10 +247,11 @@ describe("QuickScheduleModal photo OCR", () => {
         );
         expect(hasPhotoScanOverlay()).toBe(true);
         expect(
-            renderer!.root.findAllByProps({
-                accessibilityLabel: "사진에서 일정 문장 인식 중",
-            }).length
-        ).toBeGreaterThan(0);
+            renderer!.root.findAll((node) => (
+                node.props.accessibilityLabel === "사진에서 일정 문장 인식 중"
+                && typeof node.type === "string"
+            ))
+        ).toHaveLength(1);
         expect(
             renderer!.root.findAllByProps({ accessibilityLabel: "선택한 사진 정보 및 변경" })
         ).toHaveLength(0);
@@ -252,11 +278,11 @@ describe("QuickScheduleModal photo OCR", () => {
             renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
                 .props.accessibilityState.disabled
         ).toBe(false);
-        const photoMetaChangeButton = renderer!.root.findByProps({
-            accessibilityLabel: "선택한 사진 정보 및 변경",
+        const photoChangeButton = renderer!.root.findByProps({
+            accessibilityLabel: "선택한 사진 변경",
         });
-        expect(photoMetaChangeButton.props.accessibilityRole).toBe("button");
-        expect(photoMetaChangeButton.props.onPress).toEqual(expect.any(Function));
+        expect(photoChangeButton.props.accessibilityRole).toBe("button");
+        expect(photoChangeButton.props.onPress).toEqual(expect.any(Function));
     });
 
     test("iOS 사진 선택은 보관함 선권한 없이 OCR 오버레이를 표시하고 수정문을 분석한다", async () => {
@@ -827,7 +853,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(finalizingControl.props.accessibilityState.disabled).toBe(true);
         expect(finalizingControl.props.disabled).toBe(true);
         expect(
-            renderer!.root.findAll((node) => node.props.children === "음성을 정리하고 있어요")
+            renderer!.root.findAll((node) => node.props.children === "확인 중")
         ).not.toHaveLength(0);
 
         await act(async () => {
@@ -854,7 +880,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" })
                 .props.placeholder
-        ).toBe("일정 미리보기를 누르면 녹음을 인식합니다.");
+        ).toBe("필요하면 내용을 직접 적어 주세요.");
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
                 .props.accessibilityState.disabled
@@ -957,7 +983,7 @@ describe("QuickScheduleModal photo OCR", () => {
         });
         expect(reopenedControl.props.accessibilityState.disabled).toBe(false);
         expect(
-            renderer!.root.findAll((node) => node.props.children === "음성을 정리하고 있어요")
+            renderer!.root.findAll((node) => node.props.children === "확인 중")
         ).toHaveLength(0);
     });
 });

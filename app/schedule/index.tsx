@@ -54,13 +54,18 @@ import LiquidCalendarMenuPrototype, {
 import {
     CALENDAR_DAY_HEIGHTS,
     CALENDAR_VIEW_OPTIONS,
+    getPrimaryPillWeekdayGap,
+    prefetchesAdjacentMonths,
+    showsStickyMonthTitle as shouldShowStickyMonthTitle,
     type CalendarViewMode,
+    usesMonthInPrimaryPill,
 } from "../../src/modules/schedule/components/calendar/viewMode";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
 import {
     MonthAgendaList,
     SelectedDayAgendaPanel,
 } from "../../src/modules/schedule/components/list/ScheduleAgendaViews";
+import NextDepartureHero from "../../src/modules/schedule/components/list/NextDepartureHero";
 import ScheduleNewModal, {
     type ScheduleAddMorphPresenter,
 } from "../../src/modules/schedule/components/form/ScheduleAddModal";
@@ -74,13 +79,30 @@ import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { isOverlappingDay, startOfDay, toYmd } from "../../lib/util/data";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetupNavigation";
-import { createSchedule, getCalendarSchedules, getSchedules, parseScheduleText, searchSchedules } from "../../src/api/schedule";
+import {
+    createSchedule,
+    getCalendarSchedules,
+    parseScheduleText,
+    searchSchedules,
+    synchronizeCalendarScheduleCacheRevision,
+} from "../../src/api/schedule";
 import { getCalendarDays } from "../../src/api/calendar";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import { getShareInbox } from "../../src/api/scheduleSharing";
 import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
 import {
+    clearCalendarScheduleCache,
+    hasCalendarScheduleMonthCache,
+    readCalendarScheduleCache,
+    reconcileCalendarScheduleCacheWithFullList,
+    removeCalendarScheduleCacheItem,
+    refreshCalendarScheduleCache,
+    subscribeCalendarScheduleCacheInvalidated,
+    upsertCalendarScheduleCacheItem,
+} from "../../src/modules/schedule/calendarScheduleCache";
+import {
+    getCalendarMetadataPrefetchMonthKeys,
     getCalendarMetadataRange,
     indexCalendarDays,
     type CalendarDayMetadata,
@@ -121,9 +143,11 @@ import {
     CURRENT_TIME_MOTION,
     MONTH_AGENDA_MOTION,
     formatCalendarCurrentTime,
+    getCalendarMonthWeekCount,
     getMonthAgendaPanelKind,
     getMonthAgendaTransition,
     resolveCalendarPrimaryPillLayout,
+    resolveDetailMonthPanelLayout,
     resolveMonthAgendaViewportLayout,
     shouldAnimateCurrentTimeStep,
     type MonthAgendaPanelKind,
@@ -131,6 +155,7 @@ import {
 import {
     buildShareAttentionSummary,
     readSeenShareAttentionKeys,
+    startScheduleShareAttentionPolling,
     type ShareAttentionSummary,
 } from "../../src/modules/share/shareAttention";
 import { subscribeAppNotificationReceived } from "../../src/modules/notification/appNotificationEvents";
@@ -138,7 +163,25 @@ import {
     resolveQuickScheduleParseInput,
     type QuickScheduleMediaInput,
 } from "../../src/modules/schedule/quickInputExtraction";
+import {
+    buildNextDepartureCandidate,
+    buildNextDepartureHeroModel,
+    selectNextDeparture,
+} from "../../src/modules/schedule/nextDeparture";
+import { useNextDepartureHome } from "../../src/modules/schedule/useNextDepartureHome";
+import {
+    collectScheduleIdsMissingFromFullList,
+    filterScheduleItemsBySecurityFence,
+    ScheduleSessionRequestFence,
+} from "../../src/modules/schedule/sessionRequestFence";
+import {
+    getAuthSessionEpoch,
+    isAuthSessionActive,
+} from "../../src/modules/auth/authSessionEpoch";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import {
+    isScheduleSharingEnabled,
+} from "../../src/modules/share/scheduleSharingPolicy";
 
 const getErrorMessage = (error: unknown) => {
     const message = error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -201,12 +244,12 @@ const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_WIDTH = ADD_MENU_SOURCE.nativeWidth;
 const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = ADD_MENU_SOURCE.nativeHeight;
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
-// The view-mode menu still needs the wider 251pt host. The add menu itself is
-// 238pt wide and stays aligned to this canvas' trailing edge.
-const LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH = 251;
 const SHARE_ATTENTION_REFRESH_MS = 45_000;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
+const SEARCH_TOOLBAR_LEFT_INSET = 16;
+const SEARCH_TOOLBAR_OPEN_DURATION_MS = 120;
+const SEARCH_FIELD_REVEAL_START_PROGRESS = 0.28;
 const DAY_WEEK_STRIP_TOP_OFFSET = LIQUID_TOOLBAR_BUTTON_SIZE + LIQUID_TOOLBAR_TOP_OFFSET + 2;
 const DAY_WEEK_STRIP_HEIGHT = 71;
 const DAY_WEEK_STRIP_HORIZONTAL_PADDING = 0;
@@ -219,6 +262,13 @@ const EMPTY_SHARE_ATTENTION = buildShareAttentionSummary({
     receivedShares: [],
 });
 const CALENDAR_FIRST_DAY_STORAGE_KEY = "@nolate/calendar/first-day";
+
+function getStickyCalendarHeaderHeight(viewMode: CalendarViewMode): number {
+    return shouldShowStickyMonthTitle(viewMode)
+        ? STICKY_CALENDAR_HEADER_HEIGHT
+        : STICKY_WEEKDAY_HEADER_HEIGHT + getPrimaryPillWeekdayGap(viewMode);
+}
+
 function colorWithOpacity(color: string, opacity: number) {
     const normalized = color.replace("#", "");
     if (/^[0-9a-fA-F]{6}$/.test(normalized)) {
@@ -320,11 +370,19 @@ function getScheduleFetchRange(
     visibleMonth: string,
     selectedDay: string,
     calendarDepth: CalendarDepth,
-    dayViewMode: DayViewMode
+    dayViewMode: DayViewMode,
+    calendarViewMode: CalendarViewMode
 ) {
     const monthRange = getMonthRange(visibleMonth);
     const startTimes = [new Date(monthRange.startAt).getTime()];
     const endTimes = [new Date(monthRange.endAt).getTime()];
+
+    if (calendarDepth === "month" && prefetchesAdjacentMonths(calendarViewMode)) {
+        const previousMonthRange = getMonthRange(shiftCalendarMonth(visibleMonth, -2));
+        const nextMonthRange = getMonthRange(shiftCalendarMonth(visibleMonth, 2));
+        startTimes.push(new Date(previousMonthRange.startAt).getTime());
+        endTimes.push(new Date(nextMonthRange.endAt).getTime());
+    }
 
     if (calendarDepth === "day") {
         const visibleDays = dayViewMode === "multiDay"
@@ -401,7 +459,14 @@ export default function ScheduleIndex() {
     const focusRequest = Array.isArray(params.focus) ? params.focus[0] : params.focus;
     const focusDayRequest = Array.isArray(params.focusDay) ? params.focusDay[0] : params.focusDay;
     const focusRun = Array.isArray(params.focusRun) ? params.focusRun[0] : params.focusRun;
-    const { state, dispatch } = useScheduleStore();
+    const {
+        state,
+        dispatch,
+        removedItemIds,
+        redactedItemIds,
+    } = useScheduleStore();
+    const scheduleSharingEnabled = isScheduleSharingEnabled();
+    const scheduleAuthEpochRef = useRef(getAuthSessionEpoch());
     const [modalVisible, setModalVisible] = useState(false);
     const [activeToolbarMenu, setActiveToolbarMenu] = useState<ToolbarMenu | null>(null);
     const [toolbarMenuClosing, setToolbarMenuClosing] = useState(false);
@@ -412,7 +477,6 @@ export default function ScheduleIndex() {
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-    const [routeSetupItems, setRouteSetupItems] = useState<ScheduleItem[]>([]);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
@@ -423,13 +487,14 @@ export default function ScheduleIndex() {
     const [yearOverviewClosing, setYearOverviewClosing] = useState(false);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<ScheduleItem[]>([]);
+    const searchResultsRef = useRef(searchResults);
+    searchResultsRef.current = searchResults;
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const [searchRetryKey, setSearchRetryKey] = useState(0);
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
-    const searchSequenceRef = useRef(0);
     const [keyboardVisible, setKeyboardVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
     const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
@@ -491,11 +556,14 @@ export default function ScheduleIndex() {
     const dayModeTransition = useRef(new Animated.Value(1)).current;
     const toolbarDropdownProgress = useRef(new Animated.Value(0)).current;
     const searchToolbarProgress = useRef(new Animated.Value(0)).current;
+    const searchToolbarChromeOpacity = useRef(new Animated.Value(1)).current;
     const addHandoffToolbarOpacity = useRef(new Animated.Value(1)).current;
     const searchInputRef = useRef<TextInput>(null);
     const dayDisplayPrepareRef = useRef<((day: string) => void) | null>(null);
     const monthCalendarHeightRef = useRef(0);
+    const monthCalendarDayHeightRef = useRef(CALENDAR_DAY_HEIGHTS.detail);
     const monthDisplayHeightRef = useRef(0);
+    const [monthDisplayHeight, setMonthDisplayHeight] = useState(0);
     const monthViewTransitionGenerationRef = useRef(0);
     const monthViewTransitionFrameRef = useRef<number | null>(null);
     const monthViewCompletionAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -507,7 +575,6 @@ export default function ScheduleIndex() {
     const todayFocusEnterStartedRef = useRef(false);
     const todayFocusReduceMotionRef = useRef(false);
     const detailMonthMotionCancelRef = useRef<(() => void) | null>(null);
-    const detailMonthMotionShiftRef = useRef<((direction: -1 | 1) => void) | null>(null);
     const transitionStartedRef = useRef(false);
     const dayPageNavigationActiveRef = useRef(false);
     const dayTransitionCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -519,14 +586,34 @@ export default function ScheduleIndex() {
     const addHandoffClosingRef = useRef(false);
     const addHandoffNativeResetRef = useRef(false);
     const handledFocusRequestRef = useRef<string | null>(null);
-    const scheduleLoadSequenceRef = useRef(0);
-    const calendarMetadataLoadSequenceRef = useRef(0);
+    const scheduleSessionFenceRef = useRef(
+        new ScheduleSessionRequestFence()
+    );
+    const calendarMetadataMountedRef = useRef(true);
+    const calendarMetadataLoadedMonthKeysRef = useRef(new Set<string>());
+    const calendarMetadataInFlightMonthKeysRef = useRef(new Set<string>());
+    const scheduleItemsByIdRef = useRef(state.itemsById);
+    scheduleItemsByIdRef.current = state.itemsById;
+    const removedItemIdsRef = useRef(removedItemIds);
+    removedItemIdsRef.current = removedItemIds;
+    const redactedItemIdsRef = useRef(redactedItemIds);
+    redactedItemIdsRef.current = redactedItemIds;
+    const verifiedFullScheduleIdsRef = useRef<ReadonlySet<string> | null>(null);
+    useEffect(() => {
+        setSearchResults((current) => filterScheduleItemsBySecurityFence(
+            current,
+            removedItemIds,
+            redactedItemIds,
+            verifiedFullScheduleIdsRef.current
+        ));
+    }, [redactedItemIds, removedItemIds]);
 
     const [pendingSelectedDay, setPendingSelectedDay] = useState<string | null>(null);
     const selectedDay = pendingSelectedDay ?? state.selectedDay;
     const selectedDayRef = useRef(selectedDay);
     selectedDayRef.current = selectedDay;
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
+    const [departureNow, setDepartureNow] = useState(() => new Date());
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
     const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
     const [calendarDaysByDate, setCalendarDaysByDate] = useState<
@@ -537,17 +624,28 @@ export default function ScheduleIndex() {
         [state.error]
     );
     const scheduleFetchRange = useMemo(
-        () => getScheduleFetchRange(fetchVisibleMonth, selectedDay, calendarDepth, dayViewMode),
-        [calendarDepth, dayViewMode, fetchVisibleMonth, selectedDay]
+        () => getScheduleFetchRange(
+            fetchVisibleMonth,
+            selectedDay,
+            calendarDepth,
+            dayViewMode,
+            calendarViewMode
+        ),
+        [calendarDepth, calendarViewMode, dayViewMode, fetchVisibleMonth, selectedDay]
     );
     const scheduleFetchStartAt = scheduleFetchRange.startAt;
     const scheduleFetchEndAt = scheduleFetchRange.endAt;
-    const calendarMetadataRange = useMemo(
-        () => getCalendarMetadataRange(visibleMonth, firstDay),
-        [firstDay, visibleMonth]
+    const calendarMetadataPrefetchMonthKeys = useMemo(
+        () => getCalendarMetadataPrefetchMonthKeys(fetchVisibleMonth),
+        [fetchVisibleMonth]
     );
-    const calendarMetadataStartDate = calendarMetadataRange.startDate;
-    const calendarMetadataEndDate = calendarMetadataRange.endDate;
+
+    useEffect(() => {
+        calendarMetadataMountedRef.current = true;
+        return () => {
+            calendarMetadataMountedRef.current = false;
+        };
+    }, []);
 
     useEffect(() => {
         if (
@@ -657,12 +755,19 @@ export default function ScheduleIndex() {
                     ? "month"
                     : calendarDepth;
     const pillDisplayDay = dayTransitionTargetDay ?? selectedDay;
+    const detailMonthPrimaryLabel = `${visibleYear}년 ${Number(visibleMonth.slice(5, 7))}월`;
+    const monthUsesCombinedPrimaryPill = usesMonthInPrimaryPill(calendarViewMode);
     const visiblePrimaryLabel = pillTargetDepth === "day"
         ? `${new Date(`${pillDisplayDay}T00:00:00`).getMonth() + 1}월`
+        : pillTargetDepth === "month" && monthUsesCombinedPrimaryPill
+            ? detailMonthPrimaryLabel
+            : `${visibleYear}년`;
+    const monthPrimaryLabel = monthUsesCombinedPrimaryPill
+        ? detailMonthPrimaryLabel
         : `${visibleYear}년`;
     const monthPrimaryPillLayout = resolveCalendarPrimaryPillLayout(
         "month",
-        `${visibleYear}년`,
+        monthPrimaryLabel,
         screenWidth
     );
     const primaryPillLayout = resolveCalendarPrimaryPillLayout(
@@ -726,24 +831,56 @@ export default function ScheduleIndex() {
     const monthAgendaMotionDuration = reduceMotionEnabled
         ? MONTH_AGENDA_MOTION.reduceMotionDurationMs
         : MONTH_AGENDA_MOTION.durationMs;
-    const resolveMonthCalendarHeight = useCallback((viewMode: CalendarViewMode) => {
-        const fullCalendarHeight = monthDisplayHeightRef.current;
+    const resolveMonthCalendarLayout = useCallback((viewMode: CalendarViewMode) => {
+        const fullCalendarHeight = monthDisplayHeight || monthDisplayHeightRef.current;
+        const targetHeaderHeight = getStickyCalendarHeaderHeight(viewMode);
         const targetHeaderOffset = insets.top
             + CALENDAR_TOOLBAR_HEIGHT
-            + STICKY_CALENDAR_HEADER_HEIGHT;
-        const panelCalendarHeight = getFixedScheduleCalendarHeight({
+            + targetHeaderHeight;
+        const fixedCalendarHeight = getFixedScheduleCalendarHeight({
             viewMode,
             month: monthDisplaySelectedDay,
             firstDay,
             headerOffset: targetHeaderOffset,
         }) ?? fullCalendarHeight;
+        let panelCalendarHeight = fixedCalendarHeight;
+        let dayHeight = CALENDAR_DAY_HEIGHTS[viewMode];
 
-        return resolveMonthAgendaViewportLayout(viewMode, {
+        if (viewMode === "detail" && fullCalendarHeight > 0) {
+            const weekCount = getCalendarMonthWeekCount(
+                monthDisplaySelectedDay,
+                firstDay
+            );
+            const fixedChromeHeight = Math.max(
+                0,
+                fixedCalendarHeight - weekCount * CALENDAR_DAY_HEIGHTS.detail
+            );
+            const detailLayout = resolveDetailMonthPanelLayout({
+                viewportHeight: fullCalendarHeight,
+                fixedChromeHeight,
+                weekCount,
+                defaultDayHeight: CALENDAR_DAY_HEIGHTS.detail,
+            });
+            panelCalendarHeight = detailLayout.calendarHeight;
+            dayHeight = detailLayout.dayHeight;
+        }
+
+        const viewportLayout = resolveMonthAgendaViewportLayout(viewMode, {
             fullCalendarHeight,
             panelCalendarHeight,
             expandedListTop: insets.top + CALENDAR_TOOLBAR_HEIGHT,
-        }).calendarTargetHeight;
-    }, [firstDay, insets.top, monthDisplaySelectedDay]);
+        });
+
+        return {
+            calendarHeight: viewportLayout.calendarTargetHeight,
+            dayHeight,
+        };
+    }, [
+        firstDay,
+        insets.top,
+        monthDisplayHeight,
+        monthDisplaySelectedDay,
+    ]);
     const monthAgendaPanelOpacity = monthAgendaProgress.interpolate({
         inputRange: [
             0,
@@ -786,6 +923,9 @@ export default function ScheduleIndex() {
         if (!Number.isFinite(nextHeight) || nextHeight <= 0) return;
 
         monthDisplayHeightRef.current = nextHeight;
+        setMonthDisplayHeight((currentHeight) => (
+            Math.abs(currentHeight - nextHeight) > 0.5 ? nextHeight : currentHeight
+        ));
         if (!monthAgendaPanelKind && !isMonthViewTransitionActive) {
             monthCalendarHeightRef.current = nextHeight;
             monthCalendarAnimatedHeight.value = nextHeight;
@@ -800,21 +940,51 @@ export default function ScheduleIndex() {
     useLayoutEffect(() => {
         if (isMonthViewTransitionActive) return;
 
-        const targetHeight = resolveMonthCalendarHeight(calendarViewMode);
+        const targetLayout = resolveMonthCalendarLayout(calendarViewMode);
+        const targetHeight = targetLayout.calendarHeight;
         if (!Number.isFinite(targetHeight) || targetHeight <= 0) return;
 
         cancelReanimatedAnimation(monthCalendarAnimatedHeight);
+        cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
         monthCalendarHeightRef.current = targetHeight;
-        monthCalendarAnimatedHeight.value = targetHeight;
+        monthCalendarDayHeightRef.current = targetLayout.dayHeight;
         monthCalendarTargetHeight.value = targetHeight;
-        monthCalendarAnimatedDayHeight.value = CALENDAR_DAY_HEIGHTS[calendarViewMode];
+
+        const shouldAnimateResponsiveDetailLayout =
+            calendarViewMode === "detail"
+            && monthCalendarAnimatedHeight.value > 0
+            && Math.abs(monthCalendarAnimatedHeight.value - targetHeight) > 0.5;
+        if (shouldAnimateResponsiveDetailLayout) {
+            const layoutEasing = reduceMotionEnabled
+                ? ReanimatedEasing.out(ReanimatedEasing.cubic)
+                : ReanimatedEasing.bezier(...MONTH_AGENDA_MOTION.bezier);
+            monthCalendarAnimatedHeight.value = withTiming(targetHeight, {
+                duration: monthAgendaMotionDuration,
+                easing: layoutEasing,
+                reduceMotion: ReduceMotion.Never,
+            });
+            monthCalendarAnimatedDayHeight.value = withTiming(
+                targetLayout.dayHeight,
+                {
+                    duration: monthAgendaMotionDuration,
+                    easing: layoutEasing,
+                    reduceMotion: ReduceMotion.Never,
+                }
+            );
+            return;
+        }
+
+        monthCalendarAnimatedHeight.value = targetHeight;
+        monthCalendarAnimatedDayHeight.value = targetLayout.dayHeight;
     }, [
         calendarViewMode,
         isMonthViewTransitionActive,
+        monthAgendaMotionDuration,
         monthCalendarAnimatedDayHeight,
         monthCalendarAnimatedHeight,
         monthCalendarTargetHeight,
-        resolveMonthCalendarHeight,
+        reduceMotionEnabled,
+        resolveMonthCalendarLayout,
     ]);
     const dayPillBloomScaleX = dayTransition.interpolate({
         inputRange: [0, 0.5, 1],
@@ -888,21 +1058,19 @@ export default function ScheduleIndex() {
         isDayTransitionActive;
     const actionDropdownRight = 16;
     const isSearchToolbarOpen = activeToolbarMenu === "search";
+    const searchHeaderRightInset = usesLiquidViewModeControl
+        ? ADD_MENU_SOURCE.nativeRightInset
+        : ADD_MENU_SOURCE.fallbackRightInset;
     const searchHeaderTargetWidth = Math.max(
         LIQUID_TOOLBAR_ACTIONS_WIDTH,
-        screenWidth - 32
+        screenWidth - SEARCH_TOOLBAR_LEFT_INSET - searchHeaderRightInset
     );
-    const liquidPrototypeLayerWidth = isSearchToolbarOpen
-        ? searchHeaderTargetWidth
-        : LIQUID_TOOLBAR_NATIVE_CANVAS_WIDTH;
-    // Keep the collapsed Fabric host as small as the visible pill. A full-height
-    // transparent native host still wins hit-testing before its UIKit child gets
-    // a chance to reject the touch, which blocks the day strip underneath it.
-    // Swift requests `onOpenChange(true)` before starting its menu morph, so the
-    // host is expanded in time for the dropdown and shrunk only after it closes.
-    const liquidPrototypeLayerHeight = liquidPrototypeOpen
-        ? LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT
-        : LIQUID_TOOLBAR_BUTTON_SIZE;
+    // Keep the native canvas ready at its largest size. The UIKit child rejects
+    // hits outside the visible pill while collapsed, so this transparent area
+    // does not block the year pill or calendar. Search can therefore morph on
+    // the native clock immediately instead of waiting for a Fabric resize.
+    const liquidPrototypeLayerWidth = searchHeaderTargetWidth;
+    const liquidPrototypeLayerHeight = LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT;
     const requestCloseLiquidPrototype = useCallback(() => {
         if (!usesLiquidViewModeControl) return;
         // Swift closes its content first and then reports `onOpenChange(false)`,
@@ -1080,7 +1248,12 @@ export default function ScheduleIndex() {
         // Animated values survive Fast Refresh. Reset the visibility invariant
         // in cleanup instead of preserving a handoff's transient zero opacity.
         addHandoffToolbarOpacity.setValue(1);
-    }, [addHandoffToolbarOpacity, clearQuickHandoffTimer]);
+        searchToolbarChromeOpacity.setValue(1);
+    }, [
+        addHandoffToolbarOpacity,
+        clearQuickHandoffTimer,
+        searchToolbarChromeOpacity,
+    ]);
     const dropdownScaleX = toolbarDropdownProgress.interpolate({
         inputRange: [0, 1],
         outputRange: [0.68, 1],
@@ -1123,17 +1296,17 @@ export default function ScheduleIndex() {
         outputRange: [1, 1],
     });
     const searchFieldContentOpacity = searchToolbarProgress.interpolate({
-        inputRange: [0, 0.72, 1],
+        inputRange: [0, SEARCH_FIELD_REVEAL_START_PROGRESS, 1],
         outputRange: [0, 0, 1],
         extrapolate: "clamp",
     });
     const searchFieldContentTranslateX = searchToolbarProgress.interpolate({
-        inputRange: [0, 0.72, 1],
+        inputRange: [0, SEARCH_FIELD_REVEAL_START_PROGRESS, 1],
         outputRange: [6, 6, 0],
         extrapolate: "clamp",
     });
     const searchFieldContentTranslateY = searchToolbarProgress.interpolate({
-        inputRange: [0, 0.72, 1],
+        inputRange: [0, SEARCH_FIELD_REVEAL_START_PROGRESS, 1],
         outputRange: [3, 3, 0],
         extrapolate: "clamp",
     });
@@ -1157,8 +1330,11 @@ export default function ScheduleIndex() {
     const stickyCalendarHeaderPosition = useMemo<ViewStyle>(() => ({
         top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
     }), [insets.top]);
+    const showsStickyMonthTitle = shouldShowStickyMonthTitle(calendarViewMode);
+    const primaryPillWeekdayGap = getPrimaryPillWeekdayGap(calendarViewMode);
+    const reservedStickyCalendarHeaderHeight =
+        getStickyCalendarHeaderHeight(calendarViewMode);
     const isStickyCalendarMode =
-        calendarViewMode === "compact" ||
         calendarViewMode === "stack" ||
         calendarViewMode === "detail" ||
         calendarViewMode === "list";
@@ -1203,8 +1379,12 @@ export default function ScheduleIndex() {
     const calendarHeaderOffset = useMemo(
         () => insets.top
             + CALENDAR_TOOLBAR_HEIGHT
-            + (reservesStickyCalendarHeader ? STICKY_CALENDAR_HEADER_HEIGHT : 0),
-        [insets.top, reservesStickyCalendarHeader]
+            + (reservesStickyCalendarHeader ? reservedStickyCalendarHeaderHeight : 0),
+        [
+            insets.top,
+            reservedStickyCalendarHeaderHeight,
+            reservesStickyCalendarHeader,
+        ]
     );
     const stickyMonthTitle = `${Number(visibleMonth.slice(5, 7))}월`;
     const stickyMonthColorStyle = { color: colors.textPrimary };
@@ -1220,16 +1400,14 @@ export default function ScheduleIndex() {
     const bottomBarHidden =
         !isFocused ||
         keyboardVisible;
+    const stackBottomContentInset = bottomBarHidden
+        ? 0
+        : 44 + Math.max(insets.bottom, 10) + 16;
     const isAnyDepthTransitionActive =
         isDayTransitionActive ||
         isYearDepthTransitionActive ||
         isMonthViewTransitionActive ||
         isTodayFocusTransitionActive;
-    const detailMonthNavigationEnabled =
-        calendarDepth === "month" &&
-        calendarViewMode === "detail" &&
-        !yearOverviewVisible &&
-        !isAnyDepthTransitionActive;
     const primaryPillInteractionEnabled =
         primaryPillVisible && !isAnyDepthTransitionActive;
 
@@ -1321,7 +1499,11 @@ export default function ScheduleIndex() {
     useEffect(() => {
         let minuteTimer: ReturnType<typeof setInterval> | null = null;
         let alignmentTimer: ReturnType<typeof setTimeout> | null = null;
-        const refreshToday = () => setTodayKey(toYmd(new Date()));
+        const refreshToday = () => {
+            const now = new Date();
+            setTodayKey(toYmd(now));
+            setDepartureNow(now);
+        };
         const alignToNextMinute = () => {
             const delay = 60_000 - (Date.now() % 60_000) + 24;
             alignmentTimer = setTimeout(() => {
@@ -1347,54 +1529,131 @@ export default function ScheduleIndex() {
     }, []);
 
     const loadSchedules = useCallback(async () => {
-        const requestSequence = scheduleLoadSequenceRef.current + 1;
-        scheduleLoadSequenceRef.current = requestSequence;
-        dispatch({ type: "SET_LOADING", loading: true });
+        const request = scheduleSessionFenceRef.current.begin("schedule");
+        if (!request) {
+            dispatch({ type: "SET_LOADING", loading: false });
+            return;
+        }
+        const isCurrentRequest = () => (
+            scheduleSessionFenceRef.current.isCurrent(request)
+        );
+        const cached = readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt);
+        const hasVisibleMonthCache = hasCalendarScheduleMonthCache(fetchVisibleMonth);
+
+        const hasNewCachedItems = cached.items.some(
+            (item) => scheduleItemsByIdRef.current[item.id] !== item
+        );
+        if (
+            isCurrentRequest()
+            && cached.cachedMonthKeys.length > 0
+            && hasNewCachedItems
+        ) {
+            // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
+            dispatch({ type: "SET_ITEMS", items: cached.items });
+        }
+        dispatch({ type: "SET_LOADING", loading: !hasVisibleMonthCache });
         dispatch({ type: "SET_ERROR", error: null });
 
+        // 현재 보이는 월이 이미 준비돼 있으면 월 이동 자체로는 API를 호출하지 않는다.
+        // 초기 진입 또는 캐시 범위를 벗어난 월에서만 앞뒤 2개월을 한 번에 다시 채운다.
+        if (hasVisibleMonthCache) {
+            dispatch({ type: "SET_LOADING", loading: false });
+            scheduleSessionFenceRef.current.finish(request);
+            return;
+        }
+
         try {
-            const items = await getCalendarSchedules(scheduleFetchStartAt, scheduleFetchEndAt);
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
-            dispatch({ type: "SET_ITEMS", items });
+            const refreshed = await refreshCalendarScheduleCache(
+                scheduleFetchStartAt,
+                scheduleFetchEndAt,
+                async (startAt, endAt) => {
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    const nextItems = await getCalendarSchedules(startAt, endAt);
+                    if (request.signal.aborted) {
+                        throw new Error("Schedule load aborted");
+                    }
+                    return nextItems;
+                },
+            );
+            if (!isCurrentRequest()) return;
+            dispatch({ type: "SET_ITEMS", items: refreshed.items });
         } catch (error) {
-            if (requestSequence !== scheduleLoadSequenceRef.current) return;
-            const message = getErrorMessage(error);
-            dispatch({ type: "SET_ERROR", error: message });
+            if (!isCurrentRequest()) return;
+            // 화면에 표시할 월이 캐시에 있으면 프리패치 실패가 기존 일정을 가리지 않게 한다.
+            if (!hasVisibleMonthCache) {
+                const message = getErrorMessage(error);
+                dispatch({ type: "SET_ERROR", error: message });
+            }
         } finally {
-            if (requestSequence === scheduleLoadSequenceRef.current) {
+            if (isCurrentRequest()) {
                 dispatch({ type: "SET_LOADING", loading: false });
             }
+            scheduleSessionFenceRef.current.finish(request);
         }
-    }, [dispatch, scheduleFetchEndAt, scheduleFetchStartAt]);
+    }, [dispatch, fetchVisibleMonth, scheduleFetchEndAt, scheduleFetchStartAt]);
 
     useEffect(() => {
         if (!isFocused) {
             dispatch({ type: "SET_LOADING", loading: false });
             return undefined;
         }
+        const sessionFence = scheduleSessionFenceRef.current;
 
-        loadSchedules();
+        const synchronizeAndLoad = () => {
+            synchronizeCalendarScheduleCacheRevision()
+                .then((changed) => {
+                    // revision 변경 시 clear가 아래 구독자를 통해 한 번만 다시 조회한다.
+                    if (!changed) loadSchedules();
+                })
+                .catch(loadSchedules);
+        };
+        synchronizeAndLoad();
         const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") loadSchedules();
+            if (nextState !== "active") return;
+            synchronizeAndLoad();
         });
+        const unsubscribeInvalidated = subscribeCalendarScheduleCacheInvalidated(loadSchedules);
         return () => {
             subscription.remove();
+            unsubscribeInvalidated();
             // 화면을 벗어나거나 조회 범위가 바뀐 뒤 도착한 응답이
             // 상세 화면의 최신 수정값을 덮지 못하도록 무효화한다.
-            scheduleLoadSequenceRef.current += 1;
+            sessionFence.invalidate("schedule");
         };
     }, [dispatch, isFocused, loadSchedules]);
 
     const loadCalendarMetadata = useCallback(async () => {
-        const requestSequence = calendarMetadataLoadSequenceRef.current + 1;
-        calendarMetadataLoadSequenceRef.current = requestSequence;
+        const requestedMonths = calendarMetadataPrefetchMonthKeys.map((monthKey) => ({
+            monthKey,
+            cacheKey: `${firstDay}:${monthKey}`,
+        }));
+        const missingMonths = requestedMonths.filter(({ cacheKey }) => (
+            !calendarMetadataLoadedMonthKeysRef.current.has(cacheKey) &&
+            !calendarMetadataInFlightMonthKeysRef.current.has(cacheKey)
+        ));
+        if (missingMonths.length === 0) return;
 
+        const firstMissingMonth = missingMonths[0]?.monthKey ?? fetchVisibleMonth;
+        const lastMissingMonth = missingMonths[missingMonths.length - 1]?.monthKey
+            ?? fetchVisibleMonth;
+        const requestStartDate = getCalendarMetadataRange(
+            firstMissingMonth,
+            firstDay
+        ).startDate;
+        const requestEndDate = getCalendarMetadataRange(
+            lastMissingMonth,
+            firstDay
+        ).endDate;
+        missingMonths.forEach(({ cacheKey }) => {
+            calendarMetadataInFlightMonthKeysRef.current.add(cacheKey);
+        });
         try {
             const days = await getCalendarDays(
-                calendarMetadataStartDate,
-                calendarMetadataEndDate
+                requestStartDate,
+                requestEndDate
             );
-            if (requestSequence !== calendarMetadataLoadSequenceRef.current) return;
 
             if (
                 typeof __DEV__ === "boolean" &&
@@ -1403,35 +1662,47 @@ export default function ScheduleIndex() {
                 !days.some((day) => day.lunarMonth !== undefined && day.lunarDay !== undefined)
             ) {
                 console.warn("[calendar-metadata] lunar data missing from successful response", {
-                    startDate: calendarMetadataStartDate,
-                    endDate: calendarMetadataEndDate,
+                    startDate: requestStartDate,
+                    endDate: requestEndDate,
                     receivedDays: days.length,
                 });
             }
 
             const nextDaysByDate = indexCalendarDays(days);
-            setCalendarDaysByDate((currentDaysByDate) => ({
-                ...currentDaysByDate,
-                ...nextDaysByDate,
-            }));
+            missingMonths.forEach(({ cacheKey }) => {
+                calendarMetadataLoadedMonthKeysRef.current.add(cacheKey);
+            });
+            if (calendarMetadataMountedRef.current) {
+                setCalendarDaysByDate((currentDaysByDate) => {
+                    const missingEntries = Object.entries(nextDaysByDate).filter(
+                        ([date]) => currentDaysByDate[date] === undefined
+                    );
+                    if (missingEntries.length === 0) return currentDaysByDate;
+                    return {
+                        ...currentDaysByDate,
+                        ...Object.fromEntries(missingEntries),
+                    };
+                });
+            }
         } catch (error) {
             // 음력/공휴일은 보조 정보다. 조회 실패가 일정 화면을 막거나 오류 배너를
             // 띄우지 않도록, 마지막으로 성공한 메타데이터를 그대로 유지한다.
             if (typeof __DEV__ === "boolean" && __DEV__) {
                 console.warn("[calendar-metadata] load failed", {
-                    startDate: calendarMetadataStartDate,
-                    endDate: calendarMetadataEndDate,
+                    startDate: requestStartDate,
+                    endDate: requestEndDate,
                     message: error instanceof Error ? error.message : "unknown error",
                 });
             }
+        } finally {
+            missingMonths.forEach(({ cacheKey }) => {
+                calendarMetadataInFlightMonthKeysRef.current.delete(cacheKey);
+            });
         }
-    }, [calendarMetadataEndDate, calendarMetadataStartDate]);
+    }, [calendarMetadataPrefetchMonthKeys, fetchVisibleMonth, firstDay]);
 
     useEffect(() => {
-        if (!isFocused) {
-            calendarMetadataLoadSequenceRef.current += 1;
-            return undefined;
-        }
+        if (!isFocused) return undefined;
 
         loadCalendarMetadata();
         const subscription = AppState.addEventListener("change", (nextState) => {
@@ -1439,42 +1710,32 @@ export default function ScheduleIndex() {
         });
         return () => {
             subscription.remove();
-            calendarMetadataLoadSequenceRef.current += 1;
         };
     }, [isFocused, loadCalendarMetadata]);
 
     const loadShareAttention = useCallback(async () => {
+        if (!scheduleSharingEnabled) return EMPTY_SHARE_ATTENTION;
         const [inbox, seenKeys] = await Promise.all([
             getShareInbox(),
             readSeenShareAttentionKeys(),
         ]);
 
         return buildShareAttentionSummary(inbox, seenKeys);
-    }, []);
+    }, [scheduleSharingEnabled]);
 
     useEffect(() => {
-        if (!isFocused) return;
+        if (!isFocused || !scheduleSharingEnabled) {
+            setShareAttention(EMPTY_SHARE_ATTENTION);
+            return undefined;
+        }
 
-        let cancelled = false;
-
-        const refresh = () => {
-            loadShareAttention()
-                .then((summary) => {
-                    if (!cancelled) setShareAttention(summary);
-                })
-                .catch(() => {
-                    // 공유함 알림 표시는 보조 신호라 실패해도 일정 화면 사용 흐름은 유지한다.
-                });
-        };
-
-        refresh();
-        const timer = setInterval(refresh, SHARE_ATTENTION_REFRESH_MS);
-
-        return () => {
-            cancelled = true;
-            clearInterval(timer);
-        };
-    }, [isFocused, loadShareAttention]);
+        return startScheduleShareAttentionPolling({
+            enabled: scheduleSharingEnabled,
+            intervalMs: SHARE_ATTENTION_REFRESH_MS,
+            load: loadShareAttention,
+            onSummary: setShareAttention,
+        });
+    }, [isFocused, loadShareAttention, scheduleSharingEnabled]);
 
     const refreshNotificationUnreadCount = useCallback(() => {
         getAppNotificationUnreadCount()
@@ -1535,70 +1796,224 @@ export default function ScheduleIndex() {
         () => Object.values(state.itemsById),
         [state.itemsById]
     );
-    const loadRouteSetupItems = useCallback(async () => {
-        const items = await getSchedules();
-        return items.filter((item) => item.routeSetupRequired === true);
-    }, []);
-    useEffect(() => {
-        if (!isFocused) return;
-
-        let cancelled = false;
-        const refresh = () => {
-            loadRouteSetupItems()
-                .then((items) => {
-                    if (!cancelled) setRouteSetupItems(items);
-                })
-                .catch(() => {
-                    // 후속 설정 배너는 보조 UI이므로 조회 실패가 캘린더 사용을 막지 않는다.
-                    if (!cancelled) setRouteSetupItems([]);
-                });
-        };
-
-        refresh();
-        const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") refresh();
-        });
-        return () => {
-            cancelled = true;
-            subscription.remove();
-        };
-    }, [isFocused, loadRouteSetupItems]);
+    const handleScheduleAccessRevoked = useCallback((scheduleId: string) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.add(scheduleId);
+        redactedItemIdsRef.current = nextRedactedIds;
+        removeCalendarScheduleCacheItem(scheduleId);
+        setSearchResults((current) => current.filter(
+            (item) => item.id !== scheduleId
+        ));
+        setSearchLoading(settled.searchLoading);
+        setSearchError(settled.searchError);
+        dispatch({ type: "SET_LOADING", loading: settled.scheduleLoading });
+        dispatch({ type: "SET_ERROR", error: settled.scheduleError });
+        dispatch({ type: "REDACT_ITEM", id: scheduleId });
+    }, [dispatch]);
+    const handleScheduleRestored = useCallback((item: ScheduleItem) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const nextRedactedIds = new Set(redactedItemIdsRef.current);
+        nextRedactedIds.delete(item.id);
+        redactedItemIdsRef.current = nextRedactedIds;
+        dispatch({ type: "RESTORE_ITEM", item });
+        upsertCalendarScheduleCacheItem(item);
+        setSearchRetryKey((current) => current + 1);
+    }, [dispatch]);
+    const handleScheduleSessionRejected = useCallback(() => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        scheduleSessionFenceRef.current.rejectSession();
+        verifiedFullScheduleIdsRef.current = null;
+        setSearchResults([]);
+        setSearchLoading(false);
+        setSearchError(null);
+        dispatch({ type: "SET_ITEMS", items: [] });
+        clearCalendarScheduleCache();
+    }, [dispatch]);
+    const handleFullSchedulesVerified = useCallback((verifiedItems: ScheduleItem[]) => {
+        if (!isAuthSessionActive(scheduleAuthEpochRef.current)) return;
+        const authoritativeIds = new Set(
+            verifiedItems.map((item) => item.id)
+        );
+        verifiedFullScheduleIdsRef.current = authoritativeIds;
+        const displayItems = filterScheduleItemsBySecurityFence(
+            verifiedItems,
+            removedItemIdsRef.current,
+            redactedItemIdsRef.current
+        );
+        const displayIds = new Set(displayItems.map((item) => item.id));
+        scheduleSessionFenceRef.current.invalidate("schedule");
+        scheduleSessionFenceRef.current.invalidate("search");
+        setSearchLoading(false);
+        setSearchError(null);
+        setSearchResults((current) => current.filter(
+            (item) => displayIds.has(item.id)
+        ));
+        const cacheRemovedIds = reconcileCalendarScheduleCacheWithFullList(
+            displayIds,
+            {
+                items: displayItems,
+                startAt: scheduleFetchStartAt,
+                endAt: scheduleFetchEndAt,
+            }
+        );
+        const removedIds = collectScheduleIdsMissingFromFullList(
+            displayIds,
+            cacheRemovedIds,
+            Object.keys(scheduleItemsByIdRef.current),
+            searchResultsRef.current.map((item) => item.id)
+        );
+        if (removedIds.size > 0) {
+            const settled = scheduleSessionFenceRef.current.invalidateItemPurge();
+            const nextRedactedIds = new Set(redactedItemIdsRef.current);
+            removedIds.forEach((scheduleId) => {
+                nextRedactedIds.add(scheduleId);
+            });
+            redactedItemIdsRef.current = nextRedactedIds;
+            setSearchLoading(settled.searchLoading);
+            setSearchError(settled.searchError);
+            removedIds.forEach((scheduleId) => {
+                dispatch({ type: "REDACT_ITEM", id: scheduleId });
+            });
+        }
+        const verifiedRange = readCalendarScheduleCache(
+            scheduleFetchStartAt,
+            scheduleFetchEndAt
+        );
+        dispatch({ type: "SET_ITEMS", items: verifiedRange.items });
+        dispatch({ type: "SET_LOADING", loading: false });
+        dispatch({ type: "SET_ERROR", error: null });
+        scheduleSessionFenceRef.current.acceptVerifiedSession();
+        setSearchRetryKey((current) => current + 1);
+    }, [
+        dispatch,
+        scheduleFetchEndAt,
+        scheduleFetchStartAt,
+    ]);
+    const departureHome = useNextDepartureHome({
+        fallbackItems: itemsArray,
+        focused: isFocused,
+        authoritativeRemovedScheduleIds: removedItemIds,
+        authoritativeRedactedScheduleIds: redactedItemIds,
+        onScheduleAccessRevoked: handleScheduleAccessRevoked,
+        onScheduleAuthoritativelyRemoved: handleScheduleAccessRevoked,
+        onScheduleRestored: handleScheduleRestored,
+        onFullSchedulesVerified: handleFullSchedulesVerified,
+        onSessionAccessRejected: handleScheduleSessionRejected,
+    });
+    const rankedNextDepartureCandidate = useMemo(
+        () => selectNextDeparture(
+            departureHome.candidateItems,
+            departureHome.statusOrderingSafe
+                ? departureHome.statusesByScheduleId
+                : {},
+            departureNow,
+            departureHome.currentMemberId
+        ),
+        [
+            departureHome.currentMemberId,
+            departureHome.candidateItems,
+            departureHome.statusOrderingSafe,
+            departureHome.statusesByScheduleId,
+            departureNow,
+        ]
+    );
+    const nextDepartureCandidate = useMemo(
+        () => rankedNextDepartureCandidate
+            ? buildNextDepartureCandidate(
+                rankedNextDepartureCandidate.item,
+                departureHome.statusOrderingSafe
+                    ? departureHome.statusesByScheduleId[
+                        rankedNextDepartureCandidate.item.id
+                    ]
+                    : undefined
+            )
+            : null,
+        [
+            departureHome.statusOrderingSafe,
+            departureHome.statusesByScheduleId,
+            rankedNextDepartureCandidate,
+        ]
+    );
+    const nextDepartureConnectionIssue = departureHome.connectionIssue
+        ?? (nextDepartureCandidate
+            ? departureHome.statusIssuesByScheduleId[nextDepartureCandidate.item.id] ?? null
+            : null);
+    const nextDepartureModel = useMemo(
+        () => nextDepartureCandidate
+            ? buildNextDepartureHeroModel(
+                nextDepartureCandidate,
+                departureNow,
+                nextDepartureConnectionIssue
+            )
+            : null,
+        [
+            departureNow,
+            nextDepartureConnectionIssue,
+            nextDepartureCandidate,
+        ]
+    );
+    const routeSetupItems = useMemo(
+        () => departureHome.items.filter(
+            (item) => item.routeSetupRequired === true
+        ),
+        [departureHome.items]
+    );
     const writableCategories = useMemo(
         () => getWritableScheduleCategories(state.categories),
         [state.categories]
     );
     useEffect(() => {
+        const sessionFence = scheduleSessionFenceRef.current;
         const keyword = searchQuery.trim();
-        const sequence = searchSequenceRef.current + 1;
-        searchSequenceRef.current = sequence;
         if (!keyword) {
+            sessionFence.invalidate("search");
             setSearchResults([]);
             setSearchLoading(false);
             setSearchError(null);
             return undefined;
         }
+        const request = sessionFence.begin("search");
+        if (!request) {
+            setSearchResults([]);
+            setSearchLoading(false);
+            setSearchError(null);
+            return undefined;
+        }
+        const isCurrentRequest = () => (
+            sessionFence.isCurrent(request)
+        );
 
         setSearchLoading(true);
         setSearchError(null);
         const timer = setTimeout(() => {
             searchSchedules({ keyword })
                 .then((items) => {
-                    if (searchSequenceRef.current !== sequence) return;
-                    setSearchResults(items
+                    if (!isCurrentRequest()) return;
+                    setSearchResults(filterScheduleItemsBySecurityFence(
+                        items,
+                        removedItemIdsRef.current,
+                        redactedItemIdsRef.current,
+                        verifiedFullScheduleIdsRef.current
+                    )
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
                         .slice(0, 20));
                 })
                 .catch((error) => {
-                    if (searchSequenceRef.current !== sequence) return;
+                    if (!isCurrentRequest()) return;
                     setSearchResults([]);
                     setSearchError(getErrorMessage(error));
                 })
                 .finally(() => {
-                    if (searchSequenceRef.current === sequence) setSearchLoading(false);
+                    if (isCurrentRequest()) setSearchLoading(false);
                 });
         }, 300);
 
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            sessionFence.invalidate("search");
+        };
     }, [searchQuery, searchRetryKey]);
 
     // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
@@ -1610,7 +2025,7 @@ export default function ScheduleIndex() {
             const item = await createSchedule(payload);
             // 생성 요청보다 먼저 시작된 캘린더 조회는 새 일정을 포함하지 않을 수 있다.
             // 해당 응답을 무효화해 방금 저장한 일정이 화면에서 다시 사라지지 않게 한다.
-            scheduleLoadSequenceRef.current += 1;
+            scheduleSessionFenceRef.current.invalidate("schedule");
             dispatch({ type: "ADD_ITEM", item });
             dispatch({ type: "SET_LOADING", loading: false });
         } catch (error) {
@@ -1623,6 +2038,15 @@ export default function ScheduleIndex() {
     };
 
     const closeToolbarMenu = useCallback((afterClose?: () => void) => {
+        if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {
+            Keyboard.dismiss();
+            setSearchQuery("");
+            setToolbarMenuClosing(true);
+            requestCloseLiquidPrototype();
+            afterClose?.();
+            return;
+        }
+
         Keyboard.dismiss();
         requestCloseLiquidPrototype();
 
@@ -1648,9 +2072,27 @@ export default function ScheduleIndex() {
             setToolbarMenuClosing(false);
             afterClose?.();
         });
-    }, [activeToolbarMenu, requestCloseLiquidPrototype, searchToolbarProgress, toolbarDropdownProgress]);
+    }, [
+        activeToolbarMenu,
+        requestCloseLiquidPrototype,
+        searchToolbarProgress,
+        toolbarDropdownProgress,
+        usesLiquidViewModeControl,
+    ]);
 
     const runToolbarAction = useCallback((action: () => void) => {
+        if (activeToolbarMenu === "search" && usesLiquidViewModeControl) {
+            Keyboard.dismiss();
+            setSearchQuery("");
+            requestCloseLiquidPrototype();
+            searchToolbarChromeOpacity.stopAnimation();
+            searchToolbarChromeOpacity.setValue(1);
+            setActiveToolbarMenu(null);
+            setToolbarMenuClosing(false);
+            requestAnimationFrame(action);
+            return;
+        }
+
         Keyboard.dismiss();
         setToolbarMenuClosing(true);
         toolbarDropdownProgress.stopAnimation();
@@ -1664,7 +2106,13 @@ export default function ScheduleIndex() {
             setToolbarMenuClosing(false);
             requestAnimationFrame(action);
         });
-    }, [toolbarDropdownProgress]);
+    }, [
+        activeToolbarMenu,
+        requestCloseLiquidPrototype,
+        searchToolbarChromeOpacity,
+        toolbarDropdownProgress,
+        usesLiquidViewModeControl,
+    ]);
 
     const openToolbarMenu = useCallback((menu: ToolbarMenu) => {
         if (activeToolbarMenu === menu) {
@@ -1684,7 +2132,7 @@ export default function ScheduleIndex() {
             if (menu === "search") {
                 Animated.timing(searchToolbarProgress, {
                     toValue: 1,
-                    duration: 158,
+                    duration: SEARCH_TOOLBAR_OPEN_DURATION_MS,
                     easing: Easing.inOut(Easing.cubic),
                     useNativeDriver: false,
                 }).start();
@@ -1698,17 +2146,71 @@ export default function ScheduleIndex() {
                 useNativeDriver: true,
             }).start();
         });
-    }, [activeToolbarMenu, closeToolbarMenu, searchToolbarProgress, toolbarDropdownProgress]);
+    }, [
+        activeToolbarMenu,
+        closeToolbarMenu,
+        searchToolbarProgress,
+        toolbarDropdownProgress,
+    ]);
 
     const openSearchToolbar = useCallback(() => {
         setSearchQuery("");
+        if (usesLiquidViewModeControl) {
+            setToolbarMenuClosing(false);
+            setActiveToolbarMenu("search");
+            searchToolbarChromeOpacity.stopAnimation();
+            Animated.timing(searchToolbarChromeOpacity, {
+                toValue: 0,
+                duration: 90,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }).start();
+            return;
+        }
         openToolbarMenu("search");
-    }, [openToolbarMenu]);
+    }, [
+        openToolbarMenu,
+        searchToolbarChromeOpacity,
+        usesLiquidViewModeControl,
+    ]);
 
     const closeSearchToolbar = useCallback(() => {
         setSearchQuery("");
+        if (usesLiquidViewModeControl) {
+            // Swift owns the reverse morph. Keep the year pill visually and
+            // accessibly hidden until onOpenChange(false) confirms that the
+            // native search surface has fully collapsed.
+            Keyboard.dismiss();
+            setToolbarMenuClosing(true);
+            return;
+        }
         closeToolbarMenu();
-    }, [closeToolbarMenu]);
+    }, [
+        closeToolbarMenu,
+        usesLiquidViewModeControl,
+    ]);
+
+    const handleLiquidPrototypeOpenChange = useCallback((open: boolean) => {
+        setLiquidPrototypeOpen(open);
+        if (open) return;
+
+        searchToolbarChromeOpacity.stopAnimation();
+        searchToolbarChromeOpacity.setValue(1);
+        setToolbarMenuClosing(false);
+        setActiveToolbarMenu((currentMenu) => (
+            currentMenu === "search" ? null : currentMenu
+        ));
+    }, [searchToolbarChromeOpacity]);
+
+    useEffect(() => {
+        if (!isSearchToolbarOpen || usesLiquidViewModeControl) return;
+
+        const focusFrame = requestAnimationFrame(() => {
+            searchInputRef.current?.focus();
+        });
+
+        return () => cancelAnimationFrame(focusFrame);
+    }, [isSearchToolbarOpen, usesLiquidViewModeControl]);
 
     const openBlankSchedule = useCallback(() => {
         prepareAddHandoff();
@@ -2142,12 +2644,6 @@ export default function ScheduleIndex() {
         detailMonthMotionCancelRef.current = cancel;
     }, []);
 
-    const registerDetailMonthMotionShift = useCallback((
-        shift: ((direction: -1 | 1) => void) | null
-    ) => {
-        detailMonthMotionShiftRef.current = shift;
-    }, []);
-
     const startTodayFocusTransition = useCallback(() => {
         if (
             todayFocusAnimationActiveRef.current ||
@@ -2237,25 +2733,6 @@ export default function ScheduleIndex() {
         todayFocusTranslateY,
         visibleMonth,
     ]);
-
-    const handleShiftDetailMonth = useCallback((offset: -1 | 1) => {
-        closeToolbarMenu();
-
-        const shiftWithMotion = detailMonthMotionShiftRef.current;
-        if (shiftWithMotion) {
-            shiftWithMotion(offset);
-            return;
-        }
-
-        const visibleMonthKey = visibleMonth.slice(0, 7);
-        const anchorDay = selectedDay.startsWith(`${visibleMonthKey}-`)
-            ? selectedDay
-            : `${visibleMonthKey}-01`;
-        const targetDay = shiftCalendarMonth(anchorDay, offset);
-
-        selectCalendarDay(targetDay);
-        setCalendarScrollRequest((request) => request + 1);
-    }, [closeToolbarMenu, selectCalendarDay, selectedDay, visibleMonth]);
 
     useEffect(() => {
         const focusKey = `${focusRequest ?? ""}:${focusDayRequest ?? ""}:${focusRun ?? ""}`;
@@ -2385,10 +2862,15 @@ export default function ScheduleIndex() {
         const agendaTransition = getMonthAgendaTransition(calendarViewMode, nextMode);
         const nextAgendaPanelKind = getMonthAgendaPanelKind(nextMode);
         const targetAgendaProgress = nextAgendaPanelKind ? 1 : 0;
+        const sourceLayout = resolveMonthCalendarLayout(calendarViewMode);
+        const targetLayout = resolveMonthCalendarLayout(nextMode);
         const sourceHeight = monthCalendarHeightRef.current
-            || resolveMonthCalendarHeight(calendarViewMode)
+            || sourceLayout.calendarHeight
             || monthDisplayHeightRef.current;
-        const targetCalendarHeight = resolveMonthCalendarHeight(nextMode) || sourceHeight;
+        const sourceDayHeight = monthCalendarDayHeightRef.current
+            || sourceLayout.dayHeight;
+        const targetCalendarHeight = targetLayout.calendarHeight || sourceHeight;
+        const targetDayHeight = targetLayout.dayHeight;
         const motionEasing = reduceMotionEnabled
             ? Easing.out(Easing.cubic)
             : CALENDAR_DEPTH_EASING;
@@ -2402,7 +2884,7 @@ export default function ScheduleIndex() {
         monthCalendarAnimatedHeight.value = sourceHeight;
         monthCalendarTargetHeight.value = targetCalendarHeight;
         cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
-        monthCalendarAnimatedDayHeight.value = CALENDAR_DAY_HEIGHTS[calendarViewMode];
+        monthCalendarAnimatedDayHeight.value = sourceDayHeight;
         monthCalendarTransitionProgress.stopAnimation();
         monthCalendarTransitionProgress.setValue(0);
         monthAgendaProgress.stopAnimation();
@@ -2439,7 +2921,7 @@ export default function ScheduleIndex() {
                 reduceMotion: ReduceMotion.Never,
             });
             monthCalendarAnimatedDayHeight.value = withTiming(
-                CALENDAR_DAY_HEIGHTS[nextMode],
+                targetDayHeight,
                 {
                     duration: monthAgendaMotionDuration,
                     easing: layoutEasing,
@@ -2489,8 +2971,9 @@ export default function ScheduleIndex() {
                 monthCalendarAnimatedHeight.value = targetCalendarHeight;
                 monthCalendarTargetHeight.value = targetCalendarHeight;
                 cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
-                monthCalendarAnimatedDayHeight.value = CALENDAR_DAY_HEIGHTS[nextMode];
+                monthCalendarAnimatedDayHeight.value = targetDayHeight;
                 monthCalendarHeightRef.current = targetCalendarHeight;
+                monthCalendarDayHeightRef.current = targetDayHeight;
                 monthCalendarTransitionProgress.setValue(1);
                 monthAgendaProgress.setValue(targetAgendaProgress);
                 monthAgendaSwapProgress.setValue(1);
@@ -2512,7 +2995,7 @@ export default function ScheduleIndex() {
         monthCalendarTargetHeight,
         monthCalendarTransitionProgress,
         reduceMotionEnabled,
-        resolveMonthCalendarHeight,
+        resolveMonthCalendarLayout,
     ]);
 
     const handleDayViewMenuSelect = useCallback((target: "day" | "multi") => {
@@ -2710,43 +3193,67 @@ export default function ScheduleIndex() {
         router.push("/notifications");
     }, [router]);
 
-    const shareBadgeCount = shareAttention.unseenCount;
+    const shareBadgeCount = scheduleSharingEnabled
+        ? shareAttention.unseenCount
+        : 0;
 
-    const bottomRightActions = useMemo<FloatingBarAction[]>(() => [{
-        key: "notification-inbox-shortcut",
-        icon: "notifications-outline",
-        badgeCount: notificationUnreadCount,
-        emphasized: notificationUnreadCount > 0,
-        accessibilityLabel: notificationUnreadCount > 0
-            ? `알림함, 읽지 않은 알림 ${notificationUnreadCount}개`
-            : "알림함",
-        onPress: openNotificationInbox,
-    }, {
-        key: "share-inbox-shortcut",
-        icon: "mail-unread-outline",
-        badgeCount: shareBadgeCount,
-        emphasized: shareBadgeCount > 0,
-        accessibilityLabel: shareBadgeCount > 0
-            ? `공유함, 새 공유 또는 초대 ${shareBadgeCount}개`
-            : "공유함",
-        onPress: openInvitesShortcut,
-    }, {
-        key: "calendar-settings-shortcut",
-        icon: "settings-outline",
-        accessibilityLabel: "캘린더 설정",
-        onPress: openCalendarSettings,
-    }, {
-        key: "profile-shortcut",
-        icon: "person-circle-outline",
-        accessibilityLabel: "프로필",
-        onPress: openProfile,
-    }], [
+    const bottomRightActions = useMemo<FloatingBarAction[]>(() => [
+        {
+            key: "notification-inbox-shortcut",
+            icon: "notifications-outline",
+            badgeCount: notificationUnreadCount,
+            emphasized: notificationUnreadCount > 0,
+            accessibilityLabel: notificationUnreadCount > 0
+                ? `알림함, 읽지 않은 알림 ${notificationUnreadCount}개`
+                : "알림함",
+            onPress: openNotificationInbox,
+        },
+        ...(scheduleSharingEnabled ? [{
+            key: "share-inbox-shortcut",
+            icon: "mail-unread-outline" as const,
+            badgeCount: shareBadgeCount,
+            emphasized: shareBadgeCount > 0,
+            accessibilityLabel: shareBadgeCount > 0
+                ? `공유함, 새 공유 또는 초대 ${shareBadgeCount}개`
+                : "공유함",
+            onPress: openInvitesShortcut,
+        }] : []),
+        {
+            key: "calendar-settings-shortcut",
+            icon: "settings-outline",
+            accessibilityLabel: "캘린더 설정",
+            onPress: openCalendarSettings,
+        },
+        {
+            key: "profile-shortcut",
+            icon: "person-circle-outline",
+            accessibilityLabel: "프로필",
+            onPress: openProfile,
+        },
+    ], [
         notificationUnreadCount,
         openCalendarSettings,
         openInvitesShortcut,
         openNotificationInbox,
         openProfile,
+        scheduleSharingEnabled,
         shareBadgeCount,
+    ]);
+
+    const nextDepartureHero = useMemo(() => (
+        <NextDepartureHero
+            model={nextDepartureModel}
+            loading={departureHome.loading}
+            connectionIssue={nextDepartureConnectionIssue}
+            onPressSchedule={handleOpenScheduleFromDayDisplay}
+            onPressRetry={departureHome.refresh}
+        />
+    ), [
+        departureHome.loading,
+        departureHome.refresh,
+        handleOpenScheduleFromDayDisplay,
+        nextDepartureConnectionIssue,
+        nextDepartureModel,
     ]);
 
     const renderMonthAgendaPanelContent = (panelKind: MonthAgendaPanelKind) => (
@@ -2762,6 +3269,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         ) : (
             <MemoizedMonthAgendaList
@@ -2775,6 +3283,7 @@ export default function ScheduleIndex() {
                 routeSetupRequiredCount={routeSetupItems.length}
                 onOpenRouteSetup={openRouteSetupTarget}
                 onRequestViewMode={handleCalendarViewModeChange}
+                nextDepartureHero={nextDepartureHero}
             />
         )
     );
@@ -2841,7 +3350,10 @@ export default function ScheduleIndex() {
                         {...getScheduleAccessibilityVisibility(!isSearchToolbarOpen)}
                         style={[
                             styles.toolbarChromeLayer,
-                            { paddingTop: insets.top },
+                            {
+                                paddingTop: insets.top,
+                                opacity: searchToolbarChromeOpacity,
+                            },
                         ]}
                     >
                         <View style={styles.toolbar}>
@@ -2963,7 +3475,6 @@ export default function ScheduleIndex() {
                             colorScheme={mode === "dark" ? "dark" : "light"}
                             closeRequest={prototypeCloseRequest}
                             searchExpandedWidth={searchHeaderTargetWidth}
-                            searchQuery={searchQuery}
                             onSelect={(mode) => {
                                 if (pillTargetDepth === "day") {
                                     if (mode === "day") {
@@ -2996,7 +3507,7 @@ export default function ScheduleIndex() {
                                     handleCalendarViewModeChange("week");
                                 }
                             }}
-                            onOpenChange={setLiquidPrototypeOpen}
+                            onOpenChange={handleLiquidPrototypeOpenChange}
                             onSearch={openSearchToolbar}
                             onSearchTextChange={setSearchQuery}
                             onSearchClose={closeSearchToolbar}
@@ -3014,38 +3525,72 @@ export default function ScheduleIndex() {
                                 top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET,
                                 right: ADD_MENU_SOURCE.fallbackRightInset,
                                 width: searchHeaderWidth,
-                                opacity: addHandoffToolbarOpacity,
                             },
                         ]}
                     >
-                        <CalendarGlassSurface
-                            interactive
-                            clear
-                            glow
-                            variant="bottomBar"
-                            tone="softGlass"
-                            style={[
-                                styles.toolbarActions,
-                                isSearchToolbarOpen && styles.searchToolbarActions,
-                                { borderColor: colors.border },
-                            ]}
+                        <Animated.View
+                            style={{ opacity: addHandoffToolbarOpacity }}
                         >
-                            <Animated.View
-                                pointerEvents={isSearchToolbarOpen ? "none" : "auto"}
-                                {...getScheduleAccessibilityVisibility(!isSearchToolbarOpen)}
+                            <CalendarGlassSurface
+                                interactive
+                                clear
+                                glow
+                                variant="bottomBar"
+                                tone="softGlass"
                                 style={[
-                                    styles.searchFieldSeedRow,
-                                    {
-                                        opacity: searchMorphSeedOpacity,
-                                        transform: [{ scale: searchMorphSeedScale }],
-                                    },
+                                    styles.toolbarActions,
+                                    isSearchToolbarOpen && styles.searchToolbarActions,
+                                    { borderColor: colors.border },
                                 ]}
                             >
-                                {pillTargetDepth !== "year" && (
+                                <Animated.View
+                                    pointerEvents={isSearchToolbarOpen ? "none" : "auto"}
+                                    {...getScheduleAccessibilityVisibility(!isSearchToolbarOpen)}
+                                    style={[
+                                        styles.searchFieldSeedRow,
+                                        {
+                                            opacity: searchMorphSeedOpacity,
+                                            transform: [{ scale: searchMorphSeedScale }],
+                                        },
+                                    ]}
+                                >
+                                    {pillTargetDepth !== "year" && (
+                                        <Pressable
+                                            onPress={() => openToolbarMenu("view")}
+                                            accessibilityRole="button"
+                                            accessibilityLabel="캘린더 보기 방식 선택"
+                                            style={({ pressed }) => [
+                                                styles.iconButton,
+                                                {
+                                                    opacity: pressed ? 0.68 : 1,
+                                                    transform: [{ scale: pressed ? 0.88 : 1 }],
+                                                },
+                                            ]}
+                                        >
+                                            <Animated.View
+                                                style={{
+                                                    opacity: calendarVisualProgress,
+                                                    transform: [{ scale: calendarIconScale }],
+                                                }}
+                                            >
+                                                {pillTargetDepth === "day" ? (
+                                                    <Ionicons accessible={false} name="calendar-outline" size={25} color={colors.textPrimary} />
+                                                ) : (
+                                                    <CalendarViewModeGlyph
+                                                        mode={calendarViewMode}
+                                                        color={colors.textPrimary}
+                                                        size={27}
+                                                        toolbar
+                                                    />
+                                                )}
+                                            </Animated.View>
+                                        </Pressable>
+                                    )}
+
                                     <Pressable
-                                        onPress={() => openToolbarMenu("view")}
+                                        onPress={openSearchToolbar}
                                         accessibilityRole="button"
-                                        accessibilityLabel="캘린더 보기 방식 선택"
+                                        accessibilityLabel="일정 검색"
                                         style={({ pressed }) => [
                                             styles.iconButton,
                                             {
@@ -3054,111 +3599,80 @@ export default function ScheduleIndex() {
                                             },
                                         ]}
                                     >
-                                        <Animated.View
-                                            style={{
-                                                opacity: calendarVisualProgress,
-                                                transform: [{ scale: calendarIconScale }],
-                                            }}
-                                        >
-                                            {pillTargetDepth === "day" ? (
-                                                <Ionicons accessible={false} name="calendar-outline" size={25} color={colors.textPrimary} />
-                                            ) : (
-                                                <CalendarViewModeGlyph
-                                                    mode={calendarViewMode}
-                                                    color={colors.textPrimary}
-                                                    size={27}
-                                                    toolbar
-                                                />
-                                            )}
-                                        </Animated.View>
+                                        <Ionicons accessible={false} name="search" size={24} color={colors.textPrimary} />
                                     </Pressable>
-                                )}
 
-                                <Pressable
-                                    onPress={openSearchToolbar}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="일정 검색"
-                                    style={({ pressed }) => [
-                                        styles.iconButton,
+                                    <Pressable
+                                        onPress={() => openToolbarMenu("add")}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="일정 추가"
+                                        style={({ pressed }) => [
+                                            styles.iconButton,
+                                            {
+                                                opacity: pressed ? 0.68 : 1,
+                                                transform: [{ scale: pressed ? 0.88 : 1 }],
+                                            },
+                                        ]}
+                                    >
+                                        <Ionicons accessible={false} name="add" size={27} color={colors.textPrimary} />
+                                    </Pressable>
+                                </Animated.View>
+
+                                <Animated.View
+                                    pointerEvents={isSearchToolbarOpen ? "auto" : "none"}
+                                    {...getScheduleAccessibilityVisibility(isSearchToolbarOpen)}
+                                    style={[
+                                        styles.searchFieldInner,
                                         {
-                                            opacity: pressed ? 0.68 : 1,
-                                            transform: [{ scale: pressed ? 0.88 : 1 }],
+                                            opacity: searchFieldContentOpacity,
+                                            transform: [
+                                                { translateX: searchFieldContentTranslateX },
+                                                { translateY: searchFieldContentTranslateY },
+                                            ],
                                         },
                                     ]}
                                 >
-                                    <Ionicons accessible={false} name="search" size={24} color={colors.textPrimary} />
-                                </Pressable>
-
-                                <Pressable
-                                    onPress={() => openToolbarMenu("add")}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="일정 추가"
-                                    style={({ pressed }) => [
-                                        styles.iconButton,
-                                        {
-                                            opacity: pressed ? 0.68 : 1,
-                                            transform: [{ scale: pressed ? 0.88 : 1 }],
-                                        },
-                                    ]}
-                                >
-                                    <Ionicons accessible={false} name="add" size={27} color={colors.textPrimary} />
-                                </Pressable>
-                            </Animated.View>
-
-                            <Animated.View
-                                pointerEvents={isSearchToolbarOpen ? "auto" : "none"}
-                                {...getScheduleAccessibilityVisibility(isSearchToolbarOpen)}
-                                style={[
-                                    styles.searchFieldInner,
-                                    {
-                                        opacity: searchFieldContentOpacity,
-                                        transform: [
-                                            { translateX: searchFieldContentTranslateX },
-                                            { translateY: searchFieldContentTranslateY },
-                                        ],
-                                    },
-                                ]}
-                            >
-                                <Ionicons accessible={false} name="search" size={22} color={colors.textPrimary} />
-                                <TextInput
-                                    ref={searchInputRef}
-                                    accessibilityLabel="일정 검색어"
-                                    value={searchQuery}
-                                    onChangeText={setSearchQuery}
-                                    placeholder="검색"
-                                    placeholderTextColor={colors.inputPlaceholder}
-                                    returnKeyType="search"
-                                    selectionColor={colors.textPrimary}
-                                    style={[styles.searchHeaderInput, { color: colors.textPrimary }]}
-                                />
-                                {searchQuery.length > 0 ? (
+                                    <Ionicons accessible={false} name="search" size={22} color={colors.textPrimary} />
+                                    <TextInput
+                                        ref={searchInputRef}
+                                        accessibilityLabel="일정 검색어"
+                                        value={searchQuery}
+                                        onChangeText={setSearchQuery}
+                                        placeholder="검색"
+                                        placeholderTextColor={colors.inputPlaceholder}
+                                        returnKeyType="search"
+                                        selectionColor={colors.textPrimary}
+                                        style={[styles.searchHeaderInput, { color: colors.textPrimary }]}
+                                    />
+                                    {searchQuery.length > 0 ? (
+                                        <Pressable
+                                            accessibilityRole="button"
+                                            onPress={() => setSearchQuery("")}
+                                            accessibilityLabel="검색어 지우기"
+                                            hitSlop={12}
+                                            style={({ pressed }) => [
+                                                styles.searchHeaderIconButton,
+                                                { opacity: pressed ? 0.58 : 1 },
+                                            ]}
+                                        >
+                                            <Ionicons accessible={false} name="close-circle" size={27} color={colors.textSecondary} />
+                                        </Pressable>
+                                    ) : null}
                                     <Pressable
                                         accessibilityRole="button"
-                                        onPress={() => setSearchQuery("")}
-                                        accessibilityLabel="검색어 지우기"
+                                        onPress={closeSearchToolbar}
+                                        accessibilityLabel="검색 닫기"
                                         hitSlop={12}
                                         style={({ pressed }) => [
                                             styles.searchHeaderIconButton,
                                             { opacity: pressed ? 0.58 : 1 },
                                         ]}
                                     >
-                                        <Ionicons accessible={false} name="close-circle" size={27} color={colors.textSecondary} />
+                                        <Ionicons accessible={false} name="close" size={25} color={colors.textPrimary} />
                                     </Pressable>
-                                ) : null}
-                                <Pressable
-                                    accessibilityRole="button"
-                                    onPress={closeSearchToolbar}
-                                    accessibilityLabel="검색 닫기"
-                                    hitSlop={12}
-                                    style={({ pressed }) => [
-                                        styles.searchHeaderIconButton,
-                                        { opacity: pressed ? 0.58 : 1 },
-                                    ]}
-                                >
-                                    <Ionicons accessible={false} name="close" size={25} color={colors.textPrimary} />
-                                </Pressable>
-                            </Animated.View>
-                        </CalendarGlassSurface>
+                                </Animated.View>
+                            </CalendarGlassSurface>
+                        </Animated.View>
                     </Animated.View>
                 )}
 
@@ -3169,7 +3683,7 @@ export default function ScheduleIndex() {
                             styles.searchResultsLayer,
                             {
                                 top: insets.top + 74,
-                                right: 16,
+                                right: searchHeaderRightInset,
                                 width: searchHeaderTargetWidth,
                                 opacity: searchFieldContentOpacity,
                                 transform: [{ translateY: searchFieldContentTranslateY }],
@@ -3263,11 +3777,12 @@ export default function ScheduleIndex() {
 
                 {showsStickyCalendarHeader && (
                     <Animated.View
-                        pointerEvents={detailMonthNavigationEnabled ? "box-none" : "none"}
+                        pointerEvents="none"
                         style={[
                             styles.stickyCalendarHeader,
                             stickyCalendarHeaderPosition,
                             {
+                                height: reservedStickyCalendarHeaderHeight,
                                 opacity: stickyCalendarHeaderTodayOpacity,
                                 transform: [
                                     { translateX: monthChromeTranslateX },
@@ -3300,50 +3815,22 @@ export default function ScheduleIndex() {
                                     : styles.stickyHeaderBackdropBottomLight,
                             ]}
                         />
-                        <View style={styles.stickyMonthHeader}>
-                            <Text style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
-                                {stickyMonthTitle}
-                            </Text>
-                            {detailMonthNavigationEnabled && (
-                                <View style={styles.stickyMonthNavigationActions}>
-                                    <Pressable
-                                        onPress={() => handleShiftDetailMonth(-1)}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="이전 달"
-                                        hitSlop={4}
-                                        style={({ pressed }) => [
-                                            styles.stickyMonthNavigationButton,
-                                            pressed && styles.stickyMonthNavigationButtonPressed,
-                                        ]}
-                                    >
-                                        <Ionicons
-                                            accessible={false}
-                                            name="chevron-back"
-                                            size={25}
-                                            color={colors.arrowColor}
-                                        />
-                                    </Pressable>
-                                    <Pressable
-                                        onPress={() => handleShiftDetailMonth(1)}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="다음 달"
-                                        hitSlop={4}
-                                        style={({ pressed }) => [
-                                            styles.stickyMonthNavigationButton,
-                                            pressed && styles.stickyMonthNavigationButtonPressed,
-                                        ]}
-                                    >
-                                        <Ionicons
-                                            accessible={false}
-                                            name="chevron-forward"
-                                            size={25}
-                                            color={colors.arrowColor}
-                                        />
-                                    </Pressable>
-                                </View>
-                            )}
-                        </View>
-                        <View style={[styles.stickyWeekdayHeader, { borderBottomColor: stickyWeekdayBorderColor }]}>
+                        {showsStickyMonthTitle && (
+                            <View style={styles.stickyMonthHeader}>
+                                <Text style={[styles.stickyMonthTitle, stickyMonthColorStyle]}>
+                                    {stickyMonthTitle}
+                                </Text>
+                            </View>
+                        )}
+                        <View
+                            style={[
+                                styles.stickyWeekdayHeader,
+                                {
+                                    marginTop: primaryPillWeekdayGap,
+                                    borderBottomColor: stickyWeekdayBorderColor,
+                                },
+                            ]}
+                        >
                             {stickyWeekdayItems.map((item, index) => (
                                 <Text
                                     key={`${item.label}-${index}`}
@@ -3561,13 +4048,17 @@ export default function ScheduleIndex() {
                                     onPress={openCategoryManager}
                                     colors={colors}
                                 />
-                                <View style={[styles.dropdownRowDivider, { backgroundColor: colors.border }]} />
-                                <ToolbarDropdownAction
-                                    icon="people-outline"
-                                    title="공유 캘린더"
-                                    onPress={openSharedCalendarManager}
-                                    colors={colors}
-                                />
+                                {scheduleSharingEnabled ? (
+                                    <>
+                                        <View style={[styles.dropdownRowDivider, { backgroundColor: colors.border }]} />
+                                        <ToolbarDropdownAction
+                                            icon="people-outline"
+                                            title="공유 캘린더"
+                                            onPress={openSharedCalendarManager}
+                                            colors={colors}
+                                        />
+                                    </>
+                                ) : null}
                             </View>
                         </CalendarGlassSurface>
                     </Animated.View>
@@ -3661,10 +4152,8 @@ export default function ScheduleIndex() {
                                         onRegisterDetailMonthMotionCancel={
                                             registerDetailMonthMotionCancel
                                         }
-                                        onRegisterDetailMonthMotionShift={
-                                            registerDetailMonthMotionShift
-                                        }
                                         animatedDayHeight={monthCalendarAnimatedDayHeight}
+                                        bottomContentInset={stackBottomContentInset}
                                     />
                                 </View>
                             </Reanimated.View>
@@ -3847,7 +4336,9 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
-                onManageCalendars={openSharedCalendarManager}
+                onManageCalendars={scheduleSharingEnabled
+                    ? openSharedCalendarManager
+                    : undefined}
                 presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}
@@ -5667,21 +6158,6 @@ const styles = StyleSheet.create({
         fontWeight: "700",
         letterSpacing: 0,
         transform: [{ translateY: -1.5 }],
-    },
-    stickyMonthNavigationActions: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 2,
-    },
-    stickyMonthNavigationButton: {
-        width: 44,
-        height: 44,
-        alignItems: "center",
-        justifyContent: "center",
-        borderRadius: 22,
-    },
-    stickyMonthNavigationButtonPressed: {
-        opacity: 0.5,
     },
     stickyMonthTitleCurrentDark: {
         color: "#ff453a",

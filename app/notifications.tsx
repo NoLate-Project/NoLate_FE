@@ -26,6 +26,7 @@ import {
     getAppNotificationVisual,
     type AppNotificationTone,
 } from "../src/modules/notification/appNotificationPresentation";
+import { isScheduleSharingEnabled } from "../src/modules/share/scheduleSharingPolicy";
 import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
 import {
     useTheme,
@@ -203,7 +204,9 @@ export default function AppNotificationScreen() {
     const emptyTitle = filter === "unread" ? "읽지 않은 알림이 없어요" : "아직 도착한 알림이 없어요";
     const emptyCaption = filter === "unread"
         ? "새 알림이 오면 여기에 모아둘게요."
-        : "일정 공유와 출발 소식을 놓치지 않게 모아둘게요.";
+        : isScheduleSharingEnabled()
+            ? "일정 공유와 출발 소식을 놓치지 않게 모아둘게요."
+            : "내 일정의 출발과 교통 소식을 놓치지 않게 모아둘게요.";
 
     return (
         <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: insets.top }]}>

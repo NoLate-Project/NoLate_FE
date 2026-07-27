@@ -27,6 +27,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
   @Published var prototypeQuickAddRequest = 0
   @Published var prototypeManualAddRequest = 0
   @Published var prototypeHostExpanded = false
+  @Published var prototypeSearchHostReady = false
   @Published var searchExpandedWidth: CGFloat
   @Published var searchQuery: String
 
@@ -223,9 +224,13 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     },
     handleOpenChange: { [weak self] open in
       self?.prototypeMenuOpen = open
+      if !open {
+        self?.prototypeSearchOpen = false
+      }
       self?.onOpenChange?(["open": open])
     },
     handleSearch: { [weak self] in
+      self?.prototypeSearchOpen = true
       self?.onSearch?(["action": "search"])
     },
     handleSearchTextChange: { [weak self] text in
@@ -250,9 +255,11 @@ final class LiquidCalendarMenuPrototypeView: UIView {
 
   private var hostingController: UIHostingController<LiquidCalendarMenuPrototypeRootView>?
   private var prototypeMenuOpen = false
+  private var prototypeSearchOpen = false
   private var collapsedHitSize: CGSize {
     CGSize(width: model.showsViewModeButton ? 174 : 124, height: 44)
   }
+  private let searchExpandedHitHeight: CGFloat = 52
   private let collapsedHitPadding = UIEdgeInsets.zero
   private let expandedHitHeight: CGFloat = 224
   private let expandedHitPadding = UIEdgeInsets(top: 8, left: 0, bottom: 14, right: 0)
@@ -292,7 +299,7 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     guard !model.disabled else { return false }
 
     if prototypeMenuOpen {
-      return expandedHitRect.contains(point)
+      return activeExpandedHitRect.contains(point)
     }
 
     return collapsedHitRect.contains(point)
@@ -301,16 +308,22 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   override func layoutSubviews() {
     super.layoutSubviews()
 
-    let hostExpanded = bounds.height > collapsedHitSize.height + 1
+    let hostExpanded = bounds.height >= expandedHitHeight - 1
+    let searchHostReady =
+      bounds.height >= searchExpandedHitHeight - 1
+      && bounds.width >= model.searchExpandedWidth - 1
     if model.prototypeHostExpanded != hostExpanded {
       model.prototypeHostExpanded = hostExpanded
+    }
+    if model.prototypeSearchHostReady != searchHostReady {
+      model.prototypeSearchHostReady = searchHostReady
     }
   }
 
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
     guard !model.disabled else { return nil }
 
-    let activeHitRect = prototypeMenuOpen ? expandedHitRect : collapsedHitRect
+    let activeHitRect = prototypeMenuOpen ? activeExpandedHitRect : collapsedHitRect
 
     if !activeHitRect.contains(point) {
       return nil
@@ -344,6 +357,20 @@ final class LiquidCalendarMenuPrototypeView: UIView {
       width: bounds.width + expandedHitPadding.left + expandedHitPadding.right,
       height: height
     )
+  }
+
+  private var searchExpandedHitRect: CGRect {
+    let width = min(bounds.width, model.searchExpandedWidth)
+    return CGRect(
+      x: bounds.maxX - width,
+      y: bounds.minY,
+      width: width,
+      height: min(bounds.height, searchExpandedHitHeight)
+    )
+  }
+
+  private var activeExpandedHitRect: CGRect {
+    prototypeSearchOpen ? searchExpandedHitRect : expandedHitRect
   }
 }
 
@@ -819,6 +846,12 @@ private struct SharedLiquidGlassPillSurface: View {
 }
 
 private struct LiquidCalendarMenuPrototypeRootView: View {
+  private enum SearchOpenMotion {
+    static let morphDuration = 0.14
+    static let contentDelay = 0.03
+    static let contentFadeDuration = 0.08
+  }
+
   private enum Phase {
     case collapsed
     case expanding
@@ -862,7 +895,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private let collapsedRadius: CGFloat = 22
   private let expandedRadius: CGFloat = 26
   private let calendarOptions: [ViewModeGlassOption] = [
-    ViewModeGlassOption(id: "compact", label: "축소형"),
     ViewModeGlassOption(id: "stack", label: "스택형"),
     ViewModeGlassOption(id: "detail", label: "상세형"),
     ViewModeGlassOption(id: "list", label: "목록형"),
@@ -910,6 +942,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
     .onChange(of: model.prototypeHostExpanded) { hostExpanded in
       guard hostExpanded else { return }
+      beginPendingExpansionIfReady()
+    }
+    .onChange(of: model.prototypeSearchHostReady) { searchHostReady in
+      guard searchHostReady else { return }
       beginPendingExpansionIfReady()
     }
   }
@@ -1304,7 +1340,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var viewExpandedHeight: CGFloat {
-    isTimelineVariant ? 106 : 220
+    // Three rows, the list divider, spacing, and padding resolve to roughly
+    // 169pt. Keep the same ~10pt layout headroom as the former four-row 220pt
+    // menu; shrinking to the exact 170pt sum can strand collapsed controls over
+    // the morphing menu, while 220pt leaves a visibly empty fourth-row space.
+    isTimelineVariant ? 106 : 180
   }
 
   private var expandedPrimaryColor: Color {
@@ -1665,7 +1705,10 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   }
 
   private var rootHeight: CGFloat {
-    phase == .collapsed ? collapsedHeight : max(addExpandedHeight, viewExpandedHeight)
+    guard phase != .collapsed else { return collapsedHeight }
+    return activeAction == .search
+      ? searchExpandedHeight
+      : max(addExpandedHeight, viewExpandedHeight)
   }
 
   private var targetExpandedWidth: CGFloat {
@@ -1760,18 +1803,21 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     morphProgress = 0
     expansionPending = true
 
-    // Ask React Native to enlarge the Fabric host first. layoutSubviews marks
-    // the host ready, then beginPendingExpansionIfReady starts the SwiftUI
-    // morph. This prevents the large root from ever entering a 44pt host.
+    // Search already owns a full-width native canvas while collapsed, so this
+    // bridge event only updates React state; it never gates the native morph.
+    // View/add still wait for the taller host when necessary.
     model.handleOpenChange(true)
     beginPendingExpansionIfReady()
   }
 
   private func beginPendingExpansionIfReady() {
-    guard expansionPending, phase == .collapsed, model.prototypeHostExpanded else { return }
+    let hostReady = activeAction == .search
+      ? model.prototypeSearchHostReady
+      : model.prototypeHostExpanded
+    guard expansionPending, phase == .collapsed, hostReady else { return }
 
     let action = activeAction
-    let morphDuration = 0.20
+    let morphDuration = action == .search ? SearchOpenMotion.morphDuration : 0.20
     let completionDelay = morphDuration
 
     expansionPending = false
@@ -1788,10 +1834,16 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     }
 
     if action == .search {
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.055) {
+      DispatchQueue.main.asyncAfter(deadline: .now() + SearchOpenMotion.contentDelay) {
         guard activeAction == action, phase == .expanding else { return }
-        withAnimation(.easeOut(duration: 0.12)) {
+        withAnimation(.easeOut(duration: SearchOpenMotion.contentFadeDuration)) {
           contentVisible = true
+        }
+        // Let the field and keyboard appear while the short search-only morph
+        // is still settling instead of serializing focus after its completion.
+        DispatchQueue.main.async {
+          guard activeAction == action, phase == .expanding else { return }
+          searchFocused = true
         }
       }
     }
@@ -1807,9 +1859,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         contentVisible = true
         collapsedContentVisible = false
         phase = .expanded
-      }
-      if action == .search {
-        searchFocused = true
       }
     }
   }
@@ -2053,6 +2102,9 @@ private struct ViewModeGlyphMark: View {
 	      Image(systemName: "rectangle.stack")
 	        .font(.system(size: 22, weight: .regular))
 	    case "compact":
+      // Compatibility only: compact is no longer exposed as a selectable
+      // calendar mode, but a stale JS/native state must still render safely
+      // while Fast Refresh or a persisted session settles on a valid mode.
       VStack(spacing: 4.4) {
         RoundedRectangle(cornerRadius: 5, style: .continuous)
           .stroke(color, lineWidth: 2.15)

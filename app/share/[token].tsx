@@ -15,6 +15,9 @@ import { acceptShareInvitation, type ScheduleShareInvitationAcceptResult } from 
 import { useAuth } from "../../src/modules/auth/AuthContext";
 import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { createLatestAsyncRequestGuard } from "../../src/modules/share/latestAsyncRequest";
+import {
+    isScheduleSharingEnabled,
+} from "../../src/modules/share/scheduleSharingPolicy";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
@@ -38,6 +41,11 @@ function normalizeInvitationToken(value?: string): string | null {
 }
 
 export default function ShareInvitationAcceptScreen() {
+    if (!isScheduleSharingEnabled()) return null;
+    return <EnabledShareInvitationAcceptScreen />;
+}
+
+function EnabledShareInvitationAcceptScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
     const { token, autoAccept } = useLocalSearchParams<{

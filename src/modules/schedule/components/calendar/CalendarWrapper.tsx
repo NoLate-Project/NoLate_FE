@@ -36,6 +36,7 @@ type Props = {
         shift: ((direction: -1 | 1) => void) | null
     ) => void;
     animatedDayHeight?: SharedValue<number>;
+    bottomContentInset?: number;
 };
 
 // 일정 캘린더에 선택 날짜와 일정 목록을 연결한다.
@@ -59,6 +60,7 @@ function CalendarWrapper({
     onRegisterDetailMonthMotionCancel,
     onRegisterDetailMonthMotionShift,
     animatedDayHeight,
+    bottomContentInset,
 }: Props) {
     const shouldUseCompactHeight =
         viewMode === "detail" || viewMode === "list" || viewMode === "week";
@@ -85,6 +87,7 @@ function CalendarWrapper({
                 onRegisterDetailMonthMotionCancel={onRegisterDetailMonthMotionCancel}
                 onRegisterDetailMonthMotionShift={onRegisterDetailMonthMotionShift}
                 animatedDayHeight={animatedDayHeight}
+                bottomContentInset={bottomContentInset}
             />
         </View>
     );

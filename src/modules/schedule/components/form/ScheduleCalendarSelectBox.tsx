@@ -3,6 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import type { ScheduleCalendar } from "../../../../api/scheduleCalendars";
 import { useTheme } from "../../../theme/ThemeContext";
+import {
+    isScheduleSharingEnabled,
+} from "../../../share/scheduleSharingPolicy";
 
 type Props = {
     calendars: ScheduleCalendar[];
@@ -25,6 +28,13 @@ function contentModeLabel(calendar: ScheduleCalendar) {
  * 개인 영역을 항상 첫 항목으로 유지해 네트워크 오류가 나도 일정 생성 자체는 막지 않는다.
  */
 export default function ScheduleCalendarSelectBox({
+    ...props
+}: Props) {
+    if (!isScheduleSharingEnabled()) return null;
+    return <EnabledScheduleCalendarSelectBox {...props} />;
+}
+
+function EnabledScheduleCalendarSelectBox({
     calendars,
     value,
     loading = false,

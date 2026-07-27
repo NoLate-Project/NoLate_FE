@@ -1,7 +1,7 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import * as ImagePicker from "expo-image-picker";
-import { Alert } from "react-native";
+import { ActionSheetIOS, Alert } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
@@ -134,6 +134,7 @@ describe("QuickScheduleModal live speech", () => {
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
         jest.clearAllTimers();
         jest.useRealTimers();
     });
@@ -159,6 +160,21 @@ describe("QuickScheduleModal live speech", () => {
                 .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
                 .props.onPress();
         });
+        expect(
+            renderer!.root.findByProps({ testID: "quick-schedule-voice-spectrum" })
+        ).toBeDefined();
+        expect(
+            renderer!.root.findAll((node) => (
+                node.props.testID === "quick-schedule-voice-spectrum-bar"
+                && typeof node.type === "string"
+            ))
+        ).toHaveLength(48);
+        expect(
+            renderer!.root.findAll((node) => node.props.children === "말하기")
+        ).not.toHaveLength(0);
+        expect(
+            renderer!.root.findAll((node) => node.props.children === "눌러서 시작")
+        ).not.toHaveLength(0);
         await act(async () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
@@ -649,6 +665,9 @@ describe("QuickScheduleModal live speech", () => {
 
     test("활성 STT 오디오 세션 취소가 끝난 뒤에만 사진 선택기를 연다", async () => {
         const pendingCancel = createDeferred<void>();
+        const actionSheetSpy = jest
+            .spyOn(ActionSheetIOS, "showActionSheetWithOptions")
+            .mockImplementation(() => undefined);
         mockCancelLiveSpeechRecognition.mockImplementationOnce(() => pendingCancel.promise);
 
         await act(async () => {
@@ -683,19 +702,30 @@ describe("QuickScheduleModal live speech", () => {
         });
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "사진 앱에서 일정 사진 선택" })
+                .findByProps({ accessibilityLabel: "사진 선택" })
                 .props.onPress();
             await Promise.resolve();
         });
 
         expect(ImagePicker.launchImageLibraryAsync).not.toHaveBeenCalled();
+        expect(actionSheetSpy).not.toHaveBeenCalled();
         await act(async () => {
             pendingCancel.resolve(undefined);
             await pendingCancel.promise;
             await Promise.resolve();
             await Promise.resolve();
         });
+
+        expect(actionSheetSpy).toHaveBeenCalledTimes(1);
+        const actionSheetCallback = actionSheetSpy.mock.calls[0][1];
+        await act(async () => {
+            actionSheetCallback(1);
+            await jest.advanceTimersByTimeAsync(360);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
         expect(ImagePicker.launchImageLibraryAsync).toHaveBeenCalledTimes(1);
+        actionSheetSpy.mockRestore();
     });
 
     test("이전 STT 정리가 끝나기 전에는 재시작하지 않고 새 세션도 닫을 때 정리한다", async () => {

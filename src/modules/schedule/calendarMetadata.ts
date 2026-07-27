@@ -17,6 +17,13 @@ export type CalendarMetadataRange = {
     endDate: string;
 };
 
+function toMonthKey(date: Date): string {
+    return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, "0"),
+    ].join("-");
+}
+
 function toDateString(date: Date): string {
     return [
         date.getFullYear(),
@@ -56,6 +63,39 @@ export function getCalendarMetadataRange(
     };
 }
 
+/** 현재 월을 열기 전에 달력 pager의 이전·현재·다음 월 메타데이터를 준비한다. */
+export function getCalendarMetadataPrefetchMonthKeys(month: string): string[] {
+    const [yearText, monthText] = month.slice(0, 7).split("-");
+    const year = Number(yearText);
+    const monthIndex = Number(monthText) - 1;
+    const now = new Date();
+    const safeYear = Number.isFinite(year) ? year : now.getFullYear();
+    const safeMonthIndex = Number.isFinite(monthIndex) && monthIndex >= 0 && monthIndex <= 11
+        ? monthIndex
+        : now.getMonth();
+
+    return [-1, 0, 1].map((delta) => (
+        toMonthKey(new Date(safeYear, safeMonthIndex + delta, 1))
+    ));
+}
+
+export function getCalendarMetadataPrefetchRange(
+    month: string,
+    firstDay: 0 | 1
+): CalendarMetadataRange {
+    const monthKeys = getCalendarMetadataPrefetchMonthKeys(month);
+    const firstRange = getCalendarMetadataRange(monthKeys[0] ?? month, firstDay);
+    const lastRange = getCalendarMetadataRange(
+        monthKeys[monthKeys.length - 1] ?? month,
+        firstDay
+    );
+
+    return {
+        startDate: firstRange.startDate,
+        endDate: lastRange.endDate,
+    };
+}
+
 export function indexCalendarDays(
     days: CalendarDayMetadata[]
 ): Record<string, CalendarDayMetadata> {
@@ -70,4 +110,3 @@ export function formatLunarCalendarDay(
         ? `음 윤${day.lunarMonth}.${day.lunarDay}`
         : `음 ${day.lunarMonth}.${day.lunarDay}`;
 }
-

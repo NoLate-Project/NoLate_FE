@@ -233,6 +233,28 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         return handler.props as DetailMonthPanResponderProps;
     }
 
+    function getDetailMonthAnimatedValues() {
+        const layer = renderer?.root.findByProps({
+            testID: "detail-month-animated-layer",
+        });
+        if (!layer) throw new Error("Detail month animated layer was not rendered");
+        type InspectableAnimatedValue = Animated.Value & {
+            __getValue: () => number;
+        };
+        const style = layer.props.style[1] as {
+            opacity: InspectableAnimatedValue;
+            transform: [
+                { translateX: InspectableAnimatedValue },
+                { translateY: InspectableAnimatedValue },
+            ];
+        };
+        return {
+            opacity: style.opacity,
+            translateX: style.transform[0].translateX,
+            translateY: style.transform[1].translateY,
+        };
+    }
+
     function responderEvent(touchCount = 1): GestureResponderEvent {
         return {
             nativeEvent: {
@@ -244,9 +266,10 @@ describe("ScheduleCalendar detail month swipe motion", () => {
     function responderGestureState(
         dx: number,
         vx = 0,
-        dy = 0
+        dy = 0,
+        vy = 0
     ): PanResponderGestureState {
-        return { dx, dy, vx, vy: 0 } as PanResponderGestureState;
+        return { dx, dy, vx, vy } as PanResponderGestureState;
     }
 
     function callPanHandler(
@@ -278,8 +301,6 @@ describe("ScheduleCalendar detail month swipe motion", () => {
     async function acknowledgeControlledMonth(targetDay: string) {
         await updateCalendar(targetDay);
         act(() => getCalendarProps().onMonthChange({ dateString: targetDay }));
-        flushNextFrame();
-        finishNextAnimation();
     }
 
     test("12월에서 왼쪽으로 넘기면 ACK 뒤 다음 해 1월을 한 번만 반영한다", async () => {
@@ -288,7 +309,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         const staleLibraryChangeMonth = jest.fn();
 
         act(() => calendar.onPressArrowRight(staleLibraryChangeMonth));
-        finishNextAnimation();
+        flushNextFrame();
 
         expect(staleLibraryChangeMonth).not.toHaveBeenCalled();
         expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
@@ -299,12 +320,9 @@ describe("ScheduleCalendar detail month swipe motion", () => {
 
         await updateCalendar("2027-01-31");
         act(() => getCalendarProps().onMonthChange({ dateString: "2027-01-31" }));
-        expect(pendingFrameCallbacks).toHaveLength(1);
+        expect(pendingFrameCallbacks).toHaveLength(0);
         expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
         expect(onSelectDay).toHaveBeenCalledTimes(1);
-
-        flushNextFrame();
-        finishNextAnimation();
     });
 
     test("1월에서 오른쪽으로 넘기면 이전 해 12월 말일로 보정한다", async () => {
@@ -312,7 +330,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         const calendar = getCalendarProps();
 
         act(() => calendar.onPressArrowLeft(jest.fn()));
-        finishNextAnimation();
+        flushNextFrame();
 
         expect(onVisibleMonthChange).toHaveBeenLastCalledWith("2025-12-31");
         expect(onSelectDay).toHaveBeenLastCalledWith("2025-12-31");
@@ -328,13 +346,13 @@ describe("ScheduleCalendar detail month swipe motion", () => {
             calendar.onPressArrowRight(jest.fn());
         });
 
-        finishNextAnimation();
+        flushNextFrame();
         expect(onSelectDay).toHaveBeenLastCalledWith("2026-08-15");
         await acknowledgeControlledMonth("2026-08-15");
 
-        // The queued swipe starts as soon as the first enter animation settles.
-        expect(pendingAnimationCallbacks).toHaveLength(1);
-        finishNextAnimation();
+        // The queued page starts as soon as the first controlled commit settles.
+        expect(pendingFrameCallbacks).toHaveLength(1);
+        flushNextFrame();
         expect(onSelectDay).toHaveBeenLastCalledWith("2026-09-15");
         await acknowledgeControlledMonth("2026-09-15");
 
@@ -348,6 +366,28 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         ]);
     });
 
+    test("연속 버튼 전환은 미리 렌더한 pager를 사용해 grid를 숨기지 않는다", async () => {
+        await renderCalendar("2026-07-15");
+        const calendar = getCalendarProps();
+        const motion = getDetailMonthAnimatedValues();
+
+        act(() => {
+            calendar.onPressArrowRight(jest.fn());
+            calendar.onPressArrowRight(jest.fn());
+        });
+
+        flushNextFrame();
+        expect(motion.opacity.__getValue()).toBe(1);
+
+        await acknowledgeControlledMonth("2026-08-15");
+        flushNextFrame();
+        expect(motion.opacity.__getValue()).toBe(1);
+
+        await acknowledgeControlledMonth("2026-09-15");
+        expect(motion.opacity.__getValue()).toBe(1);
+        expect(motion.translateX.__getValue()).toBe(0);
+    });
+
     test("전환 중 반대 방향 스와이프는 첫 전환 뒤 원래 달로 복귀한다", async () => {
         await renderCalendar("2026-07-15");
         const calendar = getCalendarProps();
@@ -357,9 +397,9 @@ describe("ScheduleCalendar detail month swipe motion", () => {
             calendar.onPressArrowLeft(jest.fn());
         });
 
-        finishNextAnimation();
+        flushNextFrame();
         await acknowledgeControlledMonth("2026-08-15");
-        finishNextAnimation();
+        flushNextFrame();
         await acknowledgeControlledMonth("2026-07-15");
 
         expect(onSelectDay.mock.calls.map(([day]) => day)).toEqual([
@@ -374,43 +414,29 @@ describe("ScheduleCalendar detail month swipe motion", () => {
 
         act(() => calendar.onPressArrowRight(jest.fn()));
         await updateCalendar("2026-10-15");
-        finishNextAnimation();
+        flushNextFrame();
 
         expect(onVisibleMonthChange).not.toHaveBeenCalled();
         expect(onSelectDay).not.toHaveBeenCalled();
         expect(pendingFrameCallbacks).toHaveLength(0);
     });
 
-    test("controlled props commit이 enter ACK이고 늦은 Calendar callback은 중복시키지 않는다", async () => {
+    test("controlled props commit이 pager anchor를 교체하고 늦은 Calendar callback은 중복시키지 않는다", async () => {
         await renderCalendar("2026-07-15");
         const calendar = getCalendarProps();
 
         act(() => calendar.onPressArrowRight(jest.fn()));
-        finishNextAnimation();
+        flushNextFrame();
         await updateCalendar("2026-08-15");
 
-        expect(Animated.parallel).toHaveBeenCalledTimes(1);
-        expect(pendingFrameCallbacks).toHaveLength(1);
+        expect(Animated.parallel).not.toHaveBeenCalled();
+        expect(pendingFrameCallbacks).toHaveLength(0);
 
         act(() => getCalendarProps().onMonthChange({ dateString: "2026-08-15" }));
-        expect(pendingFrameCallbacks).toHaveLength(1);
-        expect(Animated.parallel).toHaveBeenCalledTimes(1);
+        expect(pendingFrameCallbacks).toHaveLength(0);
+        expect(Animated.parallel).not.toHaveBeenCalled();
         expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
         expect(onSelectDay).toHaveBeenCalledTimes(1);
-
-        flushNextFrame();
-        expect(Animated.parallel).toHaveBeenCalledTimes(2);
-        expect(Animated.timing).toHaveBeenNthCalledWith(
-            3,
-            expect.anything(),
-            expect.objectContaining({ isInteraction: false })
-        );
-        expect(Animated.timing).toHaveBeenNthCalledWith(
-            4,
-            expect.anything(),
-            expect.objectContaining({ isInteraction: false })
-        );
-        finishNextAnimation();
     });
 
     test.each([
@@ -495,9 +521,145 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(onSelectDay).not.toHaveBeenCalled();
     });
 
-    test("상세형의 세로 우세 드래그는 가로 responder가 가로채지 않는다", async () => {
+    test.each([
+        {
+            label: "위",
+            dy: -52,
+            targetDay: "2026-08-15",
+            expectedFollowOffset: -DETAIL_MONTH_SWIPE_MOTION.travel,
+            pages: ["2026-07-15", "2026-08-15", "2026-09-15"],
+        },
+        {
+            label: "아래",
+            dy: 52,
+            targetDay: "2026-06-15",
+            expectedFollowOffset: DETAIL_MONTH_SWIPE_MOTION.travel,
+            pages: ["2026-05-15", "2026-06-15", "2026-07-15"],
+        },
+    ] as const)(
+        "상세형 달력의 $label 스와이프는 $targetDay 월로 한 번만 이동한다",
+        async ({ dy, targetDay, expectedFollowOffset, pages }) => {
+            await renderCalendar("2026-07-15");
+            const handler = getDetailMonthGestureHandlerProps();
+            const event = responderEvent();
+            const gestureState = responderGestureState(2, 0, dy);
+            const motion = getDetailMonthAnimatedValues();
+
+            expect(callPanHandler(
+                handler,
+                "onMoveShouldSetResponderCapture",
+                event,
+                gestureState
+            )).toBe(true);
+            act(() => { callPanHandler(handler, "onResponderGrant", event, gestureState); });
+            act(() => { callPanHandler(handler, "onResponderMove", event, gestureState); });
+            act(() => { callPanHandler(handler, "onResponderRelease", event, gestureState); });
+
+            expect(motion.translateX.__getValue()).toBe(0);
+            expect(motion.translateY.__getValue()).toBe(expectedFollowOffset);
+            expect(onVisibleMonthChange).not.toHaveBeenCalled();
+
+            finishNextAnimation();
+            expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
+            expect(onVisibleMonthChange).toHaveBeenLastCalledWith(targetDay);
+            expect(onSelectDay).toHaveBeenCalledTimes(1);
+            expect(onSelectDay).toHaveBeenLastCalledWith(targetDay);
+
+            await updateCalendar(targetDay);
+            act(() => getCalendarProps().onMonthChange({ dateString: targetDay }));
+            flushNextFrame();
+            finishNextAnimation();
+
+            expect(mockCalendarInitialDates.slice(-3)).toEqual(pages);
+        }
+    );
+
+    test("날짜 셀의 capture와 bubble 판정 사이에도 세로 월 이동 축을 유지한다", async () => {
         await renderCalendar("2026-07-15");
         const handler = getDetailMonthGestureHandlerProps();
+        const event = responderEvent();
+        const gestureState = responderGestureState(2, 0, -52, -0.1);
+
+        expect(callPanHandler(
+            handler,
+            "onStartShouldSetResponderCapture",
+            event,
+            responderGestureState(0)
+        )).toBe(false);
+        expect(callPanHandler(
+            handler,
+            "onMoveShouldSetResponderCapture",
+            event,
+            gestureState
+        )).toBe(true);
+        expect(callPanHandler(
+            handler,
+            "onMoveShouldSetResponder",
+            responderEvent(0),
+            responderGestureState(0)
+        )).toBe(true);
+
+        act(() => {
+            callPanHandler(handler, "onResponderGrant", event, gestureState);
+            callPanHandler(handler, "onResponderRelease", event, gestureState);
+        });
+
+        finishNextAnimation();
+        expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
+        expect(onVisibleMonthChange).toHaveBeenCalledWith("2026-08-15");
+        expect(onSelectDay).toHaveBeenCalledTimes(1);
+        expect(onSelectDay).toHaveBeenCalledWith("2026-08-15");
+    });
+
+    test("세로 제스처 도중 두 번째 손가락이 추가되면 월 이동을 취소한다", async () => {
+        await renderCalendar("2026-07-15");
+        const handler = getDetailMonthGestureHandlerProps();
+        const event = responderEvent();
+        const gestureState = responderGestureState(2, 0, -52, -0.1);
+
+        expect(callPanHandler(
+            handler,
+            "onMoveShouldSetResponderCapture",
+            event,
+            gestureState
+        )).toBe(true);
+
+        act(() => {
+            callPanHandler(handler, "onResponderGrant", event, gestureState);
+            callPanHandler(
+                handler,
+                "onResponderMove",
+                responderEvent(2),
+                gestureState
+            );
+            callPanHandler(
+                handler,
+                "onResponderRelease",
+                responderEvent(0),
+                gestureState
+            );
+        });
+
+        expect(onVisibleMonthChange).not.toHaveBeenCalled();
+        expect(onSelectDay).not.toHaveBeenCalled();
+    });
+
+    test("상세형의 짧은 세로·대각선·멀티터치는 월을 바꾸지 않는다", async () => {
+        await renderCalendar("2026-07-15");
+        const handler = getDetailMonthGestureHandlerProps();
+        const event = responderEvent();
+        const shortVerticalGesture = responderGestureState(2, 0, 20);
+
+        expect(callPanHandler(
+            handler,
+            "onMoveShouldSetResponder",
+            event,
+            shortVerticalGesture
+        )).toBe(true);
+        act(() => {
+            callPanHandler(handler, "onResponderGrant", event, shortVerticalGesture);
+            callPanHandler(handler, "onResponderRelease", event, shortVerticalGesture);
+        });
 
         expect(callPanHandler(
             handler,
@@ -530,7 +692,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
 
         try {
             act(() => calendar.onPressArrowRight(jest.fn()));
-            finishNextAnimation();
+            flushNextFrame();
             onSelectDay.mockClear();
             onVisibleMonthChange.mockClear();
 
@@ -551,23 +713,19 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         }
     });
 
-    test("ACK 뒤 대기 중 unmount하면 RAF와 늦은 callback을 무효화한다", async () => {
+    test("pager ACK 뒤에는 RAF를 남기지 않고 unmount한다", async () => {
         await renderCalendar("2026-07-15");
         const calendar = getCalendarProps();
 
         act(() => calendar.onPressArrowRight(jest.fn()));
-        finishNextAnimation();
+        flushNextFrame();
         await updateCalendar("2026-08-15");
         act(() => getCalendarProps().onMonthChange({ dateString: "2026-08-15" }));
-        const pendingFrameId = pendingFrameCallbacks[0]?.id;
-        expect(pendingFrameId).toBeDefined();
+        expect(pendingFrameCallbacks).toHaveLength(0);
 
         await act(async () => renderer?.unmount());
         renderer = undefined;
-        expect(cancelAnimationFrame).toHaveBeenCalledWith(pendingFrameId);
-
-        flushNextFrame();
-        expect(Animated.parallel).toHaveBeenCalledTimes(1);
+        expect(Animated.parallel).not.toHaveBeenCalled();
     });
 
     test("전환 중에는 투명한 이전 달의 날짜 탭을 무시한다", async () => {
@@ -714,7 +872,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(registeredCancel).toEqual(expect.any(Function));
         act(() => calendar.onPressArrowRight(jest.fn()));
         act(() => registeredCancel());
-        finishNextAnimation();
+        flushNextFrame();
 
         expect(onSelectDay).not.toHaveBeenCalled();
         expect(onVisibleMonthChange).not.toHaveBeenCalled();
@@ -732,7 +890,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
 
         expect(registeredShift).toEqual(expect.any(Function));
         act(() => registeredShift(1));
-        finishNextAnimation();
+        flushNextFrame();
 
         expect(onVisibleMonthChange).toHaveBeenCalledTimes(1);
         expect(onVisibleMonthChange).toHaveBeenCalledWith("2026-08-15");
