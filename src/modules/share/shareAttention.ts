@@ -6,7 +6,6 @@ import type {
     SharePendingInvitation,
     ShareResourceType,
 } from "../../api/scheduleSharing";
-import { isScheduleSharingEnabled } from "./scheduleSharingPolicy";
 
 const SHARE_ATTENTION_SEEN_KEY = "nolate.shareAttention.seenKeys.v1";
 const MAX_SEEN_SHARE_KEYS = 240;
@@ -30,48 +29,6 @@ export type ShareAttentionSummary = {
     latest?: ShareAttentionEntry;
     latestUnseen?: ShareAttentionEntry;
 };
-
-type ShareAttentionPollingOptions = {
-    enabled?: boolean;
-    intervalMs: number;
-    load: () => Promise<ShareAttentionSummary>;
-    onSummary: (summary: ShareAttentionSummary) => void;
-    setIntervalFn?: typeof setInterval;
-    clearIntervalFn?: typeof clearInterval;
-};
-
-export function startScheduleShareAttentionPolling({
-    enabled = isScheduleSharingEnabled(),
-    intervalMs,
-    load,
-    onSummary,
-    setIntervalFn = setInterval,
-    clearIntervalFn = clearInterval,
-}: ShareAttentionPollingOptions): () => void {
-    // Do not even schedule a dormant poll: old builds may still have cached
-    // attention, and a hidden network loop would undermine the global gate.
-    if (!enabled) return () => undefined;
-
-    let cancelled = false;
-    const refresh = () => {
-        load()
-            .then((summary) => {
-                if (!cancelled) onSummary(summary);
-            })
-            .catch(() => {
-                // Attention is only a hint; an enabled rollout keeps calendar
-                // use available when this optional request temporarily fails.
-            });
-    };
-
-    refresh();
-    const timer = setIntervalFn(refresh, intervalMs);
-
-    return () => {
-        cancelled = true;
-        clearIntervalFn(timer);
-    };
-}
 
 function parseTimestamp(value?: string | null) {
     if (!value) return 0;
@@ -124,7 +81,6 @@ function uniqueKeys(keys: readonly string[]) {
 }
 
 export function getShareAttentionEntries(inbox: ShareInbox): ShareAttentionEntry[] {
-    if (!isScheduleSharingEnabled()) return [];
     return [
         ...inbox.pendingInvitations.map(invitationToEntry),
         ...inbox.receivedShares.map(shareToEntry),
@@ -139,14 +95,6 @@ export function buildShareAttentionSummary(
     inbox: ShareInbox,
     seenKeys: readonly string[] = []
 ): ShareAttentionSummary {
-    if (!isScheduleSharingEnabled()) {
-        return {
-            pendingInvitationCount: 0,
-            receivedShareCount: 0,
-            totalCount: 0,
-            unseenCount: 0,
-        };
-    }
     const entries = getShareAttentionEntries(inbox);
     const seenKeySet = new Set(uniqueKeys(seenKeys));
     const unseenEntries = entries.filter((entry) => !seenKeySet.has(entry.key));
@@ -162,12 +110,6 @@ export function buildShareAttentionSummary(
 }
 
 export async function readSeenShareAttentionKeys(): Promise<string[]> {
-    if (!isScheduleSharingEnabled()) {
-        // Seen keys are account-owned durable data. Clear them on an off-build
-        // bootstrap so an upgrade or later account switch cannot revive a badge.
-        await clearSeenShareAttention().catch(() => undefined);
-        return [];
-    }
     try {
         const raw = await SecureStore.getItemAsync(SHARE_ATTENTION_SEEN_KEY);
         if (!raw) return [];
@@ -180,10 +122,6 @@ export async function readSeenShareAttentionKeys(): Promise<string[]> {
 }
 
 export async function markShareInboxSeen(inbox: ShareInbox): Promise<void> {
-    if (!isScheduleSharingEnabled()) {
-        await clearSeenShareAttention().catch(() => undefined);
-        return;
-    }
     const currentKeys = await readSeenShareAttentionKeys();
     const nextKeys = uniqueKeys([...currentKeys, ...getShareAttentionKeys(inbox)])
         .slice(-MAX_SEEN_SHARE_KEYS);
@@ -195,9 +133,4 @@ export async function markShareInboxSeen(inbox: ShareInbox): Promise<void> {
 
 export async function clearSeenShareAttention(): Promise<void> {
     await SecureStore.deleteItemAsync(SHARE_ATTENTION_SEEN_KEY);
-}
-
-export async function clearDormantScheduleSharingAttention(): Promise<void> {
-    if (isScheduleSharingEnabled()) return;
-    await clearSeenShareAttention();
 }

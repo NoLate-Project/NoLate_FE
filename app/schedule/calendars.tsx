@@ -34,9 +34,6 @@ import {
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
-import {
-    isScheduleSharingEnabled,
-} from "../../src/modules/share/scheduleSharingPolicy";
 
 const BRAND_BLUE = "#2F80FF";
 const CALENDAR_COLORS = ["#2F80FF", "#16A085", "#34C759", "#FF3B30", "#AF52DE", "#FF9500"];
@@ -58,11 +55,6 @@ function contentModeLabel(mode: ScheduleShareContentMode) {
 }
 
 export default function ScheduleCalendarsScreen() {
-    if (!isScheduleSharingEnabled()) return null;
-    return <EnabledScheduleCalendarsScreen />;
-}
-
-function EnabledScheduleCalendarsScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id?: string }>();
     const insets = useSafeAreaInsets();

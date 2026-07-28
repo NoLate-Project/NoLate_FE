@@ -6,9 +6,6 @@ import type {
     ScheduleTravelPlanParticipant,
     TravelMode,
 } from "../modules/schedule/types";
-import {
-    assertScheduleSharingEnabled,
-} from "../modules/share/scheduleSharingPolicy";
 
 export type ScheduleTravelPlanPayload = {
     travelMinutes?: number;
@@ -30,7 +27,6 @@ export type ScheduleTravelPlanOverview = {
 export async function getScheduleTravelPlanOverview(
     scheduleId: string
 ): Promise<ScheduleTravelPlanOverview> {
-    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleTravelPlanOverview>>(
         `/api/schedules/${scheduleId}/travel-plans`
     );
@@ -41,7 +37,6 @@ export async function getScheduleTravelPlan(
     scheduleId: string,
     memberId: number
 ): Promise<ScheduleTravelPlan> {
-    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleTravelPlan>>(
         `/api/schedules/${scheduleId}/travel-plans/${memberId}`
     );

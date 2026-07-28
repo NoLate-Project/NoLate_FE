@@ -1,8 +1,3 @@
-import {
-    isScheduleNotificationAllowedBySharingPolicy,
-    isScheduleSharingEnabled,
-} from "../share/scheduleSharingPolicy";
-
 const SCHEDULE_DETAIL_TYPES = new Set([
     "SCHEDULE_TRAFFIC",
     "SCHEDULE_DEPARTURE_REMINDER",
@@ -34,13 +29,6 @@ export type PushNavigationTarget =
         kind: "shareInbox";
     };
 
-export type AccountBoundPushNavigationIntent = {
-    target: PushNavigationTarget;
-    logicalEventKey: string;
-    recipientMemberId: number;
-    validationEpoch: number;
-};
-
 export type ScheduleDetailRoute = {
     pathname: "/schedule/[id]";
     params: {
@@ -68,54 +56,23 @@ export function isPushNavigationReady({
  * so a cold-start notification is not lost behind login or onboarding.
  */
 export function createPendingPushNavigationQueue() {
-    let pendingIntent: AccountBoundPushNavigationIntent | undefined;
+    let pendingTarget: PushNavigationTarget | undefined;
 
     return {
-        defer(intent: AccountBoundPushNavigationIntent): boolean {
-            if (
-                !isScheduleSharingEnabled()
-                && intent.target.kind === "shareInbox"
-            ) {
-                pendingIntent = undefined;
-                return false;
-            }
-            pendingIntent = intent;
-            return true;
+        defer(target: PushNavigationTarget) {
+            pendingTarget = target;
         },
-        consumeIfReady(
-            readiness: PushNavigationReadiness,
-        ): AccountBoundPushNavigationIntent | undefined {
+        consumeIfReady(readiness: PushNavigationReadiness): PushNavigationTarget | undefined {
             if (!isPushNavigationReady(readiness)) return undefined;
 
-            const intent = pendingIntent;
-            pendingIntent = undefined;
-            if (
-                !isScheduleSharingEnabled()
-                && intent?.target.kind === "shareInbox"
-            ) return undefined;
-            return intent;
+            const target = pendingTarget;
+            pendingTarget = undefined;
+            return target;
         },
-        peek(): AccountBoundPushNavigationIntent | undefined {
-            return pendingIntent;
-        },
-        clear(): void {
-            pendingIntent = undefined;
+        peek(): PushNavigationTarget | undefined {
+            return pendingTarget;
         },
     };
-}
-
-export function isAccountBoundPushNavigationIntentCurrent(
-    intent: AccountBoundPushNavigationIntent,
-    current: { authEpoch: number; memberId?: number | null },
-): boolean {
-    if (
-        !isScheduleSharingEnabled()
-        && intent.target.kind === "shareInbox"
-    ) return false;
-    return intent.validationEpoch === current.authEpoch &&
-        intent.recipientMemberId === current.memberId &&
-        intent.logicalEventKey.startsWith("logical:") &&
-        intent.logicalEventKey.length > "logical:".length;
 }
 
 /**
@@ -137,10 +94,6 @@ export function getScheduleIdFromNotificationData(
 export function getPushNavigationTargetFromNotificationData(
     data?: Record<string, unknown>,
 ): PushNavigationTarget | undefined {
-    // Parse-time rejection keeps old OS taps out of canonical consumption and
-    // the navigator-ready queue, even if they were delivered by an enabled build.
-    if (!isScheduleNotificationAllowedBySharingPolicy(data)) return undefined;
-
     const rawType = data?.type;
     const type = typeof rawType === "string" ? rawType.trim() : undefined;
 
@@ -173,7 +126,6 @@ export function getPushNavigationTargetFromNotificationData(
 export function getNotificationActionCategoryFromData(
     data?: Record<string, unknown>,
 ): string | undefined {
-    if (!isScheduleNotificationAllowedBySharingPolicy(data)) return undefined;
     const type = typeof data?.type === "string" ? data.type.trim() : undefined;
     const scheduleId = getScheduleIdFromNotificationData(data);
 

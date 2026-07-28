@@ -80,7 +80,6 @@ import {
     type ScheduleCalendar,
 } from "../../../../api/scheduleCalendars";
 import { getWritableScheduleCalendars } from "../../calendarPermissions";
-import { isScheduleSharingEnabled } from "../../../share/scheduleSharingPolicy";
 
 type Props = {
     visible: boolean;
@@ -216,7 +215,6 @@ export default function ScheduleNewModal({
     const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-    const scheduleSharingEnabled = isScheduleSharingEnabled();
     const isMorphPresentation = presentation === "morph";
     const writableCategories = useMemo(
         () => getWritableScheduleCategories(categories),
@@ -325,13 +323,6 @@ export default function ScheduleNewModal({
 
     useEffect(() => {
         if (!visible) return;
-        if (!scheduleSharingEnabled) {
-            setCalendars([]);
-            setSelectedCalendarId(null);
-            setCalendarLoading(false);
-            setCalendarError(null);
-            return;
-        }
 
         let cancelled = false;
         setCalendarLoading(true);
@@ -357,7 +348,7 @@ export default function ScheduleNewModal({
         return () => {
             cancelled = true;
         };
-    }, [calendarRetryKey, scheduleSharingEnabled, visible]);
+    }, [calendarRetryKey, visible]);
 
     // 실제 선택값과 화면 표시값을 분리해 피커 전환 애니메이션을 안정화한다.
     const [picker,        setPicker]        = useState<PickerType | null>(null);

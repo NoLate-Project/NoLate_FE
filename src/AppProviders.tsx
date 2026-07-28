@@ -11,23 +11,6 @@ import {
 import { createScheduleInitialState } from "./modules/schedule/initialState";
 import { ScheduleProvider } from "./modules/schedule/store";
 import { ThemeProvider } from "./modules/theme/ThemeContext";
-import {
-    isScheduleSharingEnabled,
-} from "./modules/share/scheduleSharingPolicy";
-import {
-    clearDormantScheduleSharingAttention,
-} from "./modules/share/shareAttention";
-import { clearCalendarScheduleCache } from "./modules/schedule/calendarScheduleCache";
-import { clearScheduleDepartureStatusCache } from "./modules/schedule/departureStatusCache";
-import { subscribeAuthSessionEpoch } from "./modules/auth/authSessionEpoch";
-import {
-    clearScheduleSharingSessionOwner,
-    establishScheduleSharingSessionOwner,
-} from "./modules/share/scheduleSharingSessionOwner";
-import {
-    getAuthMember,
-    getAuthSessionEpoch,
-} from "./modules/auth/authStorage";
 
 export function AppProviders({ children }: PropsWithChildren) {
     const initialState = useMemo(() => createScheduleInitialState(), []);
@@ -36,43 +19,12 @@ export function AppProviders({ children }: PropsWithChildren) {
         <ThemeProvider>
             <AuthProvider>
                 <PushRegistrationBootstrap />
-                <ScheduleSharingPolicyBootstrap />
                 <ScheduleProvider initialState={initialState}>
                     {children}
                 </ScheduleProvider>
             </AuthProvider>
         </ThemeProvider>
     );
-}
-
-function ScheduleSharingPolicyBootstrap() {
-    useEffect(() => {
-        if (isScheduleSharingEnabled()) return undefined;
-
-        const clearDormantClientState = (authEpoch = getAuthSessionEpoch()) => {
-            clearScheduleSharingSessionOwner();
-            clearCalendarScheduleCache();
-            clearScheduleDepartureStatusCache();
-            clearDormantScheduleSharingAttention().catch(() => undefined);
-            getAuthMember()
-                .then((member) => {
-                    if (typeof member?.id === "number") {
-                        establishScheduleSharingSessionOwner(
-                            authEpoch,
-                            member.id,
-                        );
-                    }
-                })
-                .catch(() => undefined);
-        };
-
-        // Server rows remain dormant and authoritative. This only removes old
-        // client projections on bootstrap and at each account generation.
-        clearDormantClientState();
-        return subscribeAuthSessionEpoch(clearDormantClientState);
-    }, []);
-
-    return null;
 }
 
 function PushRegistrationBootstrap() {

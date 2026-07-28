@@ -54,30 +54,6 @@ export type ShareLibraryItem = {
   searchText: string;
 };
 
-export type ShareLibraryOpenDestination =
-  | { kind: 'schedule'; id: string }
-  | { kind: 'calendar'; id: string }
-  | { kind: 'category' };
-
-/**
- * 공유함의 캘린더 카드는 바로 아래에 가장 가까운 다음 일정을 노출한다.
- * 이 행을 눌렀을 때 관리 화면으로 빠지면 사용자는 표시된 일정으로 갈 수 없으므로,
- * 다음 일정이 있는 캘린더는 해당 일정 상세로 연결하고 빈 캘린더만 관리 화면으로 보낸다.
- */
-export function resolveShareLibraryOpenDestination(
-  item: ShareLibraryItem,
-): ShareLibraryOpenDestination {
-  if (item.resourceType === 'SCHEDULE') {
-    return { kind: 'schedule', id: item.resourceId };
-  }
-  if (item.resourceType === 'CALENDAR') {
-    return item.nextSchedule
-      ? { kind: 'schedule', id: item.nextSchedule.id }
-      : { kind: 'calendar', id: item.resourceId };
-  }
-  return { kind: 'category' };
-}
-
 type BuildShareLibraryItemsInput = {
   inbox: ShareInbox;
   outbox: ShareOutbox;

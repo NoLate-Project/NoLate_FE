@@ -1,13 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
-import {
-    captureCalendarScheduleCacheAuthEpoch,
-    clearCalendarScheduleCache,
-    mutateCalendarScheduleCacheIfAuthSessionCurrent,
-} from "../modules/schedule/calendarScheduleCache";
-import {
-    assertScheduleSharingEnabled,
-} from "../modules/share/scheduleSharingPolicy";
+import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
 
 export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
 export type ScheduleCalendarRole = "VIEWER" | "EDITOR" | "OWNER";
@@ -50,7 +43,6 @@ export type CreateScheduleCalendarPayload = {
 export type UpdateScheduleCalendarPayload = Partial<CreateScheduleCalendarPayload>;
 
 export async function getScheduleCalendars(): Promise<ScheduleCalendar[]> {
-    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleCalendar[]>>("/api/schedule-calendars");
     return unwrapApiResponse(response);
 }
@@ -58,7 +50,6 @@ export async function getScheduleCalendars(): Promise<ScheduleCalendar[]> {
 export async function createScheduleCalendar(
     payload: CreateScheduleCalendarPayload,
 ): Promise<ScheduleCalendar> {
-    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleCalendar>, CreateScheduleCalendarPayload>(
         "/api/schedule-calendars",
         payload,
@@ -70,35 +61,24 @@ export async function updateScheduleCalendar(
     calendarId: number | string,
     payload: UpdateScheduleCalendarPayload,
 ): Promise<ScheduleCalendar> {
-    assertScheduleSharingEnabled();
-    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPatch<ApiEnvelope<ScheduleCalendar>, UpdateScheduleCalendarPayload>(
         `/api/schedule-calendars/${calendarId}`,
         payload,
     );
     const calendar = unwrapApiResponse(response);
-    mutateCalendarScheduleCacheIfAuthSessionCurrent(
-        authEpoch,
-        clearCalendarScheduleCache,
-    );
+    clearCalendarScheduleCache();
     return calendar;
 }
 
 export async function archiveScheduleCalendar(calendarId: number | string): Promise<void> {
-    assertScheduleSharingEnabled();
-    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}`);
     assertApiSuccess(response);
-    mutateCalendarScheduleCacheIfAuthSessionCurrent(
-        authEpoch,
-        clearCalendarScheduleCache,
-    );
+    clearCalendarScheduleCache();
 }
 
 export async function getScheduleCalendarMembers(
     calendarId: number | string,
 ): Promise<ScheduleCalendarMember[]> {
-    assertScheduleSharingEnabled();
     const response = await apiGet<ApiEnvelope<ScheduleCalendarMember[]>>(
         `/api/schedule-calendars/${calendarId}/members`,
     );
@@ -113,7 +93,6 @@ export async function addScheduleCalendarMember(
         role: Exclude<ScheduleCalendarRole, "OWNER">;
     },
 ): Promise<ScheduleCalendarMember> {
-    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleCalendarMember>, typeof payload>(
         `/api/schedule-calendars/${calendarId}/members`,
         payload,
@@ -128,7 +107,6 @@ export async function updateScheduleCalendarMember(
         role?: Exclude<ScheduleCalendarRole, "OWNER">;
     },
 ): Promise<ScheduleCalendarMember> {
-    assertScheduleSharingEnabled();
     const response = await apiPatch<ApiEnvelope<ScheduleCalendarMember>, typeof payload>(
         `/api/schedule-calendars/${calendarId}/members/${memberId}`,
         payload,
@@ -140,7 +118,6 @@ export async function updateMyScheduleCalendarPreferences(
     calendarId: number | string,
     routeReminderEnabled: boolean,
 ): Promise<ScheduleCalendarMember> {
-    assertScheduleSharingEnabled();
     const response = await apiPatch<
         ApiEnvelope<ScheduleCalendarMember>,
         { routeReminderEnabled: boolean }
@@ -155,7 +132,6 @@ export async function removeScheduleCalendarMember(
     calendarId: number | string,
     memberId: number,
 ): Promise<void> {
-    assertScheduleSharingEnabled();
     const response = await apiDelete<ApiEnvelope<unknown>>(
         `/api/schedule-calendars/${calendarId}/members/${memberId}`,
     );
@@ -163,21 +139,15 @@ export async function removeScheduleCalendarMember(
 }
 
 export async function leaveScheduleCalendar(calendarId: number | string): Promise<void> {
-    assertScheduleSharingEnabled();
-    const authEpoch = captureCalendarScheduleCacheAuthEpoch();
     const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}/leave`);
     assertApiSuccess(response);
-    mutateCalendarScheduleCacheIfAuthSessionCurrent(
-        authEpoch,
-        clearCalendarScheduleCache,
-    );
+    clearCalendarScheduleCache();
 }
 
 export async function transferScheduleCalendarOwnership(
     calendarId: number | string,
     targetMemberId: number,
 ): Promise<ScheduleCalendar> {
-    assertScheduleSharingEnabled();
     const response = await apiPost<ApiEnvelope<ScheduleCalendar>, { targetMemberId: number }>(
         `/api/schedule-calendars/${calendarId}/ownership`,
         { targetMemberId },

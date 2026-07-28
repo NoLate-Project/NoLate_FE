@@ -28,12 +28,7 @@ export function isPushRegistrationGenerationCurrent(candidate: number): boolean 
 export function runPushRegistration(
     memberId: number,
     task: PushRegistrationTask,
-    options: { replaceExisting?: boolean } = {},
 ): Promise<void> {
-    if (options.replaceExisting) {
-        generation += 1;
-        inFlight = null;
-    }
     if (
         inFlight?.memberId === memberId &&
         inFlight.generation === generation

@@ -7,9 +7,5 @@
 		<string>$(AppIdentifierPrefix)com.anonymous.nolatefe</string>
 		<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	</array>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>group.com.anonymous.nolatefe.shared</string>
-	</array>
 </dict>
 </plist>

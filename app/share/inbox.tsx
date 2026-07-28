@@ -61,7 +61,6 @@ import {
   filterShareLibraryItems,
   getScheduleGroupLabel,
   getUnseenShareCounts,
-  resolveShareLibraryOpenDestination,
   type ShareLibraryFilter,
   type ShareLibraryItem,
   type ShareLibraryRelation,
@@ -78,9 +77,6 @@ import type {
 } from '../../src/modules/schedule/types';
 import { useTheme, type AppColors } from '../../src/modules/theme/ThemeContext';
 import BrandedLoader from '../../src/ui/BrandedLoader';
-import {
-  isScheduleSharingEnabled,
-} from '../../src/modules/share/scheduleSharingPolicy';
 
 type ShareInboxViewData = {
   inbox: ShareInbox;
@@ -210,11 +206,6 @@ function resourceTypeForComposer(type: ShareResourceType) {
 }
 
 export default function ShareInboxScreen() {
-  if (!isScheduleSharingEnabled()) return null;
-  return <EnabledShareInboxScreen />;
-}
-
-function EnabledShareInboxScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();
@@ -268,16 +259,15 @@ function EnabledShareInboxScreen() {
         return;
       }
 
-      const destination = resolveShareLibraryOpenDestination(item);
-      if (destination.kind === 'schedule') {
+      if (item.resourceType === 'SCHEDULE') {
         router.push({
           pathname: '/schedule/[id]',
-          params: { id: destination.id },
+          params: { id: item.resourceId },
         });
-      } else if (destination.kind === 'calendar') {
+      } else if (item.resourceType === 'CALENDAR') {
         router.push({
           pathname: '/schedule/calendars',
-          params: { id: destination.id },
+          params: { id: item.resourceId },
         });
       } else {
         router.push('/schedule/categories');
@@ -1263,9 +1253,7 @@ function CalendarShareRow({
         style={[styles.shareCardRail, { backgroundColor: itemColor }]}
       />
       <ShareInboxButton
-        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}, ${nextMeta}, ${
-          item.nextSchedule ? '다음 일정 상세 열기' : '캘린더 관리 열기'
-        }`}
+        accessibilityLabel={`${item.title}, ${relationMeta}, ${calendarMode}, ${nextMeta}, 열기`}
         onPress={onOpen}
         style={({ pressed }) => [
           styles.shareCardOpenButton,

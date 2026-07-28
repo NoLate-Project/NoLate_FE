@@ -62,7 +62,6 @@ import {
 } from "../../../api/scheduleCalendars";
 import { getWritableScheduleCalendars } from "../calendarPermissions";
 import { canDeletePresentedSchedule } from "../schedulePermissions";
-import { isScheduleSharingEnabled } from "../../share/scheduleSharingPolicy";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -93,7 +92,6 @@ export default function ScheduleEdit() {
     const insets     = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
-    const scheduleSharingEnabled = isScheduleSharingEnabled();
 
     const item = id ? state.itemsById[id] : undefined;
     const canDeleteSchedule = canDeletePresentedSchedule(item);
@@ -319,13 +317,6 @@ export default function ScheduleEdit() {
     }, []);
 
     useEffect(() => {
-        if (!scheduleSharingEnabled) {
-            setCalendars([]);
-            setCalendarLoading(false);
-            setCalendarError(null);
-            return;
-        }
-
         let cancelled = false;
         setCalendarLoading(true);
         setCalendarError(null);
@@ -345,7 +336,7 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [calendarRetryKey, scheduleSharingEnabled]);
+    }, [calendarRetryKey]);
 
     useEffect(() => {
         let cancelled = false;
@@ -718,14 +709,11 @@ export default function ScheduleEdit() {
         try {
             mutationPendingRef.current = true;
             setMutationPending(true);
-            const effectiveCalendarId = scheduleSharingEnabled
-                ? calendarId
-                : item.calendarId ?? null;
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
-                calendarId: effectiveCalendarId,
-                calendarContentModeOverride: effectiveCalendarId === item.calendarId
+                calendarId,
+                calendarContentModeOverride: calendarId === item.calendarId
                     ? item.calendarContentModeOverride
                     : null,
                 startAt: nextStartAt,

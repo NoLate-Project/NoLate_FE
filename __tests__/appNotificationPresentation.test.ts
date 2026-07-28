@@ -4,7 +4,6 @@ import {
     getAppNotificationVisual,
 } from "../src/modules/notification/appNotificationPresentation";
 import type { AppNotification } from "../src/api/notification";
-import * as env from "../src/api/env";
 
 function notification(overrides: Partial<AppNotification> = {}): AppNotification {
     return {
@@ -23,44 +22,6 @@ function notification(overrides: Partial<AppNotification> = {}): AppNotification
 }
 
 describe("app notification presentation", () => {
-    beforeEach(() => {
-        jest.spyOn(env, "getEnv").mockReturnValue("true");
-    });
-
-    afterEach(() => {
-        jest.restoreAllMocks();
-    });
-
-    test.each([
-        "SCHEDULE_SHARE_RECEIVED",
-        "CATEGORY_SHARE_RECEIVED",
-        "CALENDAR_SHARE_RECEIVED",
-        "SCHEDULE_PARTICIPANT_DEPARTED",
-        "SCHEDULE_DEPARTURE_NUDGE",
-        "SCHEDULE_CACHE_INVALIDATED",
-    ])("공유 off에서는 저장된 %s 알림을 resource route로 열지 않는다", (type) => {
-        jest.spyOn(env, "getEnv").mockReturnValue("false");
-
-        expect(getAppNotificationNavigationTarget(notification({
-            type,
-            data: { type, scheduleId: "55", categoryId: "7" },
-        }))).toBeUndefined();
-    });
-
-    test("off stored top-level share type cannot be disguised by an owner data type", () => {
-        jest.spyOn(env, "getEnv").mockReturnValue("false");
-
-        expect(getAppNotificationNavigationTarget(notification({
-            type: "SCHEDULE_SHARE_RECEIVED",
-            data: {
-                type: "SCHEDULE_TRAFFIC",
-                scheduleId: "55",
-                ownerMemberId: "7",
-                recipientMemberId: "7",
-            },
-        }))).toBeUndefined();
-    });
-
     test("routes schedule notifications to schedule detail", () => {
         expect(getAppNotificationNavigationTarget(notification())).toEqual({
             kind: "scheduleDetail",

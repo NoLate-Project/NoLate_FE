@@ -30,7 +30,6 @@ const expoPublicEnv: Record<string, string | undefined> = {
     EXPO_PUBLIC_ODSAY_ANDROID_API_KEY: process.env.EXPO_PUBLIC_ODSAY_ANDROID_API_KEY,
     EXPO_PUBLIC_ODSAY_IOS_API_KEY: process.env.EXPO_PUBLIC_ODSAY_IOS_API_KEY,
     EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED: process.env.EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED,
-    EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED: process.env.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED,
 };
 
 export function getEnv(key: string): string | undefined {

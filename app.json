@@ -70,15 +70,12 @@
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "45",
+    "buildNumber": "42",
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)",
       "keychain-access-groups": [
         "$(AppIdentifierPrefix)com.anonymous.nolatefe"
-      ],
-      "com.apple.security.application-groups": [
-        "group.com.anonymous.nolatefe.shared"
       ]
     },
     "infoPlist": {

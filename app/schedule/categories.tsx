@@ -29,9 +29,6 @@ import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { getCategorySharePermissionLabel } from "../../src/modules/share/sharePermissionPresentation";
 import { countOwnedScheduleCategories } from "../../src/modules/schedule/categoryPermissions";
 import BrandedLoader from "../../src/ui/BrandedLoader";
-import {
-    isScheduleSharingEnabled,
-} from "../../src/modules/share/scheduleSharingPolicy";
 
 const CATEGORY_COLORS = [
     "#ff3b30",
@@ -52,7 +49,6 @@ export default function ScheduleCategoriesScreen() {
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
-    const scheduleSharingEnabled = isScheduleSharingEnabled();
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -221,16 +217,14 @@ export default function ScheduleCategoriesScreen() {
                     <Ionicons accessible={false} name="chevron-back" size={24} color={colors.textPrimary} />
                 </Pressable>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
-                {scheduleSharingEnabled ? (
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="공유 캘린더 관리"
-                        onPress={() => router.push("/schedule/calendars")}
-                        style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                    >
-                        <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />
-                    </Pressable>
-                ) : <View style={styles.headerButton} />}
+                <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="공유 캘린더 관리"
+                    onPress={() => router.push("/schedule/calendars")}
+                    style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                >
+                    <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />
+                </Pressable>
             </View>
 
             <ScrollView
@@ -315,8 +309,7 @@ export default function ScheduleCategoriesScreen() {
 
                 {categoryList.map((category) => {
                     const editing = editingId === category.id;
-                    const isShared = scheduleSharingEnabled
-                        && category.shared === true;
+                    const isShared = category.shared === true;
                     return (
                         <View
                             key={category.id}
@@ -413,7 +406,7 @@ export default function ScheduleCategoriesScreen() {
                                         </View>
                                     </View>
                                     <View style={styles.rowActions}>
-                                        {scheduleSharingEnabled && !isShared && (
+                                        {!isShared && (
                                             <Pressable
                                                 accessibilityRole="button"
                                                 onPress={() => setSharingCategory(category)}
@@ -475,16 +468,14 @@ export default function ScheduleCategoriesScreen() {
                     </View>
                 ) : null}
             </ScrollView>
-            {scheduleSharingEnabled ? (
-                <ShareInvitationSheet
-                    visible={!!sharingCategory}
-                    resourceType="category"
-                    resourceId={sharingCategory?.id}
-                    title={sharingCategory?.title ?? "카테고리"}
-                    subtitle="이 카테고리에 포함된 일정을 함께 볼 수 있어요"
-                    onClose={() => setSharingCategory(null)}
-                />
-            ) : null}
+            <ShareInvitationSheet
+                visible={!!sharingCategory}
+                resourceType="category"
+                resourceId={sharingCategory?.id}
+                title={sharingCategory?.title ?? "카테고리"}
+                subtitle="이 카테고리에 포함된 일정을 함께 볼 수 있어요"
+                onClose={() => setSharingCategory(null)}
+            />
         </KeyboardAvoidingView>
     );
 }

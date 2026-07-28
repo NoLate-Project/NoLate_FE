@@ -6,7 +6,6 @@ import { useTheme } from "../../../theme/ThemeContext";
 import { formatHHmm } from "../../../../../lib/util/data";
 import { getTravelModeLabel } from "../../travelMode";
 import { getScheduleShareBadgeLabel } from "../../../share/sharePermissionPresentation";
-import { isScheduleSharingEnabled } from "../../../share/scheduleSharingPolicy";
 
 type Props = {
     item: ScheduleItem;
@@ -43,8 +42,7 @@ export default function ScheduleItemCard({ item, onPress, isLast = false }: Prop
         ? `${getTravelModeLabel(item.travelMode ?? "ETC")} ${item.travelMinutes}분`
         : "";
     const sharePermission = item.sharePermission ?? item.category?.sharePermission;
-    const isShared = isScheduleSharingEnabled()
-        && (item.category?.shared === true || Boolean(sharePermission));
+    const isShared = item.category?.shared === true || Boolean(sharePermission);
     const shareLabel = getScheduleShareBadgeLabel(sharePermission);
     const metaText = [
         item.category?.title,

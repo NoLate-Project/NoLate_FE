@@ -3,7 +3,6 @@ import { Ionicons } from "@expo/vector-icons";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { getScheduleShareBadgeLabel } from "../../../share/sharePermissionPresentation";
-import { isScheduleSharingEnabled } from "../../../share/scheduleSharingPolicy";
 import { useTheme } from "../../../theme/ThemeContext";
 import {
     formatDayTimelineDeparture,
@@ -94,8 +93,7 @@ export default function ScheduleAgendaCard({
     ].filter(Boolean).join(" · ");
     const iconName = travelIconName(metadata.travelMode);
     const sharePermission = item.sharePermission ?? item.category?.sharePermission;
-    const isShared = isScheduleSharingEnabled()
-        && (item.category?.shared === true || Boolean(sharePermission));
+    const isShared = item.category?.shared === true || Boolean(sharePermission);
     const shareAccessibilityLabel = isShared
         ? getScheduleShareBadgeLabel(sharePermission)
         : undefined;

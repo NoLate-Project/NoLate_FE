@@ -52,12 +52,10 @@ describe("schedule travel plan save policy", () => {
             myTravelPlan: savedPlan,
         };
         const reloadSchedule = jest.fn().mockResolvedValue(reloaded);
-        const invalidateDepartureStatus = jest.fn();
 
         const result = await saveScheduleRouteAsMyTravelPlan(ownerItem, routeUpdate, {
             upsertMyTravelPlan,
             reloadSchedule,
-            invalidateDepartureStatus,
         });
 
         expect(upsertMyTravelPlan).toHaveBeenCalledWith("147", expect.objectContaining({
@@ -67,7 +65,6 @@ describe("schedule travel plan save policy", () => {
             route: { id: "owner-route-v2" },
         }));
         expect(reloadSchedule).toHaveBeenCalledWith("147");
-        expect(invalidateDepartureStatus).toHaveBeenCalledWith("147");
         expect(result).toBe(reloaded);
     });
 

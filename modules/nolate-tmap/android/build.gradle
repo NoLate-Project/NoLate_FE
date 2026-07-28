@@ -38,9 +38,6 @@ android {
 dependencies {
   implementation project(':nolate-tmap$tmap-sdk')
   implementation project(':nolate-tmap$vsm-tmap-sdk')
-  // The local TMAP AAR has no POM, so its MaterialComponents theme dependency
-  // must be declared by the wrapper that owns the AAR.
-  implementation 'com.google.android.material:material:1.12.0'
   implementation 'com.google.flatbuffers:flatbuffers-java:24.3.25'
   implementation 'com.facebook.react:react-android'
 }

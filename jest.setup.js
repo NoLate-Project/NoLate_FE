@@ -1,9 +1,5 @@
 /* global jest */
 
-// Tests inherit the product default (sharing enabled). Kill-switch coverage
-// opts out explicitly with the exact public value "false".
-delete process.env.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED;
-
 jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));

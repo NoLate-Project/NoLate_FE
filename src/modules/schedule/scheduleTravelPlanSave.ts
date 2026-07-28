@@ -12,7 +12,6 @@ type ScheduleTravelPlanSaveDependencies = {
         payload: ScheduleTravelPlanPayload
     ) => Promise<ScheduleTravelPlan>;
     reloadSchedule: (scheduleId: string) => Promise<ScheduleItem>;
-    invalidateDepartureStatus?: (scheduleId: string) => void;
 };
 
 /**
@@ -29,7 +28,6 @@ export async function saveScheduleRouteAsMyTravelPlan(
         item.id,
         buildTravelPlanPayload(routeUpdate)
     );
-    dependencies.invalidateDepartureStatus?.(item.id);
 
     try {
         return await dependencies.reloadSchedule(item.id);

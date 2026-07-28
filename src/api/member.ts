@@ -1,8 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
-import {
-    prepareExplicitAuthenticationRequest,
-} from "../modules/auth/authStorage";
 
 const CURATION_STATUS_BOOTSTRAP_TIMEOUT_MS = 3_500;
 
@@ -88,24 +85,17 @@ export type WithdrawPayload = {
     password?: string | null;
 };
 
-export type WithdrawalResult = {
-    manualAppleRevocationRequired: boolean;
-};
-
 export async function signUpMember(payload: SignUpPayload): Promise<MemberDto> {
-    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SignUpPayload>("/api/member/auth/sign-up", payload);
     return unwrapApiResponse(response);
 }
 
 export async function loginMember(payload: LoginPayload): Promise<MemberDto> {
-    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, LoginPayload>("/api/member/auth/login", payload);
     return unwrapApiResponse(response);
 }
 
 export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDto> {
-    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SnsLoginPayload>("/api/member/auth/sns-login", payload);
     return unwrapApiResponse(response);
 }
@@ -113,7 +103,6 @@ export async function snsLoginMember(payload: SnsLoginPayload): Promise<MemberDt
 export async function getSnsRegistrationStatus(
     payload: SnsRegistrationPayload
 ): Promise<SnsRegistrationStatusDto> {
-    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<SnsRegistrationStatusDto>, SnsRegistrationPayload>(
         "/api/member/auth/sns-registration",
         payload
@@ -122,7 +111,6 @@ export async function getSnsRegistrationStatus(
 }
 
 export async function snsSignUpMember(payload: SnsSignUpPayload): Promise<MemberDto> {
-    await prepareExplicitAuthenticationRequest();
     const response = await apiPost<ApiEnvelope<MemberDto>, SnsSignUpPayload>(
         "/api/member/auth/sns-sign-up",
         payload
@@ -173,26 +161,7 @@ export async function changePassword(payload: ChangePasswordPayload): Promise<vo
     assertApiSuccess(response);
 }
 
-export async function withdrawMember(
-    payload: WithdrawPayload | undefined,
-    accountExit: { accessToken: string | null },
-): Promise<WithdrawalResult> {
-    const accessToken = accountExit.accessToken?.trim();
-    if (!accessToken) {
-        throw new Error("회원탈퇴 요청의 인증 snapshot을 확인하지 못했습니다.");
-    }
-    const response = await apiDelete<ApiEnvelope<WithdrawalResult>>("/api/member/withdraw", {
-        data: payload ?? {},
-        _allowDuringAccountExit: true,
-        headers: {
-            Authorization: `Bearer ${accessToken}`,
-        },
-    });
+export async function withdrawMember(payload?: WithdrawPayload): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<unknown>>("/api/member/withdraw", { data: payload ?? {} });
     assertApiSuccess(response);
-    return {
-        // During a rolling deployment, an older or malformed success envelope cannot prove that
-        // Apple revocation was queued. Defaulting to manual action is the safe post-deletion path.
-        manualAppleRevocationRequired:
-            response.data?.manualAppleRevocationRequired === false ? false : true,
-    };
 }

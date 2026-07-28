@@ -1,18 +1,6 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { ScheduleCategory, ScheduleSharePermission } from "../modules/schedule/types";
-import { getAuthMember } from "../modules/auth/authStorage";
-import {
-    getAuthSessionEpoch,
-    isAuthSessionActive,
-} from "../modules/auth/authSessionEpoch";
-import {
-    filterScheduleCategoriesForSharingPolicy,
-    isScheduleSharingEnabled,
-} from "../modules/share/scheduleSharingPolicy";
-import {
-    establishScheduleSharingSessionOwner,
-} from "../modules/share/scheduleSharingSessionOwner";
 
 export type ScheduleCategoryItem = ScheduleCategory & {
     iconKey?: string;
@@ -71,22 +59,8 @@ function normalizeScheduleCategory(dto: ScheduleCategoryDto): ScheduleCategoryIt
 }
 
 export async function getScheduleCategoriesFromApi(): Promise<ScheduleCategoryItem[]> {
-    const authEpoch = getAuthSessionEpoch();
     const response = await apiGet<ApiEnvelope<ScheduleCategoryDto[]>>("/api/schedule-categories");
-    const categories = unwrapApiResponse(response)
-        .map(normalizeScheduleCategory)
-        .filter((category) => category.id);
-    if (isScheduleSharingEnabled()) return categories;
-
-    const member = await getAuthMember().catch(() => null);
-    if (!isAuthSessionActive(authEpoch)) return [];
-    if (typeof member?.id === "number") {
-        establishScheduleSharingSessionOwner(authEpoch, member.id);
-    }
-    return filterScheduleCategoriesForSharingPolicy(
-        categories,
-        member?.id ?? null,
-    );
+    return unwrapApiResponse(response).map(normalizeScheduleCategory).filter((category) => category.id);
 }
 
 export async function createScheduleCategoryToApi(

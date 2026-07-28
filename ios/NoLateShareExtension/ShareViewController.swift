@@ -1,10 +1,8 @@
-import CryptoKit
 import Security
 import UIKit
 import UniformTypeIdentifiers
 
 private let noLateSharedKeychainAccessGroup = "457QQLB6H6.com.anonymous.nolatefe"
-private let noLateSharedAppGroup = "group.com.anonymous.nolatefe.shared"
 
 private struct APIEnvelope<Value: Decodable>: Decodable {
   let success: Bool
@@ -61,6 +59,11 @@ private struct ScheduleCategory: Decodable {
   }
 }
 
+private struct AuthTokens: Decodable, Sendable {
+  let accessToken: String
+  let refreshToken: String
+}
+
 private struct SavedSchedule: Decodable {
   let id: String
 
@@ -93,26 +96,27 @@ private enum ShareAPIError: LocalizedError {
   }
 }
 
-private struct ShareWorkflowSession: Sendable, Equatable {
-  let generation: String
-  let accessToken: String
-  let refreshToken: String
-}
+private actor ShareTokenRefreshCoordinator {
+  private var refreshTask: Task<AuthTokens?, Never>?
 
-private enum StrictStoredValue {
-  case value(String?)
-  case failure
+  func refresh(using operation: @escaping @Sendable () async -> AuthTokens?) async -> AuthTokens? {
+    if let refreshTask { return await refreshTask.value }
+    let task = Task { await operation() }
+    refreshTask = task
+    let tokens = await task.value
+    refreshTask = nil
+    return tokens
+  }
 }
 
 private final class ShareAPIClient {
   private let session: URLSession
   private var baseURL: URL
+  private var accessToken: String?
+  private let refreshCoordinator = ShareTokenRefreshCoordinator()
   private let accessTokenKey = "nolte_access_token"
   private let refreshTokenKey = "nolte_refresh_token"
   private let apiBaseURLKey = "nolate_auth_api_base_url"
-  private let invalidSessionKey = "nolate_auth_invalid_session"
-  private let appGroupSessionStateKey = "nolate_auth_session_state"
-  private let activeSessionPrefix = "active:"
 
   init() {
     let configured = Bundle.main.object(forInfoDictionaryKey: "NoLateAPIBaseURL") as? String
@@ -121,12 +125,12 @@ private final class ShareAPIClient {
     configuration.timeoutIntervalForRequest = 15
     configuration.timeoutIntervalForResource = 25
     session = URLSession(configuration: configuration)
-    if case .value(let sharedAPIBaseURL) = readKeychainStrict(apiBaseURLKey),
-       let sharedAPIBaseURL,
+    if let sharedAPIBaseURL = readKeychain(apiBaseURLKey),
        let url = URL(string: sharedAPIBaseURL),
        isAllowedAPIBaseURL(url) {
       baseURL = url
     }
+    accessToken = normalizedCredential(readKeychain(accessTokenKey))
   }
 
   private func isAllowedAPIBaseURL(_ url: URL) -> Bool {
@@ -137,53 +141,26 @@ private final class ShareAPIClient {
     #endif
   }
 
-  func captureWorkflowSession() -> ShareWorkflowSession? {
-    guard case .value(let marker) = readKeychainStrict(invalidSessionKey),
-          marker == nil,
-          case .value(let accessValue) = readKeychainStrict(accessTokenKey),
-          let accessToken = normalizedCredential(accessValue),
-          case .value(let refreshValue) = readKeychainStrict(refreshTokenKey),
-          let refreshToken = normalizedCredential(refreshValue),
-          case .value(let appGroupState) = readAppGroupSessionStateStrict(),
-          let generation = normalizedCredential(appGroupState),
-          generation == "\(activeSessionPrefix)\(sessionIdentity(refreshToken))"
-    else {
-      return nil
-    }
-    return ShareWorkflowSession(
-      generation: generation,
-      accessToken: accessToken,
-      refreshToken: refreshToken
-    )
+  var isLoggedIn: Bool {
+    accessToken != nil || normalizedCredential(readKeychain(refreshTokenKey)) != nil
   }
 
-  func isWorkflowCurrent(_ workflow: ShareWorkflowSession) -> Bool {
-    captureWorkflowSession() == workflow
-  }
-
-  func get<Value: Decodable>(
-    _ path: String,
-    workflow: ShareWorkflowSession
-  ) async throws -> Value {
+  func get<Value: Decodable>(_ path: String) async throws -> Value {
     try await request(
       url: baseURL.appendingPathComponent(path),
       method: "GET",
       body: nil,
-      workflow: workflow
+      retrying: true
     )
   }
 
-  func post<Value: Decodable>(
-    _ path: String,
-    json: [String: Any],
-    workflow: ShareWorkflowSession
-  ) async throws -> Value {
+  func post<Value: Decodable>(_ path: String, json: [String: Any]) async throws -> Value {
     let body = try JSONSerialization.data(withJSONObject: json)
     return try await request(
       url: baseURL.appendingPathComponent(path),
       method: "POST",
       body: body,
-      workflow: workflow
+      retrying: true
     )
   }
 
@@ -191,14 +168,12 @@ private final class ShareAPIClient {
     url: URL,
     method: String,
     body: Data?,
-    workflow: ShareWorkflowSession
+    retrying: Bool
   ) async throws -> Value {
-    guard isWorkflowCurrent(workflow) else {
-      throw ShareAPIError.loginRequired
-    }
-    // The workflow keeps the access JWT captured with its App Group identity.
-    // It must never re-read and attach B's token to A's URL/body.
-    guard isWorkflowCurrent(workflow) else {
+    guard let token = accessToken else {
+      if retrying, await refreshTokens() {
+        return try await request(url: url, method: method, body: body, retrying: false)
+      }
       throw ShareAPIError.loginRequired
     }
 
@@ -206,25 +181,14 @@ private final class ShareAPIClient {
     request.httpMethod = method
     request.httpBody = body
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    // The unavoidable final local-check -> URLSession handoff race is closed
-    // by the server transaction, not by this client check. Authorization
-    // carries the server-signed access JWT `sg` generation; the local
-    // refresh-token fingerprint is not a trusted server generation.
-    request.setValue(
-      "Bearer \(workflow.accessToken)",
-      forHTTPHeaderField: "Authorization"
-    )
+    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     let (data, response) = try await session.data(for: request)
-    guard isWorkflowCurrent(workflow) else {
-      throw ShareAPIError.loginRequired
-    }
     guard let http = response as? HTTPURLResponse else { throw ShareAPIError.invalidResponse }
 
     if http.statusCode == 401 {
-      // Refresh tokens are single-use and rotate. Consuming one in the
-      // extension would invalidate the copy owned by the main app, while the
-      // extension cannot safely commit the rotated pair across processes.
-      // Fail closed and let the containing app restore the session instead.
+      if retrying, await refreshTokens() {
+        return try await self.request(url: url, method: method, body: body, retrying: false)
+      }
       throw ShareAPIError.loginRequired
     }
 
@@ -238,32 +202,48 @@ private final class ShareAPIClient {
     guard envelope.success, let value = envelope.data else {
       throw ShareAPIError.server(envelope.errorMessage ?? "서버 요청을 처리하지 못했습니다.")
     }
-    guard isWorkflowCurrent(workflow) else {
-      throw ShareAPIError.loginRequired
-    }
     return value
+  }
+
+  private func refreshTokens() async -> Bool {
+    guard let refreshToken = normalizedCredential(readKeychain(refreshTokenKey)) else { return false }
+    let refreshURL = baseURL.appendingPathComponent("api/member/auth/refresh")
+    let session = session
+    guard let tokens = await refreshCoordinator.refresh(using: {
+      var request = URLRequest(url: refreshURL)
+      request.httpMethod = "POST"
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try? JSONSerialization.data(withJSONObject: ["refreshToken": refreshToken])
+      guard let (data, response) = try? await session.data(for: request),
+            let http = response as? HTTPURLResponse,
+            (200..<300).contains(http.statusCode),
+            let envelope = try? JSONDecoder().decode(APIEnvelope<AuthTokens>.self, from: data),
+            envelope.success else { return nil }
+      return envelope.data
+    }) else { return false }
+
+    guard let accessToken = normalizedCredential(tokens.accessToken),
+          let refreshToken = normalizedCredential(tokens.refreshToken) else { return false }
+    let accessSaved = writeKeychain(accessToken, key: accessTokenKey)
+    let refreshSaved = writeKeychain(refreshToken, key: refreshTokenKey)
+    guard accessSaved, refreshSaved else {
+      deleteKeychain(accessTokenKey, services: ["app:no-auth", "app"])
+      deleteKeychain(refreshTokenKey, services: ["app:no-auth", "app"])
+      self.accessToken = nil
+      return false
+    }
+    // Once the new shared service has both credentials, remove values left by
+    // older builds so a later logout cannot accidentally fall back to them.
+    deleteKeychain(accessTokenKey, services: ["app"])
+    deleteKeychain(refreshTokenKey, services: ["app"])
+    self.accessToken = accessToken
+    return true
   }
 
   private func normalizedCredential(_ value: String?) -> String? {
     guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
           !normalized.isEmpty else { return nil }
     return normalized
-  }
-
-  private func sessionIdentity(_ refreshToken: String) -> String {
-    let digest = SHA256.hash(data: Data(refreshToken.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
-  }
-
-  private func readAppGroupSessionStateStrict() -> StrictStoredValue {
-    guard let defaults = UserDefaults(suiteName: noLateSharedAppGroup) else {
-      return .failure
-    }
-    guard let raw = defaults.object(forKey: appGroupSessionStateKey) else {
-      return .value(nil)
-    }
-    guard let value = raw as? String else { return .failure }
-    return .value(value)
   }
 
   private func keychainQuery(_ key: String, service: String) -> [String: Any] {
@@ -277,23 +257,39 @@ private final class ShareAPIClient {
     ]
   }
 
-  private func readKeychainStrict(_ key: String) -> StrictStoredValue {
+  private func readKeychain(_ key: String) -> String? {
     for service in ["app:no-auth", "app"] {
       var query = keychainQuery(key, service: service)
       query[kSecMatchLimit as String] = kSecMatchLimitOne
       query[kSecReturnData as String] = true
       var item: CFTypeRef?
-      let status = SecItemCopyMatching(query as CFDictionary, &item)
-      if status == errSecItemNotFound { continue }
-      guard status == errSecSuccess,
-            let data = item as? Data,
-            let value = String(data: data, encoding: .utf8)
-      else {
-        return .failure
+      if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+         let data = item as? Data,
+         let value = String(data: data, encoding: .utf8) {
+        return value
       }
-      return .value(value)
     }
-    return .value(nil)
+    return nil
+  }
+
+  @discardableResult
+  private func writeKeychain(_ value: String, key: String) -> Bool {
+    var query = keychainQuery(key, service: "app:no-auth")
+    let data = Data(value.utf8)
+    let update = [kSecValueData as String: data]
+    var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+    if status == errSecItemNotFound {
+      query[kSecValueData as String] = data
+      query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlocked
+      status = SecItemAdd(query as CFDictionary, nil)
+    }
+    return status == errSecSuccess
+  }
+
+  private func deleteKeychain(_ key: String, services: [String] = ["app:no-auth"]) {
+    for service in services {
+      SecItemDelete(keychainQuery(key, service: service) as CFDictionary)
+    }
   }
 }
 
@@ -399,14 +395,9 @@ final class ShareViewController: UIViewController {
     defer { saveTask = nil }
     do {
       try Task.checkCancellation()
-      guard let workflow = api.captureWorkflowSession() else {
-        throw ShareAPIError.loginRequired
-      }
+      guard api.isLoggedIn else { throw ShareAPIError.loginRequired }
       sharedText = try await extractSharedText().trimmingCharacters(in: .whitespacesAndNewlines)
       try Task.checkCancellation()
-      guard api.isWorkflowCurrent(workflow) else {
-        throw ShareAPIError.loginRequired
-      }
       guard !sharedText.isEmpty else { throw ShareAPIError.server("공유된 텍스트가 없습니다.") }
 
       let referenceDateFormatter = DateFormatter()
@@ -420,16 +411,10 @@ final class ShareViewController: UIViewController {
         "inputType": "SHARE_TEXT",
         "referenceDate": referenceDateFormatter.string(from: Date()),
         "defaultDurationMinutes": 60,
-      ], workflow: workflow)
-      async let categoryValues: [ScheduleCategory] = api.get(
-        "api/schedule-categories",
-        workflow: workflow
-      )
+      ])
+      async let categoryValues: [ScheduleCategory] = api.get("api/schedule-categories")
       let (parsed, categories) = try await (parsedValue, categoryValues)
       try Task.checkCancellation()
-      guard api.isWorkflowCurrent(workflow) else {
-        throw ShareAPIError.loginRequired
-      }
       guard let category = categories.first(where: \.canWrite) else {
         throw ShareAPIError.server("앱에서 일정을 저장할 수 있는 카테고리를 먼저 만들어 주세요.")
       }
@@ -464,26 +449,13 @@ final class ShareViewController: UIViewController {
         "routeSetupRequired": true,
       ])
       try Task.checkCancellation()
-      guard api.isWorkflowCurrent(workflow) else {
-        throw ShareAPIError.loginRequired
-      }
-      let _: SavedSchedule = try await api.post(
-        "api/schedules",
-        json: payload,
-        workflow: workflow
-      )
+      let _: SavedSchedule = try await api.post("api/schedules", json: payload)
       try Task.checkCancellation()
-      guard api.isWorkflowCurrent(workflow) else {
-        throw ShareAPIError.loginRequired
-      }
       showSaved()
     } catch is CancellationError {
       return
     } catch ShareAPIError.loginRequired {
-      showFailure(
-        title: "NoLate 앱에서 다시 로그인해 주세요",
-        message: "로그인 세션을 다시 확인해야 해요. 앱을 연 뒤 로그인하고 다시 공유해 주세요."
-      )
+      showFailure(title: "로그인이 필요해요", message: "NoLate 앱에서 로그인한 뒤 다시 공유해 주세요.")
     } catch {
       if Task.isCancelled { return }
       showFailure(title: "저장하지 못했어요", message: error.localizedDescription)

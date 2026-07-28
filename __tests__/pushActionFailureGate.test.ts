@@ -46,15 +46,4 @@ describe("push action failure foreground gate", () => {
         gate.onAppStateChange("active");
         expect(deliver).toHaveBeenCalledTimes(3);
     });
-
-    test("auth session cleanup drops an inactive account's queued failure", () => {
-        const deliver = jest.fn();
-        const gate = createPushActionFailureGate(deliver, false);
-
-        gate.report(failure("A-private"));
-        gate.clearPending();
-        gate.onAppStateChange("active");
-
-        expect(deliver).not.toHaveBeenCalled();
-    });
 });

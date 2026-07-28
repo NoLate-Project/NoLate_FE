@@ -1,16 +1,8 @@
 import { dedupeCalendarSchedules } from "./calendarScheduleDedupe";
 import { getMonthRange } from "./calendarRange";
 import type { ScheduleItem } from "./types";
-import {
-    getAuthSessionEpoch,
-    isAuthSessionActive,
-} from "../auth/authSessionEpoch";
-import {
-    filterScheduleItemsForSharingPolicy,
-    sanitizeScheduleItemForSharingPolicy,
-} from "../share/scheduleSharingPolicy";
 
-// 공유 grant push와 포커스/주기 revision 확인이 원격 변경을 무효화하므로
+// 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
 // Redis 월 캐시 TTL과 맞춰 월 이동 중 불필요한 네트워크 요청을 막는다.
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_CACHED_MONTHS = 18;
@@ -43,31 +35,6 @@ const monthCache = new Map<string, CalendarScheduleCacheEntry>();
 const inFlightRanges = new Map<string, Promise<void>>();
 const invalidationListeners = new Set<() => void>();
 let cacheRevision = 0;
-let providerBlockedScheduleIds = new Set<string>();
-let purgeBlockedScheduleIds = new Set<string>();
-
-function isSecurityBlocked(scheduleId: string): boolean {
-    return (
-        providerBlockedScheduleIds.has(scheduleId)
-        || purgeBlockedScheduleIds.has(scheduleId)
-    );
-}
-
-export function captureCalendarScheduleCacheAuthEpoch(): number {
-    return getAuthSessionEpoch();
-}
-
-export function mutateCalendarScheduleCacheIfAuthSessionCurrent(
-    expectedAuthEpoch: number,
-    mutation: () => void,
-): boolean {
-    if (!isAuthSessionActive(expectedAuthEpoch)) return false;
-    // Cache mutations are synchronous, so the epoch check and write form one JS
-    // critical section. An auth invalidation that follows will clear this write;
-    // an invalidation that already happened prevents it entirely.
-    mutation();
-    return isAuthSessionActive(expectedAuthEpoch);
-}
 
 function monthKey(year: number, monthIndex: number): string {
     return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
@@ -123,10 +90,6 @@ function mergeEntries(descriptors: CalendarMonthDescriptor[], now: number): Sche
         const entry = monthCache.get(key);
         if (!entry) return;
         entry.lastAccessedAt = now;
-        // Warm memory from an enabled build can survive an account/bootstrap
-        // transition. Scrub received rows at the cache read boundary so an old
-        // deep link or notification cannot make them visible again.
-        entry.items = filterScheduleItemsForSharingPolicy(entry.items);
 
         entry.items.forEach((item) => {
             const current = newestById.get(item.id);
@@ -168,19 +131,10 @@ function writeRange(
     items: ScheduleItem[],
     fetchedAt: number,
 ): void {
-    const writableItems = filterScheduleItemsForSharingPolicy(items).filter(
-        (item) => !isSecurityBlocked(item.id)
-    );
     descriptors.forEach((descriptor) => {
         monthCache.set(descriptor.key, {
             items: dedupeCalendarSchedules(
-                writableItems.filter(
-                    (item) => overlapsRange(
-                        item,
-                        descriptor.startAt,
-                        descriptor.endAt
-                    )
-                ),
+                items.filter((item) => overlapsRange(item, descriptor.startAt, descriptor.endAt)),
             ),
             fetchedAt,
             lastAccessedAt: fetchedAt,
@@ -225,7 +179,6 @@ export async function refreshCalendarScheduleCache(
     fetcher: CalendarScheduleFetcher,
     now = Date.now(),
 ): Promise<CalendarScheduleCacheSnapshot> {
-    const authEpochAtStart = captureCalendarScheduleCacheAuthEpoch();
     const descriptors = getMonthDescriptors(startAt, endAt);
     const refreshGroups = groupRefreshRanges(descriptors, now);
     const revisionAtStart = cacheRevision;
@@ -236,7 +189,6 @@ export async function refreshCalendarScheduleCache(
         if (!first || !last) return;
 
         const inFlightKey = [
-            authEpochAtStart,
             revisionAtStart,
             first.startAt,
             last.endAt,
@@ -246,10 +198,7 @@ export async function refreshCalendarScheduleCache(
             inFlight = fetcher(first.startAt, last.endAt)
                 .then((items) => {
                     if (cacheRevision !== revisionAtStart) return;
-                    mutateCalendarScheduleCacheIfAuthSessionCurrent(
-                        authEpochAtStart,
-                        () => writeRange(group, items, Date.now()),
-                    );
+                    writeRange(group, items, Date.now());
                 })
                 .finally(() => {
                     inFlightRanges.delete(inFlightKey);
@@ -264,112 +213,23 @@ export async function refreshCalendarScheduleCache(
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
     cacheRevision += 1;
-    const writableItem = sanitizeScheduleItemForSharingPolicy(item);
-    if (!writableItem || isSecurityBlocked(item.id)) {
-        monthCache.forEach((entry) => {
-            entry.items = entry.items.filter(
-                (cachedItem) => cachedItem.id !== item.id,
-            );
-        });
-        return;
-    }
     monthCache.forEach((entry, key) => {
         const range = getMonthRange(`${key}-01`);
-        const nextItems = filterScheduleItemsForSharingPolicy(
-            entry.items,
-        ).filter((cachedItem) => cachedItem.id !== writableItem.id);
-        if (overlapsRange(writableItem, range.startAt, range.endAt)) {
-            nextItems.push(writableItem);
+        const nextItems = entry.items.filter((cachedItem) => cachedItem.id !== item.id);
+        if (overlapsRange(item, range.startAt, range.endAt)) {
+            nextItems.push(item);
         }
         entry.items = dedupeCalendarSchedules(nextItems);
         entry.lastAccessedAt = Date.now();
     });
 }
 
-export function setCalendarScheduleCacheSecurityFence(
-    removedScheduleIds: ReadonlySet<string>,
-    redactedScheduleIds: ReadonlySet<string>
-): void {
-    const nextBlockedScheduleIds = new Set([
-        ...removedScheduleIds,
-        ...redactedScheduleIds,
-    ]);
-    const changed = (
-        nextBlockedScheduleIds.size !== providerBlockedScheduleIds.size
-        || [...nextBlockedScheduleIds].some(
-            (scheduleId) => !providerBlockedScheduleIds.has(scheduleId)
-        )
-    );
-    if (!changed) return;
-
-    providerBlockedScheduleIds = nextBlockedScheduleIds;
-    cacheRevision += 1;
-    monthCache.forEach((entry) => {
-        entry.items = entry.items.filter(
-            (item) => !isSecurityBlocked(item.id)
-        );
-        entry.lastAccessedAt = Date.now();
-    });
-}
-
-export function releaseCalendarScheduleCacheSecurityBlock(
-    scheduleId: string
-): void {
-    if (!purgeBlockedScheduleIds.delete(scheduleId)) return;
-    cacheRevision += 1;
-}
-
-export function resetCalendarScheduleCacheSecurityFence(): void {
-    if (
-        providerBlockedScheduleIds.size === 0
-        && purgeBlockedScheduleIds.size === 0
-    ) {
-        return;
-    }
-    providerBlockedScheduleIds = new Set();
-    purgeBlockedScheduleIds = new Set();
-    cacheRevision += 1;
-}
-
 export function removeCalendarScheduleCacheItem(scheduleId: string): void {
-    purgeBlockedScheduleIds.add(scheduleId);
     cacheRevision += 1;
     monthCache.forEach((entry) => {
         entry.items = entry.items.filter((item) => item.id !== scheduleId);
         entry.lastAccessedAt = Date.now();
     });
-}
-
-export function reconcileCalendarScheduleCacheWithFullList(
-    authoritativeScheduleIds: ReadonlySet<string>,
-    hydration?: {
-        items: ScheduleItem[];
-        startAt: string;
-        endAt: string;
-    }
-): string[] {
-    cacheRevision += 1;
-    const removedScheduleIds = new Set<string>();
-    monthCache.forEach((entry) => {
-        entry.items = filterScheduleItemsForSharingPolicy(entry.items);
-        entry.items.forEach((item) => {
-            if (!authoritativeScheduleIds.has(item.id)) {
-                removedScheduleIds.add(item.id);
-            }
-        });
-        entry.items = entry.items.filter(
-            (item) => authoritativeScheduleIds.has(item.id)
-        );
-        entry.lastAccessedAt = Date.now();
-    });
-    if (hydration) {
-        writeRange(
-            getMonthDescriptors(hydration.startAt, hydration.endAt),
-            hydration.items,
-            Date.now()
-        );
-    }
-    return [...removedScheduleIds];
 }
 
 export function clearCalendarScheduleCache(): void {

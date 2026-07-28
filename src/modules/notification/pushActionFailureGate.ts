@@ -40,9 +40,6 @@ export function createPushActionFailureGate(
             active = state === "active";
             flush();
         },
-        clearPending(): void {
-            pending = [];
-        },
         dispose(): void {
             disposed = true;
             pending = [];

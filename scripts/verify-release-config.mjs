@@ -2,27 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import pbxTargetConfig from "./lib/pbx-target-config.cjs";
-
-const { verifyIosTargetConfigurationPolicy } = pbxTargetConfig;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
 const app = JSON.parse(read("app.json"));
 const pkg = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
-const envExample = read(".env.example");
 const publicEnvSource = read("src/api/env.ts");
-const scheduleSharingPolicy = read(
-  "src/modules/share/scheduleSharingPolicy.ts",
-);
 const rootLayout = read("app/_layout.tsx");
-const loginScreen = read("app/auth/login.tsx");
-const signupScreen = read("app/auth/signup.tsx");
-const jestSetup = read("jest.setup.js");
 const scheduleDetail = read("app/schedule/[id].tsx");
 const androidGradle = read("android/app/build.gradle");
-const nolateTmapAndroidGradle = read("modules/nolate-tmap/android/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
 const iosProject = read("ios/NoLateFE.xcodeproj/project.pbxproj");
 const iosInfo = read("ios/NoLateFE/Info.plist");
@@ -44,7 +33,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "45");
+assert.equal(app.ios.buildNumber, "42");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -56,56 +45,6 @@ assert.doesNotMatch(
   publicEnvSource,
   /EXPO_PUBLIC_NAVER_MAP_CLIENT_SECRET|EXPO_PUBLIC_NAVER_CLIENT_ID/,
   "Unused Naver secrets/legacy IDs must not be statically embedded in the client bundle",
-);
-assert.match(
-  publicEnvSource,
-  /EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED:\s*process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED/,
-  "Expo must statically embed the schedule-sharing rollout key",
-);
-assert.match(
-  envExample,
-  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=true$/m,
-  "Store/release environment defaults must keep schedule sharing available",
-);
-assert.doesNotMatch(
-  envExample,
-  /^EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED=false$/m,
-  "The checked-in release environment must not silently activate the sharing kill switch",
-);
-assert.doesNotMatch(
-  jestSetup,
-  /process\.env\.EXPO_PUBLIC_SCHEDULE_SHARING_ENABLED\s*=\s*["']false["']/,
-  "The global Jest environment must retain the default-on sharing policy",
-);
-assert.match(
-  scheduleSharingPolicy,
-  /return rawValue === undefined \|\| rawValue === ["']true["'];/,
-  "Missing configuration and only the exact literal true may enable schedule sharing",
-);
-assert.match(
-  scheduleSharingPolicy,
-  /getEnv\(SCHEDULE_SHARING_ENV_KEY\)/,
-  "All sharing boundaries must use the central public rollout policy",
-);
-assert.doesNotMatch(
-  scheduleSharingPolicy,
-  /rawValue\??\.trim\(\)|String\(rawValue\)|toLowerCase\(\)/,
-  "Malformed schedule-sharing configuration must remain disabled",
-);
-for (const [name, source] of [
-  ["login", loginScreen],
-  ["signup", signupScreen],
-]) {
-  assert.match(
-    source,
-    /retainScheduleShareTokenForEnabledPolicy\(\s*normalizeShareToken\(shareToken\)/,
-    `${name} must discard old share tokens before post-auth navigation when sharing is off`,
-  );
-}
-assert.match(
-  rootLayout,
-  /getScheduleSharingRouteRedirect\(/,
-  "The root navigator must guard old sharing routes before their screens mount",
 );
 assert.doesNotMatch(
   rootLayout,
@@ -137,11 +76,6 @@ assert.match(androidGradle, /versionCode 41/);
 assert.match(androidGradle, /versionName "1\.2\.0"/);
 assert.match(androidGradle, /release \{\s+signingConfig signingConfigs\.release/);
 assert.match(androidGradle, /Release signing is not configured/);
-assert.match(
-  nolateTmapAndroidGradle,
-  /^\s*implementation ['"]com\.google\.android\.material:material:1\.12\.0['"]\s*$/m,
-  "The TMAP wrapper must own the MaterialComponents resources required by its local AAR",
-);
 assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
 assert.match(androidManifest, /android:allowBackup="false"/);
 assert.match(androidManifest, /android:name="\.MainActivity"[^>]+android:screenOrientation="portrait"/);
@@ -173,7 +107,7 @@ for (const permission of [
   }
 }
 
-verifyIosTargetConfigurationPolicy(iosProject, app.ios.buildNumber);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 42;/g) ?? []).length >= 4);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
@@ -194,76 +128,22 @@ assert.match(privacyManifest, /NSPrivacyCollectedDataTypeOtherUserContent/);
 
 const sharedAccessGroupSuffix = "com.anonymous.nolatefe";
 const runtimeAccessGroup = `457QQLB6H6.${sharedAccessGroupSuffix}`;
-const sharedAppGroup = "group.com.anonymous.nolatefe.shared";
 assert.match(mainEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
 assert.match(extensionEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
-assert.ok(app.ios.entitlements["com.apple.security.application-groups"].includes(sharedAppGroup));
-assert.ok(mainEntitlements.includes(sharedAppGroup));
-assert.ok(extensionEntitlements.includes(sharedAppGroup));
 assert.ok(mainShareAuth.includes(runtimeAccessGroup));
 assert.ok(shareExtension.includes(runtimeAccessGroup));
-assert.ok(mainShareAuth.includes(sharedAppGroup));
-assert.ok(shareExtension.includes(sharedAppGroup));
 for (const key of ["nolte_access_token", "nolte_refresh_token", "nolate_auth_api_base_url"]) {
   assert.ok(shareExtension.includes(key), `Share extension is missing the native auth key: ${key}`);
 }
 assert.ok(mainShareAuth.includes('@"app:no-auth"'));
 assert.ok(shareExtension.includes('"app:no-auth"'));
-assert.ok(mainShareAuth.includes("getAppGroupSessionState"));
-assert.ok(mainShareAuth.includes("setAppGroupSessionState"));
-assert.ok(mainShareAuth.includes(
-  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(setAppGroupSessionStateSync:",
-));
-assert.ok(mainShareAuth.includes(
-  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(beginAppGroupSessionTransitionSync:",
-));
-assert.ok(mainShareAuth.includes(
-  "RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(compareAndSetAppGroupSessionStateSync:",
-));
-assert.match(
-  mainShareAuth,
-  /compareAndSetAppGroupSessionStateSync:[\s\S]*?writeAppGroupSessionStateSynchronously:value[\s\S]*?writeAppGroupSessionStateSynchronously:@"invalidated"/,
-  "A failed App Group active-session CAS must synchronously roll back to invalidated",
-);
-assert.ok(mainShareAuth.includes('@"status": @"mismatch"'));
-assert.ok(mainShareAuth.includes('@"status": @"partial"'));
-assert.ok(mainShareAuth.includes('hasPrefix:@"publishing:"'));
-assert.match(
-  shareExtension,
-  /"Bearer \\\(workflow\.accessToken\)"[\s\S]*?forHTTPHeaderField: "Authorization"/,
-  "Share Extension must send the workflow-captured signed access JWT generation",
-);
-assert.match(
-  mainShareAuth,
-  /status = SecItemAdd\([\s\S]*?if \(status == errSecDuplicateItem\) \{[\s\S]*?status = SecItemUpdate\(/,
-  "The native shared-Keychain writer must converge an Expo/native duplicate-Add race with Update",
-);
-assert.ok(shareExtension.includes('private let appGroupSessionStateKey = "nolate_auth_session_state"'));
-assert.ok(shareExtension.includes("readAppGroupSessionStateStrict"));
-assert.ok(shareExtension.includes("captureWorkflowSession"));
-assert.ok(shareExtension.includes("isWorkflowCurrent(workflow)"));
-assert.doesNotMatch(
-  shareExtension,
-  /writeKeychain\(|SecItemUpdate\(|SecItemAdd\(/,
-  "Share extension must never persist a refreshed credential over a newer app session",
-);
-assert.doesNotMatch(
-  shareExtension,
-  /api\/member\/auth\/refresh|ShareTokenRefreshCoordinator|refreshTokens\(|retrying:/,
-  "Share extension must never consume the main app's single-use rotating refresh token",
-);
-assert.match(
-  shareExtension,
-  /if http\.statusCode == 401 \{[\s\S]*?throw ShareAPIError\.loginRequired\s+\}/,
-  "Share extension access-token expiry must fail closed and direct the user to the app",
-);
 assert.ok(
   shareExtension.includes('"routeSetupRequired": true'),
   "Quick-share schedules must be marked for route setup",
 );
 assert.match(
   shareExtension,
-  /let _: SavedSchedule = try await api\.post\([\s\S]*?"api\/schedules",[\s\S]*?workflow: workflow/,
+  /let _: SavedSchedule = try await api\.post\("api\/schedules", json: payload\)/,
   "The share extension must save the parsed schedule directly",
 );
 assert.match(
