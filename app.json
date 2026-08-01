@@ -73,6 +73,7 @@
     "googleServicesFile": "./ios/GoogleService-Info.plist",
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)",
+      "com.apple.developer.usernotifications.time-sensitive": true,
       "keychain-access-groups": [
         "$(AppIdentifierPrefix)com.anonymous.nolatefe"
       ]
@@ -80,6 +81,7 @@
     "infoPlist": {
       "ITSAppUsesNonExemptEncryption": false,
       "KAKAO_APP_SCHEME": "kakao9586a8e3a28f3a6fbe3e23b9b34ec206",
+      "NSAlarmKitUsageDescription": "추천 출발 시각을 놓치지 않도록 출발 알람을 울립니다.",
       "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",
       "NSCalendarsUsageDescription": "NoLate에서 캘린더 일정을 가져와 출발 알림을 준비하기 위해 캘린더 접근 권한이 필요합니다.",
       "NSCalendarsFullAccessUsageDescription": "NoLate에서 선택한 캘린더 일정을 가져와 출발 알림을 준비하기 위해 전체 캘린더 접근 권한이 필요합니다.",

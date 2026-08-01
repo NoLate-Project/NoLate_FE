@@ -1,4 +1,5 @@
 import type { ScheduleTravelPlanPayload } from "../../api/scheduleTravelPlans";
+import { recoverDepartureAlarmsAfterMutation } from "../notification/departureAlarmMutationRecovery";
 import type { ScheduleRouteUpdatePayload } from "./routePlannerSession";
 import {
     applyTravelPlanToScheduleItem,
@@ -28,6 +29,7 @@ export async function saveScheduleRouteAsMyTravelPlan(
         item.id,
         buildTravelPlanPayload(routeUpdate)
     );
+    await recoverDepartureAlarmsAfterMutation();
 
     try {
         return await dependencies.reloadSchedule(item.id);

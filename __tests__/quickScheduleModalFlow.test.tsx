@@ -51,6 +51,41 @@ function parsed(overrides: Partial<ScheduleParseResult> = {}): ScheduleParseResu
     };
 }
 
+function parsedWithReadyRoute(
+    overrides: Partial<ScheduleParseResult> = {}
+): ScheduleParseResult {
+    return parsed({
+        origin: { name: "집", lat: 37.5, lng: 127 },
+        destination: { name: "서울역", lat: 37.55, lng: 126.97 },
+        travelMode: "TRANSIT",
+        travelMinutes: 30,
+        route: {
+            routeInfo: {
+                id: "route-1",
+                originName: "집",
+                destinationName: "서울역",
+                totalDurationMinutes: 30,
+                departureTime: "2026-07-17T10:30:00.000Z",
+                arrivalTime: "2026-07-17T11:00:00.000Z",
+                timeBasis: "estimated",
+                steps: [{
+                    id: "bus-1",
+                    type: "BUS",
+                    title: "버스 이동",
+                    coordinates: [
+                        { latitude: 37.5, longitude: 127 },
+                        { latitude: 37.55, longitude: 126.97 },
+                    ],
+                }],
+            },
+        },
+        notificationEnabled: true,
+        notificationLeadMinutes: 30,
+        alertMode: "STANDARD",
+        ...overrides,
+    });
+}
+
 describe("QuickScheduleModal flow", () => {
     let renderer: ReactTestRenderer | undefined;
 
@@ -407,7 +442,91 @@ describe("QuickScheduleModal flow", () => {
             notificationEnabled: true,
             notificationLeadMinutes: 30,
             notificationIntervalMinutes: 20,
+            alertMode: "STANDARD",
         }));
+    });
+
+    test("강력한 알람을 선택해 적용하면 미리보기와 저장 payload에 반영한다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsedWithReadyRoute()),
+            onSave
+        );
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.onPress();
+        });
+
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "일반 알림 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: true });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: false });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" }).props.onPress();
+        });
+
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "일반 알림 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: false });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: true });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "수정 확인" }).props.onPress();
+        });
+
+        expect(
+            renderer!.root.findAll((node) => node.props.children === "30분 전 · 강력한 알람")
+        ).not.toHaveLength(0);
+
+        await act(async () => {
+            findButtonByText("일정 저장하기").props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+            notificationEnabled: true,
+            notificationLeadMinutes: 30,
+            alertMode: "ALARM",
+        }));
+    });
+
+    test("알람 방식 변경을 취소하면 원래 STANDARD 초안이 유지된다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsedWithReadyRoute()));
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" }).props.onPress();
+        });
+        await act(async () => {
+            findButtonByText("취소").props.onPress();
+        });
+
+        expect(
+            renderer!.root.findAll((node) => node.props.children === "30분 전 · 일반 알림")
+        ).not.toHaveLength(0);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.onPress();
+        });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "일반 알림 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: true });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" })
+                .props.accessibilityState
+        ).toEqual({ checked: false });
     });
 
     test("출발 알림을 OFF로 적용하면 저장 payload에서 알림 설정값을 제거한다", async () => {
@@ -419,6 +538,11 @@ describe("QuickScheduleModal flow", () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "출발 알림 받기" })
                 .props.onValueChange(true);
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 모드" })
+                .props.onPress();
         });
         await act(async () => {
             renderer!.root
@@ -441,6 +565,7 @@ describe("QuickScheduleModal flow", () => {
             notificationEnabled: false,
             notificationLeadMinutes: undefined,
             notificationIntervalMinutes: undefined,
+            alertMode: "STANDARD",
         }));
     });
 

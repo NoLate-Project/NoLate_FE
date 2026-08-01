@@ -51,6 +51,9 @@ import { useTheme } from "../src/modules/theme/ThemeContext";
 import ThemeModeSwitch from "../src/modules/theme/ThemeModeSwitch";
 import ProfileRouteAccessibilityRoot from "../src/modules/profile/ProfileRouteAccessibilityRoot";
 import BrandedLoader, { BrandedLoadingState } from "../src/ui/BrandedLoader";
+import {
+    runWithDepartureAlarmWithdrawalGuard,
+} from "../src/modules/notification/departureAlarmSync";
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
@@ -384,7 +387,7 @@ export default function ProfileScreen() {
                         withdrawingRef.current = true;
                         try {
                             setWithdrawing(true);
-                            await withdrawMember();
+                            await runWithDepartureAlarmWithdrawalGuard(() => withdrawMember());
                             if (isNaverAccount) {
                                 await unlinkNaverSdk().catch((error) => {
                                     console.warn("[naver] sdk unlink failed", error);
@@ -419,7 +422,9 @@ export default function ProfileScreen() {
         try {
             withdrawingRef.current = true;
             setWithdrawing(true);
-            await withdrawMember({ password: withdrawalPassword });
+            await runWithDepartureAlarmWithdrawalGuard(
+                () => withdrawMember({ password: withdrawalPassword }),
+            );
             setWithdrawalModalOpen(false);
             await signOut();
             router.replace("/auth/login");

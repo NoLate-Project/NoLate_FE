@@ -9,6 +9,7 @@ import type {
     TransitLegKind,
     TransitPassStop,
     TransitRouteOption,
+    TransitServiceClass,
 } from "./tmapApi";
 
 const ODSAY_API_BASE_URL = "https://api.odsay.com/v1/api";
@@ -378,6 +379,24 @@ function lineNameForLeg(leg: any): string | undefined {
     return textValue(lane?.name ?? lane?.busNo);
 }
 
+function subwayServiceClass(lineName: string | undefined): TransitServiceClass {
+    if (!lineName) return "UNKNOWN";
+    const hasExpressEvidence = /(급행|특급|ITX|EXPRESS)/i.test(lineName);
+    const hasLocalEvidence = /(일반열차|\(일반\)|완행|LOCAL)/i.test(lineName);
+    if (hasExpressEvidence && hasLocalEvidence) return "UNKNOWN";
+    return hasExpressEvidence ? "EXPRESS" : "LOCAL";
+}
+
+function providerRouteIdForLeg(kind: TransitLegKind, lane: any): string | undefined {
+    if (kind === "BUS") return textValue(lane?.busID ?? lane?.busId);
+    if (kind !== "SUBWAY") return undefined;
+    const routeParts = [
+        textValue(lane?.subwayCityCode),
+        textValue(lane?.subwayCode),
+    ].filter((value): value is string => !!value);
+    return routeParts.length > 0 ? routeParts.join(":") : undefined;
+}
+
 function buildLegLabel(leg: Pick<TransitLegDetail, "kind" | "lineName" | "durationMinutes" | "distanceMeters">): string {
     if (leg.kind === "WALK") {
         const distance = typeof leg.distanceMeters === "number" ? `${Math.round(leg.distanceMeters)}m` : undefined;
@@ -405,6 +424,7 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
         const endCoord = routeCoord(leg?.endX, leg?.endY) ?? pathCoords[pathCoords.length - 1];
         const startName = textValue(leg?.startName);
         const endName = textValue(leg?.endName);
+        const lineName = lineNameForLeg(leg);
         // ODsay door는 별도의 승차칸/환승칸 값이 아니라, 다음 환승이나 하차를
         // 빠르게 할 수 있도록 현재 열차에서 타야 할 칸-문 위치를 뜻한다.
         const recommendation = textValue(leg?.door);
@@ -416,12 +436,38 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
             : safeNumber(leg?.wayCode) === 2
                 ? "DOWN" as const
                 : undefined;
+        const rawWaitingMinutes = safeNumber(leg?.waitingTime);
+        const routeCityCode = kind === "BUS"
+            ? textValue(lane?.busCityCode)
+            : kind === "SUBWAY"
+                ? textValue(lane?.subwayCityCode)
+                : undefined;
         const detail: Omit<TransitLegDetail, "label"> = {
             kind,
             durationMinutes: safeNumber(leg?.duration),
+            waitingMinutes: typeof rawWaitingMinutes === "number" && rawWaitingMinutes >= 0
+                ? rawWaitingMinutes
+                : undefined,
+            providerRouteId: providerRouteIdForLeg(kind, lane),
+            localRouteId: kind === "BUS" ? textValue(lane?.busLocalBlID) : undefined,
+            routeCityCode,
+            routeProviderCode: kind === "BUS" ? textValue(lane?.busProviderCode) : undefined,
+            startDateTime: parseOdsayDateTime(leg?.startDateTime),
+            endDateTime: parseOdsayDateTime(leg?.endDateTime),
+            startID: textValue(leg?.startID ?? leg?.startId),
+            startLocalStationID: textValue(leg?.startLocalStationID ?? leg?.startLocalStationId),
+            startStationCityCode: textValue(leg?.startStationCityCode),
+            startStationProviderCode: textValue(leg?.startStationProviderCode),
+            startArsID: textValue(leg?.startArsID ?? leg?.startArsId),
+            endID: textValue(leg?.endID ?? leg?.endId),
+            endLocalStationID: textValue(leg?.endLocalStationID ?? leg?.endLocalStationId),
+            endStationCityCode: textValue(leg?.endStationCityCode),
+            endStationProviderCode: textValue(leg?.endStationProviderCode),
+            endArsID: textValue(leg?.endArsID ?? leg?.endArsId),
             distanceMeters: safeNumber(leg?.distance),
             stationCount: safeNumber(leg?.stationCount) ?? (passStops.length > 1 ? passStops.length - 1 : undefined),
-            lineName: lineNameForLeg(leg),
+            lineName,
+            serviceClass: kind === "SUBWAY" ? subwayServiceClass(lineName) : undefined,
             lineColor: normalizeHexColor(lane?.busLaneColor ?? lane?.color),
             directionName: textValue(leg?.way),
             directionCode,

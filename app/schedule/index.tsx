@@ -79,7 +79,6 @@ import { isOverlappingDay, startOfDay, toYmd } from "../../lib/util/data";
 import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedule/types";
 import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetupNavigation";
 import {
-    createSchedule,
     getCalendarSchedules,
     getSchedules,
     parseScheduleText,
@@ -113,6 +112,7 @@ import {
     shiftCalendarMonth,
 } from "../../src/modules/schedule/calendarNavigation";
 import { getScheduleAccessibilityVisibility } from "../../src/modules/schedule/accessibilityVisibility";
+import { createScheduleForAddItem } from "../../src/modules/schedule/scheduleCreateMutation";
 import { getWritableScheduleCategories } from "../../src/modules/schedule/categoryPermissions";
 import {
     DAY_MINUTES,
@@ -1845,7 +1845,7 @@ export default function ScheduleIndex() {
         { showErrorAlert = true }: AddItemOptions = {},
     ) => {
         try {
-            const item = await createSchedule(payload);
+            const item = await createScheduleForAddItem(payload);
             // 생성 요청보다 먼저 시작된 캘린더 조회는 새 일정을 포함하지 않을 수 있다.
             // 해당 응답을 무효화해 방금 저장한 일정이 화면에서 다시 사라지지 않게 한다.
             scheduleLoadSequenceRef.current += 1;

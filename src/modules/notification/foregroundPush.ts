@@ -23,16 +23,30 @@ import {
     type PushActionFailure,
 } from "./pushActionFailureGate";
 import { emitAppNotificationReceived } from "./appNotificationEvents";
+import {
+    handleDepartureAlarmSyncData,
+} from "./departureAlarmSync";
+import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
+import { isDepartureAlarmSyncData } from "./departureAlarmContract";
+import { acknowledgePushDelivery } from "./pushDeliveryAck";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
 const ANDROID_CHANNEL_ID = "schedule-push";
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
 const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
+const DEFAULT_PUSH_ACTION_IDENTIFIER = "DEFAULT";
 
 type ExpoNotificationsModule = typeof import("expo-notifications");
 
 let notificationsModule: ExpoNotificationsModule | null | undefined;
+
+/** Test-only injection avoids loading native expo-notifications in Jest. */
+export function setForegroundNotificationsModuleForTests(
+    module: ExpoNotificationsModule | null | undefined,
+): void {
+    if (process.env.NODE_ENV === "test") notificationsModule = module;
+}
 
 function logPushDevelopment(
     level: "info" | "warn",
@@ -52,6 +66,38 @@ type LocalPushNotification = {
     body: string;
     data: Record<string, unknown>;
 };
+
+function acknowledgePushInteraction(
+    data: Record<string, unknown> | undefined,
+    providerMessageId: string | undefined,
+    actionIdentifier: string,
+): void {
+    // A notification response proves the device received and presented the
+    // notification even if an OS-owned background delivery callback was not
+    // available. ACKs are idempotent per logical event and stage.
+    Promise.all([
+        acknowledgePushDelivery(data, "RECEIVED", { providerMessageId }),
+        acknowledgePushDelivery(data, "PRESENTED", { providerMessageId }),
+        acknowledgePushDelivery(data, "ACTIONED", {
+            providerMessageId,
+            actionIdentifier,
+        }),
+    ]).catch(() => undefined);
+}
+
+export async function completeDepartureFromNotificationAction(
+    scheduleId: string,
+): Promise<void> {
+    await markScheduleDeparted(scheduleId);
+    await recoverDepartureAlarmsAfterMutation();
+}
+
+export async function snoozeDepartureFromNotificationAction(
+    scheduleId: string,
+): Promise<void> {
+    await snoozeScheduleDepartureReminder(scheduleId);
+    await recoverDepartureAlarmsAfterMutation();
+}
 
 async function getNotifications(): Promise<ExpoNotificationsModule | null> {
     if (notificationsModule !== undefined) {
@@ -95,13 +141,14 @@ async function getNotifications(): Promise<ExpoNotificationsModule | null> {
 export async function configureForegroundPush(): Promise<() => void> {
     const Notifications = await getNotifications();
 
-    if (!Notifications) {
-        return () => undefined;
+    if (Notifications) {
+        await ensureNotificationPresentation(Notifications);
     }
 
-    await ensureNotificationPresentation(Notifications);
-
-    return onMessage(getMessaging(), showForegroundNotification);
+    // Silent alarm sync depends only on Firebase Messaging. Register this
+    // listener even when expo-notifications is unavailable (for example an iOS
+    // simulator or a build without ExpoPushTokenManager).
+    return onMessage(getMessaging(), handleForegroundPushMessage);
 }
 
 export async function configurePushNavigation(
@@ -168,7 +215,7 @@ export async function configurePushNavigation(
         lastDepartNowActionKey = actionKey;
 
         try {
-            await markScheduleDeparted(scheduleId);
+            await completeDepartureFromNotificationAction(scheduleId);
             logPushDevelopment("info", "[push] schedule marked as departed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] depart-now action failed", error);
@@ -201,7 +248,7 @@ export async function configurePushNavigation(
         lastSnoozeActionKey = actionKey;
 
         try {
-            await snoozeScheduleDepartureReminder(scheduleId);
+            await snoozeDepartureFromNotificationAction(scheduleId);
             logPushDevelopment("info", "[push] schedule departure reminder snoozed from notification action", scheduleId);
         } catch (error) {
             logPushDevelopment("warn", "[push] snooze action failed", error);
@@ -215,6 +262,11 @@ export async function configurePushNavigation(
 
     const handleNotificationResponse = (response: NotificationResponse) => {
         const request = response.notification.request;
+        acknowledgePushInteraction(
+            request.content.data,
+            undefined,
+            response.actionIdentifier,
+        );
 
         if (response.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER) {
             markDepartedFromData(request.content.data, request.identifier).catch(() => undefined);
@@ -244,11 +296,21 @@ export async function configurePushNavigation(
         })
         : undefined;
     const firebaseUnsubscribe = onNotificationOpenedApp(messaging, (message) => {
+        acknowledgePushInteraction(
+            message.data,
+            message.messageId,
+            DEFAULT_PUSH_ACTION_IDENTIFIER,
+        );
         openFromData(message.data, message.messageId);
     });
 
     const initialMessage = await getInitialNotification(messaging);
     if (initialMessage) {
+        acknowledgePushInteraction(
+            initialMessage.data,
+            initialMessage.messageId,
+            DEFAULT_PUSH_ACTION_IDENTIFIER,
+        );
         openFromData(initialMessage.data, initialMessage.messageId);
     } else if (Notifications) {
         const initialResponse = Notifications.getLastNotificationResponse();
@@ -266,9 +328,20 @@ export async function configurePushNavigation(
     };
 }
 
-async function showForegroundNotification(
+export async function handleForegroundPushMessage(
     message: FirebaseMessagingTypes.RemoteMessage,
 ): Promise<void> {
+    acknowledgePushDelivery(message.data, "RECEIVED", {
+        providerMessageId: message.messageId,
+    }).catch(() => undefined);
+
+    if (isDepartureAlarmSyncData(message.data)) {
+        // Alarm sync is a silent control-plane payload. Even malformed commands
+        // are consumed here and must never become a local banner or inbox event.
+        await handleDepartureAlarmSyncData(message.data);
+        return;
+    }
+
     const title = message.notification?.title ?? "NoLate";
     const body = message.notification?.body ?? "새로운 일정 알림이 도착했습니다.";
 
@@ -279,11 +352,16 @@ async function showForegroundNotification(
         clearCalendarScheduleCache();
     }
 
-    await showLocalNotification({
+    const presented = await showLocalNotification({
         title,
         body,
         data: message.data ?? {},
     });
+    if (presented) {
+        acknowledgePushDelivery(message.data, "PRESENTED", {
+            providerMessageId: message.messageId,
+        }).catch(() => undefined);
+    }
 }
 
 function isScheduleVisibilityChange(
@@ -296,11 +374,11 @@ function isScheduleVisibilityChange(
         type === "SCHEDULE_CACHE_INVALIDATED";
 }
 
-async function showLocalNotification(notification: LocalPushNotification): Promise<void> {
+async function showLocalNotification(notification: LocalPushNotification): Promise<boolean> {
     const Notifications = await getNotifications();
 
     if (!Notifications) {
-        return;
+        return false;
     }
 
     await ensureNotificationPresentation(Notifications);
@@ -315,6 +393,7 @@ async function showLocalNotification(notification: LocalPushNotification): Promi
         },
         trigger: Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : null,
     });
+    return true;
 }
 
 async function ensureNotificationPresentation(Notifications: ExpoNotificationsModule): Promise<void> {

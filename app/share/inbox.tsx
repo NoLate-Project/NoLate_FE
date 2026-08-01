@@ -29,7 +29,6 @@ import {
 import {
   getScheduleCalendars,
   removeScheduleCalendarMember,
-  updateScheduleCalendar,
   type ScheduleCalendar,
 } from '../../src/api/scheduleCalendars';
 import {
@@ -46,6 +45,7 @@ import {
   type ShareResourceType,
   type ScheduleShare,
 } from '../../src/api/scheduleSharing';
+import { updateCalendarContentModeWithAlarmRecovery } from '../../src/modules/share/calendarContentModeAlarmRecovery';
 import { createLatestAsyncRequestGuard } from '../../src/modules/share/latestAsyncRequest';
 import {
   ShareInboxButton,
@@ -585,9 +585,11 @@ export default function ShareInboxScreen() {
   const updateComposerCalendarMode = useCallback(
     async (nextMode: ScheduleShareContentMode) => {
       if (!composerItem || composerItem.resourceType !== 'CALENDAR') return;
-      await updateScheduleCalendar(composerItem.resourceId, {
-        defaultContentMode: nextMode,
-      });
+      await updateCalendarContentModeWithAlarmRecovery(
+        composerItem.resourceId,
+        composerItem.contentMode,
+        nextMode,
+      );
       setComposerItem(current =>
         current
           ? {

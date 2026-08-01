@@ -35,6 +35,7 @@ export function buildTravelPlanPayload(
         notificationEnabled: payload.notificationEnabled,
         notificationLeadMinutes: payload.notificationLeadMinutes,
         notificationIntervalMinutes: payload.notificationIntervalMinutes,
+        alertMode: payload.alertMode,
     };
 }
 
@@ -55,6 +56,7 @@ export function applyTravelPlanToScheduleItem(
         notificationEnabled: plan.notificationEnabled,
         notificationLeadMinutes: plan.notificationLeadMinutes ?? undefined,
         notificationIntervalMinutes: plan.notificationIntervalMinutes ?? undefined,
+        alertMode: plan.alertMode ?? "STANDARD",
         myTravelPlan: plan,
         travelPlanStatus: plan.status,
     };

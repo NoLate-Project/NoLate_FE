@@ -163,6 +163,8 @@ describe("routeInfo", () => {
             transitLegs: [{
                 kind: "BUS",
                 label: "402",
+                durationMinutes: 18,
+                waitingMinutes: 4,
                 lineName: "402",
                 startName: "서울역버스환승센터(6번승강장)(중)",
                 endName: "남산도서관",
@@ -175,6 +177,7 @@ describe("routeInfo", () => {
         const result = buildRouteInfoFromAlternative(option, origin, destination);
         expect(result.steps[1]).toMatchObject({
             type: "BUS",
+            waitingMinutes: 4,
             boardingPlatform: "6번 승강장",
             boardingExit: "4번 출구",
             recommendedBoardingPosition: "앞문 가까이",

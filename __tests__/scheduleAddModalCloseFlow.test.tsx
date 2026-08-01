@@ -43,6 +43,23 @@ jest.mock("../src/api/subscription", () => ({
 jest.mock("../src/api/scheduleCalendars", () => ({
     getScheduleCalendars: jest.fn().mockResolvedValue([]),
 }));
+jest.mock("../src/modules/notification/departureAlarm", () => ({
+    getDepartureAlarmCapabilities: jest.fn().mockResolvedValue({
+        supported: false,
+        platform: "ios",
+        exactAlarmAuthorized: false,
+        fullScreenAuthorized: false,
+        notificationAuthorized: false,
+        reason: "NATIVE_MODULE_UNAVAILABLE",
+    }),
+    openExactAlarmSettings: jest.fn().mockResolvedValue(false),
+    openFullScreenAlarmSettings: jest.fn().mockResolvedValue(false),
+    scheduleDepartureTestAlarm: jest.fn().mockResolvedValue({
+        applied: false,
+        scheduled: false,
+        reason: "NATIVE_MODULE_UNAVAILABLE",
+    }),
+}));
 
 const category = { id: "work", title: "업무", color: "#FF3B30" };
 
@@ -204,6 +221,10 @@ describe("ScheduleAddModal close flow", () => {
         });
 
         expect(onSubmit).toHaveBeenCalledTimes(1);
+        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        }));
         expect(alertSpy).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -264,6 +285,13 @@ describe("ScheduleAddModal close flow", () => {
             await Promise.resolve();
         });
         await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.onValueChange(true);
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" }).props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
             await renderer!.root.findByProps({ accessibilityLabel: "일정 저장" }).props.onPress();
         });
 
@@ -273,6 +301,8 @@ describe("ScheduleAddModal close flow", () => {
             travelMode: "TRANSIT",
             travelMinutes: 35,
             departAt: "2026-07-17T00:25:00.000Z",
+            notificationEnabled: true,
+            alertMode: "ALARM",
             route: expect.objectContaining({
                 id: "updated-route",
                 mode: "TRANSIT",

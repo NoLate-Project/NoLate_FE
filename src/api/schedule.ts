@@ -33,6 +33,77 @@ export type NotificationSendResult = {
     removedTokenCount: number;
 };
 
+export type ScheduleEtaArrivalObservation = {
+    scheduleId: number;
+    pushJobId?: number | null;
+    departedAt: string;
+    predictionEvaluatedAt: string;
+    recommendedDepartureAt: string;
+    targetArrivalAt: string;
+    predictedArrivalAt: string;
+    actualArrivalAt: string;
+    observationSource: ScheduleArrivalObservationSource;
+    observationVerification: "UNVERIFIED_CLIENT" | "VERIFIED_GEOFENCE";
+    precisionSeconds: number;
+    adjustmentSeconds?: number | null;
+    clientAppVersion?: string | null;
+    clientBuildVersion?: string | null;
+    backendCohortVersion: string;
+    eligibilityPolicyVersion: string;
+    recordedAt: string;
+    etaSource: string;
+    etaStale: boolean;
+    travelMinutes: number;
+    travelMode: string;
+    predictionBasis: string;
+    providerId: string;
+    algorithmVersion: string;
+    providerFetchedAt?: string | null;
+    predictedOnTime: boolean;
+    actualOnTime: boolean;
+    onTimeOutcome: string;
+    departureOffsetSeconds: number;
+    actualTravelSeconds: number;
+    reportDelaySeconds: number;
+    accuracyEligible: boolean;
+    accuracyEligibilityReason: string;
+    signedErrorSeconds: number;
+    absoluteErrorSeconds: number;
+};
+
+export type ScheduleArrivalObservationSource = "USER_NOW" | "USER_ADJUSTED" | "GEOFENCE";
+
+export type ScheduleArrivalObservationCapture = {
+    arrivedAt: string;
+    observationSource: ScheduleArrivalObservationSource;
+    precisionSeconds: number;
+    adjustmentSeconds?: number;
+    clientAppVersion?: string;
+    clientBuildVersion?: string;
+};
+
+export type ScheduleEtaObservationEngagementEvent = "EXPOSED" | "PROMPT_OPENED";
+
+export type ScheduleEtaObservationEngagementCapture = {
+    event: ScheduleEtaObservationEngagementEvent;
+    clientAppVersion?: string;
+    clientBuildVersion?: string;
+    uxVariant?: string;
+};
+
+export type ScheduleEtaObservationEngagement = {
+    scheduleId: number;
+    exposedAt?: string | null;
+    exposedClientAppVersion?: string | null;
+    exposedClientBuildVersion?: string | null;
+    exposedUxVariant?: string | null;
+    promptedAt?: string | null;
+    promptedClientAppVersion?: string | null;
+    promptedClientBuildVersion?: string | null;
+    promptedUxVariant?: string | null;
+    respondedAt?: string | null;
+};
+
 export type ParseScheduleInputType =
     | "TEXT"
     | "CONVERSATION"
@@ -213,6 +284,36 @@ export async function markScheduleDeparted(scheduleId: string): Promise<Schedule
     const item = normalizeSchedule(unwrapApiResponse(response));
     upsertCalendarScheduleCacheItem(item);
     return item;
+}
+
+/** Records an explicit opt-in arrival with bounded source and temporal uncertainty. */
+export async function recordScheduleArrivalObservation(
+    scheduleId: string,
+    capture: ScheduleArrivalObservationCapture,
+): Promise<ScheduleEtaArrivalObservation> {
+    const response = await apiPost<
+        ApiEnvelope<ScheduleEtaArrivalObservation>,
+        ScheduleArrivalObservationCapture
+    >(
+        `/api/schedules/${scheduleId}/eta-observations/arrival`,
+        capture,
+    );
+    return unwrapApiResponse(response);
+}
+
+/** Idempotent, location-free denominator event; callers persist before sending. */
+export async function recordScheduleEtaObservationEngagement(
+    scheduleId: string,
+    capture: ScheduleEtaObservationEngagementCapture,
+): Promise<ScheduleEtaObservationEngagement> {
+    const response = await apiPost<
+        ApiEnvelope<ScheduleEtaObservationEngagement>,
+        ScheduleEtaObservationEngagementCapture
+    >(
+        `/api/schedules/${scheduleId}/eta-observations/engagement`,
+        capture,
+    );
+    return unwrapApiResponse(response);
 }
 
 export async function sendScheduleDepartureNudge(

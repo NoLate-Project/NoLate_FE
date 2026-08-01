@@ -70,6 +70,7 @@ import {
 } from "../../liveSpeechRecognition";
 import type {
     QuickScheduleReliabilityFeedback,
+    ScheduleAlertMode,
     ScheduleCategory,
     ScheduleItem,
     ScheduleParseResult,
@@ -78,6 +79,7 @@ import { canWriteScheduleCategory } from "../../categoryPermissions";
 import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import {
+    applyQuickScheduleNotificationSettings,
     applyQuickScheduleRouteResult as applyRouteResultToPreviewDraft,
     buildQuickSchedulePayload,
     buildQuickScheduleReliabilityFeedback,
@@ -575,6 +577,7 @@ export default function QuickScheduleModal({
     const [previewDraft, setPreviewDraft] = useState<PreviewDraft | null>(null);
     const [editingField, setEditingField] = useState<PreviewField | null>(null);
     const [editingValue, setEditingValue] = useState("");
+    const [editingAlertMode, setEditingAlertMode] = useState<ScheduleAlertMode>("STANDARD");
     const [timeEditMode, setTimeEditMode] = useState<TimeEditMode>("picker");
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
@@ -1042,6 +1045,7 @@ export default function QuickScheduleModal({
         setPreviewDraft(null);
         setEditingField(null);
         setEditingValue("");
+        setEditingAlertMode("STANDARD");
         setTimeEditMode("picker");
         setRoutePlannerSessionId(undefined);
         setRoutePlannerHidden(false);
@@ -1487,6 +1491,7 @@ export default function QuickScheduleModal({
                 ? String(previewDraft.notificationLeadMinutes ?? "none")
                 : String(previewDraft[field] ?? "")
         );
+        setEditingAlertMode(previewDraft.alertMode);
         setTimeEditMode("picker");
         setFlowStep("edit");
     }, [previewDraft, submitting]);
@@ -1494,25 +1499,43 @@ export default function QuickScheduleModal({
     const confirmEditField = useCallback(() => {
         if (!editingField) return;
 
-        const nextValue = editingField === "time"
-            ? normalizeTimeInput(editingValue, previewDraft?.time ?? "09:00")
-            : editingValue.trim() || (editingField === "notification"
-                ? "none"
-                : editingField === "location"
+        if (editingField === "notification") {
+            const leadMinutes = editingValue === "none"
+                ? undefined
+                : Number(editingValue);
+            setPreviewDraft((current) => current
+                ? applyQuickScheduleNotificationSettings(current, {
+                    leadMinutes,
+                    alertMode: editingAlertMode,
+                })
+                : current);
+        } else {
+            const nextValue = editingField === "time"
+                ? normalizeTimeInput(editingValue, previewDraft?.time ?? "09:00")
+                : editingValue.trim() || (editingField === "location"
                     ? "장소 미정"
                     : editingField === "title"
                         ? "새 일정"
                         : editingField === "memo" ? "메모 없음" : "");
-        updatePreviewField(editingField, nextValue);
+            updatePreviewField(editingField, nextValue);
+        }
         setEditingField(null);
         setEditingValue("");
+        setEditingAlertMode("STANDARD");
         setTimeEditMode("picker");
         setFlowStep("preview");
-    }, [editingField, editingValue, previewDraft?.time, updatePreviewField]);
+    }, [
+        editingAlertMode,
+        editingField,
+        editingValue,
+        previewDraft?.time,
+        updatePreviewField,
+    ]);
 
     const cancelEditField = useCallback(() => {
         setEditingField(null);
         setEditingValue("");
+        setEditingAlertMode("STANDARD");
         setTimeEditMode("picker");
         setFlowStep("preview");
     }, []);
@@ -2754,7 +2777,10 @@ export default function QuickScheduleModal({
                 return formatKoreanTime(draft.time);
             case "notification":
                 if (!canUseRouteNotification(draft)) return "사용 안 함 · 나중에 설정 가능";
-                return formatNotification(draft.notificationLeadMinutes);
+                if (draft.notificationLeadMinutes === undefined) return "사용 안 함";
+                return `${formatNotification(draft.notificationLeadMinutes)} · ${
+                    draft.alertMode === "ALARM" ? "강력한 알람" : "일반 알림"
+                }`;
             case "location":
                 return draft.location;
             case "memo":
@@ -3785,7 +3811,11 @@ export default function QuickScheduleModal({
                     </View>
                 )}
                 {isNotificationEdit && notificationRouteReady && (
-                    <View style={styles.notificationEditor}>
+                    <ScrollView
+                        style={styles.notificationEditor}
+                        contentContainerStyle={styles.notificationEditorContent}
+                        showsVerticalScrollIndicator={false}
+                    >
                         <View
                             style={[
                                 styles.notificationHero,
@@ -3931,6 +3961,72 @@ export default function QuickScheduleModal({
                                             );
                                         })}
                                     </View>
+                                    <View
+                                        style={[
+                                            styles.notificationModeSection,
+                                            { borderTopColor: cardBorderColor },
+                                        ]}
+                                    >
+                                        <Text style={[styles.notificationLeadTitle, { color: colors.textPrimary }]}>
+                                            알림 방식
+                                        </Text>
+                                        <View
+                                            accessibilityRole="radiogroup"
+                                            accessibilityLabel="출발 알림 방식"
+                                            style={styles.notificationModeOptions}
+                                        >
+                                            {([
+                                                {
+                                                    value: "STANDARD",
+                                                    label: "일반 알림",
+                                                    accessibilityLabel: "일반 알림 모드",
+                                                    icon: "notifications-outline",
+                                                },
+                                                {
+                                                    value: "ALARM",
+                                                    label: "강력한 알람",
+                                                    accessibilityLabel: "강력한 알람 모드",
+                                                    icon: "alarm-outline",
+                                                },
+                                            ] as const).map((option) => {
+                                                const checked = editingAlertMode === option.value;
+                                                return (
+                                                    <Pressable
+                                                        key={option.value}
+                                                        accessibilityRole="radio"
+                                                        accessibilityLabel={option.accessibilityLabel}
+                                                        accessibilityState={{ checked }}
+                                                        onPress={() => setEditingAlertMode(option.value)}
+                                                        style={({ pressed }) => [
+                                                            styles.notificationModeButton,
+                                                            {
+                                                                backgroundColor: checked
+                                                                    ? selectedModeBackground
+                                                                    : "transparent",
+                                                                borderColor: checked ? BLUE : cardBorderColor,
+                                                                opacity: pressed ? 0.72 : 1,
+                                                            },
+                                                        ]}
+                                                    >
+                                                        <Ionicons
+                                                            accessible={false}
+                                                            name={option.icon}
+                                                            size={16}
+                                                            color={checked ? BLUE : colors.textSecondary}
+                                                        />
+                                                        <Text
+                                                            style={[
+                                                                styles.notificationModeText,
+                                                                { color: checked ? BLUE : colors.textPrimary },
+                                                            ]}
+                                                        >
+                                                            {option.label}
+                                                        </Text>
+                                                    </Pressable>
+                                                );
+                                            })}
+                                        </View>
+                                    </View>
                                 </View>
                             ) : (
                                 <View
@@ -3958,7 +4054,7 @@ export default function QuickScheduleModal({
                                 </Text>
                             </View>
                         )}
-                    </View>
+                    </ScrollView>
                 )}
                 <View style={styles.editButtons}>
 	                    <Pressable
@@ -5046,7 +5142,11 @@ const styles = StyleSheet.create({
     },
     notificationEditor: {
         flex: 1,
+        minHeight: 0,
+    },
+    notificationEditorContent: {
         gap: 9,
+        paddingBottom: 2,
     },
     notificationHero: {
         borderWidth: 1,
@@ -5173,6 +5273,32 @@ const styles = StyleSheet.create({
     },
     notificationChipText: {
         fontSize: 12,
+        fontWeight: "900",
+    },
+    notificationModeSection: {
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    notificationModeOptions: {
+        marginTop: 8,
+        flexDirection: "row",
+        gap: 7,
+    },
+    notificationModeButton: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 42,
+        borderRadius: 12,
+        borderWidth: 1,
+        paddingHorizontal: 7,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+    },
+    notificationModeText: {
+        fontSize: 11.5,
         fontWeight: "900",
     },
     notificationOffState: {

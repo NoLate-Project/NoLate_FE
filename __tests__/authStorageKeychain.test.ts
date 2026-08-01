@@ -26,6 +26,7 @@ import {
     getAccessToken,
     getRefreshToken,
     saveAuthTokens,
+    subscribeAuthInvalidation,
 } from "../src/modules/auth/authStorage";
 
 const mockSharedAuth = NativeModules.NoLateShareAuth as {
@@ -107,5 +108,40 @@ describe("authStorage shared Keychain session", () => {
         expect(mockLocalStorage.deleteItemAsync).toHaveBeenCalledWith("nolate_auth_member");
         expect(mockSharedAuth.deleteItem).toHaveBeenCalledWith("nolte_access_token");
         expect(mockSharedAuth.deleteItem).toHaveBeenCalledWith("nolte_refresh_token");
+    });
+
+    test("계정 cleanup listener를 credential 삭제 전에 완료한다", async () => {
+        const calls: string[] = [];
+        const unsubscribe = subscribeAuthInvalidation(async () => {
+            calls.push("cleanup");
+        });
+        mockLocalStorage.deleteItemAsync.mockImplementation(async () => {
+            calls.push("delete");
+        });
+
+        try {
+            await clearAuthTokens();
+        } finally {
+            unsubscribe();
+        }
+
+        expect(calls[0]).toBe("cleanup");
+        expect(calls).toContain("delete");
+    });
+
+    test("필수 account cleanup 실패 시 credential을 삭제하지 않는다", async () => {
+        const cleanupError = new Error("native alarm purge failed");
+        const unsubscribe = subscribeAuthInvalidation(async () => {
+            throw cleanupError;
+        });
+
+        try {
+            await expect(clearAuthTokens()).rejects.toBe(cleanupError);
+        } finally {
+            unsubscribe();
+        }
+
+        expect(mockLocalStorage.deleteItemAsync).not.toHaveBeenCalled();
+        expect(mockSharedAuth.deleteItem).not.toHaveBeenCalled();
     });
 });

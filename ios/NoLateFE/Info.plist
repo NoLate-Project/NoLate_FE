@@ -77,6 +77,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>추천 출발 시각을 놓치지 않도록 출발 알람을 울립니다.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

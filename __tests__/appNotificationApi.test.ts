@@ -1,9 +1,13 @@
-import { apiGet, apiPatch } from "../src/api/api";
+import { apiGet, apiPatch, apiPost } from "../src/api/api";
 import {
     getAppNotificationInbox,
     getAppNotificationUnreadCount,
+    getDepartureAlarmSnapshotCommands,
     markAllAppNotificationsRead,
     markAppNotificationRead,
+    postDepartureAlarmFiredEvent,
+    postDepartureAlarmScheduleReceipt,
+    registerPushToken,
 } from "../src/api/notification";
 
 jest.mock("../src/api/api", () => ({
@@ -14,10 +18,29 @@ jest.mock("../src/api/api", () => ({
 
 const mockedApiGet = jest.mocked(apiGet);
 const mockedApiPatch = jest.mocked(apiPatch);
+const mockedApiPost = jest.mocked(apiPost);
 
 describe("app notification api", () => {
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    test("registers an installation with an explicit delivery ACK capability", async () => {
+        mockedApiPost.mockResolvedValue({ success: true, data: null });
+        const payload = {
+            memberId: 7,
+            deviceId: "ios-installation-7",
+            platform: "IOS" as const,
+            token: "fcm-token",
+            deliveryAckCapabilityVersion: 1 as const,
+        };
+
+        await registerPushToken(payload);
+
+        expect(mockedApiPost).toHaveBeenCalledWith(
+            "/api/notifications/token",
+            payload,
+        );
     });
 
     test("loads a cursor page with an unread filter", async () => {
@@ -60,6 +83,81 @@ describe("app notification api", () => {
         expect(mockedApiGet).toHaveBeenCalledWith("/api/notifications/inbox", {
             params: { limit: 30, unreadOnly: false },
         });
+    });
+
+    test("loads the departure alarm desired-state command list", async () => {
+        const commands = [{ type: "DEPARTURE_ALARM_SYNC" }];
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: { commands },
+        });
+
+        await expect(getDepartureAlarmSnapshotCommands()).resolves.toBe(commands);
+        expect(mockedApiGet).toHaveBeenCalledWith(
+            "/api/notifications/departure-alarms/snapshot",
+        );
+    });
+
+    test("rejects a malformed departure alarm snapshot without clearing state", async () => {
+        mockedApiGet.mockResolvedValue({
+            success: true,
+            data: { commands: null },
+        });
+
+        await expect(getDepartureAlarmSnapshotCommands()).rejects.toThrow(
+            "Departure alarm snapshot commands must be an array.",
+        );
+    });
+
+    test("posts snapshot-origin native fire evidence to the dedicated endpoint", async () => {
+        mockedApiPost.mockResolvedValue({ success: true, data: null });
+        const payload = {
+            eventId: "a7360f46-4f44-48b6-ae93-28f11c3f667d",
+            alarmId: "schedule:41:member:7",
+            scheduleId: 41,
+            generation: 3,
+            recipientMemberId: 7,
+            scheduledFor: "2026-08-01T01:00:00.000Z",
+            sourceTriggerAt: "2026-08-01T00:55:00.000Z",
+            occurredAt: "2026-08-01T01:00:02.000Z",
+            timingBasis: "OBSERVED_ALERTING" as const,
+            deviceId: "device-stable-7",
+        };
+
+        await postDepartureAlarmFiredEvent(payload);
+
+        expect(mockedApiPost).toHaveBeenCalledWith(
+            "/api/notifications/departure-alarm-fired-events",
+            payload,
+        );
+    });
+
+    test("posts native alarm schedule receipts to the denominator endpoint", async () => {
+        mockedApiPost.mockResolvedValue({ success: true, data: null });
+        const payload = {
+            receiptId: "a7360f46-4f44-48b6-ae93-28f11c3f667d",
+            alarmId: "schedule:41:member:7",
+            scheduleId: 41,
+            generation: 3,
+            recipientMemberId: 7,
+            operation: "UPSERT" as const,
+            triggerAt: "2026-08-01T02:00:00.000Z",
+            outcome: "SCHEDULED" as const,
+            applied: true,
+            scheduled: true,
+            platform: "IOS" as const,
+            deliveryMode: "IOS_ALARM_KIT" as const,
+            source: "PUSH" as const,
+            occurredAt: "2026-08-01T01:00:00.000Z",
+            deviceId: "device-stable-7",
+        };
+
+        await postDepartureAlarmScheduleReceipt(payload);
+
+        expect(mockedApiPost).toHaveBeenCalledWith(
+            "/api/notifications/departure-alarm-schedule-receipts",
+            payload,
+        );
     });
 
     test("reads count and marks one or every notification", async () => {

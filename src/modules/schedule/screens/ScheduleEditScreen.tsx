@@ -12,7 +12,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useScheduleStore } from "../store";
 import { useTheme } from "../../theme/ThemeContext";
 import { fromISO } from "../../../../lib/util/data";
-import type { ScheduleCategory, TravelMode } from "../types";
+import type { ScheduleAlertMode, ScheduleCategory, TravelMode } from "../types";
 import {
     canWriteScheduleCategory,
     getWritableScheduleCategories,
@@ -37,6 +37,7 @@ import NotificationSettingsCard from "../components/form/NotificationSettingsCar
 import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
 import CalendarGlassSurface from "../components/calendar/CalendarGlassSurface";
 import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedule";
+import { upsertMyScheduleTravelPlan } from "../../../api/scheduleTravelPlans";
 import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
 import {
     FREE_SUBSCRIPTION_POLICY,
@@ -57,11 +58,17 @@ import {
     buildScheduleFormPlace,
 } from "../scheduleFormPlace";
 import {
+    normalizeScheduleAlertMode,
+    resolveScheduleAlertModePayload,
+} from "../scheduleAlertMode";
+import {
     getScheduleCalendars,
     type ScheduleCalendar,
 } from "../../../api/scheduleCalendars";
 import { getWritableScheduleCalendars } from "../calendarPermissions";
 import { canDeletePresentedSchedule } from "../schedulePermissions";
+import { applyTravelPlanToScheduleItem } from "../travelPlanPresentation";
+import { recoverDepartureAlarmsAfterMutation } from "../../notification/departureAlarmMutationRecovery";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -83,6 +90,10 @@ const pickerTargetH = (t: PickerType | null): number  => t !== null && isDateTyp
 
 const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
+
+const hasCompletePersonalTravelPlanCoordinates = (
+    place: { lat?: number; lng?: number } | undefined,
+) => Number.isFinite(place?.lat) && Number.isFinite(place?.lng);
 
 export default function ScheduleEdit() {
     const { id }     = useLocalSearchParams<{ id: string }>();
@@ -122,6 +133,9 @@ export default function ScheduleEdit() {
     const [allDay, setAllDay]                   = useState(item?.allDay ?? false);
     const [hasEndTime, setHasEndTime]           = useState(item?.hasEndTime ?? true);
     const [notificationEnabled, setNotificationEnabled] = useState(item?.notificationEnabled ?? false);
+    const [alertMode, setAlertMode] = useState<ScheduleAlertMode>(
+        normalizeScheduleAlertMode(item?.alertMode),
+    );
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(item?.notificationLeadMinutes ?? 60);
     const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? 20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
@@ -386,6 +400,7 @@ export default function ScheduleEdit() {
         setAllDay(item.allDay ?? false);
         setHasEndTime(item.hasEndTime ?? fromISO(item.endAt).getTime() > fromISO(item.startAt).getTime());
         setNotificationEnabled(item.notificationEnabled ?? false);
+        setAlertMode(normalizeScheduleAlertMode(item.alertMode));
         setNotificationLeadMinutes(item.notificationLeadMinutes ?? 60);
         setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? 20);
         setStartDay(startOfLocalScheduleDay(fromISO(item.startAt)));
@@ -705,7 +720,40 @@ export default function ScheduleEdit() {
             nextOrigin,
             nextDestination
         );
+        const resolvedNotificationEnabled = hasRoutePlan && notificationEnabled;
+        const resolvedNotificationLeadMinutes = resolvedNotificationEnabled
+            ? notificationLeadMinutes
+            : undefined;
+        const resolvedNotificationIntervalMinutes = resolvedNotificationEnabled
+            ? notificationIntervalMinutes
+            : undefined;
+        const resolvedAlertMode = resolveScheduleAlertModePayload({
+            hasRoutePlan,
+            notificationEnabled,
+            selectedMode: alertMode,
+        });
+        const personalTravelPlanPayload = (
+            item.sharePermission != null
+            && hasRoutePlan
+            && typeof travelMinutes === "number"
+            && Number.isFinite(travelMinutes)
+            && travelMinutes > 0
+            && hasCompletePersonalTravelPlanCoordinates(nextOrigin)
+            && hasCompletePersonalTravelPlanCoordinates(nextDestination)
+        ) ? {
+                travelMinutes,
+                departAt: reconciledRouteTiming.departAt,
+                travelMode,
+                origin: nextOrigin,
+                route: reconciledRouteTiming.route,
+                notificationEnabled: resolvedNotificationEnabled,
+                notificationLeadMinutes: resolvedNotificationLeadMinutes,
+                notificationIntervalMinutes: resolvedNotificationIntervalMinutes,
+                alertMode: resolvedAlertMode,
+            }
+            : undefined;
 
+        let commonUpdateSucceeded = false;
         try {
             mutationPendingRef.current = true;
             setMutationPending(true);
@@ -728,19 +776,48 @@ export default function ScheduleEdit() {
                 notes: notes.trim() || undefined,
                 allDay: normalizedRange.allDay,
                 route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
-                notificationEnabled: hasRoutePlan && notificationEnabled,
-                notificationLeadMinutes: hasRoutePlan && notificationEnabled
-                    ? notificationLeadMinutes
-                    : undefined,
-                notificationIntervalMinutes: hasRoutePlan && notificationEnabled
-                    ? notificationIntervalMinutes
-                    : undefined,
+                notificationEnabled: resolvedNotificationEnabled,
+                notificationLeadMinutes: resolvedNotificationLeadMinutes,
+                notificationIntervalMinutes: resolvedNotificationIntervalMinutes,
+                alertMode: resolvedAlertMode,
             });
+            commonUpdateSucceeded = true;
             dispatch({ type: "UPDATE_ITEM", item: updated });
+
+            if (personalTravelPlanPayload) {
+                try {
+                    const plan = await upsertMyScheduleTravelPlan(
+                        item.id,
+                        personalTravelPlanPayload,
+                    );
+                    dispatch({
+                        type: "UPDATE_ITEM",
+                        item: applyTravelPlanToScheduleItem(updated, plan),
+                    });
+                } catch (personalPlanError) {
+                    markFormDirty();
+                    try {
+                        const refreshed = await getSchedule(item.id);
+                        dispatch({ type: "UPDATE_ITEM", item: refreshed });
+                    } catch {
+                        // 공용 저장 응답은 이미 반영했다. 재조회 실패로 그 상태까지 되돌리지 않는다.
+                    }
+                    Alert.alert(
+                        "일정 내용은 저장됐어요",
+                        "공용 일정 내용은 저장됐지만 내 이동 알림 설정은 저장하지 못했어요. " +
+                        `화면을 닫지 않았으니 다시 저장해 주세요.\n${getErrorMessage(personalPlanError)}`,
+                    );
+                    return;
+                }
+            }
+
             closeEditScreen();
         } catch (error) {
             Alert.alert("일정 수정 실패", getErrorMessage(error));
         } finally {
+            if (commonUpdateSucceeded) {
+                await recoverDepartureAlarmsAfterMutation();
+            }
             mutationPendingRef.current = false;
             setMutationPending(false);
         }
@@ -760,6 +837,7 @@ export default function ScheduleEdit() {
                         mutationPendingRef.current = true;
                         setMutationPending(true);
                         await deleteSchedule(item.id);
+                        await recoverDepartureAlarmsAfterMutation();
                         discardChanges();
                         allowNavigationRef.current = true;
                         router.replace("/schedule");
@@ -922,6 +1000,7 @@ export default function ScheduleEdit() {
                 <NotificationSettingsCard
                     routeReady={routeReady}
                     enabled={notificationEnabled}
+                    alertMode={alertMode}
                     leadMinutes={notificationLeadMinutes}
                     intervalMinutes={notificationIntervalMinutes}
                     routeInfo={routeInfo}
@@ -930,6 +1009,7 @@ export default function ScheduleEdit() {
                         : mergeDateTime(startDay, startTime)}
                     policy={subscriptionPolicy}
                     onEnabledChange={(value) => { markFormDirty(); setNotificationEnabled(value); }}
+                    onAlertModeChange={(value) => { markFormDirty(); setAlertMode(value); }}
                     onLeadMinutesChange={(value) => { markFormDirty(); setNotificationLeadMinutes(value); }}
                     onIntervalMinutesChange={(value) => { markFormDirty(); setNotificationIntervalMinutes(value); }}
                 />

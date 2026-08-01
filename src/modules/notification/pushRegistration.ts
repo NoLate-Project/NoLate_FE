@@ -24,8 +24,10 @@ import {
 } from "./pushRegistrationCoordinator";
 import { retryPushRegistration } from "./pushRegistrationRetry";
 import { shouldRegisterRemotePush } from "./pushRegistrationDevicePolicy";
+import { reconcileDepartureAlarmSnapshot } from "./departureAlarmSync";
+import { getOrCreatePushDeviceId } from "./pushDeviceIdentity";
+import { createLatestPushTokenRetryCoordinator } from "./pushTokenRefreshRetry";
 
-const PUSH_DEVICE_ID_KEY = "nolate_push_device_id";
 const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
 const APNS_TOKEN_RETRY_COUNT = 30;
 const APNS_TOKEN_RETRY_DELAY_MS = 500;
@@ -40,21 +42,20 @@ function logPushDevelopment(message: string, error?: unknown): void {
     console.warn(message, error);
 }
 
-async function getOrCreateDeviceId(): Promise<string> {
-    const existing = await SecureStore.getItemAsync(PUSH_DEVICE_ID_KEY);
-    if (existing) return existing;
-
-    const generated = `${Platform.OS}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await SecureStore.setItemAsync(PUSH_DEVICE_ID_KEY, generated);
-    return generated;
-}
-
 async function registerToken(memberId: number, token: string): Promise<void> {
     await registerPushToken({
         memberId,
-        deviceId: await getOrCreateDeviceId(),
+        deviceId: await getOrCreatePushDeviceId(),
         platform: Platform.OS === "ios" ? "IOS" : "ANDROID",
         token,
+        deliveryAckCapabilityVersion: 1,
+    });
+    // A successful token registration is a durable point at which missed
+    // data-only commands can be recovered from the authoritative snapshot.
+    await reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
+        // Token registration has already succeeded. Snapshot recovery is
+        // best-effort and must not turn that success into a registration retry.
+        logPushDevelopment("[alarm-sync] post-registration snapshot failed", error);
     });
 }
 
@@ -178,11 +179,21 @@ async function performPushRegistration(memberId: number, generation: number): Pr
 export function subscribePushTokenRefresh(memberId?: number): () => void {
     if (!memberId) return () => undefined;
 
-    return onTokenRefresh(getMessaging(), (token) => {
-        registerToken(memberId, token).catch((error) => {
-            logPushDevelopment("[push] refreshed token registration failed", error);
+    const coordinator = createLatestPushTokenRetryCoordinator({
+        register: (token) => registerToken(memberId, token),
+        onError: (error) => {
+            logPushDevelopment("[push] refreshed token registration failed after retries", error);
+        },
+    });
+    const unsubscribeNative = onTokenRefresh(getMessaging(), (token) => {
+        coordinator.enqueue(token).catch((error) => {
+            logPushDevelopment("[push] refreshed token retry coordinator failed", error);
         });
     });
+    return () => {
+        coordinator.stop();
+        unsubscribeNative();
+    };
 }
 
 export async function clearPushRegistrationAfterLogout(): Promise<void> {

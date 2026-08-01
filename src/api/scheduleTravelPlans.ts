@@ -4,6 +4,7 @@ import type {
     Place,
     ScheduleTravelPlan,
     ScheduleTravelPlanParticipant,
+    ScheduleAlertMode,
     TravelMode,
 } from "../modules/schedule/types";
 
@@ -16,6 +17,7 @@ export type ScheduleTravelPlanPayload = {
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;
     notificationIntervalMinutes?: number;
+    alertMode?: ScheduleAlertMode;
 };
 
 export type ScheduleTravelPlanOverview = {

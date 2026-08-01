@@ -29,7 +29,14 @@ import { Calendar } from "react-native-calendars";
 import { usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import type { Place, ScheduleCategory, ScheduleItem, ScheduleParseResult, TravelMode } from "../../types";
+import type {
+    Place,
+    ScheduleAlertMode,
+    ScheduleCategory,
+    ScheduleItem,
+    ScheduleParseResult,
+    TravelMode,
+} from "../../types";
 import { getWritableScheduleCategories } from "../../categoryPermissions";
 import { searchAddressByKeyword } from "../../../map/tmapApi";
 import { useTheme } from "../../../theme/ThemeContext";
@@ -75,6 +82,10 @@ import {
     buildScheduleFormLocationName,
     buildScheduleFormPlace,
 } from "../../scheduleFormPlace";
+import {
+    normalizeScheduleAlertMode,
+    resolveScheduleAlertModePayload,
+} from "../../scheduleAlertMode";
 import {
     getScheduleCalendars,
     type ScheduleCalendar,
@@ -244,6 +255,7 @@ export default function ScheduleNewModal({
     const [allDay, setAllDay]                         = useState(false);
     const [hasEndTime, setHasEndTime]                 = useState(false);
     const [notificationEnabled, setNotificationEnabled] = useState(false);
+    const [alertMode, setAlertMode] = useState<ScheduleAlertMode>("STANDARD");
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(60);
     const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(20);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
@@ -306,6 +318,7 @@ export default function ScheduleNewModal({
         setAllDay(false);
         setHasEndTime(false);
         setNotificationEnabled(false);
+        setAlertMode("STANDARD");
         setNotificationLeadMinutes(60);
         setNotificationIntervalMinutes(30);
         setRoutePlannerSessionId(undefined);
@@ -439,6 +452,7 @@ export default function ScheduleNewModal({
         setDepartAt(undefined);
         setRoute(initialValues.route);
         setNotificationEnabled(Boolean(initialValues.notificationEnabled));
+        setAlertMode(normalizeScheduleAlertMode(initialValues.alertMode));
         if (typeof initialValues.notificationLeadMinutes === "number") {
             setNotificationLeadMinutes(initialValues.notificationLeadMinutes);
         }
@@ -1294,6 +1308,11 @@ export default function ScheduleNewModal({
                 notificationIntervalMinutes: hasRoutePlan && notificationEnabled
                     ? notificationIntervalMinutes
                     : undefined,
+                alertMode: resolveScheduleAlertModePayload({
+                    hasRoutePlan,
+                    notificationEnabled,
+                    selectedMode: alertMode,
+                }),
                 locationName,
                 origin: hasRoutePlan ? nextOrigin : undefined,
                 destination: nextDestination,
@@ -1765,6 +1784,7 @@ export default function ScheduleNewModal({
                             <NotificationSettingsCard
                                 routeReady={routeReady}
                                 enabled={notificationEnabled}
+                                alertMode={alertMode}
                                 leadMinutes={notificationLeadMinutes}
                                 intervalMinutes={notificationIntervalMinutes}
                                 routeInfo={routeInfo}
@@ -1775,6 +1795,10 @@ export default function ScheduleNewModal({
                                 onEnabledChange={(value) => {
                                     markFormDirty();
                                     setNotificationEnabled(value);
+                                }}
+                                onAlertModeChange={(value) => {
+                                    markFormDirty();
+                                    setAlertMode(value);
                                 }}
                                 onLeadMinutesChange={(value) => {
                                     markFormDirty();

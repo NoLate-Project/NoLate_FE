@@ -202,6 +202,21 @@ export async function getRefreshToken(): Promise<string | null> {
 }
 
 export async function clearAuthTokens({ notifyListeners = true } = {}) {
+    if (notifyListeners) {
+        // Account-scoped native state (including system alarms) must be purged
+        // while the current member binding is still readable. Each listener is
+        // failure-isolated so credential deletion cannot be skipped.
+        const cleanupResults = await Promise.allSettled(
+            Array.from(authInvalidationListeners, (listener) => listener()),
+        );
+        const cleanupFailure = cleanupResults.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (cleanupFailure) {
+            throw cleanupFailure.reason;
+        }
+    }
+
     const deletionResults = await Promise.allSettled([
         SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
         SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
@@ -217,12 +232,5 @@ export async function clearAuthTokens({ notifyListeners = true } = {}) {
                 console.warn("[auth] 로컬 인증 정보 삭제 실패", result.reason);
             }
         });
-    }
-    if (notifyListeners) {
-        // Callers must not return to a login surface while member-owned caches are
-        // still being deleted, otherwise a fast account switch can race cleanup.
-        await Promise.allSettled(
-            Array.from(authInvalidationListeners, (listener) => listener()),
-        );
     }
 }

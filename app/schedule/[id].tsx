@@ -22,7 +22,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     getSchedule,
-    markScheduleDeparted,
     sendScheduleDepartureNudge,
 } from "../../src/api/schedule";
 import {
@@ -31,6 +30,7 @@ import {
 } from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
+import ScheduleArrivalObservationAction from "../../src/modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import { canEditPresentedSchedule } from "../../src/modules/schedule/schedulePermissions";
@@ -93,6 +93,7 @@ import {
     canOpenParticipantTravelPlan,
     travelPlanStatusLabel,
 } from "../../src/modules/schedule/travelPlanPresentation";
+import { completeScheduleDeparture } from "../../src/modules/schedule/scheduleDepartureCompletion";
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -749,7 +750,7 @@ function ScheduleDetail() {
         setDepartureActionPending(true);
         try {
             const completedAt = new Date().toISOString();
-            const updated = await markScheduleDeparted(id);
+            const updated = await completeScheduleDeparture(id);
             dispatch({
                 type: "UPDATE_ITEM",
                 item: {
@@ -1342,6 +1343,12 @@ function ScheduleDetail() {
                             ) : undefined,
                         }
                         : undefined}
+                    arrivalObservation={item.myDepartedAt ? (
+                        <ScheduleArrivalObservationAction
+                            scheduleId={item.id}
+                            myDepartedAt={item.myDepartedAt}
+                        />
+                    ) : undefined}
                 />
             ) : (
                 <View
@@ -1766,6 +1773,13 @@ function ScheduleDetail() {
                                         </Text>
                                     </View>
                                 )}
+                                {item.myDepartedAt ? (
+                                    <ScheduleArrivalObservationAction
+                                        scheduleId={item.id}
+                                        myDepartedAt={item.myDepartedAt}
+                                        compact
+                                    />
+                                ) : null}
                             </View>
 
                             {departureParticipants.length > 1 && (

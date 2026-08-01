@@ -35,6 +35,8 @@ export interface RouteStep {
     title: string;
     description?: string;
     durationMinutes?: number;
+    /** 공급자 구간 시간에 포함된 승차 대기시간. 실시간 출발 ETA에서 교체하기 위해 보존한다. */
+    waitingMinutes?: number;
     distanceMeters?: number;
     stationCount?: number;
     lineName?: string;
@@ -339,6 +341,7 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
         title: startName ?? lineName ?? fallbackKind,
         description: [destinationHint(endName), stationText, durationText].filter(Boolean).join(" · ") || undefined,
         durationMinutes,
+        waitingMinutes: leg.waitingMinutes,
         distanceMeters: leg.distanceMeters,
         stationCount: leg.stationCount,
         lineName,

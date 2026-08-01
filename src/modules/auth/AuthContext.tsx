@@ -27,12 +27,19 @@ import {
 import { clearAccountScopedLocalData } from "./accountCleanup";
 import { cancelPendingPushRegistration } from "../notification/pushRegistrationCoordinator";
 import { isDefinitiveAuthRejection } from "./refreshPolicy";
+import {
+    isDepartureAlarmAccountCleanupPending,
+} from "../notification/departureAlarmSync";
+
+type AuthenticationSyncOptions = {
+    confirmedFreshLogin?: boolean;
+};
 
 type AuthContextValue = {
     isAuthenticated: boolean;
     isCurationCompleted: boolean;
     isLoading: boolean;
-    syncAuthentication: () => Promise<boolean>;
+    syncAuthentication: (options?: AuthenticationSyncOptions) => Promise<boolean>;
     signOut: () => Promise<void>;
 };
 
@@ -56,11 +63,8 @@ const fallbackAuthContext: AuthContextValue = {
     },
     signOut: async () => {
         cancelPendingPushRegistration();
-        try {
-            await clearAccountScopedLocalData();
-        } finally {
-            await clearAuthTokens({ notifyListeners: false });
-        }
+        await clearAccountScopedLocalData();
+        await clearAuthTokens({ notifyListeners: false });
     },
 };
 
@@ -70,12 +74,30 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const [isLoading, setIsLoading] = useState(true);
     const authenticationSequenceRef = useRef(0);
 
-    const syncAuthentication = useCallback(async () => {
+    const syncAuthentication = useCallback(async (
+        options: AuthenticationSyncOptions = {},
+    ) => {
         const sequence = authenticationSequenceRef.current + 1;
         authenticationSequenceRef.current = sequence;
         const isCurrent = () => authenticationSequenceRef.current === sequence;
 
         try {
+            if (
+                !options.confirmedFreshLogin &&
+                await isDepartureAlarmAccountCleanupPending()
+            ) {
+                // A persisted marker means the previous process may have died
+                // while logging out. Finish that intent instead of silently
+                // restoring stale credentials with alarm sync disabled.
+                cancelPendingPushRegistration();
+                await clearAccountScopedLocalData();
+                await clearAuthTokens({ notifyListeners: false });
+                if (!isCurrent()) return false;
+                setIsAuthenticated(false);
+                setIsCurationCompleted(false);
+                return false;
+            }
+
             let [accessToken, refreshToken, storedMember] = await Promise.all([
                 getAccessToken(),
                 getRefreshToken(),
@@ -172,6 +194,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
         // this account's devices, otherwise a late registration could add the
         // just-signed-out device again after logout.
         cancelPendingPushRegistration();
+        // Establish the durable cleanup marker and purge native alarms before
+        // the server revokes this session. A process death after the remote
+        // response must not leave an unowned system alarm behind.
+        await clearAccountScopedLocalData();
         const refreshToken = await getRefreshToken().catch(() => null);
 
         if (refreshToken) {

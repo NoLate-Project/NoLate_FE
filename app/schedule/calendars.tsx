@@ -31,6 +31,7 @@ import {
     type ScheduleCalendarRole,
     type ScheduleShareContentMode,
 } from "../../src/api/scheduleCalendars";
+import { recoverDepartureAlarmsAfterMutation } from "../../src/modules/notification/departureAlarmMutationRecovery";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
@@ -162,6 +163,9 @@ export default function ScheduleCalendarsScreen() {
     const updateMode = useCallback(async (nextMode: ScheduleShareContentMode) => {
         if (!selected || selected.defaultContentMode === nextMode) return;
         const updated = await updateScheduleCalendar(selected.id, { defaultContentMode: nextMode });
+        if (nextMode === "SCHEDULE_ONLY") {
+            await recoverDepartureAlarmsAfterMutation();
+        }
         replaceCalendar(updated);
     }, [replaceCalendar, selected]);
 
@@ -268,6 +272,7 @@ export default function ScheduleCalendarsScreen() {
                         try {
                             if (ownerAction) await archiveScheduleCalendar(selected.id);
                             else await leaveScheduleCalendar(selected.id);
+                            await recoverDepartureAlarmsAfterMutation();
                             setCalendars((current) => current.filter((calendar) => calendar.id !== selected.id));
                             setSelectedId(null);
                         } catch (error) {

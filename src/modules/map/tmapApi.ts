@@ -73,6 +73,7 @@ export type RouteProviderSearchOptions = {
 };
 
 export type TransitLegKind = "SUBWAY" | "BUS" | "WALK" | "ETC";
+export type TransitServiceClass = "LOCAL" | "EXPRESS" | "UNKNOWN";
 
 export type TransitPassStop = {
     name: string;
@@ -93,9 +94,35 @@ export type TransitLegDetail = {
     kind: TransitLegKind;
     label: string;
     durationMinutes?: number;
+    /** 공급자 경로의 구간 소요시간에 이미 포함된 승차 대기시간. 실시간 ETA 보정 시 교체한다. */
+    waitingMinutes?: number;
+    /** 공급자가 식별하는 노선 ID. ODsay 버스는 busID, 지하철은 도시-노선 코드다. */
+    providerRouteId?: string;
+    /** 지역 BIS가 식별하는 버스 노선 ID. */
+    localRouteId?: string;
+    /** 노선이 속한 도시 코드와 BIS 공급자 코드. */
+    routeCityCode?: string;
+    routeProviderCode?: string;
+    /** 공급자 시간표가 명시한 이 구간의 출발·도착 시각(ISO-8601). */
+    startDateTime?: string;
+    endDateTime?: string;
+    /** ODsay가 구간에 직접 제공한 승차 정류장/역 식별자. */
+    startID?: string;
+    startLocalStationID?: string;
+    startStationCityCode?: string;
+    startStationProviderCode?: string;
+    startArsID?: string;
+    /** ODsay가 구간에 직접 제공한 하차 정류장/역 식별자. */
+    endID?: string;
+    endLocalStationID?: string;
+    endStationCityCode?: string;
+    endStationProviderCode?: string;
+    endArsID?: string;
     distanceMeters?: number;
     stationCount?: number;
     lineName?: string;
+    /** 공급자 계약과 노선 표기가 증명한 일반/급행 종별. 증거가 부족하면 UNKNOWN이다. */
+    serviceClass?: TransitServiceClass;
     /**
      * Tmap 원본이 직접 내려 준 노선 색상.
      * 버스 routeColor / lane.color 같은 "실제 운영 노선색"을 우선 보존해서

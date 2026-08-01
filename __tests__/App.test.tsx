@@ -11,6 +11,9 @@ import {
 import { AuthProvider, useAuth } from "../src/modules/auth/AuthContext";
 import { clearAuthTokens } from "../src/modules/auth/authStorage";
 import { clearAccountScopedLocalData } from "../src/modules/auth/accountCleanup";
+import {
+    isDepartureAlarmAccountCleanupPending,
+} from "../src/modules/notification/departureAlarmSync";
 
 jest.mock("expo-secure-store", () => ({
     deleteItemAsync: jest.fn(),
@@ -28,12 +31,17 @@ jest.mock("../src/modules/auth/accountCleanup", () => ({
     clearAccountScopedLocalData: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../src/modules/notification/departureAlarmSync", () => ({
+    isDepartureAlarmAccountCleanupPending: jest.fn().mockResolvedValue(false),
+}));
+
 const mockedGetItemAsync = jest.mocked(SecureStore.getItemAsync);
 const mockedDeleteItemAsync = jest.mocked(SecureStore.deleteItemAsync);
 const mockedGetMemberCurationStatus = jest.mocked(getMemberCurationStatus);
 const mockedLogoutMember = jest.mocked(logoutMember);
 const mockedTokenLoginMember = jest.mocked(tokenLoginMember);
 const mockedClearAccountScopedLocalData = jest.mocked(clearAccountScopedLocalData);
+const mockedAlarmCleanupPending = jest.mocked(isDepartureAlarmAccountCleanupPending);
 
 function mockStoredSession(curationCompleted = false) {
     mockedGetItemAsync.mockImplementation(async (key) => {
@@ -65,6 +73,11 @@ function SignOutButton() {
     return <Text onPress={signOut}>sign-out</Text>;
 }
 
+function FallbackSignOutButton() {
+    const { signOut } = useAuth();
+    return <Text onPress={signOut}>fallback-sign-out</Text>;
+}
+
 describe("AuthProvider", () => {
     let renderer: ReactTestRenderer | undefined;
 
@@ -78,6 +91,7 @@ describe("AuthProvider", () => {
 
     beforeEach(() => {
         mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: false });
+        mockedAlarmCleanupPending.mockResolvedValue(false);
     });
 
     afterEach(async () => {
@@ -114,6 +128,24 @@ describe("AuthProvider", () => {
         });
 
         expect(renderer?.root.findByType(Text).props.children).toBe("authenticated-incomplete");
+    });
+
+    it("finishes a crash-marked logout instead of restoring stale credentials", async () => {
+        mockStoredSession(false);
+        mockedAlarmCleanupPending.mockResolvedValue(true);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                </AuthProvider>
+            );
+        });
+
+        expect(renderer?.root.findByType(Text).props.children).toBe("unauthenticated");
+        expect(mockedClearAccountScopedLocalData).toHaveBeenCalled();
+        expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
+        expect(mockedDeleteItemAsync).toHaveBeenCalledWith("nolte_refresh_token");
     });
 
     it("restores a valid refresh session when cached member metadata is missing", async () => {
@@ -262,6 +294,42 @@ describe("AuthProvider", () => {
             (node) => node.props.children === "unauthenticated",
         );
         expect(state).toBeDefined();
+    });
+
+    it("purges account alarms before requesting remote logout", async () => {
+        mockStoredSession(false);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AuthProvider>
+                    <AuthState />
+                    <SignOutButton />
+                </AuthProvider>
+            );
+        });
+        const signOut = renderer?.root.findAllByType(Text).find(
+            (node) => node.props.children === "sign-out",
+        );
+
+        await act(async () => {
+            await signOut?.props.onPress();
+        });
+
+        expect(mockedClearAccountScopedLocalData.mock.invocationCallOrder[0])
+            .toBeLessThan(mockedLogoutMember.mock.invocationCallOrder[0]);
+    });
+
+    it("fallback sign-out retains credentials when required alarm purge fails", async () => {
+        mockedClearAccountScopedLocalData.mockRejectedValueOnce(
+            new Error("native alarm purge failed"),
+        );
+        act(() => {
+            renderer = TestRenderer.create(<FallbackSignOutButton />);
+        });
+        const signOut = renderer?.root.findByType(Text);
+
+        await expect(signOut?.props.onPress()).rejects.toThrow("native alarm purge failed");
+        expect(mockedDeleteItemAsync).not.toHaveBeenCalled();
     });
 });
 import {
