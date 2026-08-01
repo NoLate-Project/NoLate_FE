@@ -61,12 +61,11 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "READ_CALENDAR"
+        "READ_CALENDAR",
+        "CAMERA",
+        "RECORD_AUDIO"
       ],
-      "blockedPermissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
-      ]
+      "blockedPermissions": []
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",

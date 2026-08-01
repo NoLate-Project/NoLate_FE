@@ -1,5 +1,6 @@
 import { NativeModules, Platform } from "react-native";
 import type { ParseScheduleInputType } from "../../api/schedule";
+import type { LiveSpeechRecognitionAlternative } from "./liveSpeechRecognition";
 
 export type QuickScheduleMediaInput = {
     inputMode: "text" | "photo" | "voice";
@@ -9,6 +10,7 @@ export type QuickScheduleMediaInput = {
     voiceUri?: string;
     voiceDurationMillis?: number;
     voiceTranscript?: string;
+    voiceAlternatives?: LiveSpeechRecognitionAlternative[];
     recognitionConfidence?: number;
 };
 
@@ -29,7 +31,7 @@ type NativeNoLateQuickInput = {
 type NativeRecognitionResult = {
     text?: string;
     confidence?: number;
-    alternatives?: string[];
+    alternatives?: Array<string | LiveSpeechRecognitionAlternative>;
     requestId?: string;
     attemptCount?: number;
 };
@@ -38,11 +40,13 @@ export type QuickScheduleParseInput = {
     text: string;
     inputType: ParseScheduleInputType;
     recognitionConfidence?: number;
+    recognitionAlternatives?: LiveSpeechRecognitionAlternative[];
 };
 
 export type QuickScheduleRecognitionResult = {
     text: string;
     recognitionConfidence?: number;
+    attemptCount?: number;
     truncated?: boolean;
     sourceLength?: number;
 };
@@ -62,7 +66,7 @@ const SCHEDULE_SPEECH_CONTEXT = [
     "강남역", "서울역", "신촌역", "잠실역", "홍대입구역",
 ] as const;
 
-const nativeQuickInput = Platform.OS === "ios"
+const nativeQuickInput = Platform.OS === "ios" || Platform.OS === "android"
     ? NativeModules.NoLateQuickInput as NativeNoLateQuickInput | undefined
     : undefined;
 
@@ -85,6 +89,37 @@ function normalizeConfidence(value: NativeRecognitionResult | string): number | 
     return typeof value === "string"
         ? undefined
         : normalizeConfidenceValue(value.confidence);
+}
+
+function normalizeRecognitionAlternatives(
+    value: unknown,
+    bestText: string,
+    bestConfidence?: number
+): LiveSpeechRecognitionAlternative[] {
+    if (!Array.isArray(value) || value.length === 0) return [];
+
+    const alternatives: LiveSpeechRecognitionAlternative[] = [];
+    const appendAlternative = (textValue: unknown, confidenceValue?: unknown) => {
+        if (typeof textValue !== "string") return;
+        const text = normalizeExtractedText(textValue);
+        if (!text || alternatives.some((alternative) => alternative.text === text)) return;
+        const confidence = normalizeConfidenceValue(confidenceValue);
+        alternatives.push({
+            text,
+            ...(confidence !== undefined ? { confidence } : {}),
+        });
+    };
+
+    appendAlternative(bestText, bestConfidence);
+    for (const candidate of value) {
+        if (typeof candidate === "string") {
+            appendAlternative(candidate);
+        } else if (candidate && typeof candidate === "object") {
+            appendAlternative(candidate.text, candidate.confidence);
+        }
+        if (alternatives.length >= 3) break;
+    }
+    return alternatives.slice(0, 3);
 }
 
 function scheduleLineScore(line: string): number {
@@ -192,12 +227,18 @@ export async function recognizeQuickSchedulePhoto(
         throw new Error("사진에서 일정 텍스트를 찾지 못했습니다.");
     }
     const recognitionConfidence = normalizeConfidence(recognition);
+    const attemptCount = typeof recognition === "string"
+        ? undefined
+        : Number.isSafeInteger(recognition.attemptCount) && (recognition.attemptCount ?? 0) > 0
+            ? recognition.attemptCount
+            : undefined;
     return {
         text: extractedText,
         ...(normalizedText.length > extractedText.length
             ? { truncated: true, sourceLength: normalizedText.length }
             : {}),
         ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+        ...(attemptCount !== undefined ? { attemptCount } : {}),
     };
 }
 
@@ -220,7 +261,8 @@ function inputTypeForMode(inputMode: QuickScheduleMediaInput["inputMode"]): Pars
 
 /**
  * QuickScheduleModal은 사진/녹음의 파일 URI만 알고, 백엔드는 텍스트만 받는다.
- * 이 함수가 그 경계다. 사진은 iOS Vision OCR, 음성은 iOS Speech 전사로 텍스트를 만든 뒤
+ * 이 함수가 그 경계다. 사진은 iOS Vision 또는 Android ML Kit, 음성은 각 OS의 시스템
+ * 음성 인식으로 텍스트를 만든 뒤
  * 기존 /api/schedules/parse 계약에 맞는 text + inputType과 선택적 신뢰도만 반환한다.
  *
  * 서버로 원본 미디어를 업로드하지 않는 것이 현재 제품 결정이므로, 네이티브 모듈이 없거나
@@ -244,10 +286,17 @@ export async function resolveQuickScheduleParseInput(
     // 수정한 최종 문장을 그대로 일정 분석 경계로 넘겨 불필요한 재인식 손실을 피한다.
     if (inputMode === "voice" && media?.voiceTranscript?.trim()) {
         const recognitionConfidence = normalizeConfidenceValue(media.recognitionConfidence);
+        const normalizedText = normalizeExtractedText(media.voiceTranscript);
+        const recognitionAlternatives = normalizeRecognitionAlternatives(
+            media.voiceAlternatives,
+            normalizedText,
+            recognitionConfidence
+        );
         return {
-            text: normalizeExtractedText(media.voiceTranscript),
+            text: normalizedText,
             inputType,
             ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+            ...(recognitionAlternatives.length > 0 ? { recognitionAlternatives } : {}),
         };
     }
 
@@ -293,12 +342,17 @@ export async function resolveQuickScheduleParseInput(
     if (!extractedText) {
         throw new Error("음성에서 일정 텍스트를 찾지 못했습니다.");
     }
+    const recognitionConfidence = normalizeConfidence(recognition);
+    const recognitionAlternatives = normalizeRecognitionAlternatives(
+        typeof recognition === "string" ? undefined : recognition.alternatives,
+        extractedText,
+        recognitionConfidence
+    );
 
     return {
         text: extractedText,
         inputType,
-        ...(normalizeConfidence(recognition) !== undefined
-            ? { recognitionConfidence: normalizeConfidence(recognition) }
-            : {}),
+        ...(recognitionConfidence !== undefined ? { recognitionConfidence } : {}),
+        ...(recognitionAlternatives.length > 0 ? { recognitionAlternatives } : {}),
     };
 }

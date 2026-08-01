@@ -4,13 +4,13 @@ describe("quick schedule media input extraction", () => {
         recognizeTextFromImageWithRequestId?: jest.Mock;
         cancelImageRecognition?: jest.Mock;
         transcribeAudioFile?: jest.Mock;
-    }) {
+    }, platform: "ios" | "android" = "ios") {
         jest.resetModules();
         jest.doMock("react-native", () => ({
             NativeModules: nativeModule
                 ? { NoLateQuickInput: nativeModule }
                 : {},
-            Platform: { OS: "ios" },
+            Platform: { OS: platform },
         }));
 
         return require("../src/modules/schedule/quickInputExtraction") as typeof import("../src/modules/schedule/quickInputExtraction");
@@ -61,6 +61,25 @@ describe("quick schedule media input extraction", () => {
             recognitionConfidence: 0.87,
         });
         expect(recognizeTextFromImage).toHaveBeenCalledWith("file:///tmp/schedule.png");
+    });
+
+    test("Android에서도 같은 OCR 브리지를 사용한다", async () => {
+        const recognizeTextFromImage = jest.fn().mockResolvedValue({
+            text: "8월 3일 오후 2시 서울역 회의",
+            confidence: 0.93,
+        });
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
+            recognizeTextFromImage,
+        }, "android");
+
+        await expect(resolveQuickScheduleParseInput("", {
+            inputMode: "photo",
+            photoUri: "file:///tmp/android-schedule.png",
+        })).resolves.toEqual({
+            text: "8월 3일 오후 2시 서울역 회의",
+            inputType: "IMAGE_OCR",
+            recognitionConfidence: 0.93,
+        });
     });
 
     test("긴 OCR 결과에서도 뒤쪽의 일정 날짜와 시간을 우선 보존한다", async () => {
@@ -183,6 +202,53 @@ describe("quick schedule media input extraction", () => {
             text: "내일 오후 세 시 강남역 미팅",
             inputType: "VOICE_TRANSCRIPT",
             recognitionConfidence: 1,
+        });
+    });
+
+    test("실시간 받아쓰기 상위 후보를 정규화해 AI 보정 입력으로 전달한다", async () => {
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative();
+
+        await expect(resolveQuickScheduleParseInput("음성으로 입력한 일정", {
+            inputMode: "voice",
+            voiceTranscript: "  내일 오후 세 시 강남역 회의  ",
+            recognitionConfidence: 0.89,
+            voiceAlternatives: [
+                { text: "내일 오후 세 시 강남역 회의", confidence: 0.89 },
+                { text: " 내일 오후 세 시 강남형 회의 ", confidence: 0.64 },
+                { text: "내일 오후 세 시 강남역 회의", confidence: 0.52 },
+            ],
+        })).resolves.toEqual({
+            text: "내일 오후 세 시 강남역 회의",
+            inputType: "VOICE_TRANSCRIPT",
+            recognitionConfidence: 0.89,
+            recognitionAlternatives: [
+                { text: "내일 오후 세 시 강남역 회의", confidence: 0.89 },
+                { text: "내일 오후 세 시 강남형 회의", confidence: 0.64 },
+            ],
+        });
+    });
+
+    test("녹음 파일 전사의 문자열 후보도 구조화된 후보로 변환한다", async () => {
+        const transcribeAudioFile = jest.fn().mockResolvedValue({
+            text: "내일 오후 세 시 강남역 회의",
+            confidence: 0.9,
+            alternatives: [
+                "내일 오후 세 시 강남역 회의",
+                "내일 오후 세 시 강남형 회의",
+            ],
+        });
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
+            transcribeAudioFile,
+        });
+
+        await expect(resolveQuickScheduleParseInput("", {
+            inputMode: "voice",
+            voiceUri: "file:///tmp/schedule.m4a",
+        })).resolves.toMatchObject({
+            recognitionAlternatives: [
+                { text: "내일 오후 세 시 강남역 회의", confidence: 0.9 },
+                { text: "내일 오후 세 시 강남형 회의" },
+            ],
         });
     });
 

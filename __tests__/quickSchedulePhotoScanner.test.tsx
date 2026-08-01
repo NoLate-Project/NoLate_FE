@@ -57,6 +57,7 @@ jest.mock("../src/modules/schedule/quickInputExtraction", () => ({
     recognizeQuickSchedulePhoto: (...args: unknown[]) => mockRecognizeQuickSchedulePhoto(...args),
 }));
 jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
+    ...jest.requireActual("../src/modules/schedule/liveSpeechRecognition"),
     isLiveSpeechRecognitionAvailable: false,
     addLiveSpeechTranscriptListener: jest.fn(() => null),
     addLiveSpeechLevelListener: jest.fn(() => null),
@@ -80,6 +81,12 @@ const parseResult: ScheduleParseResult = {
     needsReview: false,
     warnings: [],
     missingFields: [],
+    confidence: {
+        overall: 0.97,
+        level: "HIGH",
+        fields: { date: 0.98, time: 0.98, destination: 0.94 },
+        reasons: [],
+    },
 };
 
 describe("QuickScheduleModal photo OCR", () => {

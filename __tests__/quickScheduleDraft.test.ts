@@ -1,7 +1,9 @@
 import {
     applyQuickScheduleRouteResult,
     buildQuickSchedulePayload,
+    buildQuickScheduleReliabilityFeedback,
     buildQuickSchedulePreviewDraft,
+    confirmQuickScheduleGlobalReview,
     getQuickScheduleBlockingReviewField,
     isQuickScheduleRouteReady,
     isValidQuickScheduleDate,
@@ -28,6 +30,12 @@ function parseResult(
         needsReview: false,
         warnings: [],
         missingFields: [],
+        confidence: {
+            overall: 0.97,
+            level: "HIGH",
+            fields: { date: 0.98, time: 0.98, destination: 0.94 },
+            reasons: [],
+        },
         ...overrides,
     };
 }
@@ -127,6 +135,128 @@ describe("quick schedule draft", () => {
 
         expect(draft.badges.time).toBe("시간 확인 필요");
         expect(getQuickScheduleBlockingReviewField(draft)).toBe("time");
+    });
+
+    test("90% 미만 핵심 필드는 저장을 막고 사용자 확인을 분석 점수와 분리해 기록한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "서울역 회의",
+            date: "2026-07-20",
+            time: "15:00",
+            destination,
+            confidence: {
+                overall: 0.86,
+                level: "MEDIUM",
+                fields: { date: 0.98, time: 0.86, destination: 0.82 },
+                reasons: ["음성 인식 결과를 확인해 주세요."],
+            },
+        }), "월요일 오후 3시 서울역 회의", "2026-07-17");
+
+        expect(draft.badges.time).toBe("신뢰도 확인 필요");
+        expect(draft.badges.location).toBe("장소 확인 필요");
+        expect(getQuickScheduleBlockingReviewField(draft)).toBe("time");
+
+        const timeConfirmed = updateQuickSchedulePreviewDraft(draft, "time", draft.time);
+        expect(timeConfirmed.parsed?.confidence?.fields.time).toBe(0.86);
+        expect(timeConfirmed.parsed?.confidence?.level).toBe("MEDIUM");
+        expect(timeConfirmed.verification?.fields.time).toBe("USER_CONFIRMED");
+        expect(getQuickScheduleBlockingReviewField(timeConfirmed)).toBe("location");
+
+        const locationConfirmed = updateQuickSchedulePreviewDraft(
+            timeConfirmed,
+            "location",
+            timeConfirmed.location
+        );
+        expect(locationConfirmed.parsed?.confidence).toEqual(expect.objectContaining({
+            overall: 0.86,
+            level: "MEDIUM",
+        }));
+        expect(locationConfirmed.verification?.fields.destination).toBe("USER_CONFIRMED");
+        expect(getQuickScheduleBlockingReviewField(locationConfirmed)).toBeNull();
+    });
+
+    test("신뢰도 계약이 없는 구버전 응답은 세 핵심 필드 확인 전 저장할 수 없다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "서울역 회의",
+            date: "2026-07-20",
+            time: "15:00",
+            destination,
+            confidence: undefined,
+        }), "월요일 오후 3시 서울역 회의", "2026-07-17");
+
+        expect(draft.badges).toEqual(expect.objectContaining({
+            date: "신뢰도 계산 불가",
+            time: "신뢰도 계산 불가",
+            location: "신뢰도 계산 불가",
+        }));
+        expect(getQuickScheduleBlockingReviewField(draft)).toBe("date");
+
+        const dateConfirmed = updateQuickSchedulePreviewDraft(draft, "date", draft.date);
+        const timeConfirmed = updateQuickSchedulePreviewDraft(dateConfirmed, "time", draft.time);
+        const locationConfirmed = updateQuickSchedulePreviewDraft(
+            timeConfirmed,
+            "location",
+            draft.location
+        );
+
+        expect(locationConfirmed.verification?.fields).toEqual({
+            date: "USER_CONFIRMED",
+            time: "USER_CONFIRMED",
+            destination: "USER_CONFIRMED",
+        });
+        expect(getQuickScheduleBlockingReviewField(locationConfirmed)).toBeNull();
+    });
+
+    test("범위를 벗어난 신뢰도 응답도 계산 실패로 보고 저장을 막는다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            date: "2026-07-20",
+            time: "15:00",
+            destination,
+            confidence: {
+                overall: 1.2,
+                level: "HIGH",
+                fields: { date: 0.98, time: 0.98, destination: 0.94 },
+                reasons: [],
+            },
+        }), "월요일 오후 3시 서울역 회의", "2026-07-17");
+
+        expect(draft.parsed?.confidence).toBeUndefined();
+        expect(draft.badges.date).toBe("신뢰도 계산 불가");
+        expect(getQuickScheduleBlockingReviewField(draft)).toBe("date");
+    });
+
+    test("필드로 특정할 수 없는 서버 검토 요청은 전체 내용 확인을 요구한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "서울역 회의",
+            date: "2026-07-20",
+            time: "15:00",
+            destination,
+            needsReview: true,
+            warnings: ["분석 결과 전체를 원문과 비교해 주세요."],
+        }), "월요일 오후 3시 서울역 회의", "2026-07-17");
+
+        expect(getQuickScheduleBlockingReviewField(draft)).toBe("review");
+        expect(
+            getQuickScheduleBlockingReviewField(confirmQuickScheduleGlobalReview(draft))
+        ).toBeNull();
+    });
+
+    test("원본 인식률이 높아도 장소 필드가 90% 미만이면 장소 확인을 요구한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "회의",
+            date: "2026-07-20",
+            time: "15:00",
+            destination,
+            confidence: {
+                overall: 0.91,
+                level: "HIGH",
+                recognition: 0.97,
+                fields: { date: 0.98, time: 0.98, destination: 0.89 },
+                reasons: [],
+            },
+        }), "월요일 오후 3시 서울역 회의", "2026-07-17");
+
+        expect(draft.badges.location).toBe("장소 확인 필요");
+        expect(getQuickScheduleBlockingReviewField(draft)).toBe("location");
     });
 
     test("존재하지 않는 날짜와 24시는 유효하지 않다", () => {
@@ -317,5 +447,39 @@ describe("quick schedule draft", () => {
         );
 
         expect(payload.departAt).toBe(routeInfo().departureTime);
+    });
+});
+
+describe("빠른 일정 신뢰도 피드백", () => {
+    test("모델 점수는 바꾸지 않고 사용자 확인과 수정을 별도 신호로 만든다", () => {
+        const parsed = parseResult({
+            analysisId: "analysis-1",
+            startAt: "2026-07-17T11:00:00.000Z",
+            destination,
+            confidence: {
+                overall: 0.86,
+                level: "MEDIUM",
+                fields: { date: 0.86, time: 0.86, destination: 0.86 },
+                reasons: [],
+            },
+        });
+        let draft = buildQuickSchedulePreviewDraft(parsed, "회의", "2026-07-17");
+        draft = updateQuickSchedulePreviewDraft(draft, "date", draft.date);
+        draft = updateQuickSchedulePreviewDraft(draft, "time", "20:30");
+        draft = updateQuickSchedulePreviewDraft(draft, "location", "용산역");
+
+        expect(buildQuickScheduleReliabilityFeedback(draft, "SAVED")).toEqual({
+            analysisId: "analysis-1",
+            outcome: "SAVED",
+            date: "USER_CONFIRMED",
+            time: "USER_CORRECTED",
+            destination: "USER_CORRECTED",
+            globalConfirmed: false,
+        });
+        expect(draft.parsed?.confidence?.overall).toBe(0.86);
+    });
+
+    test("분석 ID가 없는 구버전 응답은 피드백을 만들지 않는다", () => {
+        expect(buildQuickScheduleReliabilityFeedback(completeDraft(), "CANCELLED")).toBeNull();
     });
 });

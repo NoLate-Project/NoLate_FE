@@ -9,6 +9,9 @@ import {
     subscribePushTokenRefresh,
 } from "./modules/notification/pushRegistration";
 import { createScheduleInitialState } from "./modules/schedule/initialState";
+import {
+    activateQuickScheduleReliabilityFeedbackQueueForAuthenticatedMember,
+} from "./modules/schedule/quickScheduleReliabilityFeedbackQueue";
 import { ScheduleProvider } from "./modules/schedule/store";
 import { ThemeProvider } from "./modules/theme/ThemeContext";
 
@@ -39,6 +42,19 @@ function PushRegistrationBootstrap() {
         let unsubscribe: () => void = () => undefined;
         let removeAppStateListener: () => void = () => undefined;
 
+        const drainQuickScheduleFeedback = () => {
+            activateQuickScheduleReliabilityFeedbackQueueForAuthenticatedMember().catch((error) => {
+                console.warn("[quick-schedule] durable feedback queue drain failed", error);
+            });
+        };
+        drainQuickScheduleFeedback();
+        const quickScheduleFeedbackAppStateSubscription = AppState.addEventListener(
+            "change",
+            (state) => {
+                if (state === "active") drainQuickScheduleFeedback();
+            },
+        );
+
         getMyProfile()
             .then((profile) => {
                 if (cancelled) return;
@@ -66,6 +82,7 @@ function PushRegistrationBootstrap() {
             cancelled = true;
             removeAppStateListener();
             unsubscribe();
+            quickScheduleFeedbackAppStateSubscription.remove();
         };
     }, [isAuthenticated, isLoading]);
 

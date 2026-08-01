@@ -32,12 +32,18 @@ export type LiveSpeechAvailability = {
     reason?: string;
 };
 
+export type LiveSpeechRecognitionAlternative = {
+    text: string;
+    confidence?: number;
+};
+
 export type LiveSpeechTranscript = {
     sessionId: string;
     text: string;
     isFinal: boolean;
     confidence?: number;
     elapsedMillis?: number;
+    alternatives?: LiveSpeechRecognitionAlternative[];
 };
 
 export type LiveSpeechLevel = {
@@ -58,6 +64,18 @@ export type LiveSpeechFinalResult = {
     text: string;
     confidence?: number;
     elapsedMillis?: number;
+    alternatives?: LiveSpeechRecognitionAlternative[];
+};
+
+export type LiveSpeechTranscriptBuffer = {
+    stableText: string;
+    volatileText: string;
+};
+
+export type LiveSpeechTranscriptSnapshot = {
+    buffer: LiveSpeechTranscriptBuffer;
+    text: string;
+    alternatives?: LiveSpeechRecognitionAlternative[];
 };
 
 type NativeLiveSpeechModule = {
@@ -75,7 +93,7 @@ type NativeLiveSpeechModule = {
     removeListeners: (count: number) => void;
 };
 
-const nativeLiveSpeech = Platform.OS === "ios"
+const nativeLiveSpeech = Platform.OS === "ios" || Platform.OS === "android"
     ? NativeModules.NoLateLiveSpeech as NativeLiveSpeechModule | undefined
     : undefined;
 
@@ -95,6 +113,49 @@ export function createLiveSpeechSessionId(): string {
 function normalizeConfidence(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
     return Math.max(0, Math.min(1, value));
+}
+
+function normalizeSpeechText(value: unknown): string {
+    if (typeof value !== "string") return "";
+    return value
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .trim();
+}
+
+export function normalizeLiveSpeechRecognitionAlternatives(
+    value: unknown,
+    bestText?: string,
+    bestConfidence?: number
+): LiveSpeechRecognitionAlternative[] {
+    const normalizedBestText = normalizeSpeechText(bestText);
+    const candidates: LiveSpeechRecognitionAlternative[] = [];
+    const appendCandidate = (candidateText: unknown, candidateConfidence?: unknown) => {
+        const text = normalizeSpeechText(candidateText);
+        if (!text || candidates.some((candidate) => candidate.text === text)) return;
+        const confidence = normalizeConfidence(candidateConfidence);
+        candidates.push({
+            text,
+            ...(confidence !== undefined ? { confidence } : {}),
+        });
+    };
+
+    if (normalizedBestText) {
+        appendCandidate(normalizedBestText, bestConfidence);
+    }
+    if (Array.isArray(value)) {
+        for (const candidate of value) {
+            if (typeof candidate === "string") {
+                appendCandidate(candidate);
+            } else if (candidate && typeof candidate === "object") {
+                const source = candidate as Record<string, unknown>;
+                appendCandidate(source.text, source.confidence);
+            }
+            if (candidates.length >= 3) break;
+        }
+    }
+    return candidates.slice(0, 3);
 }
 
 function normalizeElapsedMillis(value: unknown): number | undefined {
@@ -152,20 +213,130 @@ function normalizeTranscript(value: unknown): LiveSpeechTranscript | null {
     const sessionId = normalizeSessionId(source.sessionId);
     if (!sessionId || typeof source.text !== "string") return null;
 
-    const text = source.text
-        .replace(/\r\n/g, "\n")
-        .replace(/[ \t]+/g, " ")
-        .trim();
+    const text = normalizeSpeechText(source.text);
+    const confidence = normalizeConfidence(source.confidence);
+    const alternatives = normalizeLiveSpeechRecognitionAlternatives(
+        source.alternatives,
+        text,
+        confidence
+    );
 
     return {
         sessionId,
         text,
         isFinal: source.isFinal === true,
-        ...(normalizeConfidence(source.confidence) !== undefined
-            ? { confidence: normalizeConfidence(source.confidence) }
-            : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
         ...(normalizeElapsedMillis(source.elapsedMillis) !== undefined
             ? { elapsedMillis: normalizeElapsedMillis(source.elapsedMillis) }
+            : {}),
+        ...(Array.isArray(source.alternatives) && alternatives.length > 0
+            ? { alternatives }
+            : {}),
+    };
+}
+
+function transcriptTokens(value: string): string[] {
+    return value.split(/\s+/).filter(Boolean);
+}
+
+function joinTranscriptParts(left: string, right: string): string {
+    const normalizedLeft = normalizeSpeechText(left);
+    const normalizedRight = normalizeSpeechText(right);
+    if (!normalizedLeft) return normalizedRight;
+    if (!normalizedRight) return normalizedLeft;
+    if (normalizedRight === normalizedLeft || normalizedRight.startsWith(`${normalizedLeft} `)) {
+        return normalizedRight;
+    }
+    if (normalizedLeft.endsWith(` ${normalizedRight}`)) return normalizedLeft;
+
+    const leftTokens = transcriptTokens(normalizedLeft);
+    const rightTokens = transcriptTokens(normalizedRight);
+    const maxOverlap = Math.min(leftTokens.length, rightTokens.length);
+    for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+        const leftSuffix = leftTokens.slice(-overlap).join(" ");
+        const rightPrefix = rightTokens.slice(0, overlap).join(" ");
+        if (leftSuffix === rightPrefix) {
+            return [...leftTokens, ...rightTokens.slice(overlap)].join(" ");
+        }
+    }
+    return `${normalizedLeft} ${normalizedRight}`;
+}
+
+/**
+ * iOS와 Android의 부분 결과는 확정 전까지 앞 문장을 다시 쓰거나 일시적으로 짧아질 수 있다.
+ * 새 가설이 기존 가설을 확장하면 갱신하고, 기존 가설의 일부로 되돌아간 경우에는 더 완전한
+ * 문장을 보존한다. 서로 겹치지 않는 재가설은 긴 쪽을 선택해 순간적인 앞 문장 유실을 막는다.
+ */
+export function mergeLiveSpeechHypothesis(previous: string, incoming: string): string {
+    const normalizedPrevious = normalizeSpeechText(previous);
+    const normalizedIncoming = normalizeSpeechText(incoming);
+    if (!normalizedPrevious) return normalizedIncoming;
+    if (!normalizedIncoming) return normalizedPrevious;
+    if (normalizedPrevious === normalizedIncoming) return normalizedPrevious;
+    if (
+        normalizedIncoming.startsWith(`${normalizedPrevious} `)
+        || normalizedIncoming.includes(` ${normalizedPrevious} `)
+    ) {
+        return normalizedIncoming;
+    }
+    if (
+        normalizedPrevious.startsWith(`${normalizedIncoming} `)
+        || normalizedPrevious.endsWith(` ${normalizedIncoming}`)
+        || normalizedPrevious.includes(` ${normalizedIncoming} `)
+    ) {
+        return normalizedPrevious;
+    }
+
+    const appended = joinTranscriptParts(normalizedPrevious, normalizedIncoming);
+    if (appended !== `${normalizedPrevious} ${normalizedIncoming}`) return appended;
+    return normalizedIncoming.length >= normalizedPrevious.length
+        ? normalizedIncoming
+        : normalizedPrevious;
+}
+
+export function createLiveSpeechTranscriptBuffer(
+    stableText = ""
+): LiveSpeechTranscriptBuffer {
+    return {
+        stableText: normalizeSpeechText(stableText),
+        volatileText: "",
+    };
+}
+
+/**
+ * stableText는 이전에 끝난 세션/사용자 수정 문장이고 volatileText는 현재 세션의 가설이다.
+ * 따라서 인식을 다시 시작해도 stableText가 유지되며 새 세션의 결과만 뒤에 이어 붙는다.
+ */
+export function accumulateLiveSpeechTranscript(
+    buffer: LiveSpeechTranscriptBuffer,
+    transcript: Pick<LiveSpeechTranscript, "text" | "confidence" | "alternatives">
+): LiveSpeechTranscriptSnapshot {
+    const volatileText = mergeLiveSpeechHypothesis(buffer.volatileText, transcript.text);
+    const nextBuffer = {
+        stableText: normalizeSpeechText(buffer.stableText),
+        volatileText,
+    };
+    const text = joinTranscriptParts(nextBuffer.stableText, volatileText);
+    const alternatives = transcript.alternatives
+        ?.map((alternative) => ({
+            text: joinTranscriptParts(nextBuffer.stableText, alternative.text),
+            ...(alternative.confidence !== undefined
+                ? { confidence: alternative.confidence }
+                : {}),
+        }));
+    const normalizedAlternatives = alternatives
+        ? normalizeLiveSpeechRecognitionAlternatives(
+            alternatives,
+            text,
+            transcript.confidence
+        )
+        : [];
+
+    return {
+        buffer: nextBuffer,
+        text,
+        ...(normalizedAlternatives.length > 0
+            ? { alternatives: normalizedAlternatives }
             : {}),
     };
 }

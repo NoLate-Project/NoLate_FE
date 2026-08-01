@@ -41,6 +41,12 @@ function parsed(overrides: Partial<ScheduleParseResult> = {}): ScheduleParseResu
         needsReview: false,
         warnings: [],
         missingFields: [],
+        confidence: {
+            overall: 0.97,
+            level: "HIGH",
+            fields: { date: 0.98, time: 0.98, destination: 0.94 },
+            reasons: [],
+        },
         ...overrides,
     };
 }
@@ -75,6 +81,7 @@ describe("QuickScheduleModal flow", () => {
         onAnalyze: jest.Mock<Promise<ScheduleParseResult>, [string, unknown?]>,
         onSave: jest.Mock = jest.fn(),
         defaultCategory: ScheduleCategory = { id: "category-1", title: "일정", color: "#246BFE" },
+        onFeedback: jest.Mock = jest.fn(),
     ) {
         const renderTree = () => (
             <ThemeProvider>
@@ -84,6 +91,7 @@ describe("QuickScheduleModal flow", () => {
                     defaultCategory={defaultCategory}
                     onAnalyze={onAnalyze}
                     onSave={onSave}
+                    onFeedback={onFeedback}
                     onClose={jest.fn()}
                 />
             </ThemeProvider>
@@ -206,6 +214,30 @@ describe("QuickScheduleModal flow", () => {
             pathname: "/schedule/route-select",
             params: { sessionId: expect.stringMatching(/^quick-route-/) },
         });
+    });
+
+    test("90% 미만 분석은 신뢰도와 사용자가 취할 개선 방법을 함께 보여준다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsed({
+            confidence: {
+                overall: 0.86,
+                level: "MEDIUM",
+                recognition: 0.84,
+                fields: { date: 0.98, time: 0.86, destination: 0.82 },
+                reasons: ["음성 인식 결과를 확인해 주세요."],
+            },
+        })));
+
+        expect(
+            renderer!.root.findByProps({
+                accessibilityLabel: "일정 분석 신뢰도 86퍼센트, 확인 권장",
+            })
+        ).toBeDefined();
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "신뢰도 개선 방법" }).props.children
+        ).toEqual([
+            "개선 방법 · ",
+            "사진·음성 인식 문장을 원본과 비교해 수정 후 시간·장소 항목을 눌러 확인",
+        ]);
     });
 
     test("분석 실패 뒤 모달을 닫지 않고 원문을 수정할 수 있다", async () => {

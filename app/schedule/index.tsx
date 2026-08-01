@@ -86,6 +86,9 @@ import {
     searchSchedules,
     synchronizeCalendarScheduleCacheRevision,
 } from "../../src/api/schedule";
+import {
+    recordQuickScheduleReliabilityFeedbackDurably,
+} from "../../src/modules/schedule/quickScheduleReliabilityFeedbackQueue";
 import { getCalendarDays } from "../../src/api/calendar";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
 import { getShareInbox } from "../../src/api/scheduleSharing";
@@ -4217,6 +4220,9 @@ export default function ScheduleIndex() {
                 onCloseStart={handleQuickModalCloseStart}
                 onAnalyze={handleQuickAnalyze}
                 onSave={addQuickItem}
+                onFeedback={async feedback => {
+                    await recordQuickScheduleReliabilityFeedbackDurably(feedback);
+                }}
                 defaultDay={selectedDay}
                 defaultCategory={writableCategories[0]}
                 categoryError={categoryError}

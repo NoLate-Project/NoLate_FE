@@ -55,24 +55,34 @@ import {
 } from "../../quickInputExtraction";
 import { finalizeQuickScheduleRecording } from "../../quickInputRecording";
 import {
+    accumulateLiveSpeechTranscript,
     addLiveSpeechLevelListener,
     addLiveSpeechStateListener,
     addLiveSpeechTranscriptListener,
     cancelLiveSpeechRecognition,
+    createLiveSpeechTranscriptBuffer,
     createLiveSpeechSessionId,
     getLiveSpeechRecognitionAvailability,
     isLiveSpeechRecognitionAvailable,
     startLiveSpeechRecognition,
     stopLiveSpeechRecognition,
+    type LiveSpeechRecognitionAlternative,
 } from "../../liveSpeechRecognition";
-import type { ScheduleCategory, ScheduleItem, ScheduleParseResult } from "../../types";
+import type {
+    QuickScheduleReliabilityFeedback,
+    ScheduleCategory,
+    ScheduleItem,
+    ScheduleParseResult,
+} from "../../types";
 import { canWriteScheduleCategory } from "../../categoryPermissions";
 import { formatRouteClock, formatRouteDuration } from "../../routeInfo";
 import { consumeRoutePlannerResult, setRoutePlannerInitial } from "../../routePlannerSession";
 import {
     applyQuickScheduleRouteResult as applyRouteResultToPreviewDraft,
     buildQuickSchedulePayload,
+    buildQuickScheduleReliabilityFeedback,
     buildQuickSchedulePreviewDraft as buildPreviewDraft,
+    confirmQuickScheduleGlobalReview,
     getQuickSchedulePreviewRouteInfo,
     getQuickScheduleBlockingReviewField,
     isQuickScheduleRouteReady as canUseRouteNotification,
@@ -96,6 +106,7 @@ type Props = {
     onCloseStart?: () => void;
     onAnalyze: (text: string, media?: QuickScheduleMediaInput) => Promise<ScheduleParseResult>;
     onSave: (payload: Omit<ScheduleItem, "id">) => void | Promise<void>;
+    onFeedback?: (feedback: QuickScheduleReliabilityFeedback) => void | Promise<void>;
     defaultDay: string;
     defaultCategory?: ScheduleCategory;
     categoryError?: string | null;
@@ -130,6 +141,26 @@ function limitRecognizedText(value: string) {
         text: value.slice(0, QUICK_TEXT_LIMIT),
         truncated: value.length > QUICK_TEXT_LIMIT,
     };
+}
+
+function limitRecognitionAlternatives(
+    alternatives: LiveSpeechRecognitionAlternative[] | undefined
+): LiveSpeechRecognitionAlternative[] {
+    if (!alternatives) return [];
+
+    const limited: LiveSpeechRecognitionAlternative[] = [];
+    for (const alternative of alternatives) {
+        const text = limitRecognizedText(alternative.text).text.trim();
+        if (!text || limited.some((candidate) => candidate.text === text)) continue;
+        limited.push({
+            text,
+            ...(alternative.confidence !== undefined
+                ? { confidence: alternative.confidence }
+                : {}),
+        });
+        if (limited.length >= 3) break;
+    }
+    return limited;
 }
 
 export function resolvePhotoPreviewAspectRatio(value?: number | null) {
@@ -168,7 +199,12 @@ const CARD_HEIGHT_BY_MODE: Record<InputMode, number> = {
     photo: 560,
     voice: 560,
 };
-const LOW_RECOGNITION_CONFIDENCE = 0.65;
+// 서버의 mediaRecognitionReviewThreshold와 같은 정책을 사용한다. 서로 다른 문턱은
+// 65~77% 사진을 입력 화면에서는 안전해 보이게 하고 서버에서만 검토 대상으로 만들었다.
+const LOW_RECOGNITION_CONFIDENCE = 0.78;
+const LIVE_SPEECH_TOTAL_DURATION_MILLIS = 60_000;
+const LIVE_SPEECH_MIN_SESSION_DURATION_MILLIS = 5_000;
+type LiveSpeechCaptureStartMode = "fresh" | "rollover";
 // 실제 음량 샘플은 반원만큼만 보관하고 화면에서는 반대편에 미러링한다.
 // 원형 파형의 무게 중심이 한쪽으로 쏠리지 않아 작은 화면에서도 안정적으로 보인다.
 const VOICE_SPECTRUM_SAMPLE_COUNT = 24;
@@ -487,6 +523,7 @@ export default function QuickScheduleModal({
     onCloseStart,
     onAnalyze,
     onSave,
+    onFeedback,
     defaultDay,
     defaultCategory,
     categoryError,
@@ -520,6 +557,9 @@ export default function QuickScheduleModal({
     const [voiceTranscript, setVoiceTranscript] = useState("");
     const [voiceTranscriptTruncated, setVoiceTranscriptTruncated] = useState(false);
     const [voiceRecognitionConfidence, setVoiceRecognitionConfidence] = useState<number>();
+    const [voiceRecognitionAlternatives, setVoiceRecognitionAlternatives] = useState<
+        LiveSpeechRecognitionAlternative[]
+    >([]);
     const [voiceStatusMessage, setVoiceStatusMessage] = useState("");
     const [isVoiceRecording, setIsVoiceRecording] = useState(false);
     const [isVoiceFinalizing, setIsVoiceFinalizing] = useState(false);
@@ -562,6 +602,17 @@ export default function QuickScheduleModal({
         operation: number;
         sessionId: string;
     } | null>(null);
+    const liveSpeechTranscriptBufferRef = useRef(createLiveSpeechTranscriptBuffer());
+    const liveSpeechBaseDurationMillisRef = useRef(0);
+    const liveSpeechCaptureActiveRef = useRef(false);
+    const liveSpeechCaptureStartedAtRef = useRef(0);
+    const liveSpeechRequiresOnDeviceRecognitionRef = useRef(true);
+    const beginLiveSpeechCaptureRef = useRef<((
+        requiresOnDeviceRecognition: boolean,
+        startMode: LiveSpeechCaptureStartMode
+    ) => Promise<void>) | null>(null);
+    const voiceTranscriptRef = useRef("");
+    const voiceDurationMillisRef = useRef(0);
     const voiceTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const closingRef = useRef(false);
     const openHandoffFrameRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
@@ -604,14 +655,24 @@ export default function QuickScheduleModal({
 
         const transcriptSubscription = addLiveSpeechTranscriptListener((event) => {
             if (!belongsToActiveSession(event.sessionId)) return;
-            const limited = limitRecognizedText(event.text);
+            const snapshot = accumulateLiveSpeechTranscript(
+                liveSpeechTranscriptBufferRef.current,
+                event
+            );
+            liveSpeechTranscriptBufferRef.current = snapshot.buffer;
+            const limited = limitRecognizedText(snapshot.text);
+            voiceTranscriptRef.current = limited.text;
             setVoiceTranscript(limited.text);
             setVoiceTranscriptTruncated(limited.truncated);
-            if (event.confidence !== undefined) {
-                setVoiceRecognitionConfidence(event.confidence);
-            }
+            setVoiceRecognitionAlternatives(limitRecognitionAlternatives(snapshot.alternatives));
+            setVoiceRecognitionConfidence(event.confidence);
             if (event.elapsedMillis !== undefined) {
-                setVoiceDurationMillis(event.elapsedMillis);
+                const durationMillis = Math.min(
+                    LIVE_SPEECH_TOTAL_DURATION_MILLIS,
+                    liveSpeechBaseDurationMillisRef.current + event.elapsedMillis
+                );
+                voiceDurationMillisRef.current = durationMillis;
+                setVoiceDurationMillis(durationMillis);
             }
         });
         const levelSubscription = addLiveSpeechLevelListener((event) => {
@@ -619,7 +680,12 @@ export default function QuickScheduleModal({
             const level = Math.max(event.rms, event.peak * 0.72);
             setVoiceMeterHistory((current) => appendVoiceMeterHistory(current, level));
             if (event.elapsedMillis !== undefined) {
-                setVoiceDurationMillis(event.elapsedMillis);
+                const durationMillis = Math.min(
+                    LIVE_SPEECH_TOTAL_DURATION_MILLIS,
+                    liveSpeechBaseDurationMillisRef.current + event.elapsedMillis
+                );
+                voiceDurationMillisRef.current = durationMillis;
+                setVoiceDurationMillis(durationMillis);
             }
         });
         const stateSubscription = addLiveSpeechStateListener((event) => {
@@ -638,8 +704,44 @@ export default function QuickScheduleModal({
                 return;
             }
             if (event.state === "finished" || event.state === "cancelled" || event.state === "failed") {
+                const shouldRollover = (
+                    event.state === "finished"
+                    && liveSpeechCaptureActiveRef.current
+                    && !liveSpeechStopInFlightRef.current
+                    && mountedRef.current
+                    && visibleRef.current
+                    && !closingRef.current
+                );
                 liveSpeechSessionIdRef.current = null;
                 liveSpeechStartingRef.current = false;
+
+                const captureWallTimeMillis = liveSpeechCaptureStartedAtRef.current > 0
+                    ? Date.now() - liveSpeechCaptureStartedAtRef.current
+                    : 0;
+                const totalElapsedMillis = Math.max(
+                    voiceDurationMillisRef.current,
+                    captureWallTimeMillis
+                );
+                const remainingMillis = LIVE_SPEECH_TOTAL_DURATION_MILLIS
+                    - totalElapsedMillis;
+                const restartCapture = beginLiveSpeechCaptureRef.current;
+                if (
+                    shouldRollover
+                    && remainingMillis >= LIVE_SPEECH_MIN_SESSION_DURATION_MILLIS
+                    && restartCapture
+                ) {
+                    setIsVoiceRecording(true);
+                    setIsVoiceFinalizing(true);
+                    setVoiceStatusMessage("계속 듣고 있어요.");
+                    restartCapture(
+                        liveSpeechRequiresOnDeviceRecognitionRef.current,
+                        "rollover"
+                    ).catch(() => undefined);
+                    return;
+                }
+
+                liveSpeechCaptureActiveRef.current = false;
+                liveSpeechCaptureStartedAtRef.current = 0;
                 setIsVoiceRecording(false);
                 setIsVoiceFinalizing(false);
                 setVoiceMeterHistory(createVoiceMeterHistory());
@@ -789,6 +891,8 @@ export default function QuickScheduleModal({
         const liveSpeechSessionId = liveSpeechSessionIdRef.current;
         const cleanupOperation = liveSpeechOperationRef.current + 1;
         liveSpeechOperationRef.current = cleanupOperation;
+        liveSpeechCaptureActiveRef.current = false;
+        liveSpeechCaptureStartedAtRef.current = 0;
         audioRecordingRef.current = null;
         liveSpeechSessionIdRef.current = null;
         liveSpeechStartingRef.current = false;
@@ -802,11 +906,16 @@ export default function QuickScheduleModal({
         setVoiceMeterHistory(createVoiceMeterHistory());
 
         if (!preserveRecording) {
+            voiceDurationMillisRef.current = 0;
+            voiceTranscriptRef.current = "";
+            liveSpeechBaseDurationMillisRef.current = 0;
+            liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
             setVoiceUri(null);
             setVoiceDurationMillis(0);
             setVoiceTranscript("");
             setVoiceTranscriptTruncated(false);
             setVoiceRecognitionConfidence(undefined);
+            setVoiceRecognitionAlternatives([]);
             setVoiceStatusMessage("");
         }
 
@@ -893,6 +1002,8 @@ export default function QuickScheduleModal({
         closeFinishedRef.current = true;
         liveSpeechOperationRef.current += 1;
         liveSpeechStartingRef.current = false;
+        liveSpeechCaptureActiveRef.current = false;
+        liveSpeechCaptureStartedAtRef.current = 0;
         photoSourceOperationRef.current += 1;
         cancelPendingPhotoAction();
         if (closeFinishTimerRef.current) {
@@ -909,11 +1020,16 @@ export default function QuickScheduleModal({
         setPhotoRecognitionError("");
         setPhotoRecognitionAttempt(0);
         setIsPhotoRecognizing(false);
+        voiceDurationMillisRef.current = 0;
+        voiceTranscriptRef.current = "";
+        liveSpeechBaseDurationMillisRef.current = 0;
+        liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
         setVoiceUri(null);
         setVoiceDurationMillis(0);
         setVoiceTranscript("");
         setVoiceTranscriptTruncated(false);
         setVoiceRecognitionConfidence(undefined);
+        setVoiceRecognitionAlternatives([]);
         setVoiceStatusMessage("");
         setIsVoiceRecording(false);
         setIsVoiceFinalizing(false);
@@ -953,6 +1069,8 @@ export default function QuickScheduleModal({
         // 살아남을 수 있으므로 닫기 시작 시 세대와 예약 작업을 즉시 무효화한다.
         liveSpeechOperationRef.current += 1;
         liveSpeechStartingRef.current = false;
+        liveSpeechCaptureActiveRef.current = false;
+        liveSpeechCaptureStartedAtRef.current = 0;
         photoSourceOperationRef.current += 1;
         cancelPendingPhotoAction();
         if (
@@ -1012,10 +1130,16 @@ export default function QuickScheduleModal({
             setSubmitting(false);
         }
 
+        const feedback = (flowStep === "preview" || flowStep === "edit") && previewDraft
+            ? buildQuickScheduleReliabilityFeedback(previewDraft, "CANCELLED")
+            : null;
+        if (feedback) {
+            void Promise.resolve(onFeedback?.(feedback)).catch(() => undefined);
+        }
         closingRef.current = true;
         onCloseStart?.();
         runCloseAnimation(true);
-    }, [flowStep, invalidatePendingAnalysis, onCloseStart, runCloseAnimation, submitting]);
+    }, [flowStep, invalidatePendingAnalysis, onCloseStart, onFeedback, previewDraft, runCloseAnimation, submitting]);
 
     const startOpenAnimation = useCallback((openCycle: number) => {
         if (
@@ -1209,6 +1333,8 @@ export default function QuickScheduleModal({
         if (visible) return;
         liveSpeechOperationRef.current += 1;
         liveSpeechStartingRef.current = false;
+        liveSpeechCaptureActiveRef.current = false;
+        liveSpeechCaptureStartedAtRef.current = 0;
         photoSourceOperationRef.current += 1;
         cancelPendingPhotoAction();
     }, [cancelPendingPhotoAction, visible]);
@@ -1268,6 +1394,9 @@ export default function QuickScheduleModal({
                 voiceTranscript: analysisInputMode === "voice"
                     ? sourceText || undefined
                     : undefined,
+                voiceAlternatives: analysisInputMode === "voice"
+                    ? voiceRecognitionAlternatives
+                    : undefined,
                 recognitionConfidence: analysisInputMode === "voice"
                     ? voiceRecognitionConfidence
                     : analysisInputMode === "photo"
@@ -1303,6 +1432,7 @@ export default function QuickScheduleModal({
         submitting,
         text,
         voiceDurationMillis,
+        voiceRecognitionAlternatives,
         voiceRecognitionConfidence,
         voiceTranscript,
         voiceUri,
@@ -1326,10 +1456,16 @@ export default function QuickScheduleModal({
         setPhotoTranscriptTruncated(false);
         setPhotoRecognitionConfidence(undefined);
         setPhotoRecognitionError("");
+        voiceDurationMillisRef.current = 0;
+        voiceTranscriptRef.current = "";
+        liveSpeechBaseDurationMillisRef.current = 0;
+        liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
         setVoiceUri(null);
+        setVoiceDurationMillis(0);
         setVoiceTranscript("");
         setVoiceTranscriptTruncated(false);
         setVoiceRecognitionConfidence(undefined);
+        setVoiceRecognitionAlternatives([]);
         setVoiceStatusMessage("");
         setAnalysisError("");
         setFlowStep("input");
@@ -1525,6 +1661,7 @@ export default function QuickScheduleModal({
 
         const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
         if (blockingReviewField) {
+            if (blockingReviewField === "review") return;
             openEditField(blockingReviewField);
             return;
         }
@@ -1534,6 +1671,10 @@ export default function QuickScheduleModal({
             setSubmitting(true);
             setFlowStep("saving");
             await onSave(buildQuickSchedulePayload(previewDraft, defaultCategory));
+            const feedback = buildQuickScheduleReliabilityFeedback(previewDraft, "SAVED");
+            if (feedback) {
+                void Promise.resolve(onFeedback?.(feedback)).catch(() => undefined);
+            }
             setFlowStep("saved");
         } catch (error) {
             Alert.alert("일정 저장 실패", error instanceof Error ? error.message : "일정을 저장하지 못했습니다.");
@@ -1776,7 +1917,8 @@ export default function QuickScheduleModal({
     ]);
 
     const beginLiveSpeechCapture = useCallback(async (
-        requiresOnDeviceRecognition: boolean
+        requiresOnDeviceRecognition: boolean,
+        startMode: LiveSpeechCaptureStartMode = "fresh"
     ) => {
         if (
             !mountedRef.current
@@ -1786,23 +1928,64 @@ export default function QuickScheduleModal({
             || liveSpeechStartingRef.current
             || liveSpeechStopInFlightRef.current
         ) return;
+        if (startMode === "rollover" && !liveSpeechCaptureActiveRef.current) return;
+
+        if (startMode === "fresh") {
+            liveSpeechCaptureActiveRef.current = true;
+            liveSpeechCaptureStartedAtRef.current = Date.now();
+            voiceDurationMillisRef.current = 0;
+            voiceTranscriptRef.current = "";
+            liveSpeechBaseDurationMillisRef.current = 0;
+            liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
+            setVoiceDurationMillis(0);
+            setVoiceTranscript("");
+            setVoiceTranscriptTruncated(false);
+            setVoiceRecognitionConfidence(undefined);
+            setVoiceRecognitionAlternatives([]);
+        }
+        liveSpeechRequiresOnDeviceRecognitionRef.current = requiresOnDeviceRecognition;
+
+        const captureWallTimeMillis = liveSpeechCaptureStartedAtRef.current > 0
+            ? Date.now() - liveSpeechCaptureStartedAtRef.current
+            : 0;
+        const totalElapsedMillis = Math.max(
+            voiceDurationMillisRef.current,
+            captureWallTimeMillis
+        );
+        const remainingDurationMillis = LIVE_SPEECH_TOTAL_DURATION_MILLIS
+            - totalElapsedMillis;
+        if (remainingDurationMillis < LIVE_SPEECH_MIN_SESSION_DURATION_MILLIS) {
+            liveSpeechCaptureActiveRef.current = false;
+            liveSpeechCaptureStartedAtRef.current = 0;
+            setIsVoiceRecording(false);
+            setIsVoiceFinalizing(false);
+            setVoiceStatusMessage("");
+            return;
+        }
 
         const operation = liveSpeechOperationRef.current + 1;
         liveSpeechOperationRef.current = operation;
         const requestedSessionId = createLiveSpeechSessionId();
+        liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer(
+            voiceTranscriptRef.current
+        );
+        liveSpeechBaseDurationMillisRef.current = voiceDurationMillisRef.current;
         liveSpeechSessionIdRef.current = requestedSessionId;
         liveSpeechStartingRef.current = true;
         setIsVoiceFinalizing(true);
+        const onlineRecognizerName = Platform.OS === "ios" ? "Apple" : "Android";
         setVoiceStatusMessage(requiresOnDeviceRecognition
             ? "기기 내 음성 인식을 시작하고 있어요."
-            : "Apple 온라인 음성 인식을 시작하고 있어요.");
+            : `${onlineRecognizerName} 온라인 음성 인식을 시작하고 있어요.`);
 
         try {
             const sessionId = await startLiveSpeechRecognition({
                 sessionId: requestedSessionId,
                 localeIdentifier: "ko-KR",
-                contextualStrings: buildScheduleSpeechContext(text),
-                maxDurationMillis: 60_000,
+                contextualStrings: buildScheduleSpeechContext(
+                    `${text} ${voiceTranscriptRef.current} ${defaultCategory?.title ?? ""}`
+                ),
+                maxDurationMillis: remainingDurationMillis,
                 requiresOnDeviceRecognition,
             });
             if (
@@ -1811,6 +1994,7 @@ export default function QuickScheduleModal({
                 || liveSpeechSessionIdRef.current !== sessionId
                 || !visibleRef.current
                 || closingRef.current
+                || !liveSpeechCaptureActiveRef.current
             ) {
                 await cancelLiveSpeechRecognition(sessionId).catch(() => undefined);
                 return;
@@ -1822,7 +2006,7 @@ export default function QuickScheduleModal({
             setIsVoiceRecording(true);
             setVoiceStatusMessage(requiresOnDeviceRecognition
                 ? "기기에서 음성을 인식하고 있어요."
-                : "Apple 온라인 인식 사용 중 · 원본은 NoLate에 저장되지 않아요.");
+                : `${onlineRecognizerName} 온라인 인식 사용 중 · 원본은 NoLate에 저장되지 않아요.`);
         } catch (error) {
             const ownsOperation = liveSpeechOperationRef.current === operation;
             if (!ownsOperation) return;
@@ -1830,6 +2014,8 @@ export default function QuickScheduleModal({
                 liveSpeechSessionIdRef.current = null;
             }
             liveSpeechStartingRef.current = false;
+            liveSpeechCaptureActiveRef.current = false;
+            liveSpeechCaptureStartedAtRef.current = 0;
             if (!mountedRef.current || !visibleRef.current || closingRef.current) return;
             setIsVoiceRecording(false);
             setIsVoiceFinalizing(false);
@@ -1840,7 +2026,16 @@ export default function QuickScheduleModal({
             setVoiceStatusMessage(message);
             Alert.alert("음성 인식 시작 실패", message);
         }
-    }, [text]);
+    }, [defaultCategory?.title, text]);
+
+    useEffect(() => {
+        beginLiveSpeechCaptureRef.current = beginLiveSpeechCapture;
+        return () => {
+            if (beginLiveSpeechCaptureRef.current === beginLiveSpeechCapture) {
+                beginLiveSpeechCaptureRef.current = null;
+            }
+        };
+    }, [beginLiveSpeechCapture]);
 
     const startVoiceRecording = useCallback(async () => {
         if (
@@ -1879,13 +2074,29 @@ export default function QuickScheduleModal({
         setInputMode("voice");
         setSelectedPhoto(null);
         setVoiceUri(null);
-        setVoiceDurationMillis(0);
-        setVoiceTranscript("");
-        setVoiceTranscriptTruncated(false);
-        setVoiceRecognitionConfidence(undefined);
         setVoiceStatusMessage("");
         setVoiceMeterHistory(createVoiceMeterHistory());
         clearVoiceTimer();
+
+        try {
+            const permission = await Audio.requestPermissionsAsync();
+            if (!startIsCurrent()) return;
+            if (!permission.granted) {
+                liveSpeechStartingRef.current = false;
+                setIsVoiceFinalizing(false);
+                Alert.alert("마이크 권한 필요", "음성으로 빠른 일정을 만들려면 마이크 권한이 필요합니다.");
+                return;
+            }
+        } catch (error) {
+            if (!startIsCurrent()) return;
+            liveSpeechStartingRef.current = false;
+            setIsVoiceFinalizing(false);
+            Alert.alert(
+                "마이크 권한 확인 실패",
+                error instanceof Error ? error.message : "마이크 권한을 확인하지 못했습니다."
+            );
+            return;
+        }
 
         if (isLiveSpeechRecognitionAvailable) {
             setVoiceStatusMessage("이 기기의 한국어 음성 인식 지원을 확인하고 있어요.");
@@ -1917,7 +2128,7 @@ export default function QuickScheduleModal({
                 setVoiceStatusMessage(`${reason} 직접 입력하거나 온라인 인식을 선택할 수 있어요.`);
                 Alert.alert(
                     "기기 내 음성 인식 미지원",
-                    `${reason}\n\n온라인 인식을 선택하면 음성이 Apple 서버에서 처리될 수 있습니다. 원본 음성은 NoLate 서버에 저장되지 않습니다.`,
+                    `${reason}\n\n온라인 인식을 선택하면 음성이 ${Platform.OS === "ios" ? "Apple" : "Android 음성 인식 서비스"} 서버에서 처리될 수 있습니다. 원본 음성은 NoLate 서버에 저장되지 않습니다.`,
                     [
                         { text: "직접 입력", style: "cancel" },
                         {
@@ -1950,6 +2161,16 @@ export default function QuickScheduleModal({
             return;
         }
 
+        voiceDurationMillisRef.current = 0;
+        voiceTranscriptRef.current = "";
+        liveSpeechBaseDurationMillisRef.current = 0;
+        liveSpeechTranscriptBufferRef.current = createLiveSpeechTranscriptBuffer();
+        setVoiceDurationMillis(0);
+        setVoiceTranscript("");
+        setVoiceTranscriptTruncated(false);
+        setVoiceRecognitionConfidence(undefined);
+        setVoiceRecognitionAlternatives([]);
+
         let recorder: Audio.Recording | null = null;
         let recordingAudioModeEnabled = false;
         const restorePlaybackAudioMode = async () => {
@@ -1971,15 +2192,6 @@ export default function QuickScheduleModal({
         };
 
         try {
-            const permission = await Audio.requestPermissionsAsync();
-            if (!startIsCurrent()) return;
-            if (!permission.granted) {
-                liveSpeechStartingRef.current = false;
-                setIsVoiceFinalizing(false);
-                Alert.alert("마이크 권한 필요", "음성으로 빠른 일정을 만들려면 마이크 권한이 필요합니다.");
-                return;
-            }
-
             await waitForAudioForegroundReady();
             if (!startIsCurrent()) return;
             await Audio.setAudioModeAsync({
@@ -2082,6 +2294,8 @@ export default function QuickScheduleModal({
     const stopVoiceRecording = useCallback(async () => {
         if (isVoiceFinalizing || liveSpeechStopInFlightRef.current) return;
 
+        liveSpeechCaptureActiveRef.current = false;
+        liveSpeechCaptureStartedAtRef.current = 0;
         const liveSpeechSessionId = liveSpeechSessionIdRef.current;
         if (liveSpeechSessionId) {
             const operation = liveSpeechOperationRef.current;
@@ -2099,14 +2313,24 @@ export default function QuickScheduleModal({
                     !visibleRef.current ||
                     closingRef.current
                 ) return;
-                const limited = limitRecognizedText(result.text);
+                const snapshot = accumulateLiveSpeechTranscript(
+                    liveSpeechTranscriptBufferRef.current,
+                    result
+                );
+                liveSpeechTranscriptBufferRef.current = snapshot.buffer;
+                const limited = limitRecognizedText(snapshot.text);
+                voiceTranscriptRef.current = limited.text;
                 setVoiceTranscript(limited.text);
                 setVoiceTranscriptTruncated(limited.truncated);
-                if (result.confidence !== undefined) {
-                    setVoiceRecognitionConfidence(result.confidence);
-                }
+                setVoiceRecognitionAlternatives(limitRecognitionAlternatives(snapshot.alternatives));
+                setVoiceRecognitionConfidence(result.confidence);
                 if (result.elapsedMillis !== undefined) {
-                    setVoiceDurationMillis(result.elapsedMillis);
+                    const durationMillis = Math.min(
+                        LIVE_SPEECH_TOTAL_DURATION_MILLIS,
+                        liveSpeechBaseDurationMillisRef.current + result.elapsedMillis
+                    );
+                    voiceDurationMillisRef.current = durationMillis;
+                    setVoiceDurationMillis(durationMillis);
                 }
                 setVoiceStatusMessage("");
             } catch (error) {
@@ -2409,7 +2633,7 @@ export default function QuickScheduleModal({
         : isVoiceFinalizing
             ? "확인 중"
             : voiceTranscript.trim() || voiceUri
-                ? "완료"
+                ? "다시 말하기"
                 : "말하기";
     const voiceControlMeta = recorderState.isRecording
         ? voiceDurationText
@@ -2562,7 +2786,7 @@ export default function QuickScheduleModal({
                     modeIndicatorAnimatedStyle,
                 ]}
             />
-            {(Platform.OS === "ios" ? INPUT_MODES : INPUT_MODES.filter((item) => item.key === "text")).map((item) => {
+            {INPUT_MODES.map((item) => {
                 const selected = item.key === inputMode;
 
                 return (
@@ -3026,11 +3250,7 @@ export default function QuickScheduleModal({
                                 >
                                     <Ionicons
                                         accessible={false}
-                                        name={recorderState.isRecording
-                                            ? "stop"
-                                            : voiceTranscript.trim() || voiceUri
-                                                ? "checkmark"
-                                                : "mic-outline"}
+                                        name={recorderState.isRecording ? "stop" : "mic-outline"}
                                         size={30}
                                         color={recorderState.isRecording ? "#FFFFFF" : BLUE}
                                     />
@@ -3061,7 +3281,7 @@ export default function QuickScheduleModal({
                                     </Text>
                                 ) : voiceRecognitionConfidence !== undefined && (
                                     <Text style={[styles.voiceConfidence, { color: colors.textSecondary }]}>
-                                        인식 {Math.round(voiceRecognitionConfidence * 100)}%
+                                        음성 인식 참고값 {Math.round(voiceRecognitionConfidence * 100)}%
                                     </Text>
                                 )}
                             </View>
@@ -3072,9 +3292,14 @@ export default function QuickScheduleModal({
                                 maxLength={QUICK_TEXT_LIMIT}
                                 value={voiceTranscript}
                                 onChangeText={(value) => {
+                                    voiceTranscriptRef.current = value;
+                                    liveSpeechTranscriptBufferRef.current = (
+                                        createLiveSpeechTranscriptBuffer(value)
+                                    );
                                     setVoiceTranscript(value);
                                     setVoiceTranscriptTruncated(false);
                                     setVoiceRecognitionConfidence(undefined);
+                                    setVoiceRecognitionAlternatives([]);
                                     setVoiceStatusMessage("");
                                 }}
                                 placeholder={recorderState.isRecording
@@ -3195,6 +3420,48 @@ export default function QuickScheduleModal({
     const renderPreviewStep = () => {
         if (!previewDraft) return null;
         const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
+        const confidence = previewDraft.parsed?.confidence;
+        const confidencePercent = confidence
+            ? Math.round(Math.max(0, Math.min(1, confidence.overall)) * 100)
+            : null;
+        const confidenceColor = confidence?.level === "HIGH"
+            ? "#0D9F6E"
+            : confidence?.level === "MEDIUM"
+                ? "#D97706"
+                : "#D94A4A";
+        const confidenceLabel = confidence?.level === "HIGH"
+            ? "높음"
+            : confidence?.level === "MEDIUM"
+                ? "확인 권장"
+                : confidence?.level === "REVIEW"
+                    ? "확인 필요"
+                    : "계산 불가";
+        const weakConfidenceFields = confidence
+            ? ([
+                ["날짜", confidence.fields.date],
+                ["시간", confidence.fields.time],
+                ["장소", confidence.fields.destination],
+            ] as const)
+                .filter(([, value]) => value < 0.90)
+                .map(([label]) => label)
+            : [];
+        const confidenceImprovement = !confidence
+            ? "날짜·시간·장소를 각각 눌러 원문과 비교해 확인"
+            : confidence.level !== "HIGH"
+            ? [
+                confidence.recognition !== undefined && confidence.recognition < 0.90
+                    ? "사진·음성 인식 문장을 원본과 비교해 수정"
+                    : null,
+                weakConfidenceFields.length > 0
+                    ? `${weakConfidenceFields.join("·")} 항목을 눌러 확인`
+                    : "표시된 분석 내용을 원문과 비교해 확인",
+            ].filter(Boolean).join(" 후 ")
+            : null;
+        const confirmGlobalReview = () => {
+            setPreviewDraft((current) => (
+                current ? confirmQuickScheduleGlobalReview(current) : current
+            ));
+        };
 
         return (
             <View style={styles.previewStep}>
@@ -3203,6 +3470,62 @@ export default function QuickScheduleModal({
                     contentContainerStyle={styles.previewScrollContent}
                     showsVerticalScrollIndicator={false}
                 >
+                    {previewDraft.parsed && (
+                        <View
+                            accessibilityRole="summary"
+                            accessibilityLabel={confidencePercent === null
+                                ? "일정 분석 신뢰도 계산 불가"
+                                : `일정 분석 신뢰도 ${confidencePercent}퍼센트, ${confidenceLabel}`}
+                            style={[
+                                styles.confidenceCard,
+                                {
+                                    backgroundColor: previewRowBackground,
+                                    borderColor: cardBorderColor,
+                                },
+                            ]}
+                        >
+                            <View style={styles.confidenceHeader}>
+                                <View>
+                                    <Text style={[styles.confidenceEyebrow, { color: colors.textSecondary }]}>일정 분석 신뢰도</Text>
+                                    <Text style={[styles.confidenceScore, { color: confidenceColor }]}>
+                                        {confidencePercent === null
+                                            ? "계산 불가 · 필드 확인 필요"
+                                            : `${confidencePercent}% · ${confidenceLabel}`}
+                                    </Text>
+                                </View>
+                                {confidence?.recognition !== undefined && (
+                                    <Text style={[styles.confidenceRecognition, { color: colors.textSecondary }]}>원본 인식 참고값 {Math.round(confidence.recognition * 100)}%</Text>
+                                )}
+                            </View>
+                            <View style={styles.confidenceFields}>
+                                {([
+                                    ["날짜", "date", confidence?.fields.date],
+                                    ["시간", "time", confidence?.fields.time],
+                                    ["장소", "destination", confidence?.fields.destination],
+                                ] as const).map(([label, field, value]) => (
+                                    <View key={label} style={[styles.confidenceFieldPill, { borderColor: cardBorderColor }]}>
+                                        <Text style={[styles.confidenceFieldText, { color: colors.textSecondary }]}>
+                                            {label} {value === undefined ? "미측정" : `${Math.round(value * 100)}%`}
+                                            {previewDraft.verification?.fields[field] ? " · 확인됨" : ""}
+                                        </Text>
+                                    </View>
+                                ))}
+                            </View>
+                            {confidence?.reasons?.[0] && confidence.level !== "HIGH" && (
+                                <Text numberOfLines={2} style={[styles.confidenceReason, { color: colors.textSecondary }]}>
+                                    {confidence.reasons[0]}
+                                </Text>
+                            )}
+                            {confidenceImprovement && (
+                                <Text
+                                    accessibilityLabel="신뢰도 개선 방법"
+                                    style={[styles.confidenceImprovement, { color: confidenceColor }]}
+                                >
+                                    개선 방법 · {confidenceImprovement}
+                                </Text>
+                            )}
+                        </View>
+                    )}
                     {PREVIEW_FIELDS.map((field) => {
                         const badge = field.key === "notification" && !canUseRouteNotification(previewDraft)
                             ? "선택 설정"
@@ -3267,9 +3590,11 @@ export default function QuickScheduleModal({
                         <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>원문 수정</Text>
                     </Pressable>
 	                    <Pressable
-	                        onPress={blockingReviewField
-                                ? () => openEditField(blockingReviewField)
-                                : savePreview}
+	                        onPress={blockingReviewField === "review"
+                                ? confirmGlobalReview
+                                : blockingReviewField
+	                                ? () => openEditField(blockingReviewField)
+	                                : savePreview}
                             accessibilityRole="button"
                         disabled={submitting}
                         style={({ pressed }) => [
@@ -3279,7 +3604,9 @@ export default function QuickScheduleModal({
                     >
                         <Text style={styles.primaryButtonText}>
                             {blockingReviewField
-                                ? `${FIELD_LABEL[blockingReviewField]} 확인하기`
+                                ? blockingReviewField === "review"
+                                    ? "전체 내용 확인 완료"
+                                    : `${FIELD_LABEL[blockingReviewField]} 확인하기`
                                 : "일정 저장하기"}
                         </Text>
                     </Pressable>
@@ -4495,6 +4822,61 @@ const styles = StyleSheet.create({
     previewScrollContent: {
         gap: 7,
         paddingBottom: 8,
+    },
+    confidenceCard: {
+        borderRadius: 12,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        gap: 8,
+    },
+    confidenceHeader: {
+        flexDirection: "row",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+    confidenceEyebrow: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+    },
+    confidenceScore: {
+        marginTop: 1,
+        fontSize: 17,
+        lineHeight: 22,
+        fontWeight: "900",
+    },
+    confidenceRecognition: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        textAlign: "right",
+    },
+    confidenceFields: {
+        flexDirection: "row",
+        gap: 6,
+    },
+    confidenceFieldPill: {
+        borderRadius: 999,
+        borderWidth: 1,
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+    },
+    confidenceFieldText: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+    },
+    confidenceReason: {
+        fontSize: 10,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    confidenceImprovement: {
+        fontSize: 10,
+        lineHeight: 15,
+        fontWeight: "700",
     },
     previewRow: {
         minHeight: 47,

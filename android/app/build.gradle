@@ -197,6 +197,9 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    // Bundled Korean model keeps first-use OCR available without a Play Services model download.
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     testImplementation 'junit:junit:4.13.2'
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";

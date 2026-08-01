@@ -1,3 +1,10 @@
+import {
+    accumulateLiveSpeechTranscript,
+    createLiveSpeechTranscriptBuffer,
+    mergeLiveSpeechHypothesis,
+    normalizeLiveSpeechRecognitionAlternatives,
+} from "../src/modules/schedule/liveSpeechRecognition";
+
 describe("live speech recognition bridge", () => {
     const listeners = new Map<string, (value: unknown) => void>();
 
@@ -6,7 +13,7 @@ describe("live speech recognition bridge", () => {
         start: jest.Mock;
         stop: jest.Mock;
         cancel: jest.Mock;
-    }) {
+    }, platform: "ios" | "android" = "ios") {
         jest.resetModules();
         listeners.clear();
 
@@ -20,7 +27,7 @@ describe("live speech recognition bridge", () => {
         jest.doMock("react-native", () => ({
             NativeEventEmitter: NativeEventEmitterMock,
             NativeModules: nativeModule ? { NoLateLiveSpeech: nativeModule } : {},
-            Platform: { OS: "ios" },
+            Platform: { OS: platform },
         }));
 
         return require("../src/modules/schedule/liveSpeechRecognition") as typeof import("../src/modules/schedule/liveSpeechRecognition");
@@ -50,6 +57,28 @@ describe("live speech recognition bridge", () => {
             maxDurationMillis: 120_000,
             requiresOnDeviceRecognition: true,
         });
+    });
+
+    test("Android에서도 동일한 실시간 음성 계약을 노출한다", async () => {
+        const nativeModule = {
+            getAvailability: jest.fn().mockResolvedValue({
+                serviceAvailable: true,
+                supportsOnDevice: true,
+            }),
+            start: jest.fn().mockResolvedValue({ sessionId: "android-session" }),
+            stop: jest.fn(),
+            cancel: jest.fn(),
+        };
+        const bridge = await loadModule(nativeModule, "android");
+
+        expect(bridge.isLiveSpeechRecognitionAvailable).toBe(true);
+        await expect(bridge.startLiveSpeechRecognition({
+            sessionId: "android-session",
+        })).resolves.toBe("android-session");
+        expect(nativeModule.start).toHaveBeenCalledWith(expect.objectContaining({
+            localeIdentifier: "ko-KR",
+            requiresOnDeviceRecognition: true,
+        }));
     });
 
     test("reports native availability and normalizes the requested locale", async () => {
@@ -112,6 +141,10 @@ describe("live speech recognition bridge", () => {
             isFinal: false,
             confidence: 1.7,
             elapsedMillis: 120.4,
+            alternatives: [
+                { text: "내일 오후 3시", confidence: 0.91 },
+                { text: "내일 오후 4시", confidence: 0.63 },
+            ],
         });
         listeners.get("NoLateLiveSpeechLevel")?.({
             sessionId: "session-1",
@@ -129,6 +162,10 @@ describe("live speech recognition bridge", () => {
             isFinal: false,
             confidence: 1,
             elapsedMillis: 120,
+            alternatives: [
+                { text: "내일 오후 3시", confidence: 1 },
+                { text: "내일 오후 4시", confidence: 0.63 },
+            ],
         });
         expect(levelListener).toHaveBeenCalledWith({
             sessionId: "session-1",
@@ -149,6 +186,10 @@ describe("live speech recognition bridge", () => {
                 text: "서울역 회의",
                 confidence: 0.82,
                 elapsedMillis: 2300,
+                alternatives: [
+                    { text: "서울역 회의", confidence: 0.82 },
+                    { text: "서울형 회의", confidence: 0.54 },
+                ],
             }),
             cancel: jest.fn().mockResolvedValue(undefined),
         };
@@ -165,6 +206,10 @@ describe("live speech recognition bridge", () => {
             isFinal: true,
             confidence: 0.82,
             elapsedMillis: 2300,
+            alternatives: [
+                { text: "서울역 회의", confidence: 0.82 },
+                { text: "서울형 회의", confidence: 0.54 },
+            ],
         });
         await bridge.cancelLiveSpeechRecognition("session-2");
         expect(nativeModule.stop).toHaveBeenCalledWith("session-2");
@@ -182,5 +227,62 @@ describe("live speech recognition bridge", () => {
         await expect(bridge.startLiveSpeechRecognition()).rejects.toThrow(
             "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다."
         );
+    });
+});
+
+describe("live speech transcript accumulation", () => {
+    test("짧게 되돌아간 부분 가설보다 기존의 완전한 문장을 보존한다", () => {
+        expect(
+            mergeLiveSpeechHypothesis(
+                "내일 오후 세 시 강남역 회의",
+                "강남역 회의"
+            )
+        ).toBe("내일 오후 세 시 강남역 회의");
+    });
+
+    test("새 부분 결과가 이전 결과의 끝에서 이어지면 겹치는 단어 없이 합친다", () => {
+        expect(
+            mergeLiveSpeechHypothesis(
+                "내일 오후 세 시",
+                "세 시 강남역 회의"
+            )
+        ).toBe("내일 오후 세 시 강남역 회의");
+    });
+
+    test("이전 세션 문장을 stable 영역에 두고 새 세션 후보 전체에 접두한다", () => {
+        const snapshot = accumulateLiveSpeechTranscript(
+            createLiveSpeechTranscriptBuffer("내일 오후 세 시"),
+            {
+                text: "강남역 회의",
+                confidence: 0.9,
+                alternatives: [
+                    { text: "강남역 회의", confidence: 0.9 },
+                    { text: "강남형 회의", confidence: 0.62 },
+                ],
+            }
+        );
+
+        expect(snapshot.text).toBe("내일 오후 세 시 강남역 회의");
+        expect(snapshot.alternatives).toEqual([
+            { text: "내일 오후 세 시 강남역 회의", confidence: 0.9 },
+            { text: "내일 오후 세 시 강남형 회의", confidence: 0.62 },
+        ]);
+    });
+
+    test("네이티브 후보는 best 포함, 중복 제거, 신뢰도 제한 후 최대 3개로 정규화한다", () => {
+        expect(normalizeLiveSpeechRecognitionAlternatives(
+            [
+                { text: "내일 세 시 회의", confidence: 0.8 },
+                { text: "내일 네 시 회의", confidence: -0.2 },
+                { text: "내일 다섯 시 회의", confidence: 1.3 },
+                { text: "내일 여섯 시 회의", confidence: 0.4 },
+            ],
+            " 내일 세 시 회의 ",
+            0.91
+        )).toEqual([
+            { text: "내일 세 시 회의", confidence: 0.91 },
+            { text: "내일 네 시 회의", confidence: 0 },
+            { text: "내일 다섯 시 회의", confidence: 1 },
+        ]);
     });
 });

@@ -1,6 +1,10 @@
 import { apiDelete, apiGet, apiPost, apiPut } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
-import type { ScheduleItem, ScheduleParseResult } from "../modules/schedule/types";
+import type {
+    QuickScheduleReliabilityFeedback,
+    ScheduleItem,
+    ScheduleParseResult,
+} from "../modules/schedule/types";
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 import {
     clearCalendarScheduleCache,
@@ -40,8 +44,13 @@ export type ParseScheduleTextPayload = {
     text: string;
     inputType?: ParseScheduleInputType;
     recognitionConfidence?: number;
+    recognitionAlternatives?: Array<{
+        text: string;
+        confidence?: number;
+    }>;
     referenceDate?: string;
     defaultDurationMinutes?: number;
+    clientPlatform?: "IOS" | "ANDROID" | "UNKNOWN";
 };
 
 type ScheduleDto = Omit<ScheduleItem, "id"> & {
@@ -171,6 +180,17 @@ export async function parseScheduleText(payload: ParseScheduleTextPayload): Prom
         payload
     );
     return unwrapApiResponse(response);
+}
+
+export async function recordQuickScheduleReliabilityFeedback(
+    feedback: QuickScheduleReliabilityFeedback,
+): Promise<void> {
+    const { analysisId, ...payload } = feedback;
+    const response = await apiPost<ApiEnvelope<unknown>, typeof payload>(
+        `/api/schedules/parse/${encodeURIComponent(analysisId)}/feedback`,
+        payload,
+    );
+    assertApiSuccess(response);
 }
 
 export async function updateSchedule(scheduleId: string, payload: SchedulePayload): Promise<ScheduleItem> {

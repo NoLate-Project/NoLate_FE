@@ -22,6 +22,9 @@ export type Place = {
 };
 
 export type ScheduleParseResult = {
+    /** 원문을 포함하지 않는 품질 피드백 연결용 임의 ID다. */
+    analysisId?: string;
+    confidenceVersion?: string;
     title?: string;
     notes?: string;
     date?: string;
@@ -42,12 +45,38 @@ export type ScheduleParseResult = {
     needsReview: boolean;
     warnings: string[];
     missingFields: string[];
+    confidence?: {
+        overall: number;
+        level: "HIGH" | "MEDIUM" | "REVIEW";
+        /** OCR/STT 자체의 참고값이며 일정 필드 정확도와 구분한다. */
+        recognition?: number;
+        fields: {
+            date: number;
+            time: number;
+            destination: number;
+        };
+        reasons: string[];
+    };
     travelMinutes?: number;
     travelMode?: TravelMode;
     route?: unknown;
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;
     notificationIntervalMinutes?: number;
+};
+
+export type QuickScheduleVerificationSignal =
+    | "UNTOUCHED"
+    | "USER_CONFIRMED"
+    | "USER_CORRECTED";
+
+export type QuickScheduleReliabilityFeedback = {
+    analysisId: string;
+    outcome: "SAVED" | "CANCELLED";
+    date: QuickScheduleVerificationSignal;
+    time: QuickScheduleVerificationSignal;
+    destination: QuickScheduleVerificationSignal;
+    globalConfirmed: boolean;
 };
 
 export type TravelMode = "CAR" | "TRANSIT" | "WALK" | "BIKE" | "ETC";

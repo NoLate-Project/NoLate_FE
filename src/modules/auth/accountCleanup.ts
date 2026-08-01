@@ -3,6 +3,9 @@ import { clearCalendarConnectionSnapshot } from "../onboarding/calendarConnectio
 import { clearStoredGoogleCalendarAccessToken } from "../onboarding/googleCalendarImport";
 import { clearLocalRoutePlaceCaches } from "../schedule/favoriteDeparture";
 import { clearSeenShareAttention } from "../share/shareAttention";
+import {
+    clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount,
+} from "../schedule/quickScheduleReliabilityFeedbackQueue";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
@@ -12,6 +15,7 @@ export async function clearAccountScopedLocalData(): Promise<void> {
         clearLocalRoutePlaceCaches(),
         clearSeenShareAttention(),
         clearPushRegistrationAfterLogout(),
+        clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount(),
     ];
 
     await Promise.allSettled(cleanups);

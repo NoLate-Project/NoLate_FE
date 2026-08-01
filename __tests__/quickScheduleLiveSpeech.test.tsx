@@ -1,18 +1,21 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import * as ImagePicker from "expo-image-picker";
+import { Audio } from "expo-av";
 import { ActionSheetIOS, Alert } from "react-native";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 import type {
     LiveSpeechLevel,
+    LiveSpeechState,
     LiveSpeechTranscript,
 } from "../src/modules/schedule/liveSpeechRecognition";
 import type { ScheduleParseResult } from "../src/modules/schedule/types";
 
 let mockTranscriptListener: ((event: LiveSpeechTranscript) => void) | undefined;
 let mockLevelListener: ((event: LiveSpeechLevel) => void) | undefined;
+let mockStateListener: ((event: LiveSpeechState) => void) | undefined;
 const mockStartLiveSpeechRecognition = jest.fn(async (options: { sessionId: string }) => options.sessionId);
 const mockStopLiveSpeechRecognition = jest.fn().mockResolvedValue({
     sessionId: "speech-session-1",
@@ -61,6 +64,7 @@ jest.mock("expo-av", () => ({
     },
 }));
 jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
+    ...jest.requireActual("../src/modules/schedule/liveSpeechRecognition"),
     isLiveSpeechRecognitionAvailable: true,
     getLiveSpeechRecognitionAvailability: (...args: unknown[]) => (
         mockGetLiveSpeechRecognitionAvailability(...args)
@@ -77,7 +81,10 @@ jest.mock("../src/modules/schedule/liveSpeechRecognition", () => ({
         mockLevelListener = listener;
         return { remove: jest.fn() };
     },
-    addLiveSpeechStateListener: () => ({ remove: jest.fn() }),
+    addLiveSpeechStateListener: (listener: (event: LiveSpeechState) => void) => {
+        mockStateListener = listener;
+        return { remove: jest.fn() };
+    },
 }));
 jest.mock("../src/modules/schedule/components/form/QuickScheduleLogoLoader", () => "QuickScheduleLogoLoader");
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
@@ -93,6 +100,12 @@ const parseResult: ScheduleParseResult = {
     needsReview: false,
     warnings: [],
     missingFields: [],
+    confidence: {
+        overall: 0.97,
+        level: "HIGH",
+        fields: { date: 0.98, time: 0.98, destination: 0.94 },
+        reasons: [],
+    },
 };
 
 describe("QuickScheduleModal live speech", () => {
@@ -108,6 +121,7 @@ describe("QuickScheduleModal live speech", () => {
         jest.useFakeTimers();
         mockTranscriptListener = undefined;
         mockLevelListener = undefined;
+        mockStateListener = undefined;
         mockStartLiveSpeechRecognition.mockReset();
         mockStartLiveSpeechRecognition.mockImplementation(
             async (options: { sessionId: string }) => options.sessionId
@@ -128,6 +142,8 @@ describe("QuickScheduleModal live speech", () => {
             serviceAvailable: true,
             supportsOnDevice: true,
         });
+        (Audio.requestPermissionsAsync as jest.Mock).mockReset();
+        (Audio.requestPermissionsAsync as jest.Mock).mockResolvedValue({ granted: true });
         (ImagePicker.launchImageLibraryAsync as jest.Mock).mockClear();
     });
 
@@ -248,6 +264,306 @@ describe("QuickScheduleModal live speech", () => {
             })
         );
         expect(onAnalyze.mock.calls[0][1].recognitionConfidence).toBeUndefined();
+    });
+
+    test("짧아진 부분 인식 결과가 먼저 말한 내용을 지우지 않는다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            mockTranscriptListener?.({
+                sessionId: "speech-session-1",
+                text: "내일 오후 세 시 강남역 회의",
+                isFinal: false,
+            });
+            mockTranscriptListener?.({
+                sessionId: "speech-session-1",
+                text: "강남역 회의",
+                isFinal: false,
+            });
+        });
+
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("내일 오후 세 시 강남역 회의");
+    });
+
+    test("최종 전사 뒤 자발적 finished가 오면 남은 시간으로 자동 재시작하고 이어 붙인다", async () => {
+        const onAnalyze = jest.fn().mockResolvedValue(parseResult);
+        mockCreateLiveSpeechSessionId
+            .mockReturnValueOnce("speech-session-a")
+            .mockReturnValueOnce("speech-session-b");
+        mockStopLiveSpeechRecognition.mockResolvedValueOnce({
+            sessionId: "speech-session-b",
+            text: "강남역 회의",
+            confidence: 0.88,
+            elapsedMillis: 800,
+            alternatives: [
+                { text: "강남역 회의", confidence: 0.88 },
+                { text: "강남형 회의", confidence: 0.61 },
+            ],
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={onAnalyze}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            mockTranscriptListener?.({
+                sessionId: "speech-session-a",
+                text: "내일 오후 세 시",
+                isFinal: true,
+                confidence: 0.91,
+                elapsedMillis: 1000,
+                alternatives: [
+                    { text: "내일 오후 세 시", confidence: 0.91 },
+                    { text: "내일 오후 네 시", confidence: 0.72 },
+                ],
+            });
+            mockStateListener?.({
+                sessionId: "speech-session-a",
+                state: "finished",
+            });
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(2);
+        expect(mockStartLiveSpeechRecognition).toHaveBeenLastCalledWith(expect.objectContaining({
+            sessionId: "speech-session-b",
+            maxDurationMillis: 59_000,
+        }));
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("내일 오후 세 시");
+
+        await act(async () => {
+            mockTranscriptListener?.({
+                sessionId: "speech-session-b",
+                text: "강남역 회의",
+                isFinal: false,
+                confidence: 0.88,
+                elapsedMillis: 800,
+                alternatives: [
+                    { text: "강남역 회의", confidence: 0.88 },
+                    { text: "강남형 회의", confidence: 0.61 },
+                ],
+            });
+        });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("내일 오후 세 시 강남역 회의");
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 중지" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(onAnalyze).toHaveBeenCalledWith(
+            "내일 오후 세 시 강남역 회의",
+            expect.objectContaining({
+                inputMode: "voice",
+                voiceDurationMillis: 1800,
+                voiceTranscript: "내일 오후 세 시 강남역 회의",
+                voiceAlternatives: [
+                    { text: "내일 오후 세 시 강남역 회의", confidence: 0.88 },
+                    { text: "내일 오후 세 시 강남형 회의", confidence: 0.61 },
+                ],
+            })
+        );
+    });
+
+    test("명시적 중지 중 finished가 와도 자동 재시작하지 않는다", async () => {
+        const pendingStop = createDeferred<{
+            sessionId: string;
+            text: string;
+            confidence: number;
+            elapsedMillis: number;
+        }>();
+        mockCreateLiveSpeechSessionId.mockReturnValueOnce("speech-session-a");
+        mockStopLiveSpeechRecognition.mockImplementationOnce(() => pendingStop.promise);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 중지" })
+                .props.onPress();
+            mockStateListener?.({
+                sessionId: "speech-session-a",
+                state: "finished",
+            });
+            await Promise.resolve();
+        });
+
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            pendingStop.resolve({
+                sessionId: "speech-session-a",
+                text: "내일 오후 세 시 회의",
+                confidence: 0.9,
+                elapsedMillis: 1000,
+            });
+            await pendingStop.promise;
+            await Promise.resolve();
+        });
+        expect(mockStartLiveSpeechRecognition).toHaveBeenCalledTimes(1);
+    });
+
+    test("명시적으로 완료한 뒤 다시 인식하면 이전 전사와 시간을 지우고 새로 시작한다", async () => {
+        mockCreateLiveSpeechSessionId
+            .mockReturnValueOnce("speech-session-a")
+            .mockReturnValueOnce("speech-session-b");
+        mockStopLiveSpeechRecognition.mockResolvedValueOnce({
+            sessionId: "speech-session-a",
+            text: "내일 오후 세 시 회의",
+            confidence: 0.9,
+            elapsedMillis: 1000,
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-23"
+                        onAnalyze={jest.fn().mockResolvedValue(parseResult)}
+                        onSave={jest.fn()}
+                        onClose={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성으로 빠른 일정 만들기" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 시작" })
+                .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            mockTranscriptListener?.({
+                sessionId: "speech-session-a",
+                text: "내일 오후 세 시 회의",
+                isFinal: false,
+                elapsedMillis: 900,
+            });
+            renderer!.root
+                .findByProps({ accessibilityLabel: "실시간 음성 인식 중지" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("내일 오후 세 시 회의");
+
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "음성 다시 인식" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("");
+        expect(mockStartLiveSpeechRecognition).toHaveBeenLastCalledWith(expect.objectContaining({
+            sessionId: "speech-session-b",
+            maxDurationMillis: 60_000,
+        }));
+
+        await act(async () => {
+            mockTranscriptListener?.({
+                sessionId: "speech-session-b",
+                text: "금요일 오전 열 시 병원",
+                isFinal: false,
+                elapsedMillis: 600,
+            });
+        });
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
+        ).toBe("금요일 오전 열 시 병원");
     });
 
     test("이전 시작 실패가 다시 연 모달의 새 음성 세션을 초기화하지 않는다", async () => {

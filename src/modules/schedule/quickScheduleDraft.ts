@@ -9,6 +9,7 @@ import type {
     ScheduleCategory,
     ScheduleItem,
     ScheduleParseResult,
+    QuickScheduleReliabilityFeedback,
     TravelMode,
 } from "./types";
 
@@ -38,10 +39,43 @@ export type QuickSchedulePreviewDraft = {
     memo: string;
     badges: Partial<Record<QuickSchedulePreviewField, string>>;
     parsed?: ScheduleParseResult;
+    verification?: QuickScheduleVerificationState;
 };
+
+export type QuickScheduleVerifiedField = "date" | "time" | "destination";
+export type QuickScheduleVerificationStatus = "USER_CONFIRMED" | "USER_CORRECTED";
+export type QuickScheduleVerificationState = {
+    requiredFields: QuickScheduleVerifiedField[];
+    fields: Partial<Record<QuickScheduleVerifiedField, QuickScheduleVerificationStatus>>;
+    globalRequired: boolean;
+    globalConfirmed: boolean;
+};
+
+export type QuickScheduleBlockingReviewField = "date" | "time" | "location" | "review";
 
 const DEFAULT_DURATION_MINUTES = 60;
 const DEFAULT_UNCONFIRMED_TIME = "19:00";
+const HIGH_CONFIDENCE_THRESHOLD = 0.90;
+
+function getUsableQuickScheduleConfidence(
+    confidence: ScheduleParseResult["confidence"]
+): ScheduleParseResult["confidence"] | undefined {
+    if (!confidence || !["HIGH", "MEDIUM", "REVIEW"].includes(confidence.level)) {
+        return undefined;
+    }
+    const fields = confidence.fields;
+    if (!fields) return undefined;
+    const values = [
+        confidence.overall,
+        fields.date,
+        fields.time,
+        fields.destination,
+        ...(confidence.recognition === undefined ? [] : [confidence.recognition]),
+    ];
+    return values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
+        ? confidence
+        : undefined;
+}
 
 function pad2(value: number) {
     return String(value).padStart(2, "0");
@@ -197,7 +231,9 @@ export function buildQuickSchedulePreviewDraft(
         : toYmd(new Date());
     const missingFields = parsed.missingFields ?? [];
     const warnings = parsed.warnings ?? [];
-    const reviewSignals = [...missingFields, ...warnings];
+    const confidence = getUsableQuickScheduleConfidence(parsed.confidence);
+    const confidenceReasons = confidence?.reasons ?? [];
+    const reviewSignals = [...missingFields, ...warnings, ...confidenceReasons];
     const dateMentioned = includesAny(reviewSignals, ["date", "day", "날짜", "요일"]);
     const timeMentioned = includesAny(reviewSignals, ["time", "hour", "시간", "시각", "오전", "오후", "am", "pm"]);
     const locationMentioned = includesAny(reviewSignals, [
@@ -219,22 +255,46 @@ export function buildQuickSchedulePreviewDraft(
         ? getExplicitDurationMinutes(parsedStartAt, parsed.endAt)
         : null;
     const badges: QuickSchedulePreviewDraft["badges"] = {};
+    const confidenceUnavailable = !confidence;
 
     if (dateMentioned) {
         badges.date = "날짜 확인 필요";
     } else if (!parsedStartAt && !validParsedDate) {
         badges.date = "날짜 미확정";
+    } else if (confidenceUnavailable) {
+        badges.date = "신뢰도 계산 불가";
+    } else if ((confidence?.fields.date ?? 0) < HIGH_CONFIDENCE_THRESHOLD) {
+        badges.date = "신뢰도 확인 필요";
     }
 
     if (timeMentioned) {
         badges.time = "시간 확인 필요";
     } else if (!parsedStartAt && !validParsedTime) {
         badges.time = "시간 미확정";
+    } else if (confidenceUnavailable) {
+        badges.time = "신뢰도 계산 불가";
+    } else if ((confidence?.fields.time ?? 0) < HIGH_CONFIDENCE_THRESHOLD) {
+        badges.time = "신뢰도 확인 필요";
     }
 
-    if (!destinationText || locationMentioned) {
-        badges.location = "장소 확인 필요";
+    if (
+        !destinationText
+        || locationMentioned
+        || confidenceUnavailable
+        || (confidence?.fields.destination ?? 0) < HIGH_CONFIDENCE_THRESHOLD
+    ) {
+        badges.location = confidenceUnavailable ? "신뢰도 계산 불가" : "장소 확인 필요";
     }
+
+    const requiredFields = [
+        ...(badges.date ? ["date" as const] : []),
+        ...(badges.time ? ["time" as const] : []),
+        ...(badges.location ? ["destination" as const] : []),
+    ];
+    const globalReviewRequired = (
+        parsed.needsReview
+        || confidence?.level === "REVIEW"
+    ) && requiredFields.length === 0;
 
     const draft: QuickSchedulePreviewDraft = {
         title: parsed.title?.trim() || fallbackText.split(/\n|,/)[0]?.trim() || "새 일정",
@@ -253,7 +313,15 @@ export function buildQuickSchedulePreviewDraft(
             : undefined,
         memo: parsed.notes?.trim() || "메모 없음",
         badges,
-        parsed,
+        parsed: confidence === parsed.confidence
+            ? parsed
+            : { ...parsed, confidence: undefined },
+        verification: {
+            requiredFields,
+            fields: {},
+            globalRequired: globalReviewRequired,
+            globalConfirmed: false,
+        },
     };
 
     if (!isQuickScheduleRouteReady(draft)) {
@@ -267,11 +335,13 @@ export function buildQuickSchedulePreviewDraft(
     }
 
     if (
-        parsed.needsReview
+        (parsed.needsReview || confidence?.level === "REVIEW")
         && !dateMentioned
         && !timeMentioned
         && !locationMentioned
-        && reviewSignals.length === 0
+        && !badges.date
+        && !badges.time
+        && !badges.location
     ) {
         badges.title = "내용 확인 필요";
     }
@@ -281,11 +351,70 @@ export function buildQuickSchedulePreviewDraft(
 
 export function getQuickScheduleBlockingReviewField(
     draft: QuickSchedulePreviewDraft | null | undefined
-): "date" | "time" | null {
+): QuickScheduleBlockingReviewField | null {
     if (!draft) return null;
     if (draft.badges.date || !isValidQuickScheduleDate(draft.date)) return "date";
     if (draft.badges.time || !isValidQuickScheduleTime(draft.time)) return "time";
+    if (draft.badges.location || !displayQuickSchedulePlaceName(draft.destination)) return "location";
+    if (!draft.parsed?.confidence && !draft.verification) return "review";
+    if (
+        draft.verification?.globalRequired
+        && !draft.verification.globalConfirmed
+    ) return "review";
     return null;
+}
+
+function markQuickScheduleFieldVerified(
+    draft: QuickSchedulePreviewDraft,
+    field: QuickScheduleVerifiedField,
+    status: QuickScheduleVerificationStatus
+): QuickScheduleVerificationState {
+    const current = draft.verification ?? {
+        requiredFields: [],
+        fields: {},
+        globalRequired: !!draft.parsed?.needsReview,
+        globalConfirmed: false,
+    };
+    return {
+        ...current,
+        fields: { ...current.fields, [field]: status },
+    };
+}
+
+export function confirmQuickScheduleGlobalReview(
+    draft: QuickSchedulePreviewDraft
+): QuickSchedulePreviewDraft {
+    const current = draft.verification ?? {
+        requiredFields: [],
+        fields: {},
+        globalRequired: true,
+        globalConfirmed: false,
+    };
+    return {
+        ...draft,
+        verification: {
+            ...current,
+            globalRequired: true,
+            globalConfirmed: true,
+        },
+    };
+}
+
+export function buildQuickScheduleReliabilityFeedback(
+    draft: QuickSchedulePreviewDraft,
+    outcome: QuickScheduleReliabilityFeedback["outcome"],
+): QuickScheduleReliabilityFeedback | null {
+    const analysisId = draft.parsed?.analysisId?.trim();
+    if (!analysisId) return null;
+    const fields = draft.verification?.fields ?? {};
+    return {
+        analysisId,
+        outcome,
+        date: fields.date ?? "UNTOUCHED",
+        time: fields.time ?? "UNTOUCHED",
+        destination: fields.destination ?? "UNTOUCHED",
+        globalConfirmed: draft.verification?.globalConfirmed ?? false,
+    };
 }
 
 function clearTimeDependentRoute(
@@ -327,11 +456,22 @@ export function updateQuickSchedulePreviewDraft(
 
     if (field === "location") {
         const normalizedLocation = value.trim() || "장소 미정";
+        const verificationStatus = normalizedLocation === draft.location.trim()
+            ? "USER_CONFIRMED"
+            : "USER_CORRECTED";
         if (normalizedLocation === "장소 미정") {
             nextBadges.location = "장소 확인 필요";
         }
         if (normalizedLocation === draft.location.trim()) {
-            return { ...draft, badges: nextBadges };
+            return {
+                ...draft,
+                badges: nextBadges,
+                verification: markQuickScheduleFieldVerified(
+                    draft,
+                    "destination",
+                    verificationStatus
+                ),
+            };
         }
 
         const destination = quickSchedulePlaceFromLocation(normalizedLocation);
@@ -345,6 +485,11 @@ export function updateQuickSchedulePreviewDraft(
             departAt: undefined,
             notificationLeadMinutes: undefined,
             badges: nextBadges,
+            verification: markQuickScheduleFieldVerified(
+                draft,
+                "destination",
+                verificationStatus
+            ),
             parsed: draft.parsed
                 ? {
                     ...draft.parsed,
@@ -360,8 +505,19 @@ export function updateQuickSchedulePreviewDraft(
 
     if (field === "date" || field === "time") {
         const previousValue = draft[field];
+        const verificationStatus = previousValue === value
+            ? "USER_CONFIRMED"
+            : "USER_CORRECTED";
         if (previousValue === value) {
-            return { ...draft, badges: nextBadges };
+            return {
+                ...draft,
+                badges: nextBadges,
+                verification: markQuickScheduleFieldVerified(
+                    draft,
+                    field,
+                    verificationStatus
+                ),
+            };
         }
 
         const nextDate = field === "date" ? value : draft.date;
@@ -397,6 +553,11 @@ export function updateQuickSchedulePreviewDraft(
             departAt: routeUpdate.departAt,
             notificationLeadMinutes: nextNotificationLeadMinutes,
             badges: nextBadges,
+            verification: markQuickScheduleFieldVerified(
+                draft,
+                field,
+                verificationStatus
+            ),
             parsed: draft.parsed
                 ? {
                     ...draft.parsed,

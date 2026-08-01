@@ -185,6 +185,7 @@ function RootNavigator() {
                     }}
                 />
                 <Stack.Screen name="schedule/index" />
+                <Stack.Screen name="internal/quick-schedule-benchmark" />
                 <Stack.Screen
                     name="notifications"
                     options={{

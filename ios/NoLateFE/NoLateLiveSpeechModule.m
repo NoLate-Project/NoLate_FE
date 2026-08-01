@@ -11,6 +11,12 @@
 static NSString *const NoLateLiveSpeechTranscriptEvent = @"NoLateLiveSpeechTranscript";
 static NSString *const NoLateLiveSpeechLevelEvent = @"NoLateLiveSpeechLevel";
 static NSString *const NoLateLiveSpeechStateEvent = @"NoLateLiveSpeechState";
+static NSString *const NoLateLiveSpeechErrorDomain = @"com.nolate.live-speech";
+static NSString *const NoLateLiveSpeechAssistantErrorDomain = @"kAFAssistantErrorDomain";
+static const NSTimeInterval NoLateLiveSpeechResetStartAdvanceSeconds = 0.35;
+static const double NoLateLiveSpeechSubstantialShorteningRatio = 0.75;
+static const NSUInteger NoLateLiveSpeechAlternativeLimit = 3;
+static const NSInteger NoLateLiveSpeechNoSpeechErrorCode = 1110;
 
 @interface NoLateLiveSpeech : RCTEventEmitter <RCTBridgeModule>
 @end
@@ -21,13 +27,23 @@ static NSString *const NoLateLiveSpeechStateEvent = @"NoLateLiveSpeechState";
   SFSpeechRecognizer *_speechRecognizer;
   SFSpeechAudioBufferRecognitionRequest *_recognitionRequest;
   SFSpeechRecognitionTask *_recognitionTask;
+  NSArray<NSString *> *_contextualStrings;
+  BOOL _requiresOnDeviceRecognition;
+  NSUInteger _recognitionCycleGeneration;
   dispatch_source_t _durationTimer;
   dispatch_source_t _levelTimer;
   NSString *_sessionId;
   NSUInteger _sessionGeneration;
+  NSString *_committedText;
+  NSString *_currentHypothesisText;
+  NSString *_previousRawText;
+  NSTimeInterval _previousRawStartTime;
+  NSTimeInterval _previousRawEndTime;
   NSString *_latestText;
+  NSArray<NSDictionary *> *_latestAlternatives;
   double _latestConfidence;
   BOOL _hasConfidence;
+  BOOL _didEmitFinalTranscript;
   BOOL _stopRequested;
   BOOL _hasListeners;
   CFTimeInterval _startedAt;
@@ -117,12 +133,14 @@ RCT_EXPORT_MODULE();
     @"elapsedMillis": @([self elapsedMillis]),
   } mutableCopy];
   if (_hasConfidence) body[@"confidence"] = @(MIN(1.0, MAX(0.0, _latestConfidence)));
+  if (_latestAlternatives.count > 0) body[@"alternatives"] = _latestAlternatives;
   return body;
 }
 
 - (void)emitTranscriptForSessionId:(NSString *)sessionId isFinal:(BOOL)isFinal
 {
   if (sessionId.length == 0) return;
+  if (isFinal) _didEmitFinalTranscript = YES;
   [self emitEvent:NoLateLiveSpeechTranscriptEvent
              body:[self resultBodyForSessionId:sessionId isFinal:isFinal]];
 }
@@ -135,6 +153,257 @@ RCT_EXPORT_MODULE();
     total += segment.confidence;
   }
   return total / transcription.segments.count;
+}
+
+- (NSString *)normalizedTranscriptText:(NSString *)text
+{
+  if (![text isKindOfClass:NSString.class]) return @"";
+  NSArray<NSString *> *components = [text
+    componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+  NSMutableArray<NSString *> *words = [NSMutableArray arrayWithCapacity:components.count];
+  for (NSString *component in components) {
+    if (component.length > 0) [words addObject:component];
+  }
+  return [words componentsJoinedByString:@" "];
+}
+
+- (NSString *)comparisonTextForTranscript:(NSString *)text
+{
+  NSMutableCharacterSet *ignoredCharacters = [NSCharacterSet.whitespaceAndNewlineCharacterSet mutableCopy];
+  [ignoredCharacters formUnionWithCharacterSet:NSCharacterSet.punctuationCharacterSet];
+  return [[text componentsSeparatedByCharactersInSet:ignoredCharacters]
+    componentsJoinedByString:@""];
+}
+
+- (NSUInteger)commonPrefixLengthBetween:(NSString *)first second:(NSString *)second
+{
+  NSUInteger maximumLength = MIN(first.length, second.length);
+  NSUInteger length = 0;
+  while (length < maximumLength
+         && [first characterAtIndex:length] == [second characterAtIndex:length]) {
+    length += 1;
+  }
+  return length;
+}
+
+- (NSUInteger)commonSuffixLengthBetween:(NSString *)first second:(NSString *)second
+{
+  NSUInteger maximumLength = MIN(first.length, second.length);
+  NSUInteger length = 0;
+  while (length < maximumLength
+         && [first characterAtIndex:first.length - length - 1]
+           == [second characterAtIndex:second.length - length - 1]) {
+    length += 1;
+  }
+  return length;
+}
+
+- (BOOL)isLikelyRevisionFromText:(NSString *)previousText toText:(NSString *)incomingText
+{
+  NSString *previous = [self comparisonTextForTranscript:previousText];
+  NSString *incoming = [self comparisonTextForTranscript:incomingText];
+  if (previous.length == 0 || incoming.length == 0) return NO;
+  if ([previous isEqualToString:incoming]
+      || [previous containsString:incoming]
+      || [incoming containsString:previous]) {
+    return YES;
+  }
+
+  NSUInteger shorterLength = MIN(previous.length, incoming.length);
+  NSUInteger stableLength = MAX(
+    [self commonPrefixLengthBetween:previous second:incoming],
+    [self commonSuffixLengthBetween:previous second:incoming]
+  );
+  return stableLength >= 4 || (shorterLength > 0 && stableLength * 2 >= shorterLength);
+}
+
+- (NSString *)textByAppendingTranscript:(NSString *)incomingText
+                                toPrefix:(NSString *)prefixText
+{
+  NSString *prefix = [self normalizedTranscriptText:prefixText];
+  NSString *incoming = [self normalizedTranscriptText:incomingText];
+  if (prefix.length == 0) return incoming;
+  if (incoming.length == 0) return prefix;
+  if ([prefix isEqualToString:incoming]
+      || [prefix hasSuffix:incoming]) {
+    return prefix;
+  }
+  if ([incoming hasPrefix:prefix]) return incoming;
+
+  NSUInteger maximumOverlap = MIN(prefix.length, incoming.length);
+  for (NSUInteger overlap = maximumOverlap; overlap >= 2; overlap -= 1) {
+    NSString *prefixSuffix = [prefix substringFromIndex:prefix.length - overlap];
+    NSString *incomingPrefix = [incoming substringToIndex:overlap];
+    if ([prefixSuffix isEqualToString:incomingPrefix]) {
+      NSString *remainder = [incoming substringFromIndex:overlap];
+      return [self normalizedTranscriptText:[prefix stringByAppendingString:remainder]];
+    }
+  }
+  return [NSString stringWithFormat:@"%@ %@", prefix, incoming];
+}
+
+- (NSTimeInterval)startTimeForTranscription:(SFTranscription *)transcription
+{
+  SFTranscriptionSegment *firstSegment = transcription.segments.firstObject;
+  return firstSegment ? firstSegment.timestamp : -1;
+}
+
+- (NSTimeInterval)endTimeForTranscription:(SFTranscription *)transcription
+{
+  SFTranscriptionSegment *lastSegment = transcription.segments.lastObject;
+  return lastSegment ? lastSegment.timestamp + lastSegment.duration : -1;
+}
+
+- (BOOL)incomingTranscriptionStartsNewUtterance:(SFTranscription *)transcription
+                                           text:(NSString *)text
+{
+  if (_previousRawText.length == 0 || _currentHypothesisText.length == 0) return NO;
+  NSTimeInterval startTime = [self startTimeForTranscription:transcription];
+  if (startTime < 0 || _previousRawStartTime < 0) return NO;
+
+  BOOL startMovedForward = startTime
+    > _previousRawStartTime + NoLateLiveSpeechResetStartAdvanceSeconds;
+  if (!startMovedForward) return NO;
+
+  NSString *previousComparison = [self comparisonTextForTranscript:_previousRawText];
+  NSString *incomingComparison = [self comparisonTextForTranscript:text];
+  BOOL substantiallyShorter = incomingComparison.length
+    < previousComparison.length * NoLateLiveSpeechSubstantialShorteningRatio;
+  BOOL startsAfterPreviousTail = _previousRawEndTime >= 0
+    && startTime >= _previousRawEndTime - NoLateLiveSpeechResetStartAdvanceSeconds;
+  return substantiallyShorter
+    || startsAfterPreviousTail
+    || ![self isLikelyRevisionFromText:_previousRawText toText:text];
+}
+
+- (BOOL)incomingTranscriptionRestoresEarlierContext:(SFTranscription *)transcription
+                                               text:(NSString *)text
+                                            isFinal:(BOOL)isFinal
+{
+  if (_committedText.length == 0 || _latestText.length == 0) return NO;
+  NSTimeInterval startTime = [self startTimeForTranscription:transcription];
+  if (startTime < 0 || _previousRawStartTime < 0) return NO;
+
+  BOOL startMovedBackward = startTime + NoLateLiveSpeechResetStartAdvanceSeconds
+    < _previousRawStartTime;
+  if (!startMovedBackward) return NO;
+
+  NSString *incomingComparison = [self comparisonTextForTranscript:text];
+  NSString *latestComparison = [self comparisonTextForTranscript:_latestText];
+  BOOL hasComparableCoverage = incomingComparison.length
+    >= latestComparison.length * NoLateLiveSpeechSubstantialShorteningRatio;
+  return isFinal
+    || hasComparableCoverage
+    || [self isLikelyRevisionFromText:_latestText toText:text];
+}
+
+- (NSString *)preferredCurrentHypothesisForIncomingText:(NSString *)incomingText
+                                                isFinal:(BOOL)isFinal
+{
+  if (_currentHypothesisText.length == 0 || isFinal) return incomingText;
+  if (incomingText.length >= _currentHypothesisText.length) return incomingText;
+  if ([_currentHypothesisText containsString:incomingText]
+      || [_currentHypothesisText hasPrefix:incomingText]) {
+    return _currentHypothesisText;
+  }
+
+  NSString *currentComparison = [self comparisonTextForTranscript:_currentHypothesisText];
+  NSString *incomingComparison = [self comparisonTextForTranscript:incomingText];
+  if ([self isLikelyRevisionFromText:_currentHypothesisText toText:incomingText]
+      && incomingComparison.length
+        >= currentComparison.length * NoLateLiveSpeechSubstantialShorteningRatio) {
+    return incomingText;
+  }
+  return _currentHypothesisText;
+}
+
+- (NSArray<NSDictionary *> *)alternativesForResult:(SFSpeechRecognitionResult *)result
+{
+  NSMutableArray<NSDictionary *> *alternatives = [NSMutableArray
+    arrayWithCapacity:NoLateLiveSpeechAlternativeLimit];
+  NSMutableSet<NSString *> *seenTexts = [NSMutableSet
+    setWithCapacity:NoLateLiveSpeechAlternativeLimit];
+
+  if (_latestText.length > 0) {
+    NSMutableDictionary *best = [@{ @"text": _latestText } mutableCopy];
+    if (_hasConfidence) {
+      best[@"confidence"] = @(MIN(1.0, MAX(0.0, _latestConfidence)));
+    }
+    [alternatives addObject:best];
+    [seenTexts addObject:_latestText];
+  }
+
+  for (SFTranscription *transcription in result.transcriptions) {
+    if (alternatives.count >= NoLateLiveSpeechAlternativeLimit) break;
+    NSString *rawText = [self normalizedTranscriptText:transcription.formattedString];
+    NSTimeInterval candidateStartTime = [self startTimeForTranscription:transcription];
+    BOOL candidateIncludesEarlierContext = _committedText.length > 0
+      && candidateStartTime >= 0
+      && _previousRawStartTime >= 0
+      && candidateStartTime + NoLateLiveSpeechResetStartAdvanceSeconds
+        < _previousRawStartTime;
+    NSString *candidateText = candidateIncludesEarlierContext
+      ? rawText
+      : [self textByAppendingTranscript:rawText toPrefix:_committedText];
+    if (candidateText.length == 0 || [seenTexts containsObject:candidateText]) continue;
+
+    NSMutableDictionary *candidate = [@{ @"text": candidateText } mutableCopy];
+    double confidence = [self averageConfidenceForTranscription:transcription];
+    if (confidence >= 0) candidate[@"confidence"] = @(MIN(1.0, MAX(0.0, confidence)));
+    [alternatives addObject:candidate];
+    [seenTexts addObject:candidateText];
+  }
+  return alternatives;
+}
+
+- (BOOL)updateTranscriptStateWithResult:(SFSpeechRecognitionResult *)result
+{
+  SFTranscription *bestTranscription = result.bestTranscription;
+  NSString *incomingText = [self normalizedTranscriptText:bestTranscription.formattedString];
+  if (incomingText.length == 0) return _latestText.length > 0;
+
+  BOOL beginsAfterCommittedCycle = _committedText.length > 0
+    && _currentHypothesisText.length == 0;
+  BOOL restoresEarlierContext = [self
+    incomingTranscriptionRestoresEarlierContext:bestTranscription
+                                           text:incomingText
+                                        isFinal:result.isFinal];
+  BOOL startsNewUtterance = !restoresEarlierContext
+    && [self incomingTranscriptionStartsNewUtterance:bestTranscription text:incomingText];
+  BOOL acceptedIncomingText = YES;
+  if (restoresEarlierContext) {
+    _currentHypothesisText = _latestText;
+    _committedText = @"";
+    NSString *preferredText = [self preferredCurrentHypothesisForIncomingText:incomingText
+                                                                       isFinal:result.isFinal];
+    acceptedIncomingText = [preferredText isEqualToString:incomingText];
+    _currentHypothesisText = preferredText;
+  } else if (startsNewUtterance) {
+    _committedText = [self textByAppendingTranscript:_currentHypothesisText
+                                           toPrefix:_committedText];
+    _currentHypothesisText = incomingText;
+  } else {
+    NSString *preferredText = [self preferredCurrentHypothesisForIncomingText:incomingText
+                                                                       isFinal:result.isFinal];
+    acceptedIncomingText = [preferredText isEqualToString:incomingText];
+    _currentHypothesisText = preferredText;
+  }
+
+  _latestText = [self textByAppendingTranscript:_currentHypothesisText
+                                       toPrefix:_committedText];
+  _previousRawText = incomingText;
+  _previousRawStartTime = [self startTimeForTranscription:bestTranscription];
+  _previousRawEndTime = [self endTimeForTranscription:bestTranscription];
+
+  double confidence = [self averageConfidenceForTranscription:bestTranscription];
+  if (confidence >= 0 && (acceptedIncomingText || !_hasConfidence)) {
+    _latestConfidence = (startsNewUtterance || beginsAfterCommittedCycle) && _hasConfidence
+      ? MIN(_latestConfidence, confidence)
+      : confidence;
+    _hasConfidence = YES;
+  }
+  _latestAlternatives = [self alternativesForResult:result];
+  return _latestText.length > 0;
 }
 
 - (void)captureLevelForBuffer:(AVAudioPCMBuffer *)buffer
@@ -384,11 +653,21 @@ RCT_EXPORT_MODULE();
   _speechRecognizer = nil;
   _recognitionRequest = nil;
   _recognitionTask = nil;
+  _contextualStrings = nil;
+  _requiresOnDeviceRecognition = NO;
+  _recognitionCycleGeneration += 1;
   _sessionId = nil;
   _sessionGeneration += 1;
+  _committedText = nil;
+  _currentHypothesisText = nil;
+  _previousRawText = nil;
+  _previousRawStartTime = -1;
+  _previousRawEndTime = -1;
   _latestText = nil;
+  _latestAlternatives = nil;
   _latestConfidence = 0;
   _hasConfidence = NO;
+  _didEmitFinalTranscript = NO;
   _stopRequested = NO;
   _startedAt = 0;
   _pendingStopResolve = nil;
@@ -407,7 +686,9 @@ RCT_EXPORT_MODULE();
   RCTPromiseResolveBlock stopResolve = _pendingStopResolve;
   RCTPromiseRejectBlock stopReject = _pendingStopReject;
 
-  if (!cancelled && hasText) [self emitTranscriptForSessionId:sessionId isFinal:YES];
+  if (!cancelled && hasText && !_didEmitFinalTranscript) {
+    [self emitTranscriptForSessionId:sessionId isFinal:YES];
+  }
   [self emitState:state sessionId:sessionId message:errorMessage];
 
   [_recognitionTask cancel];
@@ -464,6 +745,210 @@ RCT_EXPORT_MODULE();
     [self beginStoppingSession:sessionId generation:generation];
   });
   dispatch_resume(_durationTimer);
+}
+
+- (SFSpeechAudioBufferRecognitionRequest *)newRecognitionRequest
+{
+  SFSpeechAudioBufferRecognitionRequest *request =
+    [SFSpeechAudioBufferRecognitionRequest new];
+  request.shouldReportPartialResults = YES;
+  request.taskHint = SFSpeechRecognitionTaskHintDictation;
+  request.contextualStrings = _contextualStrings ?: @[];
+  if (@available(iOS 16.0, *)) request.addsPunctuation = YES;
+  if (@available(iOS 13.0, *)) {
+    request.requiresOnDeviceRecognition = _requiresOnDeviceRecognition;
+  }
+  return request;
+}
+
+- (void)stopCurrentRecognitionCycle
+{
+  AVAudioEngine *audioEngine = _audioEngine;
+  if (audioEngine.isRunning) [audioEngine stop];
+  @try {
+    [audioEngine.inputNode removeTapOnBus:0];
+  } @catch (__unused NSException *exception) {
+  }
+  [_recognitionRequest endAudio];
+  _audioEngine = nil;
+  _recognitionRequest = nil;
+}
+
+- (void)prepareTranscriptForNextRecognitionCycle
+{
+  _committedText = _latestText ?: @"";
+  _currentHypothesisText = @"";
+  _previousRawText = @"";
+  _previousRawStartTime = -1;
+  _previousRawEndTime = -1;
+}
+
+- (BOOL)isRecoverableSilenceError:(NSError *)error
+{
+  return error != nil
+    && error.code == NoLateLiveSpeechNoSpeechErrorCode
+    && [error.domain isEqualToString:NoLateLiveSpeechAssistantErrorDomain];
+}
+
+- (BOOL)startRecognitionCycleForSessionId:(NSString *)sessionId
+                               generation:(NSUInteger)sessionGeneration
+                                errorCode:(NSString **)errorCode
+                                    error:(NSError **)error
+{
+  if (![self isActiveSessionId:sessionId generation:sessionGeneration]
+      || _stopRequested
+      || !_speechRecognizer) {
+    if (errorCode) *errorCode = @"live_speech_session_mismatch";
+    if (error) {
+      *error = [NSError errorWithDomain:NoLateLiveSpeechErrorDomain
+                                  code:1
+                              userInfo:@{
+                                NSLocalizedDescriptionKey:
+                                  @"계속할 음성 인식 세션을 찾지 못했습니다.",
+                              }];
+    }
+    return NO;
+  }
+
+  NSUInteger recognitionCycleGeneration = ++_recognitionCycleGeneration;
+  SFSpeechAudioBufferRecognitionRequest *request = [self newRecognitionRequest];
+  AVAudioEngine *audioEngine = [AVAudioEngine new];
+  AVAudioInputNode *inputNode = audioEngine.inputNode;
+  AVAudioFormat *inputFormat = [inputNode outputFormatForBus:0];
+  if (inputFormat.sampleRate <= 0 || inputFormat.channelCount == 0) {
+    if (errorCode) *errorCode = @"live_speech_input_format";
+    if (error) {
+      *error = [NSError errorWithDomain:NoLateLiveSpeechErrorDomain
+                                  code:2
+                              userInfo:@{
+                                NSLocalizedDescriptionKey:
+                                  @"마이크 입력 형식을 확인하지 못했습니다.",
+                              }];
+    }
+    return NO;
+  }
+
+  _audioEngine = audioEngine;
+  _recognitionRequest = request;
+  __weak typeof(self) weakSelf = self;
+  [inputNode installTapOnBus:0
+                  bufferSize:1024
+                      format:inputFormat
+                       block:^(AVAudioPCMBuffer *buffer, __unused AVAudioTime *when) {
+    [request appendAudioPCMBuffer:buffer];
+    [weakSelf captureLevelForBuffer:buffer];
+  }];
+
+  __block __weak SFSpeechRecognitionTask *activeTask = nil;
+  activeTask = [_speechRecognizer recognitionTaskWithRequest:request
+                                               resultHandler:^(SFSpeechRecognitionResult *result,
+                                                               NSError *recognitionError) {
+    typeof(self) queuedSelf = weakSelf;
+    if (!queuedSelf) return;
+    dispatch_async(queuedSelf->_sessionQueue, ^{
+      typeof(self) strongSelf = queuedSelf;
+      if (!strongSelf
+          || strongSelf->_sessionGeneration != sessionGeneration
+          || strongSelf->_recognitionCycleGeneration != recognitionCycleGeneration
+          || strongSelf->_recognitionTask != activeTask
+          || ![strongSelf->_sessionId isEqualToString:sessionId]) return;
+
+      if (result) {
+        BOOL hasText = [strongSelf updateTranscriptStateWithResult:result];
+        BOOL shouldContinue = result.isFinal
+          && !strongSelf->_stopRequested
+          && (recognitionError == nil
+              || [strongSelf isRecoverableSilenceError:recognitionError]);
+        if (hasText) {
+          [strongSelf emitTranscriptForSessionId:sessionId
+                                        isFinal:result.isFinal && !shouldContinue];
+        }
+
+        if (result.isFinal) {
+          if (shouldContinue) {
+            [strongSelf stopCurrentRecognitionCycle];
+            [strongSelf prepareTranscriptForNextRecognitionCycle];
+
+            NSError *rolloverError = nil;
+            if (![strongSelf startRecognitionCycleForSessionId:sessionId
+                                                    generation:sessionGeneration
+                                                     errorCode:NULL
+                                                         error:&rolloverError]) {
+              NSString *message = rolloverError.localizedDescription.length > 0
+                ? rolloverError.localizedDescription
+                : @"음성 인식을 계속하지 못했습니다. 다시 시도해 주세요.";
+              [strongSelf finishSession:sessionId
+                                  state:@"failed"
+                           errorMessage:message];
+            }
+          } else {
+            [strongSelf finishSession:sessionId
+                                state:hasText ? @"finished" : @"failed"
+                         errorMessage:hasText
+                           ? nil
+                           : @"음성에서 일정 텍스트를 찾지 못했습니다. 다시 말해 주세요."];
+          }
+          return;
+        }
+      }
+
+      if (recognitionError) {
+        if (!strongSelf->_stopRequested
+            && [strongSelf isRecoverableSilenceError:recognitionError]) {
+          [strongSelf stopCurrentRecognitionCycle];
+          [strongSelf prepareTranscriptForNextRecognitionCycle];
+
+          NSError *rolloverError = nil;
+          if (![strongSelf startRecognitionCycleForSessionId:sessionId
+                                                  generation:sessionGeneration
+                                                   errorCode:NULL
+                                                       error:&rolloverError]) {
+            NSString *message = rolloverError.localizedDescription.length > 0
+              ? rolloverError.localizedDescription
+              : @"음성 인식을 계속하지 못했습니다. 다시 시도해 주세요.";
+            [strongSelf finishSession:sessionId
+                                state:@"failed"
+                         errorMessage:message];
+          }
+        } else if (strongSelf->_stopRequested && strongSelf->_latestText.length > 0) {
+          [strongSelf finishSession:sessionId state:@"finished" errorMessage:nil];
+        } else {
+          [strongSelf finishSession:sessionId
+                              state:@"failed"
+                       errorMessage:@"음성 인식이 중단되었습니다. 마이크 상태와 기기 음성 인식 설정을 확인해 주세요."];
+        }
+      }
+    });
+  }];
+  if (!activeTask) {
+    _recognitionCycleGeneration += 1;
+    [self stopCurrentRecognitionCycle];
+    if (errorCode) *errorCode = @"live_speech_task";
+    if (error) {
+      *error = [NSError errorWithDomain:NoLateLiveSpeechErrorDomain
+                                  code:3
+                              userInfo:@{
+                                NSLocalizedDescriptionKey:
+                                  @"음성 인식 작업을 시작하지 못했습니다.",
+                              }];
+    }
+    return NO;
+  }
+  _recognitionTask = activeTask;
+
+  [audioEngine prepare];
+  NSError *engineError = nil;
+  [audioEngine startAndReturnError:&engineError];
+  if (engineError) {
+    _recognitionCycleGeneration += 1;
+    [activeTask cancel];
+    [self stopCurrentRecognitionCycle];
+    _recognitionTask = nil;
+    if (errorCode) *errorCode = @"live_speech_engine";
+    if (error) *error = engineError;
+    return NO;
+  }
+  return YES;
 }
 
 RCT_REMAP_METHOD(getAvailability,
@@ -609,95 +1094,35 @@ RCT_REMAP_METHOD(start,
 
       NSUInteger sessionGeneration = ++self->_sessionGeneration;
       self->_sessionId = sessionId;
+      self->_committedText = @"";
+      self->_currentHypothesisText = @"";
+      self->_previousRawText = @"";
+      self->_previousRawStartTime = -1;
+      self->_previousRawEndTime = -1;
       self->_latestText = @"";
+      self->_latestAlternatives = @[];
       self->_latestConfidence = 0;
       self->_hasConfidence = NO;
+      self->_didEmitFinalTranscript = NO;
       self->_stopRequested = NO;
       self->_startedAt = CACurrentMediaTime();
       self->_speechRecognizer = recognizer;
-      self->_recognitionRequest = [SFSpeechAudioBufferRecognitionRequest new];
-      self->_recognitionRequest.shouldReportPartialResults = YES;
-      self->_recognitionRequest.taskHint = SFSpeechRecognitionTaskHintDictation;
-      self->_recognitionRequest.contextualStrings = [self normalizedContextFromOptions:startOptions];
-      if (@available(iOS 16.0, *)) self->_recognitionRequest.addsPunctuation = YES;
-      if (@available(iOS 13.0, *)) {
-        self->_recognitionRequest.requiresOnDeviceRecognition = requiresOnDeviceRecognition;
-      }
+      self->_contextualStrings = [self normalizedContextFromOptions:startOptions];
+      self->_requiresOnDeviceRecognition = requiresOnDeviceRecognition;
 
-      self->_audioEngine = [AVAudioEngine new];
-      AVAudioInputNode *inputNode = self->_audioEngine.inputNode;
-      AVAudioFormat *inputFormat = [inputNode outputFormatForBus:0];
-      if (inputFormat.sampleRate <= 0 || inputFormat.channelCount == 0) {
-        NSString *errorMessage = @"마이크 입력 형식을 확인하지 못했습니다.";
+      NSString *recognitionErrorCode = nil;
+      NSError *recognitionError = nil;
+      if (![self startRecognitionCycleForSessionId:sessionId
+                                        generation:sessionGeneration
+                                         errorCode:&recognitionErrorCode
+                                             error:&recognitionError]) {
+        NSString *errorMessage = recognitionError.localizedDescription.length > 0
+          ? recognitionError.localizedDescription
+          : @"실시간 마이크 입력을 시작하지 못했습니다.";
         [self finishSession:sessionId state:@"failed" errorMessage:errorMessage];
-        rejectPendingStart(@"live_speech_input_format", errorMessage, nil);
-        return;
-      }
-
-      SFSpeechAudioBufferRecognitionRequest *activeRequest = self->_recognitionRequest;
-      __weak typeof(self) weakSelf = self;
-      [inputNode installTapOnBus:0
-                      bufferSize:1024
-                          format:inputFormat
-                           block:^(AVAudioPCMBuffer *buffer, __unused AVAudioTime *when) {
-        [activeRequest appendAudioPCMBuffer:buffer];
-        [weakSelf captureLevelForBuffer:buffer];
-      }];
-
-      __block __weak SFSpeechRecognitionTask *activeTask = nil;
-      activeTask = [recognizer recognitionTaskWithRequest:activeRequest
-                                             resultHandler:^(SFSpeechRecognitionResult *result, NSError *error) {
-        typeof(self) queuedSelf = weakSelf;
-        if (!queuedSelf) return;
-        dispatch_async(queuedSelf->_sessionQueue, ^{
-          typeof(self) strongSelf = queuedSelf;
-          if (!strongSelf
-              || strongSelf->_sessionGeneration != sessionGeneration
-              || strongSelf->_recognitionTask != activeTask
-              || ![strongSelf->_sessionId isEqualToString:sessionId]) return;
-
-          if (result) {
-            NSString *text = [result.bestTranscription.formattedString
-              stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] ?: @"";
-            if (text.length > 0) {
-              strongSelf->_latestText = text;
-              double confidence = [strongSelf averageConfidenceForTranscription:result.bestTranscription];
-              if (confidence >= 0) {
-                strongSelf->_latestConfidence = confidence;
-                strongSelf->_hasConfidence = YES;
-              }
-              [strongSelf emitTranscriptForSessionId:sessionId isFinal:result.isFinal];
-            }
-            if (result.isFinal) {
-              [strongSelf finishSession:sessionId
-                                  state:text.length > 0 ? @"finished" : @"failed"
-                           errorMessage:text.length > 0
-                             ? nil
-                             : @"음성에서 일정 텍스트를 찾지 못했습니다. 다시 말해 주세요."];
-              return;
-            }
-          }
-
-          if (error) {
-            if (strongSelf->_stopRequested && strongSelf->_latestText.length > 0) {
-              [strongSelf finishSession:sessionId state:@"finished" errorMessage:nil];
-            } else {
-              [strongSelf finishSession:sessionId
-                                  state:@"failed"
-                           errorMessage:@"음성 인식이 중단되었습니다. 마이크 상태와 기기 음성 인식 설정을 확인해 주세요."];
-            }
-          }
-        });
-      }];
-      self->_recognitionTask = activeTask;
-
-      [self->_audioEngine prepare];
-      NSError *engineError = nil;
-      [self->_audioEngine startAndReturnError:&engineError];
-      if (engineError) {
-        NSString *errorMessage = @"실시간 마이크 입력을 시작하지 못했습니다.";
-        [self finishSession:sessionId state:@"failed" errorMessage:errorMessage];
-        rejectPendingStart(@"live_speech_engine", errorMessage, engineError);
+        rejectPendingStart(recognitionErrorCode ?: @"live_speech_engine",
+                           errorMessage,
+                           recognitionError);
         return;
       }
 
