@@ -30,7 +30,15 @@ jest.mock("react-native-reanimated", () => {
             View: ReactNative.View,
             Text: ReactNative.Text,
         },
-        useAnimatedStyle: (factory: () => Record<string, unknown>) => factory(),
+        useAnimatedStyle: (factory: () => Record<string, unknown>) => {
+            const style = factory();
+            Object.defineProperty(style, "__mockFactory", {
+                configurable: true,
+                enumerable: false,
+                value: factory,
+            });
+            return style;
+        },
     };
 });
 
@@ -89,6 +97,9 @@ describe("CustomDay stack indicators", () => {
         holiday = false,
         stackPresentation,
         stackEventTop,
+        state,
+        allowDisabledPress = false,
+        onPress,
     }: {
         viewMode?: "stack" | "detail";
         eventCount?: number;
@@ -96,11 +107,15 @@ describe("CustomDay stack indicators", () => {
         holiday?: boolean;
         stackPresentation?: StackDayPresentation;
         stackEventTop?: number;
+        state?: string;
+        allowDisabledPress?: boolean;
+        onPress?: jest.Mock;
     } = {}) {
         await act(async () => {
             renderer = TestRenderer.create(
                 <CustomDay
                     date={DATE}
+                    state={state}
                     marking={{ events: makeEvents(eventCount) }}
                     dayMetadata={holiday ? {
                         date: DATE.dateString,
@@ -113,6 +128,8 @@ describe("CustomDay stack indicators", () => {
                     viewMode={viewMode}
                     stackPresentation={stackPresentation}
                     stackEventTop={stackEventTop}
+                    allowDisabledPress={allowDisabledPress}
+                    onPress={onPress}
                     animatedCellHeight={animatedHeight === undefined
                         ? undefined
                         : { value: animatedHeight } as never}
@@ -334,5 +351,127 @@ describe("CustomDay stack indicators", () => {
         expect(holidayText.props.children).toBe("제헌절");
         expect(root.findByProps({ accessibilityRole: "button" }).props.accessibilityLabel)
             .toContain("음 6.1, 공휴일 제헌절, 1개의 일정");
+    });
+
+    test("전달·다음달 날짜는 흐린 표현을 유지하면서 클릭할 수 있다", async () => {
+        const onPress = jest.fn();
+        const root = await renderDay({
+            viewMode: "detail",
+            state: "disabled",
+            allowDisabledPress: true,
+            onPress,
+        });
+        const pressable = root.findByProps({ accessibilityRole: "button" });
+        const [circle] = findViewsByTestId(root, "calendar-day-circle");
+        const dayText = circle.findByType(Text);
+
+        expect(pressable.props.disabled).toBe(false);
+        expect(pressable.props.accessibilityState.disabled).toBe(false);
+        expect(StyleSheet.flatten(dayText.props.style).opacity).toBe(0.28);
+
+        act(() => pressable.props.onPress());
+        expect(onPress).toHaveBeenCalledTimes(1);
+        expect(onPress).toHaveBeenCalledWith(DATE);
+    });
+
+    test("일반 disabled 날짜는 명시적으로 허용하지 않으면 클릭되지 않는다", async () => {
+        const onPress = jest.fn();
+        const root = await renderDay({
+            viewMode: "detail",
+            state: "disabled",
+            onPress,
+        });
+        const pressable = root.findByProps({ accessibilityRole: "button" });
+
+        expect(pressable.props.disabled).toBe(true);
+        expect(pressable.props.accessibilityState.disabled).toBe(true);
+        act(() => pressable.props.onPress());
+        expect(onPress).not.toHaveBeenCalled();
+    });
+
+    test("상세형 선택 원은 controlled render를 기다리지 않고 shared key를 따른다", async () => {
+        const selectedDayKey = { value: 20260715 };
+        const nextDate = {
+            ...DATE,
+            day: 15,
+            dateString: "2026-07-15",
+            timestamp: new Date("2026-07-15T00:00:00").getTime(),
+        };
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <View>
+                    <CustomDay
+                        date={DATE}
+                        marking={{ selected: true }}
+                        isSelectedDay
+                        viewMode="detail"
+                        animatedSelectedDayKey={selectedDayKey as never}
+                    />
+                    <CustomDay
+                        date={nextDate}
+                        marking={{}}
+                        isSelectedDay={false}
+                        viewMode="detail"
+                        animatedSelectedDayKey={selectedDayKey as never}
+                    />
+                </View>
+            );
+        });
+
+        const circles = findViewsByTestId(
+            renderer!.root,
+            "calendar-day-circle"
+        );
+        expect(circles).toHaveLength(2);
+        expect(StyleSheet.flatten(circles[0].props.style).backgroundColor)
+            .toBe("transparent");
+        expect(StyleSheet.flatten(circles[1].props.style).backgroundColor)
+            .toBe("#111111");
+
+        selectedDayKey.value = 20260714;
+        const resolveAnimatedStyle = (circle: typeof circles[number]) => {
+            const animatedStyle = circle.props.style.at(-1) as {
+                __mockFactory?: () => Record<string, unknown>;
+            };
+            return animatedStyle.__mockFactory?.();
+        };
+        expect(resolveAnimatedStyle(circles[0])?.backgroundColor)
+            .toBe("#111111");
+        expect(resolveAnimatedStyle(circles[1])?.backgroundColor)
+            .toBe("transparent");
+    });
+
+    test("인접 pager는 release 전에도 같은 일자의 선택 원을 준비한다", async () => {
+        const selectedDayKey = { value: 20260715 };
+        const august15 = {
+            ...DATE,
+            day: 15,
+            month: 8,
+            dateString: "2026-08-15",
+            timestamp: new Date("2026-08-15T00:00:00").getTime(),
+        };
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <CustomDay
+                    date={august15}
+                    marking={{}}
+                    viewMode="detail"
+                    animatedSelectedDayKey={selectedDayKey as never}
+                    detailPagerMonthOrdinal={2026 * 12 + 8 - 1}
+                />
+            );
+        });
+
+        const [circle] = findViewsByTestId(
+            renderer!.root,
+            "calendar-day-circle"
+        );
+        const animatedStyle = circle.props.style.at(-1) as {
+            __mockFactory?: () => Record<string, unknown>;
+        };
+        expect(animatedStyle.__mockFactory?.().backgroundColor)
+            .toBe("#111111");
     });
 });

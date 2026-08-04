@@ -55,7 +55,10 @@ describe("ODsay multimodal transit parser", () => {
                         {
                             trafficType: 1,
                             duration: 16,
+                            waitingTime: 4,
                             distance: 7_800,
+                            startDateTime: "202607141206",
+                            endDateTime: "202607141222",
                             startID: 426,
                             startName: "서울역",
                             startX: 126.9726,
@@ -69,7 +72,7 @@ describe("ODsay multimodal transit parser", () => {
                             door: "1-1",
                             startExitNo: "4",
                             graph: "126.9726 37.5547|126.9816 37.4768",
-                            lane: [{ name: "수도권 4호선", subwayCode: 4 }],
+                            lane: [{ name: "수도권 4호선", subwayCode: 4, subwayCityCode: 1000 }],
                             passStopList: {
                                 stations: [
                                     { index: 0, stationID: 426, stationName: "서울역", x: 126.9726, y: 37.5547 },
@@ -120,8 +123,16 @@ describe("ODsay multimodal transit parser", () => {
         expect(result[0].transitLegs?.[1]).toMatchObject({
             kind: "SUBWAY",
             lineName: "수도권 4호선",
+            serviceClass: "LOCAL",
             directionName: "사당",
             directionCode: "DOWN",
+            waitingMinutes: 4,
+            providerRouteId: "1000:4",
+            routeCityCode: "1000",
+            startDateTime: "2026-07-14T03:06:00.000Z",
+            endDateTime: "2026-07-14T03:22:00.000Z",
+            startID: "426",
+            endID: "433",
             boardingExit: "4번 출구",
             recommendedBoardingPosition: "1-1",
             recommendedTransferPosition: "1-1",
@@ -129,9 +140,66 @@ describe("ODsay multimodal transit parser", () => {
         });
         expect(result[0].transitLegs?.[3]).toMatchObject({
             directionCode: "UP",
+            serviceClass: "LOCAL",
             recommendedBoardingPosition: undefined,
             recommendedTransferPosition: undefined,
         });
+    });
+
+    test("persists ODsay express markers and classifies non-express named subway legs as local", () => {
+        const [option] = parseTransitOptionsFromOdsay({
+            result: {
+                paths: [{
+                    pathType: 2,
+                    totalTime: 20,
+                    rps: [
+                        {
+                            trafficType: 1,
+                            duration: 10,
+                            startName: "여의도",
+                            endName: "김포공항",
+                            lane: [{ name: "수도권 9호선(급행)", subwayCode: 9, subwayCityCode: 1000 }],
+                        },
+                        {
+                            trafficType: 1,
+                            duration: 10,
+                            startName: "김포공항",
+                            endName: "개화",
+                            lane: [{ name: "수도권 9호선(일반)", subwayCode: 9, subwayCityCode: 1000 }],
+                        },
+                        {
+                            trafficType: 1,
+                            duration: 10,
+                            startName: "시청",
+                            endName: "을지로입구",
+                            lane: [{ name: "수도권 2호선", subwayCode: 2, subwayCityCode: 1000 }],
+                        },
+                        {
+                            trafficType: 1,
+                            duration: 10,
+                            startName: "A",
+                            endName: "B",
+                            lane: [{ name: "9호선(급행)(일반)", subwayCode: 9, subwayCityCode: 1000 }],
+                        },
+                        {
+                            trafficType: 1,
+                            duration: 10,
+                            startName: "B",
+                            endName: "C",
+                            lane: [{ subwayCode: 2, subwayCityCode: 1000 }],
+                        },
+                    ],
+                }],
+            },
+        });
+
+        expect(option.transitLegs?.map((leg) => leg.serviceClass)).toEqual([
+            "EXPRESS",
+            "LOCAL",
+            "LOCAL",
+            "UNKNOWN",
+            "UNKNOWN",
+        ]);
     });
 
     test("preserves ODsay bus ARS and provider line color for realtime arrival lookup", () => {
@@ -146,14 +214,33 @@ describe("ODsay multimodal transit parser", () => {
                         trafficType: 2,
                         duration: 18,
                         distance: 4_800,
+                        startDateTime: "202607141210",
+                        endDateTime: "202607141228",
+                        startID: 10001,
+                        startLocalStationID: "SEOUL_NODE_02005",
+                        startStationCityCode: 11,
+                        startStationProviderCode: 100,
+                        startArsID: "02005",
                         startName: "서울역버스환승센터(5번승강장)",
                         startX: 126.9726,
                         startY: 37.5552,
+                        endID: 10002,
+                        endLocalStationID: "SEOUL_NODE_22009",
+                        endStationCityCode: 11,
+                        endStationProviderCode: 100,
+                        endArsID: "22009",
                         endName: "강남역",
                         endX: 127.0276,
                         endY: 37.4979,
                         graph: "126.9726 37.5552|127.0276 37.4979",
-                        lane: [{ busNo: "402", busLaneColor: "#3952fb" }],
+                        lane: [{
+                            busNo: "402",
+                            busID: 12345,
+                            busLocalBlID: "SEOUL_ROUTE_402",
+                            busCityCode: 11,
+                            busProviderCode: 100,
+                            busLaneColor: "#3952fb",
+                        }],
                         passStopList: {
                             stations: [
                                 {
@@ -175,6 +262,22 @@ describe("ODsay multimodal transit parser", () => {
             kind: "BUS",
             lineName: "402",
             lineColor: "#3952FB",
+            providerRouteId: "12345",
+            localRouteId: "SEOUL_ROUTE_402",
+            routeCityCode: "11",
+            routeProviderCode: "100",
+            startDateTime: "2026-07-14T03:10:00.000Z",
+            endDateTime: "2026-07-14T03:28:00.000Z",
+            startID: "10001",
+            startLocalStationID: "SEOUL_NODE_02005",
+            startStationCityCode: "11",
+            startStationProviderCode: "100",
+            startArsID: "02005",
+            endID: "10002",
+            endLocalStationID: "SEOUL_NODE_22009",
+            endStationCityCode: "11",
+            endStationProviderCode: "100",
+            endArsID: "22009",
             boardingPlatform: "5번 승강장",
         });
         expect(option.transitLegs?.[0].passStops?.[0].code).toBe("ARS:02005");

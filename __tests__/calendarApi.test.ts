@@ -24,6 +24,7 @@ describe("calendar API", () => {
                 lunarMonth: 8,
                 lunarDay: 15,
                 leapMonth: false,
+                metadataComplete: true,
                 holidays: [
                     { name: " 추석 ", type: "PUBLIC_HOLIDAY" },
                     { name: " ", type: "PUBLIC_HOLIDAY" },
@@ -37,6 +38,7 @@ describe("calendar API", () => {
             lunarMonth: 8,
             lunarDay: 15,
             leapMonth: false,
+            metadataComplete: true,
             holidays: [{ name: "추석", type: "PUBLIC_HOLIDAY" }],
         }]);
         expect(mockedApiGet).toHaveBeenCalledWith("/api/calendar/days", {

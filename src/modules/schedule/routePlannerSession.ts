@@ -118,6 +118,7 @@ export function buildScheduleRouteUpdatePayload(
         notificationEnabled: item.notificationEnabled,
         notificationLeadMinutes: item.notificationLeadMinutes,
         notificationIntervalMinutes: item.notificationIntervalMinutes,
+        alertMode: item.alertMode,
         origin: result.origin,
         destination: result.destination,
         travelMode: result.travelMode,

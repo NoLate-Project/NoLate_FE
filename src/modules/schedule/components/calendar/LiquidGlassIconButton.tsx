@@ -1,4 +1,9 @@
-import React, { useCallback } from "react";
+import React, {
+    forwardRef,
+    useCallback,
+    useImperativeHandle,
+    useRef,
+} from "react";
 import {
     Platform,
     Pressable,
@@ -6,6 +11,7 @@ import {
     StyleSheet,
     View,
     type HostComponent,
+    type NativeMethods,
     type NativeSyntheticEvent,
     type ViewProps,
 } from "react-native";
@@ -41,6 +47,13 @@ export type LiquidGlassIconButtonProps = ViewProps & {
     onPress?: () => void;
 };
 
+export type LiquidGlassIconButtonHandle = {
+    setDisplayContent: (content: {
+        label: string;
+        buttonWidth: number;
+    }) => void;
+};
+
 const NativeLiquidGlassIconButton = (() => {
     try {
         return requireNativeComponent<NativeLiquidGlassIconButtonProps>(
@@ -54,7 +67,10 @@ const NativeLiquidGlassIconButton = (() => {
 export const isLiquidGlassIconButtonAvailable =
     Platform.OS === "ios" && Boolean(NativeLiquidGlassIconButton);
 
-export default function LiquidGlassIconButton({
+const LiquidGlassIconButton = forwardRef<
+    LiquidGlassIconButtonHandle,
+    LiquidGlassIconButtonProps
+>(function LiquidGlassIconButton({
     symbolName = "magnifyingglass",
     label,
     leadingSymbolName,
@@ -68,12 +84,24 @@ export default function LiquidGlassIconButton({
     onPress,
     style,
     pointerEvents,
-}: LiquidGlassIconButtonProps) {
+}, ref) {
+    const nativeButtonRef = useRef<
+        (React.Component<NativeLiquidGlassIconButtonProps> & NativeMethods) | null
+    >(null);
     const handlePress = useCallback(() => {
         if (!disabled) {
             onPress?.();
         }
     }, [disabled, onPress]);
+
+    useImperativeHandle(ref, () => ({
+        setDisplayContent: ({ label: nextLabel, buttonWidth: nextButtonWidth }) => {
+            nativeButtonRef.current?.setNativeProps({
+                label: nextLabel,
+                buttonWidth: nextButtonWidth,
+            });
+        },
+    }), []);
 
     if (!NativeLiquidGlassIconButton) {
         return null;
@@ -85,6 +113,7 @@ export default function LiquidGlassIconButton({
     return (
         <View pointerEvents={pointerEvents ?? "box-none"} style={style}>
             <NativeButton
+                ref={nativeButtonRef}
                 symbolName={symbolName}
                 label={label}
                 leadingSymbolName={leadingSymbolName}
@@ -113,7 +142,9 @@ export default function LiquidGlassIconButton({
             )}
         </View>
     );
-}
+});
+
+export default LiquidGlassIconButton;
 
 const styles = StyleSheet.create({
     hitTarget: {

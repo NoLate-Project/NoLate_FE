@@ -1,19 +1,49 @@
 import React, { type PropsWithChildren, useEffect, useMemo } from "react";
 import { AppState } from "react-native";
 
-import { getMyProfile } from "./api/member";
 import { AuthProvider } from "./modules/auth/AuthContext";
 import { useAuth } from "./modules/auth/AuthContext";
+import { getAuthMember } from "./modules/auth/authStorage";
 import {
     registerPushAfterLogin,
     subscribePushTokenRefresh,
 } from "./modules/notification/pushRegistration";
+import {
+    activatePushDeliveryAckQueueForAuthenticatedMember,
+    drainPushDeliveryAckQueue,
+} from "./modules/notification/pushDeliveryAckQueue";
+import { reconcileDepartureAlarmSnapshot } from "./modules/notification/departureAlarmSync";
+import {
+    activateNativeAlarmFireJournalForAuthenticatedMember,
+    deactivateNativeAlarmFireJournalRetry,
+} from "./modules/notification/nativeAlarmFireJournal";
+import {
+    activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember,
+} from "./modules/notification/departureAlarmScheduleReceiptQueue";
 import { createScheduleInitialState } from "./modules/schedule/initialState";
+import {
+    activateScheduleArrivalObservationQueueForAuthenticatedMember,
+} from "./modules/schedule/scheduleArrivalObservationQueue";
 import {
     activateQuickScheduleReliabilityFeedbackQueueForAuthenticatedMember,
 } from "./modules/schedule/quickScheduleReliabilityFeedbackQueue";
+import {
+    activateScheduleEtaObservationEngagementQueueForAuthenticatedMember,
+} from "./modules/schedule/scheduleEtaObservationEngagementQueue";
 import { ScheduleProvider } from "./modules/schedule/store";
 import { ThemeProvider } from "./modules/theme/ThemeContext";
+
+const PUSH_BOOTSTRAP_RETRY_DELAYS_MS = [
+    1_500,
+    4_000,
+    15_000,
+    60_000,
+] as const;
+const PUSH_REGISTRATION_RECOVERY_DELAYS_MS = [
+    15_000,
+    60_000,
+    5 * 60_000,
+] as const;
 
 export function AppProviders({ children }: PropsWithChildren) {
     const initialState = useMemo(() => createScheduleInitialState(), []);
@@ -41,7 +71,46 @@ function PushRegistrationBootstrap() {
         let cancelled = false;
         let unsubscribe: () => void = () => undefined;
         let removeAppStateListener: () => void = () => undefined;
+        let memberBoundMemberId: number | undefined;
+        let memberBootstrapInFlight: Promise<void> | undefined;
+        let memberBootstrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
+        let memberBootstrapRetryAttempt = 0;
+        let tokenRegistrationInFlight: Promise<void> | undefined;
+        let tokenRegistrationRetryTimer: ReturnType<typeof setTimeout> | undefined;
+        let tokenRegistrationRetryAttempt = 0;
+        let appIsActive = AppState.currentState === "active";
 
+        const clearMemberBootstrapRetry = () => {
+            if (memberBootstrapRetryTimer) clearTimeout(memberBootstrapRetryTimer);
+            memberBootstrapRetryTimer = undefined;
+        };
+        const clearTokenRegistrationRetry = () => {
+            if (tokenRegistrationRetryTimer) clearTimeout(tokenRegistrationRetryTimer);
+            tokenRegistrationRetryTimer = undefined;
+        };
+
+        // This effect runs for both restored sessions and fresh logins. ACK
+        // recovery is account-bound and does not depend on push permission or a
+        // successful member/token bootstrap.
+        activatePushDeliveryAckQueueForAuthenticatedMember().catch((error) => {
+            console.warn("[push-ack] durable queue bootstrap failed", error);
+        });
+        const drainAlarmFireEvents = () => {
+            activateNativeAlarmFireJournalForAuthenticatedMember().catch((error) => {
+                console.warn("[alarm-fired] native journal drain failed", error);
+            });
+        };
+        drainAlarmFireEvents();
+        /*
+         * Native fire evidence is account-bound but independent of member/token bootstrap.
+         * Foreground recovery must survive an account-cache read failing transiently.
+         */
+        const fireJournalAppStateSubscription = AppState.addEventListener("change", (state) => {
+            if (state === "active") drainAlarmFireEvents();
+        });
+        activateScheduleArrivalObservationQueueForAuthenticatedMember().catch((error) => {
+            console.warn("[eta-observation] durable arrival queue bootstrap failed", error);
+        });
         const drainQuickScheduleFeedback = () => {
             activateQuickScheduleReliabilityFeedbackQueueForAuthenticatedMember().catch((error) => {
                 console.warn("[quick-schedule] durable feedback queue drain failed", error);
@@ -54,35 +123,164 @@ function PushRegistrationBootstrap() {
                 if (state === "active") drainQuickScheduleFeedback();
             },
         );
-
-        getMyProfile()
-            .then((profile) => {
-                if (cancelled) return;
-
-                // 토큰 갱신 구독을 먼저 연결해 초기 등록 도중 FCM이 토큰을 회전해도 놓치지 않는다.
-                unsubscribe = subscribePushTokenRefresh(profile.memberId);
-                const register = () => {
-                    registerPushAfterLogin(profile.memberId).catch((error) => {
-                        console.warn("[push] token registration bootstrap failed", error);
-                    });
-                };
-
-                register();
-                const appStateSubscription = AppState.addEventListener("change", (state) => {
-                    // 권한 설정을 바꾸고 돌아오거나 시작 시 네트워크가 불안정했던 경우를 복구한다.
-                    if (state === "active") register();
-                });
-                removeAppStateListener = () => appStateSubscription.remove();
-            })
-            .catch((error) => {
-                console.warn("[push] profile bootstrap for token registration failed", error);
+        activateScheduleEtaObservationEngagementQueueForAuthenticatedMember().catch((error) => {
+            console.warn("[eta-observation] durable engagement queue bootstrap failed", error);
+        });
+        const drainAlarmScheduleReceipts = () => {
+            activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember().catch((error) => {
+                console.warn("[alarm-receipt] durable queue drain failed", error);
             });
+        };
+        drainAlarmScheduleReceipts();
+        // Receipt recovery must not depend on the member bootstrap succeeding:
+        // that request can fail for the same transient outage that queued the receipt.
+        const receiptAppStateSubscription = AppState.addEventListener("change", (state) => {
+            if (state === "active") drainAlarmScheduleReceipts();
+        });
+
+        const scheduleTokenRegistrationRetry = (
+            memberId: number,
+            register: (candidateMemberId: number) => void,
+        ) => {
+            if (
+                cancelled ||
+                memberBoundMemberId !== memberId ||
+                tokenRegistrationRetryTimer
+            ) return;
+            const delay = PUSH_REGISTRATION_RECOVERY_DELAYS_MS[Math.min(
+                tokenRegistrationRetryAttempt,
+                PUSH_REGISTRATION_RECOVERY_DELAYS_MS.length - 1,
+            )];
+            tokenRegistrationRetryAttempt += 1;
+            tokenRegistrationRetryTimer = setTimeout(() => {
+                tokenRegistrationRetryTimer = undefined;
+                if (
+                    !cancelled &&
+                    appIsActive &&
+                    memberBoundMemberId === memberId
+                ) register(memberId);
+            }, delay);
+        };
+
+        const registerMemberPush = (memberId: number) => {
+            if (
+                cancelled ||
+                memberBoundMemberId !== memberId ||
+                tokenRegistrationInFlight
+            ) return;
+
+            const request = registerPushAfterLogin(memberId)
+                .then(() => {
+                    if (cancelled || memberBoundMemberId !== memberId) return;
+                    tokenRegistrationRetryAttempt = 0;
+                    clearTokenRegistrationRetry();
+                })
+                .catch((error) => {
+                    if (cancelled || memberBoundMemberId !== memberId) return;
+                    console.warn("[push] token registration bootstrap failed", error);
+                    scheduleTokenRegistrationRetry(memberId, registerMemberPush);
+                })
+                .finally(() => {
+                    if (tokenRegistrationInFlight === request) {
+                        tokenRegistrationInFlight = undefined;
+                    }
+                });
+            tokenRegistrationInFlight = request;
+        };
+
+        const runMemberBoundRecovery = (memberId: number) => {
+            reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
+                console.warn("[alarm-sync] snapshot bootstrap failed", error);
+            });
+            registerMemberPush(memberId);
+            drainPushDeliveryAckQueue(memberId).catch((error) => {
+                console.warn("[push-ack] durable queue drain failed", error);
+            });
+            activateScheduleArrivalObservationQueueForAuthenticatedMember().catch((error) => {
+                console.warn("[eta-observation] durable arrival queue drain failed", error);
+            });
+            activateScheduleEtaObservationEngagementQueueForAuthenticatedMember().catch((error) => {
+                console.warn("[eta-observation] durable engagement queue drain failed", error);
+            });
+        };
+
+        const scheduleMemberBootstrapRetry = (bootstrap: () => void) => {
+            if (cancelled || memberBoundMemberId || memberBootstrapRetryTimer) return;
+            const delay = PUSH_BOOTSTRAP_RETRY_DELAYS_MS[Math.min(
+                memberBootstrapRetryAttempt,
+                PUSH_BOOTSTRAP_RETRY_DELAYS_MS.length - 1,
+            )];
+            memberBootstrapRetryAttempt += 1;
+            memberBootstrapRetryTimer = setTimeout(() => {
+                memberBootstrapRetryTimer = undefined;
+                if (!cancelled && appIsActive) bootstrap();
+            }, delay);
+        };
+
+        const bootstrapMemberBoundPush = () => {
+            if (cancelled) return;
+            if (memberBoundMemberId) {
+                runMemberBoundRecovery(memberBoundMemberId);
+                return;
+            }
+            if (memberBootstrapInFlight) return;
+
+            const request = getAuthMember()
+                .then((member) => {
+                    if (cancelled) return;
+                    const memberId = member?.id;
+                    if (
+                        typeof memberId !== "number" ||
+                        !Number.isSafeInteger(memberId) ||
+                        memberId <= 0
+                    ) {
+                        throw new Error("Authenticated member cache is unavailable.");
+                    }
+
+                    // The auth provider already verified this persisted identity.
+                    // Subscribe before registration so a native token rotation in
+                    // the registration window is queued rather than lost.
+                    unsubscribe = subscribePushTokenRefresh(memberId);
+                    memberBoundMemberId = memberId;
+                    memberBootstrapRetryAttempt = 0;
+                    clearMemberBootstrapRetry();
+                    runMemberBoundRecovery(memberId);
+                })
+                .catch((error) => {
+                    if (cancelled) return;
+                    console.warn("[push] member bootstrap for token registration failed", error);
+                    scheduleMemberBootstrapRetry(bootstrapMemberBoundPush);
+                })
+                .finally(() => {
+                    if (memberBootstrapInFlight === request) memberBootstrapInFlight = undefined;
+                });
+            memberBootstrapInFlight = request;
+        };
+
+        bootstrapMemberBoundPush();
+        const appStateSubscription = AppState.addEventListener("change", (state) => {
+            appIsActive = state === "active";
+            if (state !== "active") {
+                clearMemberBootstrapRetry();
+                clearTokenRegistrationRetry();
+                return;
+            }
+            // Recover both a transient SecureStore read failure and a token or
+            // snapshot request that failed before the app returned to foreground.
+            bootstrapMemberBoundPush();
+        });
+        removeAppStateListener = () => appStateSubscription.remove();
 
         return () => {
             cancelled = true;
+            clearMemberBootstrapRetry();
+            clearTokenRegistrationRetry();
             removeAppStateListener();
             unsubscribe();
+            receiptAppStateSubscription.remove();
             quickScheduleFeedbackAppStateSubscription.remove();
+            fireJournalAppStateSubscription.remove();
+            deactivateNativeAlarmFireJournalRetry();
         };
     }, [isAuthenticated, isLoading]);
 

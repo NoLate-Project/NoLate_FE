@@ -67,6 +67,7 @@ import {
     enrichCalendarCandidateWithRoute,
     extractCalendarRouteHints,
 } from "../../src/modules/onboarding/calendarImportRouteEnrichment";
+import { createCalendarImportAlarmRecoveryBatch } from "../../src/modules/onboarding/calendarImportAlarmRecoveryBatch";
 import {
     scanSelectedCalendarProviders,
     type CalendarProviderScanFailure,
@@ -928,6 +929,7 @@ export default function CalendarImportOnboarding() {
             !importCategory
         ) return;
 
+        const alarmRecoveryBatch = createCalendarImportAlarmRecoveryBatch();
         try {
             setImporting(true);
             setImportProgress(0);
@@ -1019,7 +1021,9 @@ export default function CalendarImportOnboarding() {
                         : enriched.payload;
 
                     try {
-                        const result = await createImportedSchedule(enriched.candidate, payload);
+                        const result = await alarmRecoveryBatch.run(
+                            () => createImportedSchedule(enriched.candidate, payload),
+                        );
                         dispatch({ type: "ADD_ITEM", item: result.item });
                         if (result.created) {
                             successCount += 1;
@@ -1064,6 +1068,7 @@ export default function CalendarImportOnboarding() {
         } catch (error) {
             Alert.alert("가져오기 실패", getErrorMessage(error, "선택한 일정을 가져오지 못했습니다."));
         } finally {
+            await alarmRecoveryBatch.finish();
             setImporting(false);
         }
     };

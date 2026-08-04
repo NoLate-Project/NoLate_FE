@@ -1,8 +1,10 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
+import { Alert } from "react-native";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
+import type { ScheduleItem, ScheduleTravelPlan } from "../src/modules/schedule/types";
 
 const mockCategory = { id: "work", title: "업무", color: "#FF3B30" };
 const mockOriginalRoute = {
@@ -24,7 +26,7 @@ const mockOriginalRoute = {
         steps: [],
     },
 };
-const mockItem = {
+const mockItem: ScheduleItem = {
     id: "1",
     title: "경로 수정 회의",
     startAt: "2026-07-20T11:00:00.000Z",
@@ -38,11 +40,13 @@ const mockItem = {
     travelMinutes: 36,
     departAt: "2026-07-20T10:24:00.000Z",
     route: mockOriginalRoute,
+    notificationEnabled: false,
+    alertMode: "ALARM" as const,
 };
 const mockState = {
     selectedDay: "2026-07-20",
     categories: [mockCategory],
-    itemsById: { "1": mockItem },
+    itemsById: { "1": mockItem } as Record<string, ScheduleItem>,
     loading: false,
     error: null,
 };
@@ -50,9 +54,13 @@ const mockState = {
 let mockPathname = "/schedule/1";
 const mockRouterPush = jest.fn();
 const mockRouterSetParams = jest.fn();
+const mockRouterReplace = jest.fn();
 const mockDispatch = jest.fn();
 const mockGetSchedule = jest.fn();
 const mockUpdateSchedule = jest.fn();
+const mockDeleteSchedule = jest.fn();
+const mockUpsertMyScheduleTravelPlan = jest.fn();
+const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
@@ -60,6 +68,7 @@ jest.mock("expo-router", () => ({
     usePathname: () => mockPathname,
     useRouter: () => ({
         push: mockRouterPush,
+        replace: mockRouterReplace,
         setParams: mockRouterSetParams,
     }),
 }));
@@ -87,7 +96,15 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 jest.mock("../src/api/schedule", () => ({
     getSchedule: (...args: unknown[]) => mockGetSchedule(...args),
     updateSchedule: (...args: unknown[]) => mockUpdateSchedule(...args),
-    deleteSchedule: jest.fn(),
+    deleteSchedule: (...args: unknown[]) => mockDeleteSchedule(...args),
+}));
+jest.mock("../src/api/scheduleTravelPlans", () => ({
+    upsertMyScheduleTravelPlan: (...args: unknown[]) =>
+        mockUpsertMyScheduleTravelPlan(...args),
+}));
+jest.mock("../src/modules/notification/departureAlarmMutationRecovery", () => ({
+    recoverDepartureAlarmsAfterMutation: () =>
+        mockRecoverDepartureAlarmsAfterMutation(),
 }));
 jest.mock("../src/api/scheduleCategories", () => ({
     getScheduleCategoriesFromApi: jest.fn().mockResolvedValue([mockCategory]),
@@ -117,8 +134,20 @@ jest.mock("../src/modules/schedule/components/form/LocationInputRow", () => {
 });
 jest.mock("../src/modules/schedule/components/form/NotificationSettingsCard", () => {
     const mockReact = require("react");
-    const { View: MockView } = require("react-native");
-    return () => mockReact.createElement(MockView);
+    const { Pressable: MockPressable } = require("react-native");
+    return ({
+        onEnabledChange,
+        onAlertModeChange,
+    }: {
+        onEnabledChange: (enabled: boolean) => void;
+        onAlertModeChange: (mode: "ALARM") => void;
+    }) => mockReact.createElement(MockPressable, {
+        accessibilityLabel: "강력한 알람 설정 테스트",
+        onPress: () => {
+            onEnabledChange(true);
+            onAlertModeChange("ALARM");
+        },
+    });
 });
 jest.mock("../src/modules/schedule/components/form/CategoryLoadErrorBanner", () => {
     const mockReact = require("react");
@@ -147,16 +176,24 @@ describe("ScheduleEditScreen route return", () => {
 
     beforeEach(() => {
         mockPathname = "/schedule/1";
+        mockState.itemsById["1"] = mockItem;
         mockRouterPush.mockReset();
         mockRouterSetParams.mockReset();
+        mockRouterReplace.mockReset();
         mockDispatch.mockReset();
         mockGetSchedule.mockReset();
         mockUpdateSchedule.mockReset();
+        mockDeleteSchedule.mockReset();
+        mockUpsertMyScheduleTravelPlan.mockReset();
+        mockRecoverDepartureAlarmsAfterMutation.mockReset();
+        mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
+        jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
     });
 
     afterEach(async () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
+        jest.restoreAllMocks();
     });
 
     test("느린 상세 재조회와 무관하게 경로 변경 직후 저장할 수 있다", async () => {
@@ -225,6 +262,11 @@ describe("ScheduleEditScreen route return", () => {
         expect(mockGetSchedule).toHaveBeenCalledTimes(1);
 
         await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
+                .props.onPress();
+        });
+        await act(async () => {
             await saveButton.props.onPress();
         });
 
@@ -233,6 +275,355 @@ describe("ScheduleEditScreen route return", () => {
             travelMinutes: 24,
             departAt: "2026-07-20T10:36:00.000Z",
             route: nextRoute,
+            notificationEnabled: true,
+            alertMode: "ALARM",
         }));
+        expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(mockUpdateSchedule.mock.invocationCallOrder[0])
+            .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
+    });
+
+    test("저장된 ALARM 값도 출발 알림이 꺼져 있으면 STANDARD로 전송한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        mockUpdateSchedule.mockImplementation(async (_id, payload) => ({
+            ...mockItem,
+            ...payload,
+        }));
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const saveButton = renderer!.root.findByProps({ accessibilityLabel: "일정 수정 저장" });
+        expect(saveButton.props.disabled).toBe(false);
+        await act(async () => {
+            await saveButton.props.onPress();
+        });
+
+        expect(mockUpdateSchedule).toHaveBeenCalledWith("1", expect.objectContaining({
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        }));
+        expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();
+    });
+
+    test("공유 일정은 공용 수정 후 ALARM 개인 이동계획을 저장하고 응답을 병합한 뒤 닫는다", async () => {
+        const sharedItem: ScheduleItem = {
+            ...mockItem,
+            sharePermission: "EDITOR",
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        };
+        const commonUpdated: ScheduleItem = {
+            ...sharedItem,
+            title: "공용 저장 완료",
+        };
+        const savedPlan: ScheduleTravelPlan = {
+            scheduleId: 1,
+            memberId: 22,
+            status: "READY",
+            origin: sharedItem.origin,
+            destination: sharedItem.destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 36,
+            departAt: "2026-07-20T10:24:00.000Z",
+            route: mockOriginalRoute,
+            notificationEnabled: true,
+            notificationLeadMinutes: 60,
+            notificationIntervalMinutes: 20,
+            alertMode: "ALARM",
+        };
+        mockState.itemsById["1"] = sharedItem;
+        mockGetSchedule.mockResolvedValue(sharedItem);
+        mockUpdateSchedule.mockResolvedValue(commonUpdated);
+        mockUpsertMyScheduleTravelPlan.mockResolvedValue(savedPlan);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
+                .props.onPress();
+        });
+
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockUpdateSchedule).toHaveBeenCalledTimes(1);
+        expect(mockUpsertMyScheduleTravelPlan).toHaveBeenCalledWith("1", {
+            travelMinutes: 36,
+            departAt: "2026-07-20T10:24:00.000Z",
+            travelMode: "TRANSIT",
+            origin: sharedItem.origin,
+            route: mockOriginalRoute,
+            notificationEnabled: true,
+            notificationLeadMinutes: 60,
+            notificationIntervalMinutes: 20,
+            alertMode: "ALARM",
+        });
+        expect(mockUpdateSchedule.mock.invocationCallOrder[0])
+            .toBeLessThan(mockUpsertMyScheduleTravelPlan.mock.invocationCallOrder[0]);
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(mockUpsertMyScheduleTravelPlan.mock.invocationCallOrder[0])
+            .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
+        expect(mockDispatch).toHaveBeenCalledWith({
+            type: "UPDATE_ITEM",
+            item: expect.objectContaining({
+                title: "공용 저장 완료",
+                origin: savedPlan.origin,
+                route: savedPlan.route,
+                notificationEnabled: true,
+                alertMode: "ALARM",
+                myTravelPlan: savedPlan,
+            }),
+        });
+        expect(mockRouterSetParams).toHaveBeenCalledWith({ mode: undefined });
+    });
+
+    test("공유 일정의 출발 알림이 꺼져 있으면 개인 계획에도 STANDARD를 저장한다", async () => {
+        const sharedItem: ScheduleItem = {
+            ...mockItem,
+            sharePermission: "OWNER",
+            notificationEnabled: false,
+            alertMode: "ALARM",
+        };
+        const commonUpdated: ScheduleItem = {
+            ...sharedItem,
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        };
+        mockState.itemsById["1"] = sharedItem;
+        mockGetSchedule.mockResolvedValue(sharedItem);
+        mockUpdateSchedule.mockResolvedValue(commonUpdated);
+        mockUpsertMyScheduleTravelPlan.mockResolvedValue({
+            scheduleId: 1,
+            memberId: 22,
+            status: "READY",
+            origin: sharedItem.origin,
+            destination: sharedItem.destination,
+            travelMode: sharedItem.travelMode,
+            travelMinutes: sharedItem.travelMinutes,
+            departAt: sharedItem.departAt,
+            route: sharedItem.route,
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockUpsertMyScheduleTravelPlan).toHaveBeenCalledWith("1", expect.objectContaining({
+            notificationEnabled: false,
+            notificationLeadMinutes: undefined,
+            notificationIntervalMinutes: undefined,
+            alertMode: "STANDARD",
+        }));
+        expect(mockRouterSetParams).toHaveBeenCalledWith({ mode: undefined });
+    });
+
+    test("공유 일정의 개인 계획 저장만 실패하면 공용 응답을 보존하고 화면을 열어 둔다", async () => {
+        const sharedItem: ScheduleItem = {
+            ...mockItem,
+            sharePermission: "EDITOR",
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        };
+        const commonUpdated: ScheduleItem = {
+            ...sharedItem,
+            title: "공용 저장 완료",
+        };
+        const refreshed: ScheduleItem = {
+            ...commonUpdated,
+            travelPlanStatus: "STALE",
+        };
+        mockState.itemsById["1"] = sharedItem;
+        mockGetSchedule
+            .mockResolvedValueOnce(sharedItem)
+            .mockResolvedValueOnce(refreshed);
+        mockUpdateSchedule.mockResolvedValue(commonUpdated);
+        mockUpsertMyScheduleTravelPlan.mockRejectedValue(
+            new Error("개인 계획 서버 오류"),
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
+                .props.onPress();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockDispatch).toHaveBeenCalledWith({
+            type: "UPDATE_ITEM",
+            item: commonUpdated,
+        });
+        expect(mockGetSchedule).toHaveBeenCalledTimes(2);
+        expect(mockDispatch).toHaveBeenCalledWith({
+            type: "UPDATE_ITEM",
+            item: refreshed,
+        });
+        expect(mockRouterSetParams).not.toHaveBeenCalled();
+        expect(Alert.alert).toHaveBeenCalledWith(
+            "일정 내용은 저장됐어요",
+            expect.stringContaining("공용 일정 내용은 저장됐지만 내 이동 알림 설정은 저장하지 못했어요."),
+        );
+        expect(Alert.alert).not.toHaveBeenCalledWith(
+            "일정 수정 실패",
+            expect.anything(),
+        );
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    test("공유 일정의 경로가 완전하지 않으면 개인 계획 API를 호출하지 않고 서버 응답을 사용한다", async () => {
+        const incompleteSharedItem: ScheduleItem = {
+            ...mockItem,
+            sharePermission: "EDITOR",
+            origin: undefined,
+            travelMinutes: undefined,
+            departAt: undefined,
+            route: undefined,
+            notificationEnabled: true,
+            alertMode: "ALARM",
+        };
+        const serverUpdated: ScheduleItem = {
+            ...incompleteSharedItem,
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+            routeSetupRequired: true,
+        };
+        mockState.itemsById["1"] = incompleteSharedItem;
+        mockGetSchedule.mockResolvedValue(incompleteSharedItem);
+        mockUpdateSchedule.mockResolvedValue(serverUpdated);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockUpdateSchedule).toHaveBeenCalledWith("1", expect.objectContaining({
+            notificationEnabled: false,
+            alertMode: "STANDARD",
+        }));
+        expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();
+        expect(mockDispatch).toHaveBeenCalledWith({
+            type: "UPDATE_ITEM",
+            item: serverUpdated,
+        });
+        expect(mockRouterSetParams).toHaveBeenCalledWith({ mode: undefined });
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    test("공용 일정 저장이 실패하면 알람 recovery를 실행하지 않는다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        mockUpdateSchedule.mockRejectedValue(new Error("공용 저장 실패"));
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+        expect(Alert.alert).toHaveBeenCalledWith(
+            "일정 수정 실패",
+            "공용 저장 실패",
+        );
+    });
+
+    test("일정 삭제 성공 후 recovery를 한 번 실행하고 이동한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        mockDeleteSchedule.mockResolvedValue(undefined);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "일정 삭제" })
+                .props.onPress();
+        });
+
+        const confirmation = jest.mocked(Alert.alert).mock.calls.find(
+            ([title]) => title === "삭제",
+        );
+        const destructiveAction = confirmation?.[2]?.[1];
+        await act(async () => {
+            await destructiveAction?.onPress?.();
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        });
+
+        expect(mockDeleteSchedule).toHaveBeenCalledWith("1");
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(mockDeleteSchedule.mock.invocationCallOrder[0])
+            .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
+        expect(mockRouterReplace).toHaveBeenCalledWith("/schedule");
+    });
+
+    test("일정 삭제 실패 시 recovery를 실행하지 않는다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        mockDeleteSchedule.mockRejectedValue(new Error("삭제 서버 오류"));
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "일정 삭제" })
+                .props.onPress();
+        });
+
+        const confirmation = jest.mocked(Alert.alert).mock.calls.find(
+            ([title]) => title === "삭제",
+        );
+        const destructiveAction = confirmation?.[2]?.[1];
+        await act(async () => {
+            await destructiveAction?.onPress?.();
+        });
+
+        expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+        expect(Alert.alert).toHaveBeenCalledWith(
+            "일정 삭제 실패",
+            "삭제 서버 오류",
+        );
     });
 });

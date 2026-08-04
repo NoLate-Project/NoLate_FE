@@ -29,6 +29,9 @@ import {
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
 import {
+    activateDepartureAlarmSyncForAuthenticatedAccount,
+} from "../../src/modules/notification/departureAlarmSync";
+import {
     handleSignupAgreementHardwareBack,
     shouldHandleSignupAgreementHardwareBack,
 } from "../../src/modules/auth/signupNavigation";
@@ -134,9 +137,15 @@ export default function SignUp() {
 
             await saveAuthTokens(member.accessToken, member.refreshToken);
             await saveAuthMember(member);
-            const authenticated = await syncAuthentication();
+            const authenticated = await syncAuthentication({ confirmedFreshLogin: true });
             if (!authenticated) {
                 throw new Error("로그인 상태를 저장하지 못했어요. 로그인 화면에서 다시 시도해 주세요.");
+            }
+            const alarmSyncActivated =
+                await activateDepartureAlarmSyncForAuthenticatedAccount(member.id);
+            if (!alarmSyncActivated) {
+                await clearAuthTokens();
+                throw new Error("기기의 출발 알람 상태를 안전하게 초기화하지 못했어요. 다시 로그인해 주세요.");
             }
             registerPushAfterLogin(member.id).catch((error) => {
                 console.warn("[push] token registration failed", error);

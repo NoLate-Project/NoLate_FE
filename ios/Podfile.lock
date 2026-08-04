@@ -349,6 +349,8 @@ PODS:
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
   - naveridlogin-sdk-ios (4.2.3)
+  - NoLateAlarm (1.0.0):
+    - ExpoModulesCore
   - NoLateTMap (1.0.0):
     - ExpoModulesCore
   - PromisesObjC (2.4.1)
@@ -2437,6 +2439,7 @@ DEPENDENCIES:
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
   - "kakao-login (from `../node_modules/@react-native-seoul/kakao-login`)"
+  - NoLateAlarm (from `../modules/nolate-alarm/ios`)
   - NoLateTMap (from `../modules/nolate-tmap/ios`)
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
@@ -2602,6 +2605,8 @@ EXTERNAL SOURCES:
     :tag: hermes-2025-07-07-RNv0.81.0-e0fc67142ec0763c6b6153ca2bf96df815539782
   kakao-login:
     :path: "../node_modules/@react-native-seoul/kakao-login"
+  NoLateAlarm:
+    :path: "../modules/nolate-alarm/ios"
   NoLateTMap:
     :path: "../modules/nolate-tmap/ios"
   RCTDeprecation:
@@ -2805,6 +2810,7 @@ SPEC CHECKSUMS:
   KakaoSDKUser: 043bcd7e91454ebf3bf64f150c430e6f65f0a08d
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   naveridlogin-sdk-ios: d9d46d02119d303023d7000cd5963864d5bb89e5
+  NoLateAlarm: e51a89feb42aa7ae00c6a605a40d90c0618cf79f
   NoLateTMap: eab5b45680f5e72d9b73acc46a2e8bf0f2ccd8c0
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
   RCTDeprecation: 943572d4be82d480a48f4884f670135ae30bf990

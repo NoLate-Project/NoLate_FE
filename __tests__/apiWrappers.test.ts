@@ -22,6 +22,7 @@ import {
     markScheduleDeparted,
     searchSchedules,
     sendScheduleDepartureNudge,
+    snoozeScheduleDepartureReminder,
 } from "../src/api/schedule";
 import {
     createScheduleCategoryToApi,
@@ -234,12 +235,57 @@ describe("schedule query api wrappers", () => {
         });
     });
 
+    test("schedule search forwards an abort signal when the caller supplies one", async () => {
+        mockedApiGet.mockResolvedValue({ success: true, data: [scheduleDto] });
+        const controller = new AbortController();
+
+        await searchSchedules({ keyword: "sync", limit: 20 }, controller.signal);
+
+        expect(mockedApiGet).toHaveBeenCalledWith("/api/schedules/search", {
+            params: { keyword: "sync", limit: 20 },
+            signal: controller.signal,
+        });
+    });
+
     test("markScheduleDeparted posts depart-now action and normalizes response id", async () => {
         mockedApiPost.mockResolvedValue({ success: true, data: scheduleDto });
 
         await expect(markScheduleDeparted("10")).resolves.toMatchObject({ id: "10" });
 
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedules/10/depart-now");
+    });
+
+    test("notification departure actions forward idempotency and recipient fences", async () => {
+        mockedApiPost
+            .mockResolvedValueOnce({ success: true, data: scheduleDto })
+            .mockResolvedValueOnce({ success: true, data: null });
+        const actionEventKey = `key:${"a".repeat(64)}`;
+
+        await markScheduleDeparted("10", actionEventKey, 7);
+        await snoozeScheduleDepartureReminder("10", actionEventKey, 7);
+
+        expect(mockedApiPost).toHaveBeenNthCalledWith(
+            1,
+            "/api/schedules/10/depart-now",
+            undefined,
+            {
+                headers: {
+                    "Idempotency-Key": `departNow:${actionEventKey}`,
+                    "X-NoLate-Notification-Recipient": "7",
+                },
+            },
+        );
+        expect(mockedApiPost).toHaveBeenNthCalledWith(
+            2,
+            "/api/schedules/10/departure-reminder/snooze",
+            undefined,
+            {
+                headers: {
+                    "Idempotency-Key": `snooze:${actionEventKey}`,
+                    "X-NoLate-Notification-Recipient": "7",
+                },
+            },
+        );
     });
 
     test("sendScheduleDepartureNudge targets one shared participant and returns token result", async () => {

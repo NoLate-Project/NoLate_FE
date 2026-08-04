@@ -54,6 +54,9 @@ import {
     type SocialSdkLoginResult,
 } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
+import {
+    activateDepartureAlarmSyncForAuthenticatedAccount,
+} from "../../src/modules/notification/departureAlarmSync";
 import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import {
@@ -95,9 +98,15 @@ export default function Login() {
         const authenticatedMember = requireAuthenticatedMember(member);
         await saveAuthTokens(authenticatedMember.accessToken, authenticatedMember.refreshToken);
         await saveAuthMember(authenticatedMember);
-        const authenticated = await syncAuthentication();
+        const authenticated = await syncAuthentication({ confirmedFreshLogin: true });
         if (!authenticated) {
             throw new Error("로그인 상태를 저장하지 못했어요. 다시 시도해 주세요.");
+        }
+        const alarmSyncActivated =
+            await activateDepartureAlarmSyncForAuthenticatedAccount(authenticatedMember.id);
+        if (!alarmSyncActivated) {
+            await clearAuthTokens();
+            throw new Error("기기의 출발 알람 상태를 안전하게 초기화하지 못했어요. 다시 로그인해 주세요.");
         }
         registerPushAfterLogin(authenticatedMember.id).catch((error) => {
             console.warn("[push] token registration failed", error);

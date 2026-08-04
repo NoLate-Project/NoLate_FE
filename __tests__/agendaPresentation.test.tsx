@@ -527,8 +527,8 @@ describe("schedule agenda presentation", () => {
         expect(renderedNodeText(timeColumn)).toContain("7/16 오전 11:00");
         expect(renderedNodeText(timeColumn)).not.toContain("2박 3일");
         expect(timeColumn.findAllByType(Text).every((node) => (
-            node.props.adjustsFontSizeToFit === true
-            && node.props.minimumFontScale === 0.74
+            node.props.adjustsFontSizeToFit === undefined
+            && node.props.minimumFontScale === undefined
         ))).toBe(true);
         expect(renderedNodeText(contextRow)).toContain("인천역");
         expect(renderedNodeText(contextRow)).toContain("오전 8:17 출발 · 43분");
@@ -597,7 +597,17 @@ describe("schedule agenda presentation", () => {
         });
         expect(renderedNodeText(titleRow)).toContain("공유");
         expect(renderedNodeText(titleRow)).not.toContain("경로 미설정");
-        expect(renderedNodeText(timeColumn)).toContain("오후 3:40–4:10");
+        expect(renderedNodeText(timeColumn)).toContain("오후 3:40");
+        expect(renderedNodeText(timeColumn)).toContain("오후 4:10");
+        const [startTime, endTime] = timeColumn.findAllByType(Text);
+        expect(StyleSheet.flatten(startTime.props.style)).toMatchObject({
+            color: "#000",
+            fontWeight: "700",
+        });
+        expect(StyleSheet.flatten(endTime.props.style)).toMatchObject({
+            color: "#6e6e73",
+            fontWeight: "500",
+        });
         expect(renderedNodeText(contextRow)).toContain("서울메디컬센터");
         expect(renderedNodeText(contextRow)).toContain("경로 미설정");
         expect(renderer!.root.findByProps({

@@ -355,7 +355,7 @@ export default function RouteStepTimeline({
         return currentOffset;
     });
     const scheduleSourceLabel = routeInfo.timeBasis === "provider_schedule"
-        ? routeInfo.provider === "odsay" ? "ODsay 시간표" : "경로 시간표"
+        ? "운행 시간표"
         : "경로 예상 시간";
 
     useEffect(() => {

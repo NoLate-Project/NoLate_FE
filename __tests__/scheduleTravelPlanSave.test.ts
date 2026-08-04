@@ -1,3 +1,10 @@
+const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
+
+jest.mock("../src/modules/notification/departureAlarmMutationRecovery", () => ({
+    recoverDepartureAlarmsAfterMutation: () =>
+        mockRecoverDepartureAlarmsAfterMutation(),
+}));
+
 import { saveScheduleRouteAsMyTravelPlan } from "../src/modules/schedule/scheduleTravelPlanSave";
 import type { ScheduleRouteUpdatePayload } from "../src/modules/schedule/routePlannerSession";
 import type { ScheduleItem, ScheduleTravelPlan } from "../src/modules/schedule/types";
@@ -22,10 +29,23 @@ const routeUpdate: ScheduleRouteUpdatePayload = {
     startAt: ownerItem.startAt,
     endAt: ownerItem.endAt,
     origin: { name: "오너 출발지 V2" },
-    destination: ownerItem.destination,
+    destination: {
+        name: "강남역",
+        address: "서울특별시 강남구 강남대로 396",
+        lat: 37.4979,
+        lng: 127.0276,
+    },
     travelMode: "TRANSIT",
     travelMinutes: 31,
-    route: { id: "owner-route-v2" },
+    route: {
+        id: "owner-route-v2",
+        provider: "odsay",
+        transitLegs: [{
+            kind: "SUBWAY",
+            lineName: "수도권 9호선(급행)",
+            serviceClass: "EXPRESS",
+        }],
+    },
     category: ownerItem.category,
 };
 
@@ -41,6 +61,11 @@ const savedPlan: ScheduleTravelPlan = {
 };
 
 describe("schedule travel plan save policy", () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
+    });
+
     it("saves an owners route through the personal travel plan API", async () => {
         const upsertMyTravelPlan = jest.fn().mockResolvedValue(savedPlan);
         const reloaded = {
@@ -60,11 +85,27 @@ describe("schedule travel plan save policy", () => {
 
         expect(upsertMyTravelPlan).toHaveBeenCalledWith("147", expect.objectContaining({
             origin: { name: "오너 출발지 V2" },
+            destination: {
+                name: "강남역",
+                address: "서울특별시 강남구 강남대로 396",
+                lat: 37.4979,
+                lng: 127.0276,
+            },
             travelMode: "TRANSIT",
             travelMinutes: 31,
-            route: { id: "owner-route-v2" },
+            route: routeUpdate.route,
         }));
+        expect(upsertMyTravelPlan.mock.calls[0][1].route).toEqual(
+            expect.objectContaining({
+                transitLegs: [expect.objectContaining({ serviceClass: "EXPRESS" })],
+            })
+        );
         expect(reloadSchedule).toHaveBeenCalledWith("147");
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(upsertMyTravelPlan.mock.invocationCallOrder[0])
+            .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
+        expect(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0])
+            .toBeLessThan(reloadSchedule.mock.invocationCallOrder[0]);
         expect(result).toBe(reloaded);
     });
 
@@ -77,8 +118,24 @@ describe("schedule travel plan save policy", () => {
             reloadSchedule,
         });
 
-        expect(result.route).toEqual({ id: "owner-route-v2" });
+        expect(result.route).toEqual(routeUpdate.route);
         expect(result.origin?.name).toBe("오너 출발지 V2");
         expect(result.myTravelPlan).toBe(savedPlan);
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not recover when the personal travel-plan mutation fails", async () => {
+        const upsertMyTravelPlan = jest.fn().mockRejectedValue(
+            new Error("travel-plan mutation failed"),
+        );
+        const reloadSchedule = jest.fn();
+
+        await expect(saveScheduleRouteAsMyTravelPlan(ownerItem, routeUpdate, {
+            upsertMyTravelPlan,
+            reloadSchedule,
+        })).rejects.toThrow("travel-plan mutation failed");
+
+        expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+        expect(reloadSchedule).not.toHaveBeenCalled();
     });
 });

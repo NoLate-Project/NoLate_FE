@@ -4,8 +4,13 @@ import {
     hasPersistableScheduleRoute,
     reconcileScheduleRouteTiming,
 } from "./scheduleRouteTiming";
+import {
+    normalizeScheduleAlertMode,
+    resolveScheduleAlertModePayload,
+} from "./scheduleAlertMode";
 import type {
     Place,
+    ScheduleAlertMode,
     ScheduleCategory,
     ScheduleItem,
     ScheduleParseResult,
@@ -36,6 +41,7 @@ export type QuickSchedulePreviewDraft = {
     route?: unknown;
     departAt?: string;
     notificationLeadMinutes?: number;
+    alertMode: ScheduleAlertMode;
     memo: string;
     badges: Partial<Record<QuickSchedulePreviewField, string>>;
     parsed?: ScheduleParseResult;
@@ -309,6 +315,7 @@ export function buildQuickSchedulePreviewDraft(
         notificationLeadMinutes: parsed.notificationEnabled
             ? parsed.notificationLeadMinutes ?? 30
             : undefined,
+        alertMode: normalizeScheduleAlertMode(parsed.alertMode),
         memo: parsed.notes?.trim() || "메모 없음",
         badges,
         parsed: confidence === parsed.confidence
@@ -434,6 +441,37 @@ function clearTimeDependentRoute(
     };
 }
 
+export function applyQuickScheduleNotificationSettings(
+    draft: QuickSchedulePreviewDraft,
+    settings: {
+        leadMinutes?: number;
+        alertMode: ScheduleAlertMode;
+    }
+): QuickSchedulePreviewDraft {
+    const nextBadges = { ...draft.badges };
+    delete nextBadges.notification;
+    const leadMinutes = Number.isFinite(settings.leadMinutes)
+        && Number(settings.leadMinutes) >= 0
+        ? Number(settings.leadMinutes)
+        : undefined;
+    const alertMode = normalizeScheduleAlertMode(settings.alertMode);
+
+    return {
+        ...draft,
+        notificationLeadMinutes: leadMinutes,
+        alertMode,
+        badges: nextBadges,
+        parsed: draft.parsed
+            ? {
+                ...draft.parsed,
+                notificationEnabled: leadMinutes !== undefined,
+                notificationLeadMinutes: leadMinutes,
+                alertMode,
+            }
+            : draft.parsed,
+    };
+}
+
 export function updateQuickSchedulePreviewDraft(
     draft: QuickSchedulePreviewDraft,
     field: QuickSchedulePreviewField,
@@ -444,13 +482,10 @@ export function updateQuickSchedulePreviewDraft(
 
     if (field === "notification") {
         const minutes = value === "none" ? undefined : Number(value);
-        return {
-            ...draft,
-            notificationLeadMinutes: Number.isFinite(minutes) && Number(minutes) >= 0
-                ? Number(minutes)
-                : undefined,
-            badges: nextBadges,
-        };
+        return applyQuickScheduleNotificationSettings(draft, {
+            leadMinutes: minutes,
+            alertMode: draft.alertMode,
+        });
     }
 
     if (field === "location") {
@@ -683,5 +718,10 @@ export function buildQuickSchedulePayload(
         notificationIntervalMinutes: hasNotification
             ? draft.parsed?.notificationIntervalMinutes ?? 20
             : undefined,
+        alertMode: resolveScheduleAlertModePayload({
+            hasRoutePlan: routeReady,
+            notificationEnabled: hasNotification,
+            selectedMode: draft.alertMode,
+        }),
     };
 }

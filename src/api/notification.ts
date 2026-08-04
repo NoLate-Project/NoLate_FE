@@ -3,11 +3,70 @@ import { assertApiSuccess, unwrapApiResponse, type ApiEnvelope } from "./respons
 
 export type PushPlatform = "IOS" | "ANDROID" | "WEB";
 
-type RegisterPushTokenPayload = {
+export type NotificationDeliveryAckStage =
+    | "RECEIVED"
+    | "PRESENTED"
+    | "ALARM_SCHEDULED"
+    | "ALARM_FIRED"
+    | "ACTIONED";
+
+export type NotificationDeliveryAckPayload = {
+    logicalEventKey: string;
+    deviceId: string;
+    stage: NotificationDeliveryAckStage;
+    occurredAt: string;
+    providerMessageId?: string;
+    alarmId?: string;
+    actionIdentifier?: string;
+};
+
+export type DepartureAlarmFiredEventPayload = {
+    eventId: string;
+    alarmId: string;
+    scheduleId: number;
+    generation: number;
+    recipientMemberId: number;
+    scheduledFor: string;
+    sourceTriggerAt?: string;
+    occurredAt: string;
+    timingBasis: "EXACT_CALLBACK" | "OBSERVED_ALERTING" | "INFERRED_OS_DELIVERY";
+    deviceId: string;
+    occurrenceId?: string;
+    mutationSequence?: number;
+};
+
+export type DepartureAlarmScheduleReceiptPayload = {
+    receiptId: string;
+    alarmId: string;
+    scheduleId: number;
+    generation: number;
+    recipientMemberId: number;
+    operation: "UPSERT" | "CANCEL";
+    triggerAt?: string;
+    outcome: "SCHEDULED" | "CANCELED" | "FAILED";
+    applied: boolean;
+    scheduled: boolean;
+    reason?: string;
+    platform: "IOS" | "ANDROID";
+    deliveryMode:
+        | "ANDROID_EXACT"
+        | "ANDROID_INEXACT"
+        | "IOS_ALARM_KIT"
+        | "IOS_TIME_SENSITIVE"
+        | "UNKNOWN";
+    source: "PUSH" | "SNAPSHOT";
+    occurredAt: string;
+    deviceId: string;
+    occurrenceId?: string;
+    mutationSequence?: number;
+};
+
+export type RegisterPushTokenPayload = {
     memberId?: number;
     deviceId?: string;
     platform: PushPlatform;
     token: string;
+    deliveryAckCapabilityVersion: 1;
 };
 
 export type AppNotification = {
@@ -43,9 +102,54 @@ type AppNotificationMarkAllReadResponse = {
     updatedCount: number;
 };
 
+type DepartureAlarmSnapshotResponse = {
+    commands: unknown;
+};
+
 export async function registerPushToken(payload: RegisterPushTokenPayload): Promise<void> {
     const response = await apiPost<ApiEnvelope<null>, RegisterPushTokenPayload>("/api/notifications/token", payload);
     assertApiSuccess(response);
+}
+
+export async function postNotificationDeliveryAck(
+    payload: NotificationDeliveryAckPayload,
+): Promise<void> {
+    const response = await apiPost<ApiEnvelope<null>, NotificationDeliveryAckPayload>(
+        "/api/notifications/delivery-acks",
+        payload,
+    );
+    assertApiSuccess(response);
+}
+
+export async function postDepartureAlarmFiredEvent(
+    payload: DepartureAlarmFiredEventPayload,
+): Promise<void> {
+    const response = await apiPost<ApiEnvelope<null>, DepartureAlarmFiredEventPayload>(
+        "/api/notifications/departure-alarm-fired-events",
+        payload,
+    );
+    assertApiSuccess(response);
+}
+
+export async function postDepartureAlarmScheduleReceipt(
+    payload: DepartureAlarmScheduleReceiptPayload,
+): Promise<void> {
+    const response = await apiPost<ApiEnvelope<null>, DepartureAlarmScheduleReceiptPayload>(
+        "/api/notifications/departure-alarm-schedule-receipts",
+        payload,
+    );
+    assertApiSuccess(response);
+}
+
+export async function getDepartureAlarmSnapshotCommands(): Promise<unknown[]> {
+    const response = await apiGet<ApiEnvelope<DepartureAlarmSnapshotResponse>>(
+        "/api/notifications/departure-alarms/snapshot",
+    );
+    const snapshot = unwrapApiResponse(response);
+    if (!Array.isArray(snapshot.commands)) {
+        throw new Error("Departure alarm snapshot commands must be an array.");
+    }
+    return snapshot.commands;
 }
 
 export async function getAppNotificationInbox(

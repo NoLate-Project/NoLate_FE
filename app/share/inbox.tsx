@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, {
   useCallback,
   useEffect,
@@ -22,14 +22,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  getSchedules,
-  sendScheduleDepartureNudge,
-} from '../../src/api/schedule';
+import { getSchedules } from '../../src/api/schedule';
 import {
   getScheduleCalendars,
   removeScheduleCalendarMember,
-  updateScheduleCalendar,
   type ScheduleCalendar,
 } from '../../src/api/scheduleCalendars';
 import {
@@ -46,6 +42,13 @@ import {
   type ShareResourceType,
   type ScheduleShare,
 } from '../../src/api/scheduleSharing';
+import {
+  blockSharingMember,
+  createSharingReport,
+  type SharingReportReason,
+} from '../../src/api/sharingSafety';
+import { recoverDepartureAlarmsAfterMutation } from '../../src/modules/notification/departureAlarmMutationRecovery';
+import { updateCalendarContentModeWithAlarmRecovery } from '../../src/modules/share/calendarContentModeAlarmRecovery';
 import { createLatestAsyncRequestGuard } from '../../src/modules/share/latestAsyncRequest';
 import {
   ShareInboxButton,
@@ -77,6 +80,7 @@ import type {
 } from '../../src/modules/schedule/types';
 import { useTheme, type AppColors } from '../../src/modules/theme/ThemeContext';
 import BrandedLoader from '../../src/ui/BrandedLoader';
+import SharingReportModal from '../../src/modules/share/SharingReportModal';
 
 type ShareInboxViewData = {
   inbox: ShareInbox;
@@ -129,7 +133,20 @@ function contentModeLabel(mode?: ScheduleShareContentMode) {
 }
 
 function ownerLabel(item: ShareLibraryItem) {
-  return item.ownerEmail?.trim() || `회원 #${item.ownerMemberId}`;
+  return (
+    item.ownerEmail?.trim() ||
+    (Number.isSafeInteger(item.ownerMemberId)
+      ? `회원 #${item.ownerMemberId}`
+      : '알 수 없는 사용자')
+  );
+}
+
+function sharingSafetyOwnerId(item: ShareLibraryItem) {
+  const ownerMemberId = item.ownerMemberId;
+  if (!Number.isSafeInteger(ownerMemberId) || !ownerMemberId || ownerMemberId <= 0) {
+    return null;
+  }
+  return ownerMemberId;
 }
 
 function toDate(value?: string | null) {
@@ -216,6 +233,7 @@ export default function ShareInboxScreen() {
     createLatestAsyncRequestGuard('share-inbox'),
   );
   const mountedRef = useRef(true);
+  const hasBlurredRef = useRef(false);
   const revokingInvitationRef = useRef<string | null>(null);
   const revokingShareRef = useRef<string | null>(null);
   const composerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -242,7 +260,8 @@ export default function ShareInboxScreen() {
     string | null
   >(null);
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
-  const [nudgingMemberId, setNudgingMemberId] = useState<number | null>(null);
+  const [safetyPendingKey, setSafetyPendingKey] = useState<string | null>(null);
+  const [reportItem, setReportItem] = useState<ShareLibraryItem | null>(null);
 
   const goBack = useCallback(() => {
     if (router.canGoBack()) router.back();
@@ -340,6 +359,17 @@ export default function ShareInboxScreen() {
       if (composerTimerRef.current) clearTimeout(composerTimerRef.current);
     };
   }, [loadShares]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (hasBlurredRef.current) {
+        loadShares('refresh').catch(() => undefined);
+      }
+      return () => {
+        hasBlurredRef.current = true;
+      };
+    }, [loadShares]),
+  );
 
   useEffect(() => {
     setSelectedTab(normalizeTab(params.tab));
@@ -543,35 +573,93 @@ export default function ShareInboxScreen() {
     [loadShares],
   );
 
-  const sendDepartureNudge = useCallback(
-    async (item: ShareLibraryItem, share: ScheduleShare) => {
-      if (nudgingMemberId !== null) return;
-      setNudgingMemberId(share.targetMemberId);
+  const submitSafetyReport = useCallback(
+    async (
+      item: ShareLibraryItem,
+      reason: SharingReportReason,
+      details: string,
+    ) => {
+      if (item.relation !== 'received' || item.isPending || safetyPendingKey) return;
+      const resourceId = Number(item.resourceId);
+      const ownerMemberId = sharingSafetyOwnerId(item);
+      if (!Number.isSafeInteger(resourceId) || resourceId <= 0 || ownerMemberId === null) return;
+      setSafetyPendingKey(item.key);
       try {
-        const result = await sendScheduleDepartureNudge(
-          item.resourceId,
-          share.targetMemberId,
-        );
-        if (result.sentCount > 0) {
-          Alert.alert(
-            '알림을 보냈어요',
-            `${
-              share.targetEmail?.trim() || `회원 #${share.targetMemberId}`
-            }님에게 출발 확인 알림을 전송했습니다.`,
-          );
-        } else {
-          Alert.alert(
-            '알림을 보내지 못했어요',
-            '상대방의 푸시 알림 설정이나 기기 등록 상태를 확인해 주세요.',
-          );
-        }
-      } catch (nudgeError) {
-        Alert.alert('알림 전송 실패', getErrorMessage(nudgeError));
+        await createSharingReport({
+          reportedMemberId: ownerMemberId,
+          resourceType: item.resourceType,
+          resourceId,
+          reason,
+          details: details.trim() || undefined,
+        });
+        if (mountedRef.current) setReportItem(null);
+        Alert.alert('신고가 접수됐어요', '검토가 필요한 공유로 안전하게 접수했습니다.');
+      } catch (reportError) {
+        Alert.alert('신고 접수 실패', getErrorMessage(reportError));
       } finally {
-        if (mountedRef.current) setNudgingMemberId(null);
+        if (mountedRef.current) setSafetyPendingKey(null);
       }
     },
-    [nudgingMemberId],
+    [safetyPendingKey],
+  );
+
+  const blockShareOwner = useCallback(
+    async (item: ShareLibraryItem) => {
+      if (item.relation !== 'received' || item.isPending || safetyPendingKey) return;
+      const ownerMemberId = sharingSafetyOwnerId(item);
+      if (ownerMemberId === null) return;
+      setSafetyPendingKey(item.key);
+      try {
+        await blockSharingMember(ownerMemberId);
+        await recoverDepartureAlarmsAfterMutation();
+        await loadShares('refresh');
+        Alert.alert(
+          '차단했어요',
+          '이 사용자의 기존 공유를 숨겼고 새로운 공유와 초대도 받지 않습니다.',
+        );
+      } catch (blockError) {
+        Alert.alert('차단 실패', getErrorMessage(blockError));
+      } finally {
+        if (mountedRef.current) setSafetyPendingKey(null);
+      }
+    },
+    [loadShares, safetyPendingKey],
+  );
+
+  const openSafetyActions = useCallback(
+    (item: ShareLibraryItem) => {
+      if (item.relation !== 'received' || item.isPending || safetyPendingKey) return;
+      Alert.alert(
+        '신고 또는 차단',
+        `${ownerLabel(item)} 사용자의 공유에 대해 어떤 조치를 할까요?`,
+        [
+          { text: '취소', style: 'cancel' },
+          {
+            text: '신고하기',
+            onPress: () => setReportItem(item),
+          },
+          {
+            text: '차단하기',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert(
+                '사용자 차단',
+                '기존 공유가 즉시 숨겨지고 이 사용자와의 새로운 공유도 차단됩니다.',
+                [
+                  { text: '취소', style: 'cancel' },
+                  {
+                    text: '차단',
+                    style: 'destructive',
+                    onPress: () => blockShareOwner(item).catch(() => undefined),
+                  },
+                ],
+              );
+            },
+          },
+        ],
+      );
+    },
+    [blockShareOwner, safetyPendingKey],
   );
 
   const openComposer = useCallback((item: ShareLibraryItem) => {
@@ -585,9 +673,11 @@ export default function ShareInboxScreen() {
   const updateComposerCalendarMode = useCallback(
     async (nextMode: ScheduleShareContentMode) => {
       if (!composerItem || composerItem.resourceType !== 'CALENDAR') return;
-      await updateScheduleCalendar(composerItem.resourceId, {
-        defaultContentMode: nextMode,
-      });
+      await updateCalendarContentModeWithAlarmRecovery(
+        composerItem.resourceId,
+        composerItem.contentMode,
+        nextMode,
+      );
       setComposerItem(current =>
         current
           ? {
@@ -601,7 +691,10 @@ export default function ShareInboxScreen() {
   );
 
   const hasModal =
-    filterSheetOpen || Boolean(managedItem) || Boolean(composerItem);
+    filterSheetOpen ||
+    Boolean(managedItem) ||
+    Boolean(composerItem) ||
+    Boolean(reportItem);
   const resultCount =
     selectedFilter.query.trim() || activeFilterCount > 0
       ? visibleItems.length
@@ -645,31 +738,69 @@ export default function ShareInboxScreen() {
           <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>
             공유함
           </Text>
-          <CalendarGlassSurface
-            interactive
-            clear
-            glow
-            variant="bottomBar"
-            tone="softGlass"
-            style={[styles.headerGlassButton, { borderColor: colors.border }]}
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="공유함 새로고침"
-              disabled={refreshing}
-              onPress={() => loadShares('refresh')}
-              style={({ pressed }) => [
-                styles.headerButton,
-                { opacity: refreshing ? 0.42 : pressed ? 0.62 : 1 },
-              ]}
+          <View style={styles.headerActions}>
+            <CalendarGlassSurface
+              interactive
+              clear
+              glow
+              variant="bottomBar"
+              tone="softGlass"
+              style={[styles.headerGlassButton, { borderColor: colors.border }]}
             >
-              <Ionicons
-                name="refresh"
-                size={21}
-                color={colors.textPrimary}
-              />
-            </Pressable>
-          </CalendarGlassSurface>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="내 신고 내역"
+                onPress={() => router.push('/share/reports')}
+                style={({ pressed }) => [
+                  styles.headerButton,
+                  { opacity: pressed ? 0.62 : 1 },
+                ]}
+              >
+                <Ionicons name="flag-outline" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </CalendarGlassSurface>
+            <CalendarGlassSurface
+              interactive
+              clear
+              glow
+              variant="bottomBar"
+              tone="softGlass"
+              style={[styles.headerGlassButton, { borderColor: colors.border }]}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="차단한 사용자 관리"
+                onPress={() => router.push('/share/blocked')}
+                style={({ pressed }) => [
+                  styles.headerButton,
+                  { opacity: pressed ? 0.62 : 1 },
+                ]}
+              >
+                <Ionicons name="shield-checkmark-outline" size={20} color={colors.textPrimary} />
+              </Pressable>
+            </CalendarGlassSurface>
+            <CalendarGlassSurface
+              interactive
+              clear
+              glow
+              variant="bottomBar"
+              tone="softGlass"
+              style={[styles.headerGlassButton, { borderColor: colors.border }]}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="공유함 새로고침"
+                disabled={refreshing}
+                onPress={() => loadShares('refresh')}
+                style={({ pressed }) => [
+                  styles.headerButton,
+                  { opacity: refreshing ? 0.42 : pressed ? 0.62 : 1 },
+                ]}
+              >
+                <Ionicons name="refresh" size={21} color={colors.textPrimary} />
+              </Pressable>
+            </CalendarGlassSurface>
+          </View>
         </View>
 
         <CalendarGlassSurface
@@ -839,6 +970,8 @@ export default function ShareInboxScreen() {
                         accent={accent}
                         onOpen={() => openSharedResource(item)}
                         onManage={() => setManagedItemKey(item.key)}
+                        onSafety={() => openSafetyActions(item)}
+                        safetyPending={safetyPendingKey === item.key}
                       />
                     ))}
                   </View>
@@ -855,6 +988,8 @@ export default function ShareInboxScreen() {
                   accent={accent}
                   onOpen={() => openSharedResource(item)}
                   onManage={() => setManagedItemKey(item.key)}
+                  onSafety={() => openSafetyActions(item)}
+                  safetyPending={safetyPendingKey === item.key}
                 />
               ))}
             </View>
@@ -889,7 +1024,6 @@ export default function ShareInboxScreen() {
         bottomInset={insets.bottom}
         revokingShareId={revokingShareId}
         revokingInvitationId={revokingInvitationId}
-        nudgingMemberId={nudgingMemberId}
         onClose={() => setManagedItemKey(null)}
         onOpenResource={() => {
           if (!managedItem) return;
@@ -898,9 +1032,6 @@ export default function ShareInboxScreen() {
         }}
         onOpenComposer={() => {
           if (managedItem) openComposer(managedItem);
-        }}
-        onNudge={share => {
-          if (managedItem) sendDepartureNudge(managedItem, share);
         }}
         onRevokeShare={share => {
           if (managedItem) revokeDirectShare(managedItem, share);
@@ -931,6 +1062,20 @@ export default function ShareInboxScreen() {
         onClose={() => {
           setComposerItem(null);
           loadShares('refresh').catch(() => undefined);
+        }}
+      />
+
+      <SharingReportModal
+        visible={Boolean(reportItem)}
+        owner={reportItem ? ownerLabel(reportItem) : '공유자'}
+        colors={colors}
+        accent={accent}
+        pending={Boolean(reportItem && safetyPendingKey === reportItem.key)}
+        onClose={() => {
+          if (!safetyPendingKey) setReportItem(null);
+        }}
+        onSubmit={async (reason, details) => {
+          if (reportItem) await submitSafetyReport(reportItem, reason, details);
         }}
       />
     </View>
@@ -1004,12 +1149,16 @@ function ScheduleShareRow({
   accent,
   onOpen,
   onManage,
+  onSafety,
+  safetyPending,
 }: {
   item: ShareLibraryItem;
   colors: AppColors;
   accent: string;
   onOpen: () => void;
   onManage: () => void;
+  onSafety: () => void;
+  safetyPending: boolean;
 }) {
   const itemColor = shareItemColor(item, accent);
   const location = scheduleLocationLabel(item.schedule);
@@ -1183,14 +1332,29 @@ function ScheduleShareRow({
               />
             </ShareInboxDecoration>
           </ShareInboxButton>
-        ) : (
+        ) : item.isPending ? (
           <ShareInboxDecoration>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={colors.textDisabled}
-            />
+            <Ionicons name="chevron-forward" size={18} color={colors.textDisabled} />
           </ShareInboxDecoration>
+        ) : (
+          <ShareInboxButton
+            accessibilityLabel={`${item.title} 신고 또는 사용자 차단`}
+            accessibilityState={{ busy: safetyPending, disabled: safetyPending }}
+            disabled={safetyPending}
+            onPress={onSafety}
+            style={({ pressed }) => [
+              styles.moreButton,
+              { opacity: safetyPending ? 0.42 : pressed ? 0.52 : 1 },
+            ]}
+          >
+            <ShareInboxDecoration>
+              {safetyPending ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
+              )}
+            </ShareInboxDecoration>
+          </ShareInboxButton>
         )}
       </View>
     </CalendarGlassSurface>
@@ -1203,12 +1367,16 @@ function CalendarShareRow({
   accent,
   onOpen,
   onManage,
+  onSafety,
+  safetyPending,
 }: {
   item: ShareLibraryItem;
   colors: AppColors;
   accent: string;
   onOpen: () => void;
   onManage: () => void;
+  onSafety: () => void;
+  safetyPending: boolean;
 }) {
   const itemColor = item.color || accent;
   const ownedMemberCount =
@@ -1339,14 +1507,29 @@ function CalendarShareRow({
               />
             </ShareInboxDecoration>
           </ShareInboxButton>
-        ) : (
+        ) : item.isPending ? (
           <ShareInboxDecoration>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={colors.textDisabled}
-            />
+            <Ionicons name="chevron-forward" size={18} color={colors.textDisabled} />
           </ShareInboxDecoration>
+        ) : (
+          <ShareInboxButton
+            accessibilityLabel={`${item.title} 신고 또는 사용자 차단`}
+            accessibilityState={{ busy: safetyPending, disabled: safetyPending }}
+            disabled={safetyPending}
+            onPress={onSafety}
+            style={({ pressed }) => [
+              styles.moreButton,
+              { opacity: safetyPending ? 0.42 : pressed ? 0.52 : 1 },
+            ]}
+          >
+            <ShareInboxDecoration>
+              {safetyPending ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <Ionicons name="ellipsis-horizontal" size={20} color={colors.textSecondary} />
+              )}
+            </ShareInboxDecoration>
+          </ShareInboxButton>
         )}
       </View>
     </CalendarGlassSurface>
@@ -1640,11 +1823,9 @@ function ManageShareSheet({
   bottomInset,
   revokingShareId,
   revokingInvitationId,
-  nudgingMemberId,
   onClose,
   onOpenResource,
   onOpenComposer,
-  onNudge,
   onRevokeShare,
   onRevokeInvitation,
 }: {
@@ -1654,11 +1835,9 @@ function ManageShareSheet({
   bottomInset: number;
   revokingShareId: string | null;
   revokingInvitationId: string | null;
-  nudgingMemberId: number | null;
   onClose: () => void;
   onOpenResource: () => void;
   onOpenComposer: () => void;
-  onNudge: (share: ScheduleShare) => void;
   onRevokeShare: (share: ScheduleShare) => void;
   onRevokeInvitation: (invitation: ShareInvitationSummary) => void;
 }) {
@@ -1811,7 +1990,6 @@ function ManageShareSheet({
                       share.targetEmail?.trim() ||
                       `NoLate ID #${share.targetMemberId}`;
                     const revoking = revokingShareId === share.id;
-                    const nudging = nudgingMemberId === share.targetMemberId;
                     return (
                       <View
                         key={share.id}
@@ -1852,35 +2030,6 @@ function ManageShareSheet({
                             {permissionLabel(share.permission)} 권한
                           </Text>
                         </View>
-                        {item.resourceType === 'SCHEDULE' ? (
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`${target}에게 출발 알림 보내기`}
-                            accessibilityState={{
-                              disabled: nudgingMemberId !== null,
-                              busy: nudging,
-                            }}
-                            disabled={nudgingMemberId !== null}
-                            onPress={() => onNudge(share)}
-                            style={({ pressed }) => [
-                              styles.memberActionButton,
-                              {
-                                opacity:
-                                  pressed || nudgingMemberId !== null ? 0.5 : 1,
-                              },
-                            ]}
-                          >
-                            {nudging ? (
-                              <ActivityIndicator size="small" color={accent} />
-                            ) : (
-                              <Ionicons
-                                name="notifications-outline"
-                                size={19}
-                                color={accent}
-                              />
-                            )}
-                          </Pressable>
-                        ) : null}
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel={`${target} 공유 해제`}
@@ -2230,6 +2379,11 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontWeight: '900',
     letterSpacing: 0,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   tabSurface: {
     height: 50,

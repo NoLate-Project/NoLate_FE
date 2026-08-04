@@ -1,4 +1,5 @@
 import {
+    getCalendarMonthAnchor,
     getCalendarWeekStart,
     getCalendarWeekdayIndex,
     getScheduleFocusDay,
@@ -7,6 +8,21 @@ import {
 } from "../src/modules/schedule/calendarNavigation";
 
 describe("calendar month navigation", () => {
+    test.each([
+        ["2026-07-01", "2026-07-01"],
+        ["2026-07-31", "2026-07-01"],
+        ["2026-07", "2026-07-01"],
+    ])("%s를 월 단위 상태의 기준일로 정규화한다", (day, expected) => {
+        expect(getCalendarMonthAnchor(day)).toBe(expected);
+    });
+
+    test.each([
+        "2026-13-01",
+        "not-a-date",
+    ])("잘못된 월 값 %s는 임의로 변경하지 않는다", (day) => {
+        expect(getCalendarMonthAnchor(day)).toBe(day);
+    });
+
     test.each([
         ["2026-07-15", 0, "2026-07-12"],
         ["2026-07-15", 1, "2026-07-13"],

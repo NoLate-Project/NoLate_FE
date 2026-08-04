@@ -11,6 +11,7 @@ import {
     removeCalendarScheduleCacheItem,
     upsertCalendarScheduleCacheItem,
 } from "../modules/schedule/calendarScheduleCache";
+import { emitScheduleMutation } from "../modules/schedule/scheduleMutationEvents";
 
 export type SchedulePayload = Omit<ScheduleItem, "id" | "updatedAt">;
 
@@ -31,6 +32,77 @@ export type NotificationSendResult = {
     sentCount: number;
     failedCount: number;
     removedTokenCount: number;
+};
+
+export type ScheduleEtaArrivalObservation = {
+    scheduleId: number;
+    pushJobId?: number | null;
+    departedAt: string;
+    predictionEvaluatedAt: string;
+    recommendedDepartureAt: string;
+    targetArrivalAt: string;
+    predictedArrivalAt: string;
+    actualArrivalAt: string;
+    observationSource: ScheduleArrivalObservationSource;
+    observationVerification: "UNVERIFIED_CLIENT" | "VERIFIED_GEOFENCE";
+    precisionSeconds: number;
+    adjustmentSeconds?: number | null;
+    clientAppVersion?: string | null;
+    clientBuildVersion?: string | null;
+    backendCohortVersion: string;
+    eligibilityPolicyVersion: string;
+    recordedAt: string;
+    etaSource: string;
+    etaStale: boolean;
+    travelMinutes: number;
+    travelMode: string;
+    predictionBasis: string;
+    providerId: string;
+    algorithmVersion: string;
+    providerFetchedAt?: string | null;
+    predictedOnTime: boolean;
+    actualOnTime: boolean;
+    onTimeOutcome: string;
+    departureOffsetSeconds: number;
+    actualTravelSeconds: number;
+    reportDelaySeconds: number;
+    accuracyEligible: boolean;
+    accuracyEligibilityReason: string;
+    signedErrorSeconds: number;
+    absoluteErrorSeconds: number;
+};
+
+export type ScheduleArrivalObservationSource = "USER_NOW" | "USER_ADJUSTED" | "GEOFENCE";
+
+export type ScheduleArrivalObservationCapture = {
+    arrivedAt: string;
+    observationSource: ScheduleArrivalObservationSource;
+    precisionSeconds: number;
+    adjustmentSeconds?: number;
+    clientAppVersion?: string;
+    clientBuildVersion?: string;
+};
+
+export type ScheduleEtaObservationEngagementEvent = "EXPOSED" | "PROMPT_OPENED";
+
+export type ScheduleEtaObservationEngagementCapture = {
+    event: ScheduleEtaObservationEngagementEvent;
+    clientAppVersion?: string;
+    clientBuildVersion?: string;
+    uxVariant?: string;
+};
+
+export type ScheduleEtaObservationEngagement = {
+    scheduleId: number;
+    exposedAt?: string | null;
+    exposedClientAppVersion?: string | null;
+    exposedClientBuildVersion?: string | null;
+    exposedUxVariant?: string | null;
+    promptedAt?: string | null;
+    promptedClientAppVersion?: string | null;
+    promptedClientBuildVersion?: string | null;
+    promptedUxVariant?: string | null;
+    respondedAt?: string | null;
 };
 
 export type ParseScheduleInputType =
@@ -67,6 +139,9 @@ type CalendarCacheRevisionDto = {
 };
 
 let observedCalendarCacheRevision: number | null = null;
+const CALENDAR_CACHE_REVISION_COOLDOWN_MS = 60_000;
+let lastCalendarCacheRevisionSyncAt: number | null = null;
+let calendarCacheRevisionSyncInFlight: Promise<boolean> | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
@@ -91,18 +166,47 @@ export async function getCalendarSchedules(startAt: string, endAt: string): Prom
     return dedupeCalendarSchedules(unwrapApiResponse(response).map(normalizeSchedule));
 }
 
-export async function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
-    const response = await apiGet<ApiEnvelope<CalendarCacheRevisionDto>>(
-        "/api/schedules/calendar-cache/revision",
-    );
-    const revision = unwrapApiResponse(response).revision;
-    const changed = observedCalendarCacheRevision !== null &&
-        observedCalendarCacheRevision !== revision;
-    observedCalendarCacheRevision = revision;
-    if (changed) {
-        clearCalendarScheduleCache();
+export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
+    if (calendarCacheRevisionSyncInFlight) {
+        return calendarCacheRevisionSyncInFlight;
     }
-    return changed;
+
+    const now = Date.now();
+    if (
+        lastCalendarCacheRevisionSyncAt !== null &&
+        now - lastCalendarCacheRevisionSyncAt < CALENDAR_CACHE_REVISION_COOLDOWN_MS
+    ) {
+        return Promise.resolve(false);
+    }
+
+    const request = apiGet<ApiEnvelope<CalendarCacheRevisionDto>>(
+        "/api/schedules/calendar-cache/revision",
+    ).then((response) => {
+        const revision = unwrapApiResponse(response).revision;
+        const changed = observedCalendarCacheRevision !== null &&
+            observedCalendarCacheRevision !== revision;
+        observedCalendarCacheRevision = revision;
+        lastCalendarCacheRevisionSyncAt = Date.now();
+        if (changed) {
+            clearCalendarScheduleCache();
+        }
+        return changed;
+    });
+
+    calendarCacheRevisionSyncInFlight = request;
+    request.then(
+        () => {
+            if (calendarCacheRevisionSyncInFlight === request) {
+                calendarCacheRevisionSyncInFlight = null;
+            }
+        },
+        () => {
+            if (calendarCacheRevisionSyncInFlight === request) {
+                calendarCacheRevisionSyncInFlight = null;
+            }
+        },
+    );
+    return request;
 }
 
 export async function getDailySchedules(date: string): Promise<ScheduleItem[]> {
@@ -124,8 +228,12 @@ export async function searchSchedules(params: {
     categoryId?: string;
     startAt?: string;
     endAt?: string;
-}): Promise<ScheduleItem[]> {
-    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>("/api/schedules/search", { params });
+    limit?: number;
+}, signal?: AbortSignal): Promise<ScheduleItem[]> {
+    const response = await apiGet<ApiEnvelope<ScheduleDto[]>>(
+        "/api/schedules/search",
+        signal ? { params, signal } : { params },
+    );
     return unwrapApiResponse(response).map(normalizeSchedule);
 }
 
@@ -148,6 +256,7 @@ export async function createSchedule(payload: SchedulePayload): Promise<Schedule
     const item = normalizeSchedule(unwrapApiResponse(response));
     const cachedItem = { ...item, route: item.route ?? payload.route };
     upsertCalendarScheduleCacheItem(cachedItem);
+    emitScheduleMutation();
     return cachedItem;
 }
 
@@ -167,6 +276,7 @@ export async function importCalendarSchedule(
         route: item.route ?? (result.created ? payload.route : undefined),
     };
     upsertCalendarScheduleCacheItem(cachedItem);
+    if (result.created) emitScheduleMutation();
 
     return {
         item: cachedItem,
@@ -198,6 +308,7 @@ export async function updateSchedule(scheduleId: string, payload: SchedulePayloa
     const item = normalizeSchedule(unwrapApiResponse(response));
     const cachedItem = { ...item, route: item.route ?? payload.route };
     upsertCalendarScheduleCacheItem(cachedItem);
+    emitScheduleMutation();
     return cachedItem;
 }
 
@@ -205,14 +316,62 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}`);
     assertApiSuccess(response);
     removeCalendarScheduleCacheItem(scheduleId);
+    emitScheduleMutation();
 }
 
-export async function markScheduleDeparted(scheduleId: string): Promise<ScheduleItem> {
+export async function markScheduleDeparted(
+    scheduleId: string,
+    actionEventKey?: string,
+    notificationRecipientMemberId?: number,
+): Promise<ScheduleItem> {
     // 푸시 액션에서 출발 처리만 수행한다. 화면 이동은 알림 응답 핸들러가 별도로 결정한다.
-    const response = await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
+    const response = actionEventKey
+        ? await apiPost<ApiEnvelope<ScheduleDto>>(
+            `/api/schedules/${scheduleId}/depart-now`,
+            undefined,
+            {
+                headers: {
+                    "Idempotency-Key": `departNow:${actionEventKey}`,
+                    ...(notificationRecipientMemberId
+                        ? { "X-NoLate-Notification-Recipient": String(notificationRecipientMemberId) }
+                        : {}),
+                },
+            },
+        )
+        : await apiPost<ApiEnvelope<ScheduleDto>>(`/api/schedules/${scheduleId}/depart-now`);
     const item = normalizeSchedule(unwrapApiResponse(response));
     upsertCalendarScheduleCacheItem(item);
     return item;
+}
+
+/** Records an explicit opt-in arrival with bounded source and temporal uncertainty. */
+export async function recordScheduleArrivalObservation(
+    scheduleId: string,
+    capture: ScheduleArrivalObservationCapture,
+): Promise<ScheduleEtaArrivalObservation> {
+    const response = await apiPost<
+        ApiEnvelope<ScheduleEtaArrivalObservation>,
+        ScheduleArrivalObservationCapture
+    >(
+        `/api/schedules/${scheduleId}/eta-observations/arrival`,
+        capture,
+    );
+    return unwrapApiResponse(response);
+}
+
+/** Idempotent, location-free denominator event; callers persist before sending. */
+export async function recordScheduleEtaObservationEngagement(
+    scheduleId: string,
+    capture: ScheduleEtaObservationEngagementCapture,
+): Promise<ScheduleEtaObservationEngagement> {
+    const response = await apiPost<
+        ApiEnvelope<ScheduleEtaObservationEngagement>,
+        ScheduleEtaObservationEngagementCapture
+    >(
+        `/api/schedules/${scheduleId}/eta-observations/engagement`,
+        capture,
+    );
+    return unwrapApiResponse(response);
 }
 
 export async function sendScheduleDepartureNudge(
@@ -225,8 +384,27 @@ export async function sendScheduleDepartureNudge(
     return unwrapApiResponse(response);
 }
 
-export async function snoozeScheduleDepartureReminder(scheduleId: string): Promise<void> {
+export async function snoozeScheduleDepartureReminder(
+    scheduleId: string,
+    actionEventKey?: string,
+    notificationRecipientMemberId?: number,
+): Promise<void> {
     // 푸시 액션의 재알림 요청은 화면 상태를 바꾸지 않고 서버 job의 nextCheckAt만 갱신한다.
-    const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedules/${scheduleId}/departure-reminder/snooze`);
+    const response = actionEventKey
+        ? await apiPost<ApiEnvelope<unknown>>(
+            `/api/schedules/${scheduleId}/departure-reminder/snooze`,
+            undefined,
+            {
+                headers: {
+                    "Idempotency-Key": `snooze:${actionEventKey}`,
+                    ...(notificationRecipientMemberId
+                        ? { "X-NoLate-Notification-Recipient": String(notificationRecipientMemberId) }
+                        : {}),
+                },
+            },
+        )
+        : await apiPost<ApiEnvelope<unknown>>(
+            `/api/schedules/${scheduleId}/departure-reminder/snooze`,
+        );
     assertApiSuccess(response);
 }

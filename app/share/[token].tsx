@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { acceptShareInvitation, type ScheduleShareInvitationAcceptResult } from "../../src/api/scheduleSharing";
 import { useAuth } from "../../src/modules/auth/AuthContext";
+import { recoverDepartureAlarmsAfterMutation } from "../../src/modules/notification/departureAlarmMutationRecovery";
 import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { createLatestAsyncRequestGuard } from "../../src/modules/share/latestAsyncRequest";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -86,6 +87,7 @@ export default function ShareInvitationAcceptScreen() {
         setError(null);
         try {
             const result = await acceptShareInvitation(invitationToken);
+            await recoverDepartureAlarmsAfterMutation();
             if (!requestGuardRef.current.isCurrent(ticket)) return;
             setAccepted(result);
         } catch (acceptError) {

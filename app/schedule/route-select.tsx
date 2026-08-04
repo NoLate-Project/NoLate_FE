@@ -38,10 +38,10 @@ import { createLatestRequestGuard } from "../../src/modules/map/routeAsyncGuard"
 import TmapMapView, { type TmapMarker } from "../../src/modules/map/TmapMapView";
 import {
     getRouteAlternativeOptions,
-    getRouteQualityLabel,
     invalidateRouteSearch,
     reverseGeocodeToAddress,
     searchAddressByKeyword,
+    shouldShowRequiredMapAttribution,
     type PlaceSearchItem,
     type RouteAlternativeOption,
 } from "../../src/modules/map/routingService";
@@ -161,7 +161,6 @@ type RouteProgressSegment = {
 type RouteMetricChip = {
     key: string;
     label: string;
-    tone?: "default" | "success";
 };
 type RouteDropdownSummaryKind = RouteSelectTransitLeg["kind"] | "TRANSFER";
 type RouteDropdownSummaryItem = {
@@ -635,7 +634,6 @@ function buildRouteMetricChips(option: RouteAlternativeOption): RouteMetricChip[
         }
     }
 
-    chips.push({ key: "provider", label: getRouteQualityLabel(option), tone: "success" });
     return chips;
 }
 
@@ -2423,8 +2421,6 @@ export default function RouteSelectScreen() {
             selectedModeBg: "rgba(41,121,255,0.13)",
             neutralChipBg: "rgba(255,255,255,0.025)",
             neutralChipBorder: "rgba(255,255,255,0.10)",
-            successChipBg: "rgba(34,197,94,0.09)",
-            successChipBorder: "rgba(34,197,94,0.18)",
             border: "#2A2F3A",
             borderStrong: "#474950",
             textPrimary: "#F5F7FA",
@@ -2449,8 +2445,6 @@ export default function RouteSelectScreen() {
             selectedModeBg: "rgba(41,121,255,0.10)",
             neutralChipBg: "#F8FAFC",
             neutralChipBorder: "#E2E8F0",
-            successChipBg: "rgba(34,197,94,0.10)",
-            successChipBorder: "rgba(34,197,94,0.22)",
             border: "#E2E8F0",
             borderStrong: "#CBD5E1",
             textPrimary: "#111827",
@@ -3858,25 +3852,24 @@ export default function RouteSelectScreen() {
                                                     </Text>
                                                 </View>
                                             </View>
-                                            <View style={styles.routeMetricRow}>
+                                            {routeMetricChips.length > 0 && <View style={styles.routeMetricRow}>
                                                 {routeMetricChips.map((metric) => {
-                                                    const success = metric.tone === "success";
                                                     return (
                                                         <View
                                                             key={`${option.id}-${metric.key}`}
                                                             style={[
                                                                 styles.routeMetricChip,
-	                                                                {
-	                                                                    backgroundColor: success ? routeUi.successChipBg : routeUi.neutralChipBg,
-	                                                                    borderColor: success ? routeUi.successChipBorder : routeUi.neutralChipBorder,
-	                                                                },
+                                                                {
+                                                                    backgroundColor: routeUi.neutralChipBg,
+                                                                    borderColor: routeUi.neutralChipBorder,
+                                                                },
                                                             ]}
                                                         >
                                                             <Text
                                                                 numberOfLines={1}
                                                                 style={[
                                                                     styles.routeMetricText,
-                                                                    { color: success ? routeUi.accentGreen : routeUi.textSecondary },
+                                                                    { color: routeUi.textSecondary },
                                                                 ]}
                                                             >
                                                                 {metric.label}
@@ -3884,7 +3877,7 @@ export default function RouteSelectScreen() {
                                                         </View>
                                                     );
                                                 })}
-                                            </View>
+                                            </View>}
                                             {progressSegments.length > 0 && (
                                                 <TransitRouteProgressBar
                                                     segments={progressSegments}
@@ -3986,7 +3979,7 @@ export default function RouteSelectScreen() {
                                             </View>
                                         </AnimatedRouteExpansion>
                                     )}
-                                    {!!option.attributionText && !!option.attributionUrl && (
+                                    {shouldShowRequiredMapAttribution(option) && !!option.attributionText && !!option.attributionUrl && (
                                         <Pressable
                                             accessibilityRole="link"
                                             accessibilityLabel={`${option.attributionText} 지도 정보 열기`}

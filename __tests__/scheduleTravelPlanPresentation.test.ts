@@ -44,6 +44,11 @@ describe("schedule travel plan presentation", () => {
         const result = buildTravelPlanPayload({
             ...item,
             origin: { name: "내 출발지" },
+            destination: {
+                name: "강남역",
+                lat: 37.4979,
+                lng: 127.0276,
+            },
             travelMode: "CAR",
             travelMinutes: 25,
             route: { id: "mine" },
@@ -51,6 +56,11 @@ describe("schedule travel plan presentation", () => {
 
         expect(result).toEqual(expect.objectContaining({
             origin: { name: "내 출발지" },
+            destination: {
+                name: "강남역",
+                lat: 37.4979,
+                lng: 127.0276,
+            },
             travelMode: "CAR",
             travelMinutes: 25,
             route: { id: "mine" },

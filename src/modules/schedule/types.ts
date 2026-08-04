@@ -2,6 +2,7 @@
 export type ScheduleSharePermission = "VIEWER" | "COMMENTER" | "EDITOR" | "OWNER";
 export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
 export type ScheduleType = "NORMAL" | "ROUTE";
+export type ScheduleAlertMode = "STANDARD" | "ALARM";
 
 export type ScheduleCategory = {
     id: string;
@@ -63,6 +64,7 @@ export type ScheduleParseResult = {
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;
     notificationIntervalMinutes?: number;
+    alertMode?: ScheduleAlertMode;
 };
 
 export type QuickScheduleVerificationSignal =
@@ -108,6 +110,7 @@ export type ScheduleTravelPlan = {
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number | null;
     notificationIntervalMinutes?: number | null;
+    alertMode?: ScheduleAlertMode;
     updatedAt?: string | null;
 };
 
@@ -163,6 +166,7 @@ export type ScheduleItem = {
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;
     notificationIntervalMinutes?: number;
+    alertMode?: ScheduleAlertMode;
     sharePermission?: ScheduleSharePermission;
     shareContentMode?: ScheduleShareContentMode | null;
     travelCollaborationEnabled?: boolean | null;

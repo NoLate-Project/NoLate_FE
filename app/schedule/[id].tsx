@@ -22,7 +22,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     getSchedule,
-    markScheduleDeparted,
     sendScheduleDepartureNudge,
 } from "../../src/api/schedule";
 import {
@@ -31,6 +30,8 @@ import {
 } from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
+import ScheduleArrivalObservationAction from "../../src/modules/schedule/components/detail/ScheduleArrivalObservationAction";
+import ScheduleMemoSheet from "../../src/modules/schedule/components/detail/ScheduleMemoSheet";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import { canEditPresentedSchedule } from "../../src/modules/schedule/schedulePermissions";
@@ -77,6 +78,8 @@ import {
     setRoutePlannerInitial,
 } from "../../src/modules/schedule/routePlannerSession";
 import { isRouteSetupEntryRequested } from "../../src/modules/schedule/routeSetupNavigation";
+import { isRouteDetailEntryRequested } from "../../src/modules/schedule/routeDetailNavigation";
+import { goBackFromScheduleDetail } from "../../src/modules/schedule/scheduleDetailNavigation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { fromISO } from "../../lib/util/data";
 import { getAuthMember } from "../../src/modules/auth/authStorage";
@@ -93,6 +96,7 @@ import {
     canOpenParticipantTravelPlan,
     travelPlanStatusLabel,
 } from "../../src/modules/schedule/travelPlanPresentation";
+import { completeScheduleDeparture } from "../../src/modules/schedule/scheduleDepartureCompletion";
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
@@ -241,12 +245,14 @@ export default function ScheduleRoute() {
 }
 
 function ScheduleDetail() {
-    const { id, openRouteSetup } = useLocalSearchParams<{
+    const { id, openRouteSetup, openRouteDetail } = useLocalSearchParams<{
         id: string;
         openRouteSetup?: string | string[];
+        openRouteDetail?: string | string[];
     }>();
     const pathname = usePathname();
     const router = useRouter();
+    const goBack = useCallback(() => goBackFromScheduleDetail(router), [router]);
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
     const { colors, mode } = useTheme();
@@ -289,6 +295,7 @@ function ScheduleDetail() {
         stopIndex: number;
     }>();
     const [shareSheetVisible, setShareSheetVisible] = useState(false);
+    const [memoSheetVisible, setMemoSheetVisible] = useState(false);
     const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
     const [departureActionPending, setDepartureActionPending] = useState(false);
     const [departureNudgePendingMemberId, setDepartureNudgePendingMemberId] = useState<number>();
@@ -307,6 +314,7 @@ function ScheduleDetail() {
     const [travelPlanDetailPendingMemberId, setTravelPlanDetailPendingMemberId] = useState<number>();
     const routePlannerWasActiveRef = useRef(false);
     const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
+    const autoOpenedRouteDetailItemIdRef = useRef<string | undefined>(undefined);
 
     const item = id ? state.itemsById[id] : undefined;
     const canManageSchedule = useMemo(() => {
@@ -315,6 +323,12 @@ function ScheduleDetail() {
         return currentMemberId === item.ownerMemberId;
     }, [currentMemberId, item]);
     const canEditSchedule = canEditPresentedSchedule(item, canManageSchedule);
+    const openScheduleEditor = useCallback(() => {
+        setMemoSheetVisible(false);
+        requestAnimationFrame(() => {
+            router.setParams({ mode: "edit" });
+        });
+    }, [router]);
     const currentMemberDepartedAt = item?.myDepartedAt ?? (canManageSchedule ? item?.departedAt : undefined);
     const departureParticipants = item?.departureParticipants ?? [];
     const recommendedDepartureAt = useMemo(
@@ -339,12 +353,14 @@ function ScheduleDetail() {
         currentLocationRequestGuardRef.current.invalidate();
         currentLocationPendingRef.current = false;
         setParticipantsExpanded(false);
+        setMemoSheetVisible(false);
         setExpandedContentHeight(0);
         setCurrentLocationCoord(undefined);
         setCurrentLocationPending(false);
         setInspectedTravelPlan(undefined);
         setTravelPlanDetailPendingMemberId(undefined);
         setDepartureNudgePendingMemberId(undefined);
+        autoOpenedRouteDetailItemIdRef.current = undefined;
     }, [id]);
 
     useEffect(() => () => {
@@ -573,6 +589,21 @@ function ScheduleDetail() {
         }
         : undefined;
 
+    useEffect(() => {
+        if (
+            !item ||
+            !isRouteDetailEntryRequested(openRouteDetail) ||
+            autoOpenedRouteDetailItemIdRef.current === item.id ||
+            (!routeDetailInfo && !displayTravelMinutes && item.routeSetupRequired !== true)
+        ) return;
+
+        // Notification/native alarm entry expands once after the route-backed sheet exists.
+        // Keeping the one-shot marker prevents an offline action retry or a rerender from
+        // repeatedly overriding the user's manual collapse gesture.
+        autoOpenedRouteDetailItemIdRef.current = item.id;
+        snapSheet("expanded");
+    }, [displayTravelMinutes, item, openRouteDetail, routeDetailInfo, snapSheet]);
+
     const focusRouteLeg = useCallback((legIndex: number) => {
         const leg = routeLegs[legIndex];
         if (!leg) return;
@@ -749,7 +780,7 @@ function ScheduleDetail() {
         setDepartureActionPending(true);
         try {
             const completedAt = new Date().toISOString();
-            const updated = await markScheduleDeparted(id);
+            const updated = await completeScheduleDeparture(id);
             dispatch({
                 type: "UPDATE_ITEM",
                 item: {
@@ -969,7 +1000,7 @@ function ScheduleDetail() {
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="이전 화면으로 돌아가기"
-                        onPress={() => router.canGoBack() ? router.back() : router.replace("/schedule")}
+                        onPress={goBack}
                         style={[styles.missingSecondaryButton, { borderColor: colors.border }]}
                     >
                         <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>돌아가기</Text>
@@ -1101,9 +1132,17 @@ function ScheduleDetail() {
     ].filter(Boolean).join(" · ");
     const renderDepartureParticipantChips = () => {
         if (departureParticipants.length <= 1) return null;
+        const hasNudgeableParticipant = participantPresentations.some((participant) => (
+            canSendDepartureNudge(participant, currentMemberId, item.ownerMemberId)
+        ));
 
         return (
             <View style={styles.departureParticipants}>
+                {hasNudgeableParticipant && (
+                    <Text style={[styles.departureParticipantHint, { color: secondaryText }]}>
+                        대기 중인 참여자 프로필을 눌러 출발 확인을 요청하세요.
+                    </Text>
+                )}
                 {participantPresentations.map((participant) => {
                     const departed = participant.departed;
                     const canNudge = canSendDepartureNudge(
@@ -1112,34 +1151,40 @@ function ScheduleDetail() {
                         item.ownerMemberId
                     );
                     const nudgePending = departureNudgePendingMemberId === participant.memberId;
-
-                    return (
-                        <View
-                            key={`${participant.memberId}-${participant.role}`}
-                            // 알림 버튼이 있는 오너 화면에서는 부모가 자식 접근성 요소를
-                            // 삼키지 않도록 분리한다. 읽기 전용 화면은 기존처럼 한 번에 읽는다.
-                            accessible={!canNudge}
-                            accessibilityLabel={`${participant.label}, ${departed ? "출발함" : "대기 중"}`}
-                            style={styles.departureParticipantItem}
-                        >
+                    const profile = (
+                        <>
                             <View
                                 style={[
                                     styles.departureParticipantAvatar,
                                     {
                                         backgroundColor: departed
                                             ? (isDark ? "rgba(34,197,94,0.22)" : "rgba(34,197,94,0.14)")
-                                            : (isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.07)"),
+                                            : canNudge
+                                                ? (isDark ? "rgba(41,121,255,0.24)" : "rgba(41,121,255,0.12)")
+                                                : (isDark ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.07)"),
+                                        borderColor: canNudge ? topCardAccentText : "transparent",
+                                        borderWidth: canNudge ? 1 : 0,
                                     },
                                 ]}
                             >
-                                <Text
-                                    style={[
-                                        styles.departureParticipantAvatarText,
-                                        { color: departed ? (isDark ? "#BBF7D0" : "#166534") : secondaryText },
-                                    ]}
-                                >
-                                    {participant.avatarLabel}
-                                </Text>
+                                {nudgePending ? (
+                                    <ActivityIndicator size="small" color={topCardAccentText} />
+                                ) : (
+                                    <Text
+                                        style={[
+                                            styles.departureParticipantAvatarText,
+                                            {
+                                                color: departed
+                                                    ? (isDark ? "#BBF7D0" : "#166534")
+                                                    : canNudge
+                                                        ? topCardAccentText
+                                                        : secondaryText,
+                                            },
+                                        ]}
+                                    >
+                                        {participant.avatarLabel}
+                                    </Text>
+                                )}
                                 {departed && (
                                     <View style={styles.departureParticipantCheck}>
                                         <Ionicons name="checkmark" size={8} color="#FFFFFF" />
@@ -1160,44 +1205,51 @@ function ScheduleDetail() {
                                         {
                                             color: departed
                                                 ? (isDark ? "#86EFAC" : "#15803D")
-                                                : secondaryText,
+                                                : canNudge
+                                                    ? topCardAccentText
+                                                    : secondaryText,
                                         },
                                     ]}
                                 >
                                     {departed ? "출발 완료" : "대기 중"}
                                 </Text>
-                                {canNudge && (
-                                    <Pressable
-                                        onPress={() => confirmDepartureNudge(participant.memberId, participant.label)}
-                                        disabled={departureNudgePendingMemberId !== undefined}
-                                        hitSlop={8}
-                                        accessibilityRole="button"
-                                        accessibilityLabel={`${participant.label}님에게 출발 확인 알림 보내기`}
-                                        accessibilityHint="해당 참가자의 기기로 푸시 알림을 보냅니다."
-                                        accessibilityState={{
-                                            busy: nudgePending,
-                                            disabled: departureNudgePendingMemberId !== undefined,
-                                        }}
-                                        style={({ pressed }) => [
-                                            styles.departureParticipantNudgeButton,
-                                            {
-                                                backgroundColor: pressed
-                                                    ? (isDark ? "rgba(41,121,255,0.30)" : "rgba(41,121,255,0.16)")
-                                                    : (isDark ? "rgba(41,121,255,0.18)" : "rgba(41,121,255,0.09)"),
-                                                opacity: departureNudgePendingMemberId !== undefined && !nudgePending
-                                                    ? 0.42
-                                                    : 1,
-                                            },
-                                        ]}
-                                    >
-                                        {nudgePending ? (
-                                            <ActivityIndicator size="small" color={topCardAccentText} />
-                                        ) : (
-                                            <Ionicons name="notifications-outline" size={14} color={topCardAccentText} />
-                                        )}
-                                    </Pressable>
-                                )}
                             </View>
+                        </>
+                    );
+
+                    return canNudge ? (
+                        <Pressable
+                            key={`${participant.memberId}-${participant.role}`}
+                            onPress={() => confirmDepartureNudge(participant.memberId, participant.label)}
+                            disabled={departureNudgePendingMemberId !== undefined}
+                            accessibilityRole="button"
+                            accessibilityLabel={`${participant.label}, 대기 중, 출발 확인 알림 보내기`}
+                            accessibilityHint="프로필을 누르면 해당 참가자의 기기로 출발 확인 푸시를 보냅니다."
+                            accessibilityState={{
+                                busy: nudgePending,
+                                disabled: departureNudgePendingMemberId !== undefined,
+                            }}
+                            style={({ pressed }) => [
+                                styles.departureParticipantItem,
+                                {
+                                    opacity: pressed
+                                        ? 0.56
+                                        : departureNudgePendingMemberId !== undefined && !nudgePending
+                                            ? 0.42
+                                            : 1,
+                                },
+                            ]}
+                        >
+                            {profile}
+                        </Pressable>
+                    ) : (
+                        <View
+                            key={`${participant.memberId}-${participant.role}`}
+                            accessible
+                            accessibilityLabel={`${participant.label}, ${departed ? "출발함" : "대기 중"}`}
+                            style={styles.departureParticipantItem}
+                        >
+                            {profile}
                         </View>
                     );
                 })}
@@ -1342,6 +1394,12 @@ function ScheduleDetail() {
                             ) : undefined,
                         }
                         : undefined}
+                    arrivalObservation={item.myDepartedAt ? (
+                        <ScheduleArrivalObservationAction
+                            scheduleId={item.id}
+                            myDepartedAt={item.myDepartedAt}
+                        />
+                    ) : undefined}
                 />
             ) : (
                 <View
@@ -1428,6 +1486,29 @@ function ScheduleDetail() {
                 </Pressable>
             ) : null}
 
+            {!isPlainSchedule && notesText ? (
+                <Pressable
+                    testID="schedule-memo-trigger"
+                    onPress={() => setMemoSheetVisible(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="일정 메모 보기"
+                    accessibilityHint="메모 시트를 아래에서 엽니다"
+                    style={({ pressed }) => [
+                        styles.memoButton,
+                        {
+                            bottom: sheetMinHeight + 16,
+                            backgroundColor: isDark ? "#20242C" : "#FFFFFF",
+                            borderColor: isDark ? "rgba(255,255,255,0.16)" : "rgba(15,23,42,0.12)",
+                            opacity: pressed ? 0.72 : 1,
+                        },
+                    ]}
+                >
+                    <Ionicons name="document-text-outline" size={18} color={topCardAccentText} />
+                    <Text style={[styles.memoButtonText, { color: primaryText }]}>메모</Text>
+                    <Ionicons name="chevron-up" size={14} color={secondaryText} />
+                </Pressable>
+            ) : null}
+
             <View style={styles.topOverlay}>
                 <CalendarGlassSurface
                     variant="sheet"
@@ -1455,9 +1536,9 @@ function ScheduleDetail() {
                     />
                     <View style={styles.topHeaderRow}>
                         <Pressable
-                            onPress={() => router.replace("/schedule")}
+                            onPress={goBack}
                             accessibilityRole="button"
-                            accessibilityLabel="일정 목록으로 돌아가기"
+                            accessibilityLabel="이전 화면으로 돌아가기"
                             style={({ pressed }) => [
                                 styles.topHeaderIconButton,
                                 {
@@ -1503,7 +1584,7 @@ function ScheduleDetail() {
                                 ) : null}
                                 {canEditSchedule ? (
                                     <Pressable
-                                        onPress={() => router.setParams({ mode: "edit" })}
+                                        onPress={openScheduleEditor}
                                         accessibilityRole="button"
                                         accessibilityLabel="일정 수정"
                                         style={({ pressed }) => [
@@ -1766,6 +1847,13 @@ function ScheduleDetail() {
                                         </Text>
                                     </View>
                                 )}
+                                {item.myDepartedAt ? (
+                                    <ScheduleArrivalObservationAction
+                                        scheduleId={item.id}
+                                        myDepartedAt={item.myDepartedAt}
+                                        compact
+                                    />
+                                ) : null}
                             </View>
 
                             {departureParticipants.length > 1 && (
@@ -1939,6 +2027,15 @@ function ScheduleDetail() {
             </Animated.View>
             ) : null}
 
+            <ScheduleMemoSheet
+                visible={!isPlainSchedule && memoSheetVisible && Boolean(notesText)}
+                title={item.title}
+                notes={notesText ?? ""}
+                bottomInset={insets.bottom}
+                onEdit={canEditSchedule ? openScheduleEditor : undefined}
+                onClose={() => setMemoSheetVisible(false)}
+            />
+
             <ShareInvitationSheet
                 visible={shareSheetVisible}
                 resourceType="schedule"
@@ -2073,6 +2170,30 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         letterSpacing: 0,
     },
+    memoButton: {
+        position: "absolute",
+        left: 16,
+        zIndex: 20,
+        elevation: 18,
+        height: 44,
+        borderRadius: 22,
+        borderWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 14,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        shadowColor: "#000000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 10,
+    },
+    memoButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
     topOverlay: {
         position: "absolute",
         top: 0,
@@ -2194,6 +2315,15 @@ const styles = StyleSheet.create({
         paddingTop: 8,
         paddingBottom: 2,
     },
+    departureParticipantHint: {
+        width: "100%",
+        paddingHorizontal: 4,
+        paddingBottom: 2,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
     departureParticipantItem: {
         width: "25%",
         flexGrow: 0,
@@ -2247,13 +2377,6 @@ const styles = StyleSheet.create({
         lineHeight: 12,
         fontWeight: "700",
         letterSpacing: 0,
-    },
-    departureParticipantNudgeButton: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        alignItems: "center",
-        justifyContent: "center",
     },
     routeSheet: {
         position: "absolute",

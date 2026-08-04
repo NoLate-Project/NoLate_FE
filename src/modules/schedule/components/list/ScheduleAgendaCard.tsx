@@ -416,9 +416,7 @@ export default function ScheduleAgendaCard({
                     style={styles.detailTimeColumn}
                 >
                     <Text
-                        adjustsFontSizeToFit
                         maxFontSizeMultiplier={1.4}
-                        minimumFontScale={0.74}
                         numberOfLines={1}
                         style={[styles.detailTimePrimary, { color: colors.textPrimary }]}
                     >
@@ -426,9 +424,7 @@ export default function ScheduleAgendaCard({
                     </Text>
                     {detailTimeColumn.endLabel ? (
                         <Text
-                            adjustsFontSizeToFit
                             maxFontSizeMultiplier={1.4}
-                            minimumFontScale={0.74}
                             numberOfLines={1}
                             style={[styles.detailTimeSecondary, { color: colors.textSecondary }]}
                         >
@@ -708,7 +704,7 @@ const styles = StyleSheet.create({
         width: "100%",
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "600",
+        fontWeight: "500",
         letterSpacing: -0.2,
         textAlign: "right",
     },

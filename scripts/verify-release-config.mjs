@@ -33,7 +33,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "42");
+assert.equal(app.ios.buildNumber, "46");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -67,8 +67,20 @@ assert.doesNotMatch(
   "Simulator route fixtures must not ship in the schedule detail screen",
 );
 assert.equal(app.plugins.find((entry) => Array.isArray(entry) && entry[0] === "expo-build-properties")?.[1]?.android?.usesCleartextTraffic, false);
-assert.ok(app.android.blockedPermissions.includes("android.permission.CAMERA"));
-assert.ok(app.android.blockedPermissions.includes("android.permission.RECORD_AUDIO"));
+assert.ok(app.android.permissions.includes("CAMERA"));
+assert.ok(app.android.permissions.includes("RECORD_AUDIO"));
+assert.deepEqual(app.ios.associatedDomains, ["applinks:nolate.jinuk.dev"]);
+assert.ok(
+  app.android.intentFilters?.some((filter) =>
+    filter.autoVerify === true &&
+    filter.data?.some((data) =>
+      data.scheme === "https" &&
+      data.host === "nolate.jinuk.dev" &&
+      data.pathPrefix === "/share/"
+    )
+  ),
+  "Android verified app link for the production share path is missing",
+);
 assert.ok(rootAndroidFirebaseConfig === nativeAndroidFirebaseConfig, "Android Firebase config copies must match");
 assert.ok(rootIosFirebaseConfig === nativeIosFirebaseConfig, "iOS Firebase config copies must match");
 
@@ -79,6 +91,7 @@ assert.match(androidGradle, /Release signing is not configured/);
 assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
 assert.match(androidManifest, /android:allowBackup="false"/);
 assert.match(androidManifest, /android:name="\.MainActivity"[^>]+android:screenOrientation="portrait"/);
+assert.match(androidManifest, /android:autoVerify="true"[\s\S]*?android:host="nolate\.jinuk\.dev"[\s\S]*?android:pathPrefix="\/share\/"/);
 for (const internalActivity of [
   "com.canhub.cropper.CropImageActivity",
   "androidx.compose.ui.tooling.PreviewActivity",
@@ -95,8 +108,6 @@ for (const permission of [
   "READ_EXTERNAL_STORAGE",
   "SYSTEM_ALERT_WINDOW",
   "WRITE_CALENDAR",
-  "CAMERA",
-  "RECORD_AUDIO",
 ]) {
   const declaration = androidManifest.match(
     new RegExp(`<uses-permission[^>]+android\\.permission\\.${permission}[^>]*>`, "g"),
@@ -106,8 +117,17 @@ for (const permission of [
     assert.match(entry, /tools:node="remove"/, `${permission} must only be present as a merge removal marker`);
   }
 }
+for (const permission of ["CAMERA", "RECORD_AUDIO"]) {
+  const declaration = androidManifest.match(
+    new RegExp(`<uses-permission[^>]+android\\.permission\\.${permission}[^>]*>`, "g"),
+  );
+  assert.equal(declaration?.length, 1, `Android manifest must declare ${permission} exactly once`);
+  assert.doesNotMatch(declaration[0], /tools:node="remove"/);
+}
+assert.match(androidManifest, /android\.speech\.RecognitionService/);
+assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1/);
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 42;/g) ?? []).length >= 4);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 46;/g) ?? []).length >= 6);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
@@ -129,6 +149,7 @@ assert.match(privacyManifest, /NSPrivacyCollectedDataTypeOtherUserContent/);
 const sharedAccessGroupSuffix = "com.anonymous.nolatefe";
 const runtimeAccessGroup = `457QQLB6H6.${sharedAccessGroupSuffix}`;
 assert.match(mainEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
+assert.match(mainEntitlements, /com\.apple\.developer\.associated-domains[\s\S]*?applinks:nolate\.jinuk\.dev/);
 assert.match(extensionEntitlements, new RegExp(`\\$\\(AppIdentifierPrefix\\)${sharedAccessGroupSuffix}`));
 assert.ok(mainShareAuth.includes(runtimeAccessGroup));
 assert.ok(shareExtension.includes(runtimeAccessGroup));

@@ -1,4 +1,5 @@
 import {
+    applyQuickScheduleNotificationSettings,
     applyQuickScheduleRouteResult,
     buildQuickSchedulePayload,
     buildQuickScheduleReliabilityFeedback,
@@ -79,6 +80,7 @@ function completeDraft(
         route: { routeInfo: routeInfo() },
         departAt: "2026-07-17T10:30:00.000Z",
         notificationLeadMinutes: 30,
+        alertMode: "STANDARD",
         memo: "메모 없음",
         badges: {},
         parsed: parseResult(),
@@ -122,6 +124,100 @@ describe("quick schedule draft", () => {
         expect(draft.title).toBe("저녁 약속");
         expect(draft.location).toBe("서울역");
         expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
+    });
+
+    test("파서의 ALARM 모드를 초안과 저장 payload까지 보존한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "저녁 약속",
+            startAt: "2026-07-17T20:00:00+09:00",
+            origin,
+            destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 30,
+            route: { routeInfo: routeInfo() },
+            notificationEnabled: true,
+            notificationLeadMinutes: 30,
+            alertMode: "ALARM",
+        }), "금요일 저녁 약속", "2026-07-17");
+
+        expect(draft.alertMode).toBe("ALARM");
+        expect(buildQuickSchedulePayload(draft, category).alertMode).toBe("ALARM");
+    });
+
+    test("파서의 누락되거나 잘못된 알림 모드는 STANDARD로 정규화한다", () => {
+        const missing = buildQuickSchedulePreviewDraft(
+            parseResult(),
+            "저녁 약속",
+            "2026-07-17"
+        );
+        const invalid = buildQuickSchedulePreviewDraft(
+            {
+                ...parseResult(),
+                alertMode: "LOUD",
+            } as unknown as ScheduleParseResult,
+            "저녁 약속",
+            "2026-07-17"
+        );
+
+        expect(missing.alertMode).toBe("STANDARD");
+        expect(invalid.alertMode).toBe("STANDARD");
+    });
+
+    test("알림 시간과 방식을 하나의 초안 변경으로 적용한다", () => {
+        const draft = completeDraft({ badges: { notification: "알림 미설정" } });
+        const next = applyQuickScheduleNotificationSettings(draft, {
+            leadMinutes: 10,
+            alertMode: "ALARM",
+        });
+
+        expect(next).toEqual(expect.objectContaining({
+            notificationLeadMinutes: 10,
+            alertMode: "ALARM",
+            badges: {},
+            parsed: expect.objectContaining({
+                notificationEnabled: true,
+                notificationLeadMinutes: 10,
+                alertMode: "ALARM",
+            }),
+        }));
+        expect(draft).toEqual(expect.objectContaining({
+            notificationLeadMinutes: 30,
+            alertMode: "STANDARD",
+            badges: { notification: "알림 미설정" },
+        }));
+    });
+
+    test("알림 OFF 적용 뒤 경로를 다시 적용해도 파서 fallback이 알림을 되살리지 않는다", () => {
+        const draft = completeDraft({
+            alertMode: "ALARM",
+            parsed: parseResult({
+                notificationEnabled: true,
+                notificationLeadMinutes: 30,
+                alertMode: "ALARM",
+            }),
+        });
+        const disabled = applyQuickScheduleNotificationSettings(draft, {
+            leadMinutes: undefined,
+            alertMode: "ALARM",
+        });
+        const routeApplied = applyQuickScheduleRouteResult(disabled, {
+            origin,
+            destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 30,
+            departureAt: routeInfo().departureTime,
+            route: { routeInfo: routeInfo() },
+        });
+
+        expect(routeApplied.notificationLeadMinutes).toBeUndefined();
+        expect(routeApplied.alertMode).toBe("ALARM");
+        expect(routeApplied.parsed?.notificationEnabled).toBe(false);
+        expect(buildQuickSchedulePayload(routeApplied, category)).toEqual(
+            expect.objectContaining({
+                notificationEnabled: false,
+                alertMode: "STANDARD",
+            })
+        );
     });
 
     test("날짜 누락을 선택일로 조용히 확정하지 않는다", () => {
@@ -335,12 +431,12 @@ describe("quick schedule draft", () => {
 
     test("경로 설정 후 날짜나 시간을 바꿔도 선택 경로를 새 도착 시각에 맞춰 보존한다", () => {
         const dateChanged = updateQuickSchedulePreviewDraft(
-            completeDraft(),
+            completeDraft({ alertMode: "ALARM" }),
             "date",
             "2026-07-18"
         );
         const timeChanged = updateQuickSchedulePreviewDraft(
-            completeDraft(),
+            completeDraft({ alertMode: "ALARM" }),
             "time",
             "21:00"
         );
@@ -350,6 +446,7 @@ describe("quick schedule draft", () => {
             expect(next.travelMinutes).toBe(30);
             expect(next.departAt).toBeDefined();
             expect(next.notificationLeadMinutes).toBe(30);
+            expect(next.alertMode).toBe("ALARM");
             expect(next.badges.notification).toBeUndefined();
             expect(isQuickScheduleRouteReady(next)).toBe(true);
 
@@ -363,26 +460,37 @@ describe("quick schedule draft", () => {
             expect(payload.travelMode).toBe("TRANSIT");
             expect(payload.travelMinutes).toBe(30);
             expect(payload.route).toEqual(next.route);
+            expect(payload.alertMode).toBe("ALARM");
         }
     });
 
     test("유효하지 않은 일정 시각으로 바꾸면 과거 경로를 저장하지 않는다", () => {
-        const next = updateQuickSchedulePreviewDraft(completeDraft(), "time", "24:00");
+        const next = updateQuickSchedulePreviewDraft(
+            completeDraft({ alertMode: "ALARM" }),
+            "time",
+            "24:00"
+        );
 
         expect(next.route).toBeUndefined();
         expect(next.travelMinutes).toBeUndefined();
         expect(next.departAt).toBeUndefined();
         expect(next.notificationLeadMinutes).toBeUndefined();
+        expect(next.alertMode).toBe("ALARM");
         expect(next.badges.notification).toBe("경로 다시 확인");
     });
 
     test("목적지를 비우면 장소 경고를 복원하고 기존 경로를 지운다", () => {
-        const next = updateQuickSchedulePreviewDraft(completeDraft(), "location", "  ");
+        const next = updateQuickSchedulePreviewDraft(
+            completeDraft({ alertMode: "ALARM" }),
+            "location",
+            "  "
+        );
 
         expect(next.location).toBe("장소 미정");
         expect(next.badges.location).toBe("장소 확인 필요");
         expect(next.route).toBeUndefined();
         expect(next.departAt).toBeUndefined();
+        expect(next.alertMode).toBe("ALARM");
     });
 
     test("좌표와 양수 소요시간이 없는 이름-only 경로는 알림 경로가 아니다", () => {
@@ -391,11 +499,13 @@ describe("quick schedule draft", () => {
             destination: { name: "서울역" },
             travelMinutes: 30,
             route: undefined,
+            alertMode: "ALARM",
         });
 
         expect(isQuickScheduleRouteReady(draft)).toBe(false);
         const payload = buildQuickSchedulePayload(draft, category);
         expect(payload.notificationEnabled).toBe(false);
+        expect(payload.alertMode).toBe("STANDARD");
         expect(payload.route).toBeUndefined();
         expect(payload.departAt).toBeUndefined();
 
@@ -412,6 +522,7 @@ describe("quick schedule draft", () => {
             travelMinutes: undefined,
             departAt: undefined,
             notificationLeadMinutes: undefined,
+            alertMode: "ALARM",
             badges: { notification: "선택 설정" },
         });
         const next = applyQuickScheduleRouteResult(initial, {
@@ -425,6 +536,7 @@ describe("quick schedule draft", () => {
 
         expect(isQuickScheduleRouteReady(next)).toBe(true);
         expect(next.departAt).toBe("2026-07-17T10:30:00.000Z");
+        expect(next.alertMode).toBe("ALARM");
         expect(next.badges.notification).toBe("알림 미설정");
     });
 
@@ -435,6 +547,7 @@ describe("quick schedule draft", () => {
             travelMinutes: undefined,
             departAt: undefined,
             notificationLeadMinutes: 30,
+            alertMode: "ALARM",
         });
         const payload = buildQuickSchedulePayload(draft, category);
 
@@ -442,15 +555,20 @@ describe("quick schedule draft", () => {
         expect(payload.destination).toEqual(destination);
         expect(payload.notificationEnabled).toBe(false);
         expect(payload.notificationLeadMinutes).toBeUndefined();
+        expect(payload.alertMode).toBe("STANDARD");
     });
 
     test("경로 준비가 끝난 경우에만 route와 출발 알림을 저장한다", () => {
-        const payload = buildQuickSchedulePayload(completeDraft(), category);
+        const payload = buildQuickSchedulePayload(
+            completeDraft({ alertMode: "ALARM" }),
+            category
+        );
 
         expect(payload.route).toEqual({ routeInfo: routeInfo() });
         expect(payload.departAt).toBe("2026-07-17T10:30:00.000Z");
         expect(payload.notificationEnabled).toBe(true);
         expect(payload.notificationLeadMinutes).toBe(30);
+        expect(payload.alertMode).toBe("ALARM");
     });
 
     test("top-level 출발 시각이 없으면 검증된 routeInfo 시각을 단일 소스로 사용한다", () => {

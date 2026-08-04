@@ -73,17 +73,6 @@ function formatAgendaClock(date: Date): string {
     return `${meridiem} ${hour}:${pad2(date.getMinutes())}`;
 }
 
-function formatAgendaClockRange(start: Date, end: Date): string {
-    const startLabel = formatAgendaClock(start);
-    const endLabel = formatAgendaClock(end);
-    const startMeridiem = start.getHours() < 12 ? "오전" : "오후";
-    const endMeridiem = end.getHours() < 12 ? "오전" : "오후";
-
-    return startMeridiem === endMeridiem
-        ? `${startLabel}–${endLabel.replace(`${endMeridiem} `, "")}`
-        : `${startLabel}–${endLabel}`;
-}
-
 function formatAgendaDateTime(date: Date, includeYear: boolean): string {
     const dateLabel = includeYear
         ? `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일`
@@ -213,8 +202,8 @@ export function formatAgendaDetailScheduleTime(
 
 /**
  * 상세형 카드 우측에 표시할 시각을 만든다.
- * 같은 날은 글자 크기가 서로 달라지지 않도록 한 줄 범위로 합치고,
- * 날짜를 넘기는 일정만 시작·종료를 두 줄로 나눈다.
+ * 종료 시각이 있는 일정은 시작·종료를 두 줄로 나누고,
+ * 날짜를 넘길 때만 각 줄에 날짜를 함께 표시한다.
  */
 export function formatAgendaDetailTimeColumn(
     item: Pick<ScheduleItem, "startAt" | "endAt" | "allDay" | "hasEndTime">
@@ -258,8 +247,8 @@ export function formatAgendaDetailTimeColumn(
         localCalendarDayOrdinal(start) !== localCalendarDayOrdinal(end);
     if (!spansMultipleDays) {
         return {
-            startLabel: formatAgendaClockRange(start, end),
-            endLabel: null,
+            startLabel: formatAgendaClock(start),
+            endLabel: formatAgendaClock(end),
         };
     }
 

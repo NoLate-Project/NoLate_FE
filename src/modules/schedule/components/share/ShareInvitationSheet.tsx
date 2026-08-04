@@ -83,6 +83,7 @@ const ACCEPT_COUNT_OPTIONS = [
 ];
 
 const MODE_TRANSITION_DURATION_MS = 240;
+const PRODUCTION_SHARE_LINK_ORIGIN = "https://nolate.jinuk.dev";
 const MODE_CONTENT_TRAVEL = 14;
 const SHEET_LAYOUT_TRANSITION = LinearTransition
     .springify()
@@ -137,7 +138,9 @@ function permissionLabel(permission: ScheduleSharePermission) {
 }
 
 export function createShareInviteUrl(token: string) {
-    return Linking.createURL(`/share/${encodeURIComponent(token)}`);
+    if (__DEV__) return Linking.createURL(`/share/${encodeURIComponent(token)}`);
+
+    return `${PRODUCTION_SHARE_LINK_ORIGIN}/share/${encodeURIComponent(token)}`;
 }
 
 export default function ShareInvitationSheet({

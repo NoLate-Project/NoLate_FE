@@ -55,14 +55,6 @@ export type RouteQuality = {
     notice?: string;
 };
 
-const PROVIDER_LABELS: Record<RouteApiProvider, string> = {
-    tmap: "TMAP",
-    odsay: "ODsay",
-    kakao: "Kakao",
-    naver: "Naver",
-    openstreetmap: "OpenStreetMap",
-};
-
 const ROUTE_CACHE_TTL_MS = 1000 * 60 * 2;
 const SAME_ENDPOINT_THRESHOLD_METERS = 10;
 const TRANSIT_FUTURE_SEARCH_INTERVAL_MS = 30 * 60 * 1000;
@@ -159,45 +151,43 @@ function validateRouteRequest(
     }
 }
 
-export function getRouteProviderLabel(provider?: RouteApiProvider): string {
-    return provider ? PROVIDER_LABELS[provider] ?? provider : "지도 API";
-}
-
 export function getRouteQuality(option: RouteAlternativeOption): RouteQuality {
-    if (option.routeReliability && option.routeQualityLabel) {
+    if (option.routePlausibility === "geometry_suspected") {
         return {
-            reliability: option.routeReliability,
-            label: option.routeQualityLabel,
-            notice: option.routeQualityNotice,
+            reliability: "provider_estimate",
+            label: "경로 확인 필요",
+            notice: "경로가 실제 도로와 다르게 표시될 수 있습니다. 다른 경로도 확인해 주세요.",
+        };
+    }
+    if (option.transitServiceState === "not_operating") {
+        return {
+            reliability: "provider_estimate",
+            label: "현재 운행 종료",
+            notice: "현재 운행하지 않는 경로입니다. 출발 시각을 변경해 다시 검색해 주세요.",
         };
     }
     if (option.source === "api") {
-        if (option.provider === "openstreetmap") {
-            return {
-                reliability: "provider_estimate",
-                label: "OpenStreetMap 자전거 경로",
-                notice: "OpenStreetMap 자전거 도로망을 사용한 예상 경로입니다.",
-            };
-        }
-        const providerLabel = getRouteProviderLabel(option.provider);
+        const reliability = option.routeReliability ?? (
+            option.provider === "openstreetmap" ? "provider_estimate" : "live_provider"
+        );
         return {
-            reliability: "live_provider",
-            label: `${providerLabel} 실경로`,
+            reliability,
+            label: option.provider === "openstreetmap" ? "자전거 경로" : "경로 안내",
         };
     }
 
     if (option.fallbackKind === "road") {
         return {
             reliability: "provider_estimate",
-            label: "도로 기반 보정",
-            notice: "지도 API가 실패해 보조 도로 경로로 시간을 보정했습니다.",
+            label: "예상 경로",
+            notice: "도로 상황에 따라 실제 이동 시간과 다를 수 있습니다.",
         };
     }
 
     return {
         reliability: "fallback_estimate",
-        label: "직선거리 추정",
-        notice: "지도 API 응답이 없어 직선거리 기반으로만 시간을 추정했습니다.",
+        label: "예상 경로",
+        notice: "실제 이동 시간과 다를 수 있습니다. 다른 경로도 확인해 주세요.",
     };
 }
 
@@ -207,6 +197,16 @@ export function getRouteQualityLabel(option: RouteAlternativeOption): string {
 
 export function getRouteQualityNotice(option: RouteAlternativeOption): string | undefined {
     return getRouteQuality(option).notice;
+}
+
+/**
+ * 일반 경로 공급자명은 제품 화면에 노출하지 않는다. 지도 데이터 라이선스상
+ * 표시가 필요한 OpenStreetMap 저작자 링크만 예외로 유지한다.
+ */
+export function shouldShowRequiredMapAttribution(option?: RouteAlternativeOption): boolean {
+    return option?.provider === "openstreetmap" &&
+        !!option.attributionText?.trim() &&
+        !!option.attributionUrl?.trim();
 }
 
 function attachRouteQuality(
@@ -224,8 +224,8 @@ function attachRouteQuality(
         return {
             ...normalizedOption,
             routeReliability: "provider_estimate",
-            routeQualityLabel: `${getRouteProviderLabel(normalizedOption.provider)} 경로 · 좌표 검증 필요`,
-            routeQualityNotice: "공급자 경로 좌표가 비정상적으로 끊기거나 크게 벗어났습니다. 다른 후보를 확인해 주세요.",
+            routeQualityLabel: "경로 확인 필요",
+            routeQualityNotice: "경로가 실제 도로와 다르게 표시될 수 있습니다. 다른 경로도 확인해 주세요.",
             routePlausibility: plausibility.status,
             routeDetourRatio: plausibility.detourRatio,
         };
@@ -262,11 +262,10 @@ function withTransitDepartureState(
 }
 
 function markTransitRouteAsNotOperating(option: RouteAlternativeOption): RouteAlternativeOption {
-    const providerLabel = getRouteProviderLabel(option.provider);
     return {
         ...option,
         routeReliability: "provider_estimate",
-        routeQualityLabel: `${providerLabel} 경로 · 현재 운행 종료`,
+        routeQualityLabel: "현재 운행 종료",
         routeQualityNotice: "현재 운행하지 않는 경로입니다. 출발 시각을 변경해 다시 검색해 주세요.",
     };
 }
@@ -366,12 +365,9 @@ export async function getRouteAlternativeOptions(
         .then(resolveTransitServiceState)
         .then((providerOptions) => {
             if (!providerOptions.length) {
-                const providerName = mode === "TRANSIT"
-                    ? "ODsay/TMAP"
-                    : mode === "BIKE" ? "OpenStreetMap" : "TMAP";
                 throw new RouteSearchError(
                     "NO_PROVIDER_ROUTE",
-                    `${providerName}에서 ${getModeLabel(mode)} 경로를 찾지 못했습니다. 잠시 후 다시 검색해 주세요.`
+                    `${getModeLabel(mode)} 경로를 찾지 못했습니다. 잠시 후 다시 검색해 주세요.`
                 );
             }
             routeCache.set(cacheKey, {
@@ -382,12 +378,9 @@ export async function getRouteAlternativeOptions(
         })
         .catch((error: unknown) => {
             if (error instanceof RouteSearchError) throw error;
-            const providerName = mode === "TRANSIT"
-                ? "ODsay/TMAP"
-                : mode === "BIKE" ? "OpenStreetMap" : "TMAP";
             throw new RouteSearchError(
                 "PROVIDER_UNAVAILABLE",
-                `${providerName} 경로 서버에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 검색해 주세요.`
+                "경로 서비스에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 검색해 주세요."
             );
         })
         .finally(() => {

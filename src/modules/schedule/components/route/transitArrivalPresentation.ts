@@ -116,7 +116,7 @@ export function getTransitArrivalPresentation({
 
     return {
         statusLabel: "정보 없음",
-        inlineMessage: "현재 제공되는 실시간 도착 정보가 없습니다.",
+        inlineMessage: "지금 확인할 수 있는 도착 예정이 없습니다.",
         showArrivalCard: false,
         showLoadingIcon: false,
     };

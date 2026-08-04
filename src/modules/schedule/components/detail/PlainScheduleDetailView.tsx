@@ -24,6 +24,7 @@ type Props = {
         onPress: () => void;
         participantContent?: React.ReactNode;
     };
+    arrivalObservation?: React.ReactNode;
 };
 
 type ReadOnlyFieldProps = {
@@ -150,6 +151,7 @@ export default function PlainScheduleDetailView({
     contentTopInset,
     contentBottomInset,
     travelPlan,
+    arrivalObservation,
 }: Props) {
     const { colors, mode } = useTheme();
     const presentation = useMemo(
@@ -270,6 +272,12 @@ export default function PlainScheduleDetailView({
                             </Pressable>
                         </View>
                         {travelPlan.participantContent}
+                    </View>
+                ) : null}
+
+                {arrivalObservation ? (
+                    <View style={styles.arrivalObservation}>
+                        {arrivalObservation}
                     </View>
                 ) : null}
 
@@ -395,6 +403,9 @@ const styles = StyleSheet.create({
         fontWeight: "700",
     },
     travelPlanSection: {
+        marginBottom: 14,
+    },
+    arrivalObservation: {
         marginBottom: 14,
     },
     travelPlanRow: {

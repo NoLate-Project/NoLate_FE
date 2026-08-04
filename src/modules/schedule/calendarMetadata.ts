@@ -10,6 +10,7 @@ export type CalendarDayMetadata = {
     lunarDay?: number;
     leapMonth?: boolean;
     holidays: CalendarHoliday[];
+    metadataComplete?: boolean;
 };
 
 export type CalendarMetadataRange = {
@@ -100,6 +101,71 @@ export function indexCalendarDays(
     days: CalendarDayMetadata[]
 ): Record<string, CalendarDayMetadata> {
     return Object.fromEntries(days.map((day) => [day.date, day]));
+}
+
+function isSameCalendarDayMetadata(
+    left: CalendarDayMetadata | undefined,
+    right: CalendarDayMetadata
+): boolean {
+    if (!left) return false;
+    if (
+        left.lunarYear !== right.lunarYear
+        || left.lunarMonth !== right.lunarMonth
+        || left.lunarDay !== right.lunarDay
+        || left.leapMonth !== right.leapMonth
+        || left.metadataComplete !== right.metadataComplete
+        || left.holidays.length !== right.holidays.length
+    ) return false;
+
+    return left.holidays.every((holiday, index) => (
+        holiday.name === right.holidays[index]?.name
+        && holiday.type === right.holidays[index]?.type
+    ));
+}
+
+/**
+ * Merges overlapping month responses without allowing a later partial
+ * response to erase lunar/holiday data that was already complete.
+ */
+export function mergeCalendarMetadataDays(
+    currentDaysByDate: Readonly<Record<string, CalendarDayMetadata>>,
+    nextDaysByDate: Readonly<Record<string, CalendarDayMetadata>>,
+): Record<string, CalendarDayMetadata> {
+    let mergedDaysByDate = currentDaysByDate as Record<string, CalendarDayMetadata>;
+
+    Object.entries(nextDaysByDate).forEach(([date, nextDay]) => {
+        const currentDay = currentDaysByDate[date];
+        if (
+            currentDay?.metadataComplete === true
+            && nextDay.metadataComplete !== true
+        ) return;
+        if (isSameCalendarDayMetadata(currentDay, nextDay)) return;
+
+        if (mergedDaysByDate === currentDaysByDate) {
+            mergedDaysByDate = { ...currentDaysByDate };
+        }
+        mergedDaysByDate[date] = nextDay;
+    });
+
+    return mergedDaysByDate;
+}
+
+export function isCalendarMetadataMonthComplete(
+    daysByDate: Readonly<Record<string, CalendarDayMetadata>>,
+    month: string
+): boolean {
+    const [year, monthNumber] = month.slice(0, 7).split("-").map(Number);
+    if (
+        !Number.isFinite(year)
+        || !Number.isFinite(monthNumber)
+        || monthNumber < 1
+        || monthNumber > 12
+    ) return false;
+
+    const dayCount = new Date(year, monthNumber, 0).getDate();
+    return Array.from({ length: dayCount }, (_, index) => (
+        `${month.slice(0, 7)}-${String(index + 1).padStart(2, "0")}`
+    )).every((date) => daysByDate[date]?.metadataComplete === true);
 }
 
 export function formatLunarCalendarDay(

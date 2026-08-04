@@ -4,6 +4,17 @@ function padCalendarPart(value: number): string {
 
 export type CalendarFirstDay = 0 | 1;
 
+/** 날짜/월 값을 월 단위 상태에 사용할 수 있는 해당 월 1일로 정규화한다. */
+export function getCalendarMonthAnchor(dayOrMonth: string): string {
+    const match = /^(\d{4})-(\d{2})(?:-\d{2})?$/.exec(dayOrMonth);
+    if (!match) return dayOrMonth;
+
+    const month = Number(match[2]);
+    if (month < 1 || month > 12) return dayOrMonth;
+
+    return `${match[1]}-${match[2]}-01`;
+}
+
 function parseLocalCalendarDay(day: string): Date | null {
     const [yearText, monthText, dayText] = day.split("-");
     const year = Number(yearText);
