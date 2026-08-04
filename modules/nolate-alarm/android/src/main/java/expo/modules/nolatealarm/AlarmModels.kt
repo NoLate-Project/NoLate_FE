@@ -32,8 +32,25 @@ internal data class StoredAlarm(
   val effectiveTriggerAtMillis: Long,
   val snoozeMinutes: Int,
   val state: StoredAlarmState,
-  val updatedAtMillis: Long
+  val updatedAtMillis: Long,
+  /** Stable backend identity; alarmId is the per-occurrence physical OS key. */
+  val logicalAlarmId: String = alarmId,
+  val occurrenceId: String? = null,
+  val body: String? = null,
+  val decision: String? = null,
+  val minutesBeforeDeparture: Int? = null,
+  val actionEventKey: String? = null
 )
+
+internal object AlarmSnoozePolicy {
+  /**
+   * An advance occurrence is one slot in an already-scheduled reminder sequence. Locally moving
+   * it could collide with the next deterministic slot, so the sequence itself is its retry. M0 is
+   * the terminal slot and can safely retain the native snooze behavior.
+   */
+  fun isAvailable(alarm: StoredAlarm): Boolean =
+    alarm.occurrenceId == null || alarm.occurrenceId == "M0"
+}
 
 internal data class StoredAlarmFireEvent(
   val eventId: String,
@@ -45,7 +62,8 @@ internal data class StoredAlarmFireEvent(
   val sourceTriggerAtMillis: Long,
   val occurredAtMillis: Long,
   val logicalEventKey: String?,
-  val timingBasis: AlarmFireTimingBasis = AlarmFireTimingBasis.EXACT_CALLBACK
+  val timingBasis: AlarmFireTimingBasis = AlarmFireTimingBasis.EXACT_CALLBACK,
+  val occurrenceId: String? = null
 ) {
   fun toBridgeMap(): Map<String, Any?> = buildMap {
     put("eventId", eventId)
@@ -58,6 +76,7 @@ internal data class StoredAlarmFireEvent(
     put("occurredAt", formatIsoInstant(occurredAtMillis))
     put("timingBasis", timingBasis.name)
     logicalEventKey?.let { put("logicalEventKey", it) }
+    occurrenceId?.let { put("occurrenceId", it) }
   }
 }
 
@@ -138,7 +157,13 @@ internal object AlarmGenerationPolicy {
     incomingScheduleId: String,
     incomingSourceTriggerAtMillis: Long,
     incomingTitle: String?,
-    incomingSnoozeMinutes: Int
+    incomingSnoozeMinutes: Int,
+    incomingLogicalAlarmId: String? = null,
+    incomingOccurrenceId: String? = null,
+    incomingBody: String? = null,
+    incomingDecision: String? = null,
+    incomingMinutesBeforeDeparture: Int? = null,
+    incomingActionEventKey: String? = null
   ): UpsertDisposition {
     if (incomingGeneration < 0) return UpsertDisposition.STALE
 
@@ -155,7 +180,13 @@ internal object AlarmGenerationPolicy {
       incomingScheduleId == current.scheduleId &&
       incomingSourceTriggerAtMillis == current.sourceTriggerAtMillis &&
       incomingTitle == current.title &&
-      incomingSnoozeMinutes == current.snoozeMinutes
+      incomingSnoozeMinutes == current.snoozeMinutes &&
+      (incomingLogicalAlarmId ?: current.logicalAlarmId) == current.logicalAlarmId &&
+      incomingOccurrenceId == current.occurrenceId &&
+      incomingBody == current.body &&
+      incomingDecision == current.decision &&
+      incomingMinutesBeforeDeparture == current.minutesBeforeDeparture &&
+      incomingActionEventKey == current.actionEventKey
     ) {
       UpsertDisposition.IDEMPOTENT
     } else {
@@ -222,6 +253,31 @@ internal fun normalizeAlarmTitle(value: String?): String? {
   val normalized = value?.trim().orEmpty()
   if (normalized.isEmpty()) return null
   return normalized.take(100)
+}
+
+internal fun normalizeAlarmBody(value: String?): String? {
+  val normalized = value?.trim().orEmpty()
+  if (normalized.isEmpty()) return null
+  return normalized.take(500)
+}
+
+internal fun normalizeOccurrenceId(value: String?): String? {
+  val normalized = value?.trim().orEmpty()
+  if (normalized.isEmpty()) return null
+  require(normalized in setOf("M15", "M10", "M5", "M0")) {
+    "occurrenceId must be M15, M10, M5, or M0."
+  }
+  return normalized
+}
+
+internal fun normalizeActionEventKey(value: String?): String? {
+  val normalized = value?.trim().orEmpty()
+  if (normalized.isEmpty()) return null
+  require(
+    Regex("^key:[a-f0-9]{64}$").matches(normalized) ||
+      Regex("^event:[0-9a-fA-F-]{36}$").matches(normalized)
+  ) { "actionEventKey has an invalid format." }
+  return normalized
 }
 
 internal fun requireRecipientMemberId(value: Double): Long {

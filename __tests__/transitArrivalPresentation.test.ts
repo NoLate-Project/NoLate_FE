@@ -40,7 +40,10 @@ describe("transitArrivalPresentation", () => {
             hasRequest: true,
             loadState: "empty",
             arrivalCount: 0,
-        }).statusLabel).toBe("정보 없음");
+        })).toMatchObject({
+            statusLabel: "정보 없음",
+            inlineMessage: "지금 확인할 수 있는 도착 예정이 없습니다.",
+        });
         expect(getTransitArrivalPresentation({
             hasRequest: true,
             loadState: "error",
@@ -80,7 +83,7 @@ describe("transitArrivalPresentation", () => {
         })).toEqual([]);
     });
 
-    it("실시간 결과가 없으면 ODsay 시간표 승차시각을 예정 정보로 유지한다", () => {
+    it("실시간 결과가 없으면 운행 시간표 승차시각을 예정 정보로 유지한다", () => {
         const presentation = getTransitArrivalPresentation({
             hasRequest: true,
             loadState: "empty",
@@ -89,12 +92,12 @@ describe("transitArrivalPresentation", () => {
         expect(getTransitArrivalInlineMessage(
             presentation,
             "15:32",
-            "ODsay 시간표"
-        )).toBe("ODsay 시간표 기준 · 15:32 승차 예정");
+            "운행 시간표"
+        )).toBe("운행 시간표 기준 · 15:32 승차 예정");
         expect(getTransitArrivalStatusLabel(presentation, "15:32")).toBe("15:32 예정");
     });
 
-    it("실시간 조회 오류도 ODsay 시간표가 있으면 오류 배지 대신 예정 시각을 표시한다", () => {
+    it("실시간 조회 오류도 운행 시간표가 있으면 오류 배지 대신 예정 시각을 표시한다", () => {
         const presentation = getTransitArrivalPresentation({
             hasRequest: true,
             loadState: "error",
@@ -103,8 +106,8 @@ describe("transitArrivalPresentation", () => {
         expect(getTransitArrivalInlineMessage(
             presentation,
             "15:32",
-            "ODsay 시간표"
-        )).toBe("ODsay 시간표 기준 · 15:32 승차 예정");
+            "운행 시간표"
+        )).toBe("운행 시간표 기준 · 15:32 승차 예정");
         expect(getTransitArrivalStatusLabel(presentation, "15:32")).toBe("15:32 예정");
     });
 });

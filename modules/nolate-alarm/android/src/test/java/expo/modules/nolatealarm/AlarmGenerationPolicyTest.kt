@@ -160,6 +160,55 @@ class AlarmGenerationPolicyTest {
   }
 
   @Test
+  fun equalGenerationRequiresCompleteV2OccurrenceIdentity() {
+    val key = "key:${"a".repeat(64)}"
+    val current = alarm(generation = 4).copy(
+      alarmId = "schedule:10:member:7:occurrence:M0",
+      logicalAlarmId = "schedule:10:member:7",
+      occurrenceId = "M0",
+      body = "지금 출발하세요.",
+      decision = "DEPART_NOW",
+      minutesBeforeDeparture = 0,
+      actionEventKey = key
+    )
+    val matching = AlarmGenerationPolicy.decideUpsert(
+      current = current,
+      tombstone = null,
+      incomingGeneration = 4,
+      incomingScheduleId = "10",
+      incomingSourceTriggerAtMillis = 2_000,
+      incomingTitle = "회의",
+      incomingSnoozeMinutes = 5,
+      incomingLogicalAlarmId = "schedule:10:member:7",
+      incomingOccurrenceId = "M0",
+      incomingBody = "지금 출발하세요.",
+      incomingDecision = "DEPART_NOW",
+      incomingMinutesBeforeDeparture = 0,
+      incomingActionEventKey = key
+    )
+
+    assertEquals(UpsertDisposition.IDEMPOTENT, matching)
+    assertEquals(
+      UpsertDisposition.CONFLICT,
+      AlarmGenerationPolicy.decideUpsert(
+        current = current,
+        tombstone = null,
+        incomingGeneration = 4,
+        incomingScheduleId = "10",
+        incomingSourceTriggerAtMillis = 2_000,
+        incomingTitle = "회의",
+        incomingSnoozeMinutes = 5,
+        incomingLogicalAlarmId = "schedule:10:member:7",
+        incomingOccurrenceId = "M0",
+        incomingBody = "변경됨",
+        incomingDecision = "DEPART_NOW",
+        incomingMinutesBeforeDeparture = 0,
+        incomingActionEventKey = key
+      )
+    )
+  }
+
+  @Test
   fun accountPurgeAllowsSameGenerationAfterRelogin() {
     assertEquals(
       UpsertDisposition.APPLY,

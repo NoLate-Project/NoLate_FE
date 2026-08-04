@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+    startTransition as startReactTransition,
+    useCallback,
+    useEffect,
+    useLayoutEffect,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import {
     AccessibilityInfo,
     ActivityIndicator,
@@ -42,10 +50,14 @@ import CalendarGlassSurface from "../../src/modules/schedule/components/calendar
 import CalendarSettingsModal from "../../src/modules/schedule/components/calendar/CalendarSettingsModal";
 import CalendarViewModeGlyph from "../../src/modules/schedule/components/calendar/CalendarViewModeGlyph";
 import ScheduleRouteFocusBoundary from "../../src/modules/schedule/components/ScheduleRouteFocusBoundary";
-import { getFixedScheduleCalendarHeight } from "../../src/modules/schedule/components/calendar/ScheduleCalendar";
+import {
+    getFixedScheduleCalendarHeight,
+    type DetailMonthWeekCount,
+} from "../../src/modules/schedule/components/calendar/ScheduleCalendar";
 import DayTimelineEventCard from "../../src/modules/schedule/components/calendar/DayTimelineEventCard";
 import LiquidGlassIconButton, {
     isLiquidGlassIconButtonAvailable,
+    type LiquidGlassIconButtonHandle,
 } from "../../src/modules/schedule/components/calendar/LiquidGlassIconButton";
 import LiquidCalendarMenuPrototype, {
     isCalendarViewMode,
@@ -55,6 +67,7 @@ import {
     CALENDAR_DAY_HEIGHTS,
     CALENDAR_VIEW_OPTIONS,
     getPrimaryPillWeekdayGap,
+    isContinuousMonthViewMode,
     prefetchesAdjacentMonths,
     showsStickyMonthTitle as shouldShowStickyMonthTitle,
     type CalendarViewMode,
@@ -80,7 +93,6 @@ import type { ScheduleItem, ScheduleParseResult } from "../../src/modules/schedu
 import { buildRouteSetupEntryRoute } from "../../src/modules/schedule/routeSetupNavigation";
 import {
     getCalendarSchedules,
-    getSchedules,
     parseScheduleText,
     searchSchedules,
     synchronizeCalendarScheduleCacheRevision,
@@ -103,9 +115,18 @@ import {
     getCalendarMetadataPrefetchMonthKeys,
     getCalendarMetadataRange,
     indexCalendarDays,
+    isCalendarMetadataMonthComplete,
+    mergeCalendarMetadataDays,
     type CalendarDayMetadata,
 } from "../../src/modules/schedule/calendarMetadata";
 import {
+    getCalendarMetadataRetryTargetKey,
+    getNextCalendarMetadataRetry,
+    resetCalendarMetadataRetryState,
+    type CalendarMetadataRetryState,
+} from "../../src/modules/schedule/calendarMetadataRetry";
+import {
+    getCalendarMonthAnchor,
     getCalendarWeekStart,
     getCalendarWeekdayIndex,
     getScheduleFocusDay,
@@ -113,6 +134,7 @@ import {
 } from "../../src/modules/schedule/calendarNavigation";
 import { getScheduleAccessibilityVisibility } from "../../src/modules/schedule/accessibilityVisibility";
 import { createScheduleForAddItem } from "../../src/modules/schedule/scheduleCreateMutation";
+import { subscribeScheduleMutation } from "../../src/modules/schedule/scheduleMutationEvents";
 import { getWritableScheduleCategories } from "../../src/modules/schedule/categoryPermissions";
 import {
     DAY_MINUTES,
@@ -227,7 +249,13 @@ const LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT = ADD_MENU_SOURCE.nativeHeight;
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
 // The view-mode menu still needs the wider 251pt host. The add menu itself is
 // 238pt wide and stays aligned to this canvas' trailing edge.
-const SHARE_ATTENTION_REFRESH_MS = 45_000;
+const AUXILIARY_SAFETY_REFRESH_MS = 10 * 60 * 1000;
+const SEARCH_MIN_QUERY_LENGTH = 2;
+const SEARCH_DEBOUNCE_MS = 450;
+const SEARCH_RESULT_LIMIT = 20;
+const SEARCH_RESULT_CACHE_TTL_MS = 10 * 60 * 1000;
+const SEARCH_RESULT_CACHE_MAX_ENTRIES = 12;
+const STACK_MONTH_FETCH_COALESCE_MS = 160;
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
 const SEARCH_TOOLBAR_LEFT_INSET = 16;
@@ -245,6 +273,21 @@ const EMPTY_SHARE_ATTENTION = buildShareAttentionSummary({
     receivedShares: [],
 });
 const CALENDAR_FIRST_DAY_STORAGE_KEY = "@nolate/calendar/first-day";
+const DETAIL_MONTH_LAYOUT_REPRESENTATIVE_MONTHS = {
+    0: {
+        4: "2026-02-01",
+        5: "2026-07-01",
+        6: "2026-08-01",
+    },
+    1: {
+        4: "2021-02-01",
+        5: "2026-07-01",
+        6: "2026-08-01",
+    },
+} as const satisfies Record<
+    0 | 1,
+    Record<DetailMonthWeekCount, string>
+>;
 
 function getStickyCalendarHeaderHeight(viewMode: CalendarViewMode): number {
     return shouldShowStickyMonthTitle(viewMode)
@@ -453,7 +496,6 @@ export default function ScheduleIndex() {
     const [quickHandoffHidden, setQuickHandoffHidden] = useState(false);
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
-    const [routeSetupItems, setRouteSetupItems] = useState<ScheduleItem[]>([]);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
     const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
@@ -467,10 +509,31 @@ export default function ScheduleIndex() {
     const [searchLoading, setSearchLoading] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const [searchRetryKey, setSearchRetryKey] = useState(0);
+    const [searchInvalidationKey, setSearchInvalidationKey] = useState(0);
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
     const searchSequenceRef = useRef(0);
+    const searchAbortControllerRef = useRef<AbortController | null>(null);
+    const handledSearchRetryKeyRef = useRef(searchRetryKey);
+    const searchResultCacheRef = useRef(new Map<string, {
+        items: ScheduleItem[];
+        fetchedAt: number;
+    }>());
+    const invalidateSearchResults = useCallback(() => {
+        searchSequenceRef.current += 1;
+        searchAbortControllerRef.current?.abort();
+        searchAbortControllerRef.current = null;
+        searchResultCacheRef.current.clear();
+        setSearchResults([]);
+        setSearchLoading(false);
+        setSearchError(null);
+        setSearchInvalidationKey((value) => value + 1);
+    }, []);
+    useEffect(
+        () => subscribeScheduleMutation(invalidateSearchResults),
+        [invalidateSearchResults]
+    );
     const [keyboardVisible, setKeyboardVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
     const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
@@ -527,6 +590,7 @@ export default function ScheduleIndex() {
     const monthCalendarAnimatedDayHeight = useSharedValue(
         CALENDAR_DAY_HEIGHTS.detail
     );
+    const detailMonthMotionActive = useSharedValue(false);
     const yearOverviewProgress = useRef(new Animated.Value(0)).current;
     const dayTransition = useRef(new Animated.Value(0)).current;
     const dayModeTransition = useRef(new Animated.Value(1)).current;
@@ -535,6 +599,7 @@ export default function ScheduleIndex() {
     const addHandoffToolbarOpacity = useRef(new Animated.Value(1)).current;
     const nativeSearchGenerationRef = useRef(0);
     const nativeSearchSessionRef = useRef<string | null>(null);
+    const primaryDatePillNativeRef = useRef<LiquidGlassIconButtonHandle>(null);
     const searchInputRef = useRef<TextInput>(null);
     const dayDisplayPrepareRef = useRef<((day: string) => void) | null>(null);
     const monthCalendarHeightRef = useRef(0);
@@ -555,6 +620,8 @@ export default function ScheduleIndex() {
     const todayFocusEnterStartedRef = useRef(false);
     const todayFocusReduceMotionRef = useRef(false);
     const detailMonthMotionCancelRef = useRef<(() => void) | null>(null);
+    const detailMonthMotionActiveRef = useRef(false);
+    const detailMonthFetchFlushFrameRef = useRef<number | null>(null);
     const transitionStartedRef = useRef(false);
     const dayPageNavigationActiveRef = useRef(false);
     const dayTransitionCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -567,9 +634,24 @@ export default function ScheduleIndex() {
     const addHandoffNativeResetRef = useRef(false);
     const handledFocusRequestRef = useRef<string | null>(null);
     const scheduleLoadSequenceRef = useRef(0);
+    const pendingScheduleSnapshotRef = useRef<{
+        requestSequence: number;
+        items: ScheduleItem[];
+    } | null>(null);
+    const calendarRevisionSyncPromiseRef = useRef<Promise<boolean> | null>(null);
     const calendarMetadataMountedRef = useRef(true);
     const calendarMetadataLoadedMonthKeysRef = useRef(new Set<string>());
     const calendarMetadataInFlightMonthKeysRef = useRef(new Set<string>());
+    const calendarMetadataRetryTimerRef = useRef<
+        ReturnType<typeof setTimeout> | null
+    >(null);
+    const calendarMetadataRetryStateRef = useRef<CalendarMetadataRetryState>(
+        resetCalendarMetadataRetryState()
+    );
+    const calendarMetadataLoadPendingRef = useRef(false);
+    const pendingCalendarMetadataByDateRef = useRef<
+        Record<string, CalendarDayMetadata>
+    >({});
     const scheduleItemsByIdRef = useRef(state.itemsById);
     scheduleItemsByIdRef.current = state.itemsById;
 
@@ -579,10 +661,23 @@ export default function ScheduleIndex() {
     selectedDayRef.current = selectedDay;
     const [todayKey, setTodayKey] = useState(() => toYmd(new Date()));
     const [visibleMonth, setVisibleMonth] = useState(selectedDay);
-    const [fetchVisibleMonth, setFetchVisibleMonth] = useState(selectedDay);
+    const visibleMonthRef = useRef(visibleMonth);
+    visibleMonthRef.current = visibleMonth;
+    const visibleMonthAnchor = getCalendarMonthAnchor(visibleMonth);
+    const [fetchVisibleMonth, setFetchVisibleMonth] = useState(
+        () => getCalendarMonthAnchor(selectedDay)
+    );
+    const updateFetchVisibleMonth = useCallback((month: string) => {
+        const monthAnchor = getCalendarMonthAnchor(month);
+        setFetchVisibleMonth((current) => (
+            current === monthAnchor ? current : monthAnchor
+        ));
+    }, []);
     const [calendarDaysByDate, setCalendarDaysByDate] = useState<
         Record<string, CalendarDayMetadata>
     >({});
+    const [calendarMetadataRetrySequence, setCalendarMetadataRetrySequence] =
+        useState(0);
     const scheduleError = useMemo(
         () => state.error ? getErrorMessage(new Error(state.error)) : null,
         [state.error]
@@ -603,11 +698,25 @@ export default function ScheduleIndex() {
         () => getCalendarMetadataPrefetchMonthKeys(fetchVisibleMonth),
         [fetchVisibleMonth]
     );
+    const calendarMetadataRetryTargetKey = useMemo(
+        () => getCalendarMetadataRetryTargetKey(
+            calendarMetadataPrefetchMonthKeys,
+            firstDay
+        ),
+        [calendarMetadataPrefetchMonthKeys, firstDay]
+    );
+    const calendarMetadataRetryTargetKeyRef = useRef(
+        calendarMetadataRetryTargetKey
+    );
+    calendarMetadataRetryTargetKeyRef.current = calendarMetadataRetryTargetKey;
 
     useEffect(() => {
         calendarMetadataMountedRef.current = true;
         return () => {
             calendarMetadataMountedRef.current = false;
+            const retryTimer = calendarMetadataRetryTimerRef.current;
+            if (retryTimer !== null) clearTimeout(retryTimer);
+            calendarMetadataRetryTimerRef.current = null;
         };
     }, []);
 
@@ -664,13 +773,40 @@ export default function ScheduleIndex() {
         if (isYearDepthTransitionActive) return;
 
         if (calendarDepth === "day") {
-            setFetchVisibleMonth(visibleMonth);
+            updateFetchVisibleMonth(visibleMonthAnchor);
             return;
         }
 
-        const timer = setTimeout(() => setFetchVisibleMonth(visibleMonth), 180);
-        return () => clearTimeout(timer);
-    }, [calendarDepth, isYearDepthTransitionActive, visibleMonth]);
+        // The detail-month ring already has two pages on either side in
+        // memory. Keep schedule and lunar/holiday synchronization out of a
+        // continuous gesture burst, then coalesce it to the final month.
+        if (
+            calendarDepth === "month"
+            && calendarViewMode === "detail"
+            && detailMonthMotionActiveRef.current
+        ) return;
+
+        if (
+            calendarDepth === "month"
+            && isContinuousMonthViewMode(calendarViewMode)
+        ) {
+            // Stack scrolling can cross several month boundaries in a single
+            // fling. Keep its header/visual month immediate, but move the
+            // schedule and metadata windows only after the scroll settles.
+            const timer = setTimeout(() => {
+                updateFetchVisibleMonth(visibleMonthAnchor);
+            }, STACK_MONTH_FETCH_COALESCE_MS);
+            return () => clearTimeout(timer);
+        }
+
+        updateFetchVisibleMonth(visibleMonthAnchor);
+    }, [
+        calendarDepth,
+        calendarViewMode,
+        isYearDepthTransitionActive,
+        updateFetchVisibleMonth,
+        visibleMonthAnchor,
+    ]);
 
     useEffect(() => {
         if (pendingSelectedDay && state.selectedDay === pendingSelectedDay) {
@@ -767,6 +903,50 @@ export default function ScheduleIndex() {
     const primaryPillAnimatedStyle = useAnimatedStyle(() => ({
         width: primaryPillAnimatedWidth.value,
     }));
+    const handleDetailMonthPreview = useCallback((day: string) => {
+        if (
+            pillTargetDepth !== "month"
+            || !usesMonthInPrimaryPill(calendarViewMode)
+        ) return;
+
+        const monthAnchor = getCalendarMonthAnchor(day);
+        if (!/^\d{4}-\d{2}-01$/.test(monthAnchor)) return;
+        const previewLabel =
+            `${Number(monthAnchor.slice(0, 4))}년 `
+            + `${Number(monthAnchor.slice(5, 7))}월`;
+        const previewWidth = resolveCalendarPrimaryPillLayout(
+            "month",
+            previewLabel,
+            screenWidth
+        ).width;
+
+        primaryDatePillNativeRef.current?.setDisplayContent({
+            label: previewLabel,
+            buttonWidth: previewWidth,
+        });
+        cancelReanimatedAnimation(primaryPillAnimatedWidth);
+        primaryPillAnimatedWidth.value = withTiming(previewWidth, {
+            duration: reduceMotionEnabled
+                ? CALENDAR_DEPTH_MOTION.reduceMotionDurationMs
+                : CALENDAR_DEPTH_MOTION.depthSlideDurationMs,
+            easing: reduceMotionEnabled
+                ? ReanimatedEasing.out(ReanimatedEasing.cubic)
+                : ReanimatedEasing.bezier(...CALENDAR_DEPTH_MOTION.bezier),
+            reduceMotion: ReduceMotion.Never,
+        });
+    }, [
+        calendarViewMode,
+        pillTargetDepth,
+        primaryPillAnimatedWidth,
+        reduceMotionEnabled,
+        screenWidth,
+    ]);
+    useLayoutEffect(() => {
+        primaryDatePillNativeRef.current?.setDisplayContent({
+            label: visiblePrimaryLabel,
+            buttonWidth: primaryPillContentWidth,
+        });
+    }, [primaryPillContentWidth, visiblePrimaryLabel]);
     const selectedLiquidMode: CalendarViewMode | "day" | "multi" = pillTargetDepth === "day"
         ? dayViewMode === "singleDay"
             ? "day"
@@ -805,7 +985,13 @@ export default function ScheduleIndex() {
     const detailMonthHeightMotionDuration = reduceMotionEnabled
         ? DETAIL_MONTH_HEIGHT_MOTION.reduceMotionDurationMs
         : DETAIL_MONTH_HEIGHT_MOTION.durationMs;
-    const resolveMonthCalendarLayout = useCallback((viewMode: CalendarViewMode) => {
+    const monthDisplayLayoutAnchorDay = getCalendarMonthAnchor(
+        monthDisplayFocusedMonth
+    );
+    const resolveMonthCalendarLayout = useCallback((
+        viewMode: CalendarViewMode,
+        month: string = monthDisplayLayoutAnchorDay
+    ) => {
         const fullCalendarHeight = monthDisplayHeight || monthDisplayHeightRef.current;
         const targetHeaderHeight = getStickyCalendarHeaderHeight(viewMode);
         const targetHeaderOffset = insets.top
@@ -813,7 +999,7 @@ export default function ScheduleIndex() {
             + targetHeaderHeight;
         const fixedCalendarHeight = getFixedScheduleCalendarHeight({
             viewMode,
-            month: monthDisplaySelectedDay,
+            month,
             firstDay,
             headerOffset: targetHeaderOffset,
         }) ?? fullCalendarHeight;
@@ -822,7 +1008,7 @@ export default function ScheduleIndex() {
 
         if (viewMode === "detail" && fullCalendarHeight > 0) {
             const weekCount = getCalendarMonthWeekCount(
-                monthDisplaySelectedDay,
+                month,
                 firstDay
             );
             const fixedChromeHeight = Math.max(
@@ -853,8 +1039,71 @@ export default function ScheduleIndex() {
         firstDay,
         insets.top,
         monthDisplayHeight,
-        monthDisplaySelectedDay,
+        monthDisplayLayoutAnchorDay,
     ]);
+    const detailMonthPageLayouts = useMemo(() => {
+        const representativeMonths =
+            DETAIL_MONTH_LAYOUT_REPRESENTATIVE_MONTHS[firstDay];
+        const beforePreviousMonth = shiftCalendarMonth(
+            monthDisplayLayoutAnchorDay,
+            -2
+        );
+        const previousMonth = shiftCalendarMonth(
+            monthDisplayLayoutAnchorDay,
+            -1
+        );
+        const nextMonth = shiftCalendarMonth(
+            monthDisplayLayoutAnchorDay,
+            1
+        );
+        const afterNextMonth = shiftCalendarMonth(
+            monthDisplayLayoutAnchorDay,
+            2
+        );
+
+        return {
+            byWeekCount: {
+                4: resolveMonthCalendarLayout(
+                    "detail",
+                    representativeMonths[4]
+                ),
+                5: resolveMonthCalendarLayout(
+                    "detail",
+                    representativeMonths[5]
+                ),
+                6: resolveMonthCalendarLayout(
+                    "detail",
+                    representativeMonths[6]
+                ),
+            },
+            beforePrevious: {
+                month: beforePreviousMonth.slice(0, 7),
+                ...resolveMonthCalendarLayout(
+                    "detail",
+                    beforePreviousMonth
+                ),
+            },
+            previous: {
+                month: previousMonth.slice(0, 7),
+                ...resolveMonthCalendarLayout("detail", previousMonth),
+            },
+            current: {
+                month: monthDisplayLayoutAnchorDay.slice(0, 7),
+                ...resolveMonthCalendarLayout(
+                    "detail",
+                    monthDisplayLayoutAnchorDay
+                ),
+            },
+            next: {
+                month: nextMonth.slice(0, 7),
+                ...resolveMonthCalendarLayout("detail", nextMonth),
+            },
+            afterNext: {
+                month: afterNextMonth.slice(0, 7),
+                ...resolveMonthCalendarLayout("detail", afterNextMonth),
+            },
+        };
+    }, [firstDay, monthDisplayLayoutAnchorDay, resolveMonthCalendarLayout]);
     const monthAgendaPanelOpacity = monthAgendaProgress.interpolate({
         inputRange: [
             0,
@@ -887,7 +1136,9 @@ export default function ScheduleIndex() {
         };
     });
     const monthCalendarTargetLayerStyle = useAnimatedStyle(() => {
-        const targetHeight = monthCalendarTargetHeight.value;
+        const targetHeight = detailMonthMotionActive.value
+            ? monthCalendarAnimatedHeight.value
+            : monthCalendarTargetHeight.value;
         if (targetHeight <= 0) return {};
 
         return { height: targetHeight };
@@ -918,14 +1169,18 @@ export default function ScheduleIndex() {
         const targetHeight = targetLayout.calendarHeight;
         if (!Number.isFinite(targetHeight) || targetHeight <= 0) return;
 
-        cancelReanimatedAnimation(monthCalendarAnimatedHeight);
-        cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
         monthCalendarHeightRef.current = targetHeight;
         monthCalendarDayHeightRef.current = targetLayout.dayHeight;
         monthCalendarTargetHeight.value = targetHeight;
+        if (
+            calendarViewMode === "detail"
+            && detailMonthMotionActiveRef.current
+        ) return;
 
         const liveCalendarHeight = monthCalendarAnimatedHeight.value;
         const liveDayHeight = monthCalendarAnimatedDayHeight.value;
+        cancelReanimatedAnimation(monthCalendarAnimatedHeight);
+        cancelReanimatedAnimation(monthCalendarAnimatedDayHeight);
         const shouldAnimateResponsiveDetailLayout =
             calendarViewMode === "detail"
             && !isDayTransitionActive
@@ -1518,26 +1773,65 @@ export default function ScheduleIndex() {
         };
     }, []);
 
+    const applyScheduleItemsToStore = useCallback((items: ScheduleItem[]) => {
+        const currentScheduleItemsById = scheduleItemsByIdRef.current;
+        const hasItemSetChanged =
+            items.length !== Object.keys(currentScheduleItemsById).length
+            || items.some(
+                (item) => currentScheduleItemsById[item.id] !== item
+            );
+        if (!hasItemSetChanged) return;
+
+        dispatch({ type: "SET_ITEMS", items });
+    }, [dispatch]);
+
+    const publishScheduleSnapshot = useCallback((
+        requestSequence: number,
+        items: ScheduleItem[]
+    ) => {
+        if (requestSequence !== scheduleLoadSequenceRef.current) return;
+        if (detailMonthMotionActiveRef.current) {
+            pendingScheduleSnapshotRef.current = {
+                requestSequence,
+                items,
+            };
+            return;
+        }
+
+        applyScheduleItemsToStore(items);
+    }, [applyScheduleItemsToStore]);
+
     const loadSchedules = useCallback(async () => {
         const requestSequence = scheduleLoadSequenceRef.current + 1;
         scheduleLoadSequenceRef.current = requestSequence;
         const cached = readCalendarScheduleCache(scheduleFetchStartAt, scheduleFetchEndAt);
         const hasVisibleMonthCache = hasCalendarScheduleMonthCache(fetchVisibleMonth);
 
-        const hasNewCachedItems = cached.items.some(
-            (item) => scheduleItemsByIdRef.current[item.id] !== item
-        );
-        if (cached.cachedMonthKeys.length > 0 && hasNewCachedItems) {
+        if (cached.cachedMonthKeys.length > 0) {
             // 월 이동 대상은 초기 5개월 묶음에 포함되어 있으므로 즉시 표시한다.
-            dispatch({ type: "SET_ITEMS", items: cached.items });
+            // 길이도 비교해 서버에서 삭제된 일정만 있는 경우까지 반영한다.
+            publishScheduleSnapshot(requestSequence, cached.items);
         }
         dispatch({ type: "SET_LOADING", loading: !hasVisibleMonthCache });
         dispatch({ type: "SET_ERROR", error: null });
 
-        // 현재 보이는 월이 이미 준비돼 있으면 월 이동 자체로는 API를 호출하지 않는다.
-        // 초기 진입 또는 캐시 범위를 벗어난 월에서만 앞뒤 2개월을 한 번에 다시 채운다.
+        // 현재 월 cache hit는 즉시 표시한다. 다만 이동 방향 앞쪽 월까지 계속
+        // 준비되도록 현재 ±2개월 창의 missing/stale edge는 백그라운드 SWR로
+        // 채운다. 결과를 여기서 dispatch하지 않아 다음 touch와 Calendar
+        // remount가 네트워크 완료 시점에 겹치지 않게 하고, 다음 idle load가
+        // 월별 L1 cache에서 합쳐서 표시한다.
         if (hasVisibleMonthCache) {
             dispatch({ type: "SET_LOADING", loading: false });
+            refreshCalendarScheduleCache(
+                scheduleFetchStartAt,
+                scheduleFetchEndAt,
+                getCalendarSchedules,
+            ).then((refreshed) => {
+                // This is the result of the request already made for SWR. Apply
+                // it only if this range still owns the screen, and defer the
+                // React update while a continuous gesture owns the calendar.
+                publishScheduleSnapshot(requestSequence, refreshed.items);
+            }).catch(() => undefined);
             return;
         }
 
@@ -1548,7 +1842,7 @@ export default function ScheduleIndex() {
                 getCalendarSchedules,
             );
             if (requestSequence !== scheduleLoadSequenceRef.current) return;
-            dispatch({ type: "SET_ITEMS", items: refreshed.items });
+            publishScheduleSnapshot(requestSequence, refreshed.items);
         } catch (error) {
             if (requestSequence !== scheduleLoadSequenceRef.current) return;
             // 화면에 표시할 월이 캐시에 있으면 프리패치 실패가 기존 일정을 가리지 않게 한다.
@@ -1561,29 +1855,67 @@ export default function ScheduleIndex() {
                 dispatch({ type: "SET_LOADING", loading: false });
             }
         }
-    }, [dispatch, fetchVisibleMonth, scheduleFetchEndAt, scheduleFetchStartAt]);
+    }, [
+        dispatch,
+        fetchVisibleMonth,
+        publishScheduleSnapshot,
+        scheduleFetchEndAt,
+        scheduleFetchStartAt,
+    ]);
 
     useEffect(() => {
         if (!isFocused) {
+            calendarRevisionSyncPromiseRef.current = null;
             dispatch({ type: "SET_LOADING", loading: false });
             return undefined;
         }
 
-        const synchronizeAndLoad = () => {
-            synchronizeCalendarScheduleCacheRevision()
+        let cancelled = false;
+        const loadCurrentRange = () => {
+            if (!cancelled) loadSchedules();
+        };
+        const synchronizeAndLoad = (forceRevisionCheck = false) => {
+            let revisionSync = calendarRevisionSyncPromiseRef.current;
+            if (forceRevisionCheck || revisionSync === null) {
+                revisionSync = synchronizeCalendarScheduleCacheRevision();
+                calendarRevisionSyncPromiseRef.current = revisionSync;
+            }
+
+            // Revision validation is an app-session/foreground concern, not a
+            // month-navigation concern. A Redis-backed server cache can answer
+            // this quickly. Range changes join the same promise, while the API
+            // layer single-flights and cools down foreground checks.
+            revisionSync
                 .then((changed) => {
+                    if (calendarRevisionSyncPromiseRef.current === revisionSync) {
+                        // Keep only readiness after settlement. Retaining a
+                        // resolved `true` would make later month effects skip
+                        // their range load until the next foreground event.
+                        calendarRevisionSyncPromiseRef.current =
+                            Promise.resolve(false);
+                    }
+                    if (cancelled) return;
                     // revision 변경 시 clear가 아래 구독자를 통해 한 번만 다시 조회한다.
-                    if (!changed) loadSchedules();
+                    if (!changed) loadCurrentRange();
                 })
-                .catch(loadSchedules);
+                .catch(() => {
+                    if (calendarRevisionSyncPromiseRef.current === revisionSync) {
+                        calendarRevisionSyncPromiseRef.current =
+                            Promise.resolve(false);
+                    }
+                    loadCurrentRange();
+                });
         };
         synchronizeAndLoad();
         const subscription = AppState.addEventListener("change", (nextState) => {
             if (nextState !== "active") return;
-            synchronizeAndLoad();
+            synchronizeAndLoad(true);
         });
-        const unsubscribeInvalidated = subscribeCalendarScheduleCacheInvalidated(loadSchedules);
+        const unsubscribeInvalidated = subscribeCalendarScheduleCacheInvalidated(
+            loadCurrentRange
+        );
         return () => {
+            cancelled = true;
             subscription.remove();
             unsubscribeInvalidated();
             // 화면을 벗어나거나 조회 범위가 바뀐 뒤 도착한 응답이
@@ -1592,7 +1924,64 @@ export default function ScheduleIndex() {
         };
     }, [dispatch, isFocused, loadSchedules]);
 
+    const mergeCalendarMetadataIntoState = useCallback((
+        nextDaysByDate: Record<string, CalendarDayMetadata>
+    ) => {
+        if (!calendarMetadataMountedRef.current) return;
+
+        setCalendarDaysByDate((currentDaysByDate) => (
+            mergeCalendarMetadataDays(currentDaysByDate, nextDaysByDate)
+        ));
+    }, []);
+
+    const resetCalendarMetadataRetry = useCallback((targetKey: string) => {
+        const retryTimer = calendarMetadataRetryTimerRef.current;
+        if (retryTimer !== null) clearTimeout(retryTimer);
+        calendarMetadataRetryTimerRef.current = null;
+        calendarMetadataRetryStateRef.current =
+            resetCalendarMetadataRetryState(targetKey);
+    }, []);
+
+    useEffect(() => {
+        // Moving to a different month window invalidates a timer for the old
+        // window and grants the new target its own bounded retry budget.
+        resetCalendarMetadataRetry(calendarMetadataRetryTargetKey);
+    }, [calendarMetadataRetryTargetKey, resetCalendarMetadataRetry]);
+
+    const scheduleCalendarMetadataRetry = useCallback((targetKey: string) => {
+        if (calendarMetadataRetryTargetKeyRef.current !== targetKey) return;
+        if (calendarMetadataRetryStateRef.current.targetKey !== targetKey) {
+            resetCalendarMetadataRetry(targetKey);
+        }
+        if (calendarMetadataRetryTimerRef.current !== null) return;
+
+        const retryDecision = getNextCalendarMetadataRetry(
+            calendarMetadataRetryStateRef.current,
+            targetKey
+        );
+        calendarMetadataRetryStateRef.current = retryDecision.state;
+        if (retryDecision.delayMs === null) return;
+
+        const retryTimer = setTimeout(() => {
+            if (calendarMetadataRetryTimerRef.current !== retryTimer) return;
+            calendarMetadataRetryTimerRef.current = null;
+            if (
+                !calendarMetadataMountedRef.current
+                || calendarMetadataRetryTargetKeyRef.current !== targetKey
+                || calendarMetadataRetryStateRef.current.targetKey !== targetKey
+            ) return;
+            setCalendarMetadataRetrySequence((current) => current + 1);
+        }, retryDecision.delayMs);
+        calendarMetadataRetryTimerRef.current = retryTimer;
+    }, [resetCalendarMetadataRetry]);
+
     const loadCalendarMetadata = useCallback(async () => {
+        if (detailMonthMotionActiveRef.current) {
+            // This is gesture deferral, not a server failure. Retry as soon as
+            // the gesture ends without consuming either network retry slot.
+            calendarMetadataLoadPendingRef.current = true;
+            return;
+        }
         const requestedMonths = calendarMetadataPrefetchMonthKeys.map((monthKey) => ({
             monthKey,
             cacheKey: `${firstDay}:${monthKey}`,
@@ -1637,20 +2026,37 @@ export default function ScheduleIndex() {
             }
 
             const nextDaysByDate = indexCalendarDays(days);
+            const incompleteMonths = missingMonths.filter(({ monthKey }) => (
+                !isCalendarMetadataMonthComplete(nextDaysByDate, monthKey)
+            ));
+            const incompleteCacheKeys = new Set(
+                incompleteMonths.map(({ cacheKey }) => cacheKey)
+            );
             missingMonths.forEach(({ cacheKey }) => {
-                calendarMetadataLoadedMonthKeysRef.current.add(cacheKey);
+                if (!incompleteCacheKeys.has(cacheKey)) {
+                    calendarMetadataLoadedMonthKeysRef.current.add(cacheKey);
+                }
             });
-            if (calendarMetadataMountedRef.current) {
-                setCalendarDaysByDate((currentDaysByDate) => {
-                    const missingEntries = Object.entries(nextDaysByDate).filter(
-                        ([date]) => currentDaysByDate[date] === undefined
+            const retryTargetIsCurrent =
+                calendarMetadataRetryTargetKeyRef.current
+                    === calendarMetadataRetryTargetKey;
+            if (incompleteMonths.length > 0 && retryTargetIsCurrent) {
+                scheduleCalendarMetadataRetry(
+                    calendarMetadataRetryTargetKey
+                );
+            } else if (retryTargetIsCurrent) {
+                resetCalendarMetadataRetry(
+                    calendarMetadataRetryTargetKey
+                );
+            }
+            if (detailMonthMotionActiveRef.current) {
+                pendingCalendarMetadataByDateRef.current =
+                    mergeCalendarMetadataDays(
+                        pendingCalendarMetadataByDateRef.current,
+                        nextDaysByDate
                     );
-                    if (missingEntries.length === 0) return currentDaysByDate;
-                    return {
-                        ...currentDaysByDate,
-                        ...Object.fromEntries(missingEntries),
-                    };
-                });
+            } else {
+                mergeCalendarMetadataIntoState(nextDaysByDate);
             }
         } catch (error) {
             // 음력/공휴일은 보조 정보다. 조회 실패가 일정 화면을 막거나 오류 배너를
@@ -1662,24 +2068,46 @@ export default function ScheduleIndex() {
                     message: error instanceof Error ? error.message : "unknown error",
                 });
             }
+            if (
+                calendarMetadataRetryTargetKeyRef.current
+                    === calendarMetadataRetryTargetKey
+            ) {
+                scheduleCalendarMetadataRetry(calendarMetadataRetryTargetKey);
+            }
         } finally {
             missingMonths.forEach(({ cacheKey }) => {
                 calendarMetadataInFlightMonthKeysRef.current.delete(cacheKey);
             });
         }
-    }, [calendarMetadataPrefetchMonthKeys, fetchVisibleMonth, firstDay]);
+    }, [
+        calendarMetadataPrefetchMonthKeys,
+        calendarMetadataRetryTargetKey,
+        fetchVisibleMonth,
+        firstDay,
+        mergeCalendarMetadataIntoState,
+        resetCalendarMetadataRetry,
+        scheduleCalendarMetadataRetry,
+    ]);
 
     useEffect(() => {
         if (!isFocused) return undefined;
 
         loadCalendarMetadata();
         const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") loadCalendarMetadata();
+            if (nextState !== "active") return;
+            resetCalendarMetadataRetry(calendarMetadataRetryTargetKey);
+            loadCalendarMetadata();
         });
         return () => {
             subscription.remove();
         };
-    }, [isFocused, loadCalendarMetadata]);
+    }, [
+        calendarMetadataRetrySequence,
+        calendarMetadataRetryTargetKey,
+        isFocused,
+        loadCalendarMetadata,
+        resetCalendarMetadataRetry,
+    ]);
 
     const loadShareAttention = useCallback(async () => {
         const [inbox, seenKeys] = await Promise.all([
@@ -1691,55 +2119,118 @@ export default function ScheduleIndex() {
     }, []);
 
     useEffect(() => {
-        if (!isFocused) return;
+        if (!isFocused) return undefined;
 
         let cancelled = false;
+        let auxiliaryRefreshInFlight: Promise<void> | null = null;
+        let auxiliaryRefreshPending = false;
+        let auxiliarySafetyTimer: ReturnType<typeof setInterval> | null = null;
+        let observedAppState = AppState.currentState;
+        let lastAuxiliaryRefreshAt: number | null = null;
 
-        const refresh = () => {
-            loadShareAttention()
-                .then((summary) => {
-                    if (!cancelled) setShareAttention(summary);
-                })
-                .catch(() => {
-                    // 공유함 알림 표시는 보조 신호라 실패해도 일정 화면 사용 흐름은 유지한다.
+        const refreshAuxiliaryData = (minimumIntervalMs = 0) => {
+            if (cancelled) return;
+            if (AppState.currentState !== "active") {
+                auxiliaryRefreshPending = true;
+                return;
+            }
+            // A push or genuine foreground transition can arrive while the
+            // current GET pair still represents the older snapshot. Collapse
+            // any such burst into exactly one trailing pair instead of losing it.
+            if (auxiliaryRefreshInFlight) {
+                auxiliaryRefreshPending = true;
+                return;
+            }
+
+            const now = Date.now();
+            if (
+                lastAuxiliaryRefreshAt !== null
+                && now - lastAuxiliaryRefreshAt < minimumIntervalMs
+            ) return;
+            auxiliaryRefreshPending = false;
+            lastAuxiliaryRefreshAt = now;
+
+            let request: Promise<void>;
+            request = Promise.all([
+                loadShareAttention()
+                    .then((summary) => {
+                        if (!cancelled) setShareAttention(summary);
+                    })
+                    .catch(() => {
+                        // 공유함 알림 표시는 보조 신호라 실패해도 일정 화면 사용 흐름은 유지한다.
+                    }),
+                getAppNotificationUnreadCount()
+                    .then((count) => {
+                        if (!cancelled) setNotificationUnreadCount(count);
+                    })
+                    .catch(() => {
+                        // 알림 배지는 보조 정보다. 일시적인 조회 실패가 캘린더 사용을 막지 않는다.
+                    }),
+            ])
+                .then(() => undefined)
+                .finally(() => {
+                    if (auxiliaryRefreshInFlight === request) {
+                        auxiliaryRefreshInFlight = null;
+                    }
+                    if (
+                        cancelled
+                        || !auxiliaryRefreshPending
+                        || AppState.currentState !== "active"
+                    ) return;
+                    refreshAuxiliaryData();
                 });
+            auxiliaryRefreshInFlight = request;
         };
 
-        refresh();
-        const timer = setInterval(refresh, SHARE_ATTENTION_REFRESH_MS);
+        const stopAuxiliarySafetyTimer = () => {
+            if (auxiliarySafetyTimer === null) return;
+            clearInterval(auxiliarySafetyTimer);
+            auxiliarySafetyTimer = null;
+        };
+        const startAuxiliarySafetyTimer = () => {
+            if (
+                cancelled
+                || AppState.currentState !== "active"
+                || auxiliarySafetyTimer !== null
+            ) return;
+            auxiliarySafetyTimer = setInterval(
+                () => refreshAuxiliaryData(AUXILIARY_SAFETY_REFRESH_MS),
+                AUXILIARY_SAFETY_REFRESH_MS
+            );
+        };
+
+        if (AppState.currentState === "active") {
+            refreshAuxiliaryData();
+            startAuxiliarySafetyTimer();
+        }
+        const appStateSubscription = AppState.addEventListener(
+            "change",
+            (nextState) => {
+                // React Navigation focus and AppState can report the same
+                // foreground boundary. Only a real state edge starts work.
+                if (nextState === observedAppState) return;
+                observedAppState = nextState;
+                if (nextState === "active") {
+                    startAuxiliarySafetyTimer();
+                    refreshAuxiliaryData();
+                } else {
+                    stopAuxiliarySafetyTimer();
+                }
+            }
+        );
+        const unsubscribeReceived = subscribeAppNotificationReceived(() => {
+            // Push is the primary invalidation signal for both badges. Requests
+            // still single-flight when several notifications arrive together.
+            refreshAuxiliaryData();
+        });
 
         return () => {
             cancelled = true;
-            clearInterval(timer);
-        };
-    }, [isFocused, loadShareAttention]);
-
-    const refreshNotificationUnreadCount = useCallback(() => {
-        getAppNotificationUnreadCount()
-            .then(setNotificationUnreadCount)
-            .catch(() => {
-                // 알림 배지는 보조 정보다. 일시적인 조회 실패가 캘린더 사용을 막지 않는다.
-            });
-    }, []);
-
-    useEffect(() => {
-        if (!isFocused) return undefined;
-
-        refreshNotificationUnreadCount();
-        const timer = setInterval(refreshNotificationUnreadCount, SHARE_ATTENTION_REFRESH_MS);
-        const appStateSubscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") refreshNotificationUnreadCount();
-        });
-        const unsubscribeReceived = subscribeAppNotificationReceived(
-            refreshNotificationUnreadCount,
-        );
-
-        return () => {
-            clearInterval(timer);
+            stopAuxiliarySafetyTimer();
             appStateSubscription.remove();
             unsubscribeReceived();
         };
-    }, [isFocused, refreshNotificationUnreadCount]);
+    }, [isFocused, loadShareAttention]);
 
     useEffect(() => {
         let cancelled = false;
@@ -1773,44 +2264,44 @@ export default function ScheduleIndex() {
         () => Object.values(state.itemsById),
         [state.itemsById]
     );
-    const loadRouteSetupItems = useCallback(async () => {
-        const items = await getSchedules();
-        return items.filter((item) => item.routeSetupRequired === true);
-    }, []);
-    useEffect(() => {
-        if (!isFocused) return;
-
-        let cancelled = false;
-        const refresh = () => {
-            loadRouteSetupItems()
-                .then((items) => {
-                    if (!cancelled) setRouteSetupItems(items);
-                })
-                .catch(() => {
-                    // 후속 설정 배너는 보조 UI이므로 조회 실패가 캘린더 사용을 막지 않는다.
-                    if (!cancelled) setRouteSetupItems([]);
-                });
-        };
-
-        refresh();
-        const subscription = AppState.addEventListener("change", (nextState) => {
-            if (nextState === "active") refresh();
-        });
-        return () => {
-            cancelled = true;
-            subscription.remove();
-        };
-    }, [isFocused, loadRouteSetupItems]);
+    // The calendar range already contains the nearby schedules needed by the
+    // agenda notice. Reuse it instead of issuing an unbounded /api/schedules
+    // request on every focus/foreground transition.
+    const routeSetupItems = useMemo(
+        () => itemsArray.filter((item) => item.routeSetupRequired === true),
+        [itemsArray]
+    );
     const writableCategories = useMemo(
         () => getWritableScheduleCategories(state.categories),
         [state.categories]
     );
+    const normalizedSearchKeyword = searchQuery.trim().replace(/\s+/g, " ");
+    const normalizedSearchCacheKey = normalizedSearchKeyword.toLowerCase();
+    const searchKeywordLength = Array.from(normalizedSearchKeyword).length;
     useEffect(() => {
-        const keyword = searchQuery.trim();
         const sequence = searchSequenceRef.current + 1;
         searchSequenceRef.current = sequence;
-        if (!keyword) {
+        const forceRefresh = handledSearchRetryKeyRef.current !== searchRetryKey;
+        handledSearchRetryKeyRef.current = searchRetryKey;
+        if (!isFocused || searchKeywordLength < SEARCH_MIN_QUERY_LENGTH) {
             setSearchResults([]);
+            setSearchLoading(false);
+            setSearchError(null);
+            return undefined;
+        }
+
+        const cache = searchResultCacheRef.current;
+        const cached = cache.get(normalizedSearchCacheKey);
+        if (
+            !forceRefresh
+            && cached
+            && Date.now() - cached.fetchedAt < SEARCH_RESULT_CACHE_TTL_MS
+        ) {
+            // Refresh insertion order so the small cache behaves as LRU while
+            // repeated equivalent queries stay entirely local.
+            cache.delete(normalizedSearchCacheKey);
+            cache.set(normalizedSearchCacheKey, cached);
+            setSearchResults(cached.items);
             setSearchLoading(false);
             setSearchError(null);
             return undefined;
@@ -1818,41 +2309,109 @@ export default function ScheduleIndex() {
 
         setSearchLoading(true);
         setSearchError(null);
+        const abortController = new AbortController();
+        searchAbortControllerRef.current = abortController;
         const timer = setTimeout(() => {
-            searchSchedules({ keyword })
+            searchSchedules(
+                {
+                    keyword: normalizedSearchKeyword,
+                    limit: SEARCH_RESULT_LIMIT,
+                },
+                abortController.signal
+            )
                 .then((items) => {
-                    if (searchSequenceRef.current !== sequence) return;
-                    setSearchResults(items
+                    if (
+                        abortController.signal.aborted
+                        || searchSequenceRef.current !== sequence
+                    ) return;
+                    const visibleItems = [...items]
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
-                        .slice(0, 20));
+                        .slice(0, SEARCH_RESULT_LIMIT);
+                    cache.delete(normalizedSearchCacheKey);
+                    cache.set(normalizedSearchCacheKey, {
+                        items: visibleItems,
+                        fetchedAt: Date.now(),
+                    });
+                    while (cache.size > SEARCH_RESULT_CACHE_MAX_ENTRIES) {
+                        const oldestKey = cache.keys().next().value;
+                        if (typeof oldestKey !== "string") break;
+                        cache.delete(oldestKey);
+                    }
+                    setSearchResults(visibleItems);
                 })
                 .catch((error) => {
-                    if (searchSequenceRef.current !== sequence) return;
+                    if (
+                        abortController.signal.aborted
+                        || searchSequenceRef.current !== sequence
+                    ) return;
                     setSearchResults([]);
                     setSearchError(getErrorMessage(error));
                 })
                 .finally(() => {
-                    if (searchSequenceRef.current === sequence) setSearchLoading(false);
+                    if (searchAbortControllerRef.current === abortController) {
+                        searchAbortControllerRef.current = null;
+                    }
+                    if (
+                        !abortController.signal.aborted
+                        && searchSequenceRef.current === sequence
+                    ) setSearchLoading(false);
                 });
-        }, 300);
+        }, SEARCH_DEBOUNCE_MS);
 
-        return () => clearTimeout(timer);
-    }, [searchQuery, searchRetryKey]);
+        return () => {
+            clearTimeout(timer);
+            abortController.abort();
+            if (searchAbortControllerRef.current === abortController) {
+                searchAbortControllerRef.current = null;
+            }
+        };
+    }, [
+        isFocused,
+        normalizedSearchCacheKey,
+        normalizedSearchKeyword,
+        searchInvalidationKey,
+        searchKeywordLength,
+        searchRetryKey,
+    ]);
 
     // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
     const addItem = async (
         payload: Omit<ScheduleItem, "id">,
         { showErrorAlert = true }: AddItemOptions = {},
     ) => {
+        // Fence an already-running range GET before the POST can advance the
+        // cache revision. Otherwise that GET can complete during alarm
+        // recovery and publish an empty pre-mutation snapshot.
+        const scheduleSequenceBeforeMutation = scheduleLoadSequenceRef.current;
+        const mutationFenceSequence = scheduleSequenceBeforeMutation + 1;
+        scheduleLoadSequenceRef.current = mutationFenceSequence;
+        pendingScheduleSnapshotRef.current = null;
         try {
             const item = await createScheduleForAddItem(payload);
-            // 생성 요청보다 먼저 시작된 캘린더 조회는 새 일정을 포함하지 않을 수 있다.
-            // 해당 응답을 무효화해 방금 저장한 일정이 화면에서 다시 사라지지 않게 한다.
-            scheduleLoadSequenceRef.current += 1;
             dispatch({ type: "ADD_ITEM", item });
             dispatch({ type: "SET_LOADING", loading: false });
+            // Existing month entries were updated optimistically by the API
+            // layer, so this usually hydrates from memory without a request.
+            // An uncached month performs the one authoritative fetch needed to
+            // restore the rest of that month's schedules.
+            loadSchedules();
         } catch (error) {
             const message = getErrorMessage(error);
+            dispatch({ type: "SET_LOADING", loading: false });
+            // If no newer range owns the screen, let the request that was in
+            // flight before the POST publish when it eventually completes.
+            if (scheduleLoadSequenceRef.current === mutationFenceSequence) {
+                scheduleLoadSequenceRef.current = scheduleSequenceBeforeMutation;
+            }
+            // A failed POST must not add a calendar GET while the server is
+            // already unhealthy. Reuse only a snapshot that an earlier range
+            // request managed to cache in the meantime.
+            if (hasCalendarScheduleMonthCache(fetchVisibleMonth)) {
+                applyScheduleItemsToStore(readCalendarScheduleCache(
+                    scheduleFetchStartAt,
+                    scheduleFetchEndAt
+                ).items);
+            }
             if (showErrorAlert) {
                 Alert.alert("일정 등록 실패", message);
             }
@@ -2125,18 +2684,22 @@ export default function ScheduleIndex() {
 
     const handleQuickAnalyze = async (text: string, media?: QuickScheduleMediaInput) => {
         // 사진/음성은 서버로 파일을 보내지 않는다. iOS 네이티브에서 텍스트를 먼저 추출하고,
-        // 기존 빠른일정 파서가 이해하는 텍스트와 기기 인식 신뢰도만 백엔드에 전달한다.
+        // 기존 빠른일정 파서가 이해하는 텍스트와 인식 신뢰도·음성 후보만 백엔드에 전달한다.
         const parseInput = await resolveQuickScheduleParseInput(text, media);
 
         return parseScheduleText({
             text: parseInput.text,
             inputType: parseInput.inputType,
             recognitionConfidence: parseInput.recognitionConfidence,
+            recognitionAlternatives: parseInput.recognitionAlternatives,
             // `referenceDate`는 "오늘", "내일" 같은 상대 날짜 표현의 기준이다.
             // 캘린더에서 보고 있는 날짜는 다른 달일 수 있으므로, 빠른 자연어 입력은
             // 앱이 주기적으로 갱신하는 실제 오늘 날짜를 기준으로 분석한다.
             referenceDate: todayKey,
             defaultDurationMinutes: 60,
+            clientPlatform: Platform.OS === "android"
+                ? "ANDROID"
+                : Platform.OS === "ios" ? "IOS" : "UNKNOWN",
         });
     };
 
@@ -2497,6 +3060,64 @@ export default function ScheduleIndex() {
         detailMonthMotionCancelRef.current = cancel;
     }, []);
 
+    const handleDetailMonthMotionActiveChange = useCallback((
+        active: boolean
+    ) => {
+        detailMonthMotionActiveRef.current = active;
+        detailMonthMotionActive.value = active;
+        const pendingFrame = detailMonthFetchFlushFrameRef.current;
+        if (pendingFrame !== null) {
+            cancelAnimationFrame(pendingFrame);
+            detailMonthFetchFlushFrameRef.current = null;
+        }
+        if (active) return;
+
+        // A queued gesture can start from the UI-thread endpoint in the same
+        // JS turn. Wait one paint before flushing so a continuous burst
+        // performs schedule/metadata work only for its final month.
+        const frame = requestAnimationFrame(() => {
+            if (detailMonthFetchFlushFrameRef.current === frame) {
+                detailMonthFetchFlushFrameRef.current = null;
+            }
+            if (detailMonthMotionActiveRef.current) return;
+            const pendingMetadata =
+                pendingCalendarMetadataByDateRef.current;
+            pendingCalendarMetadataByDateRef.current = {};
+            const shouldLoadPendingMetadata =
+                calendarMetadataLoadPendingRef.current;
+            calendarMetadataLoadPendingRef.current = false;
+            const pendingSchedule = pendingScheduleSnapshotRef.current;
+            pendingScheduleSnapshotRef.current = null;
+            startReactTransition(() => {
+                if (Object.keys(pendingMetadata).length > 0) {
+                    mergeCalendarMetadataIntoState(pendingMetadata);
+                }
+                if (
+                    pendingSchedule
+                    && pendingSchedule.requestSequence
+                        === scheduleLoadSequenceRef.current
+                ) {
+                    applyScheduleItemsToStore(pendingSchedule.items);
+                }
+                if (shouldLoadPendingMetadata) {
+                    setCalendarMetadataRetrySequence((current) => current + 1);
+                }
+                updateFetchVisibleMonth(visibleMonthRef.current);
+            });
+        });
+        detailMonthFetchFlushFrameRef.current = frame;
+    }, [
+        applyScheduleItemsToStore,
+        detailMonthMotionActive,
+        mergeCalendarMetadataIntoState,
+        updateFetchVisibleMonth,
+    ]);
+
+    useEffect(() => () => {
+        const pendingFrame = detailMonthFetchFlushFrameRef.current;
+        if (pendingFrame !== null) cancelAnimationFrame(pendingFrame);
+    }, []);
+
     const startTodayFocusTransition = useCallback(() => {
         if (
             todayFocusAnimationActiveRef.current ||
@@ -2702,6 +3323,7 @@ export default function ScheduleIndex() {
     const handleCalendarViewModeChange = useCallback((nextMode: CalendarViewMode) => {
         if (nextMode === calendarViewMode || viewTransitioningRef.current) return;
 
+        detailMonthMotionCancelRef.current?.();
         closeToolbarMenu();
         viewTransitioningRef.current = true;
         const transitionGeneration = monthViewTransitionGenerationRef.current + 1;
@@ -2963,7 +3585,7 @@ export default function ScheduleIndex() {
                 setYearOverviewClosing(false);
                 setDayTransitionContext("idle");
                 setPendingSelectedDay(targetSelection);
-                setFetchVisibleMonth(targetSelection);
+                updateFetchVisibleMonth(targetSelection);
                 dispatch({ type: "SET_SELECTED_DAY", day: targetSelection });
             });
         });
@@ -2974,6 +3596,7 @@ export default function ScheduleIndex() {
         dayTransition,
         dispatch,
         todayKey,
+        updateFetchVisibleMonth,
         yearOverviewProgress,
     ]);
 
@@ -3097,6 +3720,11 @@ export default function ScheduleIndex() {
     }, [router]);
 
     const shareBadgeCount = shareAttention.unseenCount;
+    const hasMonthAgendaCache = hasCalendarScheduleMonthCache(
+        monthDisplayFocusedMonth
+    );
+    const monthAgendaLoading = !hasMonthAgendaCache
+        && (state.loading || scheduleError === null);
 
     const bottomRightActions = useMemo<FloatingBarAction[]>(() => [{
         key: "notification-inbox-shortcut",
@@ -3140,7 +3768,7 @@ export default function ScheduleIndex() {
             <MemoizedSelectedDayAgendaPanel
                 selectedDay={monthDisplaySelectedDay}
                 items={itemsArray}
-                loading={state.loading}
+                loading={monthAgendaLoading}
                 error={sanitizeCalendarTransitionError(scheduleError)}
                 bottomInset={insets.bottom}
                 onPressRetry={loadSchedules}
@@ -3153,7 +3781,7 @@ export default function ScheduleIndex() {
             <MemoizedMonthAgendaList
                 visibleMonth={monthDisplayFocusedMonth}
                 items={itemsArray}
-                loading={state.loading}
+                loading={monthAgendaLoading}
                 error={sanitizeCalendarTransitionError(scheduleError)}
                 bottomInset={insets.bottom}
                 onPressRetry={loadSchedules}
@@ -3281,6 +3909,7 @@ export default function ScheduleIndex() {
                                             ]}
                                         >
                                             <LiquidGlassIconButton
+                                                ref={primaryDatePillNativeRef}
                                                 pointerEvents="none"
                                                 leadingSymbolName="chevron.left"
                                                 label={visiblePrimaryLabel}
@@ -3630,6 +4259,10 @@ export default function ScheduleIndex() {
                                     <Ionicons accessible={false} name="refresh-outline" size={20} color={colors.textSecondary} />
                                     <Text style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}>검색에 실패했어요. 눌러서 다시 시도해 주세요.</Text>
                                 </Pressable>
+                            ) : searchKeywordLength < SEARCH_MIN_QUERY_LENGTH ? (
+                                <View style={styles.dropdownEmpty}>
+                                    <Text style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}>두 글자 이상 입력해 주세요</Text>
+                                </View>
                             ) : searchResults.length === 0 ? (
                                 <View style={styles.dropdownEmpty}>
                                     <Text style={[styles.dropdownEmptyText, { color: colors.textSecondary }]}>
@@ -4065,7 +4698,23 @@ export default function ScheduleIndex() {
                                         onRegisterDetailMonthMotionCancel={
                                             registerDetailMonthMotionCancel
                                         }
+                                        onDetailMonthPreview={
+                                            handleDetailMonthPreview
+                                        }
+                                        onCommitDetailMonth={handleSelectDay}
+                                        onDetailMonthMotionActiveChange={
+                                            handleDetailMonthMotionActiveChange
+                                        }
+                                        detailMonthMotionActive={
+                                            detailMonthMotionActive
+                                        }
+                                        animatedCalendarHeight={
+                                            monthCalendarAnimatedHeight
+                                        }
                                         animatedDayHeight={monthCalendarAnimatedDayHeight}
+                                        detailMonthPageLayouts={
+                                            detailMonthPageLayouts
+                                        }
                                         bottomContentInset={stackBottomContentInset}
                                     />
                                 </View>
@@ -6111,8 +6760,8 @@ const styles = StyleSheet.create({
         position: "absolute",
         left: 16,
         right: 16,
-        zIndex: 64,
-        elevation: 64,
+        zIndex: 39,
+        elevation: 39,
     },
     scheduleActionPillLayer: {
         position: "absolute",

@@ -17,6 +17,7 @@ import type { DepartureAlarmSyncCommand } from "./departureAlarmContract";
 import { getOrCreatePushDeviceId } from "./pushDeviceIdentity";
 
 const STORAGE_KEY_PREFIX = "nolate_departure_alarm_schedule_receipts_v1:";
+const SEQUENCE_KEY_PREFIX = "nolate_departure_alarm_schedule_receipt_sequence_v1:";
 const SCHEMA_VERSION = 1;
 const MAX_ENTRIES_PER_ACCOUNT = 200;
 const RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
@@ -80,7 +81,17 @@ function isPayload(value: unknown): value is DepartureAlarmScheduleReceiptPayloa
         ) &&
         (candidate.source === "PUSH" || candidate.source === "SNAPSHOT") &&
         isIsoInstant(candidate.occurredAt) &&
-        typeof candidate.deviceId === "string" && candidate.deviceId.length > 0;
+        typeof candidate.deviceId === "string" && candidate.deviceId.length > 0 &&
+        (candidate.occurrenceId === undefined ||
+            candidate.occurrenceId === "M15" ||
+            candidate.occurrenceId === "M10" ||
+            candidate.occurrenceId === "M5" ||
+            candidate.occurrenceId === "M0") &&
+        (candidate.mutationSequence === undefined || (
+            Number.isSafeInteger(candidate.mutationSequence) &&
+            (candidate.mutationSequence ?? 0) > 0
+        )) &&
+        (candidate.occurrenceId === undefined || candidate.mutationSequence !== undefined);
 }
 
 function parseEntry(value: unknown): ReceiptEntry | undefined {
@@ -210,8 +221,18 @@ async function enqueue(
 ): Promise<boolean> {
     return serialize(async () => {
         if (blockedAccountIds.has(memberId)) return false;
-        const entries = await readUnlocked(memberId);
+        let entries = await readUnlocked(memberId);
         if (entries.some((entry) => entry.payload.receiptId === payload.receiptId)) return true;
+        if (payload.occurrenceId && payload.mutationSequence) {
+            // A newer mutation for the same desired slot supersedes queued evidence. An older
+            // request already in flight is still harmless because the backend compares sequence.
+            entries = entries.filter((entry) => !(
+                entry.payload.alarmId === payload.alarmId &&
+                entry.payload.generation === payload.generation &&
+                entry.payload.occurrenceId === payload.occurrenceId &&
+                (entry.payload.mutationSequence ?? 0) < payload.mutationSequence!
+            ));
+        }
         const now = Date.now();
         entries.push({ payload, attemptCount: 0, nextAttemptAt: now, enqueuedAt: now });
         await writeUnlocked(memberId, entries);
@@ -301,7 +322,10 @@ async function drain(memberId: number): Promise<number> {
             .filter((entry) => entry.nextAttemptAt <= now)
             .map((entry) => entry.payload.receiptId);
     });
-    const results = await Promise.all(due.map((receiptId) => attempt(memberId, receiptId)));
+    const results: DurableScheduleReceiptResult[] = [];
+    for (const receiptId of due) {
+        results.push(await attempt(memberId, receiptId));
+    }
     await scheduleNextRetry(memberId).catch(() => undefined);
     return results.filter((result) => result === "sent").length;
 }
@@ -377,6 +401,7 @@ export async function recordDepartureAlarmScheduleReceiptDurably(
     result: DepartureAlarmMutationResult,
     source: DepartureAlarmReceiptSource,
     occurredAt = new Date().toISOString(),
+    reservedMutationSequence?: number,
 ): Promise<DurableScheduleReceiptResult> {
     const memberId = normalizeMemberId(command.recipientMemberId);
     const scheduleId = Number(command.scheduleId);
@@ -390,6 +415,10 @@ export async function recordDepartureAlarmScheduleReceiptDurably(
         !Number.isSafeInteger(scheduleId) || scheduleId <= 0 ||
         !platform ||
         !isIsoInstant(occurredAt) ||
+        (command.occurrenceId !== undefined && (
+            !Number.isSafeInteger(reservedMutationSequence) ||
+            (reservedMutationSequence ?? 0) <= 0
+        )) ||
         blockedAccountIds.has(memberId) ||
         normalizeMemberId((await getAuthMember())?.id) !== memberId
     ) return "rejected";
@@ -420,6 +449,10 @@ export async function recordDepartureAlarmScheduleReceiptDurably(
             source,
             occurredAt,
             deviceId,
+            ...(command.occurrenceId ? { occurrenceId: command.occurrenceId } : {}),
+            ...(command.occurrenceId
+                ? { mutationSequence: reservedMutationSequence! }
+                : {}),
         };
         if (!(await enqueue(memberId, payload))) return "rejected";
         const targetAttempt = attempt(memberId, payload.receiptId);
@@ -429,6 +462,26 @@ export async function recordDepartureAlarmScheduleReceiptDurably(
     } catch {
         return "rejected";
     }
+}
+
+/**
+ * Reserve this immediately after a native per-occurrence mutation while still inside the native
+ * serialization lane. Receipt capability/device lookups must never decide mutation ordering.
+ */
+export async function reserveDepartureAlarmMutationSequence(memberId: number): Promise<number> {
+    if (!normalizeMemberId(memberId) || blockedAccountIds.has(memberId)) {
+        throw new Error("Cannot reserve an alarm mutation sequence for this account.");
+    }
+    return serialize(async () => {
+        const key = `${SEQUENCE_KEY_PREFIX}${memberId}`;
+        const raw = await AsyncStorage.getItem(key);
+        const current = raw && /^(0|[1-9]\d*)$/.test(raw) ? Number(raw) : 0;
+        const next = Number.isSafeInteger(current) && current >= 0
+            ? current + 1
+            : 1;
+        await AsyncStorage.setItem(key, String(next));
+        return next;
+    });
 }
 
 export async function activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember(): Promise<number> {
@@ -446,6 +499,7 @@ export async function clearDepartureAlarmScheduleReceiptQueueForCurrentAccount()
     blockedAccountIds.add(memberId);
     cancelRetryTimer(memberId);
     await serialize(() => AsyncStorage.removeItem(storageKey(memberId)));
+    await serialize(() => AsyncStorage.removeItem(`${SEQUENCE_KEY_PREFIX}${memberId}`));
 }
 
 export function resetDepartureAlarmScheduleReceiptQueueForTests(): void {

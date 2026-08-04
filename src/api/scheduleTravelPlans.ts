@@ -13,6 +13,7 @@ export type ScheduleTravelPlanPayload = {
     departAt?: string;
     travelMode?: TravelMode;
     origin?: Place;
+    destination?: Place;
     route?: unknown;
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;

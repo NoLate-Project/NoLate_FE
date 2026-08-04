@@ -50,6 +50,17 @@ struct NoLateStoredAlarm: Codable, Equatable, Sendable {
   var deliveryMode: NoLateAlarmDeliveryMode
   var state: NoLateStoredAlarmState
   var updatedAtMilliseconds: Int64
+  /** Physical OS key remains alarmId; this optional value is the stable backend identity. */
+  let logicalAlarmId: String?
+  let occurrenceId: String?
+  let body: String?
+  let decision: String?
+  let minutesBeforeDeparture: Int?
+  let actionEventKey: String?
+
+  var backendAlarmId: String {
+    logicalAlarmId ?? alarmId
+  }
 
   func hasSameIdentity(as other: NoLateStoredAlarm) -> Bool {
     alarmId == other.alarmId &&
@@ -71,6 +82,7 @@ struct NoLateStoredAlarmFireEvent: Codable, Equatable, Sendable {
   // was added. The bridge normalizes those legacy iOS records as observation.
   let timingBasis: NoLateAlarmFireTimingBasis?
   let logicalEventKey: String?
+  let occurrenceId: String?
 
   init(
     eventId: String,
@@ -82,7 +94,8 @@ struct NoLateStoredAlarmFireEvent: Codable, Equatable, Sendable {
     sourceTriggerAtMilliseconds: Int64,
     occurredAtMilliseconds: Int64,
     timingBasis: NoLateAlarmFireTimingBasis? = nil,
-    logicalEventKey: String?
+    logicalEventKey: String?,
+    occurrenceId: String? = nil
   ) {
     self.eventId = eventId
     self.alarmId = alarmId
@@ -94,6 +107,7 @@ struct NoLateStoredAlarmFireEvent: Codable, Equatable, Sendable {
     self.occurredAtMilliseconds = occurredAtMilliseconds
     self.timingBasis = timingBasis
     self.logicalEventKey = logicalEventKey
+    self.occurrenceId = occurrenceId
   }
 }
 
@@ -109,6 +123,73 @@ enum NoLateAlarmFireEventPolicy {
         $0.generation == incoming.generation &&
         $0.scheduledForMilliseconds == incoming.scheduledForMilliseconds
     }) {
+      return existing
+    }
+    return (existing + [incoming])
+      .sorted {
+        if $0.occurredAtMilliseconds != $1.occurredAtMilliseconds {
+          return $0.occurredAtMilliseconds < $1.occurredAtMilliseconds
+        }
+        return $0.eventId < $1.eventId
+      }
+      .suffix(maximumEvents)
+      .map { $0 }
+  }
+}
+
+struct NoLateStoredDepartureActionEvent: Codable, Equatable, Sendable {
+  let eventId: String
+  let alarmId: String
+  let scheduleId: String
+  let generation: Int64
+  let recipientMemberId: Int64
+  let occurrenceId: String?
+  let actionEventKey: String
+  let occurredAtMilliseconds: Int64
+  var requiresRouteNavigation: Bool
+  var routeNavigationDelivered: Bool
+}
+
+enum NoLateDepartureActionEventPolicy {
+  static let maximumEvents = 100
+
+  static func merge(
+    existing: [NoLateStoredDepartureActionEvent],
+    incoming: NoLateStoredDepartureActionEvent
+  ) -> [NoLateStoredDepartureActionEvent] {
+    if existing.contains(where: {
+      $0.recipientMemberId == incoming.recipientMemberId &&
+        $0.actionEventKey == incoming.actionEventKey
+    }) {
+      return existing
+    }
+    return (existing + [incoming])
+      .sorted {
+        if $0.occurredAtMilliseconds != $1.occurredAtMilliseconds {
+          return $0.occurredAtMilliseconds < $1.occurredAtMilliseconds
+        }
+        return $0.eventId < $1.eventId
+      }
+      .suffix(maximumEvents)
+      .map { $0 }
+  }
+}
+
+struct NoLateStoredAlarmNavigationEvent: Codable, Equatable, Sendable {
+  let eventId: String
+  let scheduleId: String
+  let recipientMemberId: Int64
+  let occurredAtMilliseconds: Int64
+}
+
+enum NoLateAlarmNavigationEventPolicy {
+  static let maximumEvents = 100
+
+  static func merge(
+    existing: [NoLateStoredAlarmNavigationEvent],
+    incoming: NoLateStoredAlarmNavigationEvent
+  ) -> [NoLateStoredAlarmNavigationEvent] {
+    if existing.contains(where: { $0.eventId == incoming.eventId }) {
       return existing
     }
     return (existing + [incoming])
@@ -161,7 +242,13 @@ enum NoLateAlarmGenerationPolicy {
     incomingScheduleId: String,
     incomingSourceTriggerAtMilliseconds: Int64,
     incomingTitle: String?,
-    incomingSnoozeMinutes: Int
+    incomingSnoozeMinutes: Int,
+    incomingLogicalAlarmId: String? = nil,
+    incomingOccurrenceId: String? = nil,
+    incomingBody: String? = nil,
+    incomingDecision: String? = nil,
+    incomingMinutesBeforeDeparture: Int? = nil,
+    incomingActionEventKey: String? = nil
   ) -> NoLateAlarmUpsertDisposition {
     guard incomingGeneration >= 0 else {
       return .stale
@@ -187,7 +274,13 @@ enum NoLateAlarmGenerationPolicy {
       incomingScheduleId == current.scheduleId,
       incomingSourceTriggerAtMilliseconds == current.sourceTriggerAtMilliseconds,
       incomingTitle == current.title,
-      incomingSnoozeMinutes == current.snoozeMinutes
+      incomingSnoozeMinutes == current.snoozeMinutes,
+      (incomingLogicalAlarmId ?? current.backendAlarmId) == current.backendAlarmId,
+      incomingOccurrenceId == current.occurrenceId,
+      incomingBody == current.body,
+      incomingDecision == current.decision,
+      incomingMinutesBeforeDeparture == current.minutesBeforeDeparture,
+      incomingActionEventKey == current.actionEventKey
     {
       return .idempotent
     }
@@ -281,8 +374,14 @@ enum NoLateAlarmValidationError: Error, LocalizedError {
 
 struct NoLateValidatedUpsertCommand: Sendable {
   let alarmId: String
+  let logicalAlarmId: String
   let scheduleId: String
   let title: String?
+  let body: String?
+  let occurrenceId: String?
+  let decision: String?
+  let minutesBeforeDeparture: Int?
+  let actionEventKey: String?
   let generation: Int64
   let recipientMemberId: Int64
   let logicalEventKey: String?
@@ -292,16 +391,52 @@ struct NoLateValidatedUpsertCommand: Sendable {
 
 struct NoLateValidatedCancelCommand: Sendable {
   let alarmId: String
+  let logicalAlarmId: String?
   let scheduleId: String
   let generation: Int64
+}
+
+struct NoLateValidatedNotificationResponseFire: Sendable {
+  let nativeAlarmId: String
+  let alarmId: String
+  let scheduleId: String
+  let generation: Int64
+  let recipientMemberId: Int64
+  let occurrenceId: String?
+  let occurredAtMilliseconds: Int64
+}
+
+enum NoLateAlarmNotificationResponsePolicy {
+  static func matches(
+    alarm: NoLateStoredAlarm,
+    response: NoLateValidatedNotificationResponseFire
+  ) -> Bool {
+    alarm.deliveryMode == .timeSensitive &&
+      alarm.state == .scheduled &&
+      alarm.alarmId == response.nativeAlarmId &&
+      alarm.backendAlarmId == response.alarmId &&
+      alarm.scheduleId == response.scheduleId &&
+      alarm.generation == response.generation &&
+      alarm.recipientMemberId == response.recipientMemberId &&
+      alarm.occurrenceId == response.occurrenceId &&
+      // UNNotification.date is the observed delivery time. Tolerate the one-second calendar
+      // trigger rounding boundary, but never accept a response dated before this alarm.
+      response.occurredAtMilliseconds >= alarm.effectiveTriggerAtMilliseconds - 1_000
+  }
 }
 
 enum NoLateAlarmInput {
   static func upsert(
     operation: String,
     alarmId: String,
+    logicalAlarmId: String,
     scheduleId: String,
     title: String?,
+    body: String?,
+    occurrenceId: String?,
+    decision: String?,
+    minutesBeforeDeparture: Int?,
+    actionEventKey: String?,
     generation: Double,
     recipientMemberId: Double,
     logicalEventKey: String?,
@@ -317,10 +452,39 @@ enum NoLateAlarmInput {
         "snoozeMinutes must be between 1 and 60."
       )
     }
+    let normalizedAlarmId = try validatedIdentifier(alarmId, fieldName: "alarmId")
+    let normalizedLogicalAlarmId = try validatedIdentifier(
+      logicalAlarmId.isEmpty ? alarmId : logicalAlarmId,
+      fieldName: "logicalAlarmId"
+    )
+    let normalizedOccurrenceId = try normalizedOccurrenceId(occurrenceId)
+    let normalizedDecision = try normalizedDecision(decision)
+    let normalizedMinutes = try normalizedMinutesBeforeDeparture(minutesBeforeDeparture)
+    let normalizedActionKey = try normalizedActionEventKey(actionEventKey)
+    if let normalizedOccurrenceId {
+      guard normalizedActionKey != nil else {
+        throw NoLateAlarmValidationError.invalid(
+          "actionEventKey is required for an occurrence alarm."
+        )
+      }
+      let expectedMinutes = ["M15": 15, "M10": 10, "M5": 5, "M0": 0][normalizedOccurrenceId]
+      let expectedDecision = normalizedOccurrenceId == "M0" ? "DEPART_NOW" : "ADVANCE_NOTICE"
+      guard normalizedMinutes == expectedMinutes, normalizedDecision == expectedDecision else {
+        throw NoLateAlarmValidationError.invalid(
+          "occurrence metadata does not match occurrenceId."
+        )
+      }
+    }
     return NoLateValidatedUpsertCommand(
-      alarmId: try validatedIdentifier(alarmId, fieldName: "alarmId"),
+      alarmId: normalizedAlarmId,
+      logicalAlarmId: normalizedLogicalAlarmId,
       scheduleId: try validatedIdentifier(scheduleId, fieldName: "scheduleId"),
       title: normalizedTitle(title),
+      body: normalizedBody(body),
+      occurrenceId: normalizedOccurrenceId,
+      decision: normalizedDecision,
+      minutesBeforeDeparture: normalizedMinutes,
+      actionEventKey: normalizedActionKey,
       generation: try safeInteger(generation, fieldName: "generation"),
       recipientMemberId: try positiveSafeInteger(
         recipientMemberId,
@@ -334,13 +498,62 @@ enum NoLateAlarmInput {
 
   static func cancel(
     alarmId: String,
+    logicalAlarmId: String?,
     scheduleId: String,
     generation: Double
   ) throws -> NoLateValidatedCancelCommand {
     NoLateValidatedCancelCommand(
       alarmId: try validatedIdentifier(alarmId, fieldName: "alarmId"),
+      logicalAlarmId: try logicalAlarmId.map {
+        try validatedIdentifier($0, fieldName: "logicalAlarmId")
+      },
       scheduleId: try validatedIdentifier(scheduleId, fieldName: "scheduleId"),
       generation: try safeInteger(generation, fieldName: "generation")
+    )
+  }
+
+  static func notificationResponseFire(
+    nativeAlarmId: String,
+    alarmId: String,
+    scheduleId: String,
+    generation: Double,
+    recipientMemberId: Double,
+    occurrenceId: String?,
+    occurredAt: String
+  ) throws -> NoLateValidatedNotificationResponseFire {
+    let normalizedNativeAlarmId = try validatedIdentifier(
+      nativeAlarmId,
+      fieldName: "nativeAlarmId"
+    )
+    let normalizedAlarmId = try validatedIdentifier(alarmId, fieldName: "alarmId")
+    let normalizedScheduleId = try validatedIdentifier(scheduleId, fieldName: "scheduleId")
+    guard let scheduleNumber = Int64(normalizedScheduleId), scheduleNumber > 0 else {
+      throw NoLateAlarmValidationError.invalid("scheduleId must be a positive integer.")
+    }
+    let normalizedRecipientMemberId = try positiveSafeInteger(
+      recipientMemberId,
+      fieldName: "recipientMemberId"
+    )
+    guard normalizedAlarmId ==
+      "schedule:\(normalizedScheduleId):member:\(normalizedRecipientMemberId)"
+    else {
+      throw NoLateAlarmValidationError.invalid("alarmId is not canonical.")
+    }
+    let normalizedOccurrenceId = try normalizedOccurrenceId(occurrenceId)
+    let expectedNativeAlarmId = normalizedOccurrenceId.map {
+      "\(normalizedAlarmId):occurrence:\($0)"
+    } ?? normalizedAlarmId
+    guard normalizedNativeAlarmId == expectedNativeAlarmId else {
+      throw NoLateAlarmValidationError.invalid("nativeAlarmId is not canonical.")
+    }
+    return NoLateValidatedNotificationResponseFire(
+      nativeAlarmId: normalizedNativeAlarmId,
+      alarmId: normalizedAlarmId,
+      scheduleId: normalizedScheduleId,
+      generation: try safeInteger(generation, fieldName: "generation"),
+      recipientMemberId: normalizedRecipientMemberId,
+      occurrenceId: normalizedOccurrenceId,
+      occurredAtMilliseconds: try isoTimestampMilliseconds(occurredAt)
     )
   }
 
@@ -446,6 +659,59 @@ enum NoLateAlarmInput {
     return normalized.isEmpty ? nil : String(normalized.prefix(100))
   }
 
+  static func normalizedBody(_ value: String?) -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return normalized.isEmpty ? nil : String(normalized.prefix(500))
+  }
+
+  static func normalizedOccurrenceId(_ value: String?) throws -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if normalized.isEmpty { return nil }
+    guard ["M15", "M10", "M5", "M0"].contains(normalized) else {
+      throw NoLateAlarmValidationError.invalid(
+        "occurrenceId must be M15, M10, M5, or M0."
+      )
+    }
+    return normalized
+  }
+
+  static func normalizedDecision(_ value: String?) throws -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if normalized.isEmpty { return nil }
+    guard normalized == "ADVANCE_NOTICE" || normalized == "DEPART_NOW" else {
+      throw NoLateAlarmValidationError.invalid(
+        "decision must be ADVANCE_NOTICE or DEPART_NOW."
+      )
+    }
+    return normalized
+  }
+
+  static func normalizedMinutesBeforeDeparture(_ value: Int?) throws -> Int? {
+    guard let value else { return nil }
+    guard [0, 5, 10, 15].contains(value) else {
+      throw NoLateAlarmValidationError.invalid(
+        "minutesBeforeDeparture must be 0, 5, 10, or 15."
+      )
+    }
+    return value
+  }
+
+  static func normalizedActionEventKey(_ value: String?) throws -> String? {
+    let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if normalized.isEmpty { return nil }
+    let keyPattern = try! NSRegularExpression(pattern: #"^key:[a-f0-9]{64}$"#)
+    let eventPattern = try! NSRegularExpression(
+      pattern: #"^event:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"#
+    )
+    let range = NSRange(normalized.startIndex..., in: normalized)
+    guard keyPattern.firstMatch(in: normalized, range: range) != nil ||
+      eventPattern.firstMatch(in: normalized, range: range) != nil
+    else {
+      throw NoLateAlarmValidationError.invalid("actionEventKey has an invalid format.")
+    }
+    return normalized
+  }
+
   private static func validatedIdentifier(
     _ value: String,
     fieldName: String
@@ -481,5 +747,60 @@ enum NoLateAlarmSystemIdentifier {
 
   static func notificationRequestIdentifier(alarmId: String) -> String {
     "nolate.departure.\(uuid(alarmId: alarmId).uuidString.lowercased())"
+  }
+}
+
+enum NoLateAlarmActionIdentity {
+  static func fallbackKey(physicalAlarmId: String, generation: Int64) -> String {
+    let input = Data("nolate.departure.action|\(physicalAlarmId)|\(generation)".utf8)
+    return "key:" + SHA256.hash(data: input).map {
+      String(format: "%02x", $0)
+    }.joined()
+  }
+}
+
+enum NoLateAlarmNavigationIdentity {
+  static func eventId(physicalAlarmId: String, generation: Int64) -> String {
+    let input = Data("nolate.departure.navigation|\(physicalAlarmId)|\(generation)".utf8)
+    return "navigation:" + SHA256.hash(data: input).map {
+      String(format: "%02x", $0)
+    }.joined()
+  }
+}
+
+enum NoLateAlarmIntentCommitSequence {
+  static func recordFireThenInteraction(
+    recordFire: () throws -> Void,
+    recordInteraction: () throws -> Void
+  ) throws {
+    var fireFailure: Error?
+    var interactionFailure: Error?
+    do {
+      try recordFire()
+    } catch {
+      fireFailure = error
+    }
+    // A telemetry persistence failure must not discard an explicit user action. Attempt the
+    // independent interaction journal even after fire failure, but only the caller may proceed to
+    // tombstone/cancel when both durable boundaries succeeded.
+    do {
+      try recordInteraction()
+    } catch {
+      interactionFailure = error
+    }
+    if let fireFailure { throw fireFailure }
+    if let interactionFailure { throw interactionFailure }
+  }
+}
+
+enum NoLateAlarmPresentationPolicy {
+  static func alarmKitAlertTitle(title: String?, body: String?) -> String {
+    let normalizedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let finalTitle = normalizedTitle.isEmpty ? "출발 시간입니다" : normalizedTitle
+    let normalizedBody = body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let combined = normalizedBody.isEmpty
+      ? finalTitle
+      : "\(finalTitle) · \(normalizedBody)"
+    return String(combined.prefix(160))
   }
 }

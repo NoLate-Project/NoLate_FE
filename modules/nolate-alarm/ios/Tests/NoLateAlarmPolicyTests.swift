@@ -311,6 +311,337 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     )
   }
 
+  func testV2PhysicalAndLogicalAlarmIdentityRoundTrips() throws {
+    let suiteName = "NoLateAlarmV2StoreTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let key = "key:\(String(repeating: "a", count: 64))"
+    let alarm = NoLateStoredAlarm(
+      alarmId: "schedule:41:member:7:occurrence:M0",
+      scheduleId: "41",
+      title: "지금 출발",
+      generation: 8,
+      recipientMemberId: 7,
+      logicalEventKey: nil,
+      sourceTriggerAtMilliseconds: 2_000,
+      effectiveTriggerAtMilliseconds: 2_000,
+      snoozeMinutes: 5,
+      deliveryMode: .alarmKit,
+      state: .scheduled,
+      updatedAtMilliseconds: 1_000,
+      logicalAlarmId: "schedule:41:member:7",
+      occurrenceId: "M0",
+      body: "지금 출발하세요.",
+      decision: "DEPART_NOW",
+      minutesBeforeDeparture: 0,
+      actionEventKey: key
+    )
+    let store = NoLateAlarmStore(defaults: defaults)
+    try store.save(NoLateAlarmStoreSnapshot(
+      alarms: [alarm.alarmId: alarm],
+      tombstones: [:]
+    ))
+
+    let restored = try NoLateAlarmStore(defaults: defaults).load().alarms[alarm.alarmId]
+    XCTAssertEqual(restored, alarm)
+    XCTAssertEqual(restored?.backendAlarmId, "schedule:41:member:7")
+    XCTAssertEqual(
+      NoLateAlarmGenerationPolicy.decideUpsert(
+        current: restored,
+        tombstone: nil,
+        incomingGeneration: 8,
+        incomingScheduleId: "41",
+        incomingSourceTriggerAtMilliseconds: 2_000,
+        incomingTitle: "지금 출발",
+        incomingSnoozeMinutes: 5,
+        incomingLogicalAlarmId: "schedule:41:member:7",
+        incomingOccurrenceId: "M0",
+        incomingBody: "지금 출발하세요.",
+        incomingDecision: "DEPART_NOW",
+        incomingMinutesBeforeDeparture: 0,
+        incomingActionEventKey: key
+      ),
+      .idempotent
+    )
+  }
+
+  func testActionAndNavigationJournalsRemainSeparateAndDurable() throws {
+    let suiteName = "NoLateAlarmIntentJournalTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let actionJournal = NoLateAlarmActionJournal(defaults: defaults)
+    let action = NoLateStoredDepartureActionEvent(
+      eventId: "action-1",
+      alarmId: "schedule:41:member:7",
+      scheduleId: "41",
+      generation: 8,
+      recipientMemberId: 7,
+      occurrenceId: "M0",
+      actionEventKey: "key:\(String(repeating: "b", count: 64))",
+      occurredAtMilliseconds: 2_000,
+      requiresRouteNavigation: false,
+      routeNavigationDelivered: false
+    )
+    try actionJournal.record(action)
+    try actionJournal.record(action)
+
+    let navigationJournal = NoLateAlarmNavigationJournal(defaults: defaults)
+    let navigationEventId = NoLateAlarmNavigationIdentity.eventId(
+      physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+      generation: 8
+    )
+    let navigation = NoLateStoredAlarmNavigationEvent(
+      eventId: navigationEventId,
+      scheduleId: "41",
+      recipientMemberId: 7,
+      occurredAtMilliseconds: 2_100
+    )
+    try navigationJournal.record(navigation)
+    try navigationJournal.record(NoLateStoredAlarmNavigationEvent(
+      eventId: navigationEventId,
+      scheduleId: "41",
+      recipientMemberId: 7,
+      occurredAtMilliseconds: 2_200
+    ))
+
+    XCTAssertEqual(try NoLateAlarmActionJournal(defaults: defaults).load(), [action])
+    XCTAssertEqual(try NoLateAlarmNavigationJournal(defaults: defaults).load(), [navigation])
+    XCTAssertFalse(try actionJournal.remove(eventId: navigationEventId))
+    XCTAssertFalse(try navigationJournal.remove(eventId: "action-1"))
+  }
+
+  func testAlarmKitIntentRetryCommitsFireBeforeActionWithoutDuplicates() throws {
+    enum SimulatedFailure: Error { case interaction }
+
+    let suiteName = "NoLateAlarmIntentRetryTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let fireJournal = NoLateAlarmFireJournal(defaults: defaults)
+    let actionJournal = NoLateAlarmActionJournal(defaults: defaults)
+    let fire = fireEvent(eventId: "fire-first", generation: 8, occurredAt: 2_000)
+    let action = NoLateStoredDepartureActionEvent(
+      eventId: "action-first",
+      alarmId: "schedule:41:member:7",
+      scheduleId: "41",
+      generation: 8,
+      recipientMemberId: 7,
+      occurrenceId: "M0",
+      actionEventKey: "key:\(String(repeating: "f", count: 64))",
+      occurredAtMilliseconds: 2_000,
+      requiresRouteNavigation: false,
+      routeNavigationDelivered: false
+    )
+
+    // A real corrupt fire store makes telemetry persistence fail, but the explicit user action
+    // still crosses its independent durable boundary. Overall failure prevents finish/cancel.
+    defaults.set(
+      Data("corrupt-fire-journal".utf8),
+      forKey: NoLateAlarmFireJournal.storageKey
+    )
+    XCTAssertThrowsError(try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: { try fireJournal.record(fire) },
+      recordInteraction: { try actionJournal.record(action) }
+    ))
+    XCTAssertThrowsError(try fireJournal.load())
+    XCTAssertEqual(try actionJournal.load(), [action])
+    defaults.removeObject(forKey: NoLateAlarmFireJournal.storageKey)
+    XCTAssertTrue(defaults.synchronize())
+
+    // If interaction persistence also fails on a later attempt, fire can still commit. Replay
+    // keeps both sides idempotent and eventually leaves exactly one of each.
+    XCTAssertThrowsError(try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: { try fireJournal.record(fire) },
+      recordInteraction: { throw SimulatedFailure.interaction }
+    ))
+    XCTAssertEqual(try fireJournal.load(), [fire])
+    XCTAssertEqual(try actionJournal.load(), [action])
+
+    try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: {
+        try fireJournal.record(fireEvent(
+          eventId: "fire-replay",
+          generation: 8,
+          occurredAt: 2_100
+        ))
+      },
+      recordInteraction: { try actionJournal.record(action) }
+    )
+    try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: {
+        try fireJournal.record(fireEvent(
+          eventId: "fire-finish-replay",
+          generation: 8,
+          occurredAt: 2_200
+        ))
+      },
+      recordInteraction: {
+        try actionJournal.record(NoLateStoredDepartureActionEvent(
+          eventId: "action-finish-replay",
+          alarmId: action.alarmId,
+          scheduleId: action.scheduleId,
+          generation: action.generation,
+          recipientMemberId: action.recipientMemberId,
+          occurrenceId: action.occurrenceId,
+          actionEventKey: action.actionEventKey,
+          occurredAtMilliseconds: 2_200,
+          requiresRouteNavigation: false,
+          routeNavigationDelivered: false
+        ))
+      }
+    )
+
+    XCTAssertEqual(try fireJournal.load(), [fire])
+    XCTAssertEqual(try actionJournal.load(), [action])
+  }
+
+  func testAlarmKitNavigationIdentityIsStableAndRetryDeduplicates() throws {
+    let suiteName = "NoLateAlarmNavigationRetryTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let journal = NoLateAlarmNavigationJournal(defaults: defaults)
+    let fireJournal = NoLateAlarmFireJournal(defaults: defaults)
+    let eventId = NoLateAlarmNavigationIdentity.eventId(
+      physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+      generation: 8
+    )
+    XCTAssertEqual(
+      eventId,
+      NoLateAlarmNavigationIdentity.eventId(
+        physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+        generation: 8
+      )
+    )
+    XCTAssertNotEqual(
+      eventId,
+      NoLateAlarmNavigationIdentity.eventId(
+        physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+        generation: 9
+      )
+    )
+
+    let first = NoLateStoredAlarmNavigationEvent(
+      eventId: eventId,
+      scheduleId: "41",
+      recipientMemberId: 7,
+      occurredAtMilliseconds: 2_000
+    )
+    let replay = NoLateStoredAlarmNavigationEvent(
+      eventId: eventId,
+      scheduleId: "41",
+      recipientMemberId: 7,
+      occurredAtMilliseconds: 2_100
+    )
+    let fire = fireEvent(eventId: "navigation-fire", generation: 9, occurredAt: 2_000)
+    defaults.set(
+      Data("corrupt-navigation-fire-journal".utf8),
+      forKey: NoLateAlarmFireJournal.storageKey
+    )
+
+    XCTAssertThrowsError(try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: { try fireJournal.record(fire) },
+      recordInteraction: { try journal.record(first) }
+    ))
+    XCTAssertEqual(try journal.load(), [first])
+    defaults.removeObject(forKey: NoLateAlarmFireJournal.storageKey)
+    XCTAssertTrue(defaults.synchronize())
+
+    try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: { try fireJournal.record(fire) },
+      recordInteraction: { try journal.record(replay) }
+    )
+
+    XCTAssertEqual(try fireJournal.load(), [fire])
+    XCTAssertEqual(try journal.load(), [first])
+  }
+
+  func testAlarmKitPresentationKeepsTitleAndBodyWithinBound() {
+    XCTAssertEqual(
+      NoLateAlarmPresentationPolicy.alarmKitAlertTitle(
+        title: "회의 출발",
+        body: "지금 출발하세요."
+      ),
+      "회의 출발 · 지금 출발하세요."
+    )
+    XCTAssertEqual(
+      NoLateAlarmPresentationPolicy.alarmKitAlertTitle(
+        title: String(repeating: "가", count: 100),
+        body: String(repeating: "나", count: 100)
+      ).count,
+      160
+    )
+  }
+
+  func testTimeSensitiveNotificationResponseRequiresExactStoredIdentity() throws {
+    let alarm = NoLateStoredAlarm(
+      alarmId: "schedule:41:member:7:occurrence:M0",
+      scheduleId: "41",
+      title: "지금 출발",
+      generation: 8,
+      recipientMemberId: 7,
+      logicalEventKey: nil,
+      sourceTriggerAtMilliseconds: 2_000,
+      effectiveTriggerAtMilliseconds: 2_000,
+      snoozeMinutes: 5,
+      deliveryMode: .timeSensitive,
+      state: .scheduled,
+      updatedAtMilliseconds: 1_000,
+      logicalAlarmId: "schedule:41:member:7",
+      occurrenceId: "M0",
+      body: "지금 출발하세요.",
+      decision: "DEPART_NOW",
+      minutesBeforeDeparture: 0,
+      actionEventKey: "key:\(String(repeating: "a", count: 64))"
+    )
+    let response = try NoLateAlarmInput.notificationResponseFire(
+      nativeAlarmId: alarm.alarmId,
+      alarmId: alarm.backendAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: Double(alarm.generation),
+      recipientMemberId: 7,
+      occurrenceId: alarm.occurrenceId,
+      occurredAt: "1970-01-01T00:00:02.100Z"
+    )
+
+    XCTAssertTrue(NoLateAlarmNotificationResponsePolicy.matches(
+      alarm: alarm,
+      response: response
+    ))
+    XCTAssertFalse(NoLateAlarmNotificationResponsePolicy.matches(
+      alarm: alarm,
+      response: NoLateValidatedNotificationResponseFire(
+        nativeAlarmId: response.nativeAlarmId,
+        alarmId: response.alarmId,
+        scheduleId: response.scheduleId,
+        generation: 9,
+        recipientMemberId: response.recipientMemberId,
+        occurrenceId: response.occurrenceId,
+        occurredAtMilliseconds: response.occurredAtMilliseconds
+      )
+    ))
+    XCTAssertThrowsError(try NoLateAlarmInput.notificationResponseFire(
+      nativeAlarmId: alarm.backendAlarmId,
+      alarmId: alarm.backendAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: Double(alarm.generation),
+      recipientMemberId: 7,
+      occurrenceId: alarm.occurrenceId,
+      occurredAt: "1970-01-01T00:00:02.100Z"
+    ))
+  }
+
+  func testFallbackActionIdentityIsStableAndCanonical() {
+    let first = NoLateAlarmActionIdentity.fallbackKey(
+      physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+      generation: 8
+    )
+    let replay = NoLateAlarmActionIdentity.fallbackKey(
+      physicalAlarmId: "schedule:41:member:7:occurrence:M0",
+      generation: 8
+    )
+    XCTAssertEqual(first, replay)
+    XCTAssertNotNil(first.range(of: #"^key:[a-f0-9]{64}$"#, options: .regularExpression))
+  }
+
   private func storedAlarm(generation: Int64) -> NoLateStoredAlarm {
     NoLateStoredAlarm(
       alarmId: "schedule:41",
@@ -324,7 +655,13 @@ final class NoLateAlarmPolicyTests: XCTestCase {
       snoozeMinutes: 5,
       deliveryMode: .alarmKit,
       state: .scheduled,
-      updatedAtMilliseconds: 1_000
+      updatedAtMilliseconds: 1_000,
+      logicalAlarmId: nil,
+      occurrenceId: nil,
+      body: nil,
+      decision: nil,
+      minutesBeforeDeparture: nil,
+      actionEventKey: nil
     )
   }
 
@@ -343,6 +680,10 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     XCTAssertEqual(
       try NoLateAlarmFireJournal(defaults: defaults).load().first?.timingBasis,
       .observedAlerting
+    )
+    XCTAssertEqual(
+      try NoLateAlarmFireJournal(defaults: defaults).load().first?.occurrenceId,
+      "M0"
     )
     XCTAssertTrue(try journal.remove(eventId: "first"))
     XCTAssertFalse(try journal.remove(eventId: "first"))
@@ -406,7 +747,8 @@ final class NoLateAlarmPolicyTests: XCTestCase {
       sourceTriggerAtMilliseconds: first.sourceTriggerAtMilliseconds,
       occurredAtMilliseconds: 302_100,
       timingBasis: .observedAlerting,
-      logicalEventKey: first.logicalEventKey
+      logicalEventKey: first.logicalEventKey,
+      occurrenceId: first.occurrenceId
     )
 
     XCTAssertEqual(
@@ -430,7 +772,8 @@ final class NoLateAlarmPolicyTests: XCTestCase {
       sourceTriggerAtMilliseconds: 1_000,
       occurredAtMilliseconds: occurredAt,
       timingBasis: .observedAlerting,
-      logicalEventKey: nil
+      logicalEventKey: nil,
+      occurrenceId: "M0"
     )
   }
 }

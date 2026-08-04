@@ -1,6 +1,8 @@
 const mockScheduleNotificationAsync = jest.fn();
 const mockAcknowledgePushDelivery = jest.fn();
 const mockEmitAppNotificationReceived = jest.fn();
+const mockEmitScheduleMutation = jest.fn();
+const mockSetNotificationCategoryAsync = jest.fn();
 
 jest.mock("@react-native-firebase/messaging", () => ({
     getInitialNotification: jest.fn().mockResolvedValue(null),
@@ -34,6 +36,10 @@ jest.mock("../src/api/schedule", () => ({
     snoozeScheduleDepartureReminder: jest.fn(),
 }));
 
+jest.mock("../src/modules/auth/authStorage", () => ({
+    getAuthMember: jest.fn().mockResolvedValue({ id: 7 }),
+}));
+
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     handleDepartureAlarmSyncData: jest.fn().mockResolvedValue(true),
 }));
@@ -48,6 +54,10 @@ jest.mock("../src/modules/notification/appNotificationEvents", () => ({
 
 jest.mock("../src/modules/schedule/calendarScheduleCache", () => ({
     clearCalendarScheduleCache: jest.fn(),
+}));
+
+jest.mock("../src/modules/schedule/scheduleMutationEvents", () => ({
+    emitScheduleMutation: () => mockEmitScheduleMutation(),
 }));
 
 jest.mock("../src/modules/notification/pushDeliveryAck", () => ({
@@ -68,7 +78,7 @@ describe("foreground push presentation ACK", () => {
         setForegroundNotificationsModuleForTests({
             AndroidImportance: { HIGH: 4 },
             scheduleNotificationAsync: mockScheduleNotificationAsync,
-            setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
+            setNotificationCategoryAsync: mockSetNotificationCategoryAsync,
             setNotificationChannelAsync: jest.fn().mockResolvedValue(undefined),
             setNotificationHandler: jest.fn(),
         } as unknown as Parameters<typeof setForegroundNotificationsModuleForTests>[0]);
@@ -106,5 +116,35 @@ describe("foreground push presentation ACK", () => {
                     mockAcknowledgePushDelivery.mock.invocationCallOrder.length - 1
                 ],
             );
+        expect(mockEmitScheduleMutation).not.toHaveBeenCalled();
+    });
+
+    it("invalidates search state only for schedule visibility pushes", async () => {
+        await handleForegroundPushMessage({
+            data: { type: "CATEGORY_SHARE_RECEIVED" },
+            notification: { title: "공유", body: "새 공유 일정" },
+        } as unknown as Parameters<typeof handleForegroundPushMessage>[0]);
+
+        expect(mockEmitScheduleMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it("registers the exact visible departure action label", async () => {
+        const { configureForegroundPush } = require(
+            "../src/modules/notification/foregroundPush"
+        ) as typeof import("../src/modules/notification/foregroundPush");
+
+        const unsubscribe = await configureForegroundPush();
+
+        expect(mockSetNotificationCategoryAsync).toHaveBeenCalledWith(
+            "schedule_depart_now",
+            expect.arrayContaining([
+                expect.objectContaining({
+                    identifier: "schedule_depart_now_action",
+                    buttonTitle: "지금 출발 완료",
+                }),
+            ]),
+            expect.any(Object),
+        );
+        unsubscribe();
     });
 });

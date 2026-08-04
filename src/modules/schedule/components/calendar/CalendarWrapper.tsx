@@ -1,7 +1,9 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
 import type { SharedValue } from "react-native-reanimated";
-import ScheduleCalendar from "./ScheduleCalendar";
+import ScheduleCalendar, {
+    type DetailMonthPageLayouts,
+} from "./ScheduleCalendar";
 import type { ScheduleItem } from "../../types";
 import type { CalendarDayMetadata } from "../../calendarMetadata";
 import type { CalendarViewMode } from "./viewMode";
@@ -35,7 +37,13 @@ type Props = {
     onRegisterDetailMonthMotionShift?: (
         shift: ((direction: -1 | 1) => void) | null
     ) => void;
+    onDetailMonthPreview?: (day: string) => void;
+    onCommitDetailMonth?: (day: string) => void;
+    onDetailMonthMotionActiveChange?: (active: boolean) => void;
+    detailMonthMotionActive?: SharedValue<boolean>;
+    animatedCalendarHeight?: SharedValue<number>;
     animatedDayHeight?: SharedValue<number>;
+    detailMonthPageLayouts?: DetailMonthPageLayouts;
     bottomContentInset?: number;
 };
 
@@ -59,7 +67,13 @@ function CalendarWrapper({
     onTodayFocusReady,
     onRegisterDetailMonthMotionCancel,
     onRegisterDetailMonthMotionShift,
+    onDetailMonthPreview,
+    onCommitDetailMonth,
+    onDetailMonthMotionActiveChange,
+    detailMonthMotionActive,
+    animatedCalendarHeight,
     animatedDayHeight,
+    detailMonthPageLayouts,
     bottomContentInset,
 }: Props) {
     const shouldUseCompactHeight =
@@ -86,7 +100,13 @@ function CalendarWrapper({
                 onTodayFocusReady={onTodayFocusReady}
                 onRegisterDetailMonthMotionCancel={onRegisterDetailMonthMotionCancel}
                 onRegisterDetailMonthMotionShift={onRegisterDetailMonthMotionShift}
+                onDetailMonthPreview={onDetailMonthPreview}
+                onCommitDetailMonth={onCommitDetailMonth}
+                onDetailMonthMotionActiveChange={onDetailMonthMotionActiveChange}
+                detailMonthMotionActive={detailMonthMotionActive}
+                animatedCalendarHeight={animatedCalendarHeight}
                 animatedDayHeight={animatedDayHeight}
+                detailMonthPageLayouts={detailMonthPageLayouts}
                 bottomContentInset={bottomContentInset}
             />
         </View>

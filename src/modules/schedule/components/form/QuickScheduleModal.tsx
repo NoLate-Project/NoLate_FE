@@ -3655,7 +3655,7 @@ export default function QuickScheduleModal({
                             <View style={[styles.aiHint, { backgroundColor: warningBackground }]}>
                                 <Ionicons accessible={false} name="information-circle-outline" size={15} color={warningTextColor} />
                                 <Text style={[styles.aiHintText, { color: warningTextColor }]}>
-                                    AI가 추정한 시간: {formatKoreanTime(previewDraft.time)} 전후
+                                    예상 시간: {formatKoreanTime(previewDraft.time)} 전후
                                 </Text>
                             </View>
                         )}

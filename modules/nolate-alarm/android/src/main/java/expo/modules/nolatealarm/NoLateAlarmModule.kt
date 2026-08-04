@@ -15,6 +15,9 @@ internal class UpsertAlarmCommand : Record {
   var alarmId: String = ""
 
   @Field
+  var logicalAlarmId: String = ""
+
+  @Field
   var scheduleId: String = ""
 
   @Field
@@ -33,6 +36,21 @@ internal class UpsertAlarmCommand : Record {
   var title: String? = null
 
   @Field
+  var body: String? = null
+
+  @Field
+  var occurrenceId: String? = null
+
+  @Field
+  var decision: String? = null
+
+  @Field
+  var minutesBeforeDeparture: Int? = null
+
+  @Field
+  var actionEventKey: String? = null
+
+  @Field
   var snoozeMinutes: Int? = null
 }
 
@@ -41,10 +59,45 @@ internal class CancelAlarmCommand : Record {
   var alarmId: String = ""
 
   @Field
+  var logicalAlarmId: String? = null
+
+  @Field
   var scheduleId: String = ""
 
   @Field
   var generation: Double = -1.0
+}
+
+internal class DepartureActionEventCommand : Record {
+  @Field
+  var eventId: String = ""
+
+  @Field
+  var alarmId: String = ""
+
+  @Field
+  var scheduleId: String = ""
+
+  @Field
+  var generation: Double = -1.0
+
+  @Field
+  var recipientMemberId: Double = -1.0
+
+  @Field
+  var occurrenceId: String? = null
+
+  @Field
+  var actionEventKey: String = ""
+
+  @Field
+  var occurredAt: String = ""
+
+  @Field
+  var requiresRouteNavigation: Boolean = false
+
+  @Field
+  var routeNavigationDelivered: Boolean = false
 }
 
 class NoLateAlarmModule : Module() {
@@ -67,8 +120,24 @@ class NoLateAlarmModule : Module() {
         }
         DepartureAlarmCoordinator(context).upsert(
           alarmId = requireAlarmId(command.alarmId),
+          logicalAlarmId = requireAlarmId(
+            command.logicalAlarmId.ifBlank { command.alarmId }
+          ),
           scheduleId = requireScheduleId(command.scheduleId),
           title = normalizeAlarmTitle(command.title),
+          body = normalizeAlarmBody(command.body),
+          occurrenceId = normalizeOccurrenceId(command.occurrenceId),
+          decision = command.decision?.trim()?.takeIf { it.isNotEmpty() }?.also {
+            require(it == "ADVANCE_NOTICE" || it == "DEPART_NOW") {
+              "decision must be ADVANCE_NOTICE or DEPART_NOW."
+            }
+          },
+          minutesBeforeDeparture = command.minutesBeforeDeparture?.also {
+            require(it in setOf(0, 5, 10, 15)) {
+              "minutesBeforeDeparture must be 0, 5, 10, or 15."
+            }
+          },
+          actionEventKey = normalizeActionEventKey(command.actionEventKey),
           generation = requireSafeJsInteger(command.generation, "generation"),
           recipientMemberId = requireRecipientMemberId(command.recipientMemberId),
           logicalEventKey = normalizeLogicalEventKey(command.logicalEventKey),
@@ -89,6 +158,10 @@ class NoLateAlarmModule : Module() {
         val current = coordinator.getScheduledAlarm(alarmId)
         require(current == null || current.scheduleId == scheduleId) {
           "scheduleId does not match the stored alarm."
+        }
+        val logicalAlarmId = command.logicalAlarmId?.let(::requireAlarmId)
+        require(current == null || logicalAlarmId == null || current.logicalAlarmId == logicalAlarmId) {
+          "logicalAlarmId does not match the stored alarm."
         }
         coordinator.cancel(
           alarmId = alarmId,
@@ -138,6 +211,55 @@ class NoLateAlarmModule : Module() {
 
     AsyncFunction("removeAlarmFireEvent") { eventId: String ->
       DepartureAlarmFireJournal(requireContext()).remove(eventId)
+    }
+
+    AsyncFunction("recordDepartureActionEvent") { command: DepartureActionEventCommand ->
+      runCatching {
+        val occurredAtMillis = parseIsoTriggerAtMillis(command.occurredAt)
+        require(occurredAtMillis in 0..MAX_SAFE_JS_INTEGER) {
+          "occurredAt is outside the supported timestamp range."
+        }
+        val eventId = command.eventId.trim().also {
+          require(it.isNotEmpty() && it.length <= 200) { "eventId is invalid." }
+        }
+        val actionEventKey = command.actionEventKey.trim().also {
+          require(isValidActionEventKey(it)) { "actionEventKey has an invalid format." }
+        }
+        DepartureAlarmActionJournal(requireContext()).record(
+          StoredDepartureActionEvent(
+            eventId = eventId,
+            alarmId = requireAlarmId(command.alarmId),
+            scheduleId = requireScheduleId(command.scheduleId),
+            generation = requireSafeJsInteger(command.generation, "generation"),
+            recipientMemberId = requireRecipientMemberId(command.recipientMemberId),
+            occurrenceId = normalizeOccurrenceId(command.occurrenceId),
+            actionEventKey = actionEventKey,
+            occurredAtMillis = occurredAtMillis,
+            requiresRouteNavigation = command.requiresRouteNavigation,
+            routeNavigationDelivered = command.routeNavigationDelivered
+          )
+        )
+      }.getOrDefault(false)
+    }
+
+    AsyncFunction("getPendingDepartureActionEvents") {
+      DepartureAlarmActionJournal(requireContext()).getAll().map { it.toBridgeMap() }
+    }
+
+    AsyncFunction("markDepartureActionNavigationDelivered") { eventId: String ->
+      DepartureAlarmActionJournal(requireContext()).markNavigationDelivered(eventId)
+    }
+
+    AsyncFunction("removeDepartureActionEvent") { eventId: String ->
+      DepartureAlarmActionJournal(requireContext()).remove(eventId)
+    }
+
+    AsyncFunction("getPendingAlarmNavigationEvents") {
+      DepartureAlarmNavigationJournal(requireContext()).getAll().map { it.toBridgeMap() }
+    }
+
+    AsyncFunction("removeAlarmNavigationEvent") { eventId: String ->
+      DepartureAlarmNavigationJournal(requireContext()).remove(eventId)
     }
   }
 

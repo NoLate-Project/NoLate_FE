@@ -345,7 +345,7 @@ export default function NotificationSettingsCard({
                                     {iosAlarmKitMode ? (
                                         <>
                                             <PermissionStatusRow
-                                                label="iOS 시스템 알람 권한"
+                                                label="NoLate 강력 알림 권한"
                                                 ready={iosSystemAlarmReady}
                                                 readyColor={accentBlue}
                                                 textColor={colors.textSecondary}
@@ -744,25 +744,25 @@ function getCapabilityCopy(capabilities: DepartureAlarmCapabilities | null): {
         if (isIOSSystemAlarmReady(capabilities)) {
             return {
                 title: "강력한 알람 준비 완료",
-                description: "iOS 시스템 알람 권한이 준비됐어요. 일반 알림 권한과 별개로 알람이 동작해요.",
+                description: "NoLate 강력 알림 권한이 준비됐어요. 일반 푸시 알림과 별개로 강력하게 알려드려요.",
             };
         }
         if (capabilities.reason === "ALARM_AUTHORIZATION_NOT_DETERMINED") {
             return {
-                title: "시스템 알람 권한을 확인해 주세요",
-                description: "10초 테스트 알람을 실행하면 iOS 시스템 알람 권한을 요청해요.",
+                title: "NoLate 강력 알림 권한을 확인해 주세요",
+                description: "10초 테스트 알림을 실행하면 iOS가 NoLate 강력 알림 권한을 요청해요.",
             };
         }
         if (capabilities.reason === "ALARM_AUTHORIZATION_DENIED") {
             if (!isIOSNotificationDisplayReady(capabilities)) {
                 return {
-                    title: "iOS 알람 권한이 모두 꺼져 있어요",
-                    description: "시스템 알람과 일반 알림 권한이 모두 꺼져 있어 출발 알림이 표시되지 않을 수 있어요.",
+                    title: "NoLate 강력 알림과 일반 알림이 모두 꺼져 있어요",
+                    description: "NoLate 강력 알림과 일반 알림 권한이 모두 꺼져 있어 출발 알림이 표시되지 않을 수 있어요.",
                 };
             }
             return {
-                title: "iOS 시스템 알람 권한이 꺼져 있어요",
-                description: "시스템 알람 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
+                title: "NoLate 강력 알림 권한이 꺼져 있어요",
+                description: "NoLate 강력 알림 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
             };
         }
         if (capabilities.reason === "NOTIFICATION_ALERTS_DISABLED") {

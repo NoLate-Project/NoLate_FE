@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
-import { Alert, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
+import { Alert, AppState, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
@@ -16,6 +16,25 @@ import {
     type PushNavigationTarget,
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
+import {
+    NAVIGATION_PERFORMANCE_ENABLED,
+    NavigationPerformanceOverlay,
+    NavigationPerformanceTracker,
+} from "../src/modules/performance/NavigationPerformanceMonitor";
+import {
+    markNavigationTransitionEnded,
+    markNavigationTransitionStarted,
+} from "../src/modules/performance/navigationPerformance";
+import {
+    activateNativeDepartureActionJournalForAuthenticatedMember,
+    configureNativeDepartureActionNavigation,
+    deactivateNativeDepartureActionJournalRetry,
+} from "../src/modules/notification/nativeDepartureActionJournal";
+import {
+    activateNativeAlarmNavigationJournal,
+    configureNativeAlarmNavigation,
+    deactivateNativeAlarmNavigationJournal,
+} from "../src/modules/notification/nativeAlarmNavigationJournal";
 
 export default function RootLayout() {
     const router = useRouter();
@@ -60,6 +79,46 @@ export default function RootLayout() {
         navigateToPushTarget,
         pendingPushNavigation,
     ]);
+
+    useEffect(() => {
+        if (!isPushNavigationReady({ isAuthenticated, isCurationCompleted, isLoading })) {
+            return undefined;
+        }
+        const removeActionJournal = configureNativeDepartureActionNavigation(() => undefined, (event) => {
+            InteractionManager.runAfterInteractions(() => {
+                Alert.alert(
+                    "출발 완료를 처리하지 못했어요",
+                    "일정 권한이나 알림 상태가 변경되었을 수 있어요. 일정 화면에서 상태를 확인해 주세요.",
+                    [
+                        { text: "닫기", style: "cancel" },
+                        {
+                            text: "일정 열기",
+                            onPress: () => openOrDeferPushTarget({
+                                kind: "scheduleDetail",
+                                scheduleId: event.scheduleId,
+                            }),
+                        },
+                    ],
+                );
+            });
+        });
+        const removeAlarmNavigation = configureNativeAlarmNavigation((scheduleId) => {
+            openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
+        });
+        const subscription = AppState.addEventListener("change", (state) => {
+            if (state === "active") {
+                activateNativeDepartureActionJournalForAuthenticatedMember().catch(() => undefined);
+                activateNativeAlarmNavigationJournal().catch(() => undefined);
+            }
+        });
+        return () => {
+            subscription.remove();
+            removeActionJournal();
+            removeAlarmNavigation();
+            deactivateNativeDepartureActionJournalRetry();
+            deactivateNativeAlarmNavigationJournal();
+        };
+    }, [isAuthenticated, isCurationCompleted, isLoading, openOrDeferPushTarget]);
 
     useEffect(() => {
         let unsubscribeForeground: (() => void) | undefined;
@@ -116,6 +175,12 @@ export default function RootLayout() {
     return (
         <GestureHandlerRootView style={styles.gestureRoot}>
             <RootNavigator />
+            {NAVIGATION_PERFORMANCE_ENABLED ? (
+                <>
+                    <NavigationPerformanceTracker />
+                    <NavigationPerformanceOverlay />
+                </>
+            ) : null}
         </GestureHandlerRootView>
     );
 }
@@ -145,14 +210,25 @@ function RootNavigator() {
     const isPublicRoute =
         routeSegments[0] === "auth" ||
         routeSegments[0] === "legal" ||
-        (routeSegments[0] === "share" && routeSegments[1] !== "inbox");
+        (routeSegments[0] === "share" &&
+            routeSegments[1] !== "inbox" &&
+            routeSegments[1] !== "blocked" &&
+            routeSegments[1] !== "reports");
 
     if (!isAuthenticated && !isPublicRoute) {
         return <Redirect href="/auth/login" />;
     }
 
     return (
-        <Stack screenOptions={{ headerShown: false }}>
+        <Stack
+            screenListeners={NAVIGATION_PERFORMANCE_ENABLED
+                ? {
+                    transitionStart: () => markNavigationTransitionStarted(),
+                    transitionEnd: () => markNavigationTransitionEnded(),
+                }
+                : undefined}
+            screenOptions={{ headerShown: false }}
+        >
             <Stack.Screen name="index" />
             <Stack.Screen name="auth/login" />
             <Stack.Screen name="auth/signup" />
@@ -195,6 +271,8 @@ function RootNavigator() {
                 />
                 <Stack.Screen name="schedule/categories" />
                 <Stack.Screen name="share/inbox" />
+                <Stack.Screen name="share/blocked" />
+                <Stack.Screen name="share/reports" />
                 <Stack.Screen name="schedule/route-select" />
                 <Stack.Screen name="schedule/route-planner" />
                 <Stack.Screen name="schedule/[id]" />

@@ -1,6 +1,5 @@
 import type { CalendarViewMode } from "./components/calendar/viewMode";
 import {
-    CALENDAR_INTERACTION_BUDGET_MS,
     CALENDAR_TRANSITION_DURATION_MS,
 } from "./calendarMotionBudget";
 
@@ -10,6 +9,9 @@ export {
 } from "./calendarMotionBudget";
 
 const CALENDAR_DEPTH_BEZIER = Object.freeze([0.25, 0.1, 0.25, 1] as const);
+const DETAIL_MONTH_SWIPE_SETTLE_BEZIER = Object.freeze(
+    [0, 0, 0.58, 1] as const
+);
 const DETAIL_MONTH_HEIGHT_BEZIER = Object.freeze([0.2, 0, 0, 1] as const);
 const DETAIL_MONTH_COMMIT_FRAME_BUDGET_MS = 16;
 
@@ -23,21 +25,28 @@ export const CALENDAR_DEPTH_MOTION = Object.freeze({
 export type DetailMonthSwipeDirection = -1 | 1;
 
 /**
- * 상세형 월 제스처는 남은 거리·릴리스 속도에 따라 마무리하되 200ms 예산을
- * 넘기지 않는다. 두 축 모두 미리 렌더한 pager를 사용하며, 세로 이동거리는
- * 월별 행 수와 무관한 고정 page 거리다. reduce motion만 짧은 fade를 사용한다.
+ * 상세형 월 제스처는 남은 거리·릴리스 속도에 따라 마무리한다. 최소 시간은
+ * 두지 않는다. Apple Calendar에서 관측한 320~417ms는 손가락을 끄는 시간까지
+ * 포함하므로 release settle에는 그보다 짧은 220ms 상한을 적용한다. 두 축 모두
+ * 미리 렌더한 pager와 실제 측정한 viewport를 사용한다.
  */
 export const DETAIL_MONTH_SWIPE_MOTION = Object.freeze({
     exitDurationMs: 48,
     commitFrameBudgetMs: DETAIL_MONTH_COMMIT_FRAME_BUDGET_MS,
     commitWatchdogMs: 120,
+    // Legacy controlled/button-transition recovery ceiling. Continuous
+    // gestures do not wait for this acknowledgement.
+    pagerAckWatchdogMs: 1_200,
     enterDurationMs: 96,
-    maxGestureSettleDurationMs:
-        CALENDAR_INTERACTION_BUDGET_MS
-            - DETAIL_MONTH_COMMIT_FRAME_BUDGET_MS,
+    maxGestureSettleDurationMs: 220,
+    // Keep controlled React/store updates out of a rapid swipe burst. The
+    // native pager and month pill already show the target immediately; the
+    // authoritative state is coalesced once the user's hand is briefly idle.
+    continuousCommitIdleMs: 600,
     // A committed vertical gesture must still have visible travel after the
     // 36pt threshold. The previous 24pt distance completed the crossfade before
     // release, so the month appeared to dissolve instead of paging.
+    // Layout measurement is authoritative; this value is the pre-layout fallback.
     travel: 320,
     // Button-driven month changes swap the controlled Calendar at the motion
     // midpoint. Keeping a visible floor prevents a delayed ACK (or a queued
@@ -47,6 +56,10 @@ export const DETAIL_MONTH_SWIPE_MOTION = Object.freeze({
     reduceMotionEnterDurationMs: 40,
     reduceMotionTravel: 0,
     bezier: CALENDAR_DEPTH_BEZIER,
+    // Direct drag remains 1:1. This moderate ease-out is only for the
+    // release-to-page-end settle and mirrors Apple Calendar's measured
+    // deceleration without the abrupt braking of stronger cubic ease-outs.
+    settleBezier: DETAIL_MONTH_SWIPE_SETTLE_BEZIER,
 });
 
 /**
@@ -140,8 +153,8 @@ export function getDetailMonthSwipeFollowOpacity(
 
 /**
  * 릴리스 뒤 남은 거리와 목표 방향 속도로 settle 시간을 계산한다.
- * 최소 시간은 두지 않고, 느린 제스처만 상호작용 예산 안에 끝나도록
- * 기준 속도를 보정한다. velocity는 px/ms 단위의 목표 방향 속도다.
+ * 최소 시간은 두지 않고, 느린 제스처만 최대 시간 안에 끝나도록 기준
+ * 속도를 보정한다. velocity는 px/ms 단위의 목표 방향 속도다.
  */
 export function getDetailMonthSwipeSettleDuration(
     remainingDistance: number,

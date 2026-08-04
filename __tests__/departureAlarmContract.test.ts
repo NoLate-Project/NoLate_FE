@@ -1,6 +1,7 @@
 import {
     isDepartureAlarmSyncData,
     parseDepartureAlarmSyncCommand,
+    parseDepartureAlarmSyncPlanCommand,
     parseStrictUtcInstantMilliseconds,
 } from "../src/modules/notification/departureAlarmContract";
 
@@ -17,6 +18,7 @@ describe("departure alarm sync contract", () => {
             alarmId: "schedule:41:member:7",
             scheduleId: "41",
             alarmGeneration: "3",
+            alarmValidationRevision: "0",
             alarmTriggerAt: "2026-07-29T03:00:00Z",
             alarmTitle: "회의 출발 시간",
             snoozeMinutes: "5",
@@ -26,6 +28,7 @@ describe("departure alarm sync contract", () => {
             alarmId: "schedule:41:member:7",
             scheduleId: "41",
             generation: 3,
+            validationRevision: 0,
             recipientMemberId: 7,
             logicalEventKey: "departure-alarm:41:7:3",
             triggerAt: "2026-07-29T03:00:00Z",
@@ -43,19 +46,168 @@ describe("departure alarm sync contract", () => {
             alarmId: "schedule:41:member:7",
             scheduleId: "41",
             alarmGeneration: "4",
+            alarmValidationRevision: "2",
         }, memberId, now)).toEqual({
             operation: "CANCEL",
             alarmId: "schedule:41:member:7",
             scheduleId: "41",
             generation: 4,
+            validationRevision: 2,
             recipientMemberId: 7,
         });
+    });
+
+    it("parses a v2 occurrence plan while retaining elapsed slots for reconciliation", () => {
+        const occurrences = [
+            {
+                occurrenceId: "M15",
+                triggerAt: "2026-07-29T01:55:00Z",
+                title: "곧 출발할 시간이에요",
+                body: "15분 뒤 출발하면 돼요.",
+                decision: "ADVANCE_NOTICE",
+                minutesBeforeDeparture: 15,
+                actionEventKey: `key:${"a".repeat(64)}`,
+            },
+            {
+                occurrenceId: "M10",
+                triggerAt: "2026-07-29T02:00:00Z",
+                title: "출발 10분 전이에요",
+                body: "10분 뒤 출발하면 돼요.",
+                decision: "ADVANCE_NOTICE",
+                minutesBeforeDeparture: 10,
+                actionEventKey: `key:${"b".repeat(64)}`,
+            },
+            {
+                occurrenceId: "M5",
+                triggerAt: "2026-07-29T02:05:00Z",
+                title: "출발 5분 전이에요",
+                body: "5분 뒤 출발하면 돼요.",
+                decision: "ADVANCE_NOTICE",
+                minutesBeforeDeparture: 5,
+                actionEventKey: `key:${"c".repeat(64)}`,
+            },
+            {
+                occurrenceId: "M0",
+                triggerAt: "2026-07-29T02:10:00Z",
+                title: "지금 출발할 시간이에요",
+                body: "지금 출발하면 약속 시간에 맞을 수 있어요.",
+                decision: "DEPART_NOW",
+                minutesBeforeDeparture: 0,
+                actionEventKey: `key:${"d".repeat(64)}`,
+            },
+        ];
+        const plan = parseDepartureAlarmSyncPlanCommand({
+            type: "DEPARTURE_ALARM_SYNC",
+            alarmSchemaVersion: "1",
+            alarmPlanSchemaVersion: "2",
+            recipientMemberId: "7",
+            alarmOperation: "UPSERT",
+            alarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            alarmGeneration: "5",
+            alarmValidationRevision: "3",
+            alarmTriggerAt: "2026-07-29T02:10:00Z",
+            alarmTitle: "지금 출발할 시간이에요",
+            snoozeMinutes: "5",
+            alarmOccurrencesJson: JSON.stringify(occurrences),
+        }, memberId, now);
+
+        expect(plan).toMatchObject({
+            planSchemaVersion: 2,
+            generation: 5,
+            validationRevision: 3,
+            occurrences: [
+                {
+                    occurrenceId: "M15",
+                    nativeAlarmId: "schedule:41:member:7:occurrence:M15",
+                },
+                expect.objectContaining({ occurrenceId: "M10" }),
+                expect.objectContaining({ occurrenceId: "M5" }),
+                {
+                    occurrenceId: "M0",
+                    nativeAlarmId: "schedule:41:member:7:occurrence:M0",
+                },
+            ],
+        });
+        expect(parseDepartureAlarmSyncCommand({
+            type: "DEPARTURE_ALARM_SYNC",
+            alarmSchemaVersion: "1",
+            alarmPlanSchemaVersion: "2",
+            recipientMemberId: "7",
+            alarmOperation: "UPSERT",
+            alarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            alarmGeneration: "5",
+            alarmValidationRevision: "3",
+            alarmTriggerAt: "2026-07-29T02:10:00Z",
+            alarmTitle: "지금 출발할 시간이에요",
+            snoozeMinutes: "5",
+            alarmOccurrencesJson: JSON.stringify(occurrences),
+        }, memberId, now)).toMatchObject({ occurrenceId: "M0" });
+    });
+
+    it("rejects a v2 plan whose legacy M0 fields disagree with its M0 occurrence", () => {
+        expect(parseDepartureAlarmSyncPlanCommand({
+            type: "DEPARTURE_ALARM_SYNC",
+            alarmSchemaVersion: "1",
+            alarmPlanSchemaVersion: "2",
+            recipientMemberId: "7",
+            alarmOperation: "UPSERT",
+            alarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            alarmGeneration: "5",
+            alarmValidationRevision: "3",
+            alarmTriggerAt: "2026-07-29T03:00:00Z",
+            alarmTitle: "다른 제목",
+            snoozeMinutes: "5",
+            alarmOccurrencesJson: JSON.stringify([{
+                occurrenceId: "M0",
+                triggerAt: "2026-07-29T03:00:00Z",
+                title: "지금 출발할 시간이에요",
+                body: "본문",
+                decision: "DEPART_NOW",
+                minutesBeforeDeparture: 0,
+                actionEventKey: `key:${"c".repeat(64)}`,
+            }]),
+        }, memberId, now)).toBeUndefined();
     });
 
     it("only classifies the reserved sync type as a sync message", () => {
         expect(isDepartureAlarmSyncData({ type: "DEPARTURE_ALARM_SYNC" })).toBe(true);
         expect(isDepartureAlarmSyncData({ type: "SCHEDULE_DEPARTURE_REMINDER" })).toBe(false);
         expect(isDepartureAlarmSyncData(undefined)).toBe(false);
+    });
+
+    it("treats a missing validation revision as legacy revision zero", () => {
+        expect(parseDepartureAlarmSyncCommand({
+            type: "DEPARTURE_ALARM_SYNC",
+            alarmSchemaVersion: "1",
+            recipientMemberId: "7",
+            alarmOperation: "CANCEL",
+            alarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            alarmGeneration: "4",
+        }, memberId, now)).toMatchObject({
+            generation: 4,
+            validationRevision: 0,
+        });
+    });
+
+    it.each([
+        ["negative", "-1"],
+        ["non-canonical", "01"],
+        ["outside the JavaScript safe integer range", "9007199254740992"],
+    ])("rejects a %s validation revision", (_label, alarmValidationRevision) => {
+        expect(parseDepartureAlarmSyncCommand({
+            type: "DEPARTURE_ALARM_SYNC",
+            alarmSchemaVersion: "1",
+            recipientMemberId: "7",
+            alarmOperation: "CANCEL",
+            alarmId: "schedule:41:member:7",
+            scheduleId: "41",
+            alarmGeneration: "4",
+            alarmValidationRevision,
+        }, memberId, now)).toBeUndefined();
     });
 
     it.each([

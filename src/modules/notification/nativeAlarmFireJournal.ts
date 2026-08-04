@@ -49,6 +49,7 @@ async function deliveryAckHandler(event: NativeAlarmFireEvent): Promise<boolean>
         occurredAt: event.occurredAt,
         timingBasis: event.timingBasis,
         deviceId: await getOrCreatePushDeviceId(),
+        ...(event.occurrenceId ? { occurrenceId: event.occurrenceId } : {}),
     });
     // Snapshot-origin alarms intentionally have no logicalEventKey. Never infer
     // one from alarmId; their dedicated lifecycle event is sufficient.

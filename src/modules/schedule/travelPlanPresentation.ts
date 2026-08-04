@@ -31,6 +31,7 @@ export function buildTravelPlanPayload(
         departAt: payload.departAt,
         travelMode: payload.travelMode,
         origin: payload.origin,
+        destination: payload.destination,
         route: payload.route,
         notificationEnabled: payload.notificationEnabled,
         notificationLeadMinutes: payload.notificationLeadMinutes,

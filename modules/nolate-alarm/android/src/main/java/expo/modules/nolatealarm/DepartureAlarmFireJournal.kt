@@ -15,7 +15,7 @@ internal class DepartureAlarmFireJournal(context: Context) {
     val recipientMemberId = alarm.recipientMemberId ?: return@synchronized false
     val incoming = StoredAlarmFireEvent(
       eventId = UUID.randomUUID().toString(),
-      alarmId = alarm.alarmId,
+      alarmId = alarm.logicalAlarmId,
       scheduleId = alarm.scheduleId,
       generation = alarm.generation,
       recipientMemberId = recipientMemberId,
@@ -23,7 +23,8 @@ internal class DepartureAlarmFireJournal(context: Context) {
       sourceTriggerAtMillis = alarm.sourceTriggerAtMillis,
       occurredAtMillis = occurredAtMillis,
       logicalEventKey = alarm.logicalEventKey,
-      timingBasis = AlarmFireTimingBasis.EXACT_CALLBACK
+      timingBasis = AlarmFireTimingBasis.EXACT_CALLBACK,
+      occurrenceId = alarm.occurrenceId
     )
     writeAllUnlocked(AlarmFireEventPolicy.merge(readAllUnlocked(), incoming))
   }
@@ -65,6 +66,7 @@ internal class DepartureAlarmFireJournal(context: Context) {
     .put("occurredAtMillis", event.occurredAtMillis)
     .put("timingBasis", event.timingBasis.name)
     .put("logicalEventKey", event.logicalEventKey ?: JSONObject.NULL)
+    .put("occurrenceId", event.occurrenceId ?: JSONObject.NULL)
     .toString()
 
   private fun decode(raw: String?): StoredAlarmFireEvent? {
@@ -90,6 +92,11 @@ internal class DepartureAlarmFireJournal(context: Context) {
           null
         } else {
           json.optString("logicalEventKey").takeIf { it.isNotBlank() }
+        },
+        occurrenceId = if (!json.has("occurrenceId") || json.isNull("occurrenceId")) {
+          null
+        } else {
+          json.optString("occurrenceId").takeIf { it in setOf("M15", "M10", "M5", "M0") }
         }
       )
     }.getOrNull()

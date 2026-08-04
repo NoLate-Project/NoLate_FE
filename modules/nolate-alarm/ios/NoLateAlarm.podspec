@@ -14,7 +14,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
 
   s.source_files = '*.swift'
-  s.frameworks = 'CryptoKit', 'Foundation', 'UIKit', 'UserNotifications', 'SwiftUI'
+  s.frameworks = 'AppIntents', 'CryptoKit', 'Foundation', 'UIKit', 'UserNotifications', 'SwiftUI'
   s.weak_frameworks = 'AlarmKit'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

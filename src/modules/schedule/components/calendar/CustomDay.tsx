@@ -65,8 +65,12 @@ type Props = {
     dayMetadata?: CalendarDayMetadata;
     isSelectedDay?: boolean;
     onPress?: (date: CalendarDate) => void;
+    allowDisabledPress?: boolean;
     viewMode: CalendarViewMode;
     animatedCellHeight?: SharedValue<number>;
+    animatedSelectedDayKey?: SharedValue<number>;
+    detailPagerMonthOrdinal?: number;
+    detailCellHeight?: number;
     stackPresentation?: StackDayPresentation;
     stackEventTop?: number;
     hideStackEventLabels?: boolean;
@@ -100,69 +104,234 @@ function colorWithOpacity(color: string, opacity: number) {
 }
 
 // 캘린더의 하루 셀을 선택 상태와 일정 마커에 맞춰 렌더링한다.
-export default function CustomDay({
+function CustomDay({
     date,
     state,
     marking,
     dayMetadata,
     isSelectedDay,
     onPress,
+    allowDisabledPress = false,
     viewMode,
     animatedCellHeight,
+    animatedSelectedDayKey,
+    detailPagerMonthOrdinal,
+    detailCellHeight,
     stackPresentation,
     stackEventTop,
     hideStackEventLabels = false,
 }: Props) {
     const { colors, mode } = useTheme();
     const cellHeight = CALENDAR_DAY_HEIGHTS[viewMode];
-    const usesResponsiveDetailGeometry = viewMode === "detail" && Boolean(animatedCellHeight);
+    const usesResponsiveDetailGeometry = viewMode === "detail"
+        && (
+            Boolean(animatedCellHeight)
+            || Number.isFinite(detailCellHeight)
+        );
     const hasResponsiveHoliday = (dayMetadata?.holidays?.length ?? 0) > 0;
     const [pressedSelection, setPressedSelection] = React.useState(false);
-    const animatedCellStyle = useAnimatedStyle(() => ({
-        height: animatedCellHeight
-            ? viewMode === "detail"
-                ? Math.max(32, animatedCellHeight.value)
-                : animatedCellHeight.value
-            : cellHeight,
-    }), [animatedCellHeight, cellHeight, viewMode]);
-    const animatedDayCircleStyle = useAnimatedStyle(() => {
-        if (!usesResponsiveDetailGeometry) return {};
+    const isDisabled = state === "disabled";
+    const isPressDisabled = isDisabled && !allowDisabledPress;
+    const isToday = state === "today";
+    const isSelected = pressedSelection || (isSelectedDay ?? marking?.selected);
+    const dateKey = date
+        ? date.year * 10_000 + date.month * 100 + date.day
+        : 0;
+    const usesAnimatedDetailSelection = viewMode === "detail"
+        && Boolean(animatedSelectedDayKey)
+        && dateKey > 0;
+    const resolveAnimatedSelectionKey = (selectedKey: number) => {
+        "worklet";
 
-        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        if (detailPagerMonthOrdinal === undefined) return selectedKey;
+        const selectedDate = selectedKey % 100;
+        const targetYear = Math.floor(detailPagerMonthOrdinal / 12);
+        const targetMonth = detailPagerMonthOrdinal - targetYear * 12 + 1;
+        const isLeapYear = targetYear % 4 === 0
+            && (targetYear % 100 !== 0 || targetYear % 400 === 0);
+        const lastDate = targetMonth === 2
+            ? isLeapYear ? 29 : 28
+            : targetMonth === 4
+                || targetMonth === 6
+                || targetMonth === 9
+                || targetMonth === 11
+                ? 30
+                : 31;
+        return targetYear * 10_000
+            + targetMonth * 100
+            + Math.min(selectedDate, lastDate);
+    };
+    const weekday = date
+        ? new Date(`${date.dateString}T00:00:00`).getDay()
+        : -1;
+    const isSunday = weekday === 0;
+    const isWeekend = weekday === 0 || weekday === 6;
+    const hasHoliday = (dayMetadata?.holidays?.length ?? 0) > 0;
+    const weekendDateColor = mode === "dark"
+        ? "rgba(235,235,245,0.52)"
+        : "rgba(60,60,67,0.52)";
+    const todayAccent = mode === "dark" ? "#ff453a" : "#ff3b30";
+    const holidayAccent = mode === "dark" ? "#ff6961" : "#d92d20";
+    const selectedCircleColor = isToday ? todayAccent : colors.selectedDayBg;
+    const selectedTextColor = isToday ? "#ffffff" : colors.selectedDayText;
+    const showsFilledCircle = isToday || isSelected;
+    const defaultTextColor = isDisabled
+        ? colors.textPrimary
+        : isToday
+        ? todayAccent
+        : hasHoliday || isSunday
+        ? holidayAccent
+        : isWeekend
+        ? weekendDateColor
+        : colors.textPrimary;
+    const animatedCellStyle = useAnimatedStyle(() => ({
+        height: viewMode === "detail" && Number.isFinite(detailCellHeight)
+            ? Math.max(32, detailCellHeight ?? cellHeight)
+            : animatedCellHeight
+                ? viewMode === "detail"
+                    ? Math.max(32, animatedCellHeight.value)
+                    : animatedCellHeight.value
+                : cellHeight,
+    }), [animatedCellHeight, cellHeight, detailCellHeight, viewMode]);
+    const animatedDayCircleStyle = useAnimatedStyle(() => {
+        const selectedKey = resolveAnimatedSelectionKey(
+            animatedSelectedDayKey?.value ?? 0
+        );
+        const selectionStyle = usesAnimatedDetailSelection && !isToday
+            ? {
+                backgroundColor:
+                    selectedKey === dateKey
+                        ? selectedCircleColor
+                        : "transparent",
+            }
+            : {};
+        if (!usesResponsiveDetailGeometry) return selectionStyle;
+
+        const height = Math.max(
+            32,
+            Math.min(
+                cellHeight,
+                detailCellHeight ?? animatedCellHeight?.value ?? cellHeight
+            )
+        );
         const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
         const size = 16 + 24 * progress;
         return {
+            ...selectionStyle,
             width: size,
             height: size,
             borderRadius: size / 2,
             marginTop: 1 + 7 * progress,
         };
-    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    }, [
+        animatedCellHeight,
+        animatedSelectedDayKey,
+        cellHeight,
+        dateKey,
+        detailCellHeight,
+        isToday,
+        selectedCircleColor,
+        usesAnimatedDetailSelection,
+        detailPagerMonthOrdinal,
+        usesResponsiveDetailGeometry,
+    ]);
     const animatedDayTextStyle = useAnimatedStyle(() => {
-        if (!usesResponsiveDetailGeometry) return {};
+        const visuallySelected = resolveAnimatedSelectionKey(
+            animatedSelectedDayKey?.value ?? 0
+        ) === dateKey;
+        const selectionStyle = usesAnimatedDetailSelection && !isToday
+            ? {
+                color: visuallySelected
+                    ? selectedTextColor
+                    : defaultTextColor,
+                fontWeight: visuallySelected
+                    ? ("700" as const)
+                    : ("600" as const),
+            }
+            : {};
+        if (!usesResponsiveDetailGeometry) return selectionStyle;
 
-        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const height = Math.max(
+            32,
+            Math.min(
+                cellHeight,
+                detailCellHeight ?? animatedCellHeight?.value ?? cellHeight
+            )
+        );
         const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
         return {
+            ...selectionStyle,
             fontSize: 10 + 8 * progress,
             lineHeight: 10 + 10 * progress,
         };
-    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    }, [
+        animatedCellHeight,
+        animatedSelectedDayKey,
+        cellHeight,
+        dateKey,
+        defaultTextColor,
+        detailCellHeight,
+        isToday,
+        selectedTextColor,
+        usesAnimatedDetailSelection,
+        detailPagerMonthOrdinal,
+        usesResponsiveDetailGeometry,
+    ]);
     const animatedLunarTextStyle = useAnimatedStyle(() => {
-        if (!usesResponsiveDetailGeometry) return {};
+        const selectedKey = resolveAnimatedSelectionKey(
+            animatedSelectedDayKey?.value ?? 0
+        );
+        const selectionStyle = usesAnimatedDetailSelection && !isToday
+            ? {
+                color: selectedKey === dateKey
+                    ? selectedTextColor
+                    : hasHoliday || isSunday
+                    ? holidayAccent
+                    : colors.textSecondary,
+            }
+            : {};
+        if (!usesResponsiveDetailGeometry) return selectionStyle;
 
-        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const height = Math.max(
+            32,
+            Math.min(
+                cellHeight,
+                detailCellHeight ?? animatedCellHeight?.value ?? cellHeight
+            )
+        );
         const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
         return {
+            ...selectionStyle,
             maxWidth: 14 + 24 * progress,
             fontSize: 4.5 + 3.5 * progress,
             lineHeight: 5 + 4 * progress,
         };
-    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    }, [
+        animatedCellHeight,
+        animatedSelectedDayKey,
+        cellHeight,
+        colors.textSecondary,
+        dateKey,
+        detailCellHeight,
+        hasHoliday,
+        holidayAccent,
+        isSunday,
+        isToday,
+        selectedTextColor,
+        usesAnimatedDetailSelection,
+        detailPagerMonthOrdinal,
+        usesResponsiveDetailGeometry,
+    ]);
     const animatedHolidayStyle = useAnimatedStyle(() => {
         if (!usesResponsiveDetailGeometry) return {};
 
-        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const height = Math.max(
+            32,
+            Math.min(
+                cellHeight,
+                detailCellHeight ?? animatedCellHeight?.value ?? cellHeight
+            )
+        );
         const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
         const circleTop = 1 + 7 * progress;
         const circleSize = 16 + 24 * progress;
@@ -171,11 +340,22 @@ export default function CustomDay({
             fontSize: 5.5 + 3 * progress,
             lineHeight: 6 + 4 * progress,
         };
-    }, [animatedCellHeight, cellHeight, usesResponsiveDetailGeometry]);
+    }, [
+        animatedCellHeight,
+        cellHeight,
+        detailCellHeight,
+        usesResponsiveDetailGeometry,
+    ]);
     const animatedDetailMarkersStyle = useAnimatedStyle(() => {
         if (!usesResponsiveDetailGeometry) return {};
 
-        const height = Math.max(32, Math.min(cellHeight, animatedCellHeight?.value ?? cellHeight));
+        const height = Math.max(
+            32,
+            Math.min(
+                cellHeight,
+                detailCellHeight ?? animatedCellHeight?.value ?? cellHeight
+            )
+        );
         const progress = Math.max(0, Math.min(1, (height - 32) / (cellHeight - 32)));
         const circleTop = 1 + 7 * progress;
         const circleSize = 16 + 24 * progress;
@@ -189,6 +369,7 @@ export default function CustomDay({
     }, [
         animatedCellHeight,
         cellHeight,
+        detailCellHeight,
         hasResponsiveHoliday,
         usesResponsiveDetailGeometry,
     ]);
@@ -212,19 +393,9 @@ export default function CustomDay({
         );
     }
 
-    const isDisabled = state === "disabled";
-    const isToday = state === "today";
-    const isSelected = pressedSelection || (isSelectedDay ?? marking?.selected);
-    const weekday = new Date(`${date.dateString}T00:00:00`).getDay();
-    const isSunday = weekday === 0;
-    const isWeekend = weekday === 0 || weekday === 6;
     const lunarText = formatLunarCalendarDay(dayMetadata);
     const holidayNames = (dayMetadata?.holidays ?? []).map((holiday) => holiday.name);
     const holidayText = holidayNames.join(" · ");
-    const hasHoliday = holidayNames.length > 0;
-    const weekendDateColor = mode === "dark"
-        ? "rgba(235,235,245,0.52)"
-        : "rgba(60,60,67,0.52)";
 
     const hasPeriods = !!(marking?.periods && marking.periods.length > 0);
     const hasDots = !!(marking?.dots && marking.dots.length > 0);
@@ -252,23 +423,9 @@ export default function CustomDay({
     const markerTop = (
         viewMode === "list" ? 47 : viewMode === "week" ? 54 : 53
     ) + (hasHoliday ? 10 : 0);
-    const todayAccent = mode === "dark" ? "#ff453a" : "#ff3b30";
-    const holidayAccent = mode === "dark" ? "#ff6961" : "#d92d20";
-    const selectedCircleColor = isToday ? todayAccent : colors.selectedDayBg;
-    const selectedTextColor = isToday ? "#ffffff" : colors.selectedDayText;
-    const showsFilledCircle = isToday || isSelected;
     const selectedBorderColor = "transparent";
-    const defaultTextColor = isDisabled
-        ? colors.textPrimary
-        : isToday
-        ? todayAccent
-        : hasHoliday || isSunday
-        ? holidayAccent
-        : isWeekend
-        ? weekendDateColor
-        : colors.textPrimary;
     const triggerPress = () => {
-        if (isDisabled) return;
+        if (isPressDisabled) return;
         setPressedSelection(true);
         onPress?.(date);
     };
@@ -286,10 +443,13 @@ export default function CustomDay({
             <Pressable
                 testID={`calendar-day-${date.dateString}`}
                 onPress={triggerPress}
-                disabled={isDisabled}
+                disabled={isPressDisabled}
                 accessibilityRole="button"
                 accessibilityLabel={accessibilityLabel}
-                accessibilityState={{ selected: Boolean(isSelected), disabled: isDisabled }}
+                accessibilityState={{
+                    selected: Boolean(isSelected),
+                    disabled: isPressDisabled,
+                }}
                 style={({ pressed }) => [
                     styles.cell,
                     {
@@ -522,6 +682,27 @@ export default function CustomDay({
         </Reanimated.View>
     );
 }
+
+function areCustomDayPropsEqual(previous: Props, next: Props): boolean {
+    return (
+        previous.date?.dateString === next.date?.dateString
+        && previous.state === next.state
+        && previous.marking === next.marking
+        && previous.dayMetadata === next.dayMetadata
+        && previous.isSelectedDay === next.isSelectedDay
+        && previous.onPress === next.onPress
+        && previous.allowDisabledPress === next.allowDisabledPress
+        && previous.viewMode === next.viewMode
+        && previous.animatedCellHeight === next.animatedCellHeight
+        && previous.animatedSelectedDayKey === next.animatedSelectedDayKey
+        && previous.detailCellHeight === next.detailCellHeight
+        && previous.stackPresentation === next.stackPresentation
+        && previous.stackEventTop === next.stackEventTop
+        && previous.hideStackEventLabels === next.hideStackEventLabels
+    );
+}
+
+export default React.memo(CustomDay, areCustomDayPropsEqual);
 
 const styles = StyleSheet.create({
     animatedCell: {

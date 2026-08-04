@@ -5,22 +5,35 @@ import {
     getRefreshToken,
 } from "../auth/authStorage";
 import {
-    applyDepartureAlarmCommand,
+    applyDepartureAlarmPlanCommand,
     clearAllDepartureAlarms,
     isDepartureAlarmNativeAvailable,
 } from "./departureAlarm";
 import * as SecureStore from "../storage/secureStorage";
 import {
     isDepartureAlarmSyncData,
-    parseDepartureAlarmSyncCommand,
+    isDepartureAlarmOccurrenceEligible,
+    parseDepartureAlarmSyncPlanCommand,
 } from "./departureAlarmContract";
 import { acknowledgePushDelivery } from "./pushDeliveryAck";
 import {
     classifyDepartureAlarmReceiptOutcome,
     recordDepartureAlarmScheduleReceiptDurably,
+    reserveDepartureAlarmMutationSequence,
 } from "./departureAlarmScheduleReceiptQueue";
-import type { DepartureAlarmMutationResult } from "./departureAlarm";
-import type { DepartureAlarmSyncCommand } from "./departureAlarmContract";
+import {
+    claimDepartureAlarmValidationRevision,
+    clearDepartureAlarmValidationRevisions,
+    resetDepartureAlarmValidationRevisionJournalForTests,
+} from "./departureAlarmValidationRevisionJournal";
+import type {
+    DepartureAlarmMutationResult,
+    DepartureAlarmPlanMutationExecution,
+} from "./departureAlarm";
+import type {
+    DepartureAlarmSyncCommand,
+    DepartureAlarmSyncPlanCommand,
+} from "./departureAlarmContract";
 
 export type DepartureAlarmSnapshotReconcileResult = {
     fetched: boolean;
@@ -116,39 +129,54 @@ export async function handleDepartureAlarmSyncData(
 
     const generation = syncGeneration;
     const execution = await enqueueNativeMutation(async (): Promise<{
-        command: DepartureAlarmSyncCommand;
-        result: DepartureAlarmMutationResult;
+        plan: DepartureAlarmSyncPlanCommand;
+        executions: DepartureAlarmPlanMutationExecution[];
     } | undefined> => {
         if (await isAccountCleanupBlocked()) return;
         const memberId = await getCurrentAuthenticatedMemberId();
         if (!memberId || generation !== syncGeneration) return;
 
-        const command = parseDepartureAlarmSyncCommand(data, memberId);
-        if (!command || !(await isCurrentAccount(memberId, generation))) return;
+        const plan = parseDepartureAlarmSyncPlanCommand(data, memberId);
+        if (!plan || !(await isCurrentAccount(memberId, generation))) return;
 
         try {
-            const result = await applyDepartureAlarmCommand(command);
-            return { command, result };
+            if (await claimDepartureAlarmValidationRevision(plan) === "STALE") return;
+        } catch (error) {
+            // Without the durable revision fence, an older equal-generation command could undo a
+            // newer control after restart. Consume it silently and let snapshot recovery retry.
+            logSyncDevelopment("[alarm-sync] validation revision claim failed", error);
+            return;
+        }
+
+        try {
+            const executions = await reserveReceiptOrderForExecutions(
+                await applyDepartureAlarmPlanCommand(plan),
+            );
+            return { plan, executions };
         } catch (error) {
             logSyncDevelopment("[alarm-sync] native command failed", error);
-            return { command, result: nativeBridgeFailureResult() };
+            return {
+                plan,
+                executions: await reserveReceiptOrderForExecutions(
+                    failureExecutionsForPlan(plan),
+                ),
+            };
         }
     });
     if (execution) {
-        const receipt = recordDepartureAlarmScheduleReceiptDurably(
-            execution.command,
-            execution.result,
-            "PUSH",
+        const receipts = execution.executions.map((item) =>
+            recordReceiptForExecution(item, "PUSH")
         );
         // Keep the network ACK outside the serialized native mutation queue so
         // an unavailable server cannot delay newer UPSERT/CANCEL commands.
-        const scheduledAck = execution.command.operation === "UPSERT" &&
-            execution.result.scheduled === true
+        const scheduledAck = execution.plan.planSchemaVersion === 1 &&
+            execution.plan.operation === "UPSERT" &&
+            execution.executions.some(({ result }) => result.scheduled === true)
             ? acknowledgePushDelivery(data, "ALARM_SCHEDULED", {
-                alarmId: execution.command.alarmId,
+                alarmId: execution.plan.alarmId,
             })
             : Promise.resolve(false);
-        await Promise.all([receipt, scheduledAck]);
+        await Promise.all([...receipts, scheduledAck]);
     }
     return true;
 }
@@ -242,10 +270,7 @@ export function reconcileDepartureAlarmSnapshot(
             let appliedCount = 0;
             let droppedCount = 0;
             let failedCount = 0;
-            const executions: Array<{
-                command: DepartureAlarmSyncCommand;
-                result: DepartureAlarmMutationResult;
-            }> = [];
+            const executions: DepartureAlarmPlanMutationExecution[] = [];
             const parsedAtMilliseconds = Date.now();
 
             for (const rawCommand of rawCommands) {
@@ -263,27 +288,45 @@ export function reconcileDepartureAlarmSnapshot(
                     };
                 }
 
-                const command = parseDepartureAlarmSyncCommand(
+                const plan = parseDepartureAlarmSyncPlanCommand(
                     asDataMap(rawCommand),
                     expectedMemberId,
                     parsedAtMilliseconds,
                 );
-                if (!command) {
+                if (!plan) {
                     droppedCount += 1;
                     continue;
                 }
 
                 try {
-                    const result = await applyDepartureAlarmCommand(command);
-                    executions.push({ command, result });
-                    if (classifyDepartureAlarmReceiptOutcome(command, result) === "FAILED") {
-                        failedCount += 1;
-                    } else {
-                        appliedCount += 1;
+                    if (await claimDepartureAlarmValidationRevision(plan) === "STALE") {
+                        droppedCount += 1;
+                        continue;
                     }
                 } catch (error) {
-                    const result = nativeBridgeFailureResult();
-                    executions.push({ command, result });
+                    failedCount += 1;
+                    logSyncDevelopment("[alarm-sync] validation revision claim failed", error);
+                    continue;
+                }
+
+                try {
+                    const planExecutions = await reserveReceiptOrderForExecutions(
+                        await applyDepartureAlarmPlanCommand(
+                            plan,
+                            parsedAtMilliseconds,
+                        ),
+                    );
+                    executions.push(...planExecutions);
+                    const planFailed = planExecutions.some(({ command, result }) =>
+                        classifyDepartureAlarmReceiptOutcome(command, result) === "FAILED"
+                    );
+                    if (planFailed) failedCount += 1;
+                    else appliedCount += 1;
+                } catch (error) {
+                    const failures = await reserveReceiptOrderForExecutions(
+                        failureExecutionsForPlan(plan, parsedAtMilliseconds),
+                    );
+                    executions.push(...failures);
                     failedCount += 1;
                     logSyncDevelopment("[alarm-sync] snapshot command failed", error);
                 }
@@ -293,8 +336,8 @@ export function reconcileDepartureAlarmSnapshot(
                 executions,
             };
         });
-        await Promise.all(mutation.executions.map(({ command, result }) =>
-            recordDepartureAlarmScheduleReceiptDurably(command, result, "SNAPSHOT")
+        await Promise.all(mutation.executions.map((item) =>
+            recordReceiptForExecution(item, "SNAPSHOT")
         ));
         return mutation.summary;
     })().finally(() => {
@@ -368,10 +411,15 @@ export async function clearDepartureAlarmsForAccountCleanup(): Promise<boolean> 
         logSyncDevelopment("[alarm-sync] cleanup fence persistence failed", error);
         throw error;
     }
+    const memberId = await getCurrentAuthenticatedMemberId();
     if (!isDepartureAlarmNativeAvailable()) {
         throw new Error("Departure alarm native module is unavailable during account cleanup.");
     }
-    return enqueueNativeMutation(() => clearAllDepartureAlarms());
+    return enqueueNativeMutation(async () => {
+        const cleared = await clearAllDepartureAlarms();
+        if (cleared && memberId) await clearDepartureAlarmValidationRevisions(memberId);
+        return cleared;
+    });
 }
 
 /**
@@ -398,6 +446,7 @@ export async function activateDepartureAlarmSyncForAuthenticatedAccount(
             // state at an explicit login/signup boundary, then rebuild only
             // the confirmed account from its authoritative snapshot.
             await clearAllDepartureAlarms();
+            await clearDepartureAlarmValidationRevisions(memberId);
         } catch (error) {
             logSyncDevelopment("[alarm-sync] activation purge failed", error);
             return false;
@@ -453,6 +502,64 @@ function nativeBridgeFailureResult(): DepartureAlarmMutationResult {
     };
 }
 
+function failureExecutionsForPlan(
+    plan: DepartureAlarmSyncPlanCommand,
+    nowMilliseconds = Date.now(),
+): DepartureAlarmPlanMutationExecution[] {
+    if (plan.operation === "CANCEL") {
+        const command: DepartureAlarmSyncCommand = {
+            operation: "CANCEL",
+            alarmId: plan.alarmId,
+            scheduleId: plan.scheduleId,
+            generation: plan.generation,
+            recipientMemberId: plan.recipientMemberId,
+            ...(plan.logicalEventKey ? { logicalEventKey: plan.logicalEventKey } : {}),
+        };
+        return [{ command, result: nativeBridgeFailureResult() }];
+    }
+    return plan.occurrences
+        .filter((command) => isDepartureAlarmOccurrenceEligible(command, nowMilliseconds))
+        .map((command) => ({ command, result: nativeBridgeFailureResult() }));
+}
+
+async function reserveReceiptOrderForExecutions(
+    executions: DepartureAlarmPlanMutationExecution[],
+): Promise<DepartureAlarmPlanMutationExecution[]> {
+    const ordered: DepartureAlarmPlanMutationExecution[] = [];
+    for (const execution of executions) {
+        const mutationOccurredAt = new Date().toISOString();
+        const mutationSequence = execution.command.occurrenceId
+            ? await reserveDepartureAlarmMutationSequence(execution.command.recipientMemberId)
+            : undefined;
+        ordered.push({
+            ...execution,
+            mutationOccurredAt,
+            ...(mutationSequence ? { mutationSequence } : {}),
+        });
+    }
+    return ordered;
+}
+
+function recordReceiptForExecution(
+    execution: DepartureAlarmPlanMutationExecution,
+    source: "PUSH" | "SNAPSHOT",
+): Promise<"sent" | "queued" | "rejected"> {
+    if (!execution.command.occurrenceId) {
+        return recordDepartureAlarmScheduleReceiptDurably(
+            execution.command,
+            execution.result,
+            source,
+        );
+    }
+    return recordDepartureAlarmScheduleReceiptDurably(
+        execution.command,
+        execution.result,
+        source,
+        execution.mutationOccurredAt,
+        execution.mutationSequence,
+    );
+}
+
 /** Test-only reset for module-level sequencing state. */
 export async function resetDepartureAlarmSyncForTests(): Promise<void> {
     if (process.env.NODE_ENV !== "test") return;
@@ -460,6 +567,7 @@ export async function resetDepartureAlarmSyncForTests(): Promise<void> {
     snapshotInFlight = null;
     await nativeMutationQueue;
     await SecureStore.deleteItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY).catch(() => undefined);
+    await resetDepartureAlarmValidationRevisionJournalForTests();
     accountCleanupBlocked = false;
     nativeMutationQueue = Promise.resolve();
 }

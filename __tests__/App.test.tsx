@@ -441,7 +441,7 @@ describe("schedule push navigation payload", () => {
     test("일정 상세 route를 생성한다", () => {
         expect(createScheduleDetailRoute("42")).toEqual({
             pathname: "/schedule/[id]",
-            params: { id: "42" },
+            params: { id: "42", openRouteDetail: "1" },
         });
     });
 
@@ -451,7 +451,7 @@ describe("schedule push navigation payload", () => {
             scheduleId: "42",
         })).toEqual({
             pathname: "/schedule/[id]",
-            params: { id: "42" },
+            params: { id: "42", openRouteDetail: "1" },
         });
     });
 

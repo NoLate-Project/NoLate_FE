@@ -4,6 +4,8 @@ import {
     getCalendarMetadataPrefetchRange,
     getCalendarMetadataRange,
     indexCalendarDays,
+    isCalendarMetadataMonthComplete,
+    mergeCalendarMetadataDays,
     type CalendarDayMetadata,
 } from "../src/modules/schedule/calendarMetadata";
 
@@ -57,5 +59,75 @@ describe("calendar metadata presentation", () => {
         };
 
         expect(indexCalendarDays([day])).toEqual({ "2026-08-15": day });
+    });
+
+    test("SWR snapshot은 월 전체 refresh 완료 여부를 구분한다", () => {
+        const completeFebruary: Record<string, CalendarDayMetadata> = Object.fromEntries(
+            Array.from({ length: 28 }, (_, index) => {
+                const date = `2026-02-${String(index + 1).padStart(2, "0")}`;
+                return [date, {
+                    date,
+                    holidays: [],
+                    metadataComplete: true,
+                } satisfies CalendarDayMetadata];
+            })
+        );
+        expect(isCalendarMetadataMonthComplete(
+            completeFebruary,
+            "2026-02"
+        )).toBe(true);
+
+        completeFebruary["2026-02-14"] = {
+            ...completeFebruary["2026-02-14"],
+            metadataComplete: false,
+        };
+        expect(isCalendarMetadataMonthComplete(
+            completeFebruary,
+            "2026-02"
+        )).toBe(false);
+    });
+
+    test("늦게 도착한 partial 응답이 이미 완료된 날짜를 덮지 않는다", () => {
+        const completeDay: CalendarDayMetadata = {
+            date: "2027-02-09",
+            lunarMonth: 1,
+            lunarDay: 3,
+            holidays: [{ name: "대체공휴일(설날)", type: "PUBLIC_HOLIDAY" }],
+            metadataComplete: true,
+        };
+        const current = { [completeDay.date]: completeDay };
+        const partialDay: CalendarDayMetadata = {
+            date: completeDay.date,
+            holidays: [],
+            metadataComplete: false,
+        };
+
+        expect(mergeCalendarMetadataDays(current, {
+            [partialDay.date]: partialDay,
+        })).toBe(current);
+    });
+
+    test("완료 응답은 partial 날짜를 교체하고 동일 응답은 참조를 유지한다", () => {
+        const partialDay: CalendarDayMetadata = {
+            date: "2027-02-09",
+            holidays: [],
+            metadataComplete: false,
+        };
+        const completeDay: CalendarDayMetadata = {
+            ...partialDay,
+            lunarMonth: 1,
+            lunarDay: 3,
+            metadataComplete: true,
+        };
+        const current = { [partialDay.date]: partialDay };
+        const completed = mergeCalendarMetadataDays(current, {
+            [completeDay.date]: completeDay,
+        });
+
+        expect(completed).not.toBe(current);
+        expect(completed[completeDay.date]).toBe(completeDay);
+        expect(mergeCalendarMetadataDays(completed, {
+            [completeDay.date]: { ...completeDay },
+        })).toBe(completed);
     });
 });

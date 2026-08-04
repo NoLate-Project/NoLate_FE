@@ -113,7 +113,13 @@ internal class DepartureAlarmStore(context: Context) {
   private fun encodeAlarm(alarm: StoredAlarm): String = JSONObject()
     .put("alarmId", alarm.alarmId)
     .put("scheduleId", alarm.scheduleId)
+    .put("logicalAlarmId", alarm.logicalAlarmId)
+    .put("occurrenceId", alarm.occurrenceId ?: JSONObject.NULL)
     .put("title", alarm.title ?: JSONObject.NULL)
+    .put("body", alarm.body ?: JSONObject.NULL)
+    .put("decision", alarm.decision ?: JSONObject.NULL)
+    .put("minutesBeforeDeparture", alarm.minutesBeforeDeparture ?: JSONObject.NULL)
+    .put("actionEventKey", alarm.actionEventKey ?: JSONObject.NULL)
     .put("generation", alarm.generation)
     .put("recipientMemberId", alarm.recipientMemberId ?: JSONObject.NULL)
     .put("logicalEventKey", alarm.logicalEventKey ?: JSONObject.NULL)
@@ -151,7 +157,18 @@ internal class DepartureAlarmStore(context: Context) {
         effectiveTriggerAtMillis = json.getLong("effectiveTriggerAtMillis"),
         snoozeMinutes = json.optInt("snoozeMinutes", 5).coerceIn(1, 60),
         state = StoredAlarmState.valueOf(json.getString("state")),
-        updatedAtMillis = json.getLong("updatedAtMillis")
+        updatedAtMillis = json.getLong("updatedAtMillis"),
+        logicalAlarmId = json.optString("logicalAlarmId", json.getString("alarmId"))
+          .takeIf { it.isNotBlank() } ?: json.getString("alarmId"),
+        occurrenceId = nullableText(json, "occurrenceId"),
+        body = nullableText(json, "body"),
+        decision = nullableText(json, "decision"),
+        minutesBeforeDeparture = if (json.isNull("minutesBeforeDeparture")) {
+          null
+        } else {
+          json.optInt("minutesBeforeDeparture").takeIf { it in setOf(0, 5, 10, 15) }
+        },
+        actionEventKey = nullableText(json, "actionEventKey")
       )
     }.getOrNull()
   }
@@ -173,6 +190,10 @@ internal class DepartureAlarmStore(context: Context) {
       )
     }.getOrNull()
   }
+
+  private fun nullableText(json: JSONObject, key: String): String? =
+    if (!json.has(key) || json.isNull(key)) null
+    else json.optString(key).takeIf { it.isNotBlank() }
 
   private fun alarmKey(alarmId: String) = "$ALARM_PREFIX$alarmId"
   private fun tombstoneKey(alarmId: String) = "$TOMBSTONE_PREFIX$alarmId"

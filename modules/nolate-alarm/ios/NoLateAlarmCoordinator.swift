@@ -77,7 +77,8 @@ struct NoLateScheduledAlarmBridgeRecord: Sendable {
   func bridgeMap() -> [String: Any] {
     var result: [String: Any] = [
       "operation": "UPSERT",
-      "alarmId": alarm.alarmId,
+      "alarmId": alarm.backendAlarmId,
+      "nativeAlarmId": alarm.alarmId,
       "scheduleId": alarm.scheduleId,
       "generation": Double(alarm.generation),
       "triggerAt": NoLateAlarmDateFormatter.isoString(
@@ -93,6 +94,21 @@ struct NoLateScheduledAlarmBridgeRecord: Sendable {
     }
     if let title = alarm.title {
       result["title"] = title
+    }
+    if let body = alarm.body {
+      result["body"] = body
+    }
+    if let occurrenceId = alarm.occurrenceId {
+      result["occurrenceId"] = occurrenceId
+    }
+    if let decision = alarm.decision {
+      result["decision"] = decision
+    }
+    if let minutesBeforeDeparture = alarm.minutesBeforeDeparture {
+      result["minutesBeforeDeparture"] = minutesBeforeDeparture
+    }
+    if let actionEventKey = alarm.actionEventKey {
+      result["actionEventKey"] = actionEventKey
     }
     return result
   }
@@ -163,6 +179,8 @@ actor NoLateAlarmCoordinator {
 
   private let store: NoLateAlarmStore
   private let fireJournal: NoLateAlarmFireJournal
+  private let actionJournal: NoLateAlarmActionJournal
+  private let navigationJournal: NoLateAlarmNavigationJournal
   private let notificationCenter: UNUserNotificationCenter
   private let systemMutex = NoLateAlarmSystemMutex()
   private var snapshot: NoLateAlarmStoreSnapshot
@@ -171,10 +189,14 @@ actor NoLateAlarmCoordinator {
   init(
     store: NoLateAlarmStore = NoLateAlarmStore(),
     fireJournal: NoLateAlarmFireJournal = NoLateAlarmFireJournal(),
+    actionJournal: NoLateAlarmActionJournal = NoLateAlarmActionJournal(),
+    navigationJournal: NoLateAlarmNavigationJournal = NoLateAlarmNavigationJournal(),
     notificationCenter: UNUserNotificationCenter = .current()
   ) {
     self.store = store
     self.fireJournal = fireJournal
+    self.actionJournal = actionJournal
+    self.navigationJournal = navigationJournal
     self.notificationCenter = notificationCenter
     do {
       self.snapshot = try store.load()
@@ -286,7 +308,13 @@ actor NoLateAlarmCoordinator {
       incomingScheduleId: command.scheduleId,
       incomingSourceTriggerAtMilliseconds: command.triggerAtMilliseconds,
       incomingTitle: command.title,
-      incomingSnoozeMinutes: command.snoozeMinutes
+      incomingSnoozeMinutes: command.snoozeMinutes,
+      incomingLogicalAlarmId: command.logicalAlarmId,
+      incomingOccurrenceId: command.occurrenceId,
+      incomingBody: command.body,
+      incomingDecision: command.decision,
+      incomingMinutesBeforeDeparture: command.minutesBeforeDeparture,
+      incomingActionEventKey: command.actionEventKey
     )
     switch disposition {
     case .stale:
@@ -346,7 +374,13 @@ actor NoLateAlarmCoordinator {
       snoozeMinutes: command.snoozeMinutes,
       deliveryMode: desiredDeliveryMode,
       state: .pendingPermission,
-      updatedAtMilliseconds: nowMilliseconds
+      updatedAtMilliseconds: nowMilliseconds,
+      logicalAlarmId: command.logicalAlarmId,
+      occurrenceId: command.occurrenceId,
+      body: command.body,
+      decision: command.decision,
+      minutesBeforeDeparture: command.minutesBeforeDeparture,
+      actionEventKey: command.actionEventKey
     )
     snapshot.alarms[desired.alarmId] = desired
     snapshot.tombstones.removeValue(forKey: desired.alarmId)
@@ -375,6 +409,17 @@ actor NoLateAlarmCoordinator {
         applied: false,
         scheduled: false,
         reason: "INVALID_COMMAND:scheduleId does not match the stored alarm."
+      )
+    }
+    if
+      let current,
+      let logicalAlarmId = command.logicalAlarmId,
+      current.backendAlarmId != logicalAlarmId
+    {
+      return NoLateAlarmMutationResult(
+        applied: false,
+        scheduled: false,
+        reason: "INVALID_COMMAND:logicalAlarmId does not match the stored alarm."
       )
     }
     let disposition = NoLateAlarmGenerationPolicy.decideCancel(
@@ -441,8 +486,14 @@ actor NoLateAlarmCoordinator {
     return try await upsert(
       NoLateValidatedUpsertCommand(
         alarmId: "test:\(UUID().uuidString.lowercased())",
+        logicalAlarmId: "test",
         scheduleId: "test",
         title: "NoLate 테스트 알람",
+        body: "강력한 출발 알람 테스트입니다.",
+        occurrenceId: nil,
+        decision: nil,
+        minutesBeforeDeparture: nil,
+        actionEventKey: nil,
         generation: min(nowMilliseconds, noLateMaximumSafeJavaScriptInteger),
         recipientMemberId: 1,
         logicalEventKey: nil,
@@ -489,7 +540,8 @@ actor NoLateAlarmCoordinator {
         let userInfo = notification.request.content.userInfo
         return NoLateAlarmDeliveredNotificationPolicy.matches(
           alarm: alarm,
-          deliveredAlarmId: userInfo["alarmId"] as? String,
+          deliveredAlarmId: (userInfo["nativeAlarmId"] as? String) ??
+            (userInfo["alarmId"] as? String),
           deliveredScheduleId: userInfo["scheduleId"] as? String,
           deliveredGeneration: Self.int64Value(
             userInfo["alarmGeneration"]
@@ -527,11 +579,15 @@ actor NoLateAlarmCoordinator {
         !snapshot.alarms.isEmpty ||
         !snapshot.tombstones.isEmpty
       let hadFireEvidence = (try? !fireJournal.load().isEmpty) ?? true
+      let hadActionEvidence = (try? !actionJournal.load().isEmpty) ?? true
+      let hadNavigationEvidence = (try? !navigationJournal.load().isEmpty) ?? true
       // Logout is a privacy boundary. Purge healthy alarms, tombstones, and
       // corrupt bytes alike. Retaining tombstones here would reject the same
       // generation when this account logs in again and replays its snapshot.
       try store.reset()
       try fireJournal.reset()
+      try actionJournal.reset()
+      try navigationJournal.reset()
       snapshot = .empty
       initialPersistenceError = nil
 
@@ -586,6 +642,8 @@ actor NoLateAlarmCoordinator {
       await systemMutex.release()
       return hadStoredState ||
         hadFireEvidence ||
+        hadActionEvidence ||
+        hadNavigationEvidence ||
         !storedAlarms.isEmpty ||
         !pendingIdentifiers.isEmpty ||
         !deliveredIdentifiers.isEmpty ||
@@ -744,6 +802,9 @@ actor NoLateAlarmCoordinator {
       if let logicalEventKey = event.logicalEventKey {
         result["logicalEventKey"] = logicalEventKey
       }
+      if let occurrenceId = event.occurrenceId {
+        result["occurrenceId"] = occurrenceId
+      }
       return result
     }
   }
@@ -751,6 +812,213 @@ actor NoLateAlarmCoordinator {
   func removeAlarmFireEvent(eventId: String) throws -> Bool {
     guard !eventId.isEmpty, eventId.count <= 200 else { return false }
     return try fireJournal.remove(eventId: eventId)
+  }
+
+  /**
+   * A UNNotificationResponse is durable proof that a time-sensitive alarm was presented even when
+   * iOS removes its notification-center row before deliveredNotifications() reconciliation. Commit
+   * fire evidence first, then tombstone/cancel the consumed physical occurrence so recovery cannot
+   * re-install an alert the user already handled.
+   */
+  func recordTimeSensitiveNotificationResponse(
+    _ response: NoLateValidatedNotificationResponseFire
+  ) async throws -> Bool {
+    try requireHealthyStore()
+    guard
+      let alarm = snapshot.alarms[response.nativeAlarmId],
+      NoLateAlarmNotificationResponsePolicy.matches(alarm: alarm, response: response)
+    else {
+      // Ordinary remote visible pushes do not own a stored physical native alarm.
+      return false
+    }
+    try recordObservedFireEvent(
+      for: alarm,
+      occurredAtMilliseconds: response.occurredAtMilliseconds,
+      timingBasis: .observedAlerting
+    )
+    try await finishAlarmAfterCommittedUserIntent(
+      alarm,
+      nowMilliseconds: NoLateAlarmCoordinator.currentTimeMilliseconds()
+    )
+    return true
+  }
+
+  func recordDepartureActionEvent(
+    _ event: NoLateStoredDepartureActionEvent
+  ) throws -> Bool {
+    try requireHealthyStore()
+    guard
+      !event.eventId.isEmpty,
+      event.eventId.count <= 200,
+      Int64(event.scheduleId) != nil,
+      event.alarmId == "schedule:\(event.scheduleId):member:\(event.recipientMemberId)",
+      event.generation >= 0,
+      event.generation <= noLateMaximumSafeJavaScriptInteger,
+      event.occurredAtMilliseconds >= 0,
+      event.occurredAtMilliseconds <= noLateMaximumSafeJavaScriptInteger,
+      (try? NoLateAlarmInput.normalizedActionEventKey(event.actionEventKey)) != nil
+    else {
+      return false
+    }
+    try actionJournal.record(event)
+    return true
+  }
+
+  func getPendingDepartureActionEvents() throws -> [[String: Any]] {
+    try requireHealthyStore()
+    return try actionJournal.load().map { event in
+      var result: [String: Any] = [
+        "eventId": event.eventId,
+        "alarmId": event.alarmId,
+        "scheduleId": event.scheduleId,
+        "generation": Double(event.generation),
+        "recipientMemberId": Double(event.recipientMemberId),
+        "actionEventKey": event.actionEventKey,
+        "occurredAt": NoLateAlarmDateFormatter.isoString(
+          milliseconds: event.occurredAtMilliseconds
+        ),
+        "requiresRouteNavigation": event.requiresRouteNavigation,
+        "routeNavigationDelivered": event.routeNavigationDelivered
+      ]
+      if let occurrenceId = event.occurrenceId {
+        result["occurrenceId"] = occurrenceId
+      }
+      return result
+    }
+  }
+
+  func markDepartureActionNavigationDelivered(eventId: String) throws -> Bool {
+    guard !eventId.isEmpty, eventId.count <= 200 else { return false }
+    return try actionJournal.markNavigationDelivered(eventId: eventId)
+  }
+
+  func removeDepartureActionEvent(eventId: String) throws -> Bool {
+    guard !eventId.isEmpty, eventId.count <= 200 else { return false }
+    return try actionJournal.remove(eventId: eventId)
+  }
+
+  func getPendingAlarmNavigationEvents() throws -> [[String: Any]] {
+    try requireHealthyStore()
+    return try navigationJournal.load().map { event in
+      [
+        "eventId": event.eventId,
+        "scheduleId": event.scheduleId,
+        "recipientMemberId": Double(event.recipientMemberId),
+        "occurredAt": NoLateAlarmDateFormatter.isoString(
+          milliseconds: event.occurredAtMilliseconds
+        )
+      ]
+    }
+  }
+
+  func removeAlarmNavigationEvent(eventId: String) throws -> Bool {
+    guard !eventId.isEmpty, eventId.count <= 200 else { return false }
+    return try navigationJournal.remove(eventId: eventId)
+  }
+
+  /** AlarmKit secondary action: commit fire then action before stopping; never enqueue navigation. */
+  func performDepartureActionFromAlarmKit(
+    physicalAlarmId: String,
+    nowMilliseconds: Int64 = NoLateAlarmCoordinator.currentTimeMilliseconds()
+  ) async throws -> Bool {
+    try requireHealthyStore()
+    guard
+      let alarm = snapshot.alarms[physicalAlarmId],
+      let recipientMemberId = alarm.recipientMemberId,
+      Int64(alarm.scheduleId) != nil,
+      alarm.backendAlarmId == "schedule:\(alarm.scheduleId):member:\(recipientMemberId)"
+    else {
+      return false
+    }
+    let actionEventKey = Self.actionEventKey(for: alarm)
+    let event = NoLateStoredDepartureActionEvent(
+      eventId: UUID().uuidString.lowercased(),
+      alarmId: alarm.backendAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: alarm.generation,
+      recipientMemberId: recipientMemberId,
+      occurrenceId: alarm.occurrenceId,
+      actionEventKey: actionEventKey,
+      occurredAtMilliseconds: nowMilliseconds,
+      requiresRouteNavigation: false,
+      routeNavigationDelivered: false
+    )
+    try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: {
+        try recordObservedFireEvent(
+          for: alarm,
+          occurredAtMilliseconds: nowMilliseconds,
+          timingBasis: .observedAlerting
+        )
+      },
+      recordInteraction: {
+        try actionJournal.record(event)
+      }
+    )
+    try await finishAlarmAfterCommittedUserIntent(alarm, nowMilliseconds: nowMilliseconds)
+    return true
+  }
+
+  /** AlarmKit default/system-stop path: route only, with no departure mutation. */
+  func performOpenRouteFromAlarmKit(
+    physicalAlarmId: String,
+    nowMilliseconds: Int64 = NoLateAlarmCoordinator.currentTimeMilliseconds()
+  ) async throws -> Bool {
+    try requireHealthyStore()
+    guard
+      let alarm = snapshot.alarms[physicalAlarmId],
+      let recipientMemberId = alarm.recipientMemberId,
+      Int64(alarm.scheduleId) != nil,
+      alarm.backendAlarmId == "schedule:\(alarm.scheduleId):member:\(recipientMemberId)"
+    else {
+      return false
+    }
+    let navigationEvent = NoLateStoredAlarmNavigationEvent(
+      eventId: NoLateAlarmNavigationIdentity.eventId(
+        physicalAlarmId: alarm.alarmId,
+        generation: alarm.generation
+      ),
+      scheduleId: alarm.scheduleId,
+      recipientMemberId: recipientMemberId,
+      occurredAtMilliseconds: nowMilliseconds
+    )
+    try NoLateAlarmIntentCommitSequence.recordFireThenInteraction(
+      recordFire: {
+        try recordObservedFireEvent(
+          for: alarm,
+          occurredAtMilliseconds: nowMilliseconds,
+          timingBasis: .observedAlerting
+        )
+      },
+      recordInteraction: {
+        try navigationJournal.record(navigationEvent)
+      }
+    )
+    try await finishAlarmAfterCommittedUserIntent(alarm, nowMilliseconds: nowMilliseconds)
+    return true
+  }
+
+  private func finishAlarmAfterCommittedUserIntent(
+    _ alarm: NoLateStoredAlarm,
+    nowMilliseconds: Int64
+  ) async throws {
+    guard snapshot.alarms[alarm.alarmId]?.hasSameIdentity(as: alarm) == true else {
+      return
+    }
+    var committedSnapshot = snapshot
+    committedSnapshot.alarms.removeValue(forKey: alarm.alarmId)
+    committedSnapshot.tombstones[alarm.alarmId] = NoLateAlarmTombstone(
+      alarmId: alarm.alarmId,
+      generation: alarm.generation,
+      updatedAtMilliseconds: nowMilliseconds
+    )
+    // Do not expose an in-memory tombstone until the same state is durable. Otherwise a failed
+    // save followed by response replay looks like a benign already-committed `false` and can erase
+    // the only OS response record while the old alarm remains persisted on disk.
+    try requireHealthyStore()
+    try store.save(committedSnapshot)
+    snapshot = committedSnapshot
+    try await cancelSystemDelivery(for: alarm)
   }
 
   private func reconcileDeliveredNotificationFireEvents() async throws {
@@ -768,7 +1036,8 @@ actor NoLateAlarmCoordinator {
       let userInfo = notification.request.content.userInfo
       guard NoLateAlarmDeliveredNotificationPolicy.matches(
         alarm: alarm,
-        deliveredAlarmId: userInfo["alarmId"] as? String,
+        deliveredAlarmId: (userInfo["nativeAlarmId"] as? String) ??
+          (userInfo["alarmId"] as? String),
         deliveredScheduleId: userInfo["scheduleId"] as? String,
         deliveredGeneration: Self.int64Value(userInfo["alarmGeneration"])
       ) else {
@@ -803,13 +1072,13 @@ actor NoLateAlarmCoordinator {
     guard
       let recipientMemberId = alarm.recipientMemberId,
       Int64(alarm.scheduleId) != nil,
-      alarm.alarmId == "schedule:\(alarm.scheduleId):member:\(recipientMemberId)"
+      alarm.backendAlarmId == "schedule:\(alarm.scheduleId):member:\(recipientMemberId)"
     else {
       return
     }
     try fireJournal.record(NoLateStoredAlarmFireEvent(
       eventId: UUID().uuidString.lowercased(),
-      alarmId: alarm.alarmId,
+      alarmId: alarm.backendAlarmId,
       scheduleId: alarm.scheduleId,
       generation: alarm.generation,
       recipientMemberId: recipientMemberId,
@@ -817,7 +1086,8 @@ actor NoLateAlarmCoordinator {
       sourceTriggerAtMilliseconds: alarm.sourceTriggerAtMilliseconds,
       occurredAtMilliseconds: occurredAtMilliseconds,
       timingBasis: timingBasis,
-      logicalEventKey: alarm.logicalEventKey
+      logicalEventKey: alarm.logicalEventKey,
+      occurrenceId: alarm.occurrenceId
     ))
   }
 
@@ -952,17 +1222,32 @@ actor NoLateAlarmCoordinator {
 
     let content = UNMutableNotificationContent()
     content.title = alarm.title ?? "출발 시간입니다"
-    content.body = "지금 출발하면 예정된 시간에 도착할 수 있어요."
+    content.body = alarm.body ?? "지금 출발하면 예정된 시간에 도착할 수 있어요."
     content.sound = .default
     content.categoryIdentifier = "schedule_depart_now"
     content.threadIdentifier = "departure-reminder"
     content.interruptionLevel = .timeSensitive
-    content.userInfo = [
+    let actionEventKey = Self.actionEventKey(for: alarm)
+    var userInfo: [AnyHashable: Any] = [
       "type": "SCHEDULE_DEPARTURE_REMINDER",
       "scheduleId": alarm.scheduleId,
-      "alarmId": alarm.alarmId,
-      "alarmGeneration": String(alarm.generation)
+      "alarmId": alarm.backendAlarmId,
+      "nativeAlarmId": alarm.alarmId,
+      "alarmGeneration": String(alarm.generation),
+      "recipientMemberId": String(alarm.recipientMemberId ?? 0),
+      "actionEventKey": actionEventKey
     ]
+    if let occurrenceId = alarm.occurrenceId {
+      userInfo["occurrenceId"] = occurrenceId
+    }
+    if let logicalEventKey = alarm.logicalEventKey {
+      userInfo["logicalEventKey"] = logicalEventKey
+    }
+    if let decision = alarm.decision {
+      userInfo["decision"] = decision
+    }
+    userInfo["body"] = content.body
+    content.userInfo = userInfo
 
     let fireDate = Date(
       timeIntervalSince1970:
@@ -1025,30 +1310,52 @@ actor NoLateAlarmCoordinator {
       return .permissionRequired(.alarmKit, reason: reason)
     }
 
+    // AlarmKit exposes one alert-title slot and no body slot. Keep both server strings by
+    // synthesizing a bounded, readable title instead of dropping the occurrence body.
     let title = LocalizedStringResource(
-      String.LocalizationValue(alarm.title ?? "출발 시간입니다")
+      String.LocalizationValue(NoLateAlarmPresentationPolicy.alarmKitAlertTitle(
+        title: alarm.title,
+        body: alarm.body
+      ))
     )
     let stopButton = AlarmButton(
       text: "중지",
       textColor: .white,
       systemImageName: "stop.circle.fill"
     )
+    let departButton = AlarmButton(
+      text: "지금 출발 완료",
+      textColor: .white,
+      systemImageName: "figure.walk.circle.fill"
+    )
     let alert: AlarmPresentation.Alert
     if #available(iOS 26.1, *) {
-      alert = AlarmPresentation.Alert(title: title)
+      alert = AlarmPresentation.Alert(
+        title: title,
+        secondaryButton: departButton,
+        secondaryButtonBehavior: .custom
+      )
     } else {
-      alert = AlarmPresentation.Alert(title: title, stopButton: stopButton)
+      alert = AlarmPresentation.Alert(
+        title: title,
+        stopButton: stopButton,
+        secondaryButton: departButton,
+        secondaryButtonBehavior: .custom
+      )
     }
     let attributes = AlarmAttributes(
       presentation: AlarmPresentation(alert: alert),
       metadata: NoLateAlarmMetadata(
         alarmId: alarm.alarmId,
+        logicalAlarmId: alarm.backendAlarmId,
         scheduleId: alarm.scheduleId,
-        generation: alarm.generation
+        generation: alarm.generation,
+        occurrenceId: alarm.occurrenceId,
+        actionEventKey: Self.actionEventKey(for: alarm)
       ),
       tintColor: Color(red: 0.95, green: 0.38, blue: 0.17)
     )
-    let configuration = AlarmManager.AlarmConfiguration(
+    let configuration = AlarmManager.AlarmConfiguration.alarm(
       schedule: .fixed(
         Date(
           timeIntervalSince1970:
@@ -1056,6 +1363,10 @@ actor NoLateAlarmCoordinator {
         )
       ),
       attributes: attributes,
+      // AlarmKit has no independent body-tap intent. The system stop/default path is the closest
+      // supported route entry and remains navigation-only; it never commits departure.
+      stopIntent: NoLateOpenRouteAlarmIntent(physicalAlarmId: alarm.alarmId),
+      secondaryIntent: NoLateDepartNowAlarmIntent(physicalAlarmId: alarm.alarmId),
       sound: .default
     )
     let id = Self.systemUUID(for: alarm)
@@ -1314,6 +1625,22 @@ actor NoLateAlarmCoordinator {
     NoLateAlarmSystemIdentifier.notificationRequestIdentifier(alarmId: alarm.alarmId)
   }
 
+  private static func actionEventKey(for alarm: NoLateStoredAlarm) -> String {
+    if let actionEventKey = alarm.actionEventKey {
+      return actionEventKey
+    }
+    if
+      let logicalEventKey = alarm.logicalEventKey,
+      (try? NoLateAlarmInput.normalizedActionEventKey(logicalEventKey)) != nil
+    {
+      return logicalEventKey
+    }
+    return NoLateAlarmActionIdentity.fallbackKey(
+      physicalAlarmId: alarm.alarmId,
+      generation: alarm.generation
+    )
+  }
+
   private static let notificationIdentifierPrefix = "nolate.departure."
 
   private static func currentTimeMilliseconds() -> Int64 {
@@ -1378,8 +1705,11 @@ actor NoLateAlarmCoordinator {
 @available(iOS 26.0, *)
 private struct NoLateAlarmMetadata: AlarmMetadata {
   let alarmId: String
+  let logicalAlarmId: String
   let scheduleId: String
   let generation: Int64
+  let occurrenceId: String?
+  let actionEventKey: String
 }
 #endif
 

@@ -242,10 +242,10 @@ describe("NotificationSettingsCard alarm mode", () => {
             children: "강력한 알람 준비 완료",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            children: "iOS 시스템 알람 권한이 준비됐어요. 일반 알림 권한과 별개로 알람이 동작해요.",
+            children: "NoLate 강력 알림 권한이 준비됐어요. 일반 푸시 알림과 별개로 강력하게 알려드려요.",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            accessibilityLabel: "iOS 시스템 알람 권한: 준비됨",
+            accessibilityLabel: "NoLate 강력 알림 권한: 준비됨",
         })).toBeTruthy();
         expect(renderer!.root.findAllByProps({
             accessibilityLabel: "일반 푸시 알림: 설정 필요",
@@ -276,10 +276,10 @@ describe("NotificationSettingsCard alarm mode", () => {
         await renderCard("ALARM");
 
         expect(renderer!.root.findByProps({
-            children: "시스템 알람 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
+            children: "NoLate 강력 알림 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            accessibilityLabel: "iOS 시스템 알람 권한: 설정 필요",
+            accessibilityLabel: "NoLate 강력 알림 권한: 설정 필요",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
             accessibilityLabel: "일반 푸시 알림: 준비됨",
@@ -303,16 +303,16 @@ describe("NotificationSettingsCard alarm mode", () => {
         await renderCard("ALARM");
 
         expect(renderer!.root.findByProps({
-            children: "iOS 알람 권한이 모두 꺼져 있어요",
+            children: "NoLate 강력 알림과 일반 알림이 모두 꺼져 있어요",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            children: "시스템 알람과 일반 알림 권한이 모두 꺼져 있어 출발 알림이 표시되지 않을 수 있어요.",
+            children: "NoLate 강력 알림과 일반 알림 권한이 모두 꺼져 있어 출발 알림이 표시되지 않을 수 있어요.",
         })).toBeTruthy();
         expect(renderer!.root.findAllByProps({
-            children: "시스템 알람 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
+            children: "NoLate 강력 알림 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
         })).toHaveLength(0);
         expect(renderer!.root.findByProps({
-            accessibilityLabel: "iOS 시스템 알람 권한: 설정 필요",
+            accessibilityLabel: "NoLate 강력 알림 권한: 설정 필요",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
             accessibilityLabel: "일반 푸시 알림: 설정 필요",
@@ -400,10 +400,10 @@ describe("NotificationSettingsCard alarm mode", () => {
         await renderCard("ALARM");
 
         expect(renderer!.root.findByProps({
-            children: "시스템 알람 권한을 확인해 주세요",
+            children: "NoLate 강력 알림 권한을 확인해 주세요",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            children: "10초 테스트 알람을 실행하면 iOS 시스템 알람 권한을 요청해요.",
+            children: "10초 테스트 알림을 실행하면 iOS가 NoLate 강력 알림 권한을 요청해요.",
         })).toBeTruthy();
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "10초 뒤 테스트 알람" })
@@ -413,7 +413,7 @@ describe("NotificationSettingsCard alarm mode", () => {
             children: "iOS 사운드 알림으로 동작해요",
         })).toHaveLength(0);
         expect(renderer!.root.findByProps({
-            accessibilityLabel: "iOS 시스템 알람 권한: 설정 필요",
+            accessibilityLabel: "NoLate 강력 알림 권한: 설정 필요",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
             accessibilityLabel: "일반 푸시 알림: 준비됨",

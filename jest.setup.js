@@ -28,6 +28,9 @@ jest.mock('react-native-gesture-handler', () => {
     [
       'enabled',
       'minDistance',
+      'maxDistance',
+      'maxDuration',
+      'minPointers',
       'maxPointers',
       'cancelsTouchesInView',
     ].forEach((method) => {
@@ -55,12 +58,22 @@ jest.mock('react-native-gesture-handler', () => {
 
     return gesture;
   };
+  const createExclusiveGesture = (...gestures) => ({
+    __mockComposition: 'exclusive',
+    __mockGestures: gestures,
+    // Preserve the existing pan-oriented test surface while also exposing
+    // every child recognizer through mockGestures below.
+    __mockCallbacks: gestures[0]?.__mockCallbacks,
+    __mockConfig: gestures[0]?.__mockConfig,
+  });
   const GestureDetector = ({ gesture, children }) => React.createElement(
     View,
     {
       testID: gesture?.__mockConfig?.testID,
       mockGestureCallbacks: gesture?.__mockCallbacks,
       mockGestureConfig: gesture?.__mockConfig,
+      mockGestureComposition: gesture?.__mockComposition,
+      mockGestures: gesture?.__mockGestures,
     },
     children
   );
@@ -68,6 +81,8 @@ jest.mock('react-native-gesture-handler', () => {
   return {
     Gesture: {
       Pan: createGesture,
+      Tap: createGesture,
+      Exclusive: createExclusiveGesture,
     },
     GestureDetector,
     GestureHandlerRootView: View,
@@ -86,6 +101,7 @@ jest.mock('react-native-gesture-handler', () => {
 jest.mock('react-native-reanimated', () => {
   const React = require('react');
   const { View } = require('react-native');
+  const createAnimatedComponent = (Component) => Component;
   const identity = (value) => value;
   const easingIdentity = (value) => value;
   const pendingTimingCallbacks = [];
@@ -109,10 +125,12 @@ jest.mock('react-native-reanimated', () => {
     }
     return callback(...args);
   };
+  const runOnUI = (callback) => (...args) => callback(...args);
 
   return {
     __esModule: true,
-    default: { View },
+    default: { View, createAnimatedComponent },
+    createAnimatedComponent,
     cancelAnimation: jest.fn(),
     Easing: {
       bezier: () => easingIdentity,
@@ -151,6 +169,16 @@ jest.mock('react-native-reanimated', () => {
       System: 'system',
     },
     runOnJS,
+    runOnUI,
+    useAnimatedProps: (factory) => {
+      const props = factory();
+      Object.defineProperty(props, '__mockFactory', {
+        configurable: true,
+        enumerable: false,
+        value: factory,
+      });
+      return props;
+    },
     useAnimatedStyle: (factory) => {
       const style = factory();
       Object.defineProperty(style, '__mockFactory', {

@@ -3,9 +3,11 @@
   <string name="nolate_alarm_channel_description">추천 출발 시각에 벨소리와 잠금 화면으로 알려줍니다.</string>
   <string name="nolate_alarm_title">출발할 시간이에요</string>
   <string name="nolate_alarm_body">지금 출발하면 약속 시간에 맞출 수 있어요.</string>
-  <string name="nolate_alarm_depart">앱 열기</string>
+  <string name="nolate_alarm_depart">지금 출발 완료</string>
   <string name="nolate_alarm_snooze">5분 뒤 다시 알림</string>
   <string name="nolate_alarm_stop">알람 끄기</string>
   <string name="nolate_alarm_notification_snooze">5분 뒤</string>
   <string name="nolate_alarm_notification_stop">끄기</string>
+  <string name="nolate_alarm_action_retry">출발 완료를 저장하지 못했어요. 다시 눌러 주세요.</string>
+  <string name="nolate_alarm_navigation_retry">일정 열기를 저장하지 못했어요. 다시 눌러 주세요.</string>
 </resources>

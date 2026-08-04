@@ -39,6 +39,12 @@ internal class DepartureAlarmCoordinator(context: Context) {
     logicalEventKey: String?,
     triggerAtMillis: Long,
     snoozeMinutes: Int,
+    logicalAlarmId: String = alarmId,
+    occurrenceId: String? = null,
+    body: String? = null,
+    decision: String? = null,
+    minutesBeforeDeparture: Int? = null,
+    actionEventKey: String? = null,
     nowMillis: Long = System.currentTimeMillis()
   ): AlarmMutationResult = synchronized(MUTATION_LOCK) {
     store.pruneTombstones(nowMillis)
@@ -58,7 +64,13 @@ internal class DepartureAlarmCoordinator(context: Context) {
       incomingScheduleId = scheduleId,
       incomingSourceTriggerAtMillis = triggerAtMillis,
       incomingTitle = title,
-      incomingSnoozeMinutes = snoozeMinutes
+      incomingSnoozeMinutes = snoozeMinutes,
+      incomingLogicalAlarmId = logicalAlarmId,
+      incomingOccurrenceId = occurrenceId,
+      incomingBody = body,
+      incomingDecision = decision,
+      incomingMinutesBeforeDeparture = minutesBeforeDeparture,
+      incomingActionEventKey = actionEventKey
     )
     when (disposition) {
       UpsertDisposition.STALE -> {
@@ -113,7 +125,13 @@ internal class DepartureAlarmCoordinator(context: Context) {
       effectiveTriggerAtMillis = triggerAtMillis,
       snoozeMinutes = snoozeMinutes.coerceIn(1, 60),
       state = StoredAlarmState.PENDING_PERMISSION,
-      updatedAtMillis = nowMillis
+      updatedAtMillis = nowMillis,
+      logicalAlarmId = logicalAlarmId,
+      occurrenceId = occurrenceId,
+      body = body,
+      decision = decision,
+      minutesBeforeDeparture = minutesBeforeDeparture,
+      actionEventKey = actionEventKey
     )
     check(store.saveAlarm(desired)) { "Failed to persist departure alarm." }
     schedulePersisted(desired, nowMillis, applied = true)
@@ -206,11 +224,22 @@ internal class DepartureAlarmCoordinator(context: Context) {
       check(fireJournal.clear()) {
         "Failed to purge alarm fire journal."
       }
+      val actionJournal = DepartureAlarmActionJournal(applicationContext)
+      val hadActionEvidence = actionJournal.getAll().isNotEmpty()
+      check(actionJournal.clear()) {
+        "Failed to purge alarm action journal."
+      }
+      val navigationJournal = DepartureAlarmNavigationJournal(applicationContext)
+      val hadNavigationEvidence = navigationJournal.getAll().isNotEmpty()
+      check(navigationJournal.clear()) {
+        "Failed to purge alarm navigation journal."
+      }
       purged.healthyAlarms.forEach(scheduler::cancel)
       val stoppedRingingService = applicationContext.stopService(
         android.content.Intent(applicationContext, DepartureAlarmService::class.java)
       )
-      purged.hadStoredState || hadFireEvidence || stoppedRingingService
+      purged.hadStoredState || hadFireEvidence || hadActionEvidence ||
+        hadNavigationEvidence || stoppedRingingService
     }
 
   fun findCurrentForIntent(
@@ -295,13 +324,19 @@ internal class DepartureAlarmCoordinator(context: Context) {
   fun getScheduledAlarms(): List<Map<String, Any?>> = store.getAllAlarms().map { alarm ->
     buildMap {
       put("operation", "UPSERT")
-      put("alarmId", alarm.alarmId)
+      put("alarmId", alarm.logicalAlarmId)
+      put("nativeAlarmId", alarm.alarmId)
       put("scheduleId", alarm.scheduleId)
       put("generation", alarm.generation.toDouble())
       alarm.recipientMemberId?.let { put("recipientMemberId", it.toDouble()) }
       alarm.logicalEventKey?.let { put("logicalEventKey", it) }
       put("triggerAt", formatIsoInstant(alarm.effectiveTriggerAtMillis))
       alarm.title?.let { put("title", it) }
+      alarm.body?.let { put("body", it) }
+      alarm.occurrenceId?.let { put("occurrenceId", it) }
+      alarm.decision?.let { put("decision", it) }
+      alarm.minutesBeforeDeparture?.let { put("minutesBeforeDeparture", it) }
+      alarm.actionEventKey?.let { put("actionEventKey", it) }
       put("snoozeMinutes", alarm.snoozeMinutes)
     }
   }

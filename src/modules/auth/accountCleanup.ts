@@ -17,6 +17,9 @@ import {
 import {
     clearDepartureAlarmScheduleReceiptQueueForCurrentAccount,
 } from "../notification/departureAlarmScheduleReceiptQueue";
+import {
+    clearStandardDepartureActionFallbackForCurrentAccount,
+} from "../notification/nativeDepartureActionJournal";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
@@ -36,6 +39,7 @@ export async function clearAccountScopedLocalData(): Promise<void> {
         clearScheduleEtaObservationEngagementQueueForCurrentAccount(),
         clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount(),
         clearDepartureAlarmScheduleReceiptQueueForCurrentAccount(),
+        clearStandardDepartureActionFallbackForCurrentAccount(),
     ]);
 
     const alarmResult = cleanupResults[0];

@@ -31,6 +31,8 @@ export type DepartureAlarmFiredEventPayload = {
     occurredAt: string;
     timingBasis: "EXACT_CALLBACK" | "OBSERVED_ALERTING" | "INFERRED_OS_DELIVERY";
     deviceId: string;
+    occurrenceId?: string;
+    mutationSequence?: number;
 };
 
 export type DepartureAlarmScheduleReceiptPayload = {
@@ -55,6 +57,8 @@ export type DepartureAlarmScheduleReceiptPayload = {
     source: "PUSH" | "SNAPSHOT";
     occurredAt: string;
     deviceId: string;
+    occurrenceId?: string;
+    mutationSequence?: number;
 };
 
 export type RegisterPushTokenPayload = {

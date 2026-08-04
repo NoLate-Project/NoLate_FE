@@ -42,10 +42,14 @@ class AlarmFireEventPolicyTest {
 
   @Test
   fun androidReceiverEvidenceUsesExactCallbackTiming() {
-    val evidence = event("exact", generation = 4, occurredAtMillis = 2_000)
+    val evidence = event("exact", generation = 4, occurredAtMillis = 2_000).copy(
+      occurrenceId = "M0"
+    )
 
     assertEquals(AlarmFireTimingBasis.EXACT_CALLBACK, evidence.timingBasis)
     assertEquals("EXACT_CALLBACK", evidence.toBridgeMap()["timingBasis"])
+    assertEquals("schedule:41:member:7", evidence.toBridgeMap()["alarmId"])
+    assertEquals("M0", evidence.toBridgeMap()["occurrenceId"])
   }
 
   @Test

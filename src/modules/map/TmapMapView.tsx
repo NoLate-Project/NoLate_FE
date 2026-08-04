@@ -3678,7 +3678,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         if (!window.Tmapv3 || !window.Tmapv3.Map) {
           initRetry += 1;
           if (initRetry > 40) {
-            post("error", { message: "TMAP Vector JS SDK 로딩 실패: 앱키에서 Vector Map SDK 상품과 네트워크 설정을 확인해 주세요." });
+            post("error", { message: "지도를 불러오지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요." });
             return;
           }
           setTimeout(initMap, 220);
@@ -3705,7 +3705,7 @@ ${TMAP_NATIVE_DIRECTION_REPORT_SCRIPT}
         } catch (error) {
           map = null;
           post("error", {
-            message: "TMAP Vector 지도 초기화 실패: " + (error && error.message ? String(error.message) : "앱키 권한을 확인해 주세요."),
+            message: "지도를 초기화하지 못했습니다. 잠시 후 다시 시도해 주세요.",
           });
         }
       }
@@ -3940,7 +3940,7 @@ const TmapMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(function Tma
     // 조용히 대체하지 않는다. 그렇게 하면 Web SDK의 검은 방향 표시가
     // 네이티브 SDK 결과처럼 보여 설치 누락을 알아차리기 어렵다.
     if (Platform.OS !== "web" && process.env.NODE_ENV !== "test") {
-        const message = "TMAP 네이티브 지도를 사용할 수 없습니다. 앱을 다시 빌드해 설치해 주세요.";
+        const message = "지도를 사용할 수 없습니다. 앱을 업데이트한 뒤 다시 시도해 주세요.";
         return (
             <View
                 accessible

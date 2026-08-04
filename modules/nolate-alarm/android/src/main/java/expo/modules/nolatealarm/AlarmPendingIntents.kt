@@ -31,6 +31,18 @@ internal object AlarmPendingIntents {
     return PendingIntent.getActivity(context, 0, intent, IMMUTABLE_UPDATE_FLAGS)
   }
 
+  fun openRoute(context: Context, alarm: StoredAlarm): PendingIntent = activityAction(
+    context,
+    AlarmContract.ACTION_OPEN_ROUTE,
+    alarm
+  )
+
+  fun depart(context: Context, alarm: StoredAlarm): PendingIntent = activityAction(
+    context,
+    AlarmContract.ACTION_DEPART,
+    alarm
+  )
+
   fun action(context: Context, action: String, alarm: StoredAlarm): PendingIntent {
     val intent = baseIntent(
       context,
@@ -40,6 +52,21 @@ internal object AlarmPendingIntents {
       alarm
     )
     return PendingIntent.getBroadcast(context, 0, intent, IMMUTABLE_UPDATE_FLAGS)
+  }
+
+  private fun activityAction(
+    context: Context,
+    action: String,
+    alarm: StoredAlarm
+  ): PendingIntent {
+    val intent = baseIntent(
+      context,
+      DepartureAlarmActivity::class.java,
+      action,
+      AlarmContract.URI_ACTION_AUTHORITY,
+      alarm
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    return PendingIntent.getActivity(context, 0, intent, IMMUTABLE_UPDATE_FLAGS)
   }
 
   fun alarmUri(authority: String, action: String, alarm: StoredAlarm): Uri =

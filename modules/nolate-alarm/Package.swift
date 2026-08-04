@@ -15,6 +15,7 @@ let package = Package(
       exclude: [
         "NoLateAlarm.podspec",
         "NoLateAlarmCoordinator.swift",
+        "NoLateAlarmIntents.swift",
         "NoLateAlarmModule.swift",
         "Tests"
       ],

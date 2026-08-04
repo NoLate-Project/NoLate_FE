@@ -12,6 +12,7 @@ import {
     clearDepartureAlarmScheduleReceiptQueueForCurrentAccount,
     DEPARTURE_ALARM_RECEIPT_QUEUE_TEST_CONSTANTS,
     recordDepartureAlarmScheduleReceiptDurably,
+    reserveDepartureAlarmMutationSequence,
     resetDepartureAlarmScheduleReceiptQueueForTests,
 } from "../src/modules/notification/departureAlarmScheduleReceiptQueue";
 import { getOrCreatePushDeviceId } from "../src/modules/notification/pushDeviceIdentity";
@@ -124,6 +125,61 @@ describe("durable departure alarm schedule receipt queue", () => {
             deviceId: "device-stable-7",
         }));
         expect(await storedEntries()).toEqual([]);
+    });
+
+    it("reserves monotonic occurrence order before receipt capability awaits", async () => {
+        const occurrence = { ...upsert, occurrenceId: "M0" as const };
+        const capabilityGate: {
+            resolve?: (value: Awaited<ReturnType<typeof getDepartureAlarmCapabilities>>) => void;
+        } = {};
+        mockedGetCapabilities.mockReturnValueOnce(new Promise((resolve) => {
+            capabilityGate.resolve = resolve;
+        }));
+        const firstSequence = await reserveDepartureAlarmMutationSequence(7);
+        const first = recordDepartureAlarmScheduleReceiptDurably(
+            occurrence,
+            { applied: true, scheduled: true },
+            "PUSH",
+            "2026-08-01T01:00:01.000Z",
+            firstSequence,
+        );
+        for (let attempt = 0; attempt < 10 && mockedGetCapabilities.mock.calls.length === 0; attempt += 1) {
+            await Promise.resolve();
+        }
+
+        const secondSequence = await reserveDepartureAlarmMutationSequence(7);
+        const second = recordDepartureAlarmScheduleReceiptDurably(
+            occurrence,
+            { applied: false, scheduled: false, deliveryMode: "alarmKit" },
+            "PUSH",
+            "2026-08-01T01:00:02.000Z",
+            secondSequence,
+        );
+        await second;
+        capabilityGate.resolve?.({
+            supported: true,
+            platform: "ios",
+            exactAlarmAuthorized: true,
+            fullScreenAuthorized: true,
+            notificationAuthorized: true,
+            deliveryMode: "alarmKit",
+        });
+        await first;
+
+        expect([firstSequence, secondSequence]).toEqual([1, 2]);
+        expect(mockedPost.mock.calls.map(([payload]) => payload.mutationSequence))
+            .toEqual([2, 1]);
+        expect(mockedPost.mock.calls.map(([payload]) => payload.outcome))
+            .toEqual(["FAILED", "SCHEDULED"]);
+    });
+
+    it("rejects an occurrence receipt without its mutation-time sequence", async () => {
+        await expect(recordDepartureAlarmScheduleReceiptDurably(
+            { ...upsert, occurrenceId: "M5" },
+            { applied: true, scheduled: true },
+            "PUSH",
+        )).resolves.toBe("rejected");
+        expect(mockedPost).not.toHaveBeenCalled();
     });
 
     it("queues an idempotent native replay as SCHEDULED even when applied is false", async () => {

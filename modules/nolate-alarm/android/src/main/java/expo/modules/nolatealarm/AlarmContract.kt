@@ -9,6 +9,7 @@ internal object AlarmContract {
   const val ACTION_DISMISS = "expo.modules.nolatealarm.action.DISMISS"
   const val ACTION_SNOOZE = "expo.modules.nolatealarm.action.SNOOZE"
   const val ACTION_DEPART = "expo.modules.nolatealarm.action.DEPART"
+  const val ACTION_OPEN_ROUTE = "expo.modules.nolatealarm.action.OPEN_ROUTE"
   const val ACTION_REMOVE_FROM_SERVICE = "expo.modules.nolatealarm.action.REMOVE_FROM_SERVICE"
   const val ACTION_STOP_ALL = "expo.modules.nolatealarm.action.STOP_ALL"
 

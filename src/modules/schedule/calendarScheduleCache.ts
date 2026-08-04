@@ -2,11 +2,12 @@ import { dedupeCalendarSchedules } from "./calendarScheduleDedupe";
 import { getMonthRange } from "./calendarRange";
 import type { ScheduleItem } from "./types";
 
-// 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 짧은 주기 재조회 대신
-// Redis 월 캐시 TTL과 맞춰 월 이동 중 불필요한 네트워크 요청을 막는다.
-const CACHE_TTL_MS = 15 * 60 * 1000;
+// 서버 revision/공유 푸시가 변경을 즉시 무효화하므로 홈서버 환경에서는
+// 60분 동안 월 캐시를 재사용해 월 이동 중 불필요한 요청을 막는다.
+const CACHE_TTL_MS = 60 * 60 * 1000;
 const MAX_CACHED_MONTHS = 18;
 const MAX_RANGE_MONTHS = 120;
+const MAX_REVISION_REFRESH_RETRIES = 1;
 
 type CalendarScheduleCacheEntry = {
     items: ScheduleItem[];
@@ -32,7 +33,7 @@ export type CalendarScheduleCacheSnapshot = {
 };
 
 const monthCache = new Map<string, CalendarScheduleCacheEntry>();
-const inFlightRanges = new Map<string, Promise<void>>();
+const inFlightMonths = new Map<string, Promise<void>>();
 const invalidationListeners = new Set<() => void>();
 let cacheRevision = 0;
 
@@ -173,42 +174,91 @@ export function hasCalendarScheduleMonthCache(ymd: string): boolean {
     return Boolean(match && monthCache.has(`${match[1]}-${match[2]}`));
 }
 
+async function refreshCalendarScheduleCacheAtCurrentRevision(
+    startAt: string,
+    endAt: string,
+    fetcher: CalendarScheduleFetcher,
+    now: number,
+): Promise<boolean> {
+    const descriptors = getMonthDescriptors(startAt, endAt);
+    const refreshGroups = groupRefreshRanges(descriptors, now);
+    const revisionAtStart = cacheRevision;
+    const pending = new Set<Promise<void>>();
+
+    refreshGroups.forEach((group) => {
+        let missingGroup: CalendarMonthDescriptor[] = [];
+        const flushMissingGroup = () => {
+            const groupToFetch = missingGroup;
+            missingGroup = [];
+            const first = groupToFetch[0];
+            const last = groupToFetch[groupToFetch.length - 1];
+            if (!first || !last) return;
+
+            let request: Promise<void>;
+            request = fetcher(first.startAt, last.endAt)
+                .then((items) => {
+                    if (cacheRevision !== revisionAtStart) return;
+                    writeRange(groupToFetch, items, Date.now());
+                })
+                .finally(() => {
+                    groupToFetch.forEach(({ key }) => {
+                        const inFlightKey = `${revisionAtStart}|${key}`;
+                        if (inFlightMonths.get(inFlightKey) === request) {
+                            inFlightMonths.delete(inFlightKey);
+                        }
+                    });
+                });
+            groupToFetch.forEach(({ key }) => {
+                inFlightMonths.set(`${revisionAtStart}|${key}`, request);
+            });
+            pending.add(request);
+        };
+
+        group.forEach((descriptor) => {
+            const existing = inFlightMonths.get(
+                `${revisionAtStart}|${descriptor.key}`
+            );
+            if (existing) {
+                flushMissingGroup();
+                pending.add(existing);
+                return;
+            }
+            missingGroup.push(descriptor);
+        });
+        flushMissingGroup();
+    });
+
+    await Promise.all(pending);
+
+    return cacheRevision === revisionAtStart;
+}
+
 export async function refreshCalendarScheduleCache(
     startAt: string,
     endAt: string,
     fetcher: CalendarScheduleFetcher,
     now = Date.now(),
 ): Promise<CalendarScheduleCacheSnapshot> {
-    const descriptors = getMonthDescriptors(startAt, endAt);
-    const refreshGroups = groupRefreshRanges(descriptors, now);
-    const revisionAtStart = cacheRevision;
-
-    await Promise.all(refreshGroups.map(async (group) => {
-        const first = group[0];
-        const last = group[group.length - 1];
-        if (!first || !last) return;
-
-        const inFlightKey = [
-            revisionAtStart,
-            first.startAt,
-            last.endAt,
-        ].join("|");
-        let inFlight = inFlightRanges.get(inFlightKey);
-        if (!inFlight) {
-            inFlight = fetcher(first.startAt, last.endAt)
-                .then((items) => {
-                    if (cacheRevision !== revisionAtStart) return;
-                    writeRange(group, items, Date.now());
-                })
-                .finally(() => {
-                    inFlightRanges.delete(inFlightKey);
-                });
-            inFlightRanges.set(inFlightKey, inFlight);
+    for (
+        let retryCount = 0;
+        retryCount <= MAX_REVISION_REFRESH_RETRIES;
+        retryCount += 1
+    ) {
+        const revisionStayedCurrent = await refreshCalendarScheduleCacheAtCurrentRevision(
+            startAt,
+            endAt,
+            fetcher,
+            now,
+        );
+        if (revisionStayedCurrent) {
+            return readCalendarScheduleCache(startAt, endAt);
         }
-        await inFlight;
-    }));
+    }
 
-    return readCalendarScheduleCache(startAt, endAt);
+    // A mutation invalidates any response that started before it. Retrying once
+    // handles the normal create/update overlap; a second mutation must not turn
+    // an empty or partially cached range into a successful refresh result.
+    throw new Error("일정 캐시가 연속으로 변경되어 조회를 완료하지 못했습니다.");
 }
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {
@@ -235,7 +285,7 @@ export function removeCalendarScheduleCacheItem(scheduleId: string): void {
 export function clearCalendarScheduleCache(): void {
     cacheRevision += 1;
     monthCache.clear();
-    inFlightRanges.clear();
+    inFlightMonths.clear();
     invalidationListeners.forEach((listener) => listener());
 }
 

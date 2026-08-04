@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.Space
 import android.widget.TextView
+import android.widget.Toast
 import java.text.DateFormat
 import java.util.Date
 
@@ -75,6 +76,16 @@ class DepartureAlarmActivity : Activity() {
     }
 
     currentAlarm = alarm
+    when (sourceIntent.action) {
+      AlarmContract.ACTION_DEPART -> {
+        handleDepart(alarm)
+        return
+      }
+      AlarmContract.ACTION_OPEN_ROUTE -> {
+        handleOpenRoute(alarm)
+        return
+      }
+    }
     setContentView(createContent(alarm))
   }
 
@@ -103,6 +114,7 @@ class DepartureAlarmActivity : Activity() {
           insets
         }
       }
+      setOnClickListener { handleOpenRoute(alarm) }
     }
 
     root.addView(TextView(this).apply {
@@ -121,7 +133,7 @@ class DepartureAlarmActivity : Activity() {
       setPadding(0, dp(24), 0, dp(8))
     })
     root.addView(TextView(this).apply {
-      text = getString(R.string.nolate_alarm_body)
+      text = alarm.body ?: getString(R.string.nolate_alarm_body)
       textSize = 16f
       setTextColor(getColor(R.color.nolate_alarm_text_secondary))
       gravity = Gravity.CENTER
@@ -132,17 +144,17 @@ class DepartureAlarmActivity : Activity() {
       getString(R.string.nolate_alarm_depart),
       getColor(R.color.nolate_alarm_primary)
     ) {
-      sendAlarmAction(AlarmContract.ACTION_DEPART)
-      launchMainApp(alarm)
-      finish()
+      handleDepart(alarm)
     })
-    root.addView(createButton(
-      getString(R.string.nolate_alarm_snooze),
-      getColor(R.color.nolate_alarm_surface)
-    ) {
-      sendAlarmAction(AlarmContract.ACTION_SNOOZE)
-      finish()
-    })
+    if (AlarmSnoozePolicy.isAvailable(alarm)) {
+      root.addView(createButton(
+        getString(R.string.nolate_alarm_snooze),
+        getColor(R.color.nolate_alarm_surface)
+      ) {
+        sendAlarmAction(AlarmContract.ACTION_SNOOZE)
+        finish()
+      })
+    }
     root.addView(createButton(
       getString(R.string.nolate_alarm_stop),
       Color.TRANSPARENT
@@ -193,12 +205,42 @@ class DepartureAlarmActivity : Activity() {
     )
   }
 
-  private fun launchMainApp(alarm: StoredAlarm) {
+  private fun handleDepart(alarm: StoredAlarm) {
+    // The journal commit is the acknowledgement boundary. If storage is unavailable, keep the
+    // alarm visible/ringing so the user can retry and the action is never silently lost.
+    if (!DepartureAlarmActionJournal(this).record(alarm, System.currentTimeMillis())) {
+      Toast.makeText(this, R.string.nolate_alarm_action_retry, Toast.LENGTH_LONG).show()
+      setContentView(createContent(alarm))
+      return
+    }
+    runCatching {
+      DepartureAlarmCoordinator(this).dismiss(alarm.alarmId, alarm.generation)
+    }
+    // Foreground/cold-launch authenticated JS so the durable action drains promptly. No schedule
+    // id or navigation event is attached, therefore this can never force route-detail UI.
+    launchMainApp()
+    finish()
+  }
+
+  private fun handleOpenRoute(alarm: StoredAlarm) {
+    // Opening route details is a separate durable intent and must never enqueue a depart action.
+    if (!DepartureAlarmNavigationJournal(this).record(alarm, System.currentTimeMillis())) {
+      Toast.makeText(this, R.string.nolate_alarm_navigation_retry, Toast.LENGTH_LONG).show()
+      setContentView(createContent(alarm))
+      return
+    }
+    runCatching {
+      DepartureAlarmCoordinator(this).dismiss(alarm.alarmId, alarm.generation)
+    }
+    launchMainApp()
+    finish()
+  }
+
+  private fun launchMainApp() {
     val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
     launchIntent
       .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
       .putExtra(AlarmContract.EXTRA_LAUNCHED_FROM_ALARM, true)
-      .putExtra(AlarmContract.EXTRA_SCHEDULE_ID, alarm.scheduleId)
     runCatching { startActivity(launchIntent) }
   }
 }

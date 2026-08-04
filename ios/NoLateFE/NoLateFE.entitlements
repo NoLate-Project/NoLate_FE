@@ -8,6 +8,10 @@
     <array>
       <string>Default</string>
     </array>
+    <key>com.apple.developer.associated-domains</key>
+    <array>
+      <string>applinks:nolate.jinuk.dev</string>
+    </array>
     <key>com.apple.developer.usernotifications.time-sensitive</key>
     <true/>
     <key>keychain-access-groups</key>

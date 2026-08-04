@@ -6,6 +6,7 @@ import {
 } from "../src/modules/auth/authStorage";
 import {
     applyDepartureAlarmCommand,
+    applyDepartureAlarmPlanCommand,
     clearAllDepartureAlarms,
     isDepartureAlarmNativeAvailable,
 } from "../src/modules/notification/departureAlarm";
@@ -36,6 +37,7 @@ jest.mock("../src/modules/auth/authStorage", () => ({
 
 jest.mock("../src/modules/notification/departureAlarm", () => ({
     applyDepartureAlarmCommand: jest.fn(),
+    applyDepartureAlarmPlanCommand: jest.fn(),
     clearAllDepartureAlarms: jest.fn(),
     isDepartureAlarmNativeAvailable: jest.fn(),
 }));
@@ -51,6 +53,11 @@ jest.mock("../src/modules/notification/departureAlarmScheduleReceiptQueue", () =
         return "FAILED";
     }),
     recordDepartureAlarmScheduleReceiptDurably: jest.fn(),
+    reserveDepartureAlarmMutationSequence: jest.fn()
+        .mockImplementation((() => {
+            let sequence = 0;
+            return async () => { sequence += 1; return sequence; };
+        })()),
 }));
 
 jest.mock("../src/modules/storage/secureStorage", () => ({
@@ -64,6 +71,7 @@ const mockedGetAccessToken = jest.mocked(getAccessToken);
 const mockedGetAuthMember = jest.mocked(getAuthMember);
 const mockedGetRefreshToken = jest.mocked(getRefreshToken);
 const mockedApplyCommand = jest.mocked(applyDepartureAlarmCommand);
+const mockedApplyPlan = jest.mocked(applyDepartureAlarmPlanCommand);
 const mockedClearAll = jest.mocked(clearAllDepartureAlarms);
 const mockedNativeAvailable = jest.mocked(isDepartureAlarmNativeAvailable);
 const mockedCleanupMarkerGet = jest.mocked(SecureStore.getItemAsync);
@@ -81,6 +89,7 @@ function syncCommand(overrides: Record<string, unknown> = {}): Record<string, un
         alarmId: "schedule:41:member:7",
         scheduleId: "41",
         alarmGeneration: "3",
+        alarmValidationRevision: "0",
         alarmTriggerAt: "2099-07-29T03:00:00Z",
         alarmTitle: "회의 출발 시간",
         snoozeMinutes: "5",
@@ -97,8 +106,31 @@ function cancelCommand(overrides: Record<string, unknown> = {}): Record<string, 
         alarmId: "schedule:41:member:7",
         scheduleId: "41",
         alarmGeneration: "4",
+        alarmValidationRevision: "0",
         ...overrides,
     };
+}
+
+function v2SyncCommand(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    const occurrences = [
+        ["M15", "2099-07-29T02:45:00Z", 15, "ADVANCE_NOTICE", "a"],
+        ["M10", "2099-07-29T02:50:00Z", 10, "ADVANCE_NOTICE", "b"],
+        ["M5", "2099-07-29T02:55:00Z", 5, "ADVANCE_NOTICE", "c"],
+        ["M0", "2099-07-29T03:00:00Z", 0, "DEPART_NOW", "d"],
+    ].map(([occurrenceId, triggerAt, minutesBeforeDeparture, decision, key]) => ({
+        occurrenceId,
+        triggerAt,
+        title: occurrenceId === "M0" ? "회의 출발 시간" : `회의 출발 ${minutesBeforeDeparture}분 전`,
+        body: occurrenceId === "M0" ? "지금 출발하세요." : `${minutesBeforeDeparture}분 뒤 출발하세요.`,
+        decision,
+        minutesBeforeDeparture,
+        actionEventKey: `key:${String(key).repeat(64)}`,
+    }));
+    return syncCommand({
+        alarmPlanSchemaVersion: "2",
+        alarmOccurrencesJson: JSON.stringify(occurrences),
+        ...overrides,
+    });
 }
 
 function deferred<T>(): {
@@ -127,6 +159,20 @@ describe("departure alarm data-only synchronization", () => {
         mockedGetRefreshToken.mockResolvedValue("refresh");
         mockedGetAuthMember.mockResolvedValue({ id: 7 });
         mockedApplyCommand.mockResolvedValue({ applied: true, scheduled: true });
+        mockedApplyPlan.mockImplementation(async (plan) => {
+            const command = plan.operation === "CANCEL"
+                ? {
+                    operation: "CANCEL" as const,
+                    alarmId: plan.alarmId,
+                    scheduleId: plan.scheduleId,
+                    generation: plan.generation,
+                    recipientMemberId: plan.recipientMemberId,
+                    ...(plan.logicalEventKey ? { logicalEventKey: plan.logicalEventKey } : {}),
+                }
+                : plan.occurrences[0];
+            if (!command) return [];
+            return [{ command, result: await mockedApplyCommand(command) }];
+        });
         mockedClearAll.mockResolvedValue(true);
         mockedNativeAvailable.mockReturnValue(true);
         mockedCleanupMarkerGet.mockResolvedValue(null);
@@ -165,6 +211,7 @@ describe("departure alarm data-only synchronization", () => {
             alarmId: "schedule:41:member:7",
             scheduleId: "41",
             generation: 3,
+            validationRevision: 0,
             recipientMemberId: 7,
             triggerAt: "2099-07-29T03:00:00Z",
             title: "회의 출발 시간",
@@ -208,6 +255,98 @@ describe("departure alarm data-only synchronization", () => {
         );
     });
 
+    it("records each successful v2 occurrence and does not emit the legacy aggregate ACK", async () => {
+        mockedApplyPlan.mockImplementationOnce(async (plan) => plan.occurrences.map((command) => ({
+            command,
+            result: { applied: true, scheduled: true },
+        })));
+        const data = v2SyncCommand({ logicalEventKey: "event:alarm-plan-41" });
+
+        await expect(handleDepartureAlarmSyncData(data)).resolves.toBe(true);
+
+        expect(mockedRecordReceipt).toHaveBeenCalledTimes(4);
+        expect(mockedRecordReceipt.mock.calls.map(([command]) => command.occurrenceId))
+            .toEqual(["M15", "M10", "M5", "M0"]);
+        expect(mockedRecordReceipt).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+                alarmId: "schedule:41:member:7",
+                occurrenceId: "M0",
+                triggerAt: "2099-07-29T03:00:00Z",
+            }),
+            { applied: true, scheduled: true },
+            "PUSH",
+            expect.any(String),
+            expect.any(Number),
+        );
+        expect(mockedAcknowledgePushDelivery).not.toHaveBeenCalled();
+    });
+
+    it("reconciles a higher validation revision and emits fresh occurrence sequences", async () => {
+        mockedApplyPlan.mockImplementation(async (plan) => plan.occurrences.map((command) => ({
+            command,
+            result: { applied: true, scheduled: true },
+        })));
+
+        await handleDepartureAlarmSyncData(v2SyncCommand({ alarmValidationRevision: "4" }));
+        await handleDepartureAlarmSyncData(v2SyncCommand({ alarmValidationRevision: "5" }));
+
+        expect(mockedApplyPlan).toHaveBeenCalledTimes(2);
+        expect(mockedRecordReceipt).toHaveBeenCalledTimes(8);
+        const sequences = mockedRecordReceipt.mock.calls.map((call) => call[4] as number);
+        expect(sequences.every((sequence) => Number.isSafeInteger(sequence) && sequence > 0))
+            .toBe(true);
+        expect(Math.min(...sequences.slice(4))).toBeGreaterThan(Math.max(...sequences.slice(0, 4)));
+    });
+
+    it("silently ignores a lower validation revision in the same generation", async () => {
+        await handleDepartureAlarmSyncData(syncCommand({ alarmValidationRevision: "5" }));
+        mockedApplyPlan.mockClear();
+        mockedApplyCommand.mockClear();
+        mockedRecordReceipt.mockClear();
+        mockedAcknowledgePushDelivery.mockClear();
+
+        await expect(handleDepartureAlarmSyncData(syncCommand({
+            alarmValidationRevision: "4",
+        }))).resolves.toBe(true);
+
+        expect(mockedApplyPlan).not.toHaveBeenCalled();
+        expect(mockedApplyCommand).not.toHaveBeenCalled();
+        expect(mockedRecordReceipt).not.toHaveBeenCalled();
+        expect(mockedAcknowledgePushDelivery).not.toHaveBeenCalled();
+    });
+
+    it("treats a delayed revision-less command as stale after a newer revision", async () => {
+        await handleDepartureAlarmSyncData(syncCommand({ alarmValidationRevision: "5" }));
+        mockedApplyPlan.mockClear();
+        mockedApplyCommand.mockClear();
+        mockedRecordReceipt.mockClear();
+        const legacyCommand = syncCommand();
+        delete legacyCommand.alarmValidationRevision;
+
+        await handleDepartureAlarmSyncData(legacyCommand);
+
+        expect(mockedApplyPlan).not.toHaveBeenCalled();
+        expect(mockedApplyCommand).not.toHaveBeenCalled();
+        expect(mockedRecordReceipt).not.toHaveBeenCalled();
+    });
+
+    it("accepts a higher generation even when its validation revision restarts lower", async () => {
+        await handleDepartureAlarmSyncData(syncCommand({ alarmValidationRevision: "5" }));
+        mockedApplyPlan.mockClear();
+        mockedApplyCommand.mockClear();
+
+        await handleDepartureAlarmSyncData(syncCommand({
+            alarmGeneration: "4",
+            alarmValidationRevision: "0",
+        }));
+
+        expect(mockedApplyPlan).toHaveBeenCalledTimes(1);
+        expect(mockedApplyCommand).toHaveBeenCalledWith(expect.objectContaining({
+            generation: 4,
+            validationRevision: 0,
+        }));
+    });
+
     it("records applied cancel and thrown native outcomes without a scheduled ACK", async () => {
         mockedApplyCommand.mockResolvedValueOnce({ applied: true, scheduled: false });
         await handleDepartureAlarmSyncData(cancelCommand());
@@ -220,7 +359,7 @@ describe("departure alarm data-only synchronization", () => {
         expect(mockedAcknowledgePushDelivery).not.toHaveBeenCalled();
 
         mockedApplyCommand.mockRejectedValueOnce(new Error("native crashed"));
-        await handleDepartureAlarmSyncData(syncCommand());
+        await handleDepartureAlarmSyncData(syncCommand({ alarmGeneration: "5" }));
         expect(mockedRecordReceipt).toHaveBeenLastCalledWith(
             expect.objectContaining({ operation: "UPSERT" }),
             {

@@ -1,7 +1,9 @@
 import { getRouteAlternativeOptions as getLegacyRouteAlternativeOptions } from "../src/modules/map/tmapApi";
 import {
     getRouteAlternativeOptions,
+    getRouteQuality,
     invalidateRouteSearch,
+    shouldShowRequiredMapAttribution,
 } from "../src/modules/map/routingService";
 import type { Place } from "../src/modules/schedule/types";
 
@@ -46,7 +48,7 @@ describe("routingService", () => {
         expect(result[0]).toMatchObject({
             provider: "tmap",
             routeReliability: "live_provider",
-            routeQualityLabel: "TMAP 실경로",
+            routeQualityLabel: "경로 안내",
         });
     });
 
@@ -115,7 +117,7 @@ describe("routingService", () => {
         expect(result[0]).toMatchObject({
             provider: "openstreetmap",
             routeReliability: "provider_estimate",
-            routeQualityLabel: "OpenStreetMap 자전거 경로",
+            routeQualityLabel: "자전거 경로",
         });
     });
 
@@ -140,7 +142,7 @@ describe("routingService", () => {
         expect(result[0]).toMatchObject({
             routeReliability: "provider_estimate",
             routePlausibility: "geometry_suspected",
-            routeQualityLabel: expect.stringContaining("좌표 검증 필요"),
+            routeQualityLabel: "경로 확인 필요",
         });
     });
 
@@ -170,7 +172,7 @@ describe("routingService", () => {
         expect(result[0]).toMatchObject({
             id: "transit-not-operating",
             routeReliability: "provider_estimate",
-            routeQualityLabel: "TMAP 경로 · 현재 운행 종료",
+            routeQualityLabel: "현재 운행 종료",
             routeQualityNotice: expect.stringContaining("현재 운행하지"),
             transitServiceState: "not_operating",
         });
@@ -254,7 +256,51 @@ describe("routingService", () => {
 
         await expect(getRouteAlternativeOptions(origin, destination, "CAR")).rejects.toMatchObject({
             code: "PROVIDER_UNAVAILABLE",
-            message: expect.stringContaining("경로 서버에 연결하지 못했습니다"),
+            message: "경로 서비스에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 검색해 주세요.",
         });
+    });
+
+    test("keeps provider metadata internal while returning neutral user-facing copy", () => {
+        const quality = getRouteQuality({
+            id: "legacy-odsay-copy",
+            mode: "TRANSIT",
+            minutes: 37,
+            source: "api",
+            provider: "odsay",
+            routeReliability: "live_provider",
+            routeQualityLabel: "ODsay에서 조회",
+            routeQualityNotice: "ODsay 정보 제공",
+            pathCoords: [
+                { lat: origin.lat!, lng: origin.lng! },
+                { lat: destination.lat!, lng: destination.lng! },
+            ],
+            attributionText: "ODsay",
+            attributionUrl: "https://lab.odsay.com/",
+        });
+
+        expect(quality).toEqual({
+            reliability: "live_provider",
+            label: "경로 안내",
+        });
+        expect(shouldShowRequiredMapAttribution({
+            id: "odsay-route",
+            mode: "TRANSIT",
+            minutes: 37,
+            source: "api",
+            provider: "odsay",
+            pathCoords: [],
+            attributionText: "ODsay",
+            attributionUrl: "https://lab.odsay.com/",
+        })).toBe(false);
+        expect(shouldShowRequiredMapAttribution({
+            id: "open-map-route",
+            mode: "BIKE",
+            minutes: 42,
+            source: "api",
+            provider: "openstreetmap",
+            pathCoords: [],
+            attributionText: "© OpenStreetMap contributors",
+            attributionUrl: "https://www.openstreetmap.org/fixthemap",
+        })).toBe(true);
     });
 });

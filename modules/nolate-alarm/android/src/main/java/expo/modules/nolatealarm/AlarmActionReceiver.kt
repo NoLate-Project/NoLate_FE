@@ -35,15 +35,25 @@ class AlarmActionReceiver : BroadcastReceiver() {
 
     runCatching {
       when (action) {
-        AlarmContract.ACTION_SNOOZE -> coordinator.snooze(
+        AlarmContract.ACTION_SNOOZE -> if (AlarmSnoozePolicy.isAvailable(current)) {
+          coordinator.snooze(current.alarmId, current.generation)
+        } else {
+          // A stale v2 PendingIntent from an older binary must not create a fifth alarm that can
+          // overlap the already-scheduled reminder sequence. Treat it as dismissing this slot.
+          coordinator.dismiss(current.alarmId, current.generation)
+        }
+        AlarmContract.ACTION_DISMISS -> coordinator.dismiss(
           current.alarmId,
           current.generation
         )
-        AlarmContract.ACTION_DISMISS,
-        AlarmContract.ACTION_DEPART -> coordinator.dismiss(
-          current.alarmId,
-          current.generation
-        )
+        AlarmContract.ACTION_DEPART -> {
+          // Legacy PendingIntents from a previous binary can still reach this receiver. Preserve
+          // the action durably before stopping the alarm; receivers never force app navigation.
+          if (!DepartureAlarmActionJournal(context).record(current, System.currentTimeMillis())) {
+            return@runCatching
+          }
+          coordinator.dismiss(current.alarmId, current.generation)
+        }
       }
     }
   }

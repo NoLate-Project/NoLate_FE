@@ -29,7 +29,12 @@ const routeUpdate: ScheduleRouteUpdatePayload = {
     startAt: ownerItem.startAt,
     endAt: ownerItem.endAt,
     origin: { name: "오너 출발지 V2" },
-    destination: ownerItem.destination,
+    destination: {
+        name: "강남역",
+        address: "서울특별시 강남구 강남대로 396",
+        lat: 37.4979,
+        lng: 127.0276,
+    },
     travelMode: "TRANSIT",
     travelMinutes: 31,
     route: {
@@ -80,6 +85,12 @@ describe("schedule travel plan save policy", () => {
 
         expect(upsertMyTravelPlan).toHaveBeenCalledWith("147", expect.objectContaining({
             origin: { name: "오너 출발지 V2" },
+            destination: {
+                name: "강남역",
+                address: "서울특별시 강남구 강남대로 396",
+                lat: 37.4979,
+                lng: 127.0276,
+            },
             travelMode: "TRANSIT",
             travelMinutes: 31,
             route: routeUpdate.route,

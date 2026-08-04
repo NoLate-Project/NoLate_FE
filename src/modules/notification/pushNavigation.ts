@@ -33,6 +33,7 @@ export type ScheduleDetailRoute = {
     pathname: "/schedule/[id]";
     params: {
         id: string;
+        openRouteDetail: "1";
     };
 };
 
@@ -139,6 +140,7 @@ export function createScheduleDetailRoute(scheduleId: string): ScheduleDetailRou
         pathname: "/schedule/[id]",
         params: {
             id: scheduleId,
+            openRouteDetail: "1",
         },
     };
 }

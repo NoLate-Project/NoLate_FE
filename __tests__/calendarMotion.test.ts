@@ -106,12 +106,14 @@ describe("calendar depth motion", () => {
     });
 
     test.each([
-        [1, -320, 320],
-        [-1, 320, -320],
+        ["가로", 1, 402, -402, 402],
+        ["가로", -1, 402, 402, -402],
+        ["세로", 1, 495, -495, 495],
+        ["세로", -1, 495, 495, -495],
     ] as const)(
-        "상세형 월 이동 방향 %s는 outgoing=%s, incoming=%s이다",
-        (direction, outgoing, incoming) => {
-            expect(getDetailMonthSwipeOffsets(direction)).toEqual({
+        "%s 상세형 월 이동 방향 %s는 실제 viewport %spx를 page travel로 사용한다",
+        (_axis, direction, travel, outgoing, incoming) => {
+            expect(getDetailMonthSwipeOffsets(direction, travel)).toEqual({
                 outgoing,
                 incoming,
             });
@@ -130,28 +132,30 @@ describe("calendar depth motion", () => {
     });
 
     test("상세형 월 드래그 판정값은 짧은 상호작용 예산 안에 있다", () => {
-        expect(DETAIL_MONTH_SWIPE_GESTURE).toEqual({
+        expect(DETAIL_MONTH_SWIPE_GESTURE).toMatchObject({
             activationDistance: 8,
             directionDominance: 1.2,
             distanceThreshold: 36,
             velocityThreshold: 0.35,
             velocityProjection: 80,
             followRatio: 1,
-            maxFollowTravel: 320,
             cancelDurationMs: 110,
             maxOpacityLoss: 0,
         });
+        expect(DETAIL_MONTH_SWIPE_GESTURE.maxFollowTravel).toBeGreaterThan(0);
         expect(DETAIL_MONTH_SWIPE_GESTURE.cancelDurationMs).toBeLessThanOrEqual(120);
         expect(Object.isFrozen(DETAIL_MONTH_SWIPE_GESTURE)).toBe(true);
     });
 
-    test("상세형 월 settle은 최소 시간 없이 거리·속도에 따라 줄어든다", () => {
+    test("상세형 월 settle은 최소 시간 없이 거리·속도에 따라 줄고 최대 시간만 제한한다", () => {
         const maximum = DETAIL_MONTH_SWIPE_MOTION.maxGestureSettleDurationMs;
 
-        expect(maximum).toBe(
-            CALENDAR_INTERACTION_BUDGET_MS
-                - DETAIL_MONTH_SWIPE_MOTION.commitFrameBudgetMs
-        );
+        expect(maximum).toBe(220);
+        expect(DETAIL_MONTH_SWIPE_MOTION.continuousCommitIdleMs).toBe(600);
+        expect(DETAIL_MONTH_SWIPE_MOTION.settleBezier)
+            .toEqual([0, 0, 0.58, 1]);
+        expect(Object.isFrozen(DETAIL_MONTH_SWIPE_MOTION.settleBezier))
+            .toBe(true);
         expect(getDetailMonthSwipeSettleDuration(400, 0, 400))
             .toBe(maximum);
         expect(getDetailMonthSwipeSettleDuration(200, 0, 400))
@@ -159,8 +163,30 @@ describe("calendar depth motion", () => {
         expect(getDetailMonthSwipeSettleDuration(400, 4, 400))
             .toBe(100);
         expect(getDetailMonthSwipeSettleDuration(1, 0, 400))
-            .toBeLessThan(1);
+            .toBeCloseTo(maximum / 400, 10);
+        expect(getDetailMonthSwipeSettleDuration(0.1, 0, 400))
+            .toBeCloseTo(maximum / 4_000, 10);
+        expect(getDetailMonthSwipeSettleDuration(0.1, 0, 400))
+            .toBeLessThan(getDetailMonthSwipeSettleDuration(1, 0, 400));
         expect(getDetailMonthSwipeSettleDuration(0, 0, 400)).toBe(0);
+
+        for (const [remainingDistance, velocity] of [
+            [400, 0],
+            [200, 0],
+            [400, 4],
+            [1, 0],
+            [0.1, 0],
+        ] as const) {
+            expect(getDetailMonthSwipeSettleDuration(
+                remainingDistance,
+                velocity,
+                400
+            )).toBeLessThanOrEqual(maximum);
+        }
+
+        expect(getDetailMonthSwipeSettleDuration(400, 0, 400, 80)).toBe(80);
+        expect(getDetailMonthSwipeSettleDuration(1, 0, 400, 80))
+            .toBeCloseTo(0.2, 10);
     });
 
     test("상세형 월 settle은 반대·비정상 속도를 안전하게 보정한다", () => {
@@ -225,9 +251,39 @@ describe("calendar depth motion", () => {
         expect(getDetailMonthSwipeFollowOffset(-10)).toBe(-10);
         expect(getDetailMonthSwipeFollowOffset(100)).toBe(100);
         expect(getDetailMonthSwipeFollowOffset(-100)).toBe(-100);
-        expect(getDetailMonthSwipeFollowOffset(400)).toBe(320);
-        expect(getDetailMonthSwipeFollowOffset(-400)).toBe(-320);
+        expect(getDetailMonthSwipeFollowOffset(10_000))
+            .toBe(DETAIL_MONTH_SWIPE_GESTURE.maxFollowTravel);
+        expect(getDetailMonthSwipeFollowOffset(-10_000))
+            .toBe(-DETAIL_MONTH_SWIPE_GESTURE.maxFollowTravel);
+    });
+
+    test.each([
+        ["가로", 402],
+        ["세로", 495],
+    ] as const)(
+        "%s drag follow는 측정된 viewport travel로 clamp한다",
+        (_axis, viewportTravel) => {
+            expect(getDetailMonthSwipeFollowOffset(
+                viewportTravel / 2,
+                false,
+                viewportTravel
+            )).toBe(viewportTravel / 2);
+            expect(getDetailMonthSwipeFollowOffset(
+                viewportTravel + 80,
+                false,
+                viewportTravel
+            )).toBe(viewportTravel);
+            expect(getDetailMonthSwipeFollowOffset(
+                -viewportTravel - 80,
+                false,
+                viewportTravel
+            )).toBe(-viewportTravel);
+        }
+    );
+
+    test("호출자가 제공한 짧은 viewport도 page 경계를 넘지 않는다", () => {
         expect(getDetailMonthSwipeFollowOffset(100, false, 12)).toBe(12);
+        expect(getDetailMonthSwipeFollowOffset(-100, false, 12)).toBe(-12);
     });
 
     test("모션 줄이기와 비정상 follow 값은 이동시키지 않는다", () => {
@@ -237,12 +293,28 @@ describe("calendar depth motion", () => {
         expect(getDetailMonthSwipeFollowOffset(20, false, -1)).toBe(0);
     });
 
-    test("page swipe 중에는 달력을 흐리게 만들지 않는다", () => {
-        expect(getDetailMonthSwipeFollowOpacity(0)).toBe(1);
-        expect(getDetailMonthSwipeFollowOpacity(12)).toBe(1);
-        expect(getDetailMonthSwipeFollowOpacity(-12)).toBe(1);
-        expect(getDetailMonthSwipeFollowOpacity(240)).toBe(1);
-    });
+    test.each([
+        ["가로", 402],
+        ["세로", 495],
+    ] as const)(
+        "%s page swipe는 viewport 전체 이동 중 두 page를 불투명하게 유지한다",
+        (_axis, viewportTravel) => {
+            for (const offset of [
+                0,
+                viewportTravel * 0.25,
+                -viewportTravel * 0.25,
+                viewportTravel,
+                -viewportTravel,
+                viewportTravel * 1.5,
+                -viewportTravel * 1.5,
+            ]) {
+                expect(getDetailMonthSwipeFollowOpacity(
+                    offset,
+                    viewportTravel
+                )).toBe(1);
+            }
+        }
+    );
 
     test("비정상 opacity 입력과 움직임 없는 travel은 불투명하게 유지한다", () => {
         expect(getDetailMonthSwipeFollowOpacity(Number.NaN)).toBe(1);

@@ -28,12 +28,12 @@ import {
     createLatestRequestGuard,
 } from "../../src/modules/map/routeAsyncGuard";
 import {
-    getRouteQualityLabel,
     getRouteQualityNotice,
     getRouteAlternativeOptions,
     invalidateRouteSearch,
     reverseGeocodeToAddress,
     searchAddressByKeyword,
+    shouldShowRequiredMapAttribution,
     type PlaceSearchItem,
     type RouteAlternativeOption,
     type RoutePathCoord,
@@ -1707,7 +1707,7 @@ function formatAlternativeInfo(option: RouteAlternativeOption): string {
     }
 
     if (!chunks.length) {
-        return getRouteQualityLabel(option);
+        return "경로 안내";
     }
 
     return chunks.join(" · ");
@@ -9520,7 +9520,7 @@ export default function RoutePlannerScreen() {
                                         </Text>
                                     </View>
                                 )}
-                                {!!selectedAlternative?.attributionText && !!selectedAlternative.attributionUrl && !etaLoading && (
+                                {shouldShowRequiredMapAttribution(selectedAlternative) && !!selectedAlternative?.attributionText && !!selectedAlternative.attributionUrl && !etaLoading && (
                                     <Pressable
                                         accessibilityRole="link"
                                         accessibilityLabel={`${selectedAlternative.attributionText} 지도 정보 열기`}
