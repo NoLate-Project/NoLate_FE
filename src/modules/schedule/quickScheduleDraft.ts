@@ -61,7 +61,6 @@ export type QuickScheduleBlockingReviewField = "date" | "time" | "location" | "r
 
 const DEFAULT_DURATION_MINUTES = 60;
 const DEFAULT_UNCONFIRMED_TIME = "19:00";
-const HIGH_CONFIDENCE_THRESHOLD = 0.90;
 
 function getUsableQuickScheduleConfidence(
     confidence: ScheduleParseResult["confidence"]
@@ -76,11 +75,19 @@ function getUsableQuickScheduleConfidence(
         fields.date,
         fields.time,
         fields.destination,
-        ...(confidence.recognition === undefined ? [] : [confidence.recognition]),
     ];
-    return values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
-        ? confidence
-        : undefined;
+    if (!values.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
+        return undefined;
+    }
+    // 구버전 서버/네이티브가 만든 전 필드 0은 실제 측정 결과가 아니라 미제공 sentinel이다.
+    if (values.every((value) => value === 0)) return undefined;
+
+    const recognition = confidence.recognition;
+    if (recognition === undefined) return confidence;
+    if (!Number.isFinite(recognition) || recognition <= 0 || recognition > 1) {
+        return { ...confidence, recognition: undefined };
+    }
+    return confidence;
 }
 
 function pad2(value: number) {
@@ -238,8 +245,8 @@ export function buildQuickSchedulePreviewDraft(
     const missingFields = parsed.missingFields ?? [];
     const warnings = parsed.warnings ?? [];
     const confidence = getUsableQuickScheduleConfidence(parsed.confidence);
-    const confidenceReasons = confidence?.reasons ?? [];
-    const reviewSignals = [...missingFields, ...warnings, ...confidenceReasons];
+    // 수치 점수는 참고 정보다. 실제 missing/warning이 있을 때만 해당 필드 확인을 요구한다.
+    const reviewSignals = [...missingFields, ...warnings];
     const dateMentioned = includesAny(reviewSignals, ["date", "day", "날짜", "요일"]);
     const timeMentioned = includesAny(reviewSignals, ["time", "hour", "시간", "시각", "오전", "오후", "am", "pm"]);
     const locationMentioned = includesAny(reviewSignals, [
@@ -260,36 +267,25 @@ export function buildQuickSchedulePreviewDraft(
     const explicitDurationMinutes = parserMarkedExplicitEnd
         ? getExplicitDurationMinutes(parsedStartAt, parsed.endAt)
         : null;
+    const parsedTitleTime = parsedStartAt ? toHm(parsedStartAt) : validParsedTime;
+    const defaultTitle = [parsedTitleTime, destinationText]
+        .filter((value): value is string => Boolean(value?.trim()))
+        .join(" ");
     const badges: QuickSchedulePreviewDraft["badges"] = {};
-    const confidenceUnavailable = !confidence;
-
     if (dateMentioned) {
         badges.date = "날짜 확인 필요";
     } else if (!parsedStartAt && !validParsedDate) {
         badges.date = "날짜 미확정";
-    } else if (confidenceUnavailable) {
-        badges.date = "신뢰도 계산 불가";
-    } else if ((confidence?.fields.date ?? 0) < HIGH_CONFIDENCE_THRESHOLD) {
-        badges.date = "신뢰도 확인 필요";
     }
 
     if (timeMentioned) {
         badges.time = "시간 확인 필요";
     } else if (!parsedStartAt && !validParsedTime) {
         badges.time = "시간 미확정";
-    } else if (confidenceUnavailable) {
-        badges.time = "신뢰도 계산 불가";
-    } else if ((confidence?.fields.time ?? 0) < HIGH_CONFIDENCE_THRESHOLD) {
-        badges.time = "신뢰도 확인 필요";
     }
 
-    if (
-        !destinationText
-        || locationMentioned
-        || confidenceUnavailable
-        || (confidence?.fields.destination ?? 0) < HIGH_CONFIDENCE_THRESHOLD
-    ) {
-        badges.location = confidenceUnavailable ? "신뢰도 계산 불가" : "장소 확인 필요";
+    if (!destinationText || locationMentioned) {
+        badges.location = "장소 확인 필요";
     }
 
     const requiredFields = [
@@ -297,13 +293,15 @@ export function buildQuickSchedulePreviewDraft(
         ...(badges.time ? ["time" as const] : []),
         ...(badges.location ? ["destination" as const] : []),
     ];
-    const globalReviewRequired = (
-        parsed.needsReview
-        || confidence?.level === "REVIEW"
-    ) && requiredFields.length === 0;
+    const globalReviewRequired = parsed.needsReview
+        && warnings.length > 0
+        && requiredFields.length === 0;
 
     const draft: QuickSchedulePreviewDraft = {
-        title: parsed.title?.trim() || fallbackText.split(/\n|,/)[0]?.trim() || "새 일정",
+        title: parsed.title?.trim()
+            || defaultTitle
+            || fallbackText.split(/\n|,/)[0]?.trim()
+            || "새 일정",
         date,
         time,
         durationMinutes: explicitDurationMinutes ?? DEFAULT_DURATION_MINUTES,
@@ -322,7 +320,7 @@ export function buildQuickSchedulePreviewDraft(
         badges,
         parsed: confidence === parsed.confidence
             ? parsed
-            : { ...parsed, confidence: undefined },
+            : { ...parsed, confidence },
         verification: {
             requiredFields,
             fields: {},
@@ -342,7 +340,8 @@ export function buildQuickSchedulePreviewDraft(
     }
 
     if (
-        (parsed.needsReview || confidence?.level === "REVIEW")
+        parsed.needsReview
+        && warnings.length > 0
         && !dateMentioned
         && !timeMentioned
         && !locationMentioned

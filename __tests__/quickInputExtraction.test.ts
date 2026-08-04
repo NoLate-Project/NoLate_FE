@@ -267,6 +267,21 @@ describe("quick schedule media input extraction", () => {
         })).resolves.toMatchObject({ recognitionConfidence: 1 });
     });
 
+    test("네이티브 0점은 실제 정확도가 아니라 점수 미제공으로 처리한다", async () => {
+        const recognizeTextFromImage = jest.fn().mockResolvedValue({
+            text: "내일 3시 서울역",
+            confidence: 0,
+        });
+        const { resolveQuickScheduleParseInput } = await loadModuleWithNative({
+            recognizeTextFromImage,
+        });
+
+        await expect(resolveQuickScheduleParseInput("", {
+            inputMode: "photo",
+            photoUri: "file:///tmp/schedule.png",
+        })).resolves.not.toHaveProperty("recognitionConfidence");
+    });
+
     test("음성 전사 실패 원인을 사용자에게 그대로 전달한다", async () => {
         const transcribeAudioFile = jest.fn().mockRejectedValue(
             new Error("녹음에서 음성을 감지하지 못했습니다. 마이크 입력을 확인하고 다시 녹음해주세요.")

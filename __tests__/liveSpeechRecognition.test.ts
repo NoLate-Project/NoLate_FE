@@ -281,7 +281,7 @@ describe("live speech transcript accumulation", () => {
             0.91
         )).toEqual([
             { text: "내일 세 시 회의", confidence: 0.91 },
-            { text: "내일 네 시 회의", confidence: 0 },
+            { text: "내일 네 시 회의" },
             { text: "내일 다섯 시 회의", confidence: 1 },
         ]);
     });

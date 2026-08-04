@@ -112,6 +112,9 @@ export function createLiveSpeechSessionId(): string {
 
 function normalizeConfidence(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    // iOS/Android speech APIs use zero or a negative value when no calibrated score is available.
+    // Showing that sentinel as a real 0% makes a correctly transcribed sentence look completely wrong.
+    if (value <= 0) return undefined;
     return Math.max(0, Math.min(1, value));
 }
 

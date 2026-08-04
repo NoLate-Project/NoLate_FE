@@ -242,9 +242,9 @@ class NoLateLiveSpeechModule(
         if (texts.isEmpty()) return
         val confidences = bundle?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
         latestText = texts.first()
-        latestConfidence = confidences?.getOrNull(0)?.toDouble()?.takeIf { it >= 0 }?.coerceIn(0.0, 1.0)
+        latestConfidence = confidences?.getOrNull(0)?.toDouble()?.takeIf { it > 0.0 }?.coerceIn(0.0, 1.0)
         latestAlternatives = texts.mapIndexed { index, text ->
-            text to confidences?.getOrNull(index)?.toDouble()?.takeIf { it >= 0 }?.coerceIn(0.0, 1.0)
+            text to confidences?.getOrNull(index)?.toDouble()?.takeIf { it > 0.0 }?.coerceIn(0.0, 1.0)
         }
         emitTranscript(isFinal)
     }

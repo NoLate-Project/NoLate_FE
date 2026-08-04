@@ -6,6 +6,7 @@
 #import <React/RCTLog.h>
 #import <Speech/Speech.h>
 #import <TargetConditionals.h>
+#import <math.h>
 #import <stdatomic.h>
 
 static NSString *const NoLateLiveSpeechTranscriptEvent = @"NoLateLiveSpeechTranscript";
@@ -149,10 +150,15 @@ RCT_EXPORT_MODULE();
 {
   if (transcription.segments.count == 0) return -1;
   double total = 0;
+  NSUInteger measuredCount = 0;
   for (SFTranscriptionSegment *segment in transcription.segments) {
-    total += segment.confidence;
+    double confidence = segment.confidence;
+    // SFSpeech can return 0 when it has not produced a calibrated confidence value.
+    if (!isfinite(confidence) || confidence <= 0) continue;
+    total += confidence;
+    measuredCount += 1;
   }
-  return total / transcription.segments.count;
+  return measuredCount > 0 ? total / measuredCount : -1;
 }
 
 - (NSString *)normalizedTranscriptText:(NSString *)text

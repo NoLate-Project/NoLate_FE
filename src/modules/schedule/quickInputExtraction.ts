@@ -82,6 +82,7 @@ function normalizeExtractedText(value: NativeRecognitionResult | string) {
 
 function normalizeConfidenceValue(value: unknown): number | undefined {
     if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+    if (value <= 0) return undefined;
     return Math.max(0, Math.min(1, value));
 }
 

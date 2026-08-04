@@ -234,6 +234,12 @@ describe("QuickScheduleModal live speech", () => {
         expect(
             renderer!.root.findByProps({ accessibilityLabel: "실시간 음성 인식 텍스트" }).props.value
         ).toBe("내일 오후 세 시 강남역 회의");
+        expect(
+            renderer!.root.findAll((node) => (
+                typeof node.props.children === "string"
+                && node.props.children.includes("음성 인식 참고값")
+            ))
+        ).toHaveLength(0);
 
         await act(async () => {
             renderer!.root

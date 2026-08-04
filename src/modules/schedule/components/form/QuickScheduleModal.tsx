@@ -3301,13 +3301,9 @@ export default function QuickScheduleModal({
                         >
                             <View style={styles.voiceTranscriptHeader}>
                                 <Text style={[styles.voiceTranscriptLabel, { color: colors.textSecondary }]}>말한 내용</Text>
-                                {voiceTranscriptTruncated ? (
+                                {voiceTranscriptTruncated && (
                                     <Text style={[styles.voiceConfidence, styles.truncatedRecognitionText]}>
                                         앞 300자만 표시
-                                    </Text>
-                                ) : voiceRecognitionConfidence !== undefined && (
-                                    <Text style={[styles.voiceConfidence, { color: colors.textSecondary }]}>
-                                        음성 인식 참고값 {Math.round(voiceRecognitionConfidence * 100)}%
                                     </Text>
                                 )}
                             </View>
@@ -3446,43 +3442,6 @@ export default function QuickScheduleModal({
     const renderPreviewStep = () => {
         if (!previewDraft) return null;
         const blockingReviewField = getQuickScheduleBlockingReviewField(previewDraft);
-        const confidence = previewDraft.parsed?.confidence;
-        const confidencePercent = confidence
-            ? Math.round(Math.max(0, Math.min(1, confidence.overall)) * 100)
-            : null;
-        const confidenceColor = confidence?.level === "HIGH"
-            ? "#0D9F6E"
-            : confidence?.level === "MEDIUM"
-                ? "#D97706"
-                : "#D94A4A";
-        const confidenceLabel = confidence?.level === "HIGH"
-            ? "높음"
-            : confidence?.level === "MEDIUM"
-                ? "확인 권장"
-                : confidence?.level === "REVIEW"
-                    ? "확인 필요"
-                    : "계산 불가";
-        const weakConfidenceFields = confidence
-            ? ([
-                ["날짜", confidence.fields.date],
-                ["시간", confidence.fields.time],
-                ["장소", confidence.fields.destination],
-            ] as const)
-                .filter(([, value]) => value < 0.90)
-                .map(([label]) => label)
-            : [];
-        const confidenceImprovement = !confidence
-            ? "날짜·시간·장소를 각각 눌러 원문과 비교해 확인"
-            : confidence.level !== "HIGH"
-            ? [
-                confidence.recognition !== undefined && confidence.recognition < 0.90
-                    ? "사진·음성 인식 문장을 원본과 비교해 수정"
-                    : null,
-                weakConfidenceFields.length > 0
-                    ? `${weakConfidenceFields.join("·")} 항목을 눌러 확인`
-                    : "표시된 분석 내용을 원문과 비교해 확인",
-            ].filter(Boolean).join(" 후 ")
-            : null;
         const confirmGlobalReview = () => {
             setPreviewDraft((current) => (
                 current ? confirmQuickScheduleGlobalReview(current) : current
@@ -3496,62 +3455,6 @@ export default function QuickScheduleModal({
                     contentContainerStyle={styles.previewScrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    {previewDraft.parsed && (
-                        <View
-                            accessibilityRole="summary"
-                            accessibilityLabel={confidencePercent === null
-                                ? "일정 분석 신뢰도 계산 불가"
-                                : `일정 분석 신뢰도 ${confidencePercent}퍼센트, ${confidenceLabel}`}
-                            style={[
-                                styles.confidenceCard,
-                                {
-                                    backgroundColor: previewRowBackground,
-                                    borderColor: cardBorderColor,
-                                },
-                            ]}
-                        >
-                            <View style={styles.confidenceHeader}>
-                                <View>
-                                    <Text style={[styles.confidenceEyebrow, { color: colors.textSecondary }]}>일정 분석 신뢰도</Text>
-                                    <Text style={[styles.confidenceScore, { color: confidenceColor }]}>
-                                        {confidencePercent === null
-                                            ? "계산 불가 · 필드 확인 필요"
-                                            : `${confidencePercent}% · ${confidenceLabel}`}
-                                    </Text>
-                                </View>
-                                {confidence?.recognition !== undefined && (
-                                    <Text style={[styles.confidenceRecognition, { color: colors.textSecondary }]}>원본 인식 참고값 {Math.round(confidence.recognition * 100)}%</Text>
-                                )}
-                            </View>
-                            <View style={styles.confidenceFields}>
-                                {([
-                                    ["날짜", "date", confidence?.fields.date],
-                                    ["시간", "time", confidence?.fields.time],
-                                    ["장소", "destination", confidence?.fields.destination],
-                                ] as const).map(([label, field, value]) => (
-                                    <View key={label} style={[styles.confidenceFieldPill, { borderColor: cardBorderColor }]}>
-                                        <Text style={[styles.confidenceFieldText, { color: colors.textSecondary }]}>
-                                            {label} {value === undefined ? "미측정" : `${Math.round(value * 100)}%`}
-                                            {previewDraft.verification?.fields[field] ? " · 확인됨" : ""}
-                                        </Text>
-                                    </View>
-                                ))}
-                            </View>
-                            {confidence?.reasons?.[0] && confidence.level !== "HIGH" && (
-                                <Text numberOfLines={2} style={[styles.confidenceReason, { color: colors.textSecondary }]}>
-                                    {confidence.reasons[0]}
-                                </Text>
-                            )}
-                            {confidenceImprovement && (
-                                <Text
-                                    accessibilityLabel="신뢰도 개선 방법"
-                                    style={[styles.confidenceImprovement, { color: confidenceColor }]}
-                                >
-                                    개선 방법 · {confidenceImprovement}
-                                </Text>
-                            )}
-                        </View>
-                    )}
                     {PREVIEW_FIELDS.map((field) => {
                         const badge = field.key === "notification" && !canUseRouteNotification(previewDraft)
                             ? "선택 설정"
@@ -4918,61 +4821,6 @@ const styles = StyleSheet.create({
     previewScrollContent: {
         gap: 7,
         paddingBottom: 8,
-    },
-    confidenceCard: {
-        borderRadius: 12,
-        borderWidth: 1,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-        gap: 8,
-    },
-    confidenceHeader: {
-        flexDirection: "row",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-        gap: 8,
-    },
-    confidenceEyebrow: {
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "800",
-    },
-    confidenceScore: {
-        marginTop: 1,
-        fontSize: 17,
-        lineHeight: 22,
-        fontWeight: "900",
-    },
-    confidenceRecognition: {
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "700",
-        textAlign: "right",
-    },
-    confidenceFields: {
-        flexDirection: "row",
-        gap: 6,
-    },
-    confidenceFieldPill: {
-        borderRadius: 999,
-        borderWidth: 1,
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-    },
-    confidenceFieldText: {
-        fontSize: 10,
-        lineHeight: 14,
-        fontWeight: "700",
-    },
-    confidenceReason: {
-        fontSize: 10,
-        lineHeight: 15,
-        fontWeight: "600",
-    },
-    confidenceImprovement: {
-        fontSize: 10,
-        lineHeight: 15,
-        fontWeight: "700",
     },
     previewRow: {
         minHeight: 47,
