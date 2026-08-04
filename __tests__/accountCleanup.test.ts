@@ -24,6 +24,9 @@ import {
     clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount,
 } from "../src/modules/schedule/quickScheduleReliabilityFeedbackQueue";
 import { clearSeenShareAttention } from "../src/modules/share/shareAttention";
+import {
+    clearNavigationPerformanceQueueForCurrentAccount,
+} from "../src/modules/performance/navigationPerformanceQueue";
 
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     clearDepartureAlarmsForAccountCleanup: jest.fn().mockResolvedValue(true),
@@ -87,6 +90,10 @@ jest.mock("../src/modules/share/shareAttention", () => ({
     clearSeenShareAttention: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../src/modules/performance/navigationPerformanceQueue", () => ({
+    clearNavigationPerformanceQueueForCurrentAccount: jest.fn().mockResolvedValue(undefined),
+}));
+
 const mockedAlarmCleanup = jest.mocked(clearDepartureAlarmsForAccountCleanup);
 const mockedReceiptCleanup = jest.mocked(
     clearDepartureAlarmScheduleReceiptQueueForCurrentAccount
@@ -103,6 +110,7 @@ const allOtherCleanupMocks = [
     clearScheduleEtaObservationEngagementQueueForCurrentAccount,
     clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount,
     clearSeenShareAttention,
+    clearNavigationPerformanceQueueForCurrentAccount,
 ].map((cleanup) => jest.mocked(cleanup));
 
 describe("clearAccountScopedLocalData", () => {

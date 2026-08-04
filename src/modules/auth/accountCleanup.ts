@@ -23,6 +23,9 @@ import {
 import {
     clearForegroundPushPresentationClaimsForCurrentAccount,
 } from "../notification/foregroundPushPresentationClaim";
+import {
+    clearNavigationPerformanceQueueForCurrentAccount,
+} from "../performance/navigationPerformanceQueue";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
@@ -44,6 +47,7 @@ export async function clearAccountScopedLocalData(): Promise<void> {
         clearDepartureAlarmScheduleReceiptQueueForCurrentAccount(),
         clearStandardDepartureActionFallbackForCurrentAccount(),
         clearForegroundPushPresentationClaimsForCurrentAccount(),
+        clearNavigationPerformanceQueueForCurrentAccount(),
     ]);
 
     const alarmResult = cleanupResults[0];
