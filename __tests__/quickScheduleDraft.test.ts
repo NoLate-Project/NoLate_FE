@@ -87,6 +87,27 @@ function completeDraft(
 }
 
 describe("quick schedule draft", () => {
+    test("제목이 없으면 도착시간과 장소 순서로 기본 제목을 만든다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            date: "2026-08-07",
+            time: "15:00",
+            destination,
+        }), "금요일 오후 3시 서울역", "2026-08-01");
+
+        expect(draft.title).toBe("15:00 서울역");
+    });
+
+    test("분석 결과에 제목값이 있으면 기본 제목보다 우선한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "팀 주간회의",
+            date: "2026-08-07",
+            time: "15:00",
+            destination,
+        }), "금요일 오후 3시 서울역 팀 주간회의", "2026-08-01");
+
+        expect(draft.title).toBe("팀 주간회의");
+    });
+
     test("완전한 분석 결과는 바로 검토 가능한 초안이 된다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             title: "저녁 약속",
@@ -137,7 +158,7 @@ describe("quick schedule draft", () => {
         expect(getQuickScheduleBlockingReviewField(draft)).toBe("time");
     });
 
-    test("90% 미만 핵심 필드는 저장을 막고 사용자 확인을 분석 점수와 분리해 기록한다", () => {
+    test("90% 미만 내부 점수만으로 필드 확인을 강제하지 않는다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             title: "서울역 회의",
             date: "2026-07-20",
@@ -151,30 +172,16 @@ describe("quick schedule draft", () => {
             },
         }), "월요일 오후 3시 서울역 회의", "2026-07-17");
 
-        expect(draft.badges.time).toBe("신뢰도 확인 필요");
-        expect(draft.badges.location).toBe("장소 확인 필요");
-        expect(getQuickScheduleBlockingReviewField(draft)).toBe("time");
-
-        const timeConfirmed = updateQuickSchedulePreviewDraft(draft, "time", draft.time);
-        expect(timeConfirmed.parsed?.confidence?.fields.time).toBe(0.86);
-        expect(timeConfirmed.parsed?.confidence?.level).toBe("MEDIUM");
-        expect(timeConfirmed.verification?.fields.time).toBe("USER_CONFIRMED");
-        expect(getQuickScheduleBlockingReviewField(timeConfirmed)).toBe("location");
-
-        const locationConfirmed = updateQuickSchedulePreviewDraft(
-            timeConfirmed,
-            "location",
-            timeConfirmed.location
-        );
-        expect(locationConfirmed.parsed?.confidence).toEqual(expect.objectContaining({
+        expect(draft.badges.time).toBeUndefined();
+        expect(draft.badges.location).toBeUndefined();
+        expect(draft.parsed?.confidence).toEqual(expect.objectContaining({
             overall: 0.86,
             level: "MEDIUM",
         }));
-        expect(locationConfirmed.verification?.fields.destination).toBe("USER_CONFIRMED");
-        expect(getQuickScheduleBlockingReviewField(locationConfirmed)).toBeNull();
+        expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
     });
 
-    test("신뢰도 계약이 없는 구버전 응답은 세 핵심 필드 확인 전 저장할 수 없다", () => {
+    test("신뢰도 계약이 없는 구버전 응답도 유효한 일정 필드를 그대로 사용한다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             title: "서울역 회의",
             date: "2026-07-20",
@@ -183,30 +190,36 @@ describe("quick schedule draft", () => {
             confidence: undefined,
         }), "월요일 오후 3시 서울역 회의", "2026-07-17");
 
-        expect(draft.badges).toEqual(expect.objectContaining({
-            date: "신뢰도 계산 불가",
-            time: "신뢰도 계산 불가",
-            location: "신뢰도 계산 불가",
-        }));
-        expect(getQuickScheduleBlockingReviewField(draft)).toBe("date");
-
-        const dateConfirmed = updateQuickSchedulePreviewDraft(draft, "date", draft.date);
-        const timeConfirmed = updateQuickSchedulePreviewDraft(dateConfirmed, "time", draft.time);
-        const locationConfirmed = updateQuickSchedulePreviewDraft(
-            timeConfirmed,
-            "location",
-            draft.location
-        );
-
-        expect(locationConfirmed.verification?.fields).toEqual({
-            date: "USER_CONFIRMED",
-            time: "USER_CONFIRMED",
-            destination: "USER_CONFIRMED",
-        });
-        expect(getQuickScheduleBlockingReviewField(locationConfirmed)).toBeNull();
+        expect(draft.badges.date).toBeUndefined();
+        expect(draft.badges.time).toBeUndefined();
+        expect(draft.badges.location).toBeUndefined();
+        expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
     });
 
-    test("범위를 벗어난 신뢰도 응답도 계산 실패로 보고 저장을 막는다", () => {
+    test("구버전의 전 필드 0점 응답은 내부 점수만 버리고 일정은 유지한다", () => {
+        const draft = buildQuickSchedulePreviewDraft(parseResult({
+            title: "강남역",
+            date: "2026-08-04",
+            time: "21:09",
+            destination: { name: "강남역" },
+            confidence: {
+                overall: 0,
+                level: "REVIEW",
+                recognition: 0,
+                fields: { date: 0, time: 0, destination: 0 },
+                reasons: ["점수 미제공"],
+            },
+        }), "1시간 뒤에 강남역", "2026-08-04");
+
+        expect(draft.parsed?.confidence).toBeUndefined();
+        expect(draft.location).toBe("강남역");
+        expect(draft.badges.date).toBeUndefined();
+        expect(draft.badges.time).toBeUndefined();
+        expect(draft.badges.location).toBeUndefined();
+        expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
+    });
+
+    test("범위를 벗어난 내부 점수는 버리되 유효한 일정 필드를 막지 않는다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             date: "2026-07-20",
             time: "15:00",
@@ -220,8 +233,8 @@ describe("quick schedule draft", () => {
         }), "월요일 오후 3시 서울역 회의", "2026-07-17");
 
         expect(draft.parsed?.confidence).toBeUndefined();
-        expect(draft.badges.date).toBe("신뢰도 계산 불가");
-        expect(getQuickScheduleBlockingReviewField(draft)).toBe("date");
+        expect(draft.badges.date).toBeUndefined();
+        expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
     });
 
     test("필드로 특정할 수 없는 서버 검토 요청은 전체 내용 확인을 요구한다", () => {
@@ -240,7 +253,7 @@ describe("quick schedule draft", () => {
         ).toBeNull();
     });
 
-    test("원본 인식률이 높아도 장소 필드가 90% 미만이면 장소 확인을 요구한다", () => {
+    test("장소가 추출됐으면 내부 장소 점수만으로 확인을 요구하지 않는다", () => {
         const draft = buildQuickSchedulePreviewDraft(parseResult({
             title: "회의",
             date: "2026-07-20",
@@ -255,8 +268,8 @@ describe("quick schedule draft", () => {
             },
         }), "월요일 오후 3시 서울역 회의", "2026-07-17");
 
-        expect(draft.badges.location).toBe("장소 확인 필요");
-        expect(getQuickScheduleBlockingReviewField(draft)).toBe("location");
+        expect(draft.badges.location).toBeUndefined();
+        expect(getQuickScheduleBlockingReviewField(draft)).toBeNull();
     });
 
     test("존재하지 않는 날짜와 24시는 유효하지 않다", () => {

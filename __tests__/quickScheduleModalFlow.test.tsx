@@ -216,7 +216,7 @@ describe("QuickScheduleModal flow", () => {
         });
     });
 
-    test("90% 미만 분석은 신뢰도와 사용자가 취할 개선 방법을 함께 보여준다", async () => {
+    test("분석 신뢰도 수치는 숨기고 장소와 알림을 일정 정보로 보여준다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed({
             confidence: {
                 overall: 0.86,
@@ -227,17 +227,9 @@ describe("QuickScheduleModal flow", () => {
             },
         })));
 
-        expect(
-            renderer!.root.findByProps({
-                accessibilityLabel: "일정 분석 신뢰도 86퍼센트, 확인 권장",
-            })
-        ).toBeDefined();
-        expect(
-            renderer!.root.findByProps({ accessibilityLabel: "신뢰도 개선 방법" }).props.children
-        ).toEqual([
-            "개선 방법 · ",
-            "사진·음성 인식 문장을 원본과 비교해 수정 후 시간·장소 항목을 눌러 확인",
-        ]);
+        expect(renderer!.root.findAllByProps({ accessibilityRole: "summary" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "알림 수정" })).toBeDefined();
     });
 
     test("분석 실패 뒤 모달을 닫지 않고 원문을 수정할 수 있다", async () => {
@@ -408,6 +400,32 @@ describe("QuickScheduleModal flow", () => {
             notificationLeadMinutes: 30,
             notificationIntervalMinutes: 20,
         }));
+    });
+
+    test("저장 성공 후 모델 점수와 분리된 품질 피드백을 전송한다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const onFeedback = jest.fn().mockResolvedValue(undefined);
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed({ analysisId: "analysis-1" })),
+            onSave,
+            { id: "category-1", title: "일정", color: "#246BFE" },
+            onFeedback,
+        );
+
+        await act(async () => {
+            findButtonByText("일정 저장하기").props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(onFeedback).toHaveBeenCalledWith({
+            analysisId: "analysis-1",
+            outcome: "SAVED",
+            date: "UNTOUCHED",
+            time: "UNTOUCHED",
+            destination: "UNTOUCHED",
+            globalConfirmed: false,
+        });
     });
 
     test("출발 알림을 OFF로 적용하면 저장 payload에서 알림 설정값을 제거한다", async () => {
