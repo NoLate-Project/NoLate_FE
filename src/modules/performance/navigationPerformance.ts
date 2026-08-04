@@ -25,19 +25,14 @@ type PendingNavigation = {
     transitionEndedAt?: number;
 };
 
-type NavigationPerformanceSnapshot = {
-    entries: readonly NavigationPerformanceEntry[];
-};
+type NavigationPerformanceSink = (entry: NavigationPerformanceEntry) => void;
 
-const MAX_ENTRIES = 50;
 const DUPLICATE_ACTION_WINDOW_MS = 50;
 
 let nextId = 1;
 let pendingNavigation: PendingNavigation | undefined;
 let observedRoute = "/";
-let entries: NavigationPerformanceEntry[] = [];
-let snapshot: NavigationPerformanceSnapshot = { entries };
-const listeners = new Set<() => void>();
+let performanceSink: NavigationPerformanceSink | undefined;
 
 function monotonicNow() {
     const runtimePerformance = (
@@ -52,12 +47,6 @@ function monotonicNow() {
 function normalizeRoute(route: string | undefined, fallback: string) {
     const trimmed = route?.trim();
     return trimmed || fallback;
-}
-
-function publishEntries(nextEntries: NavigationPerformanceEntry[]) {
-    entries = nextEntries;
-    snapshot = { entries };
-    listeners.forEach((listener) => listener());
 }
 
 function completePendingNavigation(
@@ -81,7 +70,11 @@ function completePendingNavigation(
     };
 
     pendingNavigation = undefined;
-    publishEntries([entry, ...entries].slice(0, MAX_ENTRIES));
+    try {
+        performanceSink?.(entry);
+    } catch {
+        // 성능 수집 실패가 실제 화면 전환을 방해해서는 안 된다.
+    }
     return true;
 }
 
@@ -176,26 +169,16 @@ export function finishNavigationAfterFrames(
     return completePendingNavigation("frame", at);
 }
 
-export function subscribeNavigationPerformance(listener: () => void) {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-}
-
-export function getNavigationPerformanceSnapshot() {
-    return snapshot;
-}
-
-export function clearNavigationPerformanceEntries() {
-    publishEntries([]);
-}
-
-export function getObservedNavigationRoute() {
-    return observedRoute;
+export function setNavigationPerformanceSink(sink: NavigationPerformanceSink) {
+    performanceSink = sink;
+    return () => {
+        if (performanceSink === sink) performanceSink = undefined;
+    };
 }
 
 export function resetNavigationPerformanceForTests() {
     nextId = 1;
     pendingNavigation = undefined;
     observedRoute = "/";
-    publishEntries([]);
+    performanceSink = undefined;
 }

@@ -16,11 +16,7 @@ import {
     type PushNavigationTarget,
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
-import {
-    NAVIGATION_PERFORMANCE_ENABLED,
-    NavigationPerformanceOverlay,
-    NavigationPerformanceTracker,
-} from "../src/modules/performance/NavigationPerformanceMonitor";
+import NavigationPerformanceTracker from "../src/modules/performance/NavigationPerformanceTracker";
 import {
     markNavigationTransitionEnded,
     markNavigationTransitionStarted,
@@ -175,12 +171,7 @@ export default function RootLayout() {
     return (
         <GestureHandlerRootView style={styles.gestureRoot}>
             <RootNavigator />
-            {NAVIGATION_PERFORMANCE_ENABLED ? (
-                <>
-                    <NavigationPerformanceTracker />
-                    <NavigationPerformanceOverlay />
-                </>
-            ) : null}
+            {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
         </GestureHandlerRootView>
     );
 }
@@ -221,7 +212,7 @@ function RootNavigator() {
 
     return (
         <Stack
-            screenListeners={NAVIGATION_PERFORMANCE_ENABLED
+            screenListeners={isAuthenticated
                 ? {
                     transitionStart: () => markNavigationTransitionStarted(),
                     transitionEnd: () => markNavigationTransitionEnded(),
