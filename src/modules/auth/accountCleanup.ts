@@ -20,6 +20,9 @@ import {
 import {
     clearStandardDepartureActionFallbackForCurrentAccount,
 } from "../notification/nativeDepartureActionJournal";
+import {
+    clearForegroundPushPresentationClaimsForCurrentAccount,
+} from "../notification/foregroundPushPresentationClaim";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
@@ -40,6 +43,7 @@ export async function clearAccountScopedLocalData(): Promise<void> {
         clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount(),
         clearDepartureAlarmScheduleReceiptQueueForCurrentAccount(),
         clearStandardDepartureActionFallbackForCurrentAccount(),
+        clearForegroundPushPresentationClaimsForCurrentAccount(),
     ]);
 
     const alarmResult = cleanupResults[0];

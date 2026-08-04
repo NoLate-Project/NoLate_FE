@@ -4,6 +4,19 @@ jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));
 
+jest.mock('expo-crypto', () => {
+  const nodeCrypto = require('crypto');
+
+  return {
+    CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+    CryptoEncoding: { HEX: 'hex' },
+    digestStringAsync: jest.fn(async (_algorithm, value) => (
+      nodeCrypto.createHash('sha256').update(value, 'utf8').digest('hex')
+    )),
+    randomUUID: jest.fn(() => nodeCrypto.randomUUID()),
+  };
+});
+
 jest.mock('expo-image-picker', () => ({
   UIImagePickerPreferredAssetRepresentationMode: {
     Current: 'current',

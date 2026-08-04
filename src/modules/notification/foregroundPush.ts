@@ -33,6 +33,7 @@ import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRec
 import { isDepartureAlarmSyncData } from "./departureAlarmContract";
 import { acknowledgePushDelivery } from "./pushDeliveryAck";
 import { recordNativeAlarmNotificationResponseFire } from "./departureAlarm";
+import { presentForegroundPushOnce } from "./foregroundPushPresentationClaim";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -528,12 +529,16 @@ export async function handleForegroundPushMessage(
         emitScheduleMutation();
     }
 
-    const presented = await showLocalNotification({
-        title,
-        body,
-        data: message.data ?? {},
-    });
-    if (presented) {
+    const presentationResult = await presentForegroundPushOnce(
+        message.data,
+        message.messageId,
+        (notificationIdentifier) => showLocalNotification({
+            title,
+            body,
+            data: message.data ?? {},
+        }, notificationIdentifier),
+    );
+    if (presentationResult === "presented") {
         acknowledgePushDelivery(message.data, "PRESENTED", {
             providerMessageId: message.messageId,
         }).catch(() => undefined);
@@ -550,7 +555,10 @@ function isScheduleVisibilityChange(
         type === "SCHEDULE_CACHE_INVALIDATED";
 }
 
-async function showLocalNotification(notification: LocalPushNotification): Promise<boolean> {
+async function showLocalNotification(
+    notification: LocalPushNotification,
+    identifier: string,
+): Promise<boolean> {
     const Notifications = await getNotifications();
 
     if (!Notifications) {
@@ -560,6 +568,7 @@ async function showLocalNotification(notification: LocalPushNotification): Promi
     await ensureNotificationPresentation(Notifications);
 
     await Notifications.scheduleNotificationAsync({
+        identifier,
         content: {
             title: notification.title,
             body: notification.body,
