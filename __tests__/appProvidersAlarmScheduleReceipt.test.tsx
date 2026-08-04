@@ -9,6 +9,9 @@ import {
     activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember,
 } from "../src/modules/notification/departureAlarmScheduleReceiptQueue";
 import {
+    activateForegroundPushPresentationClaimsForAuthenticatedMember,
+} from "../src/modules/notification/foregroundPushPresentationClaim";
+import {
     activateNativeAlarmFireJournalForAuthenticatedMember,
 } from "../src/modules/notification/nativeAlarmFireJournal";
 import {
@@ -65,6 +68,12 @@ jest.mock("../src/modules/notification/departureAlarmScheduleReceiptQueue", () =
         .mockResolvedValue(undefined),
 }));
 
+jest.mock("../src/modules/notification/foregroundPushPresentationClaim", () => ({
+    activateForegroundPushPresentationClaimsForAuthenticatedMember: jest
+        .fn()
+        .mockResolvedValue(true),
+}));
+
 jest.mock("../src/modules/schedule/scheduleArrivalObservationQueue", () => ({
     activateScheduleArrivalObservationQueueForAuthenticatedMember: jest
         .fn()
@@ -93,6 +102,9 @@ const mockedGetAuthMember = jest.mocked(getAuthMember);
 const mockedUseAuth = jest.mocked(useAuth);
 const mockedActivateReceiptQueue = jest.mocked(
     activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember
+);
+const mockedActivatePresentationClaims = jest.mocked(
+    activateForegroundPushPresentationClaimsForAuthenticatedMember
 );
 const mockedActivateFireJournal = jest.mocked(
     activateNativeAlarmFireJournalForAuthenticatedMember
@@ -161,6 +173,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         });
 
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(1);
+        expect(mockedActivatePresentationClaims).toHaveBeenCalledTimes(1);
         expect(mockedRegisterPushAfterLogin).toHaveBeenCalledWith(77);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(1);
         expect(mockedActivateQuickScheduleFeedback).toHaveBeenCalledTimes(1);
@@ -171,6 +184,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
             await Promise.resolve();
         });
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(1);
+        expect(mockedActivatePresentationClaims).toHaveBeenCalledTimes(1);
 
         await act(async () => {
             appStateListeners.forEach((listener) => listener("active"));

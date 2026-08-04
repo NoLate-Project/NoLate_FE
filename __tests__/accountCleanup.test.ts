@@ -8,6 +8,9 @@ import { clearPushRegistrationAfterLogout } from "../src/modules/notification/pu
 import {
     clearStandardDepartureActionFallbackForCurrentAccount,
 } from "../src/modules/notification/nativeDepartureActionJournal";
+import {
+    clearForegroundPushPresentationClaimsForCurrentAccount,
+} from "../src/modules/notification/foregroundPushPresentationClaim";
 import { clearCalendarConnectionSnapshot } from "../src/modules/onboarding/calendarConnectionStorage";
 import { clearStoredGoogleCalendarAccessToken } from "../src/modules/onboarding/googleCalendarImport";
 import { clearLocalRoutePlaceCaches } from "../src/modules/schedule/favoriteDeparture";
@@ -42,6 +45,12 @@ jest.mock("../src/modules/notification/pushRegistration", () => ({
 
 jest.mock("../src/modules/notification/nativeDepartureActionJournal", () => ({
     clearStandardDepartureActionFallbackForCurrentAccount: jest
+        .fn()
+        .mockResolvedValue(undefined),
+}));
+
+jest.mock("../src/modules/notification/foregroundPushPresentationClaim", () => ({
+    clearForegroundPushPresentationClaimsForCurrentAccount: jest
         .fn()
         .mockResolvedValue(undefined),
 }));
@@ -86,6 +95,7 @@ const allOtherCleanupMocks = [
     clearPushDeliveryAckQueueForCurrentAccount,
     clearPushRegistrationAfterLogout,
     clearStandardDepartureActionFallbackForCurrentAccount,
+    clearForegroundPushPresentationClaimsForCurrentAccount,
     clearCalendarConnectionSnapshot,
     clearStoredGoogleCalendarAccessToken,
     clearLocalRoutePlaceCaches,

@@ -20,6 +20,9 @@ import {
 import {
     activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember,
 } from "./modules/notification/departureAlarmScheduleReceiptQueue";
+import {
+    activateForegroundPushPresentationClaimsForAuthenticatedMember,
+} from "./modules/notification/foregroundPushPresentationClaim";
 import { createScheduleInitialState } from "./modules/schedule/initialState";
 import {
     activateScheduleArrivalObservationQueueForAuthenticatedMember,
@@ -94,6 +97,9 @@ function PushRegistrationBootstrap() {
         // successful member/token bootstrap.
         activatePushDeliveryAckQueueForAuthenticatedMember().catch((error) => {
             console.warn("[push-ack] durable queue bootstrap failed", error);
+        });
+        activateForegroundPushPresentationClaimsForAuthenticatedMember().catch((error) => {
+            console.warn("[push] presentation claim activation failed", error);
         });
         const drainAlarmFireEvents = () => {
             activateNativeAlarmFireJournalForAuthenticatedMember().catch((error) => {
