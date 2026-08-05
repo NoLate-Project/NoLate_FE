@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -114,6 +114,7 @@ type Props = {
     onFeedback?: (feedback: QuickScheduleReliabilityFeedback) => void | Promise<void>;
     defaultDay: string;
     defaultCategory?: ScheduleCategory;
+    categories?: ScheduleCategory[];
     categoryError?: string | null;
     categoryLoading?: boolean;
     onRetryCategories?: () => void;
@@ -221,7 +222,7 @@ const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"]
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
-    preview: 452,
+    preview: 552,
     edit: 520,
     saving: 368,
     saved: 368,
@@ -526,6 +527,7 @@ export default function QuickScheduleModal({
     onFeedback,
     defaultDay,
     defaultCategory,
+    categories,
     categoryError,
     categoryLoading = false,
     onRetryCategories,
@@ -542,6 +544,19 @@ export default function QuickScheduleModal({
     const { colors, mode } = useTheme();
     const { width, height } = useWindowDimensions();
     const insets = useSafeAreaInsets();
+    const writableCategories = useMemo(() => {
+        const available = [...(categories ?? []), ...(defaultCategory ? [defaultCategory] : [])];
+        const seenIds = new Set<string>();
+
+        return available.filter(category => {
+            if (!canWriteScheduleCategory(category) || seenIds.has(category.id)) return false;
+            seenIds.add(category.id);
+            return true;
+        });
+    }, [categories, defaultCategory]);
+    const initialCategoryId = canWriteScheduleCategory(defaultCategory)
+        ? defaultCategory!.id
+        : writableCategories[0]?.id ?? "";
     const [rendered, setRendered] = useState(visible || prewarm);
     const [text, setText] = useState("");
     const [inputMode, setInputMode] = useState<InputMode>("text");
@@ -578,6 +593,11 @@ export default function QuickScheduleModal({
     const [timeEditMode, setTimeEditMode] = useState<TimeEditMode>("picker");
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
+    const [selectedCategoryId, setSelectedCategoryId] = useState(initialCategoryId);
+    const selectedCategory = useMemo(
+        () => writableCategories.find(category => category.id === selectedCategoryId),
+        [selectedCategoryId, writableCategories],
+    );
     const recorderState = {
         isRecording: isVoiceRecording,
         durationMillis: voiceDurationMillis,
@@ -619,6 +639,7 @@ export default function QuickScheduleModal({
     const visibleRef = useRef(visible);
     const closeFinishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const closeFinishedRef = useRef(false);
+    const discardConfirmationVisibleRef = useRef(false);
     const routePlannerAwayRef = useRef(false);
     const routePlannerReturnFieldRef = useRef<PreviewField | null>(null);
     const initialRequestHandledRef = useRef<string | null>(null);
@@ -645,6 +666,17 @@ export default function QuickScheduleModal({
             cancelPendingPhotoAction();
         };
     }, [cancelPendingPhotoAction]);
+
+    useEffect(() => {
+        if (!visible || selectedCategory) return;
+
+        const initialCategory = canWriteScheduleCategory(defaultCategory)
+            ? defaultCategory
+            : writableCategories[0];
+        if (!initialCategory) return;
+
+        setSelectedCategoryId(initialCategory.id);
+    }, [defaultCategory, selectedCategory, visible, writableCategories]);
 
     useEffect(() => {
         const belongsToActiveSession = (sessionId: string) => liveSpeechSessionIdRef.current === sessionId;
@@ -1027,6 +1059,8 @@ export default function QuickScheduleModal({
             setTimeEditMode("picker");
             setRoutePlannerSessionId(undefined);
             setRoutePlannerHidden(false);
+            setSelectedCategoryId("");
+            discardConfirmationVisibleRef.current = false;
             saveInFlightRef.current = false;
             invalidatePendingAnalysis();
             routePlannerAwayRef.current = false;
@@ -1098,7 +1132,7 @@ export default function QuickScheduleModal({
         ],
     );
 
-    const requestClose = useCallback(() => {
+    const closeQuickSchedule = useCallback(() => {
         if ((submitting && flowStep !== "analyzing") || closingRef.current) return;
 
         if (flowStep === "analyzing") {
@@ -1117,6 +1151,69 @@ export default function QuickScheduleModal({
         onCloseStart?.();
         runCloseAnimation(true);
     }, [flowStep, invalidatePendingAnalysis, onCloseStart, onFeedback, previewDraft, runCloseAnimation, submitting]);
+
+    const requestClose = useCallback(() => {
+        if ((submitting && flowStep !== "analyzing") || closingRef.current) return;
+
+        const hasDirtyDraft = Boolean(
+            previewDraft ||
+                text.trim() ||
+                selectedPhoto?.uri ||
+                photoTranscript.trim() ||
+                voiceUri ||
+                voiceTranscript.trim() ||
+                isVoiceRecording ||
+                isVoiceFinalizing ||
+                voiceDurationMillis > 0,
+        );
+        if (flowStep === "saved" || !hasDirtyDraft) {
+            closeQuickSchedule();
+            return;
+        }
+        if (discardConfirmationVisibleRef.current) return;
+
+        discardConfirmationVisibleRef.current = true;
+        Alert.alert(
+            "작성 중인 일정이 있어요",
+            "닫으면 입력한 내용이 사라져요.",
+            [
+                {
+                    text: "계속 작성",
+                    style: "cancel",
+                    onPress: () => {
+                        discardConfirmationVisibleRef.current = false;
+                    },
+                },
+                {
+                    text: "입력 버리기",
+                    style: "destructive",
+                    onPress: () => {
+                        discardConfirmationVisibleRef.current = false;
+                        closeQuickSchedule();
+                    },
+                },
+            ],
+            {
+                cancelable: true,
+                onDismiss: () => {
+                    discardConfirmationVisibleRef.current = false;
+                },
+            },
+        );
+    }, [
+        closeQuickSchedule,
+        flowStep,
+        isVoiceFinalizing,
+        isVoiceRecording,
+        photoTranscript,
+        previewDraft,
+        selectedPhoto?.uri,
+        submitting,
+        text,
+        voiceDurationMillis,
+        voiceTranscript,
+        voiceUri,
+    ]);
 
     const startOpenAnimation = useCallback(
         (openCycle: number) => {
@@ -1658,7 +1755,7 @@ export default function QuickScheduleModal({
     const savePreview = async () => {
         if (!previewDraft || submitting || saveInFlightRef.current) return;
 
-        if (!defaultCategory || !canWriteScheduleCategory(defaultCategory)) {
+        if (!selectedCategory || !canWriteScheduleCategory(selectedCategory)) {
             Alert.alert(
                 "카테고리가 필요해요",
                 categoryError
@@ -1679,7 +1776,7 @@ export default function QuickScheduleModal({
             saveInFlightRef.current = true;
             setSubmitting(true);
             setFlowStep("saving");
-            await onSave(buildQuickSchedulePayload(previewDraft, defaultCategory));
+            await onSave(buildQuickSchedulePayload(previewDraft, selectedCategory));
             const feedback = buildQuickScheduleReliabilityFeedback(previewDraft, "SAVED");
             if (feedback) {
                 void Promise.resolve(onFeedback?.(feedback)).catch(() => undefined);
@@ -1976,7 +2073,7 @@ export default function QuickScheduleModal({
                     sessionId: requestedSessionId,
                     localeIdentifier: "ko-KR",
                     contextualStrings: buildScheduleSpeechContext(
-                        `${text} ${voiceTranscriptRef.current} ${defaultCategory?.title ?? ""}`,
+                        `${text} ${voiceTranscriptRef.current} ${selectedCategory?.title ?? defaultCategory?.title ?? ""}`,
                     ),
                     maxDurationMillis: remainingDurationMillis,
                     requiresOnDeviceRecognition,
@@ -2020,7 +2117,7 @@ export default function QuickScheduleModal({
                 Alert.alert("음성 입력을 시작하지 못했어요", message);
             }
         },
-        [defaultCategory?.title, text],
+        [defaultCategory?.title, selectedCategory?.title, text],
     );
 
     useEffect(() => {
@@ -3418,6 +3515,79 @@ export default function QuickScheduleModal({
                         <Text style={styles.previewSourceAction}>수정</Text>
                     </Pressable>
 
+                    <View
+                        accessibilityRole="radiogroup"
+                        accessibilityLabel="일정 카테고리"
+                        style={[styles.previewCategorySection, { borderBottomColor: previewDividerColor }]}
+                    >
+                        <Text style={[styles.previewLabel, styles.previewCategoryLabel, { color: previewLabelColor }]}>
+                            카테고리
+                        </Text>
+                        {writableCategories.length > 0 ? (
+                            <ScrollView
+                                horizontal
+                                contentContainerStyle={styles.previewCategoryList}
+                                showsHorizontalScrollIndicator={false}
+                            >
+                                {writableCategories.map(category => {
+                                    const selected = category.id === selectedCategoryId;
+
+                                    return (
+                                        <Pressable
+                                            key={category.id}
+                                            accessibilityRole="radio"
+                                            accessibilityLabel={`${category.title} 카테고리 선택`}
+                                            accessibilityState={{ selected, disabled: submitting }}
+                                            accessibilityValue={{ text: selected ? "선택됨" : "선택 안 됨" }}
+                                            disabled={submitting}
+                                            hitSlop={{ top: 7, bottom: 7 }}
+                                            onPress={() => setSelectedCategoryId(category.id)}
+                                            style={({ pressed }) => [
+                                                styles.previewCategoryChip,
+                                                {
+                                                    backgroundColor: selected
+                                                        ? mode === "dark"
+                                                            ? "rgba(255,255,255,0.09)"
+                                                            : "rgba(36,107,254,0.06)"
+                                                        : "transparent",
+                                                    borderColor: selected ? category.color : previewDividerColor,
+                                                    opacity: pressed ? 0.72 : submitting ? 0.42 : 1,
+                                                },
+                                            ]}
+                                        >
+                                            <View
+                                                accessible={false}
+                                                style={[styles.previewCategoryDot, { backgroundColor: category.color }]}
+                                            />
+                                            <Text
+                                                numberOfLines={1}
+                                                style={[
+                                                    styles.previewCategoryChipText,
+                                                    { color: colors.textPrimary },
+                                                    selected && styles.previewCategoryChipTextSelected,
+                                                ]}
+                                            >
+                                                {category.title}
+                                            </Text>
+                                            {selected && (
+                                                <Ionicons
+                                                    accessible={false}
+                                                    name="checkmark"
+                                                    size={13}
+                                                    color={category.color}
+                                                />
+                                            )}
+                                        </Pressable>
+                                    );
+                                })}
+                            </ScrollView>
+                        ) : (
+                            <Text style={[styles.previewCategoryEmpty, { color: colors.textSecondary }]}>
+                                저장할 카테고리가 없어요
+                            </Text>
+                        )}
+                    </View>
+
                     <Pressable
                         onPress={() => openEditField("title")}
                         disabled={submitting}
@@ -3624,7 +3794,7 @@ export default function QuickScheduleModal({
                                 <Text style={[styles.previewLabel, { color: previewLabelColor }]}>메모</Text>
                                 <View style={styles.previewOptionalValueRow}>
                                     <Text
-                                        numberOfLines={1}
+                                        numberOfLines={2}
                                         style={[styles.previewOptionalValue, { color: colors.textPrimary }]}
                                     >
                                         {getPreviewValue(previewDraft, "memo")}
@@ -3642,32 +3812,6 @@ export default function QuickScheduleModal({
                     </View>
                 </ScrollView>
                 <View style={styles.previewButtons}>
-                    <Pressable
-                        onPress={() => setFlowStep("input")}
-                        accessibilityRole="button"
-                        accessibilityLabel="빠른 일정 입력 수정"
-                        accessibilityState={{ disabled: submitting }}
-                        disabled={submitting}
-                        style={({ pressed }) => [
-                            styles.secondaryButton,
-                            styles.previewSecondaryButton,
-                            {
-                                backgroundColor: "transparent",
-                                borderColor: previewDividerColor,
-                                opacity: pressed ? 0.72 : submitting ? 0.42 : 1,
-                            },
-                        ]}
-                    >
-                        <Text
-                            style={[
-                                styles.secondaryButtonText,
-                                styles.previewSecondaryButtonText,
-                                { color: colors.textPrimary },
-                            ]}
-                        >
-                            입력 수정
-                        </Text>
-                    </Pressable>
                     <Pressable
                         onPress={
                             blockingReviewField === "review"
@@ -4329,7 +4473,12 @@ export default function QuickScheduleModal({
                         },
                     ]}
                 />
-                <Pressable accessible={false} style={StyleSheet.absoluteFill} onPress={requestClose} />
+                <Pressable
+                    testID="quick-schedule-backdrop"
+                    accessible={false}
+                    style={StyleSheet.absoluteFill}
+                    onPress={requestClose}
+                />
 
                 <Reanimated.View
                     collapsable={false}
@@ -5130,6 +5279,54 @@ const styles = StyleSheet.create({
         alignSelf: "flex-end",
         marginBottom: 2,
     },
+    previewCategorySection: {
+        minHeight: 52,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        justifyContent: "center",
+        paddingHorizontal: 2,
+        paddingTop: 6,
+        paddingBottom: 7,
+    },
+    previewCategoryLabel: {
+        marginBottom: 4,
+    },
+    previewCategoryList: {
+        alignItems: "center",
+        gap: 6,
+        paddingRight: 2,
+    },
+    previewCategoryChip: {
+        minWidth: 0,
+        maxWidth: 152,
+        minHeight: 30,
+        borderRadius: 15,
+        borderWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        paddingHorizontal: 10,
+    },
+    previewCategoryDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        flexShrink: 0,
+    },
+    previewCategoryChipText: {
+        minWidth: 0,
+        flexShrink: 1,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "600",
+    },
+    previewCategoryChipTextSelected: {
+        fontWeight: "800",
+    },
+    previewCategoryEmpty: {
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: "600",
+    },
     previewTitleRow: {
         minHeight: 54,
         justifyContent: "center",
@@ -5232,31 +5429,30 @@ const styles = StyleSheet.create({
         flexShrink: 1,
     },
     previewOptional: {
-        minHeight: 52,
+        minHeight: 92,
         marginHorizontal: 2,
         marginTop: 2,
-        paddingTop: 6,
+        paddingTop: 2,
         borderTopWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
+        flexDirection: "column",
         alignItems: "stretch",
     },
     previewOptionalItem: {
-        flex: 1,
+        width: "100%",
         minWidth: 0,
         minHeight: 44,
-        paddingRight: 10,
+        paddingVertical: 5,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
-        gap: 6,
+        gap: 10,
     },
     previewOptionalItemTrailing: {
-        paddingLeft: 14,
-        paddingRight: 0,
+        minHeight: 48,
     },
     previewOptionalDivider: {
-        width: StyleSheet.hairlineWidth,
-        marginVertical: 8,
+        width: "100%",
+        height: StyleSheet.hairlineWidth,
     },
     previewOptionalCopy: {
         flex: 1,
@@ -5284,25 +5480,17 @@ const styles = StyleSheet.create({
         fontWeight: "900",
     },
     previewButtons: {
-        flexDirection: "row",
-        gap: 8,
         paddingTop: 6,
     },
-    previewSecondaryButton: {
-        height: 46,
-        borderRadius: 14,
-    },
     previewPrimaryButton: {
-        flex: 1.55,
+        flex: 0,
+        width: "100%",
         height: 46,
         borderRadius: 14,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.12,
         shadowRadius: 10,
         elevation: 3,
-    },
-    previewSecondaryButtonText: {
-        fontWeight: "700",
     },
     previewPrimaryButtonText: {
         fontWeight: "700",

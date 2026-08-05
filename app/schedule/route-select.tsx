@@ -1924,7 +1924,7 @@ export default function RouteSelectScreen() {
             return;
         }
         if (isReservedFavoritePlaceCategoryName(categoryName)) {
-            Alert.alert("카테고리 추가", "기본주소와 미분류는 기본 제공 카테고리 이름입니다.");
+            Alert.alert("카테고리 추가", "기본 주소와 미분류는 기본 제공 카테고리 이름입니다.");
             return;
         }
 
@@ -1973,7 +1973,7 @@ export default function RouteSelectScreen() {
                     if (defaultOrigin) {
                         favoriteMutationRevisionRef.current += 1;
                         if (activeTarget !== "origin") {
-                            // 도착지 검색 중 기본주소를 바꾸더라도 현재 경로의 출발지는
+                            // 도착지 검색 중 기본 주소를 바꾸더라도 현재 경로의 출발지는
                             // 이번 편집 세션 동안 그대로 둔다.
                             originTouchedRef.current = true;
                             setOriginUsesDefault(false);
@@ -1991,8 +1991,8 @@ export default function RouteSelectScreen() {
                     setFavoriteSheetPlace(undefined);
                     setSaveFavoriteAsDefaultOrigin(false);
                     Alert.alert(
-                        "기본주소 저장 실패",
-                        "즐겨찾기는 저장했지만 기본주소는 설정하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                        "기본 주소 저장 실패",
+                        "즐겨찾기는 저장했지만 기본 주소는 설정하지 못했습니다. 잠시 후 다시 시도해 주세요."
                     );
                     return;
                 }
@@ -2003,8 +2003,8 @@ export default function RouteSelectScreen() {
             Alert.alert(
                 "즐겨찾기 저장",
                 saveFavoriteAsDefaultOrigin
-                    ? `${getPlaceDisplayText(place)}을(를) 즐겨찾기와 기본주소로 저장했습니다.`
-                    : `${getPlaceDisplayText(place)}을(를) 저장했습니다.`
+                    ? `${getPlaceDisplayText(place)} 장소를 즐겨찾기와 기본 주소로 저장했습니다.`
+                    : `${getPlaceDisplayText(place)} 장소를 저장했습니다.`
             );
         } catch {
             Alert.alert("즐겨찾기 저장 실패", "잠시 후 다시 시도해 주세요.");
@@ -2107,7 +2107,7 @@ export default function RouteSelectScreen() {
             setOriginUsesDefault(true);
             Alert.alert(
                 "기본 출발지 설정",
-                `${getPlaceDisplayText(saved)}을(를) 기본 출발지로 설정했습니다.`
+                `${getPlaceDisplayText(saved)} 장소를 기본 출발지로 설정했습니다.`
             );
         } catch {
             Alert.alert("기본 출발지 설정 실패", "잠시 후 다시 시도해 주세요.");
@@ -2552,8 +2552,8 @@ export default function RouteSelectScreen() {
                             }}
                             disabled={favoriteSheetSaving || creatingFavoriteCategory}
                             accessibilityRole="button"
-                            accessibilityLabel="기본주소 카테고리"
-                            accessibilityHint="이 장소를 다음 경로부터 사용할 기본주소로 저장합니다"
+                            accessibilityLabel="기본 주소 카테고리"
+                            accessibilityHint="이 장소를 다음 경로부터 사용할 기본 주소로 저장합니다"
                             accessibilityState={{ selected: saveFavoriteAsDefaultOrigin }}
                             style={[
                                 styles.favoriteCategoryChip,
@@ -2574,7 +2574,7 @@ export default function RouteSelectScreen() {
                                     { color: saveFavoriteAsDefaultOrigin ? modeSelectedText : routeUi.textPrimary },
                                 ]}
                             >
-                                기본주소
+                                기본 주소
                             </Text>
                         </Pressable>
                         <Pressable
@@ -3203,18 +3203,27 @@ export default function RouteSelectScreen() {
                                 </Pressable>
                             </View>
                             {!!favoritePlacesError && (
-                                <View style={styles.searchModeEmptyRow}>
-                                    <Text style={[styles.recentEmptyText, { color: routeUi.textSecondary }]}>
+                                <View
+                                    style={[
+                                        styles.favoriteLoadErrorRow,
+                                        { backgroundColor: routeUi.surface2, borderColor: routeUi.border },
+                                    ]}
+                                >
+                                    <Text style={[styles.favoriteLoadErrorText, { color: routeUi.textSecondary }]}>
                                         {favoritePlacesError}
                                     </Text>
                                     <Pressable
                                         accessibilityRole="button"
                                         accessibilityLabel="즐겨찾기 다시 불러오기"
+                                        hitSlop={6}
                                         onPress={() => setFavoriteReloadVersion((current) => current + 1)}
-                                        style={[styles.emptyRetryButton, { backgroundColor: routeUi.accentBlue }]}
+                                        style={[
+                                            styles.favoriteRetryButton,
+                                            { backgroundColor: routeUi.surface, borderColor: routeUi.borderStrong },
+                                        ]}
                                     >
-                                        <Ionicons name="refresh" size={15} color="#FFFFFF" />
-                                        <Text style={styles.emptyRetryText}>다시 시도</Text>
+                                        <Ionicons name="refresh" size={14} color={routeUi.accentBlue} />
+                                        <Text style={[styles.favoriteRetryText, { color: routeUi.accentBlue }]}>다시 시도</Text>
                                     </Pressable>
                                 </View>
                             )}
@@ -3228,6 +3237,7 @@ export default function RouteSelectScreen() {
                             >
                                 {favoritePlaceTabs.map((tab) => {
                                     const selected = selectedFavoriteFilterId === tab.id;
+                                    const tabLabel = tab.kind === "default-address" ? "기본 주소" : tab.name;
                                     const tabColor = tab.kind === "default-address"
                                         ? routeUi.accentBlue
                                         : tab.color ?? routeUi.textSecondary;
@@ -3236,7 +3246,7 @@ export default function RouteSelectScreen() {
                                         key={tab.id}
                                         onPress={() => toggleFavoriteFilter(tab.id)}
                                         accessibilityRole="button"
-                                        accessibilityLabel={`${tab.name} 즐겨찾기`}
+                                        accessibilityLabel={`${tabLabel} 즐겨찾기`}
                                         accessibilityHint={selected
                                             ? "다시 누르면 장소 목록을 접습니다"
                                             : "누르면 장소 목록을 펼칩니다"}
@@ -3270,7 +3280,7 @@ export default function RouteSelectScreen() {
                                                     : routeUi.textSecondary,
                                             },
                                         ]}>
-                                            {tab.name}
+                                            {tabLabel}
                                         </Text>
                                         <FavoriteFilterSelectionIndicator
                                             selected={selected}
@@ -3413,8 +3423,8 @@ export default function RouteSelectScreen() {
                                 <Pressable
                                     onPress={openPlaceSettings}
                                     accessibilityRole="button"
-                                    accessibilityLabel="기본주소 설정"
-                                    accessibilityHint="내 장소 관리 화면에서 기본주소를 설정합니다"
+                                    accessibilityLabel="기본 주소 설정"
+                                    accessibilityHint="내 장소 관리 화면에서 기본 주소를 설정합니다"
                                     style={[
                                         styles.defaultOriginSetupBar,
                                         { backgroundColor: routeUi.selectedModeBg, borderColor: routeUi.selectedBorder },
@@ -3424,9 +3434,9 @@ export default function RouteSelectScreen() {
                                         <Ionicons name="home-outline" size={19} color={routeUi.accentBlue} />
                                     </View>
                                     <View style={styles.defaultOriginCopy}>
-                                        <Text style={[styles.defaultOriginSetupTitle, { color: routeUi.textPrimary }]}>기본주소가 없어요</Text>
+                                        <Text style={[styles.defaultOriginSetupTitle, { color: routeUi.textPrimary }]}>기본 주소가 없어요</Text>
                                         <Text numberOfLines={2} style={[styles.defaultOriginSetupDescription, { color: routeUi.textSecondary }]}>
-                                            자주 출발하는 장소를 기본주소로 설정해 보세요
+                                            자주 출발하는 장소를 기본 주소로 설정해 보세요
                                         </Text>
                                     </View>
                                     <Text style={[styles.defaultOriginAction, { color: routeUi.accentBlue }]}>설정</Text>
@@ -3449,7 +3459,7 @@ export default function RouteSelectScreen() {
                             )}
                             </Animated.View>
                             <View style={[styles.searchModeSectionHeader, { borderBottomColor: routeUi.border }]}>
-                                <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>최근검색</Text>
+                                <Text style={[styles.searchModeSectionTitle, { color: routeUi.textSecondary }]}>최근 검색</Text>
                             </View>
                             {visibleRecentPlaces.length > 0 ? (
                                 visibleRecentPlaces.map((place, index) => {
@@ -4213,7 +4223,7 @@ const styles = StyleSheet.create({
     scheduleListIconButton: {
         width: 40,
         height: 40,
-        borderRadius: 12,
+        borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
         justifyContent: "center",
@@ -4222,7 +4232,7 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         height: 40,
-        borderRadius: 8,
+        borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
         paddingLeft: 13,
         paddingRight: 8,
@@ -4299,12 +4309,12 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
     },
     defaultOriginSetupBar: {
-        minHeight: 70,
-        marginHorizontal: 16,
+        minHeight: 68,
+        marginHorizontal: 20,
         marginTop: 2,
-        marginBottom: 4,
+        marginBottom: 6,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 10,
+        borderRadius: 14,
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
@@ -4328,18 +4338,17 @@ const styles = StyleSheet.create({
         lineHeight: 16,
     },
     searchModeActionRow: {
-        minHeight: 86,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        paddingHorizontal: 16,
+        gap: 10,
+        paddingHorizontal: 20,
         paddingTop: 4,
-        paddingBottom: 14,
+        paddingBottom: 10,
     },
     searchModeActionButton: {
         flex: 1,
-        minHeight: 64,
-        borderRadius: 8,
+        minHeight: 58,
+        borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
@@ -4353,18 +4362,18 @@ const styles = StyleSheet.create({
     },
     searchModeContent: {
         flexGrow: 1,
-        paddingTop: 10,
+        paddingTop: 4,
     },
     searchModePanel: {
         width: "100%",
     },
     searchModeSectionHeader: {
-        minHeight: 36,
+        minHeight: 34,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         paddingHorizontal: 20,
-        marginBottom: 6,
+        marginBottom: 4,
     },
     searchModeSectionTitle: {
         fontSize: 14,
@@ -4382,11 +4391,11 @@ const styles = StyleSheet.create({
         paddingHorizontal: 4,
     },
     favoriteFilterScroll: {
-        marginBottom: 8,
+        marginBottom: 6,
     },
     favoriteFilterContent: {
         gap: 8,
-        paddingHorizontal: 16,
+        paddingHorizontal: 20,
         paddingBottom: 2,
     },
     favoriteFilterChip: {
@@ -4456,19 +4465,53 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     favoriteEmptyRow: {
-        minHeight: 58,
+        minHeight: 48,
         justifyContent: "center",
-        paddingHorizontal: 22,
-        paddingBottom: 4,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+    },
+    favoriteLoadErrorRow: {
+        minHeight: 52,
+        marginHorizontal: 20,
+        marginBottom: 10,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    favoriteLoadErrorText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 12,
+        fontWeight: "700",
+        lineHeight: 18,
+    },
+    favoriteRetryButton: {
+        minHeight: 32,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 10,
+        paddingHorizontal: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 5,
+    },
+    favoriteRetryText: {
+        fontSize: 12,
+        fontWeight: "800",
+        lineHeight: 16,
     },
     searchModeResultRow: {
         minHeight: 68,
         flexDirection: "row",
         alignItems: "center",
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 8,
-        marginHorizontal: 16,
-        marginBottom: 6,
+        borderRadius: 14,
+        marginHorizontal: 20,
+        marginBottom: 8,
         overflow: "hidden",
     },
     searchModeResultMain: {
@@ -4486,9 +4529,9 @@ const styles = StyleSheet.create({
         flexDirection: "row",
         alignItems: "center",
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 8,
-        marginHorizontal: 16,
-        marginBottom: 6,
+        borderRadius: 14,
+        marginHorizontal: 20,
+        marginBottom: 8,
         overflow: "hidden",
     },
     searchModeRecentMain: {
@@ -4534,9 +4577,11 @@ const styles = StyleSheet.create({
         lineHeight: 26,
     },
     searchModeEmptyRow: {
-        minHeight: 72,
+        minHeight: 48,
         justifyContent: "center",
-        paddingHorizontal: 22,
+        gap: 10,
+        paddingHorizontal: 20,
+        paddingVertical: 10,
     },
     recentPlaceTitle: {
         fontSize: 13,

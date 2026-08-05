@@ -1,4 +1,5 @@
 import React from "react";
+import { Alert, StyleSheet } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import QuickScheduleModal from "../src/modules/schedule/components/form/QuickScheduleModal";
@@ -88,6 +89,7 @@ function parsedWithReadyRoute(overrides: Partial<ScheduleParseResult> = {}): Sch
 
 describe("QuickScheduleModal flow", () => {
     let renderer: ReactTestRenderer | undefined;
+    let alertSpy: jest.SpyInstance;
 
     beforeAll(() => {
         (
@@ -101,6 +103,7 @@ describe("QuickScheduleModal flow", () => {
         jest.useFakeTimers();
         mockRouterPush.mockReset();
         mockPathname = "/schedule";
+        alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
     });
 
     afterEach(async () => {
@@ -108,6 +111,7 @@ describe("QuickScheduleModal flow", () => {
             renderer?.unmount();
         });
         renderer = undefined;
+        alertSpy.mockRestore();
         jest.clearAllTimers();
         jest.useRealTimers();
     });
@@ -121,13 +125,16 @@ describe("QuickScheduleModal flow", () => {
             color: "#246BFE",
         },
         onFeedback: jest.Mock = jest.fn(),
+        categories: ScheduleCategory[] = [defaultCategory],
     ) {
+        let renderedCategories = categories;
         const renderTree = () => (
             <ThemeProvider>
                 <QuickScheduleModal
                     visible
                     defaultDay="2026-07-17"
                     defaultCategory={defaultCategory}
+                    categories={renderedCategories}
                     onAnalyze={onAnalyze}
                     onSave={onSave}
                     onFeedback={onFeedback}
@@ -152,7 +159,8 @@ describe("QuickScheduleModal flow", () => {
             jest.advanceTimersByTime(230);
         });
 
-        return async () => {
+        return async (nextCategories?: ScheduleCategory[]) => {
+            if (nextCategories) renderedCategories = nextCategories;
             await act(async () => {
                 renderer!.update(renderTree());
             });
@@ -288,7 +296,144 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.accessibilityValue).toEqual({
             text: "없음",
         });
-        expect(findButtonByText("입력 수정").props.accessibilityLabel).toBe("빠른 일정 입력 수정");
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 입력 수정" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" })).toBeDefined();
+        expect(
+            StyleSheet.flatten(findButtonByText("일정 저장").props.style({ pressed: false })),
+        ).toMatchObject({ width: "100%", height: 46 });
+    });
+
+    test("쓰기 가능한 카테고리를 모두 보여주고 화면에서 고른 카테고리로 저장한다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const personalCategory: ScheduleCategory = {
+            id: "personal",
+            title: "개인",
+            color: "#34C759",
+        };
+        const workCategory: ScheduleCategory = {
+            id: "work",
+            title: "업무",
+            color: "#FF9500",
+        };
+        const sharedEditorCategory: ScheduleCategory = {
+            id: "shared-editor",
+            title: "프로젝트",
+            color: "#AF52DE",
+            shared: true,
+            sharePermission: "EDITOR",
+        };
+        const sharedViewerCategory: ScheduleCategory = {
+            id: "shared-viewer",
+            title: "받은 일정",
+            color: "#8E8E93",
+            shared: true,
+            sharePermission: "VIEWER",
+        };
+
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed()),
+            onSave,
+            personalCategory,
+            jest.fn(),
+            [personalCategory, workCategory, sharedEditorCategory, sharedViewerCategory],
+        );
+
+        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: true });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "프로젝트 카테고리 선택" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리 선택" })).toHaveLength(0);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.onPress();
+        });
+        const workChip = renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" });
+        expect(workChip.props.hitSlop).toEqual({ top: 7, bottom: 7 });
+        expect(StyleSheet.flatten(workChip.props.style({ pressed: false }))).toMatchObject({ minHeight: 30 });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: false });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: true });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "일정 미리보기로 돌아가기" }).props.onPress();
+        });
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: true });
+
+        await act(async () => {
+            findButtonByText("일정 저장").props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ category: workCategory }));
+    });
+
+    test("선택한 카테고리가 갱신 목록에서 사라지면 유효한 기본 카테고리로 복구한다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const personalCategory: ScheduleCategory = {
+            id: "personal",
+            title: "개인",
+            color: "#34C759",
+        };
+        const workCategory: ScheduleCategory = {
+            id: "work",
+            title: "업무",
+            color: "#FF9500",
+        };
+        const rerender = await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed()),
+            onSave,
+            personalCategory,
+            jest.fn(),
+            [personalCategory, workCategory],
+        );
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.onPress();
+        });
+        await rerender([personalCategory]);
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 카테고리 선택" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: true });
+
+        await act(async () => {
+            findButtonByText("일정 저장").props.onPress();
+            await Promise.resolve();
+        });
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ category: personalCategory }));
+    });
+
+    test("읽기 전용 기본값은 건너뛰고 첫 쓰기 가능 카테고리를 최초 선택한다", async () => {
+        const viewerCategory: ScheduleCategory = {
+            id: "viewer",
+            title: "받은 일정",
+            color: "#8E8E93",
+            shared: true,
+            sharePermission: "VIEWER",
+        };
+        const writableCategory: ScheduleCategory = {
+            id: "writable",
+            title: "내 일정",
+            color: "#246BFE",
+        };
+
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed()),
+            jest.fn(),
+            viewerCategory,
+            jest.fn(),
+            [viewerCategory, writableCategory],
+        );
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리 선택" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "내 일정 카테고리 선택" }).props.accessibilityState)
+            .toMatchObject({ selected: true });
     });
 
     test("제목·날짜·시간은 각각의 편집 이동 표시를 제공한다", async () => {
@@ -371,6 +516,123 @@ describe("QuickScheduleModal flow", () => {
         );
     });
 
+    test("빈 빠른 일정은 확인 없이 닫는다", async () => {
+        const onClose = jest.fn();
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-17"
+                        defaultCategory={{ id: "category-1", title: "일정", color: "#246BFE" }}
+                        onAnalyze={jest.fn()}
+                        onSave={jest.fn()}
+                        onClose={onClose}
+                    />
+                </ThemeProvider>,
+            );
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" }).props.onPress();
+            jest.runAllTimers();
+        });
+
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test("작성 중 X를 누르면 계속 작성할 수 있고 폐기를 선택해야 닫는다", async () => {
+        const onClose = jest.fn();
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <QuickScheduleModal
+                        visible
+                        defaultDay="2026-07-17"
+                        defaultCategory={{ id: "category-1", title: "일정", color: "#246BFE" }}
+                        onAnalyze={jest.fn()}
+                        onSave={jest.fn()}
+                        onClose={onClose}
+                    />
+                </ThemeProvider>,
+            );
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" }).props.onChangeText("저녁 약속");
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" }).props.onPress();
+        });
+
+        expect(alertSpy).toHaveBeenCalledWith(
+            "작성 중인 일정이 있어요",
+            "닫으면 입력한 내용이 사라져요.",
+            expect.arrayContaining([
+                expect.objectContaining({ text: "계속 작성", style: "cancel" }),
+                expect.objectContaining({ text: "입력 버리기", style: "destructive" }),
+            ]),
+            expect.objectContaining({ cancelable: true }),
+        );
+        expect(onClose).not.toHaveBeenCalled();
+
+        const continueButton = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === "계속 작성");
+        await act(async () => continueButton?.onPress?.());
+        expect(renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" }).props.value).toBe("저녁 약속");
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" }).props.onPress();
+        });
+        const discardButton = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기");
+        await act(async () => {
+            discardButton?.onPress?.();
+            jest.runAllTimers();
+        });
+
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    test("미리보기 배경을 눌러도 작성 중인 초안을 바로 버리지 않는다", async () => {
+        const onClose = jest.fn();
+        const renderTree = () => (
+            <ThemeProvider>
+                <QuickScheduleModal
+                    visible
+                    defaultDay="2026-07-17"
+                    defaultCategory={{ id: "category-1", title: "일정", color: "#246BFE" }}
+                    onAnalyze={jest.fn().mockResolvedValue(parsed())}
+                    onSave={jest.fn()}
+                    onClose={onClose}
+                />
+            </ThemeProvider>
+        );
+
+        await act(async () => {
+            renderer = TestRenderer.create(renderTree());
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장" }).props.onChangeText("서울역 약속");
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" }).props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => jest.advanceTimersByTime(230));
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "quick-schedule-backdrop" }).props.onPress();
+        });
+
+        expect(alertSpy).toHaveBeenCalledWith(
+            "작성 중인 일정이 있어요",
+            "닫으면 입력한 내용이 사라져요.",
+            expect.any(Array),
+            expect.objectContaining({ cancelable: true }),
+        );
+        expect(onClose).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "제목 수정" })).toBeDefined();
+    });
+
     test("메모를 적용하면 같은 모달의 열린 미리보기에 반영한다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
@@ -387,6 +649,8 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.accessibilityValue).toEqual({
             text: "예약자 이름 확인",
         });
+        const memoButton = renderer!.root.findByProps({ accessibilityLabel: "메모 수정" });
+        expect(memoButton.findAll(node => node.props.children === "예약자 이름 확인")[0].props.numberOfLines).toBe(2);
     });
 
     test("일정 만들기 실패 뒤 모달을 닫지 않고 입력 내용을 수정할 수 있다", async () => {

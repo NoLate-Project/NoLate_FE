@@ -302,6 +302,10 @@ export default function ScheduleNewModal({
         inputRange: [0, 1],
         outputRange: [-CATEGORY_PICKER_MARGIN, 0],
     });
+    const categoryChevronRotation = categoryPickerSpacingAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
+    });
 
     const discardDraft = useCallback(() => {
         formDirtyRef.current = false;
@@ -1406,8 +1410,8 @@ export default function ScheduleNewModal({
     }), [colors]);
 
     const formPlaceholderColor = mode === "dark"
-        ? "rgba(235,235,245,0.42)"
-        : "rgba(60,60,67,0.46)";
+        ? "rgba(235,235,245,0.50)"
+        : "rgba(60,60,67,0.56)";
     const pressedFieldColor = mode === "dark"
         ? "rgba(255,255,255,0.06)"
         : "rgba(60,60,67,0.05)";
@@ -1742,8 +1746,8 @@ export default function ScheduleNewModal({
                                     style={({ pressed }) => [
                                         styles.closeBtn,
                                         {
-                                            backgroundColor: colors.surface2,
-                                            borderColor: colors.border,
+                                            backgroundColor: pressed ? pressedFieldColor : "transparent",
+                                            borderColor: "transparent",
                                             opacity: pressed ? 0.78 : 1,
                                         },
                                     ]}
@@ -1817,6 +1821,20 @@ export default function ScheduleNewModal({
                                 <Text numberOfLines={1} style={[styles.categoryInlineText, { color: colors.textPrimary }]}>
                                     {category?.title ?? "카테고리"}
                                 </Text>
+                                <Animated.View
+                                    testID="schedule-add-category-chevron"
+                                    style={[
+                                        styles.categoryInlineChevron,
+                                        { transform: [{ rotate: categoryChevronRotation }] },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        accessible={false}
+                                        name="chevron-down"
+                                        size={13}
+                                        color={categoryPickerOpen ? FORM_ACCENT : colors.textSecondary}
+                                    />
+                                </Animated.View>
                             </Pressable>
                         </View>
 
@@ -2366,11 +2384,12 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     categoryInlineChip: {
-        maxWidth: 116,
-        height: 30,
+        maxWidth: 128,
+        minHeight: 30,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 999,
         paddingHorizontal: 9,
+        paddingVertical: 5,
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
@@ -2384,6 +2403,12 @@ const styles = StyleSheet.create({
         flexShrink: 1,
         fontSize: 12,
         fontWeight: "600",
+    },
+    categoryInlineChevron: {
+        width: 13,
+        height: 16,
+        alignItems: "center",
+        justifyContent: "center",
     },
     compactSectionCard: {
         borderWidth: StyleSheet.hairlineWidth,

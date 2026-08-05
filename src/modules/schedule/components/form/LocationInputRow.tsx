@@ -77,7 +77,7 @@ export default function LocationInputRow({
                                 </Text>
                             ) : (
                                 <Text style={[styles.routeMeta, { color: colors.textSecondary }]}>
-                                    경로·출발 알림 설정
+                                    경로와 출발 알림 설정
                                 </Text>
                             )}
                         </View>
@@ -102,10 +102,10 @@ export default function LocationInputRow({
                                 testID="location-input-clear-surface"
                                 style={[
                                     styles.clearIconSurface,
-                                    { borderColor: colors.border, backgroundColor: colors.background },
+                                    { backgroundColor: colors.surface },
                                 ]}
                             >
-                                <Ionicons accessible={false} name="close" size={16} color={colors.textSecondary} />
+                                <Ionicons accessible={false} name="close" size={14} color={colors.textSecondary} />
                             </View>
                         </Pressable>
                     ) : null}
@@ -176,10 +176,9 @@ const styles = StyleSheet.create({
         backgroundColor: "transparent",
     },
     clearIconSurface: {
-        width: 32,
-        height: 32,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
+        width: 28,
+        height: 28,
+        borderRadius: 14,
         alignItems: "center",
         justifyContent: "center",
     },

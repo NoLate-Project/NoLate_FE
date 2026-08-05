@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
-import { Alert, StyleSheet, Switch } from "react-native";
+import { Alert, Animated, StyleSheet, Switch } from "react-native";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
 import {
@@ -297,6 +297,8 @@ describe("ScheduleEditScreen route return", () => {
             lineHeight: 22,
             fontWeight: "600",
         });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
+            .toBe("rgba(60,60,67,0.56)");
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "schedule-edit-start-row" }).props.style,
         )).toMatchObject({ minHeight: 58 });
@@ -308,6 +310,8 @@ describe("ScheduleEditScreen route return", () => {
             lineHeight: 21,
             fontWeight: "400",
         });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 메모" }).props.placeholderTextColor)
+            .toBe("rgba(60,60,67,0.56)");
         renderer!.root.findAllByType(Switch).forEach((toggle) => {
             expect(StyleSheet.flatten(toggle.props.style)).toMatchObject({
                 transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
@@ -386,32 +390,59 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         const picker = renderer!.root.findByProps({ testID: "mock-category-options" });
+        const categoryChip = renderer!.root.findByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        });
+        const categoryChevron = renderer!.root.findByProps({
+            testID: "schedule-edit-category-chevron",
+        });
         expect(picker.props).toMatchObject({
             expanded: false,
             hideTrigger: true,
         });
+        expect(categoryChevron.findByProps({ name: "chevron-down" }).props).toMatchObject({
+            size: 13,
+            color: "#6E6E73",
+        });
+        expect(StyleSheet.flatten(categoryChip.props.style({ pressed: false }))).toMatchObject({
+            minHeight: 34,
+            paddingVertical: 5,
+        });
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
+            categoryChip.props.onPress();
         });
 
         expect(picker.props).toMatchObject({
             expanded: true,
             hideTrigger: true,
         });
+        expect(categoryChevron.findByProps({ name: "chevron-down" }).props.color).toBe("#2979FF");
         expect(renderer!.root.findByProps({
             testID: "schedule-edit-category-dismiss-layer",
         })).toBeTruthy();
 
-        await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
-        });
+        let finishClosing: ((result: { finished: boolean }) => void) | undefined;
+        const timingSpy = jest.spyOn(Animated, "timing").mockImplementation((() => ({
+            start: (callback?: (result: { finished: boolean }) => void) => {
+                finishClosing = callback;
+            },
+            stop: jest.fn(),
+            reset: jest.fn(),
+        })) as typeof Animated.timing);
+        await act(async () => categoryChip.props.onPress());
 
         expect(renderer!.root.findByProps({ testID: "mock-category-options" })).toBe(picker);
         expect(picker.props.expanded).toBe(false);
-        expect(renderer!.root.findAllByProps({
-            testID: "schedule-edit-category-dismiss-layer",
-        })).toHaveLength(0);
+        expect(timingSpy).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ toValue: 0, duration: 200, useNativeDriver: false }),
+        );
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-category-dismiss-layer" }).props.accessible)
+            .toBe(false);
+
+        await act(async () => finishClosing?.({ finished: true }));
+        expect(renderer!.root.findAllByProps({ testID: "schedule-edit-category-dismiss-layer" })).toHaveLength(0);
     });
 
     test("빠른 반복 탭과 바깥 탭 뒤에도 카테고리 열림 상태가 일관된다", async () => {
@@ -444,7 +475,7 @@ describe("ScheduleEditScreen route return", () => {
         expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(true);
     });
 
-    test("카테고리를 고르면 목록을 유지한 채 닫고 바깥 탭 영역을 제거한다", async () => {
+    test("카테고리를 고르면 목록을 유지하고 닫힘 전환 동안 바깥 탭을 차단한다", async () => {
         mockGetSchedule.mockResolvedValue(mockItem);
 
         await act(async () => {
@@ -461,9 +492,11 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(false);
-        expect(renderer!.root.findAllByProps({
+        const dismissLayers = renderer!.root.findAllByProps({
             testID: "schedule-edit-category-dismiss-layer",
-        })).toHaveLength(0);
+        });
+        expect(dismissLayers.length).toBeGreaterThan(0);
+        expect(dismissLayers.some(layer => layer.props.accessible === false)).toBe(true);
     });
 
     test("이동 경로를 열 때 현재 출발지·도착지·수단·소요시간·출발시각·경로를 세션에 보존한다", async () => {

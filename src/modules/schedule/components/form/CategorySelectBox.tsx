@@ -35,11 +35,15 @@ export default function CategorySelectBox({
     hideTrigger = false,
     onExpandedChange,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const [internalOpen, setInternalOpen] = useState(false);
+    const [closing, setClosing] = useState(false);
+    const [measuredContentHeight, setMeasuredContentHeight] = useState(0);
     const open = expanded ?? internalOpen;
 
     const updateOpen = (nextOpen: boolean) => {
+        if (!nextOpen && open) setClosing(true);
+        if (nextOpen) setClosing(false);
         if (expanded === undefined) setInternalOpen(nextOpen);
         onExpandedChange?.(nextOpen);
     };
@@ -50,26 +54,35 @@ export default function CategorySelectBox({
     useEffect(() => {
         const wasOpen = prevOpenRef.current;
         prevOpenRef.current = open;
+        let animation: Animated.CompositeAnimation | undefined;
 
         if (open && !wasOpen) {
-            Animated.spring(expandAnim, {
+            setClosing(false);
+            animation = Animated.spring(expandAnim, {
                 toValue: 1,
                 useNativeDriver: false,
                 damping: 18,
                 stiffness: 160,
                 mass: 0.8,
-            }).start();
+            });
         } else if (!open && wasOpen) {
-            Animated.timing(expandAnim, {
+            setClosing(true);
+            animation = Animated.timing(expandAnim, {
                 toValue: 0,
                 duration: 200,
                 useNativeDriver: false,
-            }).start();
+            });
         }
+
+        animation?.start(({ finished }) => {
+            if (finished && !open) setClosing(false);
+        });
+        return () => animation?.stop();
     }, [open, expandAnim]);
 
-    const targetHeight =
+    const estimatedContentHeight =
         ITEM_HEIGHT * categories.length + (onManageCategories ? MANAGE_BUTTON_HEIGHT : 0);
+    const targetHeight = measuredContentHeight || estimatedContentHeight;
 
     const listMaxHeight = expandAnim.interpolate({
         inputRange: [0, 1],
@@ -86,6 +99,7 @@ export default function CategorySelectBox({
         [categories, value]
     );
     const canOpen = categories.length > 0 || Boolean(onManageCategories);
+    const selectionAccent = mode === "dark" ? "#4B9DFF" : "#2979FF";
 
     return (
         <View style={styles.root}>
@@ -104,7 +118,7 @@ export default function CategorySelectBox({
                         style={[
                             styles.selector,
                             {
-                                borderColor: open ? colors.selectedDayBg : colors.border,
+                                borderColor: open ? selectionAccent : colors.border,
                                 backgroundColor: colors.surface2,
                             },
                         ]}
@@ -122,16 +136,22 @@ export default function CategorySelectBox({
                         </View>
 
                         <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
-                            <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
+                            <Ionicons
+                                accessible={false}
+                                name="chevron-down"
+                                size={17}
+                                color={open ? selectionAccent : colors.textSecondary}
+                            />
                         </Animated.View>
                     </Pressable>
                 </>
             ) : null}
 
             <Animated.View
+                testID="category-dropdown-transition"
                 accessibilityElementsHidden={!open}
                 importantForAccessibility={open ? "auto" : "no-hide-descendants"}
-                pointerEvents={open ? "auto" : "none"}
+                pointerEvents={open || closing ? "auto" : "none"}
                 style={[
                     styles.dropdownWrap,
                     {
@@ -141,6 +161,13 @@ export default function CategorySelectBox({
                 ]}
             >
                 <View
+                    testID="category-dropdown-content"
+                    onLayout={(event) => {
+                        const nextHeight = Math.ceil(event.nativeEvent.layout.height);
+                        if (nextHeight > 0 && nextHeight !== measuredContentHeight) {
+                            setMeasuredContentHeight(nextHeight);
+                        }
+                    }}
                     style={[
                         styles.dropdown,
                         hideTrigger && styles.inlineDropdown,
@@ -159,18 +186,26 @@ export default function CategorySelectBox({
                                 accessibilityState={{ checked: active }}
                                 accessibilityLabel={`${category.title} 카테고리`}
                                 onPress={() => {
-                                    onChange(category.id);
                                     updateOpen(false);
+                                    onChange(category.id);
                                 }}
                                 style={[
                                     styles.categoryItem,
                                     {
                                         backgroundColor: active ? colors.surface2 : colors.surface,
-                                        borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth,
-                                        borderTopColor: colors.border,
                                     },
                                 ]}
                             >
+                                {index > 0 ? (
+                                    <View
+                                        testID={`category-divider-${category.id}`}
+                                        pointerEvents="none"
+                                        style={[
+                                            styles.itemDivider,
+                                            { backgroundColor: colors.border },
+                                        ]}
+                                    />
+                                ) : null}
                                 <View style={styles.categoryTitleRow}>
                                     <View
                                         style={[
@@ -191,7 +226,7 @@ export default function CategorySelectBox({
                                     accessible={false}
                                     name="checkmark"
                                     size={18}
-                                    color={active ? colors.textPrimary : "transparent"}
+                                    color={active ? selectionAccent : "transparent"}
                                 />
                             </Pressable>
                         );
@@ -279,9 +314,17 @@ const styles = StyleSheet.create({
     categoryItem: {
         minHeight: ITEM_HEIGHT,
         paddingHorizontal: 12,
+        paddingVertical: 10,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
+    },
+    itemDivider: {
+        position: "absolute",
+        top: 0,
+        right: 0,
+        left: 34,
+        height: StyleSheet.hairlineWidth,
     },
     categoryTitleRow: {
         flexDirection: "row",
@@ -304,6 +347,7 @@ const styles = StyleSheet.create({
     manageButton: {
         minHeight: MANAGE_BUTTON_HEIGHT,
         paddingHorizontal: 12,
+        paddingVertical: 10,
         flexDirection: "row",
         alignItems: "center",
         gap: 9,

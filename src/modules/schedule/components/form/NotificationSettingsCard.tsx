@@ -396,7 +396,9 @@ export default function NotificationSettingsCard({
                 ]}
             >
                 <View style={styles.headerText}>
-                    <Text style={[styles.title, { color: colors.textPrimary }]}>출발 알림</Text>
+                    <Text style={[styles.title, { color: colors.textPrimary }]}>
+                        {flat ? "알림" : "출발 알림"}
+                    </Text>
                     {!flat ? (
                         <Text style={[styles.usage, { color: colors.textSecondary }]}>
                             교통 상황을 반영해 출발 시간을 알려드려요.
@@ -404,7 +406,7 @@ export default function NotificationSettingsCard({
                     ) : null}
                 </View>
                 <Switch
-                    accessibilityLabel="출발 알림"
+                    accessibilityLabel={flat ? "출발 알림 사용" : "출발 알림"}
                     accessibilityHint={canEnable || enabled ? undefined : "경로 선택 또는 이용 한도 확인이 필요합니다"}
                     value={enabled}
                     disabled={!canEnable && !enabled}

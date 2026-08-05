@@ -578,6 +578,7 @@ describe("QuickScheduleModal live speech", () => {
         const onAnalyze = jest.fn().mockResolvedValue(parseResult);
         const onSave = jest.fn();
         const onClose = jest.fn();
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
         const renderModal = (visible: boolean) => (
             <ThemeProvider>
                 <QuickScheduleModal
@@ -615,6 +616,10 @@ describe("QuickScheduleModal live speech", () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
                 .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
             await Promise.resolve();
         });
         await act(async () => {
@@ -675,6 +680,7 @@ describe("QuickScheduleModal live speech", () => {
         const onAnalyze = jest.fn().mockResolvedValue(parseResult);
         const onSave = jest.fn();
         const onClose = jest.fn();
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
         const renderModal = (visible: boolean) => (
             <ThemeProvider>
                 <QuickScheduleModal
@@ -716,6 +722,10 @@ describe("QuickScheduleModal live speech", () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
                 .props.onPress();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
             await Promise.resolve();
         });
         await act(async () => {
@@ -1052,6 +1062,7 @@ describe("QuickScheduleModal live speech", () => {
 
     test("이전 STT 정리가 끝나기 전에는 재시작하지 않고 새 세션도 닫을 때 정리한다", async () => {
         const firstCancel = createDeferred<void>();
+        const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
         mockCreateLiveSpeechSessionId
             .mockReturnValueOnce("speech-session-a")
             .mockReturnValueOnce("speech-session-b");
@@ -1125,6 +1136,11 @@ describe("QuickScheduleModal live speech", () => {
             renderer!.root
                 .findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" })
                 .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
             await Promise.resolve();
             await Promise.resolve();
         });

@@ -4874,6 +4874,7 @@ export default function ScheduleIndex() {
                 }}
                 defaultDay={selectedDay}
                 defaultCategory={writableCategories[0]}
+                categories={writableCategories}
                 categoryError={categoryError}
                 categoryLoading={categoryLoading}
                 onRetryCategories={retryCategoryLoad}

@@ -23,7 +23,8 @@ function normalizeText(value: string | null | undefined) {
 }
 
 export function isReservedFavoritePlaceCategoryName(value: string) {
-    return RESERVED_FAVORITE_CATEGORY_NAMES.has(value.trim().toLocaleLowerCase());
+    const normalizedName = value.trim().toLocaleLowerCase().replace(/\s+/g, "");
+    return RESERVED_FAVORITE_CATEGORY_NAMES.has(normalizedName);
 }
 
 export function getFavoritePlaceCategoryDisplayName(value: string) {

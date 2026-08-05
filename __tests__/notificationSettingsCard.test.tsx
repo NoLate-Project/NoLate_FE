@@ -224,6 +224,9 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             paddingHorizontal: 0,
         });
         expect(renderer!.root.findByProps({ testID: "notification-flat-summary" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "알림" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "푸시 알림" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발 알람" })).toBeTruthy();
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "notification-flat-summary" }).props.style,
         )).toMatchObject({
@@ -242,11 +245,11 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             borderRadius: 10,
         });
         expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.style,
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알림 사용" }).props.style,
         )).toMatchObject({
             transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
         });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.trackColor)
+        expect(renderer!.root.findByProps({ accessibilityLabel: "출발 알림 사용" }).props.trackColor)
             .toEqual({ false: "#D1D1D6", true: "#2979FF" });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ children: "추천 출발 시간" }).props.style,

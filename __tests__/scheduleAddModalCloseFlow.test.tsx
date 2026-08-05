@@ -135,7 +135,7 @@ describe("ScheduleAddModal close flow", () => {
             .toBe("일정 제목");
         expect(renderer!.root.findByProps({ children: "일시" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "경로·출발 알림 설정" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "경로와 출발 알림 설정" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "일정 저장" })).toBeTruthy();
         expect(renderer!.root.findAllByProps({ children: "제목을 입력하면 저장할 수 있어요." }))
             .toHaveLength(0);
@@ -174,7 +174,7 @@ describe("ScheduleAddModal close flow", () => {
             backgroundColor: "#f7f7f8",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
-            .toBe("rgba(60,60,67,0.46)");
+            .toBe("rgba(60,60,67,0.56)");
         expect(switchStyle.transform).toEqual([{ scale: 0.88 }]);
         expect(allDaySwitch.props.hitSlop).toEqual({ top: 8, right: 6, bottom: 8, left: 6 });
         expect(memoStyle).toMatchObject({
@@ -185,7 +185,13 @@ describe("ScheduleAddModal close flow", () => {
         });
         expect(saveStyle).toMatchObject({ height: 48, borderRadius: 14, backgroundColor: "#E9E9EE" });
         expect(renderer!.root.findAllByProps({ testID: "schedule-add-handle" })).toHaveLength(0);
-        expect(closeStyle).toMatchObject({ width: 34, height: 34, borderRadius: 17 });
+        expect(closeStyle).toMatchObject({
+            width: 34,
+            height: 34,
+            borderRadius: 17,
+            backgroundColor: "transparent",
+            borderColor: "transparent",
+        });
         expect(closeButton.props.hitSlop).toBe(6);
         expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(20);
         expect(backdropStyle.backgroundColor).toBe("rgba(0,0,0,0.30)");
@@ -206,12 +212,24 @@ describe("ScheduleAddModal close flow", () => {
         const categoryChip = renderer!.root.findByProps({
             accessibilityLabel: "카테고리 선택, 현재 업무",
         });
+        expect(StyleSheet.flatten(categoryChip.props.style({ pressed: false }))).toMatchObject({
+            minHeight: 30,
+            paddingVertical: 5,
+        });
+        const categoryChevron = renderer!.root.findByProps({
+            testID: "schedule-add-category-chevron",
+        });
+        expect(categoryChevron.findByProps({ name: "chevron-down" }).props).toMatchObject({
+            size: 13,
+            color: "#6e6e73",
+        });
         await act(async () => categoryChip.props.onPress());
 
         expect(picker.props.expanded).toBe(true);
         expect(picker.findAllByProps({
             accessibilityLabel: "카테고리 선택, 현재 업무",
         })).toHaveLength(0);
+        expect(categoryChevron.findByProps({ name: "chevron-down" }).props.color).toBe("#246BFE");
 
         await act(async () => categoryChip.props.onPress());
 

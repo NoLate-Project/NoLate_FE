@@ -31,6 +31,12 @@ const previewCategory: ScheduleCategory = {
     title: "개인",
     color: "#2979FF",
 };
+const previewWorkCategory: ScheduleCategory = {
+    id: "preview-work",
+    title: "업무",
+    color: "#FF6B5F",
+};
+const previewCategories = [previewCategory, previewWorkCategory];
 
 const previewRoute = {
     routeInfo: {
@@ -223,7 +229,7 @@ function EditPreview({
     const { state, dispatch } = useScheduleStore();
 
     useEffect(() => {
-        dispatch({ type: "SET_CATEGORIES", categories: [previewCategory] });
+        dispatch({ type: "SET_CATEGORIES", categories: previewCategories });
         dispatch({ type: "UPDATE_ITEM", item: previewItem });
     }, [dispatch]);
 
@@ -294,7 +300,7 @@ export default function ScheduleUiPreviewScreen() {
     }, [screen]);
 
     useEffect(() => {
-        dispatch({ type: "SET_CATEGORIES", categories: [previewCategory] });
+        dispatch({ type: "SET_CATEGORIES", categories: previewCategories });
         dispatch({ type: "UPDATE_ITEM", item: previewItem });
     }, [dispatch]);
 
@@ -342,6 +348,7 @@ export default function ScheduleUiPreviewScreen() {
                     initialPreviewField={quickPreviewField}
                     defaultDay={PREVIEW_DAY}
                     defaultCategory={previewCategory}
+                    categories={previewCategories}
                     sourceTopOffset={4}
                     sourceWidth={238}
                     sourceHeight={164}
@@ -361,7 +368,7 @@ export default function ScheduleUiPreviewScreen() {
             <ScheduleAddModal
                 visible={visibleModalScreen === "create"}
                 presentation="morph"
-                categories={[previewCategory]}
+                categories={previewCategories}
                 defaultDay={PREVIEW_DAY}
                 sourceTopOffset={4}
                 sourceWidth={238}

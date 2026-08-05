@@ -256,6 +256,7 @@ describe("favorite place selection", () => {
 
     test("시스템 카테고리 이름은 사용자 그룹 이름으로 다시 만들 수 없다", () => {
         expect(isReservedFavoritePlaceCategoryName(" 기본주소 ")).toBe(true);
+        expect(isReservedFavoritePlaceCategoryName(" 기본 주소 ")).toBe(true);
         expect(isReservedFavoritePlaceCategoryName("미분류")).toBe(true);
         expect(isReservedFavoritePlaceCategoryName("회사")).toBe(false);
     });

@@ -37,6 +37,8 @@ describe("plain schedule detail route layout", () => {
         expect(previewSource).toContain("function EditPreview({");
         expect(previewSource).toContain('dispatch({ type: "UPDATE_ITEM", item: previewItem })');
         expect(previewSource).toContain("initialPreviewField={quickPreviewField}");
+        expect(previewSource).toContain("categories={previewCategories}");
+        expect(previewSource).toContain('title: "업무"');
         expect(previewSource).toContain('initialCategoryPickerOpen={params.category === "open"}');
         expect(previewSource).toContain('if (screen === "route") return <RouteInputPreview />');
         expect(previewSource).toContain('return <RouteSelectScreen />');

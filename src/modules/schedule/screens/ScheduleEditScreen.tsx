@@ -116,6 +116,9 @@ export default function ScheduleEdit({
     const { state, dispatch } = useScheduleStore();
     const fieldAccent = mode === "dark" ? "#4B9DFF" : "#2979FF";
     const inactiveSwitchTrack = mode === "dark" ? "#3A3A3C" : "#D1D1D6";
+    const formPlaceholderColor = mode === "dark"
+        ? "rgba(235,235,245,0.50)"
+        : "rgba(60,60,67,0.56)";
 
     const item = id ? state.itemsById[id] : undefined;
     const canDeleteSchedule = canDeletePresentedSchedule(item);
@@ -129,6 +132,8 @@ export default function ScheduleEdit({
         resolveWritableScheduleCategoryId(item?.category, state.categories)
     );
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(initialCategoryPickerOpen);
+    const [categoryPickerClosing, setCategoryPickerClosing] = useState(false);
+    const categoryPickerOpenRef = useRef(initialCategoryPickerOpen);
     const categoryPickerSpacingAnim = useRef(new Animated.Value(0)).current;
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
@@ -173,13 +178,24 @@ export default function ScheduleEdit({
         setFormDirty(true);
     }, []);
 
-    const closeCategoryPicker = useCallback(() => {
-        setCategoryPickerOpen(false);
+    const setCategoryPickerExpanded = useCallback((expanded: boolean) => {
+        const wasOpen = categoryPickerOpenRef.current;
+        categoryPickerOpenRef.current = expanded;
+        setCategoryPickerOpen(expanded);
+        if (expanded) {
+            setCategoryPickerClosing(false);
+        } else if (wasOpen) {
+            setCategoryPickerClosing(true);
+        }
     }, []);
 
+    const closeCategoryPicker = useCallback(() => {
+        setCategoryPickerExpanded(false);
+    }, [setCategoryPickerExpanded]);
+
     const toggleCategoryPicker = useCallback(() => {
-        setCategoryPickerOpen((current) => !current);
-    }, []);
+        setCategoryPickerExpanded(!categoryPickerOpenRef.current);
+    }, [setCategoryPickerExpanded]);
 
     useEffect(() => {
         const animation = categoryPickerOpen
@@ -196,13 +212,19 @@ export default function ScheduleEdit({
                 useNativeDriver: false,
             });
 
-        animation.start();
+        animation.start(({ finished }) => {
+            if (finished && !categoryPickerOpen) setCategoryPickerClosing(false);
+        });
         return () => animation.stop();
     }, [categoryPickerOpen, categoryPickerSpacingAnim]);
 
     const categoryPickerMarginBottom = categoryPickerSpacingAnim.interpolate({
         inputRange: [0, 1],
         outputRange: [-CATEGORY_PICKER_MARGIN, 0],
+    });
+    const categoryChevronRotation = categoryPickerSpacingAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
     });
 
     const discardChanges = useCallback(() => {
@@ -991,9 +1013,10 @@ export default function ScheduleEdit({
                 />
             ) : null}
 
-            {categoryPickerOpen ? (
+            {categoryPickerOpen || categoryPickerClosing ? (
                 <Pressable
                     testID="schedule-edit-category-dismiss-layer"
+                    accessible={categoryPickerOpen}
                     accessibilityRole="button"
                     accessibilityLabel="카테고리 선택 닫기"
                     onPress={closeCategoryPicker}
@@ -1026,7 +1049,7 @@ export default function ScheduleEdit({
                         accessibilityLabel="일정 제목"
                         maxLength={120}
                         placeholder="예) 회의"
-                        placeholderTextColor={colors.inputPlaceholder}
+                        placeholderTextColor={formPlaceholderColor}
                         style={[styles.titleInput, { color: colors.textPrimary }]}
                     />
                     <Pressable
@@ -1048,6 +1071,20 @@ export default function ScheduleEdit({
                         <Text numberOfLines={1} style={[styles.categoryInlineText, { color: colors.textPrimary }]}>
                             {category?.title ?? "카테고리"}
                         </Text>
+                        <Animated.View
+                            testID="schedule-edit-category-chevron"
+                            style={[
+                                styles.categoryInlineChevron,
+                                { transform: [{ rotate: categoryChevronRotation }] },
+                            ]}
+                        >
+                            <Ionicons
+                                accessible={false}
+                                name="chevron-down"
+                                size={13}
+                                color={categoryPickerOpen ? fieldAccent : colors.textSecondary}
+                            />
+                        </Animated.View>
                     </Pressable>
                 </View>
 
@@ -1060,7 +1097,7 @@ export default function ScheduleEdit({
                         value={categoryId}
                         expanded={categoryPickerOpen}
                         hideTrigger
-                        onExpandedChange={setCategoryPickerOpen}
+                        onExpandedChange={setCategoryPickerExpanded}
                         onChange={(nextCategoryId) => {
                             markFormDirty();
                             setCategoryId(nextCategoryId);
@@ -1293,7 +1330,7 @@ export default function ScheduleEdit({
                 multiline
                 maxLength={2000}
                 placeholder="메모 추가"
-                placeholderTextColor={colors.inputPlaceholder}
+                placeholderTextColor={formPlaceholderColor}
                 style={[
                     styles.input,
                     styles.notesInput,
@@ -1496,11 +1533,12 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     categoryInlineChip: {
-        maxWidth: 116,
-        height: 34,
+        maxWidth: 128,
+        minHeight: 34,
         borderWidth: 1,
         borderRadius: 999,
         paddingHorizontal: 9,
+        paddingVertical: 5,
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
@@ -1514,6 +1552,12 @@ const styles = StyleSheet.create({
         flexShrink: 1,
         fontSize: 12,
         fontWeight: "600",
+    },
+    categoryInlineChevron: {
+        width: 13,
+        height: 16,
+        alignItems: "center",
+        justifyContent: "center",
     },
     pickerContainer: {
         borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",

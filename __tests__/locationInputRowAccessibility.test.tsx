@@ -58,15 +58,16 @@ describe("LocationInputRow accessibility", () => {
         });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onClear).toHaveBeenCalledTimes(1);
-        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(16);
+        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(14);
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "location-input-clear-surface" }).props.style,
         )).toMatchObject({
-            width: 32,
-            height: 32,
-            borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: 16,
+            width: 28,
+            height: 28,
+            borderRadius: 14,
+            backgroundColor: "#fff",
         });
+        expect(StyleSheet.flatten(clearButton.props.style)).toMatchObject({ width: 44, height: 44 });
     });
 
     test("빈 경로는 짧은 문구로 다음 행동과 결과를 안내한다", async () => {
@@ -84,7 +85,7 @@ describe("LocationInputRow accessibility", () => {
 
         expect(renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "경로·출발 알림 설정" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "경로와 출발 알림 설정" })).toBeTruthy();
     });
 
     test("공유 폼에서도 60pt 터치 영역과 가벼운 그룹 표면을 사용한다", async () => {
