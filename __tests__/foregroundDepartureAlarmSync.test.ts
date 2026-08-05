@@ -100,6 +100,8 @@ import {
 } from "../src/modules/notification/foregroundPush";
 import { ApiResponseError } from "../src/api/response";
 
+const FUTURE_ETA_EVENT_EXPIRY = "2099-08-04T01:05:00.000Z";
+
 describe("foreground departure alarm sync routing", () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -827,6 +829,7 @@ describe("foreground departure alarm sync routing", () => {
             occurrenceId: "M0",
             actionEventKey,
             logicalEventKey: "event:00000000-0000-4000-8000-000000000042",
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
         };
         const initialResponse = {
             actionIdentifier: "schedule_depart_now_action",
@@ -892,6 +895,7 @@ describe("foreground departure alarm sync routing", () => {
             scheduleId: "41",
             recipientMemberId: "7",
             actionEventKey,
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
         };
         mockEnqueueStandardDepartureAction.mockReturnValueOnce(durableEnqueue);
         setForegroundNotificationsModuleForTests({
@@ -932,6 +936,168 @@ describe("foreground departure alarm sync routing", () => {
         cleanup();
     });
 
+    it("prioritizes an explicit Expo depart action over RNFirebase's cold-start default open", async () => {
+        const clearLastResponse = jest.fn();
+        const openSchedule = jest.fn();
+        const actionEventKey = `key:${"f".repeat(64)}`;
+        const data = {
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            scheduleId: "41",
+            recipientMemberId: "7",
+            actionEventKey,
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
+        };
+        mockGetInitialNotification.mockResolvedValueOnce({
+            data,
+            messageId: "firebase-cold-start-41",
+        });
+        setForegroundNotificationsModuleForTests({
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => ({
+                actionIdentifier: "schedule_depart_now_action",
+                notification: {
+                    request: {
+                        identifier: "expo-cold-start-depart-41",
+                        content: { data },
+                    },
+                },
+            })),
+            setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const cleanup = await configurePushNavigation(openSchedule, jest.fn());
+
+        expect(mockEnqueueStandardDepartureAction).toHaveBeenCalledWith(expect.objectContaining({
+            scheduleId: "41",
+            recipientMemberId: 7,
+            actionEventKey,
+        }));
+        expect(openSchedule).not.toHaveBeenCalled();
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+        cleanup();
+    });
+
+    it("clears a mismatched historical Expo action instead of stealing a newer Firebase tap", async () => {
+        const { AppState } = require("react-native") as typeof import("react-native");
+        let appStateHandler: ((state: string) => void) | undefined;
+        const appStateSpy = jest.spyOn(AppState, "addEventListener").mockImplementation((
+            (_type: string, handler: (state: string) => void) => {
+                appStateHandler = handler;
+                return { remove: jest.fn() };
+            }
+        ) as typeof AppState.addEventListener);
+        const oldData = {
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            scheduleId: "41",
+            recipientMemberId: "7",
+            actionEventKey: `key:${"1".repeat(64)}`,
+            etaEventExpiresAt: "2099-08-04T01:05:00.000Z",
+        };
+        const newData = {
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            scheduleId: "42",
+            recipientMemberId: "7",
+            actionEventKey: `key:${"2".repeat(64)}`,
+            etaEventExpiresAt: "2099-08-04T01:05:00.000Z",
+        };
+        let storedResponse: unknown = {
+            actionIdentifier: "schedule_depart_now_action",
+            notification: {
+                request: {
+                    identifier: "historical-expo-response-41",
+                    content: { data: oldData },
+                },
+            },
+        };
+        const clearLastResponse = jest.fn(() => { storedResponse = null; });
+        mockGetInitialNotification.mockResolvedValueOnce({
+            data: newData,
+            messageId: "new-firebase-tap-42",
+        });
+        setForegroundNotificationsModuleForTests({
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => storedResponse),
+            setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
+        } as never);
+        const openSchedule = jest.fn();
+
+        const cleanup = await configurePushNavigation(openSchedule, jest.fn());
+
+        expect(openSchedule).toHaveBeenCalledWith("42");
+        expect(mockEnqueueStandardDepartureAction).not.toHaveBeenCalled();
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+
+        appStateHandler?.("active");
+        await Promise.resolve();
+        expect(mockEnqueueStandardDepartureAction).not.toHaveBeenCalled();
+        cleanup();
+        appStateSpy.mockRestore();
+    });
+
+    it("clears an expired Expo depart action without enqueueing a server mutation", async () => {
+        const clearLastResponse = jest.fn();
+        const data = {
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            scheduleId: "41",
+            recipientMemberId: "7",
+            actionEventKey: `key:${"9".repeat(64)}`,
+            etaEventExpiresAt: "2020-01-01T00:00:00.000Z",
+        };
+        setForegroundNotificationsModuleForTests({
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => ({
+                actionIdentifier: "schedule_depart_now_action",
+                notification: {
+                    request: {
+                        identifier: "expired-expo-depart-41",
+                        content: { data },
+                    },
+                },
+            })),
+            setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const cleanup = await configurePushNavigation(jest.fn(), jest.fn());
+
+        expect(mockEnqueueStandardDepartureAction).not.toHaveBeenCalled();
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+        cleanup();
+    });
+
+    it("rejects a standard departure action when its expiration is missing", async () => {
+        const clearLastResponse = jest.fn();
+        setForegroundNotificationsModuleForTests({
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => ({
+                actionIdentifier: "schedule_depart_now_action",
+                notification: {
+                    request: {
+                        identifier: "missing-expiry-depart-41",
+                        content: {
+                            data: {
+                                type: "SCHEDULE_DEPARTURE_REMINDER",
+                                scheduleId: "41",
+                                recipientMemberId: "7",
+                                actionEventKey: `key:${"8".repeat(64)}`,
+                            },
+                        },
+                    },
+                },
+            })),
+            setNotificationCategoryAsync: jest.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const cleanup = await configurePushNavigation(jest.fn(), jest.fn());
+
+        expect(mockEnqueueStandardDepartureAction).not.toHaveBeenCalled();
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+        cleanup();
+    });
+
     it("keeps an initial snooze response until the server mutation attempt settles", async () => {
         let resolveSnooze!: () => void;
         const snoozeAttempt = new Promise<void>((resolve) => {
@@ -944,6 +1110,7 @@ describe("foreground departure alarm sync routing", () => {
             scheduleId: "41",
             recipientMemberId: "7",
             actionEventKey,
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
         };
         mockSnoozeScheduleDepartureReminder.mockReturnValueOnce(snoozeAttempt);
         setForegroundNotificationsModuleForTests({
@@ -1003,6 +1170,7 @@ describe("foreground departure alarm sync routing", () => {
             recipientMemberId: "7",
             occurrenceId: "M0",
             actionEventKey,
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
         };
         const response = {
             actionIdentifier: "schedule_depart_now_action",
@@ -1070,6 +1238,7 @@ describe("foreground departure alarm sync routing", () => {
             recipientMemberId: "7",
             occurrenceId: "M0",
             actionEventKey,
+            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
         };
         const response = {
             actionIdentifier: "schedule_depart_now_action",
@@ -1122,6 +1291,7 @@ describe("foreground departure alarm sync routing", () => {
                 scheduleId: "41",
                 recipientMemberId: "7",
                 actionEventKey: "event:00000000-0000-4000-8000-000000000044",
+                etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
             };
             mockSnoozeScheduleDepartureReminder.mockRejectedValueOnce(
                 new ApiResponseError("retry later", { status }),
@@ -1168,6 +1338,7 @@ describe("foreground departure alarm sync routing", () => {
                                 scheduleId: "41",
                                 recipientMemberId: "7",
                                 actionEventKey: "event:00000000-0000-4000-8000-000000000045",
+                                etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
                             },
                         },
                     },
@@ -1304,6 +1475,7 @@ describe("foreground departure alarm sync routing", () => {
                             scheduleId: "41",
                             recipientMemberId: "7",
                             actionEventKey,
+                            etaEventExpiresAt: FUTURE_ETA_EVENT_EXPIRY,
                         },
                     },
                 },

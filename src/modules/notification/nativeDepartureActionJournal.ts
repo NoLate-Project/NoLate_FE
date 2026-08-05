@@ -4,6 +4,10 @@ import { markScheduleDeparted } from "../../api/schedule";
 import { ApiResponseError } from "../../api/response";
 import { getAuthMember } from "../auth/authStorage";
 import {
+    createScheduleDepartureMutationEvent,
+    emitScheduleMutation,
+} from "../schedule/scheduleMutationEvents";
+import {
     getPendingNativeDepartureActionEvents,
     enqueueNativeDepartureActionEvent,
     markNativeDepartureActionNavigationDelivered,
@@ -33,6 +37,13 @@ export type NativeDepartureActionTerminalHandler = (
     event: NativeDepartureActionEvent,
     message: string,
 ) => void;
+
+class PermanentDepartureActionIntegrityError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "PermanentDepartureActionIntegrityError";
+    }
+}
 
 const RETRY_DELAYS_MS = [15_000, 60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000] as const;
 const FALLBACK_STORAGE_PREFIX = "nolate_departure_action_fallback_v1:";
@@ -197,16 +208,24 @@ async function drainEpoch(epoch: number): Promise<NativeDepartureActionDrainResu
                 result.blocked = true;
                 break;
             }
-            await markScheduleDeparted(
+            const updatedSchedule = await markScheduleDeparted(
                 event.scheduleId,
                 event.actionEventKey,
                 event.recipientMemberId,
             );
+            if (updatedSchedule.id !== event.scheduleId) {
+                throw new PermanentDepartureActionIntegrityError(
+                    "Departure mutation returned a different schedule identity.",
+                );
+            }
             if (!(await isCurrentEpochAccount(epoch, event.recipientMemberId))) {
                 result.unresolved += 1;
                 result.blocked = true;
                 continue;
             }
+            // Publish the server-returned state at the successful mutation boundary so mounted
+            // detail/agenda consumers update before slower alarm reconciliation/navigation.
+            emitScheduleMutation(createScheduleDepartureMutationEvent(updatedSchedule));
             await recoverDepartureAlarmsAfterMutation();
             if (!(await isCurrentEpochAccount(epoch, event.recipientMemberId))) {
                 result.unresolved += 1;
@@ -404,6 +423,7 @@ function isFallbackEvent(value: unknown): value is NativeDepartureActionEvent {
 }
 
 function isTerminalActionError(error: unknown): boolean {
+    if (error instanceof PermanentDepartureActionIntegrityError) return true;
     if (!(error instanceof ApiResponseError)) return false;
     const status = error.status;
     if (status === undefined || status === 401 || status === 408 || status === 429 || status >= 500) {

@@ -8,9 +8,11 @@ import {
     resetPushDeliveryAckQueueForTests,
 } from "./pushDeliveryAckQueue";
 import { getOrCreatePushDeviceId } from "./pushDeviceIdentity";
+import { getLogicalEventKeyFromPushData } from "./pushNotificationIdentity";
+
+export { getLogicalEventKeyFromPushData } from "./pushNotificationIdentity";
 
 const MAX_COMPLETED_ACK_KEYS = 500;
-const MAX_LOGICAL_EVENT_KEY_LENGTH = 100;
 const MAX_PROVIDER_MESSAGE_ID_LENGTH = 300;
 const MAX_ALARM_ID_LENGTH = 100;
 const MAX_ACTION_IDENTIFIER_LENGTH = 100;
@@ -39,12 +41,6 @@ function normalizedMemberId(value: unknown): number | undefined {
     return typeof parsed === "number" && Number.isSafeInteger(parsed) && parsed > 0
         ? parsed
         : undefined;
-}
-
-export function getLogicalEventKeyFromPushData(
-    data?: Record<string, unknown>,
-): string | undefined {
-    return normalizedText(data?.logicalEventKey, MAX_LOGICAL_EVENT_KEY_LENGTH);
 }
 
 function rememberCompletedAck(key: string): void {
