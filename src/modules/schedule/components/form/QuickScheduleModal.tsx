@@ -219,8 +219,8 @@ const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"]
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
-    preview: 456,
-    edit: 456,
+    preview: 520,
+    edit: 520,
     saving: 368,
     saved: 368,
 };
@@ -560,6 +560,7 @@ export default function QuickScheduleModal({
     const [flowStep, setFlowStep] = useState<FlowStep>("input");
     const [analysisError, setAnalysisError] = useState("");
     const [previewDraft, setPreviewDraft] = useState<PreviewDraft | null>(null);
+    const [previewSourceText, setPreviewSourceText] = useState("");
     const [editingField, setEditingField] = useState<PreviewField | null>(null);
     const [editingValue, setEditingValue] = useState("");
     const [editingAlertMode, setEditingAlertMode] = useState<ScheduleAlertMode>("STANDARD");
@@ -1005,6 +1006,7 @@ export default function QuickScheduleModal({
             setFlowStep("input");
             setAnalysisError("");
             setPreviewDraft(null);
+            setPreviewSourceText("");
             setEditingField(null);
             setEditingValue("");
             setEditingAlertMode("STANDARD");
@@ -1374,6 +1376,7 @@ export default function QuickScheduleModal({
                     analysisPreviewTimerRef.current = null;
                     if (analysisSequenceRef.current !== analysisSequence || !visibleRef.current) return;
                     setPreviewDraft(buildPreviewDraft(parsed, sourceText, defaultDay));
+                    setPreviewSourceText(sourceText);
                     setFlowStep("preview");
                     setSubmitting(false);
                     analysisInFlightRef.current = false;
@@ -2633,8 +2636,7 @@ export default function QuickScheduleModal({
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
     const successColor = "#22C55E";
-    const previewRowBackground = mode === "dark" ? "rgba(18,19,24,0.92)" : "rgba(255,255,255,0.92)";
-    const previewIconColor = mode === "dark" ? "#D7D7DC" : "#5F636C";
+    const previewIconBackground = mode === "dark" ? "rgba(36,107,254,0.17)" : "rgba(36,107,254,0.08)";
 
     const getPreviewValue = useCallback((draft: PreviewDraft, field: PreviewField) => {
         switch (field) {
@@ -2651,15 +2653,14 @@ export default function QuickScheduleModal({
                 }
                 return formatKoreanTime(draft.time);
             case "notification":
-                if (!canUseRouteNotification(draft)) return "사용 안 함 · 나중에 설정 가능";
-                if (draft.notificationLeadMinutes === undefined) return "사용 안 함";
+                if (!canUseRouteNotification(draft) || draft.notificationLeadMinutes === undefined) return "없음";
                 return `${formatNotification(draft.notificationLeadMinutes)} · ${getScheduleAlertModeLabel(
                     draft.alertMode,
                 )}`;
             case "location":
-                return draft.location;
+                return draft.location === "장소 미정" ? "미정" : draft.location;
             case "memo":
-                return draft.memo;
+                return draft.memo === "메모 없음" ? "없음" : draft.memo;
             case "title":
             default:
                 return draft.title;
@@ -3329,6 +3330,28 @@ export default function QuickScheduleModal({
         const confirmGlobalReview = () => {
             setPreviewDraft(current => (current ? confirmQuickScheduleGlobalReview(current) : current));
         };
+        const getPreviewBadge = (field: PreviewField) =>
+            field === "notification" && !canUseRouteNotification(previewDraft)
+                ? "선택 설정"
+                : previewDraft.badges[field];
+        const getPreviewAccessibilityValue = (field: PreviewField) =>
+            [getPreviewValue(previewDraft, field), getPreviewBadge(field)].filter(Boolean).join(", ");
+        const renderPreviewBadge = (field: PreviewField) => {
+            const badge = getPreviewBadge(field);
+            if (!badge) return null;
+
+            return (
+                <View style={[styles.warningBadge, { backgroundColor: warningBackground }]}>
+                    <Text style={[styles.warningBadgeText, { color: warningTextColor }]}>{badge}</Text>
+                </View>
+            );
+        };
+        const primaryActionLabel = blockingReviewField
+            ? blockingReviewField === "review"
+                ? "전체 내용 확인 완료"
+                : `${FIELD_LABEL[blockingReviewField]} 확인하기`
+            : "일정 저장";
+        const displayedSourceText = previewSourceText || "입력한 내용";
 
         return (
             <View style={styles.previewStep}>
@@ -3337,66 +3360,230 @@ export default function QuickScheduleModal({
                     contentContainerStyle={styles.previewScrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    {PREVIEW_FIELDS.map(field => {
-                        const badge =
-                            field.key === "notification" && !canUseRouteNotification(previewDraft)
-                                ? "선택 설정"
-                                : previewDraft.badges[field.key];
-                        return (
-                            <Pressable
-                                key={field.key}
-                                onPress={() => openEditField(field.key)}
-                                disabled={submitting}
-                                accessibilityRole="button"
-                                accessibilityLabel={`${field.label} 수정`}
-                                style={[
-                                    styles.previewRow,
-                                    {
-                                        backgroundColor: previewRowBackground,
-                                        borderColor: cardBorderColor,
-                                    },
-                                ]}
-                            >
-                                <View style={styles.previewIcon}>
-                                    <Ionicons accessible={false} name={field.icon} size={17} color={previewIconColor} />
-                                </View>
-                                <View style={styles.previewTextWrap}>
-                                    <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>
-                                        {field.label}
-                                    </Text>
-                                    <View style={styles.previewValueRow}>
-                                        <Text
-                                            numberOfLines={field.key === "memo" ? 2 : 1}
-                                            style={[styles.previewValue, { color: colors.textPrimary }]}
-                                        >
-                                            {getPreviewValue(previewDraft, field.key)}
+                    <Pressable
+                        onPress={() => setFlowStep("input")}
+                        disabled={submitting}
+                        accessibilityRole="button"
+                        accessibilityLabel="입력 내용 수정"
+                        accessibilityValue={{ text: displayedSourceText }}
+                        accessibilityState={{ disabled: submitting }}
+                        style={({ pressed }) => [
+                            styles.previewSourceStrip,
+                            {
+                                borderBottomColor: cardBorderColor,
+                                opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
+                            },
+                        ]}
+                    >
+                        <View style={styles.previewSourceCopy}>
+                            <Text style={[styles.previewSourceLabel, { color: colors.textSecondary }]}>
+                                입력한 내용
+                            </Text>
+                            <Text numberOfLines={1} style={[styles.previewSourceValue, { color: colors.textPrimary }]}>
+                                “{displayedSourceText}”
+                            </Text>
+                        </View>
+                        <Text style={styles.previewSourceAction}>수정</Text>
+                    </Pressable>
+
+                    <Pressable
+                        onPress={() => openEditField("title")}
+                        disabled={submitting}
+                        accessibilityRole="button"
+                        accessibilityLabel="제목 수정"
+                        accessibilityValue={{ text: getPreviewAccessibilityValue("title") }}
+                        accessibilityState={{ disabled: submitting }}
+                        style={({ pressed }) => [
+                            styles.previewTitleRow,
+                            { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                        ]}
+                    >
+                        <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>제목</Text>
+                        <View style={styles.previewTitleValueRow}>
+                            <Text numberOfLines={2} style={[styles.previewTitleValue, { color: colors.textPrimary }]}>
+                                {getPreviewValue(previewDraft, "title")}
+                            </Text>
+                            {renderPreviewBadge("title")}
+                        </View>
+                    </Pressable>
+
+                    <View style={styles.previewInfoRow}>
+                        <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}>
+                            <Ionicons accessible={false} name="calendar-outline" size={17} color={BLUE} />
+                        </View>
+                        <View style={styles.previewInfoCopy}>
+                            <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>일시</Text>
+                            <View style={styles.previewDateTimeValue}>
+                                <Pressable
+                                    onPress={() => openEditField("date")}
+                                    disabled={submitting}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="날짜 수정"
+                                    accessibilityValue={{
+                                        text: getPreviewAccessibilityValue("date"),
+                                    }}
+                                    accessibilityState={{ disabled: submitting }}
+                                    style={({ pressed }) => [
+                                        styles.previewInlineField,
+                                        { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
+                                    ]}
+                                >
+                                    <View style={styles.previewInlineContent}>
+                                        <Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>
+                                            {getPreviewValue(previewDraft, "date")}
                                         </Text>
-                                        {badge && (
-                                            <View style={[styles.warningBadge, { backgroundColor: warningBackground }]}>
-                                                <Text style={[styles.warningBadgeText, { color: warningTextColor }]}>
-                                                    {badge}
-                                                </Text>
-                                            </View>
-                                        )}
+                                        {renderPreviewBadge("date")}
                                     </View>
-                                </View>
-                                <Ionicons
+                                </Pressable>
+                                <Text
                                     accessible={false}
-                                    name="create-outline"
-                                    size={17}
-                                    color={colors.textSecondary}
-                                />
-                            </Pressable>
-                        );
-                    })}
+                                    style={[styles.previewDateTimeSeparator, { color: colors.textSecondary }]}
+                                >
+                                    ·
+                                </Text>
+                                <Pressable
+                                    onPress={() => openEditField("time")}
+                                    disabled={submitting}
+                                    accessibilityRole="button"
+                                    accessibilityLabel="시간 수정"
+                                    accessibilityValue={{
+                                        text: getPreviewAccessibilityValue("time"),
+                                    }}
+                                    accessibilityState={{ disabled: submitting }}
+                                    style={({ pressed }) => [
+                                        styles.previewInlineField,
+                                        { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
+                                    ]}
+                                >
+                                    <View style={styles.previewInlineContent}>
+                                        <Text style={[styles.previewInlineValue, { color: colors.textPrimary }]}>
+                                            {getPreviewValue(previewDraft, "time")}
+                                        </Text>
+                                        {renderPreviewBadge("time")}
+                                    </View>
+                                </Pressable>
+                            </View>
+                        </View>
+                        <Ionicons accessible={false} name="chevron-forward" size={17} color={colors.textSecondary} />
+                    </View>
+
+                    <Pressable
+                        onPress={() => openEditField("location")}
+                        disabled={submitting}
+                        accessibilityRole="button"
+                        accessibilityLabel="장소 수정"
+                        accessibilityValue={{
+                            text: getPreviewAccessibilityValue("location"),
+                        }}
+                        accessibilityState={{ disabled: submitting }}
+                        style={({ pressed }) => [
+                            styles.previewInfoRow,
+                            styles.previewPlaceRow,
+                            {
+                                borderTopColor: cardBorderColor,
+                                opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
+                            },
+                        ]}
+                    >
+                        <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}>
+                            <Ionicons accessible={false} name="location-outline" size={17} color={BLUE} />
+                        </View>
+                        <View style={styles.previewInfoCopy}>
+                            <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>장소</Text>
+                            <View style={styles.previewInfoValueRow}>
+                                <Text
+                                    numberOfLines={1}
+                                    style={[styles.previewInfoValue, { color: colors.textPrimary }]}
+                                >
+                                    {getPreviewValue(previewDraft, "location")}
+                                </Text>
+                                {renderPreviewBadge("location")}
+                            </View>
+                        </View>
+                        <Ionicons accessible={false} name="chevron-forward" size={17} color={colors.textSecondary} />
+                    </Pressable>
+
+                    <View style={[styles.previewOptional, { borderTopColor: cardBorderColor }]}>
+                        <Pressable
+                            onPress={() => openEditField("notification")}
+                            disabled={submitting}
+                            accessibilityRole="button"
+                            accessibilityLabel="알림 수정"
+                            accessibilityValue={{
+                                text: getPreviewAccessibilityValue("notification"),
+                            }}
+                            accessibilityState={{ disabled: submitting }}
+                            style={({ pressed }) => [
+                                styles.previewOptionalItem,
+                                { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                            ]}
+                        >
+                            <View style={styles.previewOptionalCopy}>
+                                <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>알림</Text>
+                                <View style={styles.previewOptionalValueRow}>
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[styles.previewOptionalValue, { color: colors.textPrimary }]}
+                                    >
+                                        {getPreviewValue(previewDraft, "notification")}
+                                    </Text>
+                                    {renderPreviewBadge("notification")}
+                                </View>
+                            </View>
+                            <Ionicons
+                                accessible={false}
+                                name="chevron-forward"
+                                size={16}
+                                color={colors.textSecondary}
+                            />
+                        </Pressable>
+                        <View style={[styles.previewOptionalDivider, { backgroundColor: cardBorderColor }]} />
+                        <Pressable
+                            onPress={() => openEditField("memo")}
+                            disabled={submitting}
+                            accessibilityRole="button"
+                            accessibilityLabel="메모 수정"
+                            accessibilityValue={{
+                                text: getPreviewAccessibilityValue("memo"),
+                            }}
+                            accessibilityState={{ disabled: submitting }}
+                            style={({ pressed }) => [
+                                styles.previewOptionalItem,
+                                styles.previewOptionalItemTrailing,
+                                { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                            ]}
+                        >
+                            <View style={styles.previewOptionalCopy}>
+                                <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>메모</Text>
+                                <View style={styles.previewOptionalValueRow}>
+                                    <Text
+                                        numberOfLines={1}
+                                        style={[styles.previewOptionalValue, { color: colors.textPrimary }]}
+                                    >
+                                        {getPreviewValue(previewDraft, "memo")}
+                                    </Text>
+                                    {renderPreviewBadge("memo")}
+                                </View>
+                            </View>
+                            <Ionicons
+                                accessible={false}
+                                name="chevron-forward"
+                                size={16}
+                                color={colors.textSecondary}
+                            />
+                        </Pressable>
+                    </View>
                 </ScrollView>
                 <View style={styles.previewButtons}>
                     <Pressable
                         onPress={() => setFlowStep("input")}
                         accessibilityRole="button"
+                        accessibilityLabel="빠른 일정 입력 수정"
+                        accessibilityState={{ disabled: submitting }}
                         disabled={submitting}
                         style={({ pressed }) => [
                             styles.secondaryButton,
+                            styles.previewSecondaryButton,
                             {
                                 backgroundColor: inputBackground,
                                 borderColor: cardBorderColor,
@@ -3404,7 +3591,7 @@ export default function QuickScheduleModal({
                             },
                         ]}
                     >
-                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>입력 내용 수정</Text>
+                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>문장 수정</Text>
                     </Pressable>
                     <Pressable
                         onPress={
@@ -3415,16 +3602,16 @@ export default function QuickScheduleModal({
                                 : savePreview
                         }
                         accessibilityRole="button"
+                        accessibilityLabel={primaryActionLabel}
+                        accessibilityState={{ disabled: submitting, busy: submitting }}
                         disabled={submitting}
-                        style={({ pressed }) => [styles.primaryButton, { opacity: pressed ? 0.78 : 1 }]}
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+                            styles.previewPrimaryButton,
+                            { opacity: pressed ? 0.78 : 1 },
+                        ]}
                     >
-                        <Text style={styles.primaryButtonText}>
-                            {blockingReviewField
-                                ? blockingReviewField === "review"
-                                    ? "전체 내용 확인 완료"
-                                    : `${FIELD_LABEL[blockingReviewField]} 확인하기`
-                                : "일정 저장하기"}
-                        </Text>
+                        <Text style={styles.primaryButtonText}>{primaryActionLabel}</Text>
                     </Pressable>
                 </View>
             </View>
@@ -4797,43 +4984,166 @@ const styles = StyleSheet.create({
         minHeight: 0,
     },
     previewScrollContent: {
-        gap: 7,
-        paddingBottom: 8,
+        paddingBottom: 4,
     },
-    previewRow: {
-        minHeight: 47,
-        borderRadius: 10,
-        borderWidth: 1,
+    previewSourceStrip: {
+        minHeight: 55,
+        borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
-        gap: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 7,
+        justifyContent: "space-between",
+        gap: 12,
+        paddingHorizontal: 2,
+        paddingVertical: 9,
     },
-    previewIcon: {
-        width: 23,
-        height: 23,
-        borderRadius: 11.5,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    previewTextWrap: {
+    previewSourceCopy: {
         flex: 1,
         minWidth: 0,
     },
-    previewLabel: {
+    previewSourceLabel: {
+        marginBottom: 3,
         fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "700",
+    },
+    previewSourceValue: {
+        fontSize: 12,
+        lineHeight: 17,
         fontWeight: "800",
+    },
+    previewSourceAction: {
+        color: BLUE,
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "900",
+    },
+    previewTitleRow: {
+        minHeight: 62,
+        justifyContent: "center",
+        paddingHorizontal: 3,
+        paddingVertical: 9,
+    },
+    previewLabel: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
         marginBottom: 2,
     },
-    previewValueRow: {
+    previewTitleValueRow: {
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
         flexWrap: "wrap",
     },
-    previewValue: {
-        fontSize: 12.5,
+    previewTitleValue: {
+        fontSize: 20,
+        lineHeight: 25,
+        fontWeight: "900",
+        letterSpacing: -0.45,
+        flexShrink: 1,
+    },
+    previewInfoRow: {
+        minHeight: 64,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        paddingHorizontal: 2,
+        paddingVertical: 7,
+    },
+    previewPlaceRow: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    previewInfoIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 10,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    previewInfoCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    previewDateTimeValue: {
+        minHeight: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        columnGap: 4,
+    },
+    previewInlineField: {
+        minHeight: 44,
+        flexShrink: 1,
+        justifyContent: "center",
+    },
+    previewInlineContent: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 5,
+    },
+    previewInlineValue: {
+        fontSize: 13.5,
+        lineHeight: 19,
+        fontWeight: "800",
+        flexShrink: 1,
+    },
+    previewDateTimeSeparator: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    previewInfoValueRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 6,
+    },
+    previewInfoValue: {
+        fontSize: 14,
+        lineHeight: 20,
+        fontWeight: "800",
+        flexShrink: 1,
+    },
+    previewOptional: {
+        minHeight: 59,
+        marginHorizontal: 2,
+        marginTop: 2,
+        paddingTop: 10,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        flexDirection: "row",
+        alignItems: "stretch",
+    },
+    previewOptionalItem: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 48,
+        paddingRight: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 6,
+    },
+    previewOptionalItemTrailing: {
+        paddingLeft: 14,
+        paddingRight: 0,
+    },
+    previewOptionalDivider: {
+        width: StyleSheet.hairlineWidth,
+        marginVertical: 5,
+    },
+    previewOptionalCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    previewOptionalValueRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 5,
+    },
+    previewOptionalValue: {
+        fontSize: 12,
         lineHeight: 17,
         fontWeight: "800",
         flexShrink: 1,
@@ -4850,7 +5160,14 @@ const styles = StyleSheet.create({
     previewButtons: {
         flexDirection: "row",
         gap: 8,
-        paddingTop: 8,
+        paddingTop: 10,
+    },
+    previewSecondaryButton: {
+        height: 47,
+    },
+    previewPrimaryButton: {
+        flex: 1.55,
+        height: 47,
     },
     secondaryButton: {
         flex: 1,

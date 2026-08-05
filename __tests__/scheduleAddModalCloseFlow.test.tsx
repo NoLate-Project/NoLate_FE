@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Animated, BackHandler, PanResponder, Platform } from "react-native";
+import { Alert, Animated, BackHandler, Dimensions, PanResponder, Platform, StyleSheet } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
@@ -100,10 +100,12 @@ describe("ScheduleAddModal close flow", () => {
         onClose = jest.fn(),
         onSubmit = jest.fn().mockResolvedValue(undefined),
         categories = [category],
+        presentation = "sheet",
     }: {
         onClose?: jest.Mock;
         onSubmit?: jest.Mock;
         categories?: (typeof category)[];
+        presentation?: "sheet" | "morph";
     } = {}) {
         await act(async () => {
             renderer = TestRenderer.create(
@@ -114,6 +116,7 @@ describe("ScheduleAddModal close flow", () => {
                         onSubmit={onSubmit}
                         categories={categories}
                         defaultDay="2026-07-17"
+                        presentation={presentation}
                     />
                 </ThemeProvider>,
             );
@@ -122,11 +125,78 @@ describe("ScheduleAddModal close flow", () => {
         return { onClose, onSubmit };
     }
 
+    test("새 일정의 핵심 입력을 짧고 자연스러운 문구로 보여 준다", async () => {
+        await renderModal();
+
+        expect(renderer!.root.findByProps({ children: "새 일정" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholder)
+            .toBe("일정 제목");
+        expect(renderer!.root.findByProps({ children: "일시" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "경로·출발 알림 설정" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "일정 저장" })).toBeTruthy();
+        expect(renderer!.root.findAllByProps({ children: "제목을 입력하면 저장할 수 있어요." }))
+            .toHaveLength(0);
+    });
+
+    test("모프 카드는 측정한 내용 높이에 맞춰 떠 있는 카드 크기를 정한다", async () => {
+        await renderModal({ presentation: "morph" });
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "schedule-add-scroll" })
+                .props.onContentSizeChange(350, 430);
+        });
+
+        const motionStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-card-motion" }).props.style,
+        );
+        expect(motionStyle.position).toBe("absolute");
+        expect(motionStyle.height).toBe(450);
+
+        await act(async () => {
+            renderer!.root.findByProps({ testID: "schedule-add-scroll" })
+                .props.onContentSizeChange(350, 10_000);
+        });
+        const clampedMotionStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-card-motion" }).props.style,
+        );
+        expect(clampedMotionStyle.height).toBe(Dimensions.get("window").height - 28);
+    });
+
+    test("종료 시각과 메모를 필요할 때만 펼치고 저장값은 그대로 전달한다", async () => {
+        const { onSubmit } = await renderModal();
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "종료 시각 설정" })
+                .props.onValueChange(true);
+            renderer!.root.findByProps({ accessibilityLabel: "메모 추가" }).props.onPress();
+        });
+
+        expect(renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("종료 날짜 ")
+        )).length).toBeGreaterThan(0);
+        expect(renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("종료 시간 ")
+        )).length).toBeGreaterThan(0);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
+            renderer!.root.findByProps({ accessibilityLabel: "일정 메모" }).props.onChangeText("창가 자리");
+        });
+        await act(async () => {
+            await renderer!.root.findByProps({ accessibilityLabel: "일정 저장" }).props.onPress();
+        });
+
+        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ notes: "창가 자리" }));
+    });
+
     test("깨끗한 폼의 닫기 버튼은 확인 없이 닫는다", async () => {
         const { onClose } = await renderModal();
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "일정 생성 닫기" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "새 일정 닫기" }).props.onPress();
         });
 
         expect(alertSpy).not.toHaveBeenCalled();
@@ -158,7 +228,7 @@ describe("ScheduleAddModal close flow", () => {
         const { onClose } = await renderModal();
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
-            renderer!.root.findByProps({ accessibilityLabel: "일정 생성 닫기" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "새 일정 닫기" }).props.onPress();
         });
 
         expect(onClose).not.toHaveBeenCalled();

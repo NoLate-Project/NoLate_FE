@@ -73,7 +73,7 @@ describe("LocationInputRow accessibility", () => {
         });
 
         expect(renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "출발지와 도착지 추가" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "경로를 추가하면 출발 알림을 설정할 수 있어요." })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "경로·출발 알림 설정" })).toBeTruthy();
     });
 });

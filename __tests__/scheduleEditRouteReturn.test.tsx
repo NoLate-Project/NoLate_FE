@@ -52,6 +52,7 @@ const mockState = {
 };
 
 let mockPathname = "/schedule/1";
+let mockRouteParams: { id: string; preview?: string } = { id: "1" };
 const mockRouterPush = jest.fn();
 const mockRouterSetParams = jest.fn();
 const mockRouterReplace = jest.fn();
@@ -64,7 +65,7 @@ const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
-    useLocalSearchParams: () => ({ id: "1" }),
+    useLocalSearchParams: () => mockRouteParams,
     usePathname: () => mockPathname,
     useRouter: () => ({
         push: mockRouterPush,
@@ -202,6 +203,7 @@ describe("ScheduleEditScreen route return", () => {
 
     beforeEach(() => {
         mockPathname = "/schedule/1";
+        mockRouteParams = { id: "1" };
         mockState.itemsById["1"] = mockItem;
         mockRouterPush.mockReset();
         mockRouterSetParams.mockReset();
@@ -222,7 +224,19 @@ describe("ScheduleEditScreen route return", () => {
         jest.restoreAllMocks();
     });
 
-    test("상세 화면과 같은 평탄한 페이지에서 알림 설정을 flat 변형으로 보여준다", async () => {
+    test("개발용 시뮬레이터 미리보기에서는 서버 상세 재조회를 건너뛴다", async () => {
+        mockRouteParams = { id: "1", preview: "1" };
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+        });
+
+        expect(mockGetSchedule).not.toHaveBeenCalled();
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-page" })).toBeTruthy();
+    });
+
+    test("전체 페이지에서 일시를 한 그룹으로 묶고 알림 설정을 flat 변형으로 보여준다", async () => {
         mockGetSchedule.mockResolvedValue(mockItem);
 
         await act(async () => {
@@ -236,7 +250,10 @@ describe("ScheduleEditScreen route return", () => {
         expect(navigation.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "일정 정보" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "시간 없이 날짜로만 일정을 표시해요." })).toHaveLength(0);
-        expect(renderer!.root.findAllByProps({ children: "종료 시간" }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-datetime-card" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-start-row" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "종료 시간" })).toBeTruthy();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-delete-action" })).toBeTruthy();
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "schedule-edit-page" }).props.style,
@@ -244,7 +261,7 @@ describe("ScheduleEditScreen route return", () => {
             width: "100%",
             maxWidth: 560,
             alignSelf: "center",
-            paddingTop: 24,
+            paddingTop: 8,
         });
         expect(renderer!.root.findByProps({
             testID: "mock-notification-settings",

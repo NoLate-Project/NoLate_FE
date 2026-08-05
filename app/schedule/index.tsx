@@ -4901,7 +4901,7 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
-                presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
+                presentation="morph"
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}
                 sourceHeight={LIQUID_TOOLBAR_ADD_DROPDOWN_HEIGHT}
