@@ -1353,7 +1353,7 @@ function ScheduleDetail() {
             ) : isPlainSchedule ? (
                 <PlainScheduleDetailView
                     item={item}
-                    contentTopInset={insets.top + 88}
+                    contentTopInset={insets.top + 80}
                     contentBottomInset={Math.max(insets.bottom + 32, 48)}
                     travelPlan={item.routeSetupRequired === true || travelPlanParticipants.length > 1
                         ? {
@@ -1551,22 +1551,38 @@ function ScheduleDetail() {
                             <Ionicons name="chevron-back" size={21} color={primaryText} />
                         </Pressable>
 
-                        <View style={styles.topHeaderContent}>
-                            <View style={styles.topHeaderTitleRow}>
+                        <View style={[
+                            styles.topHeaderContent,
+                            isPlainSchedule && styles.plainTopHeaderContent,
+                        ]}>
+                            <View style={[
+                                styles.topHeaderTitleRow,
+                                isPlainSchedule && styles.plainTopHeaderTitleRow,
+                            ]}>
                                 {!isPlainSchedule ? (
                                     <View style={styles.topHeaderKindBadge}>
                                         <Ionicons name="calendar-clear-outline" size={13} color={topCardAccentText} />
                                         <Text style={[styles.topHeaderKindText, { color: topCardAccentText }]}>일정</Text>
                                     </View>
                                 ) : null}
-                                <Text style={[styles.topHeaderTitle, { color: primaryText }]} numberOfLines={1}>
+                                <Text
+                                    style={[
+                                        styles.topHeaderTitle,
+                                        isPlainSchedule && styles.plainTopHeaderTitle,
+                                        { color: primaryText },
+                                    ]}
+                                    numberOfLines={1}
+                                >
                                     {isPlainSchedule ? "일정 상세" : item.title}
                                 </Text>
                             </View>
                         </View>
 
                         {(canManageSchedule || canEditSchedule) && (
-                            <View style={styles.topHeaderActions}>
+                            <View style={[
+                                styles.topHeaderActions,
+                                isPlainSchedule && styles.plainTopHeaderActions,
+                            ]}>
                                 {canManageSchedule ? (
                                     <Pressable
                                         onPress={() => setShareSheetVisible(true)}
@@ -2238,11 +2254,24 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
     },
+    plainTopHeaderContent: {
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: 88,
+        right: 88,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     topHeaderTitleRow: {
         minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
         gap: 9,
+    },
+    plainTopHeaderTitleRow: {
+        width: "100%",
+        justifyContent: "center",
     },
     topHeaderKindBadge: {
         minHeight: 18,
@@ -2266,10 +2295,17 @@ const styles = StyleSheet.create({
         fontWeight: "900",
         letterSpacing: 0,
     },
+    plainTopHeaderTitle: {
+        textAlign: "center",
+        fontWeight: "800",
+    },
     topHeaderActions: {
         flexDirection: "row",
         alignItems: "center",
         gap: 0,
+    },
+    plainTopHeaderActions: {
+        marginLeft: "auto",
     },
     topHeaderRouteBar: {
         minHeight: 42,

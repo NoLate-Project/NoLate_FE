@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
-import { Alert, StyleSheet } from "react-native";
+import { Alert, StyleSheet, Switch } from "react-native";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
@@ -247,6 +247,13 @@ describe("ScheduleEditScreen route return", () => {
 
         const navigation = renderer!.root.findByProps({ testID: "schedule-edit-navigation" });
         expect(navigation.findByProps({ accessibilityLabel: "일정 수정 저장" })).toBeTruthy();
+        expect(StyleSheet.flatten(
+            navigation.findByProps({ children: "일정 수정" }).props.style,
+        )).toMatchObject({
+            fontSize: 19,
+            lineHeight: 25,
+            fontWeight: "800",
+        });
         expect(navigation.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "일정 정보" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "시간 없이 날짜로만 일정을 표시해요." })).toHaveLength(0);
@@ -266,6 +273,24 @@ describe("ScheduleEditScreen route return", () => {
         expect(renderer!.root.findByProps({
             testID: "mock-notification-settings",
         }).props.variant).toBe("flat");
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.style,
+        )).toMatchObject({
+            fontSize: 16,
+            lineHeight: 22,
+            fontWeight: "700",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-start-row" }).props.style,
+        )).toMatchObject({ minHeight: 58 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ accessibilityLabel: "일정 메모" }).props.style,
+        )).toMatchObject({ minHeight: 76 });
+        renderer!.root.findAllByType(Switch).forEach((toggle) => {
+            expect(StyleSheet.flatten(toggle.props.style)).toMatchObject({
+                transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
+            });
+        });
     });
 
     test("평탄한 상단 뒤로 버튼도 수정 중에는 변경사항 폐기 확인을 유지한다", async () => {

@@ -307,6 +307,27 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ mode: "time" })).toBeDefined();
     });
 
+    test("명시적 종료 시간이 있으면 날짜와 시간을 독립 버튼인 두 줄로 보여준다", async () => {
+        await renderAndAnalyze(
+            jest.fn().mockResolvedValue(
+                parsed({
+                    endAt: "2026-07-17T21:00:00+09:00",
+                    hasExplicitEndTime: true,
+                }),
+            ),
+        );
+
+        const dateTimeGroup = renderer!.root.findByProps({ testID: "quick-schedule-preview-date-time" });
+        const dateButton = renderer!.root.findByProps({ accessibilityLabel: "날짜 수정" });
+        const timeButton = renderer!.root.findByProps({ accessibilityLabel: "시간 수정" });
+
+        expect(dateButton.props.accessibilityValue).toEqual({ text: "2026년 7월 17일 (금)" });
+        expect(timeButton.props.accessibilityValue).toEqual({ text: "오후 8:00 ~ 오후 9:00" });
+        expect(dateButton.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 4, right: 4 });
+        expect(timeButton.props.hitSlop).toEqual({ top: 6, bottom: 6, left: 4, right: 4 });
+        expect(dateTimeGroup.findAll(node => node.props.children === "·")).toHaveLength(0);
+    });
+
     test("큰 제목을 누르면 같은 모달의 제목 편집기를 연다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 

@@ -631,7 +631,7 @@ export default function ScheduleEdit() {
                         <Text style={{ color: colors.textPrimary, fontWeight: "800" }}>돌아가기</Text>
                     </Pressable>
                     <Pressable accessibilityRole="button" onPress={() => setRetryKey((value) => value + 1)}>
-                        <Text style={{ color: colors.selectedDayBg, fontWeight: "900" }}>다시 시도</Text>
+                        <Text style={{ color: colors.selectedDayBg, fontWeight: "800" }}>다시 시도</Text>
                     </Pressable>
                 </View>
             </View>
@@ -942,8 +942,8 @@ export default function ScheduleEdit() {
                 style={[
                     styles.titleInputWrap,
                     {
-                        borderColor: colors.inputBorder,
-                        backgroundColor: colors.inputBackground,
+                        borderColor: colors.border,
+                        backgroundColor: colors.surface2,
                     },
                 ]}
             >
@@ -1007,8 +1007,8 @@ export default function ScheduleEdit() {
                 style={[
                     styles.dateTimeCard,
                     {
-                        borderColor: colors.inputBorder,
-                        backgroundColor: colors.inputBackground,
+                        borderColor: colors.border,
+                        backgroundColor: colors.surface2,
                     },
                 ]}
             >
@@ -1137,8 +1137,8 @@ export default function ScheduleEdit() {
             </View>
 
             <Animated.View style={[styles.pickerContainer, {
-                borderColor:  colors.inputBorder,
-                backgroundColor: colors.inputBackground,
+                borderColor:  colors.border,
+                backgroundColor: colors.surface2,
                 maxHeight:    heightAnim,
                 opacity:      outerOpacity,
                 marginBottom: outerOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 14] }),
@@ -1209,8 +1209,8 @@ export default function ScheduleEdit() {
                     styles.input,
                     styles.notesInput,
                     {
-                        borderColor: colors.inputBorder,
-                        backgroundColor: colors.inputBackground,
+                        borderColor: colors.border,
+                        backgroundColor: colors.surface2,
                         color: colors.textPrimary,
                     },
                 ]}
@@ -1278,9 +1278,9 @@ const styles = StyleSheet.create({
     navigationTitle: {
         flex: 1,
         minWidth: 0,
-        fontSize: 20,
-        lineHeight: 28,
-        fontWeight: "900",
+        fontSize: 19,
+        lineHeight: 25,
+        fontWeight: "800",
     },
     navigationSaveButton: {
         width: 64,
@@ -1294,15 +1294,15 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         fontWeight: "800",
     },
-    label:        { marginBottom: 6, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+    label:        { marginBottom: 6, fontSize: 12, lineHeight: 17, fontWeight: "700" },
     dateTimeCard: {
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 16,
-        marginBottom: 14,
+        marginBottom: 16,
         overflow: "hidden",
     },
     dateTimeToggleRow: {
-        minHeight: 52,
+        minHeight: 48,
         paddingHorizontal: 13,
         flexDirection: "row",
         alignItems: "center",
@@ -1310,7 +1310,7 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     dateTimeValueRow: {
-        minHeight: 64,
+        minHeight: 58,
         paddingLeft: 4,
         paddingRight: 10,
         flexDirection: "row",
@@ -1320,7 +1320,7 @@ const styles = StyleSheet.create({
     dateTimeDateAction: {
         flex: 1,
         minWidth: 0,
-        minHeight: 56,
+        minHeight: 50,
         borderRadius: 12,
         paddingHorizontal: 9,
         paddingVertical: 8,
@@ -1347,9 +1347,9 @@ const styles = StyleSheet.create({
         gap: 3,
     },
     dateTimeClockText: {
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "800",
+        fontSize: 15,
+        lineHeight: 20,
+        fontWeight: "700",
         fontVariant: ["tabular-nums"],
     },
     dateTimeEndControls: {
@@ -1363,21 +1363,22 @@ const styles = StyleSheet.create({
     },
     toggleSwitch: {
         alignSelf: "center",
+        transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
     },
     input: {
-        borderWidth: 1, borderRadius: 16, padding: 12, marginBottom: 14,
+        borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, marginBottom: 16,
     },
     notesInput: {
-        minHeight: 88,
+        minHeight: 76,
         textAlignVertical: "top",
     },
     titleInputWrap: {
         minHeight: 44,
-        borderWidth: 1,
-        borderRadius: 16,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 14,
         paddingLeft: 12,
         paddingRight: 8,
-        marginBottom: 14,
+        marginBottom: 16,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -1386,7 +1387,8 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         paddingVertical: 11,
-        fontSize: 14,
+        fontSize: 16,
+        lineHeight: 22,
         fontWeight: "700",
     },
     categoryInlineChip: {
@@ -1410,7 +1412,7 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
     pickerContainer: {
-        borderRadius: 16, borderWidth: 1, overflow: "hidden",
+        borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",
     },
     deleteAction: {
         minHeight: 48,

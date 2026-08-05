@@ -89,6 +89,10 @@ export default function NotificationSettingsCard({
     const canEnable = routeReady && !quotaReached;
     const accentBlue = mode === "dark" ? "#4B9DFF" : "#2979FF";
     const selectedBackground = mode === "dark" ? "rgba(75,157,255,0.18)" : "#EAF2FF";
+    const segmentedTrackBackground = mode === "dark"
+        ? "rgba(118,118,128,0.24)"
+        : "rgba(118,118,128,0.12)";
+    const segmentedSelectedBackground = colors.surface;
     const warningColor = mode === "dark" ? "#FFBF69" : "#A85C00";
     const routeMinutes = routeInfo?.totalDurationMinutes;
     const eventStartAt = startAt && !Number.isNaN(startAt.getTime()) ? startAt : undefined;
@@ -370,8 +374,8 @@ export default function NotificationSettingsCard({
             style={[
                 styles.container,
                 {
-                    borderColor: colors.inputBorder,
-                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                    backgroundColor: colors.surface2,
                 },
                 flat && styles.flatContainer,
             ]}
@@ -398,6 +402,7 @@ export default function NotificationSettingsCard({
                     onValueChange={onEnabledChange}
                     trackColor={{ false: colors.border, true: accentBlue }}
                     thumbColor="#FFFFFF"
+                    style={styles.compactSwitch}
                 />
             </View>
 
@@ -417,12 +422,12 @@ export default function NotificationSettingsCard({
                             style={[
                                 styles.flatSummaryCard,
                                 {
-                                    borderColor: colors.inputBorder,
-                                    backgroundColor: colors.inputBackground,
+                                    borderColor: colors.border,
+                                    backgroundColor: colors.surface2,
                                 },
                             ]}
                         >
-                            <View style={styles.flatSummaryMain}>
+                            <View testID="notification-flat-summary-main" style={styles.flatSummaryMain}>
                                 <View style={styles.flatSummaryCopy}>
                                     <Text style={[styles.flatSummaryLabel, { color: colors.textSecondary }]}>
                                         추천 출발 시간
@@ -445,13 +450,16 @@ export default function NotificationSettingsCard({
                                 testID="notification-alert-mode-picker"
                                 accessibilityRole="radiogroup"
                                 accessibilityLabel="출발 알림 방식"
-                                style={[styles.flatModeControl, { backgroundColor: colors.background }]}
+                                style={[
+                                    styles.flatModeControl,
+                                    { backgroundColor: segmentedTrackBackground },
+                                ]}
                             >
                                 <CompactAlarmModeOption
                                     mode="STANDARD"
                                     selected={alertMode === "STANDARD"}
                                     accentBlue={accentBlue}
-                                    selectedBackground={selectedBackground}
+                                    selectedBackground={segmentedSelectedBackground}
                                     textSecondary={colors.textSecondary}
                                     onPress={() => onAlertModeChange("STANDARD")}
                                 />
@@ -459,7 +467,7 @@ export default function NotificationSettingsCard({
                                     mode="ALARM"
                                     selected={alertMode === "ALARM"}
                                     accentBlue={accentBlue}
-                                    selectedBackground={selectedBackground}
+                                    selectedBackground={segmentedSelectedBackground}
                                     textSecondary={colors.textSecondary}
                                     onPress={() => onAlertModeChange("ALARM")}
                                 />
@@ -731,8 +739,8 @@ export default function NotificationSettingsCard({
                                     style={({ pressed }) => [
                                         styles.flatTestRow,
                                         {
-                                            borderColor: colors.inputBorder,
-                                            backgroundColor: colors.inputBackground,
+                                            borderColor: colors.border,
+                                            backgroundColor: colors.surface2,
                                         },
                                         soundPreviewDisabled && styles.disabledButton,
                                         pressed && !soundPreviewDisabled && styles.pressedRow,
@@ -792,7 +800,7 @@ export default function NotificationSettingsCard({
 
 const styles = StyleSheet.create({
     container: {
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 16,
         padding: 16,
         marginBottom: 14,
@@ -801,7 +809,7 @@ const styles = StyleSheet.create({
         borderWidth: 0,
         borderRadius: 0,
         padding: 0,
-        marginBottom: 20,
+        marginBottom: 16,
         backgroundColor: "transparent",
     },
     header: {
@@ -811,16 +819,19 @@ const styles = StyleSheet.create({
         minHeight: 38,
     },
     flatHeader: {
-        minHeight: 52,
+        minHeight: 48,
         borderBottomWidth: 0,
         paddingHorizontal: 0,
         paddingBottom: 8,
     },
     headerText: { flex: 1, paddingRight: 12 },
-    title: { fontSize: 15, lineHeight: 20, fontWeight: "900" },
+    title: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
     usage: { marginTop: 3, fontSize: 11.5, lineHeight: 16, fontWeight: "600" },
+    compactSwitch: {
+        transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
+    },
     notice: { marginTop: 10, fontSize: 12 },
-    settings: { marginTop: 14 },
+    settings: { marginTop: 10 },
     label: { marginBottom: 7, fontSize: 12, fontWeight: "600" },
     description: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
     modeSection: {
@@ -834,14 +845,14 @@ const styles = StyleSheet.create({
         borderTopWidth: 0,
     },
     flatSummaryCard: {
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 16,
         overflow: "hidden",
     },
     flatSummaryMain: {
-        minHeight: 96,
+        minHeight: 82,
         paddingHorizontal: 13,
-        paddingVertical: 12,
+        paddingVertical: 10,
         flexDirection: "row",
         alignItems: "center",
         gap: 12,
@@ -859,7 +870,7 @@ const styles = StyleSheet.create({
         marginTop: 2,
         fontSize: 21,
         lineHeight: 27,
-        fontWeight: "900",
+        fontWeight: "800",
         fontVariant: ["tabular-nums"],
     },
     flatSummaryArrival: {
@@ -885,10 +896,10 @@ const styles = StyleSheet.create({
         marginHorizontal: 13,
     },
     flatModeControl: {
-        minHeight: 42,
-        margin: 10,
-        borderRadius: 12,
-        padding: 3,
+        minHeight: 40,
+        margin: 8,
+        borderRadius: 10,
+        padding: 2,
         flexDirection: "row",
         alignItems: "stretch",
         gap: 3,
@@ -897,9 +908,16 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         minHeight: 36,
-        borderRadius: 9,
+        borderRadius: 8,
         alignItems: "center",
         justifyContent: "center",
+    },
+    compactModeButtonSelected: {
+        shadowColor: "#000000",
+        shadowOpacity: 0.08,
+        shadowRadius: 2,
+        shadowOffset: { width: 0, height: 1 },
+        elevation: 1,
     },
     compactModeText: {
         fontSize: 12,
@@ -992,7 +1010,7 @@ const styles = StyleSheet.create({
     modeHeadingTitle: {
         fontSize: 13,
         lineHeight: 18,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     modeRow: {
         borderWidth: 1,
@@ -1079,7 +1097,7 @@ const styles = StyleSheet.create({
     pushActionTitle: {
         fontSize: 11.5,
         lineHeight: 16,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     pushActionList: {
         marginTop: 8,
@@ -1099,7 +1117,7 @@ const styles = StyleSheet.create({
     pushActionValue: {
         flex: 1,
         fontSize: 10.5,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     alarmPanel: {
         borderWidth: 1,
@@ -1165,7 +1183,7 @@ const styles = StyleSheet.create({
     },
     alarmStatusTitle: {
         fontSize: 13,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     alarmStatusDescription: {
         marginTop: 4,
@@ -1229,12 +1247,12 @@ const styles = StyleSheet.create({
     },
     testButtonText: {
         fontSize: 12,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     flatTestRow: {
-        minHeight: 62,
+        minHeight: 56,
         marginTop: 4,
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 14,
         paddingHorizontal: 12,
         paddingVertical: 10,
@@ -1313,7 +1331,7 @@ const styles = StyleSheet.create({
     recommendationValue: {
         fontSize: 17,
         lineHeight: 22,
-        fontWeight: "900",
+        fontWeight: "800",
     },
     recommendationDivider: {
         width: StyleSheet.hairlineWidth,
@@ -1367,9 +1385,11 @@ function CompactAlarmModeOption({
             accessibilityLabel={presentation.accessibilityLabel}
             accessibilityHint={presentation.description}
             accessibilityState={{ checked: selected }}
+            hitSlop={{ top: 4, bottom: 4 }}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.compactModeButton,
+                selected && styles.compactModeButtonSelected,
                 {
                     backgroundColor: selected ? selectedBackground : "transparent",
                     opacity: pressed ? 0.65 : 1,

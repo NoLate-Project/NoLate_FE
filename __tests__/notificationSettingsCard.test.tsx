@@ -49,6 +49,8 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
         mode: "light",
         colors: {
             background: "#FFFFFF",
+            surface: "#FFFFFF",
+            surface2: "#F7F7F8",
             border: "#DDDDDD",
             inputBorder: "#CCCCCC",
             inputBackground: "#FFFFFF",
@@ -222,6 +224,34 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             paddingHorizontal: 0,
         });
         expect(renderer!.root.findByProps({ testID: "notification-flat-summary" })).toBeTruthy();
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "notification-flat-summary" }).props.style,
+        )).toMatchObject({
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+            backgroundColor: "#F7F7F8",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "notification-flat-summary-main" }).props.style,
+        )).toMatchObject({ minHeight: 82 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "notification-alert-mode-picker" }).props.style,
+        )).toMatchObject({
+            minHeight: 40,
+            margin: 8,
+            borderRadius: 10,
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.style,
+        )).toMatchObject({
+            transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
+        });
+        const soundRow = renderer!.root.findByProps({ testID: "notification-alarm-sound-row" });
+        expect(StyleSheet.flatten(soundRow.props.style({ pressed: false }))).toMatchObject({
+            minHeight: 56,
+            borderWidth: StyleSheet.hairlineWidth,
+            backgroundColor: "#F7F7F8",
+        });
         const rendered = JSON.stringify(renderer!.toJSON());
         expect(rendered).toContain("교통 상황 반영");
         expect(rendered).toContain("추천 출발 시간");

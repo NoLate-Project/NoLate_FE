@@ -1,4 +1,5 @@
 import React from "react";
+import { StyleSheet } from "react-native";
 import TestRenderer, { act, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 
 import LocationInputRow from "../src/modules/schedule/components/form/LocationInputRow";
@@ -75,5 +76,38 @@ describe("LocationInputRow accessibility", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "출발지·도착지 추가" })).toBeTruthy();
         expect(renderer!.root.findByProps({ children: "경로·출발 알림 설정" })).toBeTruthy();
+    });
+
+    test("공유 폼에서도 60pt 터치 영역과 가벼운 그룹 표면을 사용한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <LocationInputRow
+                        originValue=""
+                        destinationValue=""
+                        onPress={jest.fn()}
+                    />
+                </ThemeProvider>,
+            );
+        });
+
+        const cardStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "location-input-card" }).props.style,
+        );
+        const pressableStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "location-input-pressable" }).props.style,
+        );
+        const labelStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "이동 경로" }).props.style,
+        );
+
+        expect(cardStyle).toMatchObject({
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+            backgroundColor: "#f7f7f8",
+        });
+        expect(pressableStyle).toMatchObject({ minHeight: 60, paddingVertical: 10 });
+        expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "700" });
+        expect(renderer!.root.findByProps({ name: "chevron-forward" }).props.size).toBe(16);
     });
 });

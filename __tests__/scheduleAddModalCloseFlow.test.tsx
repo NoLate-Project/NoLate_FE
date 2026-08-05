@@ -139,6 +139,47 @@ describe("ScheduleAddModal close flow", () => {
             .toHaveLength(0);
     });
 
+    test("컴팩트한 그룹 폼의 밀도와 터치 영역을 유지한다", async () => {
+        await renderModal({ presentation: "morph" });
+
+        const titleFieldStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-title-field" }).props.style,
+        );
+        const timeCardStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-time-card" }).props.style,
+        );
+        const allDaySwitch = renderer!.root.findByProps({ accessibilityLabel: "종일 일정" });
+        const switchStyle = StyleSheet.flatten(allDaySwitch.props.style);
+        const memoButton = renderer!.root.findByProps({ testID: "schedule-add-memo-collapsed" });
+        const memoStyle = StyleSheet.flatten(memoButton.props.style({ pressed: false }));
+        const saveStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-save" }).props.style,
+        );
+        const handleStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-handle" }).props.style,
+        );
+
+        expect(titleFieldStyle).toMatchObject({
+            minHeight: 56,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+            backgroundColor: "#f7f7f8",
+        });
+        expect(timeCardStyle).toMatchObject({
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+            backgroundColor: "#f7f7f8",
+        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
+            .toBe("rgba(60,60,67,0.46)");
+        expect(switchStyle.transform).toEqual([{ scale: 0.88 }]);
+        expect(allDaySwitch.props.hitSlop).toEqual({ top: 8, right: 6, bottom: 8, left: 6 });
+        expect(memoStyle).toMatchObject({ minHeight: 52, borderRadius: 16, marginBottom: 14 });
+        expect(saveStyle).toMatchObject({ height: 50, borderRadius: 14, backgroundColor: "#ECECF1" });
+        expect(handleStyle).toMatchObject({ width: 36, height: 4, opacity: 0.24 });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "새 일정 닫기" }).props.hitSlop).toBe(6);
+    });
+
     test("모프 카드는 측정한 내용 높이에 맞춰 떠 있는 카드 크기를 정한다", async () => {
         await renderModal({ presentation: "morph" });
 
@@ -152,6 +193,12 @@ describe("ScheduleAddModal close flow", () => {
         );
         expect(motionStyle.position).toBe("absolute");
         expect(motionStyle.height).toBe(450);
+        expect(motionStyle).toMatchObject({
+            shadowOpacity: 0.16,
+            shadowRadius: 22,
+            shadowOffset: { width: 0, height: 10 },
+            elevation: 16,
+        });
 
         await act(async () => {
             renderer!.root.findByProps({ testID: "schedule-add-scroll" })

@@ -1,5 +1,5 @@
 import React from "react";
-import { Switch, Text, TextInput } from "react-native";
+import { StyleSheet, Switch, Text, TextInput } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 jest.mock("@expo/vector-icons", () => ({
@@ -154,6 +154,48 @@ describe("PlainScheduleDetailView", () => {
         expect(renderer!.root.findByProps({
             accessibilityLabel: "알림 없음",
         })).toBeTruthy();
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "plain-schedule-detail-info-group" }).props.style,
+        )).toMatchObject({
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({
+                accessibilityLabel: "일시 2026년 7월 14일 (화) 오전 10:00 – 11:30 1시간 30분",
+            }).props.style,
+        )).toMatchObject({
+            minHeight: 68,
+            paddingVertical: 11,
+            gap: 10,
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "plain-schedule-detail-time-icon" }).props.style,
+        )).toMatchObject({
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "QA0713A 일반 일정" }).props.style,
+        )).toMatchObject({
+            fontSize: 26,
+            lineHeight: 32,
+            fontWeight: "800",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "2026년 7월 14일 (화)" }).props.style,
+        )).toMatchObject({
+            fontSize: 15,
+            fontWeight: "700",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "오전 10:00 – 11:30" }).props.style,
+        )).toMatchObject({
+            fontSize: 18,
+            lineHeight: 24,
+            fontWeight: "800",
+        });
         expect(renderer!.root.findAllByType(TextInput)).toHaveLength(0);
         expect(renderer!.root.findAllByType(Switch)).toHaveLength(0);
     });

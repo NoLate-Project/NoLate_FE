@@ -48,7 +48,9 @@ function DetailInfoRow({
     muted = false,
     last = false,
 }: DetailInfoRowProps) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
+    const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const iconBackground = mode === "dark" ? "rgba(75,157,255,0.16)" : "#EAF2FF";
 
     return (
         <View
@@ -63,8 +65,11 @@ function DetailInfoRow({
                 },
             ]}
         >
-            <View style={[styles.infoIcon, { backgroundColor: colors.background }]}>
-                <Ionicons name={icon} size={18} color={colors.textPrimary} />
+            <View
+                testID={`${testID}-icon`}
+                style={[styles.infoIcon, { backgroundColor: iconBackground }]}
+            >
+                <Ionicons name={icon} size={17} color={accent} />
             </View>
             <View style={styles.infoCopy}>
                 <Text style={[styles.infoKicker, { color: colors.textSecondary }]}>{label}</Text>
@@ -153,8 +158,8 @@ export default function PlainScheduleDetailView({
                     style={[
                         styles.infoGroup,
                         {
-                            borderColor: colors.inputBorder,
-                            backgroundColor: colors.inputBackground,
+                            borderColor: colors.border,
+                            backgroundColor: colors.surface2,
                         },
                     ]}
                 >
@@ -190,8 +195,8 @@ export default function PlainScheduleDetailView({
                             style={[
                                 styles.travelPlanRow,
                                 {
-                                    borderColor: colors.inputBorder,
-                                    backgroundColor: colors.inputBackground,
+                                    borderColor: colors.border,
+                                    backgroundColor: colors.surface2,
                                 },
                             ]}
                         >
@@ -274,20 +279,20 @@ const styles = StyleSheet.create({
         alignSelf: "center",
     },
     hero: {
-        marginBottom: 20,
+        marginBottom: 16,
     },
     heroTitle: {
-        marginTop: 11,
+        marginTop: 8,
         fontSize: 26,
-        lineHeight: 34,
-        fontWeight: "900",
+        lineHeight: 32,
+        fontWeight: "800",
         letterSpacing: -0.3,
     },
     sectionTitle: {
         marginBottom: 8,
         fontSize: 14,
-        lineHeight: 19,
-        fontWeight: "900",
+        lineHeight: 20,
+        fontWeight: "800",
     },
     label: {
         marginBottom: 6,
@@ -297,7 +302,7 @@ const styles = StyleSheet.create({
     categoryChip: {
         maxWidth: 116,
         minHeight: 28,
-        borderWidth: 1,
+        borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 999,
         paddingHorizontal: 9,
         flexDirection: "row",
@@ -316,23 +321,23 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
     infoGroup: {
-        borderWidth: 1,
-        borderRadius: 18,
-        marginBottom: 18,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 16,
+        marginBottom: 16,
         overflow: "hidden",
     },
     infoRow: {
-        minHeight: 76,
+        minHeight: 68,
         paddingHorizontal: 14,
-        paddingVertical: 13,
+        paddingVertical: 11,
         flexDirection: "row",
         alignItems: "flex-start",
-        gap: 12,
+        gap: 10,
     },
     infoIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 11,
+        width: 32,
+        height: 32,
+        borderRadius: 10,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -341,18 +346,18 @@ const styles = StyleSheet.create({
         minWidth: 0,
     },
     infoKicker: {
-        fontSize: 10.5,
-        lineHeight: 14,
-        fontWeight: "700",
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "600",
     },
     infoValue: {
         marginTop: 2,
-        fontSize: 14,
+        fontSize: 15,
         lineHeight: 20,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     infoSecondaryRow: {
-        marginTop: 8,
+        marginTop: 6,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
@@ -362,8 +367,8 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         fontSize: 18,
-        lineHeight: 23,
-        fontWeight: "900",
+        lineHeight: 24,
+        fontWeight: "800",
         fontVariant: ["tabular-nums"],
     },
     infoBadge: {
@@ -376,7 +381,7 @@ const styles = StyleSheet.create({
     infoBadgeText: {
         fontSize: 10.5,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     travelPlanSection: {
         marginBottom: 14,
@@ -386,8 +391,8 @@ const styles = StyleSheet.create({
     },
     travelPlanRow: {
         minHeight: 64,
-        borderWidth: 1,
-        borderRadius: 8,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 14,
         paddingHorizontal: 10,
         paddingVertical: 9,
         flexDirection: "row",
@@ -408,7 +413,7 @@ const styles = StyleSheet.create({
     travelPlanTitle: {
         fontSize: 13,
         lineHeight: 18,
-        fontWeight: "900",
+        fontWeight: "800",
         letterSpacing: 0,
     },
     travelPlanStatus: {
@@ -432,7 +437,7 @@ const styles = StyleSheet.create({
         color: "#FFFFFF",
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "900",
+        fontWeight: "800",
         letterSpacing: 0,
     },
     memoSection: {

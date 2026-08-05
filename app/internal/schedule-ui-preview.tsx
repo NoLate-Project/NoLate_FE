@@ -134,7 +134,7 @@ function PreviewBackdrop({ label }: { label: string }) {
 }
 
 function DetailPreview() {
-    const { colors, mode } = useTheme();
+    const { colors } = useTheme();
     const insets = useSafeAreaInsets();
     const router = useRouter();
 
@@ -142,7 +142,7 @@ function DetailPreview() {
         <View style={[styles.detailRoot, { backgroundColor: colors.background }]}>
             <PlainScheduleDetailView
                 item={previewItem}
-                contentTopInset={insets.top + 74}
+                contentTopInset={insets.top + 80}
                 contentBottomInset={insets.bottom + 28}
             />
             <View
@@ -176,14 +176,7 @@ function DetailPreview() {
                     hitSlop={10}
                     style={styles.headerButton}
                 >
-                    <Text
-                        style={[
-                            styles.headerAction,
-                            mode === "dark" ? styles.headerActionDark : styles.headerActionLight,
-                        ]}
-                    >
-                        수정
-                    </Text>
+                    <Ionicons name="create-outline" size={20} color={colors.textPrimary} />
                 </Pressable>
             </View>
         </View>
@@ -199,7 +192,15 @@ export default function ScheduleUiPreviewScreen() {
     const router = useRouter();
     const { dispatch } = useScheduleStore();
     const screen = params.screen ?? "create";
-    const [modalVisible, setModalVisible] = useState(true);
+    const [visibleModalScreen, setVisibleModalScreen] = useState<"create" | "quick" | null>(null);
+
+    useEffect(() => {
+        setVisibleModalScreen(null);
+        if (screen !== "create" && screen !== "quick") return undefined;
+
+        const frame = requestAnimationFrame(() => setVisibleModalScreen(screen));
+        return () => cancelAnimationFrame(frame);
+    }, [screen]);
 
     useEffect(() => {
         dispatch({ type: "SET_CATEGORIES", categories: [previewCategory] });
@@ -232,14 +233,19 @@ export default function ScheduleUiPreviewScreen() {
             <View style={styles.full}>
                 <PreviewBackdrop label="빠른 일정 · 실제 컴포넌트 QA" />
                 <QuickScheduleModal
-                    visible={modalVisible}
+                    visible={visibleModalScreen === "quick"}
                     initialText={quickInitialText}
                     initialRequestId="schedule-ui-preview-request"
                     defaultDay={PREVIEW_DAY}
                     defaultCategory={previewCategory}
+                    sourceTopOffset={4}
+                    sourceWidth={238}
+                    sourceHeight={164}
+                    sourceRightOffset={8}
+                    closeTargetWidth={150}
                     onAnalyze={async () => quickParseResult}
                     onSave={() => undefined}
-                    onClose={() => setModalVisible(false)}
+                    onClose={() => setVisibleModalScreen(null)}
                 />
             </View>
         );
@@ -249,17 +255,17 @@ export default function ScheduleUiPreviewScreen() {
         <View style={styles.full}>
             <PreviewBackdrop label="일정 생성 · 실제 컴포넌트 QA" />
             <ScheduleAddModal
-                visible={modalVisible}
+                visible={visibleModalScreen === "create"}
                 presentation="morph"
                 categories={[previewCategory]}
                 defaultDay={PREVIEW_DAY}
-                sourceTopOffset={116}
+                sourceTopOffset={4}
                 sourceWidth={238}
                 sourceHeight={164}
-                sourceRightOffset={18}
+                sourceRightOffset={8}
                 closeTargetWidth={150}
                 onSubmit={() => undefined}
-                onClose={() => setModalVisible(false)}
+                onClose={() => setVisibleModalScreen(null)}
             />
         </View>
     );
@@ -308,15 +314,5 @@ const styles = StyleSheet.create({
         fontSize: 17,
         fontWeight: "800",
         textAlign: "center",
-    },
-    headerAction: {
-        fontSize: 16,
-        fontWeight: "800",
-    },
-    headerActionDark: {
-        color: "#4B9DFF",
-    },
-    headerActionLight: {
-        color: "#2979FF",
     },
 });

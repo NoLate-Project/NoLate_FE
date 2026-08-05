@@ -219,7 +219,7 @@ const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"]
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
-    preview: 520,
+    preview: 472,
     edit: 520,
     saving: 368,
     saved: 368,
@@ -2636,7 +2636,12 @@ export default function QuickScheduleModal({
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
     const successColor = "#22C55E";
-    const previewIconBackground = mode === "dark" ? "rgba(36,107,254,0.17)" : "rgba(36,107,254,0.08)";
+    const previewIconBackground = mode === "dark" ? "rgba(36,107,254,0.14)" : "rgba(36,107,254,0.065)";
+    const previewDividerColor = mode === "dark" ? "rgba(84,84,88,0.65)" : "rgba(60,60,67,0.12)";
+    const previewLabelColor = mode === "dark" ? "rgba(235,235,245,0.60)" : "rgba(60,60,67,0.60)";
+    const previewChevronColor = mode === "dark" ? "#8E8E93" : "#AEAEB2";
+    const previewSecondaryBackground =
+        mode === "dark" ? "rgba(255,255,255,0.055)" : "rgba(118,118,128,0.055)";
 
     const getPreviewValue = useCallback((draft: PreviewDraft, field: PreviewField) => {
         switch (field) {
@@ -3352,6 +3357,9 @@ export default function QuickScheduleModal({
                 : `${FIELD_LABEL[blockingReviewField]} 확인하기`
             : "일정 저장";
         const displayedSourceText = previewSourceText || "입력한 내용";
+        const stackedDateTimeHitSlop = previewDraft.hasExplicitEndTime
+            ? { top: 6, bottom: 6, left: 4, right: 4 }
+            : undefined;
 
         return (
             <View style={styles.previewStep}>
@@ -3370,17 +3378,17 @@ export default function QuickScheduleModal({
                         style={({ pressed }) => [
                             styles.previewSourceStrip,
                             {
-                                borderBottomColor: cardBorderColor,
+                                borderBottomColor: previewDividerColor,
                                 opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
                             },
                         ]}
                     >
                         <View style={styles.previewSourceCopy}>
-                            <Text style={[styles.previewSourceLabel, { color: colors.textSecondary }]}>
+                            <Text style={[styles.previewSourceLabel, { color: previewLabelColor }]}>
                                 입력한 내용
                             </Text>
                             <Text numberOfLines={1} style={[styles.previewSourceValue, { color: colors.textPrimary }]}>
-                                “{displayedSourceText}”
+                                {displayedSourceText}
                             </Text>
                         </View>
                         <Text style={styles.previewSourceAction}>수정</Text>
@@ -3398,7 +3406,7 @@ export default function QuickScheduleModal({
                             { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
                         ]}
                     >
-                        <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>제목</Text>
+                        <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
                         <View style={styles.previewTitleValueRow}>
                             <Text numberOfLines={2} style={[styles.previewTitleValue, { color: colors.textPrimary }]}>
                                 {getPreviewValue(previewDraft, "title")}
@@ -3409,14 +3417,21 @@ export default function QuickScheduleModal({
 
                     <View style={styles.previewInfoRow}>
                         <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}>
-                            <Ionicons accessible={false} name="calendar-outline" size={17} color={BLUE} />
+                            <Ionicons accessible={false} name="calendar-outline" size={16} color={BLUE} />
                         </View>
                         <View style={styles.previewInfoCopy}>
-                            <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>일시</Text>
-                            <View style={styles.previewDateTimeValue}>
+                            <Text style={[styles.previewLabel, { color: previewLabelColor }]}>일시</Text>
+                            <View
+                                testID="quick-schedule-preview-date-time"
+                                style={[
+                                    styles.previewDateTimeValue,
+                                    previewDraft.hasExplicitEndTime && styles.previewDateTimeValueStacked,
+                                ]}
+                            >
                                 <Pressable
                                     onPress={() => openEditField("date")}
                                     disabled={submitting}
+                                    hitSlop={stackedDateTimeHitSlop}
                                     accessibilityRole="button"
                                     accessibilityLabel="날짜 수정"
                                     accessibilityValue={{
@@ -3425,6 +3440,7 @@ export default function QuickScheduleModal({
                                     accessibilityState={{ disabled: submitting }}
                                     style={({ pressed }) => [
                                         styles.previewInlineField,
+                                        previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked,
                                         { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
                                     ]}
                                 >
@@ -3435,15 +3451,18 @@ export default function QuickScheduleModal({
                                         {renderPreviewBadge("date")}
                                     </View>
                                 </Pressable>
-                                <Text
-                                    accessible={false}
-                                    style={[styles.previewDateTimeSeparator, { color: colors.textSecondary }]}
-                                >
-                                    ·
-                                </Text>
+                                {!previewDraft.hasExplicitEndTime && (
+                                    <Text
+                                        accessible={false}
+                                        style={[styles.previewDateTimeSeparator, { color: previewLabelColor }]}
+                                    >
+                                        ·
+                                    </Text>
+                                )}
                                 <Pressable
                                     onPress={() => openEditField("time")}
                                     disabled={submitting}
+                                    hitSlop={stackedDateTimeHitSlop}
                                     accessibilityRole="button"
                                     accessibilityLabel="시간 수정"
                                     accessibilityValue={{
@@ -3452,6 +3471,7 @@ export default function QuickScheduleModal({
                                     accessibilityState={{ disabled: submitting }}
                                     style={({ pressed }) => [
                                         styles.previewInlineField,
+                                        previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked,
                                         { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
                                     ]}
                                 >
@@ -3464,7 +3484,7 @@ export default function QuickScheduleModal({
                                 </Pressable>
                             </View>
                         </View>
-                        <Ionicons accessible={false} name="chevron-forward" size={17} color={colors.textSecondary} />
+                        <Ionicons accessible={false} name="chevron-forward" size={15} color={previewChevronColor} />
                     </View>
 
                     <Pressable
@@ -3480,16 +3500,16 @@ export default function QuickScheduleModal({
                             styles.previewInfoRow,
                             styles.previewPlaceRow,
                             {
-                                borderTopColor: cardBorderColor,
+                                borderTopColor: previewDividerColor,
                                 opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
                             },
                         ]}
                     >
                         <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}>
-                            <Ionicons accessible={false} name="location-outline" size={17} color={BLUE} />
+                            <Ionicons accessible={false} name="location-outline" size={16} color={BLUE} />
                         </View>
                         <View style={styles.previewInfoCopy}>
-                            <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>장소</Text>
+                            <Text style={[styles.previewLabel, { color: previewLabelColor }]}>장소</Text>
                             <View style={styles.previewInfoValueRow}>
                                 <Text
                                     numberOfLines={1}
@@ -3500,10 +3520,10 @@ export default function QuickScheduleModal({
                                 {renderPreviewBadge("location")}
                             </View>
                         </View>
-                        <Ionicons accessible={false} name="chevron-forward" size={17} color={colors.textSecondary} />
+                        <Ionicons accessible={false} name="chevron-forward" size={15} color={previewChevronColor} />
                     </Pressable>
 
-                    <View style={[styles.previewOptional, { borderTopColor: cardBorderColor }]}>
+                    <View style={[styles.previewOptional, { borderTopColor: previewDividerColor }]}>
                         <Pressable
                             onPress={() => openEditField("notification")}
                             disabled={submitting}
@@ -3519,7 +3539,7 @@ export default function QuickScheduleModal({
                             ]}
                         >
                             <View style={styles.previewOptionalCopy}>
-                                <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>알림</Text>
+                                <Text style={[styles.previewLabel, { color: previewLabelColor }]}>알림</Text>
                                 <View style={styles.previewOptionalValueRow}>
                                     <Text
                                         numberOfLines={1}
@@ -3533,11 +3553,11 @@ export default function QuickScheduleModal({
                             <Ionicons
                                 accessible={false}
                                 name="chevron-forward"
-                                size={16}
-                                color={colors.textSecondary}
+                                size={14}
+                                color={previewChevronColor}
                             />
                         </Pressable>
-                        <View style={[styles.previewOptionalDivider, { backgroundColor: cardBorderColor }]} />
+                        <View style={[styles.previewOptionalDivider, { backgroundColor: previewDividerColor }]} />
                         <Pressable
                             onPress={() => openEditField("memo")}
                             disabled={submitting}
@@ -3554,7 +3574,7 @@ export default function QuickScheduleModal({
                             ]}
                         >
                             <View style={styles.previewOptionalCopy}>
-                                <Text style={[styles.previewLabel, { color: colors.textSecondary }]}>메모</Text>
+                                <Text style={[styles.previewLabel, { color: previewLabelColor }]}>메모</Text>
                                 <View style={styles.previewOptionalValueRow}>
                                     <Text
                                         numberOfLines={1}
@@ -3568,8 +3588,8 @@ export default function QuickScheduleModal({
                             <Ionicons
                                 accessible={false}
                                 name="chevron-forward"
-                                size={16}
-                                color={colors.textSecondary}
+                                size={14}
+                                color={previewChevronColor}
                             />
                         </Pressable>
                     </View>
@@ -3585,13 +3605,21 @@ export default function QuickScheduleModal({
                             styles.secondaryButton,
                             styles.previewSecondaryButton,
                             {
-                                backgroundColor: inputBackground,
-                                borderColor: cardBorderColor,
+                                backgroundColor: previewSecondaryBackground,
+                                borderColor: previewDividerColor,
                                 opacity: pressed ? 0.72 : 1,
                             },
                         ]}
                     >
-                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>문장 수정</Text>
+                        <Text
+                            style={[
+                                styles.secondaryButtonText,
+                                styles.previewSecondaryButtonText,
+                                { color: colors.textPrimary },
+                            ]}
+                        >
+                            문장 수정
+                        </Text>
                     </Pressable>
                     <Pressable
                         onPress={
@@ -3611,7 +3639,9 @@ export default function QuickScheduleModal({
                             { opacity: pressed ? 0.78 : 1 },
                         ]}
                     >
-                        <Text style={styles.primaryButtonText}>{primaryActionLabel}</Text>
+                        <Text style={[styles.primaryButtonText, styles.previewPrimaryButtonText]}>
+                            {primaryActionLabel}
+                        </Text>
                     </Pressable>
                 </View>
             </View>
@@ -4296,7 +4326,13 @@ export default function QuickScheduleModal({
                                             </Pressable>
                                         </View>
 
-                                        <View style={[styles.header, flowStep !== "input" && styles.headerCentered]}>
+                                        <View
+                                            style={[
+                                                styles.header,
+                                                flowStep !== "input" && styles.headerCentered,
+                                                flowStep === "preview" && styles.previewHeader,
+                                            ]}
+                                        >
                                             {flowStep === "edit" && (
                                                 <Pressable
                                                     accessibilityRole="button"
@@ -4316,7 +4352,13 @@ export default function QuickScheduleModal({
                                                     />
                                                 </Pressable>
                                             )}
-                                            <Text style={[styles.title, { color: colors.textPrimary }]}>
+                                            <Text
+                                                style={[
+                                                    styles.title,
+                                                    flowStep === "preview" && styles.previewHeaderTitle,
+                                                    { color: colors.textPrimary },
+                                                ]}
+                                            >
                                                 {flowTitle}
                                             </Text>
                                             {flowStep === "input" && (
@@ -4450,11 +4492,20 @@ const styles = StyleSheet.create({
         alignItems: "center",
         paddingHorizontal: 36,
     },
+    previewHeader: {
+        marginBottom: 12,
+    },
     title: {
         fontSize: 20,
         lineHeight: 25,
         fontWeight: "800",
         letterSpacing: -0.3,
+    },
+    previewHeaderTitle: {
+        fontSize: 19,
+        lineHeight: 24,
+        fontWeight: "700",
+        letterSpacing: -0.2,
     },
     headerDescription: {
         marginTop: 4,
@@ -4987,14 +5038,14 @@ const styles = StyleSheet.create({
         paddingBottom: 4,
     },
     previewSourceStrip: {
-        minHeight: 55,
+        minHeight: 52,
         borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
         paddingHorizontal: 2,
-        paddingVertical: 9,
+        paddingVertical: 7,
     },
     previewSourceCopy: {
         flex: 1,
@@ -5004,29 +5055,29 @@ const styles = StyleSheet.create({
         marginBottom: 3,
         fontSize: 10.5,
         lineHeight: 14,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     previewSourceValue: {
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     previewSourceAction: {
         color: BLUE,
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     previewTitleRow: {
-        minHeight: 62,
+        minHeight: 58,
         justifyContent: "center",
         paddingHorizontal: 3,
-        paddingVertical: 9,
+        paddingVertical: 7,
     },
     previewLabel: {
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "600",
         marginBottom: 2,
     },
     previewTitleValueRow: {
@@ -5036,27 +5087,27 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
     },
     previewTitleValue: {
-        fontSize: 20,
-        lineHeight: 25,
-        fontWeight: "900",
-        letterSpacing: -0.45,
+        fontSize: 19,
+        lineHeight: 24,
+        fontWeight: "700",
+        letterSpacing: -0.35,
         flexShrink: 1,
     },
     previewInfoRow: {
-        minHeight: 64,
+        minHeight: 60,
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
         paddingHorizontal: 2,
-        paddingVertical: 7,
+        paddingVertical: 6,
     },
     previewPlaceRow: {
         borderTopWidth: StyleSheet.hairlineWidth,
     },
     previewInfoIcon: {
-        width: 30,
-        height: 30,
-        borderRadius: 10,
+        width: 28,
+        height: 28,
+        borderRadius: 9,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -5071,10 +5122,20 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
         columnGap: 4,
     },
+    previewDateTimeValueStacked: {
+        minHeight: 64,
+        flexDirection: "column",
+        alignItems: "flex-start",
+        flexWrap: "nowrap",
+        rowGap: 0,
+    },
     previewInlineField: {
         minHeight: 44,
         flexShrink: 1,
         justifyContent: "center",
+    },
+    previewInlineFieldStacked: {
+        minHeight: 32,
     },
     previewInlineContent: {
         flexDirection: "row",
@@ -5083,15 +5144,15 @@ const styles = StyleSheet.create({
         gap: 5,
     },
     previewInlineValue: {
-        fontSize: 13.5,
-        lineHeight: 19,
-        fontWeight: "800",
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "700",
         flexShrink: 1,
     },
     previewDateTimeSeparator: {
         fontSize: 13,
         lineHeight: 18,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     previewInfoValueRow: {
         flexDirection: "row",
@@ -5100,16 +5161,16 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     previewInfoValue: {
-        fontSize: 14,
-        lineHeight: 20,
-        fontWeight: "800",
+        fontSize: 13.5,
+        lineHeight: 19,
+        fontWeight: "700",
         flexShrink: 1,
     },
     previewOptional: {
-        minHeight: 59,
+        minHeight: 55,
         marginHorizontal: 2,
         marginTop: 2,
-        paddingTop: 10,
+        paddingTop: 8,
         borderTopWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "stretch",
@@ -5117,7 +5178,7 @@ const styles = StyleSheet.create({
     previewOptionalItem: {
         flex: 1,
         minWidth: 0,
-        minHeight: 48,
+        minHeight: 46,
         paddingRight: 10,
         flexDirection: "row",
         alignItems: "center",
@@ -5130,7 +5191,7 @@ const styles = StyleSheet.create({
     },
     previewOptionalDivider: {
         width: StyleSheet.hairlineWidth,
-        marginVertical: 5,
+        marginVertical: 8,
     },
     previewOptionalCopy: {
         flex: 1,
@@ -5145,7 +5206,7 @@ const styles = StyleSheet.create({
     previewOptionalValue: {
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "800",
+        fontWeight: "600",
         flexShrink: 1,
     },
     warningBadge: {
@@ -5160,14 +5221,26 @@ const styles = StyleSheet.create({
     previewButtons: {
         flexDirection: "row",
         gap: 8,
-        paddingTop: 10,
+        paddingTop: 8,
     },
     previewSecondaryButton: {
-        height: 47,
+        height: 46,
+        borderRadius: 14,
     },
     previewPrimaryButton: {
         flex: 1.55,
-        height: 47,
+        height: 46,
+        borderRadius: 14,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        elevation: 3,
+    },
+    previewSecondaryButtonText: {
+        fontWeight: "700",
+    },
+    previewPrimaryButtonText: {
+        fontWeight: "700",
     },
     secondaryButton: {
         flex: 1,
