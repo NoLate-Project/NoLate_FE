@@ -33,6 +33,7 @@ import {
 import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
 import { isDepartureAlarmSyncData } from "./departureAlarmContract";
 import { acknowledgePushDelivery } from "./pushDeliveryAck";
+import { isSamePushNotificationIdentity } from "./pushNotificationIdentity";
 import { recordNativeAlarmNotificationResponseFire } from "./departureAlarm";
 import { presentForegroundPushOnce } from "./foregroundPushPresentationClaim";
 import {
@@ -46,6 +47,7 @@ import {
     consumeNoLateCustomAlarmCapability,
     issueNoLateCustomAlarmCapability,
 } from "./customAlarmCapability";
+import { isNotificationEtaEventFresh } from "./notificationEventExpiry";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
 
@@ -514,6 +516,15 @@ export async function configurePushNavigation(
             });
             return true;
         }
+        if (!isNotificationEtaEventFresh(data, Date.now())) {
+            logPushDevelopment("warn", "[push] ignored expired depart-now action", data);
+            actionFailureGate.report({
+                action: "departNow",
+                scheduleId,
+                message: "이 출발 알림의 유효 시간이 지났어요. 일정 화면에서 현재 상태를 확인해 주세요.",
+            });
+            return true;
+        }
 
         const candidateActionKey = typeof data?.actionEventKey === "string"
             ? data.actionEventKey
@@ -550,6 +561,15 @@ export async function configurePushNavigation(
             actionFailureGate.report({
                 action: "snooze",
                 message: "알림의 일정 정보를 확인하지 못했어요. 앱에서 일정을 열어 알림을 다시 설정해 주세요.",
+            });
+            return true;
+        }
+        if (!isNotificationEtaEventFresh(data, Date.now())) {
+            logPushDevelopment("warn", "[push] ignored expired snooze action", data);
+            actionFailureGate.report({
+                action: "snooze",
+                scheduleId,
+                message: "이 출발 알림의 유효 시간이 지났어요. 일정 화면에서 현재 알림을 확인해 주세요.",
             });
             return true;
         }
@@ -751,20 +771,50 @@ export async function configurePushNavigation(
     });
 
     const initialMessage = await getInitialNotification(messaging);
-    if (initialMessage) {
+    const initialResponse = Notifications?.getLastNotificationResponse();
+    const hasExplicitInitialResponse = initialResponse && (
+        initialResponse.actionIdentifier === SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER ||
+        initialResponse.actionIdentifier === SCHEDULE_SNOOZE_ACTION_IDENTIFIER ||
+        customAlarmTargetFromRequest(
+            initialResponse.notification.request,
+            initialResponse.actionIdentifier,
+        ) !== undefined
+    );
+    const shouldPrioritizeInitialResponse = hasExplicitInitialResponse && (
+        !initialMessage || isSamePushNotificationIdentity(
+            {
+                data: initialMessage.data,
+                providerMessageId: initialMessage.messageId,
+            },
+            {
+                data: initialResponse.notification.request.content.data,
+                providerMessageId: initialResponse.notification.request.identifier,
+            },
+        )
+    );
+    if (hasExplicitInitialResponse && initialMessage && !shouldPrioritizeInitialResponse) {
+        // The OS can retain an older Expo response after a crash. It must not intercept a newer
+        // Firebase notification tap, and retaining it would replay that stale action on next active.
+        Notifications?.clearLastNotificationResponse();
+    }
+    if (shouldPrioritizeInitialResponse) {
+        // On an iOS cold start RNFirebase can expose the same notification as a default open while
+        // Expo retains the actual action identifier. The explicit action is the stronger signal;
+        // processing Firebase first would silently turn "출발 완료" into navigation only.
+        const shouldClear = await handleNotificationResponse(initialResponse)
+            .catch(() => false);
+        if (shouldClear) Notifications?.clearLastNotificationResponse();
+    } else if (initialMessage) {
         acknowledgePushInteraction(
             initialMessage.data,
             initialMessage.messageId,
             DEFAULT_PUSH_ACTION_IDENTIFIER,
         );
         openFromData(initialMessage.data, initialMessage.messageId);
-    } else if (Notifications) {
-        const initialResponse = Notifications.getLastNotificationResponse();
-        if (initialResponse) {
-            const shouldClear = await handleNotificationResponse(initialResponse)
+    } else if (initialResponse) {
+        const shouldClear = await handleNotificationResponse(initialResponse)
                 .catch(() => false);
-            if (shouldClear) Notifications.clearLastNotificationResponse();
-        }
+        if (shouldClear) Notifications?.clearLastNotificationResponse();
     }
     if (CustomAlarmNotifications && CustomAlarmNotifications !== Notifications) {
         try {
@@ -993,7 +1043,7 @@ async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): 
             [
                 {
                     identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
-                    buttonTitle: "지금 출발 완료",
+                    buttonTitle: "출발 완료",
                     options: {
                         opensAppToForeground: true,
                     },

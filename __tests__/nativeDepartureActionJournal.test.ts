@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { markScheduleDeparted } from "../src/api/schedule";
 import { ApiResponseError } from "../src/api/response";
 import { getAuthMember } from "../src/modules/auth/authStorage";
+import { emitScheduleMutation } from "../src/modules/schedule/scheduleMutationEvents";
 import {
     enqueueNativeDepartureActionEvent,
     getPendingNativeDepartureActionEvents,
@@ -22,6 +23,16 @@ import {
 
 jest.mock("../src/api/schedule", () => ({ markScheduleDeparted: jest.fn() }));
 jest.mock("../src/modules/auth/authStorage", () => ({ getAuthMember: jest.fn() }));
+jest.mock("../src/modules/schedule/scheduleMutationEvents", () => ({
+    createScheduleDepartureMutationEvent: (item: { id: string; departedAt?: string; myDepartedAt?: string }) => ({
+        scheduleId: item.id,
+        departure: {
+            ...(item.departedAt ? { departedAt: item.departedAt } : {}),
+            ...(item.myDepartedAt ? { myDepartedAt: item.myDepartedAt } : {}),
+        },
+    }),
+    emitScheduleMutation: jest.fn(),
+}));
 jest.mock("../src/modules/notification/departureAlarm", () => ({
     enqueueNativeDepartureActionEvent: jest.fn(),
     getPendingNativeDepartureActionEvents: jest.fn(),
@@ -55,6 +66,7 @@ const notificationEvent = {
     notificationLogicalEventKey: "event:00000000-0000-4000-8000-000000000041",
     providerMessageId: "provider-41",
 };
+const departedSchedule = { id: "41", departedAt: "2026-08-04T01:00:03.000Z" };
 
 describe("durable departure action journal", () => {
     beforeEach(async () => {
@@ -64,7 +76,7 @@ describe("durable departure action journal", () => {
         jest.mocked(getAuthMember).mockResolvedValue({ id: 7 });
         jest.mocked(isDepartureAlarmAccountCleanupPending).mockResolvedValue(false);
         jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([]);
-        jest.mocked(markScheduleDeparted).mockResolvedValue({ id: "41" } as never);
+        jest.mocked(markScheduleDeparted).mockResolvedValue(departedSchedule as never);
         jest.mocked(recoverDepartureAlarmsAfterMutation).mockResolvedValue(undefined);
         jest.mocked(markNativeDepartureActionNavigationDelivered).mockResolvedValue(true);
         jest.mocked(removePendingNativeDepartureActionEvent).mockResolvedValue(true);
@@ -88,10 +100,38 @@ describe("durable departure action journal", () => {
         });
 
         expect(markScheduleDeparted).toHaveBeenCalledWith("41", event.actionEventKey, 7);
+        expect(emitScheduleMutation).toHaveBeenCalledWith({
+            scheduleId: "41",
+            departure: { departedAt: departedSchedule.departedAt },
+        });
         expect(recoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(jest.mocked(markScheduleDeparted).mock.invocationCallOrder[0])
+            .toBeLessThan(jest.mocked(emitScheduleMutation).mock.invocationCallOrder[0]);
+        expect(jest.mocked(emitScheduleMutation).mock.invocationCallOrder[0])
+            .toBeLessThan(
+                jest.mocked(recoverDepartureAlarmsAfterMutation).mock.invocationCallOrder[0],
+            );
         expect(navigate).not.toHaveBeenCalled();
         expect(markNativeDepartureActionNavigationDelivered).not.toHaveBeenCalled();
         expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith("action-1");
+    });
+
+    it("terminates the journal and never publishes a mismatched response schedule", async () => {
+        jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([event]);
+        jest.mocked(markScheduleDeparted).mockResolvedValue({
+            ...departedSchedule,
+            id: "42",
+        } as never);
+
+        await expect(drainNativeDepartureActionJournal()).resolves.toMatchObject({
+            completed: 0,
+            failed: 0,
+            terminal: 1,
+        });
+
+        expect(emitScheduleMutation).not.toHaveBeenCalled();
+        expect(recoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+        expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith(event.eventId);
     });
 
     it("drains a cold-start native action after authenticated app setup without routing", async () => {

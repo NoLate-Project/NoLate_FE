@@ -3,6 +3,11 @@ import type {ScheduleCategory, ScheduleItem} from "./types";
 import type {ScheduleState} from "./initialState";
 import { subscribeAuthInvalidation } from "../auth/authStorage";
 import { clearCalendarScheduleCache } from "./calendarScheduleCache";
+import {
+    mergeScheduleDepartureMutation,
+    subscribeScheduleMutation,
+    type ScheduleMutationEvent,
+} from "./scheduleMutationEvents";
 
 type Action =
     | { type: "SET_SELECTED_DAY"; day: string }
@@ -16,6 +21,7 @@ type Action =
     | { type: "RESET"; state: ScheduleState }
     | { type: "ADD_ITEM"; item: ScheduleItem }
     | { type: "UPDATE_ITEM"; item: ScheduleItem }
+    | { type: "MERGE_DEPARTURE_MUTATION"; mutation: ScheduleMutationEvent }
     | { type: "DELETE_ITEM"; id: string };
 
 function reducer(state: ScheduleState, action: Action): ScheduleState {
@@ -88,6 +94,18 @@ function reducer(state: ScheduleState, action: Action): ScheduleState {
             };
         }
 
+        case "MERGE_DEPARTURE_MUTATION": {
+            const scheduleId = action.mutation.scheduleId;
+            const current = scheduleId ? state.itemsById[scheduleId] : undefined;
+            if (!current) return state;
+            const updated = mergeScheduleDepartureMutation(current, action.mutation);
+            if (updated === current) return state;
+            return {
+                ...state,
+                itemsById: { ...state.itemsById, [current.id]: updated },
+            };
+        }
+
         case "DELETE_ITEM": {
             const next = {...state.itemsById};
             delete next[action.id];
@@ -117,6 +135,13 @@ export function ScheduleProvider({
         clearCalendarScheduleCache();
         dispatch({ type: "RESET", state: initialState });
     }), [initialState]);
+    useEffect(() => subscribeScheduleMutation((mutation) => {
+        // Notification actions complete outside screen-owned callbacks. Merge only departure-owned
+        // monotonic fields so a delayed journal response cannot overwrite concurrent local edits.
+        if (mutation.scheduleId && mutation.departure) {
+            dispatch({ type: "MERGE_DEPARTURE_MUTATION", mutation });
+        }
+    }), []);
     const value = useMemo(() => ({state, dispatch}), [state]);
     return <ScheduleContext.Provider value={value}>{children}</ScheduleContext.Provider>;
 }

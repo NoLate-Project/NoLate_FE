@@ -54,7 +54,7 @@ describe("Android departure reminder native contract", () => {
             ".setContentIntent(interactionIntent(payload, DEPARTURE_REMINDER_ACTION_OPEN_ROUTE))",
         );
         expect(presenter).toMatch(
-            /context\.getString\(R\.string\.nolate_alarm_depart\),\s*interactionIntent\(payload, DEPARTURE_REMINDER_ACTION_DEPART\)/,
+            /context\.getString\(R\.string\.nolate_departure_reminder_depart\),\s*interactionIntent\(payload, DEPARTURE_REMINDER_ACTION_DEPART\)/,
         );
         expect(interaction).toMatch(
             /DEPARTURE_REMINDER_ACTION_DEPART[\s\S]*DepartureAlarmActionJournal\(this\)\.record\(/,
@@ -64,7 +64,7 @@ describe("Android departure reminder native contract", () => {
             /DEPARTURE_REMINDER_ACTION_OPEN_ROUTE[\s\S]*DepartureAlarmNavigationJournal\(this\)\.record\(/,
         );
         expect(read("modules/nolate-alarm/android/src/main/res/values/strings.xml"))
-            .toContain('<string name="nolate_alarm_depart">지금 출발 완료</string>');
+            .toContain('<string name="nolate_departure_reminder_depart">출발 완료</string>');
     });
 
     it("purges every app notification at Android and iOS account boundaries", () => {

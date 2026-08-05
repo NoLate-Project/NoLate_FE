@@ -266,7 +266,7 @@ actor NoLateCustomAlarmNotificationScheduler {
         UNNotificationAction(
           identifier:
             NoLateCustomAlarmNotificationContract.legacyDepartureActionIdentifier,
-          title: "지금 출발 완료",
+          title: "출발 완료",
           options: [.foreground]
         ),
         UNNotificationAction(

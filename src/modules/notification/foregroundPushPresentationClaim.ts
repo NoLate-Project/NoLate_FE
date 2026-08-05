@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
 
 import { getAuthMember } from "../auth/authStorage";
+import { isNotificationEtaEventFresh } from "./notificationEventExpiry";
 
 const STORAGE_KEY_PREFIX = "nolate_foreground_push_presentation_claims_v1:";
 const SCHEMA_VERSION = 1;
@@ -75,16 +76,6 @@ function normalizeProviderMessageId(value: unknown): string | undefined {
     return PROVIDER_MESSAGE_ID_PATTERN.test(normalized) ? normalized : undefined;
 }
 
-function isValidExpiry(
-    data: Record<string, unknown> | undefined,
-    nowMilliseconds: number,
-): boolean {
-    if (!data || !("etaEventExpiresAt" in data)) return true;
-    if (typeof data.etaEventExpiresAt !== "string") return false;
-    const expiresAt = Date.parse(data.etaEventExpiresAt);
-    return Number.isFinite(expiresAt) && expiresAt > nowMilliseconds;
-}
-
 async function sha256(value: string): Promise<string> {
     return Crypto.digestStringAsync(
         Crypto.CryptoDigestAlgorithm.SHA256,
@@ -99,7 +90,7 @@ async function resolveIdentity(
     nowMilliseconds: number,
 ): Promise<ResolvedPresentationIdentity | undefined> {
     if (!Number.isSafeInteger(nowMilliseconds) || nowMilliseconds < 0) return undefined;
-    if (!isValidExpiry(data, nowMilliseconds)) return undefined;
+    if (!isNotificationEtaEventFresh(data, nowMilliseconds)) return undefined;
 
     const lifecycleGeneration = accountLifecycleGeneration;
     const authenticatedMemberId = normalizeMemberId((await getAuthMember())?.id);

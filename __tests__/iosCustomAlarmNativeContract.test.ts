@@ -52,6 +52,14 @@ describe("iOS NoLate custom alarm native contract", () => {
         expect(scheduler).toContain("Self.legacyStandardCategory()");
         expect(scheduler).toContain("preservedCategories");
         expect(scheduler).toContain("setNotificationCategories(registeredCategories)");
+        const standardCategoryStart = scheduler.indexOf(
+            "private nonisolated static func legacyStandardCategory()",
+        );
+        const standardCategory = scheduler.slice(standardCategoryStart);
+        expect(standardCategoryStart).toBeGreaterThanOrEqual(0);
+        expect(standardCategory).toContain('title: "출발 완료"');
+        expect(standardCategory).not.toContain('title: "지금 출발 완료"');
+        expect(foregroundRouter).toContain('buttonTitle: "출발 완료"');
 
         const categoryWriterStart = foregroundRouter.indexOf(
             "async function ensureDepartNowCategory",

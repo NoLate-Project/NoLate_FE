@@ -613,7 +613,7 @@ internal class AndroidDepartureReminderPresenter(private val context: Context) :
         .setContentIntent(interactionIntent(payload, DEPARTURE_REMINDER_ACTION_OPEN_ROUTE))
         .addAction(
           R.drawable.ic_nolate_alarm,
-          context.getString(R.string.nolate_alarm_depart),
+          context.getString(R.string.nolate_departure_reminder_depart),
           interactionIntent(payload, DEPARTURE_REMINDER_ACTION_DEPART)
         )
         .build()

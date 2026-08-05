@@ -7,6 +7,7 @@ import {
     getLogicalEventKeyFromPushData,
     resetPushDeliveryAckForTests,
 } from "../src/modules/notification/pushDeliveryAck";
+import { isSamePushNotificationIdentity } from "../src/modules/notification/pushNotificationIdentity";
 import {
     getOrCreatePushDeviceId,
 } from "../src/modules/notification/pushDeviceIdentity";
@@ -74,6 +75,42 @@ describe("push delivery ACK orchestration", () => {
         expect(getLogicalEventKeyFromPushData({ logicalEventKey: 17 })).toBeUndefined();
         expect(getLogicalEventKeyFromPushData({ logicalEventKey: "x".repeat(101) }))
             .toBeUndefined();
+    });
+
+    it("matches canonical SDK identities only with the same action, recipient, and schedule", () => {
+        const base = {
+            scheduleId: "41",
+            recipientMemberId: "7",
+            actionEventKey: `key:${"a".repeat(64)}`,
+        };
+        expect(isSamePushNotificationIdentity({ data: base }, { data: { ...base } })).toBe(true);
+        expect(isSamePushNotificationIdentity(
+            { data: base, providerMessageId: "same-provider" },
+            { data: { ...base, scheduleId: "42" }, providerMessageId: "same-provider" },
+        )).toBe(false);
+        expect(isSamePushNotificationIdentity(
+            { data: base, providerMessageId: "same-provider" },
+            { data: { ...base, recipientMemberId: "8" }, providerMessageId: "same-provider" },
+        )).toBe(false);
+        expect(isSamePushNotificationIdentity(
+            { data: base, providerMessageId: "same-provider" },
+            { data: {}, providerMessageId: "same-provider" },
+        )).toBe(false);
+        expect(isSamePushNotificationIdentity(
+            { data: { ...base, actionEventKey: "malformed" }, providerMessageId: "same-provider" },
+            { data: {}, providerMessageId: "same-provider" },
+        )).toBe(false);
+    });
+
+    it("uses exact provider message identity only when both payloads are legacy", () => {
+        expect(isSamePushNotificationIdentity(
+            { data: { type: "LEGACY" }, providerMessageId: " provider-41 " },
+            { data: {}, providerMessageId: "provider-41" },
+        )).toBe(true);
+        expect(isSamePushNotificationIdentity(
+            { data: {}, providerMessageId: "provider-41" },
+            { data: {}, providerMessageId: "provider-42" },
+        )).toBe(false);
     });
 
     it("sends the exact ACK contract and trims optional metadata", async () => {
