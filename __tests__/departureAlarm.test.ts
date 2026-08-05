@@ -4,22 +4,40 @@ jest.mock("expo-modules-core", () => ({
     requireOptionalNativeModule: (...args: unknown[]) => mockOptionalNativeModule(...args),
 }));
 
+import { Platform } from "react-native";
+
 import {
     applyDepartureAlarmCommand,
     applyDepartureAlarmPlanCommand,
     clearAllDepartureAlarms,
     getDepartureAlarmCapabilities,
+    getNativeNoLateAlarmSoundPreference,
     getPendingNativeAlarmFireEvents,
     recordNativeAlarmNotificationResponseFire,
     removePendingNativeAlarmFireEvent,
     resetDepartureAlarmNativeModuleForTests,
     scheduleDepartureTestAlarm,
+    scheduleNoLateCustomAlarmPreview,
+    setNativeNoLateAlarmSoundPreference,
 } from "../src/modules/notification/departureAlarm";
 
 describe("departure alarm native facade", () => {
+    const originalPlatform = Platform.OS;
+
     beforeEach(() => {
         mockOptionalNativeModule.mockReset();
         resetDepartureAlarmNativeModuleForTests();
+        Object.defineProperty(Platform, "OS", {
+            configurable: true,
+            value: originalPlatform,
+        });
+    });
+
+    afterAll(() => {
+        Object.defineProperty(Platform, "OS", {
+            configurable: true,
+            value: originalPlatform,
+        });
     });
 
     it("routes upsert and cancel through distinct native methods", async () => {
@@ -355,6 +373,81 @@ describe("departure alarm native facade", () => {
 
         expect(scheduleTestAlarm).toHaveBeenNthCalledWith(1, 3);
         expect(scheduleTestAlarm).toHaveBeenNthCalledWith(2, 60);
+    });
+
+    it("reads and writes only whitelisted NoLate alarm sound ids", async () => {
+        const getAlarmSoundPreference = jest.fn().mockResolvedValue("BELL");
+        const setAlarmSoundPreference = jest.fn().mockResolvedValue(true);
+        mockOptionalNativeModule.mockReturnValue({
+            getAlarmSoundPreference,
+            setAlarmSoundPreference,
+        });
+
+        await expect(getNativeNoLateAlarmSoundPreference()).resolves.toBe("BELL");
+        await expect(setNativeNoLateAlarmSoundPreference("BEEP")).resolves.toBe(true);
+        expect(setAlarmSoundPreference).toHaveBeenCalledWith("BEEP");
+
+        getAlarmSoundPreference.mockResolvedValue("../../bad.wav");
+        resetDepartureAlarmNativeModuleForTests();
+        mockOptionalNativeModule.mockReturnValue({
+            getAlarmSoundPreference,
+            setAlarmSoundPreference,
+        });
+        await expect(getNativeNoLateAlarmSoundPreference()).resolves.toBeUndefined();
+    });
+
+    it("uses the iOS custom-alarm preview bridge with normalized inputs", async () => {
+        Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
+        const scheduleCustomAlarmPreview = jest.fn()
+            .mockResolvedValue({ applied: true, scheduled: true });
+        mockOptionalNativeModule.mockReturnValue({ scheduleCustomAlarmPreview });
+
+        await scheduleNoLateCustomAlarmPreview(1, " 41 ");
+        await scheduleNoLateCustomAlarmPreview(90);
+
+        expect(scheduleCustomAlarmPreview).toHaveBeenNthCalledWith(1, 3, "41");
+        expect(scheduleCustomAlarmPreview).toHaveBeenNthCalledWith(2, 60, null);
+    });
+
+    it("rejects an invalid iOS schedule id before scheduling a preview", async () => {
+        Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
+        const scheduleCustomAlarmPreview = jest.fn();
+        mockOptionalNativeModule.mockReturnValue({ scheduleCustomAlarmPreview });
+
+        await expect(scheduleNoLateCustomAlarmPreview(10, "schedule:41"))
+            .resolves.toEqual({
+                applied: false,
+                scheduled: false,
+                reason: "INVALID_SCHEDULE_ID",
+            });
+        expect(scheduleCustomAlarmPreview).not.toHaveBeenCalled();
+    });
+
+    it("keeps Android on its existing NoLate full-screen test alarm", async () => {
+        Object.defineProperty(Platform, "OS", { configurable: true, value: "android" });
+        const scheduleTestAlarm = jest.fn()
+            .mockResolvedValue({ applied: true, scheduled: true });
+        const scheduleCustomAlarmPreview = jest.fn();
+        mockOptionalNativeModule.mockReturnValue({
+            scheduleTestAlarm,
+            scheduleCustomAlarmPreview,
+        });
+
+        await expect(scheduleNoLateCustomAlarmPreview(1, "unused-on-android"))
+            .resolves.toEqual({ applied: true, scheduled: true });
+        expect(scheduleTestAlarm).toHaveBeenCalledWith(3);
+        expect(scheduleCustomAlarmPreview).not.toHaveBeenCalled();
+    });
+
+    it("fails safely when an older iOS binary lacks the custom preview bridge", async () => {
+        Object.defineProperty(Platform, "OS", { configurable: true, value: "ios" });
+        mockOptionalNativeModule.mockReturnValue({ scheduleTestAlarm: jest.fn() });
+
+        await expect(scheduleNoLateCustomAlarmPreview()).resolves.toEqual({
+            applied: false,
+            scheduled: false,
+            reason: "CUSTOM_ALARM_PREVIEW_UNAVAILABLE",
+        });
     });
 
     it("clears all account-owned native alarms through one bridge call", async () => {

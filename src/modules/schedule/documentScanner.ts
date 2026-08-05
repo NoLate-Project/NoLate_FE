@@ -76,7 +76,7 @@ export async function scanDocuments(
     options: DocumentScanOptions = {}
 ): Promise<DocumentScanResult | null> {
     if (!nativeDocumentScanner) {
-        throw new Error("이 기기에서는 문서 스캔을 사용할 수 없습니다.");
+        throw new Error("이 기기에서는 문서 스캔을 사용할 수 없어요. 사진을 선택해 주세요.");
     }
 
     const result = await nativeDocumentScanner.scan({

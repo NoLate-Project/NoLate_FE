@@ -143,7 +143,7 @@ describe("schedule arrival observation action", () => {
 
         expect(Alert.alert).toHaveBeenCalledWith(
             "도착을 기록할까요?",
-            expect.stringContaining("위치 정보는 수집하지 않습니다"),
+            expect.stringContaining("위치 정보는 수집하지 않아요"),
             expect.any(Array),
         );
         expect(mockRecordScheduleArrivalDurably).not.toHaveBeenCalled();

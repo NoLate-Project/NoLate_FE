@@ -23,6 +23,10 @@ import {
 import {
     activateForegroundPushPresentationClaimsForAuthenticatedMember,
 } from "./modules/notification/foregroundPushPresentationClaim";
+import {
+    activateNativeDepartureReminderPresentationJournal,
+    deactivateNativeDepartureReminderPresentationJournal,
+} from "./modules/notification/nativeDepartureReminderPresentationJournal";
 import { createScheduleInitialState } from "./modules/schedule/initialState";
 import {
     activateScheduleArrivalObservationQueueForAuthenticatedMember,
@@ -195,6 +199,9 @@ function PushRegistrationBootstrap() {
         };
 
         const runMemberBoundRecovery = (memberId: number) => {
+            activateNativeDepartureReminderPresentationJournal().catch((error) => {
+                console.warn("[push] native presentation evidence drain failed", error);
+            });
             reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
                 console.warn("[alarm-sync] snapshot bootstrap failed", error);
             });
@@ -287,6 +294,7 @@ function PushRegistrationBootstrap() {
             quickScheduleFeedbackAppStateSubscription.remove();
             fireJournalAppStateSubscription.remove();
             deactivateNativeAlarmFireJournalRetry();
+            deactivateNativeDepartureReminderPresentationJournal();
         };
     }, [isAuthenticated, isLoading]);
 

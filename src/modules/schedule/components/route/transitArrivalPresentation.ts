@@ -90,7 +90,7 @@ export function getTransitArrivalPresentation({
     if (!hasRequest) {
         return {
             statusLabel: "미지원",
-            inlineMessage: "이 승차 지점은 실시간 도착 정보를 지원하지 않습니다.",
+            inlineMessage: "이 승차 지점에서는 실시간 도착 정보를 확인할 수 없어요.",
             showArrivalCard: false,
             showLoadingIcon: false,
         };
@@ -99,7 +99,7 @@ export function getTransitArrivalPresentation({
     if (!loadState || loadState === "loading") {
         return {
             statusLabel: "확인 중",
-            inlineMessage: "실시간 도착 정보를 확인하고 있습니다.",
+            inlineMessage: "실시간 도착 정보를 확인하고 있어요.",
             showArrivalCard: false,
             showLoadingIcon: true,
         };
@@ -108,7 +108,7 @@ export function getTransitArrivalPresentation({
     if (loadState === "error") {
         return {
             statusLabel: "일시 오류",
-            inlineMessage: "실시간 도착 정보를 불러오지 못했습니다.",
+            inlineMessage: "실시간 도착 정보를 불러오지 못했어요.",
             showArrivalCard: false,
             showLoadingIcon: false,
         };
@@ -116,7 +116,7 @@ export function getTransitArrivalPresentation({
 
     return {
         statusLabel: "정보 없음",
-        inlineMessage: "지금 확인할 수 있는 도착 예정이 없습니다.",
+        inlineMessage: "지금 확인할 수 있는 도착 예정이 없어요.",
         showArrivalCard: false,
         showLoadingIcon: false,
     };

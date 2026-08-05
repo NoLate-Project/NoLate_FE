@@ -359,7 +359,7 @@ async function requestTransitRouteProxy<T>(payload: TransitRouteProxyRequest): P
 function getTmapHeaders() {
     const appKey = resolveTmapAppKey();
     if (!appKey) {
-        throw new Error("Tmap API 키가 없습니다. EXPO_PUBLIC_TMAP_APP_KEY를 설정해 주세요.");
+        throw new Error("경로 찾기를 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
     }
 
     return {
@@ -2119,7 +2119,7 @@ async function getDrivingAlternatives(origin: Place, destination: Place, mode: "
     }));
     const options = results.filter((item): item is RouteAlternativeOption => item !== null);
     if (options.length === 0 && failedRequestCount === searchOptions.length) {
-        throw new Error("TMAP 자동차 경로 서버에 연결하지 못했습니다.");
+        throw new Error("자동차 경로를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
     return dedupeRouteAlternatives(options);
@@ -2158,7 +2158,7 @@ async function getWalkingAlternatives(origin: Place, destination: Place): Promis
     }));
     const options = results.filter((item): item is RouteAlternativeOption => item !== null);
     if (options.length === 0 && failedRequestCount === searchOptions.length) {
-        throw new Error("TMAP 도보 경로 서버에 연결하지 못했습니다.");
+        throw new Error("도보 경로를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
     return dedupeRouteAlternatives(options);
@@ -2198,7 +2198,7 @@ export async function searchAddressByKeyword(
         return await searchViaNominatim(normalized, context);
     } catch (error) {
         if (!hasTmapAppKey()) {
-            throw new Error("Tmap API 키가 없습니다. EXPO_PUBLIC_TMAP_APP_KEY를 설정해 주세요.");
+            throw new Error("경로 찾기를 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
         }
         throw error;
     }

@@ -44,6 +44,7 @@ describe("LocationInputRow accessibility", () => {
         const clearButton = renderer!.root.findByProps({
             accessibilityLabel: "설정한 이동 경로 지우기",
         });
+        expect(renderer!.root.findByProps({ children: "대중교통 · 약 30분" })).toBeTruthy();
         let ancestor: ReactTestInstance | null = clearButton.parent;
         while (ancestor) {
             expect(ancestor).not.toBe(editButton);
@@ -56,5 +57,23 @@ describe("LocationInputRow accessibility", () => {
         });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onClear).toHaveBeenCalledTimes(1);
+    });
+
+    test("빈 경로는 짧은 문구로 다음 행동과 결과를 안내한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <LocationInputRow
+                        originValue=""
+                        destinationValue=""
+                        onPress={jest.fn()}
+                    />
+                </ThemeProvider>,
+            );
+        });
+
+        expect(renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "출발지와 도착지 추가" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "경로를 추가하면 출발 알림을 설정할 수 있어요." })).toBeTruthy();
     });
 });

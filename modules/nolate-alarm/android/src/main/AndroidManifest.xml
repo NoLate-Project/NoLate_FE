@@ -19,6 +19,25 @@
       android:taskAffinity=""
       android:theme="@style/NoLateAlarmTheme" />
 
+    <activity
+      android:name="expo.modules.nolatealarm.DepartureReminderInteractionActivity"
+      android:excludeFromRecents="true"
+      android:exported="false"
+      android:launchMode="singleTask"
+      android:noHistory="true"
+      android:taskAffinity=""
+      android:theme="@style/NoLateReminderInteractionTheme" />
+
+    <!-- Highest-priority app-owned FCM service. It subclasses RNFirebase's service so token
+         callbacks remain intact while departure reminders gain native Android actions. -->
+    <service
+      android:name="expo.modules.nolatealarm.NoLateFirebaseMessagingService"
+      android:exported="false">
+      <intent-filter android:priority="100">
+        <action android:name="com.google.firebase.MESSAGING_EVENT" />
+      </intent-filter>
+    </service>
+
     <service
       android:name="expo.modules.nolatealarm.DepartureAlarmService"
       android:directBootAware="true"

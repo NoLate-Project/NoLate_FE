@@ -123,6 +123,7 @@ public final class NoLateAlarmModule: Module {
 
     OnCreate {
       Task {
+        await NoLateCustomAlarmNotificationScheduler.shared.registerCategories()
         try? await NoLateAlarmCoordinator.shared.restoreAndReconcile()
       }
     }
@@ -178,13 +179,13 @@ public final class NoLateAlarmModule: Module {
 
     AsyncFunction("openExactAlarmSettings") {
       await NoLateAlarmSettingsOpener.open(
-        preferNotificationSettings: !NoLateAlarmRuntime.isAlarmKitAvailable
+        preferNotificationSettings: true
       )
     }
 
     AsyncFunction("openFullScreenSettings") {
       await NoLateAlarmSettingsOpener.open(
-        preferNotificationSettings: !NoLateAlarmRuntime.isAlarmKitAvailable
+        preferNotificationSettings: true
       )
     }
 
@@ -194,6 +195,26 @@ public final class NoLateAlarmModule: Module {
           delaySeconds: delaySeconds
         )
       }
+    }
+
+    AsyncFunction("scheduleCustomAlarmPreview") {
+      (delaySeconds: Int, scheduleId: String?) in
+      await Self.mutationOrInvalid {
+        try await NoLateCustomAlarmNotificationScheduler.shared.schedulePreview(
+          delaySeconds: delaySeconds,
+          scheduleId: scheduleId
+        )
+      }
+    }
+
+    AsyncFunction("getAlarmSoundPreference") {
+      await NoLateCustomAlarmNotificationScheduler.shared
+        .getAlarmSoundPreference()
+    }
+
+    AsyncFunction("setAlarmSoundPreference") { (soundId: String) in
+      await NoLateCustomAlarmNotificationScheduler.shared
+        .setAlarmSoundPreference(soundId)
     }
 
     AsyncFunction("stopRinging") {

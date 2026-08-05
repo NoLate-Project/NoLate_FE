@@ -38,7 +38,16 @@ describe("calendar import schedule payload", () => {
 
     test("원본 event id가 없으면 중복 방지가 불가능하므로 가져오기를 중단한다", () => {
         expect(() => buildCalendarImportSource({ ...CANDIDATE, eventId: "  " }))
-            .toThrow("원본 캘린더 일정 식별자가 없어 가져올 수 없습니다.");
+            .toThrow("이 일정을 가져올 수 없어요. 캘린더에서 일정을 다시 확인해 주세요.");
+    });
+
+    test("가져온 일정의 메모에는 사용자가 작성한 내용만 보존한다", () => {
+        const payload = buildSchedulePayloadFromCandidate(
+            { ...CANDIDATE, notes: "준비물 확인" },
+            SETTINGS
+        );
+
+        expect(payload.notes).toBe("준비물 확인");
     });
 
     test("경로가 없는 외부 일정은 예상 출발값만 저장하고 실시간 알림은 끈다", () => {

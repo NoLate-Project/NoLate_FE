@@ -950,7 +950,7 @@ export default function ProfileScreen() {
 
                 {isNaverAccount ? (
                     <View style={styles.section}>
-                        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>네이버 제공정보 활용</Text>
+                        <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>네이버 계정 정보</Text>
                         <CalendarGlassSurface
                             variant="card"
                             tone="solidCard"
@@ -961,15 +961,15 @@ export default function ProfileScreen() {
                                     <Text style={styles.naverBadgeText}>N</Text>
                                 </View>
                                 <View style={styles.usageHeaderText}>
-                                    <Text style={[styles.usageTitle, { color: colors.textPrimary }]}>네이버에서 받은 정보</Text>
-                                    <Text style={[styles.usageHint, { color: colors.textSecondary }]}>현재 계정에서 실제 사용하는 항목입니다.</Text>
+                                    <Text style={[styles.usageTitle, { color: colors.textPrimary }]}>NoLate에서 사용하는 정보</Text>
+                                    <Text style={[styles.usageHint, { color: colors.textSecondary }]}>네이버 계정의 이름과 이메일을 사용하고 있어요.</Text>
                                 </View>
                             </View>
                             <View style={[styles.usageDivider, { backgroundColor: colors.border }]} />
                             <Text style={[styles.usageItemTitle, { color: colors.textPrimary }]}>회원이름 · {displayAccountName}</Text>
-                            <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>프로필에서 회원 식별 및 이름 표시</Text>
+                            <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>프로필에 표시</Text>
                             <Text style={[styles.usageItemTitle, styles.usageItemSpacing, { color: colors.textPrimary }]}>이메일 · {displayEmail}</Text>
-                            <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>계정 식별과 로그인 계정 확인</Text>
+                            <Text style={[styles.usageItemBody, { color: colors.textSecondary }]}>로그인 계정 확인에 사용</Text>
                         </CalendarGlassSurface>
                     </View>
                 ) : null}
@@ -993,7 +993,7 @@ export default function ProfileScreen() {
                                             {calendarConnection.providerLabel}
                                         </Text>
                                         <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
-                                            선택한 캘린더에서 연동됨
+                                            일정을 가져온 캘린더
                                         </Text>
                                     </View>
                                     <View style={styles.connectedBadge}>
@@ -1006,11 +1006,11 @@ export default function ProfileScreen() {
                                         value={`${calendarConnection.calendarCount}개`}
                                     />
                                     <CalendarConnectionStat
-                                        label="후보 일정"
+                                        label="확인한 일정"
                                         value={`${calendarConnection.eventCandidateCount}개`}
                                     />
                                     <CalendarConnectionStat
-                                        label="가져온 일정"
+                                        label="추가한 일정"
                                         value={`${calendarConnection.importedCount}개`}
                                     />
                                 </View>
@@ -1032,7 +1032,7 @@ export default function ProfileScreen() {
                                 <Text style={[styles.calendarConnectionFooter, { color: colors.textSecondary }]}>
                                     마지막 확인 {formatConnectionDate(calendarConnection.lastScannedAt)}
                                     {calendarConnection.lastImportedAt
-                                        ? ` · 마지막 가져오기 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
+                                        ? ` · 마지막 추가 ${formatConnectionDate(calendarConnection.lastImportedAt)}`
                                         : ""}
                                 </Text>
                                 <Pressable
@@ -1080,7 +1080,7 @@ export default function ProfileScreen() {
                                     <Text style={[styles.calendarConnectionHint, { color: colors.textSecondary }]}>
                                         {calendarConnectionError
                                             ? "탭해서 다시 확인해 주세요"
-                                            : "기기 캘린더 또는 Google에서 일정을 가져올 수 있어요"}
+                                            : "휴대폰 캘린더나 Google Calendar의 일정을 추가할 수 있어요"}
                                     </Text>
                                 </View>
                                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />

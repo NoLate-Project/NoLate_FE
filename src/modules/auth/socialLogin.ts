@@ -24,7 +24,7 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
         } else if (typeof kakao.login === "function") {
             loginToken = await kakao.login();
         } else {
-            throw new Error("카카오 SDK 로그인 함수(login)가 없습니다.");
+            throw new Error("카카오 로그인을 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
         }
     } catch (error) {
         throw new Error(`카카오 로그인 실패: ${formatSdkError(error)}`);
@@ -32,11 +32,11 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
 
     const providerToken = stringify((loginToken as { accessToken?: unknown } | null)?.accessToken);
     if (!providerToken) {
-        throw new Error("카카오 인증 토큰을 가져오지 못했습니다.");
+        throw new Error("카카오 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
     }
 
     if (typeof kakao.getProfile !== "function") {
-        throw new Error("카카오 SDK 프로필 함수(getProfile)가 없습니다.");
+        throw new Error("카카오 계정 정보를 불러오지 못했어요. 다시 시도해 주세요.");
     }
 
     const profile = await kakao.getProfile();
@@ -56,7 +56,7 @@ export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
         getEnv("EXPO_PUBLIC_NAVER_SERVICE_URL_SCHEME_IOS") ?? (consumerKey ? `naver${consumerKey}` : undefined);
 
     if (!consumerKey || !consumerSecret || !serviceUrlSchemeIOS) {
-        throw new Error("네이버 로그인 설정이 없습니다. EXPO_PUBLIC_NAVER_CONSUMER_KEY/SECRET 값은 네아로 앱 키로 설정해 주세요.");
+        throw new Error("네이버 로그인을 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
     }
 
     const loginConfig = {
@@ -71,14 +71,13 @@ export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
 
     const token = await NaverLogin.login();
     if (token?.isSuccess === false) {
-        const failureMessage = stringify(token?.failureResponse?.message);
-        throw new Error(failureMessage ? `네이버 로그인 실패: ${failureMessage}` : "네이버 로그인에 실패했습니다.");
+        throw new Error("네이버 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
     }
 
     const accessToken = stringify(token?.successResponse?.accessToken);
 
     if (!accessToken) {
-        throw new Error("네이버 AccessToken을 가져오지 못했습니다.");
+        throw new Error("네이버 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
     }
 
     const profileResult = await NaverLogin.getProfile(accessToken);
@@ -119,23 +118,26 @@ export async function loginWithAppleSdk(): Promise<SocialSdkLoginResult> {
     }
 
     const nonce = Crypto.randomUUID();
+    const state = Crypto.randomUUID();
     const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
             AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
             AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
         nonce,
+        state,
     });
 
     const providerToken = stringify(credential.identityToken);
-    if (!providerToken) {
-        throw new Error("Apple 인증 토큰을 가져오지 못했습니다.");
+    const authorizationCode = stringify(credential.authorizationCode);
+    if (!providerToken || !authorizationCode || credential.state !== state) {
+        throw new Error("Apple 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
     }
 
     return {
         loginType: "APPLE",
         providerToken,
-        authorizationCode: optionalString(credential.authorizationCode),
+        authorizationCode,
         nonce,
         name: appleDisplayName(credential.fullName) || optionalString(credential.email) || "Apple 사용자",
         email: optionalString(credential.email),

@@ -1,6 +1,6 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
-import { Alert } from "react-native";
+import { Alert, StyleSheet } from "react-native";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
@@ -121,8 +121,30 @@ jest.mock("../src/api/subscription", () => ({
 }));
 jest.mock("../src/modules/schedule/components/form/CategorySelectBox", () => {
     const mockReact = require("react");
-    const { View: MockView } = require("react-native");
-    return () => mockReact.createElement(MockView);
+    const { Pressable: MockPressable, View: MockView } = require("react-native");
+    return ({
+        expanded,
+        hideTrigger,
+        onChange,
+        onExpandedChange,
+    }: {
+        expanded?: boolean;
+        hideTrigger?: boolean;
+        onChange: (categoryId: string) => void;
+        onExpandedChange?: (expanded: boolean) => void;
+    }) => mockReact.createElement(
+        MockView,
+        { testID: "mock-category-options", expanded, hideTrigger },
+        expanded
+            ? mockReact.createElement(MockPressable, {
+                accessibilityLabel: "업무 카테고리 항목",
+                onPress: () => {
+                    onChange("work");
+                    onExpandedChange?.(false);
+                },
+            })
+            : null,
+    );
 });
 jest.mock("../src/modules/schedule/components/form/LocationInputRow", () => {
     const mockReact = require("react");
@@ -136,12 +158,16 @@ jest.mock("../src/modules/schedule/components/form/NotificationSettingsCard", ()
     const mockReact = require("react");
     const { Pressable: MockPressable } = require("react-native");
     return ({
+        variant,
         onEnabledChange,
         onAlertModeChange,
     }: {
+        variant?: "card" | "flat";
         onEnabledChange: (enabled: boolean) => void;
         onAlertModeChange: (mode: "ALARM") => void;
     }) => mockReact.createElement(MockPressable, {
+        testID: "mock-notification-settings",
+        variant,
         accessibilityLabel: "강력한 알람 설정 테스트",
         onPress: () => {
             onEnabledChange(true);
@@ -194,6 +220,84 @@ describe("ScheduleEditScreen route return", () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
         jest.restoreAllMocks();
+    });
+
+    test("상세 화면과 같은 평탄한 페이지에서 알림 설정을 flat 변형으로 보여준다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const navigation = renderer!.root.findByProps({ testID: "schedule-edit-navigation" });
+        expect(navigation.findByProps({ accessibilityLabel: "일정 수정 저장" })).toBeTruthy();
+        expect(navigation.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ children: "일정 정보" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ children: "시간 없이 날짜로만 일정을 표시해요." })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ children: "종료 시간" }).length).toBeGreaterThan(0);
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-delete-action" })).toBeTruthy();
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-page" }).props.style,
+        )).toMatchObject({
+            width: "100%",
+            maxWidth: 560,
+            alignSelf: "center",
+            paddingTop: 24,
+        });
+        expect(renderer!.root.findByProps({
+            testID: "mock-notification-settings",
+        }).props.variant).toBe("flat");
+    });
+
+    test("평탄한 상단 뒤로 버튼도 수정 중에는 변경사항 폐기 확인을 유지한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "일정 제목" })
+                .props.onChangeText("변경한 제목");
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "일정 수정 닫기" })
+                .props.onPress();
+        });
+
+        expect(Alert.alert).toHaveBeenCalledWith(
+            "저장하지 않고 나갈까요?",
+            "수정한 내용이 저장되지 않아요.",
+            expect.any(Array),
+        );
+        expect(mockRouterSetParams).not.toHaveBeenCalled();
+    });
+
+    test("제목의 카테고리 칩을 한 번 누르면 중복 선택 상자 없이 항목을 바로 고른다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findAllByProps({ testID: "mock-category-options" })).toHaveLength(0);
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
+        });
+
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props).toMatchObject({
+            expanded: true,
+            hideTrigger: true,
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 항목" }).props.onPress();
+        });
+        expect(renderer!.root.findAllByProps({ testID: "mock-category-options" })).toHaveLength(0);
     });
 
     test("느린 상세 재조회와 무관하게 경로 변경 직후 저장할 수 있다", async () => {
@@ -489,8 +593,8 @@ describe("ScheduleEditScreen route return", () => {
         });
         expect(mockRouterSetParams).not.toHaveBeenCalled();
         expect(Alert.alert).toHaveBeenCalledWith(
-            "일정 내용은 저장됐어요",
-            expect.stringContaining("공용 일정 내용은 저장됐지만 내 이동 알림 설정은 저장하지 못했어요."),
+            "일정은 저장했어요",
+            "출발 알림은 저장하지 못했어요. 다시 저장해 주세요.",
         );
         expect(Alert.alert).not.toHaveBeenCalledWith(
             "일정 수정 실패",
@@ -582,7 +686,7 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         const confirmation = jest.mocked(Alert.alert).mock.calls.find(
-            ([title]) => title === "삭제",
+            ([title]) => title === "일정을 삭제할까요?",
         );
         const destructiveAction = confirmation?.[2]?.[1];
         await act(async () => {
@@ -613,7 +717,7 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         const confirmation = jest.mocked(Alert.alert).mock.calls.find(
-            ([title]) => title === "삭제",
+            ([title]) => title === "일정을 삭제할까요?",
         );
         const destructiveAction = confirmation?.[2]?.[1];
         await act(async () => {

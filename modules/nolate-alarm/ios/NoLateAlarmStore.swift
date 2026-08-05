@@ -17,6 +17,41 @@ enum NoLateAlarmPersistenceError: Error, LocalizedError {
   }
 }
 
+final class NoLateAlarmSoundPreferenceStore {
+  static let storageKey = "nolate.custom-alarm.sound.v1"
+
+  private let defaults: UserDefaults
+
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
+  }
+
+  func load() -> NoLateAlarmSoundPreference {
+    guard
+      let rawValue = defaults.string(forKey: Self.storageKey),
+      let preference = NoLateAlarmSoundPreference(rawValue: rawValue)
+    else {
+      return .defaultValue
+    }
+    return preference
+  }
+
+  @discardableResult
+  func save(rawValue: String) -> Bool {
+    guard let preference = NoLateAlarmSoundPreference(rawValue: rawValue) else {
+      return false
+    }
+    return save(preference)
+  }
+
+  @discardableResult
+  func save(_ preference: NoLateAlarmSoundPreference) -> Bool {
+    defaults.set(preference.rawValue, forKey: Self.storageKey)
+    return defaults.synchronize()
+      && defaults.string(forKey: Self.storageKey) == preference.rawValue
+  }
+}
+
 final class NoLateAlarmStore {
   static let storageKey = "nolate.departure-alarms.snapshot.v1"
 

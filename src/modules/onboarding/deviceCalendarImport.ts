@@ -66,7 +66,7 @@ function loadCalendarModule(): ExpoCalendarModule | null {
 
 function requireCalendarModule(): ExpoCalendarModule {
     if (!Calendar) {
-        throw new Error("현재 앱 빌드에서 캘린더 가져오기를 사용할 수 없습니다.");
+        throw new Error("현재 캘린더 가져오기를 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
     }
     return Calendar;
 }
@@ -245,7 +245,7 @@ export function buildCalendarImportSource(
     const calendarId = candidate.calendarId.trim();
     const eventId = candidate.eventId.trim();
     if (!calendarId || !eventId) {
-        throw new Error("원본 캘린더 일정 식별자가 없어 가져올 수 없습니다.");
+        throw new Error("이 일정을 가져올 수 없어요. 캘린더에서 일정을 다시 확인해 주세요.");
     }
 
     return {
@@ -361,13 +361,7 @@ function compareCandidates(a: DeviceCalendarCandidate, b: DeviceCalendarCandidat
 }
 
 function buildImportedNotes(candidate: DeviceCalendarCandidate): string | undefined {
-    const sourceLine = `${getCalendarProviderLabel(candidate.provider)}에서 가져온 일정`;
-    const calendarLine = `원본 캘린더: ${candidate.calendarTitle}`;
-    const notes = [candidate.notes, sourceLine, calendarLine]
-        .map((line) => line?.trim())
-        .filter(Boolean);
-
-    return notes.length > 0 ? notes.join("\n\n") : undefined;
+    return candidate.notes?.trim() || undefined;
 }
 
 function normalizeDate(value: string | Date | undefined | null): Date | null {

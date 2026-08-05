@@ -42,7 +42,7 @@ describe("transitArrivalPresentation", () => {
             arrivalCount: 0,
         })).toMatchObject({
             statusLabel: "정보 없음",
-            inlineMessage: "지금 확인할 수 있는 도착 예정이 없습니다.",
+            inlineMessage: "지금 확인할 수 있는 도착 예정이 없어요.",
         });
         expect(getTransitArrivalPresentation({
             hasRequest: true,

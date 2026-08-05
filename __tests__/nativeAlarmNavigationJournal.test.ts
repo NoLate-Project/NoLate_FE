@@ -4,6 +4,7 @@ import {
     removePendingNativeAlarmNavigationEvent,
 } from "../src/modules/notification/departureAlarm";
 import { isDepartureAlarmAccountCleanupPending } from "../src/modules/notification/departureAlarmSync";
+import { acknowledgePushDelivery } from "../src/modules/notification/pushDeliveryAck";
 import {
     configureNativeAlarmNavigation,
     deactivateNativeAlarmNavigationJournal,
@@ -19,12 +20,20 @@ jest.mock("../src/modules/notification/departureAlarm", () => ({
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     isDepartureAlarmAccountCleanupPending: jest.fn(),
 }));
+jest.mock("../src/modules/notification/pushDeliveryAck", () => ({
+    acknowledgePushDelivery: jest.fn().mockResolvedValue(true),
+}));
 
 const event = {
     eventId: "navigation-1",
     scheduleId: "41",
     recipientMemberId: 7,
     occurredAt: "2026-08-04T01:00:00.000Z",
+};
+const notificationEvent = {
+    ...event,
+    notificationLogicalEventKey: "event:00000000-0000-4000-8000-000000000041",
+    providerMessageId: "provider-41",
 };
 
 describe("native alarm navigation journal", () => {
@@ -35,6 +44,7 @@ describe("native alarm navigation journal", () => {
         jest.mocked(isDepartureAlarmAccountCleanupPending).mockResolvedValue(false);
         jest.mocked(getPendingNativeAlarmNavigationEvents).mockResolvedValue([]);
         jest.mocked(removePendingNativeAlarmNavigationEvent).mockResolvedValue(true);
+        jest.mocked(acknowledgePushDelivery).mockResolvedValue(true);
     });
 
     afterEach(() => {
@@ -79,5 +89,31 @@ describe("native alarm navigation journal", () => {
             delivered: 0,
         });
         expect(removePendingNativeAlarmNavigationEvent).not.toHaveBeenCalled();
+    });
+
+    it("records body-tap evidence before routing and ignores telemetry failure", async () => {
+        jest.mocked(getPendingNativeAlarmNavigationEvents).mockResolvedValue([notificationEvent]);
+        jest.mocked(acknowledgePushDelivery).mockRejectedValue(new Error("ack storage failed"));
+        const navigate = jest.fn();
+        configureNativeAlarmNavigation(navigate);
+
+        await expect(drainNativeAlarmNavigationJournal()).resolves.toMatchObject({
+            delivered: 1,
+            unresolved: 0,
+        });
+        expect(acknowledgePushDelivery).toHaveBeenCalledTimes(3);
+        expect(acknowledgePushDelivery).toHaveBeenCalledWith(
+            expect.objectContaining({
+                logicalEventKey: notificationEvent.notificationLogicalEventKey,
+            }),
+            "ACTIONED",
+            expect.objectContaining({ actionIdentifier: "DEFAULT" }),
+        );
+        expect(
+            jest.mocked(acknowledgePushDelivery).mock.invocationCallOrder[0],
+        ).toBeLessThan(navigate.mock.invocationCallOrder[0]);
+        expect(removePendingNativeAlarmNavigationEvent).toHaveBeenCalledWith(
+            notificationEvent.eventId,
+        );
     });
 });

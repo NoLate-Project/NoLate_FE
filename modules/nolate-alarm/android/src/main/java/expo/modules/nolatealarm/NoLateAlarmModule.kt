@@ -100,6 +100,35 @@ internal class DepartureActionEventCommand : Record {
   var routeNavigationDelivered: Boolean = false
 }
 
+internal class DepartureReminderPresentationCommand : Record {
+  @Field
+  var type: String = ""
+
+  @Field
+  var scheduleId: String = ""
+
+  @Field
+  var recipientMemberId: String = ""
+
+  @Field
+  var logicalEventKey: String = ""
+
+  @Field
+  var etaEventExpiresAt: String = ""
+
+  @Field
+  var nolateNotificationTitle: String = ""
+
+  @Field
+  var nolateNotificationBody: String = ""
+
+  @Field
+  var nolateNotificationTag: String = ""
+
+  @Field
+  var providerMessageId: String? = null
+}
+
 class NoLateAlarmModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("NoLateAlarm")
@@ -110,6 +139,16 @@ class NoLateAlarmModule : Module() {
       AlarmCapabilityReader.read(context).toBridgeMap()
     }
 
+    AsyncFunction("getAlarmSoundPreference") {
+      AlarmSoundPreferenceStore(requireContext()).get().bridgeValue
+    }
+
+    AsyncFunction("setAlarmSoundPreference") { soundId: String ->
+      runCatching {
+        AlarmSoundPreferenceStore(requireContext()).set(soundId)
+      }.getOrDefault(false)
+    }
+
     AsyncFunction("upsertAlarm") { command: UpsertAlarmCommand ->
       mutationOrInvalid {
         require(command.operation == "UPSERT") { "operation must be UPSERT." }
@@ -117,6 +156,10 @@ class NoLateAlarmModule : Module() {
         val triggerAtMillis = parseIsoTriggerAtMillis(command.triggerAt)
         require(triggerAtMillis in 0..MAX_SAFE_JS_INTEGER) {
           "triggerAt is outside the supported timestamp range."
+        }
+        val recipientMemberId = requireRecipientMemberId(command.recipientMemberId)
+        check(DepartureReminderAccountStore(context).activate(recipientMemberId)) {
+          "Failed to bind the active departure reminder account."
         }
         DepartureAlarmCoordinator(context).upsert(
           alarmId = requireAlarmId(command.alarmId),
@@ -139,7 +182,7 @@ class NoLateAlarmModule : Module() {
           },
           actionEventKey = normalizeActionEventKey(command.actionEventKey),
           generation = requireSafeJsInteger(command.generation, "generation"),
-          recipientMemberId = requireRecipientMemberId(command.recipientMemberId),
+          recipientMemberId = recipientMemberId,
           logicalEventKey = normalizeLogicalEventKey(command.logicalEventKey),
           triggerAtMillis = triggerAtMillis,
           snoozeMinutes = (command.snoozeMinutes ?: 5).also {
@@ -202,7 +245,67 @@ class NoLateAlarmModule : Module() {
     }
 
     AsyncFunction("clearAllAlarms") {
-      DepartureAlarmCoordinator(requireContext()).clearAll()
+      val context = requireContext()
+      synchronized(DepartureReminderLifecycleLock.monitor) {
+        val claimStore = DurableDepartureReminderClaimStore(context)
+        val notificationTags = claimStore.getAll(System.currentTimeMillis())
+          .map(DepartureReminderPresentationClaim::notificationTag)
+        val alarmStateCleared = DepartureAlarmCoordinator(context).clearAll()
+        check(claimStore.clear()) { "Failed to purge departure reminder claims." }
+        check(DepartureReminderAccountStore(context).deactivate()) {
+          "Failed to purge departure reminder account binding."
+        }
+        // This bridge is used only at account cleanup/login boundaries. cancelAll also removes
+        // fail-open reminders whose claim storage was unavailable and legacy auto-displayed rows
+        // whose provider tag could not be recovered from the native claim journal.
+        context.getSystemService(android.app.NotificationManager::class.java)?.cancelAll()
+        alarmStateCleared || notificationTags.isNotEmpty()
+      }
+    }
+
+    AsyncFunction("activateDepartureReminderAccount") { recipientMemberId: Double ->
+      DepartureReminderAccountStore(requireContext()).activate(
+        requireRecipientMemberId(recipientMemberId)
+      )
+    }
+
+    AsyncFunction("presentDepartureReminder") { command: DepartureReminderPresentationCommand ->
+      val context = requireContext()
+      val nowMillis = System.currentTimeMillis()
+      synchronized(DepartureReminderLifecycleLock.monitor) {
+        val payload = DepartureReminderPayload.fromPushData(
+          mapOf(
+            "type" to command.type,
+            "scheduleId" to command.scheduleId,
+            "recipientMemberId" to command.recipientMemberId,
+            "logicalEventKey" to command.logicalEventKey,
+            "etaEventExpiresAt" to command.etaEventExpiresAt,
+            "nolateNotificationTitle" to command.nolateNotificationTitle,
+            "nolateNotificationBody" to command.nolateNotificationBody,
+            "nolateNotificationTag" to command.nolateNotificationTag
+          ),
+          command.providerMessageId,
+          nowMillis
+        ) ?: return@synchronized "UNSUPPORTED"
+        if (!DepartureReminderAccountStore(context).isActive(payload.recipientMemberId)) {
+          return@synchronized "REJECTED"
+        }
+        DepartureReminderPresentationCoordinator(
+          DurableDepartureReminderClaimStore(context),
+          AndroidDepartureReminderPresenter(context)
+        ).present(payload, nowMillis).name
+      }
+    }
+
+    AsyncFunction("getPendingDepartureReminderPresentationEvents") {
+      DurableDepartureReminderClaimStore(requireContext())
+        .getUndeliveredEvidence(System.currentTimeMillis())
+        .map(DepartureReminderPresentationClaim::toBridgeMap)
+    }
+
+    AsyncFunction("markDepartureReminderPresentationDelivered") { notificationTag: String ->
+      DurableDepartureReminderClaimStore(requireContext())
+        .markEvidenceDelivered(notificationTag)
     }
 
     AsyncFunction("getPendingAlarmFireEvents") {

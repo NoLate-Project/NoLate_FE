@@ -215,7 +215,7 @@ RCT_EXPORT_MODULE();
   if (!image && error) {
     *error = [NSError errorWithDomain:NoLateQuickInputErrorDomain
                                  code:NoLateQuickInputImageDecodeError
-                             userInfo:@{ NSLocalizedDescriptionKey: @"OCR용 이미지를 만들지 못했습니다." }];
+                             userInfo:@{ NSLocalizedDescriptionKey: @"사진 내용을 읽지 못했어요. 다른 사진으로 다시 시도해 주세요." }];
   }
   return image;
 }
@@ -397,7 +397,7 @@ RCT_EXPORT_MODULE();
     if (error) {
       *error = [NSError errorWithDomain:NoLateQuickInputErrorDomain
                                    code:NoLateQuickInputKoreanOcrUnsupportedError
-                               userInfo:@{ NSLocalizedDescriptionKey: @"한국어 OCR을 지원하지 않는 iOS 버전입니다." }];
+                               userInfo:@{ NSLocalizedDescriptionKey: @"이 iOS 버전에서는 사진 속 한글을 자동으로 읽을 수 없어요. 직접 입력해 주세요." }];
     }
     return nil;
   }
@@ -524,7 +524,7 @@ RCT_EXPORT_MODULE();
   if (@available(iOS 13.0, *)) {
     NSURL *fileURL = [self fileURLFromURI:uri];
     if (!fileURL) {
-      reject(@"quick_input_invalid_image_uri", @"분석할 사진 파일 경로가 올바르지 않습니다.", nil);
+      reject(@"quick_input_invalid_image_uri", @"사진을 열지 못했어요. 다시 선택해 주세요.", nil);
       return;
     }
 
@@ -532,7 +532,7 @@ RCT_EXPORT_MODULE();
         ? [requestId stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
         : @"";
     if (normalizedRequestId.length == 0) {
-      reject(@"quick_input_invalid_request_id", @"사진 인식 요청 식별자가 올바르지 않습니다.", nil);
+      reject(@"quick_input_invalid_request_id", @"선택한 사진이 바뀌었어요. 다시 읽어 주세요.", nil);
       return;
     }
 
@@ -555,7 +555,7 @@ RCT_EXPORT_MODULE();
         }
         [self rejectOnMain:reject
                       code:@"quick_input_image_not_found"
-                   message:@"분석할 사진 파일을 찾을 수 없습니다."
+                   message:@"사진을 찾지 못했어요. 다시 선택해 주세요."
                      error:nil];
         return;
       }
@@ -670,7 +670,7 @@ RCT_EXPORT_MODULE();
       }
       if (!performedAnyRequest && lastError) {
         NSString *message = lastError.code == NoLateQuickInputKoreanOcrUnsupportedError
-            ? @"이 iOS 버전에서는 한국어 사진 인식을 지원하지 않습니다. iOS 16 이상에서 다시 시도해주세요."
+            ? @"이 iOS 버전에서는 사진 속 한글을 자동으로 읽을 수 없어요. 직접 입력해 주세요."
             : @"사진에서 텍스트를 추출하지 못했습니다.";
         [self rejectOnMain:reject
                       code:@"quick_input_ocr_failed"
@@ -692,7 +692,7 @@ RCT_EXPORT_MODULE();
       }];
     });
   } else {
-    reject(@"quick_input_ocr_unavailable", @"이 iOS 버전에서는 사진 텍스트 추출을 사용할 수 없습니다.", nil);
+    reject(@"quick_input_ocr_unavailable", @"이 iOS 버전에서는 사진 내용을 자동으로 읽을 수 없어요. 직접 입력해 주세요.", nil);
   }
 }
 
@@ -728,7 +728,7 @@ RCT_REMAP_METHOD(cancelImageRecognition,
       ? [requestId stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
       : @"";
   if (normalizedRequestId.length == 0) {
-    reject(@"quick_input_invalid_request_id", @"취소할 사진 인식 요청 식별자가 올바르지 않습니다.", nil);
+    reject(@"quick_input_invalid_request_id", @"사진 읽기를 취소하지 못했어요. 잠시 후 다시 시도해 주세요.", nil);
     return;
   }
   resolve(@([self cancelOCRRequestWithId:normalizedRequestId]));
@@ -808,13 +808,13 @@ RCT_REMAP_METHOD(cancelImageRecognition,
   if ([error.domain isEqualToString:@"kLSRErrorDomain"]) {
     switch (error.code) {
       case 102:
-        return @"한국어 음성 인식 모델이 준비되지 않았습니다. 받아쓰기 언어 설정을 확인해주세요.";
+        return @"한국어 음성 입력이 준비되지 않았어요. iPhone의 받아쓰기 언어 설정을 확인해 주세요.";
       case 201:
         return @"Siri 또는 받아쓰기가 꺼져 있습니다. 기기 설정에서 받아쓰기를 켜주세요.";
       case 300:
-        return @"음성 인식 엔진을 시작하지 못했습니다. 시뮬레이터를 재시작하거나 실제 기기에서 다시 시도해주세요.";
+        return @"음성 입력을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.";
       default:
-        return @"기기의 음성 인식 엔진을 사용할 수 없습니다. 잠시 후 다시 시도해주세요.";
+        return @"음성 입력을 사용할 수 없어요. 잠시 후 다시 시도해 주세요.";
     }
   }
 
@@ -875,12 +875,12 @@ RCT_REMAP_METHOD(transcribeAudioFile,
   if (@available(iOS 10.0, *)) {
     NSURL *fileURL = [self fileURLFromURI:uri];
     if (!fileURL) {
-      reject(@"quick_input_invalid_audio_uri", @"분석할 음성 파일 경로가 올바르지 않습니다.", nil);
+      reject(@"quick_input_invalid_audio_uri", @"녹음 파일을 열지 못했어요. 다시 녹음해 주세요.", nil);
       return;
     }
 
     if (![[NSFileManager defaultManager] fileExistsAtPath:fileURL.path]) {
-      reject(@"quick_input_audio_not_found", @"분석할 음성 파일을 찾을 수 없습니다.", nil);
+      reject(@"quick_input_audio_not_found", @"녹음 파일을 찾지 못했어요. 다시 녹음해 주세요.", nil);
       return;
     }
 
@@ -914,7 +914,7 @@ RCT_REMAP_METHOD(transcribeAudioFile,
     if (previousReject) {
       [self rejectOnMain:previousReject
                     code:@"quick_input_transcription_cancelled"
-                 message:@"새 음성 분석 요청으로 이전 작업을 취소했습니다."
+                 message:@"새 음성 입력을 시작해 이전 작업을 취소했어요."
                    error:nil];
     }
 
@@ -946,14 +946,14 @@ RCT_REMAP_METHOD(transcribeAudioFile,
           if (!recognizer.supportsOnDeviceRecognition) {
             if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
             reject(@"quick_input_on_device_speech_unavailable",
-                   @"이 기기에는 한국어 온디바이스 음성 인식이 준비되지 않았습니다. iOS 설정과 언어 다운로드 상태를 확인해주세요.",
+                   @"이 기기에서는 오프라인 음성 입력을 사용할 수 없어요. iPhone의 받아쓰기 언어 설정을 확인해 주세요.",
                    nil);
             return;
           }
         } else {
           if (![self claimFileSpeechCompletion:speechGeneration task:nil]) return;
           reject(@"quick_input_on_device_speech_unavailable",
-                 @"이 iOS 버전에서는 온디바이스 음성 인식을 사용할 수 없습니다.",
+                 @"이 iOS 버전에서는 오프라인 음성 입력을 사용할 수 없어요.",
                  nil);
           return;
         }
@@ -1057,7 +1057,7 @@ RCT_REMAP_METHOD(transcribeAudioFile,
       });
     }];
   } else {
-    reject(@"quick_input_speech_unavailable", @"이 iOS 버전에서는 음성 인식을 사용할 수 없습니다.", nil);
+    reject(@"quick_input_speech_unavailable", @"이 iOS 버전에서는 음성 입력을 사용할 수 없어요. 직접 입력해 주세요.", nil);
   }
 }
 

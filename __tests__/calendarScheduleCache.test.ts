@@ -233,7 +233,7 @@ describe("calendar schedule month cache", () => {
 
         const error = await refreshError;
         expect(error?.message).toBe(
-            "일정 캐시가 연속으로 변경되어 조회를 완료하지 못했습니다."
+            "일정이 변경되어 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
         );
         expect(fetcher).toHaveBeenCalledTimes(2);
         expect(readCalendarScheduleCache(

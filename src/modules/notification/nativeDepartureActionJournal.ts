@@ -13,6 +13,7 @@ import {
 } from "./departureAlarm";
 import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
 import { isDepartureAlarmAccountCleanupPending } from "./departureAlarmSync";
+import { acknowledgePushDelivery } from "./pushDeliveryAck";
 
 export type NativeDepartureActionDrainResult = {
     discovered: number;
@@ -180,6 +181,13 @@ async function drainEpoch(epoch: number): Promise<NativeDepartureActionDrainResu
             result.blocked = true;
             break;
         }
+        // The durable native journal itself proves the notification action was tapped. Record
+        // that evidence before the business mutation so retryable and terminal API outcomes keep
+        // the same RECEIVED/PRESENTED/ACTIONED telemetry. ACK failure is deliberately best-effort.
+        await acknowledgeNotificationInteractionBestEffort(
+            event,
+            "schedule_depart_now_action",
+        );
 
         try {
             // This is the final account/cleanup check before the authenticated mutation. Navigation
@@ -251,6 +259,32 @@ async function drainEpoch(epoch: number): Promise<NativeDepartureActionDrainResu
         }
     }
     return result;
+}
+
+async function acknowledgeNotificationInteractionBestEffort(
+    event: NativeDepartureActionEvent,
+    actionIdentifier: string,
+): Promise<void> {
+    if (!event.notificationLogicalEventKey) return;
+    const notificationData = {
+        logicalEventKey: event.notificationLogicalEventKey,
+        recipientMemberId: String(event.recipientMemberId),
+    };
+    await Promise.all([
+        acknowledgePushDelivery(notificationData, "RECEIVED", {
+            providerMessageId: event.providerMessageId,
+            occurredAt: event.occurredAt,
+        }),
+        acknowledgePushDelivery(notificationData, "PRESENTED", {
+            providerMessageId: event.providerMessageId,
+            occurredAt: event.occurredAt,
+        }),
+        acknowledgePushDelivery(notificationData, "ACTIONED", {
+            providerMessageId: event.providerMessageId,
+            actionIdentifier,
+            occurredAt: event.occurredAt,
+        }),
+    ]).then(() => undefined, () => undefined);
 }
 
 async function isCurrentEpochAccount(epoch: number, memberId: number): Promise<boolean> {

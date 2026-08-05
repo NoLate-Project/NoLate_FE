@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
     Pressable, Text, TextInput, View,
     Alert, Platform, ScrollView, StyleSheet, Animated, Switch,
@@ -31,11 +32,9 @@ import {
     reconcileScheduleRouteTiming,
 } from "../scheduleRouteTiming";
 import CategoryPickerRow from "../components/form/CategorySelectBox";
-import ScheduleCalendarSelectBox from "../components/form/ScheduleCalendarSelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
 import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
-import CalendarGlassSurface from "../components/calendar/CalendarGlassSurface";
 import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedule";
 import { upsertMyScheduleTravelPlan } from "../../../api/scheduleTravelPlans";
 import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
@@ -61,14 +60,13 @@ import {
     normalizeScheduleAlertMode,
     resolveScheduleAlertModePayload,
 } from "../scheduleAlertMode";
-import {
-    getScheduleCalendars,
-    type ScheduleCalendar,
-} from "../../../api/scheduleCalendars";
-import { getWritableScheduleCalendars } from "../calendarPermissions";
 import { canDeletePresentedSchedule } from "../schedulePermissions";
 import { applyTravelPlanToScheduleItem } from "../travelPlanPresentation";
 import { recoverDepartureAlarmsAfterMutation } from "../../notification/departureAlarmMutationRecovery";
+import {
+    getUserVisibleScheduleNotes,
+    preserveLegacyCalendarImportMetadata,
+} from "../calendarImportNotes";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -108,16 +106,11 @@ export default function ScheduleEdit() {
     const canDeleteSchedule = canDeletePresentedSchedule(item);
 
     const [title,           setTitle]           = useState(item?.title ?? "");
-    const [notes,           setNotes]           = useState(item?.notes ?? "");
+    const [notes,           setNotes]           = useState(getUserVisibleScheduleNotes(item?.notes) ?? "");
     const [categoryId,      setCategoryId]      = useState(
         resolveWritableScheduleCategoryId(item?.category, state.categories)
     );
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
-    const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
-    const [calendarId, setCalendarId] = useState<number | null>(item?.calendarId ?? null);
-    const [calendarLoading, setCalendarLoading] = useState(false);
-    const [calendarError, setCalendarError] = useState<string | null>(null);
-    const [calendarRetryKey, setCalendarRetryKey] = useState(0);
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
     const [originAddress, setOriginAddress]     = useState(item?.origin?.address);
@@ -175,7 +168,7 @@ export default function ScheduleEdit() {
             submitting: mutationPending || mutationPendingRef.current,
         });
         if (action === "ignore") {
-            Alert.alert("처리 중이에요", "일정 저장 또는 삭제가 끝난 뒤 다시 시도해 주세요.");
+            Alert.alert("처리 중이에요", "일정 저장 또는 삭제가 끝날 때까지 기다려 주세요.");
             return;
         }
         if (action === "close") {
@@ -183,9 +176,9 @@ export default function ScheduleEdit() {
             return;
         }
 
-        Alert.alert("변경사항을 버릴까요?", "저장하지 않은 일정 수정 내용이 사라집니다.", [
+        Alert.alert("저장하지 않고 나갈까요?", "수정한 내용이 저장되지 않아요.", [
             { text: "계속 수정", style: "cancel" },
-            { text: "버리기", style: "destructive", onPress: closeEditScreen },
+            { text: "나가기", style: "destructive", onPress: closeEditScreen },
         ]);
     }, [closeEditScreen, mutationPending]);
 
@@ -203,10 +196,10 @@ export default function ScheduleEdit() {
             return;
         }
 
-        Alert.alert("변경사항을 버릴까요?", "저장하지 않은 일정 수정 내용이 사라집니다.", [
+        Alert.alert("저장하지 않고 나갈까요?", "수정한 내용이 저장되지 않아요.", [
             { text: "계속 수정", style: "cancel" },
             {
-                text: "버리기",
+                text: "나가기",
                 style: "destructive",
                 onPress: () => {
                     discardChanges();
@@ -332,28 +325,6 @@ export default function ScheduleEdit() {
 
     useEffect(() => {
         let cancelled = false;
-        setCalendarLoading(true);
-        setCalendarError(null);
-
-        getScheduleCalendars()
-            .then((result) => {
-                if (cancelled) return;
-                setCalendars(getWritableScheduleCalendars(result));
-            })
-            .catch(() => {
-                if (!cancelled) setCalendarError("공유 캘린더를 불러오지 못했어요.");
-            })
-            .finally(() => {
-                if (!cancelled) setCalendarLoading(false);
-            });
-
-        return () => {
-            cancelled = true;
-        };
-    }, [calendarRetryKey]);
-
-    useEffect(() => {
-        let cancelled = false;
         getMySubscriptionPolicy()
             .then((policy) => {
                 if (cancelled) return;
@@ -380,9 +351,8 @@ export default function ScheduleEdit() {
         if (formDirtyRef.current) return;
 
         setTitle(item.title);
-        setNotes(item.notes ?? "");
+        setNotes(getUserVisibleScheduleNotes(item.notes) ?? "");
         setCategoryId(resolveWritableScheduleCategoryId(item.category, state.categories));
-        setCalendarId(item.calendarId ?? null);
         setOriginText(item.origin?.name ?? "");
         setDestinationText(item.destination?.name ?? "");
         setOriginAddress(item.origin?.address);
@@ -630,7 +600,6 @@ export default function ScheduleEdit() {
                         variant="schedule"
                         accessibilityLabel="수정할 일정을 불러오고 있어요"
                         title="일정을 불러오고 있어요"
-                        caption="수정할 일정 정보를 확인하고 있어요"
                     />
                 </View>
             );
@@ -760,10 +729,9 @@ export default function ScheduleEdit() {
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
-                calendarId,
-                calendarContentModeOverride: calendarId === item.calendarId
-                    ? item.calendarContentModeOverride
-                    : null,
+                // 수정 화면에서는 공유 캘린더 소속을 노출하거나 변경하지 않고 그대로 보존한다.
+                calendarId: item.calendarId ?? null,
+                calendarContentModeOverride: item.calendarContentModeOverride ?? null,
                 startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
@@ -773,7 +741,7 @@ export default function ScheduleEdit() {
                 locationName,
                 destination: nextDestination,
                 origin: hasRoutePlan ? nextOrigin : undefined,
-                notes: notes.trim() || undefined,
+                notes: preserveLegacyCalendarImportMetadata(item.notes, notes),
                 allDay: normalizedRange.allDay,
                 route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
                 notificationEnabled: resolvedNotificationEnabled,
@@ -794,7 +762,7 @@ export default function ScheduleEdit() {
                         type: "UPDATE_ITEM",
                         item: applyTravelPlanToScheduleItem(updated, plan),
                     });
-                } catch (personalPlanError) {
+                } catch {
                     markFormDirty();
                     try {
                         const refreshed = await getSchedule(item.id);
@@ -803,9 +771,8 @@ export default function ScheduleEdit() {
                         // 공용 저장 응답은 이미 반영했다. 재조회 실패로 그 상태까지 되돌리지 않는다.
                     }
                     Alert.alert(
-                        "일정 내용은 저장됐어요",
-                        "공용 일정 내용은 저장됐지만 내 이동 알림 설정은 저장하지 못했어요. " +
-                        `화면을 닫지 않았으니 다시 저장해 주세요.\n${getErrorMessage(personalPlanError)}`,
+                        "일정은 저장했어요",
+                        "출발 알림은 저장하지 못했어요. 다시 저장해 주세요.",
                     );
                     return;
                 }
@@ -826,7 +793,7 @@ export default function ScheduleEdit() {
     // 현재 일정을 삭제하고 이전 화면으로 돌아간다.
     const remove = () => {
         if (mutationPending || mutationPendingRef.current) return;
-        Alert.alert("삭제", "이 일정을 삭제할까요?", [
+        Alert.alert("일정을 삭제할까요?", "삭제한 일정은 되돌릴 수 없어요.", [
             { text: "취소", style: "cancel" },
             {
                 text: "삭제",
@@ -885,36 +852,76 @@ export default function ScheduleEdit() {
     });
 
     return (
-        <>
-        <ScrollView
-            style={[styles.editRoot, { backgroundColor: colors.background }]}
-            contentContainerStyle={[styles.scrollContent, { paddingTop: insets.top + 16 }]}
-            keyboardShouldPersistTaps="handled"
+        <View style={[styles.editRoot, { backgroundColor: colors.background }]}>
+        <View
+            style={[
+                styles.topHeader,
+                {
+                    paddingTop: insets.top + 6,
+                    backgroundColor: colors.background,
+                },
+            ]}
         >
-            <CalendarGlassSurface
-                prominent
-                variant="sheet"
-                style={[styles.editSheet, { borderColor: colors.border }]}
-            >
-            <View style={styles.headerRow}>
-                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 수정</Text>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="일정 수정 닫기"
-                    onPress={requestCloseEditScreen}
-                    style={[
-                        styles.closeBtn,
-                        {
-                            backgroundColor: mode === "dark"
-                                ? "rgba(255,255,255,0.08)"
-                                : "rgba(118,118,128,0.12)",
-                            borderColor: colors.border,
-                        },
-                    ]}
-                >
-                    <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>뒤로</Text>
-                </Pressable>
+            <View style={styles.pageContent}>
+                <View testID="schedule-edit-navigation" style={styles.navigationHeader}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 수정 닫기"
+                        onPress={requestCloseEditScreen}
+                        style={({ pressed }) => [
+                            styles.navigationBackButton,
+                            {
+                                backgroundColor: pressed
+                                    ? mode === "dark"
+                                        ? "rgba(255,255,255,0.08)"
+                                        : "rgba(15,23,42,0.05)"
+                                    : "transparent",
+                                opacity: pressed ? 0.58 : 1,
+                            },
+                        ]}
+                    >
+                        <Ionicons accessible={false} name="chevron-back" size={22} color={colors.textPrimary} />
+                    </Pressable>
+                    <Text accessibilityRole="header" style={[styles.navigationTitle, { color: colors.textPrimary }]}>일정 수정</Text>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 수정 저장"
+                        accessibilityState={{
+                            disabled: detailLoading || mutationPending || !title.trim() || !category,
+                            busy: mutationPending,
+                        }}
+                        disabled={detailLoading || mutationPending || !title.trim() || !category}
+                        onPress={save}
+                        style={({ pressed }) => [
+                            styles.navigationSaveButton,
+                            {
+                                opacity: detailLoading || mutationPending || !title.trim() || !category
+                                    ? 0.34
+                                    : pressed
+                                        ? 0.55
+                                        : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.navigationSaveText, { color: mode === "dark" ? "#4B9DFF" : "#2979FF" }]}>
+                            {mutationPending ? "저장 중" : "저장"}
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
+        </View>
+        <ScrollView
+            style={styles.editBody}
+            contentContainerStyle={[
+                styles.scrollContent,
+                {
+                    paddingBottom: Math.max(36, insets.bottom + 24),
+                },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+        >
+            <View testID="schedule-edit-page" style={[styles.pageContent, styles.formPageContent]}>
 
             {categoryError ? (
                 <CategoryLoadErrorBanner
@@ -951,6 +958,7 @@ export default function ScheduleEdit() {
                     accessibilityState={{ expanded: categoryPickerOpen, disabled: categoryOptions.length === 0 }}
                     onPress={() => setCategoryPickerOpen((current) => !current)}
                     disabled={categoryOptions.length === 0}
+                    hitSlop={5}
                     style={[styles.categoryInlineChip, { borderColor: colors.border }]}
                 >
                     <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
@@ -964,6 +972,9 @@ export default function ScheduleEdit() {
                 <CategoryPickerRow
                     categories={categoryOptions}
                     value={categoryId}
+                    expanded={categoryPickerOpen}
+                    hideTrigger
+                    onExpandedChange={setCategoryPickerOpen}
                     onChange={(nextCategoryId) => {
                         markFormDirty();
                         setCategoryId(nextCategoryId);
@@ -972,19 +983,6 @@ export default function ScheduleEdit() {
                     onManageCategories={() => router.push("/schedule/categories")}
                 />
             )}
-
-            <ScheduleCalendarSelectBox
-                calendars={calendars}
-                value={calendarId}
-                loading={calendarLoading}
-                error={calendarError}
-                onChange={(nextCalendarId) => {
-                    markFormDirty();
-                    setCalendarId(nextCalendarId);
-                }}
-                onRetry={() => setCalendarRetryKey((current) => current + 1)}
-                onManageCalendars={() => router.push("/schedule/calendars")}
-            />
 
             <LocationInputRow
                 originValue={originText}
@@ -996,25 +994,6 @@ export default function ScheduleEdit() {
                 onClear={routeInfo ? clearRoute : undefined}
             />
 
-            {!!routeInfo && (
-                <NotificationSettingsCard
-                    routeReady={routeReady}
-                    enabled={notificationEnabled}
-                    alertMode={alertMode}
-                    leadMinutes={notificationLeadMinutes}
-                    intervalMinutes={notificationIntervalMinutes}
-                    routeInfo={routeInfo}
-                    startAt={allDay
-                        ? startOfLocalScheduleDay(startDay)
-                        : mergeDateTime(startDay, startTime)}
-                    policy={subscriptionPolicy}
-                    onEnabledChange={(value) => { markFormDirty(); setNotificationEnabled(value); }}
-                    onAlertModeChange={(value) => { markFormDirty(); setAlertMode(value); }}
-                    onLeadMinutesChange={(value) => { markFormDirty(); setNotificationLeadMinutes(value); }}
-                    onIntervalMinutesChange={(value) => { markFormDirty(); setNotificationIntervalMinutes(value); }}
-                />
-            )}
-
             <View
                 style={[
                     styles.endTimeToggleRow,
@@ -1024,12 +1003,10 @@ export default function ScheduleEdit() {
                     },
                 ]}
             >
-                <View style={styles.endTimeToggleCopy}>
-                    <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종일</Text>
-                    <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>시간 없이 날짜로만 일정을 표시해요.</Text>
-                </View>
+                <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종일</Text>
                 <Switch
                     accessibilityLabel="종일 일정"
+                    accessibilityHint="켜면 시간 없이 날짜만 설정합니다"
                     value={allDay}
                     onValueChange={handleAllDayChange}
                     trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
@@ -1053,12 +1030,12 @@ export default function ScheduleEdit() {
                 </View>
                 <View style={styles.col}>
                     <Text style={[styles.label, { color: colors.textSecondary }]}>
-                        {allDay ? "마지막 날" : "시작 시간"}
+                        {allDay ? "종료 날짜" : "시작 시간"}
                     </Text>
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={allDay
-                            ? `마지막 날 ${formatScheduleFormDate(endDay)}`
+                            ? `종료 날짜 ${formatScheduleFormDate(endDay)}`
                             : `시작 시간 ${hhmmText(startTime)}`}
                         accessibilityState={{ expanded: picker === (allDay ? "endDate" : "startTime") }}
                         onPress={() => togglePicker(allDay ? "endDate" : "startTime")}
@@ -1081,12 +1058,10 @@ export default function ScheduleEdit() {
                         },
                     ]}
                 >
-                    <View style={styles.endTimeToggleCopy}>
-                        <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종료 시각 설정</Text>
-                        <Text style={[styles.endTimeToggleHint, { color: colors.textSecondary }]}>끄면 시작 시각만 일정에 표시돼요.</Text>
-                    </View>
+                    <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종료 시간</Text>
                     <Switch
-                        accessibilityLabel="종료 시각 설정"
+                        accessibilityLabel="종료 시간"
+                        accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
                         value={hasEndTime}
                         onValueChange={handleEndTimeEnabledChange}
                         trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
@@ -1161,6 +1136,27 @@ export default function ScheduleEdit() {
                 </Animated.View>
             </Animated.View>
 
+            {!!routeInfo && (
+                <NotificationSettingsCard
+                    variant="flat"
+                    routeReady={routeReady}
+                    enabled={notificationEnabled}
+                    alertMode={alertMode}
+                    scheduleId={id}
+                    leadMinutes={notificationLeadMinutes}
+                    intervalMinutes={notificationIntervalMinutes}
+                    routeInfo={routeInfo}
+                    startAt={allDay
+                        ? startOfLocalScheduleDay(startDay)
+                        : mergeDateTime(startDay, startTime)}
+                    policy={subscriptionPolicy}
+                    onEnabledChange={(value) => { markFormDirty(); setNotificationEnabled(value); }}
+                    onAlertModeChange={(value) => { markFormDirty(); setAlertMode(value); }}
+                    onLeadMinutesChange={(value) => { markFormDirty(); setNotificationLeadMinutes(value); }}
+                    onIntervalMinutesChange={(value) => { markFormDirty(); setNotificationIntervalMinutes(value); }}
+                />
+            )}
+
             <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
             <TextInput
                 value={notes}
@@ -1171,7 +1167,7 @@ export default function ScheduleEdit() {
                 accessibilityLabel="일정 메모"
                 multiline
                 maxLength={2000}
-                placeholder="추가로 기억할 내용을 입력하세요"
+                placeholder="메모 추가"
                 placeholderTextColor={colors.inputPlaceholder}
                 style={[
                     styles.input,
@@ -1184,53 +1180,26 @@ export default function ScheduleEdit() {
                 ]}
             />
 
-            <View style={styles.composerActionRow}>
+            {canDeleteSchedule ? (
                 <Pressable
+                    testID="schedule-edit-delete-action"
                     accessibilityRole="button"
-                    accessibilityLabel="일정 수정 저장"
-                    accessibilityState={{ disabled: detailLoading || mutationPending || !title.trim() || !category, busy: mutationPending }}
-                    disabled={detailLoading || mutationPending || !title.trim() || !category}
-                    onPress={save}
-                    style={[
-                            styles.saveBtn,
-                            {
-                                backgroundColor: mode === "dark"
-                                    ? "#1E68FF"
-                                    : "#2979FF",
-                                borderColor: mode === "dark" ? "#4B9DFF" : "#1E68FF",
-                                opacity: detailLoading || mutationPending || !title.trim() || !category ? 0.45 : 1,
-                            },
-                        ]}
-                    >
-                    <Text style={[styles.saveBtnText, { color: "#FFFFFF" }]}>
-                        {mutationPending ? "저장 중" : "저장"}
-                    </Text>
+                    accessibilityLabel="일정 삭제"
+                    accessibilityState={{ disabled: detailLoading || mutationPending, busy: mutationPending }}
+                    disabled={detailLoading || mutationPending}
+                    onPress={remove}
+                    style={({ pressed }) => [
+                        styles.deleteAction,
+                        { opacity: detailLoading || mutationPending ? 0.4 : pressed ? 0.55 : 1 },
+                    ]}
+                >
+                    <Ionicons accessible={false} name="trash-outline" size={17} color="#D9393E" />
+                    <Text style={styles.deleteActionText}>일정 삭제</Text>
                 </Pressable>
-
-                {canDeleteSchedule ? (
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="일정 삭제"
-                        accessibilityState={{ disabled: detailLoading || mutationPending, busy: mutationPending }}
-                        disabled={detailLoading || mutationPending}
-                        onPress={remove}
-                        style={[
-                            styles.deleteBtn,
-                            {
-                                backgroundColor: mode === "dark"
-                                    ? "rgba(239,68,68,0.12)"
-                                    : "rgba(239,68,68,0.08)",
-                                borderColor: "rgba(239,68,68,0.34)",
-                            },
-                        ]}
-                    >
-                        <Text style={styles.deleteBtnText}>삭제</Text>
-                    </Pressable>
-                ) : null}
+            ) : null}
             </View>
-            </CalendarGlassSurface>
         </ScrollView>
-        </>
+        </View>
     );
 }
 
@@ -1238,76 +1207,60 @@ const styles = StyleSheet.create({
     editRoot: {
         flex: 1,
     },
+    editBody: {
+        flex: 1,
+    },
+    topHeader: {
+        paddingHorizontal: 20,
+        zIndex: 2,
+    },
     scrollContent: {
-        paddingHorizontal: 18,
+        paddingHorizontal: 20,
         paddingBottom: 36,
     },
-    editSheet: {
-        borderWidth: 1,
-        borderRadius: 30,
-        padding: 18,
+    pageContent: {
+        width: "100%",
+        maxWidth: 560,
+        alignSelf: "center",
     },
-    headerRow: {
-        flexDirection: "row", alignItems: "center",
-        justifyContent: "space-between", marginBottom: 20,
+    formPageContent: {
+        paddingTop: 24,
     },
-    headerTitle:  { fontSize: 22, fontWeight: "900" },
-    closeBtn:     { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1 },
-    closeBtnText: { fontWeight: "600", fontSize: 13 },
-    previewCard: {
-        borderWidth: 1,
-        borderRadius: 18,
-        minHeight: 116,
-        marginBottom: 18,
-        padding: 14,
+    navigationHeader: {
+        minHeight: 44,
         flexDirection: "row",
-        gap: 12,
+        alignItems: "center",
     },
-    previewColorBar: {
-        width: 5,
-        borderRadius: 999,
-        alignSelf: "stretch",
+    navigationBackButton: {
+        width: 44,
+        height: 44,
+        marginLeft: -12,
+        borderRadius: 22,
+        alignItems: "center",
+        justifyContent: "center",
     },
-    previewBody: {
+    navigationTitle: {
         flex: 1,
         minWidth: 0,
-    },
-    previewTitle: {
         fontSize: 20,
+        lineHeight: 28,
         fontWeight: "900",
-        letterSpacing: 0,
     },
-    previewMeta: {
-        marginTop: 4,
-        fontSize: 13,
+    navigationSaveButton: {
+        width: 64,
+        height: 44,
+        marginRight: -8,
+        alignItems: "flex-end",
+        justifyContent: "center",
+    },
+    navigationSaveText: {
+        fontSize: 15,
+        lineHeight: 20,
         fontWeight: "800",
     },
-    previewChipRow: {
-        marginTop: 10,
-        flexDirection: "row",
-        gap: 7,
-    },
-    previewChip: {
-        minWidth: 0,
-        maxWidth: "50%",
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 999,
-        paddingHorizontal: 9,
-        paddingVertical: 5,
-        backgroundColor: "rgba(255,255,255,0.055)",
-    },
-    previewChipText: {
-        fontSize: 11,
-        fontWeight: "800",
-    },
-    previewSub: {
-        marginTop: 10,
-        fontSize: 12,
-        fontWeight: "700",
-    },
-    label:        { marginBottom: 6, fontSize: 13 },
+    label:        { marginBottom: 6, fontSize: 13, lineHeight: 18, fontWeight: "600" },
     endTimeToggleRow: {
-        minHeight: 58,
+        minHeight: 52,
         borderWidth: 1,
         borderRadius: 16,
         paddingHorizontal: 13,
@@ -1317,19 +1270,10 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 12,
     },
-    endTimeToggleCopy: {
-        flex: 1,
-        minWidth: 0,
-        paddingVertical: 9,
-    },
     endTimeToggleTitle: {
-        fontSize: 13,
+        flex: 1,
+        fontSize: 15,
         fontWeight: "800",
-    },
-    endTimeToggleHint: {
-        marginTop: 2,
-        fontSize: 11,
-        fontWeight: "600",
     },
     toggleSwitch: {
         alignSelf: "center",
@@ -1361,7 +1305,7 @@ const styles = StyleSheet.create({
     },
     categoryInlineChip: {
         maxWidth: 116,
-        height: 30,
+        height: 34,
         borderWidth: 1,
         borderRadius: 999,
         paddingHorizontal: 9,
@@ -1385,25 +1329,17 @@ const styles = StyleSheet.create({
     pickerContainer: {
         borderRadius: 16, borderWidth: 1, overflow: "hidden",
     },
-    composerActionRow: {
+    deleteAction: {
+        minHeight: 48,
+        marginTop: 2,
         flexDirection: "row",
-        gap: 10,
-        marginTop: 8,
-    },
-    saveBtn: {
-        flex: 1,
-        paddingVertical: 14,
-        borderRadius: 18,
-        borderWidth: 1,
         alignItems: "center",
+        justifyContent: "center",
+        gap: 7,
     },
-    saveBtnText: { fontWeight: "700", fontSize: 15 },
-    deleteBtn: {
-        minWidth: 92,
-        paddingVertical: 14,
-        borderRadius: 18,
-        alignItems: "center",
-        borderWidth: 1,
+    deleteActionText: {
+        color: "#D9393E",
+        fontSize: 14,
+        fontWeight: "700",
     },
-    deleteBtnText: { color: "#e74c3c", fontWeight: "700", fontSize: 15 },
 });

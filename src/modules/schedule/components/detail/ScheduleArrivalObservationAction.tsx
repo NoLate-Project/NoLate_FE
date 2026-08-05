@@ -270,7 +270,7 @@ export default function ScheduleArrivalObservationAction({
 
         Alert.alert(
             "도착을 기록할까요?",
-            "위치 정보는 수집하지 않습니다. 지금 또는 5분 전 시각을 참고용 자기 보고로 기록하며, 검증된 ETA 정확도 표본에는 포함하지 않습니다.",
+            "위치 정보는 수집하지 않아요. 지금 또는 5분 전을 도착 시각으로 저장하며, 예상 도착 시간의 정확도를 확인하는 참고용으로만 사용해요.",
             [
                 { text: "취소", style: "cancel" },
                 {
@@ -316,8 +316,8 @@ export default function ScheduleArrivalObservationAction({
                     style={[styles.hint, { color: colors.textSecondary }]}
                 >
                     {recordedAt
-                        ? "참고용 자기 보고 도착 시각이 저장됐어요."
-                        : "위치 추적 없이 참고용 도착 시각만 기록해요."}
+                        ? "도착 시각이 저장됐어요."
+                        : "위치 추적 없이 도착 시각만 기록해요."}
                 </Text>
             </View>
             <Pressable

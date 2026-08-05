@@ -419,7 +419,7 @@ export default function CalendarImportOnboarding() {
 
             const writableCategories = getWritableCalendarImportCategories(nextCategories);
             if (writableCategories.length === 0) {
-                throw new Error("일정을 저장할 수 있는 카테고리가 없습니다.");
+                throw new Error("일정을 저장할 카테고리가 없어요.");
             }
 
             dispatch({ type: "SET_CATEGORIES", categories: nextCategories });
@@ -507,7 +507,7 @@ export default function CalendarImportOnboarding() {
 
         const status = await completeMemberCuration();
         if (!status.curationCompleted) {
-            throw new Error("큐레이션 완료 상태를 저장하지 못했습니다.");
+            throw new Error("캘린더 설정을 저장하지 못했어요.");
         }
 
         // 서버 저장이 끝난 뒤 로컬 인증 상태를 갱신해야 보호된 일정 화면이 열린다.
@@ -675,7 +675,7 @@ export default function CalendarImportOnboarding() {
                 setErrorMessage(
                     outcome.failures.length > 0
                         ? formatCalendarScanFailures(outcome.failures)
-                        : "연결된 캘린더에서 일정을 불러오지 못했습니다."
+                        : "연결된 캘린더에서 일정을 불러오지 못했어요."
                 );
                 goToStep("permission");
                 return;
@@ -685,7 +685,7 @@ export default function CalendarImportOnboarding() {
                 outcome.scans.flatMap((scan) => scan.summary.candidates)
             );
             setScanStage(2);
-            setScanStatusMessage("가져올 일정 후보를 정리하고 있어요");
+            setScanStatusMessage("가져올 일정을 확인하고 있어요");
 
             try {
                 await withCalendarImportTimeout(
@@ -724,7 +724,7 @@ export default function CalendarImportOnboarding() {
             goToStep("select");
         } catch (error) {
             if (!isCurrentAttempt()) return;
-            setErrorMessage(getErrorMessage(error, "캘린더 일정을 불러오지 못했습니다."));
+            setErrorMessage(getErrorMessage(error, "캘린더 일정을 불러오지 못했어요."));
             goToStep("permission");
         }
     };
@@ -770,7 +770,7 @@ export default function CalendarImportOnboarding() {
 
         const code = result.params.code;
         if (!code || !googleAuthRequest.codeVerifier) {
-            throw new Error("Google Calendar 인증 코드를 확인하지 못했습니다.");
+            throw new Error("Google Calendar 연결을 완료하지 못했어요. 다시 시도해 주세요.");
         }
 
         const tokenResponse = await withCalendarImportTimeout(
@@ -1043,7 +1043,7 @@ export default function CalendarImportOnboarding() {
             }
 
             if (successCount === 0 && skippedCount === 0) {
-                throw lastError ?? new Error("선택한 일정을 가져오지 못했습니다.");
+                throw lastError ?? new Error("선택한 일정을 가져오지 못했어요.");
             }
 
             setImportedCount(successCount);
@@ -1066,7 +1066,7 @@ export default function CalendarImportOnboarding() {
             }
             goToStep("complete");
         } catch (error) {
-            Alert.alert("가져오기 실패", getErrorMessage(error, "선택한 일정을 가져오지 못했습니다."));
+            Alert.alert("가져오기 실패", getErrorMessage(error, "선택한 일정을 가져오지 못했어요."));
         } finally {
             await alarmRecoveryBatch.finish();
             setImporting(false);
@@ -1120,7 +1120,7 @@ export default function CalendarImportOnboarding() {
                         </Text>
 
                         <View style={styles.introPointList}>
-                            <IntroPoint label="원본 캘린더는 그대로 유지해요" />
+                            <IntroPoint label="기존 캘린더 일정은 바뀌지 않아요" />
                             <IntroPoint label="필요한 일정만 직접 선택해요" />
                         </View>
                     </View>
@@ -1370,7 +1370,7 @@ export default function CalendarImportOnboarding() {
                                 <Text style={styles.switchTitle}>경로와 출발 알림 준비</Text>
                                 <Text style={styles.switchHint}>
                                     {routeCandidateCount === 0
-                                        ? "경로 후보가 없어 일정만 가져와요"
+                                        ? "이동 경로를 찾지 못해 일정만 가져와요"
                                         : remainingNotificationQuota > 0
                                             ? `이번 달 최대 ${remainingNotificationQuota}개 자동 설정`
                                             : "이번 달 실시간 알림 한도를 모두 사용했어요"}
@@ -2325,8 +2325,8 @@ function formatCalendarScanFailures(failures: CalendarProviderScanFailure[]): st
 
 function buildCalendarProviderOptions(deviceProviderLabel: string): CalendarProviderOption[] {
     const deviceDescription = Platform.OS === "ios"
-        ? "이 iPhone에 동기화된 일정"
-        : "이 Android 기기에 동기화된 일정";
+        ? "이 iPhone의 캘린더 일정"
+        : "이 Android 기기의 캘린더 일정";
 
     return [
         {
@@ -2359,9 +2359,9 @@ function buildCalendarConsentItems(
             summary: "캘린더 목록과 다가오는 일정 정보를 읽어요.",
             required: true,
             detail: [
-                "캘린더 이름, 일정 제목, 시작/종료 시간, 장소, 메모, 종일 여부를 일정 후보로 확인합니다.",
-                "선택한 일정의 장소와 메모는 출발지·도착지 후보를 찾고 경로를 준비하는 데 사용합니다.",
-                "원본 캘린더의 일정은 수정하거나 삭제하지 않습니다.",
+                "캘린더 이름, 일정 제목, 시작/종료 시간, 장소, 메모, 종일 여부를 가져올 일정 목록에 보여줍니다.",
+                "선택한 일정의 장소와 메모는 이동 경로를 찾는 데 사용합니다.",
+                "기존 캘린더 일정은 수정하거나 삭제하지 않습니다.",
                 "기기 권한은 iOS/Android 설정에서 언제든 철회할 수 있습니다.",
             ],
         });
@@ -2371,12 +2371,12 @@ function buildCalendarConsentItems(
         items.push({
             id: "google_access",
             title: "Google Calendar 연동",
-            summary: "Google 동의 후 읽기 전용으로 일정을 확인해요.",
+            summary: "Google에 연결한 뒤 일정을 읽기만 해요.",
             required: true,
             detail: [
-                "Google Calendar API의 읽기 전용 범위로 캘린더 목록과 다가오는 일정 후보를 조회합니다.",
-                "선택한 일정의 장소와 메모는 출발지·도착지 후보를 찾고 경로를 준비하는 데 사용합니다.",
-                "접근 토큰은 기기 보안 저장소에 저장되며 현재 서버에는 저장하지 않습니다.",
+                "Google Calendar에서 캘린더 목록과 다가오는 일정을 읽기만 합니다.",
+                "선택한 일정의 장소와 메모는 이동 경로를 찾는 데 사용합니다.",
+                "Google 연결 정보는 이 기기에 안전하게 저장되며 NoLate 서버에는 저장하지 않습니다.",
                 "Google 계정 보안 설정에서 연동 권한을 철회할 수 있습니다.",
             ],
         });
@@ -2385,24 +2385,24 @@ function buildCalendarConsentItems(
     items.push(
         {
             id: "candidate_review",
-            title: "일정 후보 확인",
+            title: "가져올 일정 선택",
             summary: "가져올 일정은 직접 선택해요.",
             required: true,
             detail: [
-                "장소와 시간이 있는 일정은 기본 추천으로 표시합니다.",
-                "장소와 메모의 명시적인 이동 표현만 분석하며, 찾지 못한 위치는 임의로 확정하지 않습니다.",
-                "종일 일정이나 시간이 애매한 일정은 확인이 필요한 후보로 표시합니다.",
-                "후보 목록에서 전체 선택, 전체 해제, 캘린더별 선택을 할 수 있습니다.",
+                "장소와 시간이 있는 일정을 먼저 보여드립니다.",
+                "장소나 메모에서 이동 정보를 찾지 못하면 직접 확인할 수 있도록 남겨둡니다.",
+                "종일 일정이나 시간이 분명하지 않은 일정은 확인이 필요하다고 표시합니다.",
+                "목록에서 전체 선택, 전체 해제, 캘린더별 선택을 할 수 있습니다.",
             ],
         },
         {
             id: "selected_schedule_storage",
-            title: "선택 일정 저장",
+            title: "선택한 일정 저장",
             summary: "선택한 일정만 NoLate에 저장해요.",
             required: true,
             detail: [
-                "외부 캘린더 전체 원본을 서버에 일괄 저장하지 않습니다.",
-                "사용자가 가져오기로 선택한 일정의 제목, 시간, 장소, 메모, 카테고리, 경로와 알림 설정만 저장합니다.",
+                "캘린더 전체 내용은 NoLate 서버에 저장하지 않습니다.",
+                "직접 선택한 일정의 제목, 시간, 장소, 메모, 카테고리, 경로와 알림 설정만 저장합니다.",
                 "저장된 일정은 NoLate 일정 화면에서 수정하거나 삭제할 수 있습니다.",
             ],
         }

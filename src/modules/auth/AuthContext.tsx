@@ -28,6 +28,7 @@ import { clearAccountScopedLocalData } from "./accountCleanup";
 import { cancelPendingPushRegistration } from "../notification/pushRegistrationCoordinator";
 import { isDefinitiveAuthRejection } from "./refreshPolicy";
 import {
+    activateDepartureAlarmSyncForAuthenticatedAccount,
     isDepartureAlarmAccountCleanupPending,
 } from "../notification/departureAlarmSync";
 
@@ -170,6 +171,25 @@ export function AuthProvider({ children }: PropsWithChildren) {
             }
 
             if (!isCurrent()) return false;
+
+            if (authenticated && options.confirmedFreshLogin) {
+                const memberId = storedMember?.id;
+                if (
+                    !Number.isSafeInteger(memberId) ||
+                    (memberId ?? 0) <= 0 ||
+                    !(await activateDepartureAlarmSyncForAuthenticatedAccount(memberId as number))
+                ) {
+                    // Only the explicit login/signup boundary may remove a completed cleanup
+                    // fence and reactivate native delivery. Keep PushRegistrationBootstrap
+                    // unmounted until that privacy transition commits successfully.
+                    if (isCurrent()) {
+                        setIsAuthenticated(false);
+                        setIsCurationCompleted(false);
+                    }
+                    return false;
+                }
+                if (!isCurrent()) return false;
+            }
 
             setIsAuthenticated(authenticated);
             setIsCurationCompleted(authenticated && curationCompleted);

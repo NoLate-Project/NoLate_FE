@@ -6,8 +6,11 @@ import {
 } from "../auth/authStorage";
 import {
     applyDepartureAlarmPlanCommand,
+    activateNativeDepartureReminderAccount,
     clearAllDepartureAlarms,
+    type ForegroundNativeDepartureReminderPresentationResult,
     isDepartureAlarmNativeAvailable,
+    presentNativeDepartureReminderWithBoundAccount,
 } from "./departureAlarm";
 import * as SecureStore from "../storage/secureStorage";
 import {
@@ -46,6 +49,7 @@ export type DepartureAlarmSnapshotReconcileResult = {
 let syncGeneration = 0;
 let accountCleanupBlocked = false;
 let nativeMutationQueue: Promise<void> = Promise.resolve();
+let cleanupMarkerMutationQueue: Promise<void> = Promise.resolve();
 let snapshotInFlight: {
     memberId: number;
     generation: number;
@@ -70,9 +74,44 @@ function enqueueNativeMutation<T>(task: () => Promise<T>): Promise<T> {
     return result;
 }
 
+function enqueueCleanupMarkerMutation<T>(task: () => Promise<T>): Promise<T> {
+    const result = cleanupMarkerMutationQueue.then(task, task);
+    cleanupMarkerMutationQueue = result.then(
+        () => undefined,
+        () => undefined,
+    );
+    return result;
+}
+
+function persistAccountCleanupFence(): Promise<void> {
+    return enqueueCleanupMarkerMutation(() =>
+        SecureStore.setItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY, "1")
+    );
+}
+
+function removeAccountCleanupFence(): Promise<void> {
+    return enqueueCleanupMarkerMutation(() =>
+        SecureStore.deleteItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY)
+    );
+}
+
+function removeAccountCleanupFenceForActivation(
+    activationGeneration: number,
+): Promise<boolean> {
+    return enqueueCleanupMarkerMutation(async () => {
+        // Recheck inside the serialized marker task, not merely before scheduling it. A logout
+        // that started while native activation was awaiting has already advanced the generation
+        // and queued a durable SET; that newer fence must never be deleted by this stale login.
+        if (activationGeneration !== syncGeneration) return false;
+        await SecureStore.deleteItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY);
+        return activationGeneration === syncGeneration;
+    });
+}
+
 async function isAccountCleanupBlocked(): Promise<boolean> {
     if (accountCleanupBlocked) return true;
     try {
+        await cleanupMarkerMutationQueue;
         if (await SecureStore.getItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY) === "1") {
             accountCleanupBlocked = true;
             return true;
@@ -86,6 +125,64 @@ async function isAccountCleanupBlocked(): Promise<boolean> {
 
 export async function isDepartureAlarmAccountCleanupPending(): Promise<boolean> {
     return isAccountCleanupBlocked();
+}
+
+/**
+ * Serializes native reminder account binding with logout cleanup. The fence and identity are
+ * checked when this task actually reaches the queue, so a stale task queued before logout cannot
+ * reactivate the previous account after clear/deactivate completes.
+ */
+export async function activateDepartureReminderAccountForAuthenticatedSession(
+    memberId: number,
+): Promise<boolean> {
+    if (!Number.isSafeInteger(memberId) || memberId <= 0) return false;
+    const generation = syncGeneration;
+    return enqueueNativeMutation(async () => {
+        if (!(await isCurrentAccount(memberId, generation))) return false;
+        try {
+            if (!(await activateNativeDepartureReminderAccount(memberId))) return false;
+        } catch (error) {
+            logSyncDevelopment("[push] native reminder account bind failed", error);
+            return false;
+        }
+        return isCurrentAccount(memberId, generation);
+    });
+}
+
+/** Uses one guarded JS mutation plus the native process lock for bind + foreground display. */
+export async function presentForegroundDepartureReminderForAuthenticatedSession(
+    data: Record<string, unknown> | undefined,
+    providerMessageId?: string,
+): Promise<ForegroundNativeDepartureReminderPresentationResult> {
+    if (data?.type !== "SCHEDULE_DEPARTURE_REMINDER") return "unsupported";
+    const recipientText = typeof data.recipientMemberId === "string"
+        ? data.recipientMemberId
+        : undefined;
+    if (!recipientText) return "unsupported";
+    if (!/^[1-9]\d*$/.test(recipientText)) return "rejected";
+    const memberId = Number(recipientText);
+    if (!Number.isSafeInteger(memberId) || memberId <= 0) return "rejected";
+
+    const generation = syncGeneration;
+    return enqueueNativeMutation(async () => {
+        if (!(await isCurrentAccount(memberId, generation))) return "rejected";
+        try {
+            if (!(await activateNativeDepartureReminderAccount(memberId))) return "failed";
+        } catch (error) {
+            logSyncDevelopment("[push] native reminder account bind failed", error);
+            return "failed";
+        }
+        if (!(await isCurrentAccount(memberId, generation))) return "rejected";
+        const result = await presentNativeDepartureReminderWithBoundAccount(
+            data,
+            providerMessageId,
+        );
+        // Cleanup may establish its synchronous fence while the native bridge is running. It is
+        // queued behind this task and will cancel the row; never fall back to Expo for that stale
+        // account after the bridge returns.
+        if (!(await isCurrentAccount(memberId, generation))) return "rejected";
+        return result;
+    });
 }
 
 async function getCurrentAuthenticatedMemberId(): Promise<number | undefined> {
@@ -218,6 +315,17 @@ export function reconcileDepartureAlarmSnapshot(
             };
         }
         if (!(await isCurrentAccount(expectedMemberId, generation))) {
+            return {
+                fetched: false,
+                appliedCount: 0,
+                droppedCount: 0,
+                failedCount: 0,
+                reason: "ACCOUNT_CHANGED",
+            };
+        }
+        // Bind even when the authoritative snapshot is empty. The native background reminder
+        // service otherwise cannot distinguish this restored session from an old logged-out one.
+        if (!(await activateDepartureReminderAccountForAuthenticatedSession(expectedMemberId))) {
             return {
                 fetched: false,
                 appliedCount: 0,
@@ -406,14 +514,14 @@ export async function clearDepartureAlarmsForAccountCleanup(): Promise<boolean> 
     syncGeneration += 1;
     snapshotInFlight = null;
     try {
-        await SecureStore.setItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY, "1");
+        await persistAccountCleanupFence();
     } catch (error) {
         logSyncDevelopment("[alarm-sync] cleanup fence persistence failed", error);
         throw error;
     }
     const memberId = await getCurrentAuthenticatedMemberId();
     if (!isDepartureAlarmNativeAvailable()) {
-        throw new Error("Departure alarm native module is unavailable during account cleanup.");
+        throw new Error("로그아웃 중 출발 알림을 정리하지 못했어요.");
     }
     return enqueueNativeMutation(async () => {
         const cleared = await clearAllDepartureAlarms();
@@ -440,6 +548,17 @@ export async function activateDepartureAlarmSyncForAuthenticatedAccount(
             return false;
         }
         if (!isDepartureAlarmNativeAvailable()) return false;
+        // Persist an activation fence even when no logout marker existed. Until the entire
+        // clear/bind transaction commits, a crash or concurrent foreground task must observe a
+        // blocked account rather than an ambiguously active native binding.
+        accountCleanupBlocked = true;
+        try {
+            await persistAccountCleanupFence();
+        } catch (error) {
+            logSyncDevelopment("[alarm-sync] activation fence persistence failed", error);
+            return false;
+        }
+        if (activationGeneration !== syncGeneration) return false;
         try {
             // A public auth route can replace stored account A with account B
             // without first creating a cleanup marker. Always purge native
@@ -451,13 +570,34 @@ export async function activateDepartureAlarmSyncForAuthenticatedAccount(
             logSyncDevelopment("[alarm-sync] activation purge failed", error);
             return false;
         }
+        if (activationGeneration !== syncGeneration) return false;
+
         try {
-            await SecureStore.deleteItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY);
+            if (!(await removeAccountCleanupFenceForActivation(activationGeneration))) {
+                return false;
+            }
         } catch (error) {
             logSyncDevelopment("[alarm-sync] cleanup fence removal failed", error);
             return false;
         }
         if (activationGeneration !== syncGeneration) return false;
+
+        try {
+            if (!(await activateNativeDepartureReminderAccount(memberId))) {
+                await persistAccountCleanupFence();
+                return false;
+            }
+        } catch (error) {
+            // Fence deletion happens only while native is still INACTIVE. Restore it if the final
+            // bind cannot commit so a restart never mistakes this half-finished login for active.
+            await persistAccountCleanupFence().catch(() => undefined);
+            logSyncDevelopment("[alarm-sync] native reminder account bind failed", error);
+            return false;
+        }
+        if (activationGeneration !== syncGeneration) {
+            await persistAccountCleanupFence().catch(() => undefined);
+            return false;
+        }
 
         syncGeneration += 1;
         snapshotInFlight = null;
@@ -566,10 +706,11 @@ export async function resetDepartureAlarmSyncForTests(): Promise<void> {
     syncGeneration += 1;
     snapshotInFlight = null;
     await nativeMutationQueue;
-    await SecureStore.deleteItemAsync(DEPARTURE_ALARM_CLEANUP_BLOCK_KEY).catch(() => undefined);
+    await removeAccountCleanupFence().catch(() => undefined);
     await resetDepartureAlarmValidationRevisionJournalForTests();
     accountCleanupBlocked = false;
     nativeMutationQueue = Promise.resolve();
+    cleanupMarkerMutationQueue = Promise.resolve();
 }
 
 const DEPARTURE_ALARM_CLEANUP_BLOCK_KEY = "nolate_departure_alarm_cleanup_block_v1";

@@ -313,7 +313,7 @@ export default function ShareInvitationSheet({
 
             if (!invitation.token) {
                 setGeneratedLink(null);
-                Alert.alert("초대 링크 생성", "초대는 생성됐지만 링크 토큰이 응답에 없습니다.");
+                Alert.alert("초대 링크를 만들지 못했어요", "잠시 후 다시 시도해 주세요.");
                 return;
             }
 

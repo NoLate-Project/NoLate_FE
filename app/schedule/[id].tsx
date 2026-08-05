@@ -29,6 +29,7 @@ import {
     upsertMyScheduleTravelPlan,
 } from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
+import { getUserVisibleScheduleNotes } from "../../src/modules/schedule/calendarImportNotes";
 import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import ScheduleArrivalObservationAction from "../../src/modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import ScheduleMemoSheet from "../../src/modules/schedule/components/detail/ScheduleMemoSheet";
@@ -1092,7 +1093,7 @@ function ScheduleDetail() {
         routeSetupRequired: item.routeSetupRequired,
     }) === "plain";
     const showTopRouteBar = !isPlainSchedule;
-    const notesText = item.notes?.trim();
+    const notesText = getUserVisibleScheduleNotes(item.notes);
     const routeDetailMeta = [
         hasDetailedRoute
             ? `${arrivalTimeLabel} 도착`

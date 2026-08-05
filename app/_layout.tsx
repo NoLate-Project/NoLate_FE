@@ -7,6 +7,7 @@ import { BrandedLoadingState } from "../src/ui/BrandedLoader";
 import {
     configureForegroundPush,
     configurePushNavigation,
+    type NoLateCustomAlarmOpenOutcome,
 } from "../src/modules/notification/foregroundPush";
 import { useAuth } from "../src/modules/auth/AuthContext";
 import {
@@ -31,6 +32,10 @@ import {
     configureNativeAlarmNavigation,
     deactivateNativeAlarmNavigationJournal,
 } from "../src/modules/notification/nativeAlarmNavigationJournal";
+import {
+    createNoLateCustomAlarmRoute,
+    type NoLateCustomAlarmNavigationTarget,
+} from "../src/modules/notification/customAlarmNavigation";
 
 export default function RootLayout() {
     const router = useRouter();
@@ -59,6 +64,25 @@ export default function RootLayout() {
         }
         navigateToPushTarget(target);
     }, [navigateToPushTarget, pendingPushNavigation]);
+
+    const navigateToCustomAlarmTarget = useCallback((target: NoLateCustomAlarmNavigationTarget) => {
+        // A single reusable route owns alarm audio. `navigate` focuses/reuses it instead of
+        // stacking multiple mounted alarm screens whose audio loops could overlap.
+        router.navigate(createNoLateCustomAlarmRoute(target));
+    }, [router]);
+
+    const openOrDeferCustomAlarmTarget = useCallback((
+        target: NoLateCustomAlarmNavigationTarget,
+    ): NoLateCustomAlarmOpenOutcome => {
+        if (!pushNavigationReadyRef.current) {
+            // Keep the OS-owned last notification response until auth/navigation is ready. The
+            // listener is configured again when readiness changes, so no account-agnostic JS
+            // queue survives logout, reload, or a process crash.
+            return "deferred";
+        }
+        navigateToCustomAlarmTarget(target);
+        return "opened";
+    }, [navigateToCustomAlarmTarget]);
 
     useEffect(() => {
         const readiness = { isAuthenticated, isCurationCompleted, isLoading };
@@ -119,54 +143,70 @@ export default function RootLayout() {
     useEffect(() => {
         let unsubscribeForeground: (() => void) | undefined;
         let unsubscribeNavigation: (() => void) | undefined;
+        let disposed = false;
 
-        configureForegroundPush()
-            .then((listener) => {
+        const configureNotifications = async () => {
+            try {
+                const listener = await configureForegroundPush();
+                if (disposed) {
+                    listener();
+                    return;
+                }
                 unsubscribeForeground = listener;
-            })
-            .catch((error) => {
+            } catch (error) {
                 console.warn("[push] foreground notification setup failed", error);
-            });
-        configurePushNavigation(
-            (scheduleId) => {
-                openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
-            },
-            () => {
-                openOrDeferPushTarget({ kind: "shareInbox" });
-            },
-            ({ scheduleId, message }) => {
-                InteractionManager.runAfterInteractions(() => {
-                    Alert.alert(
-                        "알림 요청을 처리하지 못했어요",
-                        message,
-                        scheduleId
-                            ? [
-                                { text: "닫기", style: "cancel" },
-                                {
-                                    text: "일정 열기",
-                                    onPress: () => openOrDeferPushTarget({
-                                        kind: "scheduleDetail",
-                                        scheduleId,
-                                    }),
-                                },
-                            ]
-                            : [{ text: "확인" }],
-                    );
-                });
-            },
-        )
-            .then((listener) => {
-                unsubscribeNavigation = listener;
-            })
-            .catch((error) => {
+            }
+
+            try {
+                const listener = await configurePushNavigation(
+                    (scheduleId) => {
+                        openOrDeferPushTarget({ kind: "scheduleDetail", scheduleId });
+                    },
+                    () => {
+                        openOrDeferPushTarget({ kind: "shareInbox" });
+                    },
+                    ({ scheduleId, message }) => {
+                        InteractionManager.runAfterInteractions(() => {
+                            Alert.alert(
+                                "알림 요청을 처리하지 못했어요",
+                                message,
+                                scheduleId
+                                    ? [
+                                        { text: "닫기", style: "cancel" },
+                                        {
+                                            text: "일정 열기",
+                                            onPress: () => openOrDeferPushTarget({
+                                                kind: "scheduleDetail",
+                                                scheduleId,
+                                            }),
+                                        },
+                                    ]
+                                    : [{ text: "확인" }],
+                            );
+                        });
+                    },
+                    openOrDeferCustomAlarmTarget,
+                );
+                if (disposed) listener();
+                else unsubscribeNavigation = listener;
+            } catch (error) {
                 console.warn("[push] notification navigation setup failed", error);
-            });
+            }
+        };
+        configureNotifications().catch(() => undefined);
 
         return () => {
+            disposed = true;
             unsubscribeForeground?.();
             unsubscribeNavigation?.();
         };
-    }, [openOrDeferPushTarget]);
+    }, [
+        isAuthenticated,
+        isCurationCompleted,
+        isLoading,
+        openOrDeferCustomAlarmTarget,
+        openOrDeferPushTarget,
+    ]);
 
     return (
         <GestureHandlerRootView style={styles.gestureRoot}>
@@ -258,6 +298,14 @@ function RootNavigator() {
                     options={{
                         animation: "slide_from_right",
                         animationDuration: 200,
+                    }}
+                />
+                <Stack.Screen
+                    name="alarm"
+                    options={{
+                        animation: "fade",
+                        animationDuration: 140,
+                        gestureEnabled: false,
                     }}
                 />
                 <Stack.Screen name="schedule/categories" />

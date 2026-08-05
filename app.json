@@ -83,7 +83,7 @@
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "47",
+    "buildNumber": "50",
     "associatedDomains": [
       "applinks:nolate.jinuk.dev"
     ],

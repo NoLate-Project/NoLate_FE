@@ -69,6 +69,91 @@ struct NoLateStoredAlarm: Codable, Equatable, Sendable {
   }
 }
 
+/**
+ * Minimal immutable identity retained only when recovery expires a scheduled time-sensitive alarm.
+ *
+ * A cold-start UNNotificationResponse can outlive the active alarm row because iOS removes the
+ * delivered notification before JS starts and reconciliation expires alarms after the grace window.
+ * Keeping this response-only evidence on the tombstone lets that response prove the fire without
+ * retaining presentation text or making the expired alarm schedulable again.
+ */
+struct NoLateAlarmNotificationResponseEvidence: Codable, Equatable, Sendable {
+  let nativeAlarmId: String
+  let alarmId: String
+  let scheduleId: String
+  let generation: Int64
+  let recipientMemberId: Int64
+  let occurrenceId: String?
+  let scheduledForMilliseconds: Int64
+  let sourceTriggerAtMilliseconds: Int64
+  let logicalEventKey: String?
+
+  init?(alarm: NoLateStoredAlarm) {
+    guard
+      alarm.deliveryMode == .timeSensitive,
+      alarm.state == .scheduled,
+      let recipientMemberId = alarm.recipientMemberId
+    else {
+      return nil
+    }
+    self.nativeAlarmId = alarm.alarmId
+    self.alarmId = alarm.backendAlarmId
+    self.scheduleId = alarm.scheduleId
+    self.generation = alarm.generation
+    self.recipientMemberId = recipientMemberId
+    self.occurrenceId = alarm.occurrenceId
+    self.scheduledForMilliseconds = alarm.effectiveTriggerAtMilliseconds
+    self.sourceTriggerAtMilliseconds = alarm.sourceTriggerAtMilliseconds
+    self.logicalEventKey = alarm.logicalEventKey
+    guard isCanonical else { return nil }
+  }
+
+  var isCanonical: Bool {
+    let hasCanonicalOccurrence = occurrenceId.map {
+      ["M15", "M10", "M5", "M0"].contains($0)
+    } ?? true
+    guard
+      let scheduleNumber = Int64(scheduleId),
+      scheduleNumber > 0,
+      generation >= 0,
+      generation <= noLateMaximumSafeJavaScriptInteger,
+      recipientMemberId > 0,
+      recipientMemberId <= noLateMaximumSafeJavaScriptInteger,
+      sourceTriggerAtMilliseconds >= 0,
+      scheduledForMilliseconds >= sourceTriggerAtMilliseconds,
+      scheduledForMilliseconds - sourceTriggerAtMilliseconds < 1_000,
+      hasCanonicalOccurrence
+    else {
+      return false
+    }
+    let expectedAlarmId = "schedule:\(scheduleId):member:\(recipientMemberId)"
+    let expectedNativeAlarmId = occurrenceId.map {
+      "\(expectedAlarmId):occurrence:\($0)"
+    } ?? expectedAlarmId
+    return alarmId == expectedAlarmId && nativeAlarmId == expectedNativeAlarmId
+  }
+
+  func fireEvent(
+    eventId: String,
+    occurredAtMilliseconds: Int64,
+    timingBasis: NoLateAlarmFireTimingBasis
+  ) -> NoLateStoredAlarmFireEvent {
+    NoLateStoredAlarmFireEvent(
+      eventId: eventId,
+      alarmId: alarmId,
+      scheduleId: scheduleId,
+      generation: generation,
+      recipientMemberId: recipientMemberId,
+      scheduledForMilliseconds: scheduledForMilliseconds,
+      sourceTriggerAtMilliseconds: sourceTriggerAtMilliseconds,
+      occurredAtMilliseconds: occurredAtMilliseconds,
+      timingBasis: timingBasis,
+      logicalEventKey: logicalEventKey,
+      occurrenceId: occurrenceId
+    )
+  }
+}
+
 struct NoLateStoredAlarmFireEvent: Codable, Equatable, Sendable {
   let eventId: String
   let alarmId: String
@@ -208,6 +293,27 @@ struct NoLateAlarmTombstone: Codable, Equatable, Sendable {
   let alarmId: String
   let generation: Int64
   let updatedAtMilliseconds: Int64
+  let expiredResponseEvidence: NoLateAlarmNotificationResponseEvidence?
+
+  init(
+    alarmId: String,
+    generation: Int64,
+    updatedAtMilliseconds: Int64,
+    expiredResponseEvidence: NoLateAlarmNotificationResponseEvidence? = nil
+  ) {
+    self.alarmId = alarmId
+    self.generation = generation
+    self.updatedAtMilliseconds = updatedAtMilliseconds
+    self.expiredResponseEvidence = expiredResponseEvidence
+  }
+
+  func withoutExpiredResponseEvidence() -> NoLateAlarmTombstone {
+    NoLateAlarmTombstone(
+      alarmId: alarmId,
+      generation: generation,
+      updatedAtMilliseconds: updatedAtMilliseconds
+    )
+  }
 }
 
 struct NoLateAlarmStoreSnapshot: Codable, Equatable, Sendable {
@@ -310,6 +416,18 @@ enum NoLateAlarmRecoveryPolicy {
       : .keep
   }
 
+  static func expiredTombstone(
+    for alarm: NoLateStoredAlarm,
+    nowMilliseconds: Int64
+  ) -> NoLateAlarmTombstone {
+    NoLateAlarmTombstone(
+      alarmId: alarm.alarmId,
+      generation: alarm.generation,
+      updatedAtMilliseconds: nowMilliseconds,
+      expiredResponseEvidence: NoLateAlarmNotificationResponseEvidence(alarm: alarm)
+    )
+  }
+
   static func mayCancelTombstonedDelivery(
     captured: NoLateAlarmTombstone,
     current: NoLateAlarmTombstone?,
@@ -407,21 +525,66 @@ struct NoLateValidatedNotificationResponseFire: Sendable {
 }
 
 enum NoLateAlarmNotificationResponsePolicy {
+  static func matchingEvidence(
+    activeAlarm: NoLateStoredAlarm?,
+    tombstone: NoLateAlarmTombstone?,
+    response: NoLateValidatedNotificationResponseFire,
+    nowMilliseconds: Int64
+  ) -> NoLateAlarmNotificationResponseEvidence? {
+    if let activeAlarm {
+      guard
+        let evidence = NoLateAlarmNotificationResponseEvidence(alarm: activeAlarm),
+        matches(evidence: evidence, response: response)
+      else {
+        return nil
+      }
+      return evidence
+    }
+
+    guard
+      let tombstone,
+      tombstone.alarmId == response.nativeAlarmId,
+      tombstone.generation == response.generation,
+      tombstone.updatedAtMilliseconds >= 0,
+      nowMilliseconds >= tombstone.updatedAtMilliseconds,
+      nowMilliseconds - tombstone.updatedAtMilliseconds <=
+        noLateTombstoneRetentionMilliseconds,
+      let evidence = tombstone.expiredResponseEvidence,
+      evidence.nativeAlarmId == tombstone.alarmId,
+      evidence.generation == tombstone.generation,
+      tombstone.updatedAtMilliseconds >= evidence.scheduledForMilliseconds,
+      response.occurredAtMilliseconds <= tombstone.updatedAtMilliseconds,
+      matches(evidence: evidence, response: response)
+    else {
+      return nil
+    }
+    return evidence
+  }
+
   static func matches(
     alarm: NoLateStoredAlarm,
     response: NoLateValidatedNotificationResponseFire
   ) -> Bool {
-    alarm.deliveryMode == .timeSensitive &&
-      alarm.state == .scheduled &&
-      alarm.alarmId == response.nativeAlarmId &&
-      alarm.backendAlarmId == response.alarmId &&
-      alarm.scheduleId == response.scheduleId &&
-      alarm.generation == response.generation &&
-      alarm.recipientMemberId == response.recipientMemberId &&
-      alarm.occurrenceId == response.occurrenceId &&
+    guard let evidence = NoLateAlarmNotificationResponseEvidence(alarm: alarm) else {
+      return false
+    }
+    return matches(evidence: evidence, response: response)
+  }
+
+  private static func matches(
+    evidence: NoLateAlarmNotificationResponseEvidence,
+    response: NoLateValidatedNotificationResponseFire
+  ) -> Bool {
+    evidence.isCanonical &&
+      evidence.nativeAlarmId == response.nativeAlarmId &&
+      evidence.alarmId == response.alarmId &&
+      evidence.scheduleId == response.scheduleId &&
+      evidence.generation == response.generation &&
+      evidence.recipientMemberId == response.recipientMemberId &&
+      evidence.occurrenceId == response.occurrenceId &&
       // UNNotification.date is the observed delivery time. Tolerate the one-second calendar
       // trigger rounding boundary, but never accept a response dated before this alarm.
-      response.occurredAtMilliseconds >= alarm.effectiveTriggerAtMilliseconds - 1_000
+      response.occurredAtMilliseconds >= evidence.scheduledForMilliseconds - 1_000
   }
 }
 
@@ -802,5 +965,119 @@ enum NoLateAlarmPresentationPolicy {
       ? finalTitle
       : "\(finalTitle) · \(normalizedBody)"
     return String(combined.prefix(160))
+  }
+}
+
+enum NoLateAlarmSoundPreference: String, CaseIterable {
+  case chime = "CHIME"
+  case bell = "BELL"
+  case beep = "BEEP"
+
+  static let defaultValue: Self = .chime
+
+  var notificationResourceName: String {
+    switch self {
+    case .chime:
+      return "nolate_departure_alert"
+    case .bell:
+      return "nolate_alarm_bell_alert"
+    case .beep:
+      return "nolate_alarm_beep_alert"
+    }
+  }
+}
+
+/**
+ * Stable identifiers shared by the native notification scheduler and the JS response router.
+ *
+ * Custom-alarm notification actions only open NoLate. They deliberately do not reuse the
+ * production `schedule_depart_now_action` identifier, because that identifier commits a departure
+ * mutation before the app UI is shown.
+ */
+enum NoLateCustomAlarmNotificationContract {
+  static let payloadType = "NOLATE_CUSTOM_ALARM"
+  static let categoryIdentifier = "nolate_custom_alarm"
+  static let previewCategoryIdentifier = "nolate_custom_alarm_preview"
+  static let legacyCategoryIdentifier = "schedule_depart_now"
+  static let openActionIdentifier = "nolate_custom_alarm_open_action"
+  static let confirmDepartureActionIdentifier =
+    "nolate_custom_alarm_confirm_departure_action"
+  static let previewRouteActionIdentifier = "nolate_custom_alarm_preview_route_action"
+  static let previewDepartureActionIdentifier =
+    "nolate_custom_alarm_preview_departure_action"
+  static let legacyDepartureActionIdentifier = "schedule_depart_now_action"
+  static let legacySnoozeActionIdentifier = "schedule_snooze_action"
+
+  static let previewRequestIdentifierPrefix = "nolate.custom-alarm.preview."
+  static let previewRequestIdentifier = "\(previewRequestIdentifierPrefix)current"
+
+  static let managedCategoryIdentifiers: Set<String> = [
+    categoryIdentifier,
+    previewCategoryIdentifier,
+    legacyCategoryIdentifier
+  ]
+
+  // Only notifications that open NoLate's custom alarm screen follow the selected alarm sound.
+  // The legacy standard-push category remains on its own notification sound policy.
+  static let soundManagedCategoryIdentifiers: Set<String> = [
+    categoryIdentifier,
+    previewCategoryIdentifier
+  ]
+
+  static let previewTitle = "출발 알람 미리보기"
+  static let previewBody = "알람이 잘 울리는지 확인해 보세요."
+
+  static func categoryIdentifiersAfterRegistration(
+    preserving existing: Set<String>
+  ) -> Set<String> {
+    existing.union(managedCategoryIdentifiers)
+  }
+
+  static func shouldRefreshSound(categoryIdentifier: String) -> Bool {
+    soundManagedCategoryIdentifiers.contains(categoryIdentifier)
+  }
+
+  static func previewRequestIdentifiers(
+    from identifiers: [String]
+  ) -> [String] {
+    identifiers.filter { $0.hasPrefix(previewRequestIdentifierPrefix) }
+  }
+
+  static func normalizedScheduleId(_ value: String?) throws -> String? {
+    guard let value else { return nil }
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+      !normalized.isEmpty,
+      normalized.count <= 200,
+      normalized.range(
+        of: "^[1-9][0-9]*$",
+        options: .regularExpression
+      ) != nil
+    else {
+      throw NoLateAlarmValidationError.invalid(
+        "scheduleId must be a positive decimal identifier."
+      )
+    }
+    return normalized
+  }
+
+  static func payload(
+    alarmId: String,
+    previewId: String?,
+    scheduleId: String?,
+    title: String?,
+    body: String?,
+    isPreview: Bool
+  ) -> [String: String] {
+    var data: [String: String] = [
+      "type": payloadType,
+      "alarmId": alarmId,
+      "isPreview": isPreview ? "true" : "false"
+    ]
+    if let previewId { data["previewId"] = previewId }
+    if let scheduleId { data["scheduleId"] = scheduleId }
+    if let title { data["title"] = title }
+    if let body { data["body"] = body }
+    return data
   }
 }

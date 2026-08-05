@@ -5,6 +5,7 @@ import {
     getScheduleAllDayFormEndDay,
 } from "./scheduleFormDate";
 import type { ScheduleItem } from "./types";
+import { getUserVisibleScheduleNotes } from "./calendarImportNotes";
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
 
@@ -54,7 +55,7 @@ export function buildPlainScheduleDetailPresentation(
         categoryTitle: item.category.title,
         categoryColor: item.category.color,
         location: getPlainScheduleLocation(item),
-        notes: item.notes?.trim() || undefined,
+        notes: getUserVisibleScheduleNotes(item.notes),
         allDay,
         hasEndTime,
         startDate: formatScheduleFormDate(startAt),

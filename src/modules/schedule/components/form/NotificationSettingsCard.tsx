@@ -1,22 +1,37 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import { AppState, Linking, Pressable, StyleSheet, Switch, Text, View } from "react-native";
 
 import type { SubscriptionPolicy } from "../../../../api/subscription";
 import {
     getDepartureAlarmCapabilities,
+    getNativeNoLateAlarmSoundPreference,
     openExactAlarmSettings,
     openFullScreenAlarmSettings,
-    scheduleDepartureTestAlarm,
+    setNativeNoLateAlarmSoundPreference,
     type DepartureAlarmCapabilities,
 } from "../../../notification/departureAlarm";
+import type { NoLateCustomAlarmAudioSession } from "../../../notification/customAlarmAudio";
+import {
+    DEFAULT_NOLATE_ALARM_SOUND_ID,
+    getNoLateAlarmSound,
+    getNoLateAlarmSoundPreference,
+    setNoLateAlarmSoundPreference,
+    type NoLateAlarmSoundId,
+} from "../../../notification/customAlarmSounds";
+import { requestPushNotificationPermission } from "../../../notification/pushPermission";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatRouteClock, formatRouteDuration, type RouteInfo } from "../../routeInfo";
+import { SCHEDULE_ALERT_MODE_PRESENTATION } from "../../scheduleAlertMode";
 import type { ScheduleAlertMode } from "../../types";
+import AlarmSoundPickerSheet from "./AlarmSoundPickerSheet";
 
 type Props = {
+    variant?: "card" | "flat";
     routeReady: boolean;
     enabled: boolean;
     alertMode: ScheduleAlertMode;
+    scheduleId?: string;
     leadMinutes: number;
     intervalMinutes: number;
     routeInfo?: RouteInfo;
@@ -29,6 +44,7 @@ type Props = {
 };
 
 export default function NotificationSettingsCard({
+    variant = "card",
     routeReady,
     enabled,
     alertMode,
@@ -47,11 +63,28 @@ export default function NotificationSettingsCard({
     const [capabilityLoading, setCapabilityLoading] = useState(false);
     const [capabilityError, setCapabilityError] = useState<string | null>(null);
     const [pendingAction, setPendingAction] = useState<
-        "notification" | "exact" | "fullScreen" | "test" | null
+        | "notification"
+        | "notificationPermission"
+        | "exact"
+        | "fullScreen"
+        | "soundPreference"
+        | "soundPreview"
+        | null
     >(null);
     const [alarmFeedback, setAlarmFeedback] = useState<string | null>(null);
+    const [selectedSoundId, setSelectedSoundId] = useState<NoLateAlarmSoundId>(DEFAULT_NOLATE_ALARM_SOUND_ID);
+    const [previewingSoundId, setPreviewingSoundId] = useState<NoLateAlarmSoundId | null>(null);
+    const [soundPickerVisible, setSoundPickerVisible] = useState(false);
     const mountedRef = useRef(false);
     const capabilityRequestRef = useRef(0);
+    const soundPreferenceRequestRef = useRef(0);
+    const soundPreviewRequestRef = useRef(0);
+    const soundPickerGenerationRef = useRef(0);
+    const soundPickerVisibleRef = useRef(false);
+    const appStateActiveRef = useRef(true);
+    const soundPreviewSessionRef = useRef<NoLateCustomAlarmAudioSession | null>(null);
+    const soundPreviewingIdRef = useRef<NoLateAlarmSoundId | null>(null);
+    const soundPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const quotaReached = policy.usedSmartSchedulesThisMonth >= policy.maxSmartSchedulesPerMonth;
     const canEnable = routeReady && !quotaReached;
     const accentBlue = mode === "dark" ? "#4B9DFF" : "#2979FF";
@@ -59,17 +92,43 @@ export default function NotificationSettingsCard({
     const warningColor = mode === "dark" ? "#FFBF69" : "#A85C00";
     const routeMinutes = routeInfo?.totalDurationMinutes;
     const eventStartAt = startAt && !Number.isNaN(startAt.getTime()) ? startAt : undefined;
-    const recommendedDepartureAt = eventStartAt && typeof routeMinutes === "number"
-        ? new Date(eventStartAt.getTime() - routeMinutes * 60 * 1000)
-        : undefined;
+    const recommendedDepartureAt =
+        eventStartAt && typeof routeMinutes === "number"
+            ? new Date(eventStartAt.getTime() - routeMinutes * 60 * 1000)
+            : undefined;
     const arrivalAt = eventStartAt;
     const showAlarmControls = enabled && alertMode === "ALARM";
+    const flat = variant === "flat";
+
+    const stopSoundPreview = useCallback(async () => {
+        soundPreviewRequestRef.current += 1;
+        if (soundPreviewTimerRef.current) {
+            clearTimeout(soundPreviewTimerRef.current);
+            soundPreviewTimerRef.current = null;
+        }
+        const session = soundPreviewSessionRef.current;
+        soundPreviewSessionRef.current = null;
+        soundPreviewingIdRef.current = null;
+        if (mountedRef.current) setPreviewingSoundId(null);
+        await session?.stop().catch(() => undefined);
+    }, []);
 
     useEffect(() => {
         mountedRef.current = true;
         return () => {
             mountedRef.current = false;
+            appStateActiveRef.current = false;
+            soundPickerVisibleRef.current = false;
+            soundPickerGenerationRef.current += 1;
             capabilityRequestRef.current += 1;
+            soundPreferenceRequestRef.current += 1;
+            soundPreviewRequestRef.current += 1;
+            if (soundPreviewTimerRef.current) clearTimeout(soundPreviewTimerRef.current);
+            soundPreviewTimerRef.current = null;
+            const session = soundPreviewSessionRef.current;
+            soundPreviewSessionRef.current = null;
+            soundPreviewingIdRef.current = null;
+            session?.stop().catch(() => undefined);
         };
     }, []);
 
@@ -88,7 +147,7 @@ export default function NotificationSettingsCard({
         } catch {
             if (mountedRef.current && capabilityRequestRef.current === requestId) {
                 setCapabilities(null);
-                setCapabilityError("알람 권한 상태를 확인하지 못했어요.");
+                setCapabilityError("출발 알람 상태를 불러오지 못했어요.");
             }
         } finally {
             if (mountedRef.current && capabilityRequestRef.current === requestId) {
@@ -100,37 +159,75 @@ export default function NotificationSettingsCard({
     useEffect(() => {
         if (!showAlarmControls) {
             capabilityRequestRef.current += 1;
+            soundPreferenceRequestRef.current += 1;
+            soundPickerGenerationRef.current += 1;
+            soundPickerVisibleRef.current = false;
             setAlarmFeedback(null);
+            setSoundPickerVisible(false);
+            setPendingAction(current =>
+                current === "soundPreference" || current === "soundPreview" ? null : current,
+            );
+            stopSoundPreview().catch(() => undefined);
             return undefined;
         }
 
+        if (AppState.currentState === "active") appStateActiveRef.current = true;
+        if (AppState.currentState === "background" || AppState.currentState === "inactive") {
+            appStateActiveRef.current = false;
+        }
         refreshCapabilities().catch(() => undefined);
-        const subscription = AppState.addEventListener("change", (state) => {
+        const subscription = AppState.addEventListener("change", state => {
+            appStateActiveRef.current = state === "active";
             if (state === "active") {
                 refreshCapabilities().catch(() => undefined);
+            } else {
+                stopSoundPreview().catch(() => undefined);
             }
         });
         return () => {
             subscription.remove();
             capabilityRequestRef.current += 1;
         };
-    }, [refreshCapabilities, showAlarmControls]);
+    }, [refreshCapabilities, showAlarmControls, stopSoundPreview]);
 
-    const openAlarmSetting = useCallback(async (
-        kind: "notification" | "exact" | "fullScreen",
-    ) => {
+    useEffect(() => {
+        if (!showAlarmControls) return undefined;
+        const requestId = soundPreferenceRequestRef.current + 1;
+        soundPreferenceRequestRef.current = requestId;
+
+        Promise.all([
+            getNoLateAlarmSoundPreference(),
+            typeof getNativeNoLateAlarmSoundPreference === "function"
+                ? getNativeNoLateAlarmSoundPreference().catch(() => undefined)
+                : Promise.resolve(undefined),
+        ]).then(([localSoundId, nativeSoundId]) => {
+            if (!mountedRef.current || requestId !== soundPreferenceRequestRef.current) return;
+            const resolvedSoundId = nativeSoundId ?? localSoundId;
+            setSelectedSoundId(resolvedSoundId);
+            if (nativeSoundId && nativeSoundId !== localSoundId) {
+                setNoLateAlarmSoundPreference(nativeSoundId).catch(() => undefined);
+            } else if (!nativeSoundId && typeof setNativeNoLateAlarmSoundPreference === "function") {
+                setNativeNoLateAlarmSoundPreference(localSoundId).catch(() => false);
+            }
+        });
+
+        return () => {
+            soundPreferenceRequestRef.current += 1;
+        };
+    }, [showAlarmControls]);
+
+    const openAlarmSetting = useCallback(async (kind: "notification" | "exact" | "fullScreen") => {
         setPendingAction(kind);
         setAlarmFeedback(null);
         try {
-            const opened = kind === "notification"
-                ? await Linking.openSettings().then(() => true)
-                : kind === "exact"
+            const opened =
+                kind === "notification"
+                    ? await Linking.openSettings().then(() => true)
+                    : kind === "exact"
                     ? await openExactAlarmSettings()
                     : await openFullScreenAlarmSettings();
             if (!mountedRef.current) return;
-            setAlarmFeedback(opened
-                ? "설정을 변경한 뒤 앱으로 돌아오면 상태를 자동으로 다시 확인해요."
-                : "설정 화면을 열지 못했어요. 기기 설정에서 NoLate 알람 권한을 확인해 주세요.");
+            setAlarmFeedback(opened ? null : "설정 화면을 열지 못했어요. 기기 설정에서 NoLate 알림을 열어 주세요.");
         } catch {
             if (!mountedRef.current) return;
             setAlarmFeedback("설정 화면을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
@@ -139,70 +236,158 @@ export default function NotificationSettingsCard({
         }
     }, []);
 
-    const runTestAlarm = useCallback(async () => {
-        setPendingAction("test");
+    const toggleSoundPreview = useCallback(async (soundId: NoLateAlarmSoundId) => {
+        if (soundPreviewSessionRef.current && soundPreviewingIdRef.current === soundId) {
+            await stopSoundPreview();
+            return;
+        }
+
+        await stopSoundPreview();
+        if (!appStateActiveRef.current || !soundPickerVisibleRef.current) return;
+
+        const requestId = soundPreviewRequestRef.current + 1;
+        soundPreviewRequestRef.current = requestId;
+        setPendingAction("soundPreview");
         setAlarmFeedback(null);
         try {
-            const result = await scheduleDepartureTestAlarm(10);
+            const { startNoLateCustomAlarmAudio } = require("../../../notification/customAlarmAudio") as typeof import("../../../notification/customAlarmAudio");
+            const session = await startNoLateCustomAlarmAudio(soundId);
+            if (
+                !mountedRef.current ||
+                requestId !== soundPreviewRequestRef.current ||
+                !appStateActiveRef.current ||
+                !soundPickerVisibleRef.current
+            ) {
+                await session.stop();
+                return;
+            }
+            soundPreviewSessionRef.current = session;
+            soundPreviewingIdRef.current = soundId;
+            setPreviewingSoundId(soundId);
+            soundPreviewTimerRef.current = setTimeout(() => {
+                stopSoundPreview().catch(() => undefined);
+            }, 10_000);
+        } catch {
+            if (!mountedRef.current || requestId !== soundPreviewRequestRef.current) return;
+            setAlarmFeedback("소리를 재생하지 못했어요.");
+        } finally {
+            if (mountedRef.current) {
+                setPendingAction(current => (current === "soundPreview" ? null : current));
+            }
+        }
+    }, [stopSoundPreview]);
+
+    const selectAlarmSound = useCallback(async (soundId: NoLateAlarmSoundId) => {
+        if (soundId === selectedSoundId) {
+            await toggleSoundPreview(soundId);
+            return;
+        }
+
+        const previousSoundId = selectedSoundId;
+        const requestId = soundPreferenceRequestRef.current + 1;
+        const pickerGeneration = soundPickerGenerationRef.current;
+        soundPreferenceRequestRef.current = requestId;
+        setSelectedSoundId(soundId);
+        setPendingAction("soundPreference");
+        setAlarmFeedback(null);
+        await stopSoundPreview();
+
+        try {
+            const nativeSaved = typeof setNativeNoLateAlarmSoundPreference === "function"
+                ? await setNativeNoLateAlarmSoundPreference(soundId)
+                : false;
+            if (!nativeSaved) throw new Error("NATIVE_SOUND_PREFERENCE_UNAVAILABLE");
+            await setNoLateAlarmSoundPreference(soundId).catch(() => undefined);
+            if (!mountedRef.current || requestId !== soundPreferenceRequestRef.current) return;
+            setPendingAction(null);
+            if (
+                pickerGeneration === soundPickerGenerationRef.current &&
+                soundPickerVisibleRef.current &&
+                appStateActiveRef.current
+            ) {
+                await toggleSoundPreview(soundId);
+            }
+        } catch {
+            if (!mountedRef.current || requestId !== soundPreferenceRequestRef.current) return;
+            setSelectedSoundId(previousSoundId);
+            setAlarmFeedback("알람음을 바꾸지 못했어요.");
+            setPendingAction(null);
+        }
+    }, [selectedSoundId, stopSoundPreview, toggleSoundPreview]);
+
+    const openSoundPicker = useCallback(() => {
+        soundPickerGenerationRef.current += 1;
+        soundPickerVisibleRef.current = true;
+        setSoundPickerVisible(true);
+    }, []);
+
+    const closeSoundPicker = useCallback(() => {
+        soundPickerGenerationRef.current += 1;
+        soundPickerVisibleRef.current = false;
+        setSoundPickerVisible(false);
+        stopSoundPreview().catch(() => undefined);
+    }, [stopSoundPreview]);
+
+    const requestNotificationPermission = useCallback(async () => {
+        setPendingAction("notificationPermission");
+        setAlarmFeedback(null);
+        try {
+            await requestPushNotificationPermission();
             if (!mountedRef.current) return;
-            setAlarmFeedback(result.scheduled
-                ? "테스트 알람을 예약했어요. 10초 뒤 벨소리를 확인해 주세요."
-                : getAlarmMutationFailureMessage(result.reason));
             await refreshCapabilities();
         } catch {
             if (!mountedRef.current) return;
-            setAlarmFeedback("테스트 알람을 예약하지 못했어요. 권한을 확인한 뒤 다시 시도해 주세요.");
+            setAlarmFeedback("알림 요청을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
         } finally {
             if (mountedRef.current) setPendingAction(null);
         }
     }, [refreshCapabilities]);
 
-    const capabilityCopy = getCapabilityCopy(capabilities);
-    const testAlarmDisabled =
-        capabilityLoading ||
-        pendingAction !== null ||
-        capabilities?.supported !== true;
-    const iosCapabilitySettingsRequired = capabilities
-        ? requiresIOSAlarmSettings(capabilities)
-        : false;
-    const iosSystemAlarmReady = capabilities
-        ? isIOSSystemAlarmReady(capabilities)
-        : false;
-    const iosAlarmKitMode = capabilities
-        ? isIOSAlarmKitMode(capabilities)
-        : false;
-    const iosNotificationDisplayReady = capabilities
-        ? isIOSNotificationDisplayReady(capabilities)
-        : false;
-    const notificationDisplayReady = capabilities?.platform === "ios"
-        ? iosNotificationDisplayReady
-        : capabilities?.notificationAuthorized === true;
-    const iosFallbackStatus = capabilities
-        ? getIOSFallbackPermissionStatus(capabilities)
-        : null;
-    const showAlarmSettingsActions = capabilities?.supported === true && (
-        (!notificationDisplayReady && !iosSystemAlarmReady) ||
-        iosCapabilitySettingsRequired ||
-        (
-            capabilities.platform === "android" &&
-            (
-                !capabilities.exactAlarmAuthorized ||
-                !capabilities.fullScreenAuthorized
-            )
-        )
-    );
-    const showNotificationSettingsAction = capabilities !== null && (
-        (!notificationDisplayReady && !iosSystemAlarmReady) ||
-        iosCapabilitySettingsRequired
-    );
+    const customAlarmIssue = getCustomAlarmIssue(capabilities);
+    const customAlarmIssueActionPending =
+        customAlarmIssue?.action === "requestNotification"
+            ? pendingAction === "notificationPermission"
+            : customAlarmIssue?.action === "openSetting"
+            ? pendingAction === customAlarmIssue.settingKind
+            : false;
+    const customAlarmUnsupported =
+        capabilities !== null && (capabilities.supported !== true || capabilities.platform === "other");
+    const soundPreviewDisabled = pendingAction !== null;
+    const warningBackground = mode === "dark" ? "rgba(255,191,105,0.12)" : "rgba(168,92,0,0.08)";
+    const selectedSound = getNoLateAlarmSound(selectedSoundId);
+
+    useEffect(() => {
+        if (!customAlarmUnsupported) return;
+        soundPickerGenerationRef.current += 1;
+        soundPickerVisibleRef.current = false;
+        setSoundPickerVisible(false);
+        stopSoundPreview().catch(() => undefined);
+    }, [customAlarmUnsupported, stopSoundPreview]);
 
     return (
-        <View style={[styles.container, { borderColor: colors.inputBorder, backgroundColor: colors.inputBackground }]}>
-            <View style={styles.header}>
+        <View
+            testID={flat ? "notification-settings-flat" : "notification-settings-card"}
+            style={[
+                styles.container,
+                {
+                    borderColor: colors.inputBorder,
+                    backgroundColor: colors.inputBackground,
+                },
+                flat && styles.flatContainer,
+            ]}
+        >
+            <View
+                testID="notification-settings-toggle-row"
+                style={[
+                    styles.header,
+                    flat && styles.flatHeader,
+                    flat && { borderBottomColor: colors.border },
+                ]}
+            >
                 <View style={styles.headerText}>
                     <Text style={[styles.title, { color: colors.textPrimary }]}>출발 알림</Text>
                     <Text style={[styles.usage, { color: colors.textSecondary }]}>
-                        교통 상황을 반영해 최적의 출발 시간을 알려드려요.
+                        교통 상황을 반영해 출발 시간을 알려드려요.
                     </Text>
                 </View>
                 <Switch
@@ -219,247 +404,324 @@ export default function NotificationSettingsCard({
             {!routeReady ? (
                 <Text style={[styles.notice, { color: colors.textSecondary }]}>경로를 선택하면 설정할 수 있어요.</Text>
             ) : quotaReached && !enabled ? (
-                <Text style={[styles.notice, { color: colors.textSecondary }]}>이번 달 알림 일정 한도를 사용했어요.</Text>
+                <Text style={[styles.notice, { color: colors.textSecondary }]}>
+                    이번 달 알림 일정 한도를 사용했어요.
+                </Text>
             ) : null}
 
             {enabled ? (
                 <View style={styles.settings}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>알림 방식</Text>
                     <View
-                        accessibilityRole="radiogroup"
-                        accessibilityLabel="출발 알림 방식"
-                        style={styles.modeRow}
+                        style={[
+                            styles.recommendationCard,
+                            {
+                                borderColor: colors.inputBorder,
+                                backgroundColor: colors.inputBackground,
+                            },
+                            flat && styles.flatRecommendationCard,
+                        ]}
                     >
-                        <Pressable
-                            accessibilityRole="radio"
-                            accessibilityLabel="일반 알림 모드"
-                            accessibilityState={{ checked: alertMode === "STANDARD" }}
-                            onPress={() => onAlertModeChange("STANDARD")}
+                        <View
                             style={[
-                                styles.modeButton,
-                                {
-                                    borderColor: alertMode === "STANDARD" ? accentBlue : colors.border,
-                                    backgroundColor: alertMode === "STANDARD"
-                                        ? selectedBackground
-                                        : colors.inputBackground,
+                                styles.recommendationCol,
+                                flat && styles.flatRecommendationField,
+                                flat && {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
                                 },
                             ]}
                         >
-                            <Text style={[styles.modeTitle, {
-                                color: alertMode === "STANDARD" ? accentBlue : colors.textPrimary,
-                            }]}>
-                                일반 알림
+                            <Text style={[styles.label, { color: colors.textSecondary }]}>추천 출발</Text>
+                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
                             </Text>
-                            <Text style={[styles.modeDescription, { color: colors.textSecondary }]}>
-                                앱 푸시 알림으로 알려드려요.
-                            </Text>
-                        </Pressable>
-                        <Pressable
-                            accessibilityRole="radio"
-                            accessibilityLabel="강력한 알람 모드"
-                            accessibilityState={{ checked: alertMode === "ALARM" }}
-                            onPress={() => onAlertModeChange("ALARM")}
+                        </View>
+                        {flat ? null : (
+                            <View style={[styles.recommendationDivider, { backgroundColor: colors.border }]} />
+                        )}
+                        <View
                             style={[
-                                styles.modeButton,
-                                {
-                                    borderColor: alertMode === "ALARM" ? accentBlue : colors.border,
-                                    backgroundColor: alertMode === "ALARM"
-                                        ? selectedBackground
-                                        : colors.inputBackground,
+                                styles.recommendationCol,
+                                flat && styles.flatRecommendationField,
+                                flat && {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
                                 },
                             ]}
                         >
-                            <Text style={[styles.modeTitle, {
-                                color: alertMode === "ALARM" ? accentBlue : colors.textPrimary,
-                            }]}>
-                                강력한 알람
+                            <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정</Text>
+                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
                             </Text>
-                            <Text style={[styles.modeDescription, { color: colors.textSecondary }]}>
-                                지원되는 기기에서는 벨소리처럼 눈에 띄게 알려드려요.
-                            </Text>
-                        </Pressable>
+                        </View>
                     </View>
-
-                    {showAlarmControls ? (
-                        <View style={[styles.alarmPanel, { borderColor: colors.border }]}>
-                            <View style={styles.alarmPanelHeader}>
-                                <View style={styles.alarmPanelCopy}>
-                                    <Text style={[styles.alarmStatusTitle, { color: colors.textPrimary }]}>
-                                        {capabilityLoading && !capabilities
-                                            ? "알람 준비 상태 확인 중"
-                                            : capabilityCopy.title}
-                                    </Text>
-                                    <Text style={[styles.alarmStatusDescription, { color: colors.textSecondary }]}>
-                                        {capabilityLoading && !capabilities
-                                            ? "기기의 알람·알림 권한을 확인하고 있어요."
-                                            : capabilityCopy.description}
-                                    </Text>
-                                </View>
-                                <Pressable
-                                    accessibilityRole="button"
-                                    accessibilityLabel="알람 권한 상태 새로고침"
-                                    disabled={capabilityLoading}
-                                    onPress={() => {
-                                        refreshCapabilities().catch(() => undefined);
-                                    }}
-                                    style={[styles.compactButton, { borderColor: colors.border }]}
-                                >
-                                    <Text style={[styles.compactButtonText, { color: accentBlue }]}>
-                                        {capabilityLoading ? "확인 중" : "새로고침"}
-                                    </Text>
-                                </Pressable>
-                            </View>
-
-                            {capabilityError ? (
-                                <Text style={[styles.feedback, { color: warningColor }]}>
-                                    {capabilityError}
-                                </Text>
-                            ) : null}
-
-                            {capabilities?.platform === "android" ? (
-                                <View style={styles.permissionList}>
-                                    <PermissionStatusRow
-                                        label="알림 권한"
-                                        ready={capabilities.notificationAuthorized}
-                                        readyColor={accentBlue}
-                                        textColor={colors.textSecondary}
-                                        warningColor={warningColor}
-                                    />
-                                    <PermissionStatusRow
-                                        label="정확한 알람"
-                                        ready={capabilities.exactAlarmAuthorized}
-                                        readyColor={accentBlue}
-                                        textColor={colors.textSecondary}
-                                        warningColor={warningColor}
-                                    />
-                                    <PermissionStatusRow
-                                        label="전체 화면 표시"
-                                        ready={capabilities.fullScreenAuthorized}
-                                        readyColor={accentBlue}
-                                        textColor={colors.textSecondary}
-                                        warningColor={warningColor}
-                                    />
-                                </View>
-                            ) : capabilities?.platform === "ios" ? (
-                                <View style={styles.permissionList}>
-                                    {iosAlarmKitMode ? (
-                                        <>
-                                            <PermissionStatusRow
-                                                label="NoLate 강력 알림 권한"
-                                                ready={iosSystemAlarmReady}
-                                                readyColor={accentBlue}
-                                                textColor={colors.textSecondary}
-                                                warningColor={warningColor}
-                                            />
-                                            {!iosSystemAlarmReady ? (
-                                                <PermissionStatusRow
-                                                    label="일반 푸시 알림"
-                                                    ready={iosNotificationDisplayReady}
-                                                    readyColor={accentBlue}
-                                                    textColor={colors.textSecondary}
-                                                    warningColor={warningColor}
-                                                />
-                                            ) : null}
-                                        </>
-                                    ) : iosFallbackStatus ? (
-                                        <>
-                                            <PermissionStatusRow
-                                                label="알림 표시"
-                                                ready={iosFallbackStatus.notificationDisplayReady}
-                                                readyColor={accentBlue}
-                                                textColor={colors.textSecondary}
-                                                warningColor={warningColor}
-                                            />
-                                            <PermissionStatusRow
-                                                label="시간 지정 알림"
-                                                ready={iosFallbackStatus.timeSensitiveReady}
-                                                readyColor={accentBlue}
-                                                textColor={colors.textSecondary}
-                                                warningColor={warningColor}
-                                            />
-                                            <PermissionStatusRow
-                                                label="알림 사운드"
-                                                ready={iosFallbackStatus.soundReady}
-                                                readyColor={accentBlue}
-                                                textColor={colors.textSecondary}
-                                                warningColor={warningColor}
-                                            />
-                                        </>
-                                    ) : null}
-                                </View>
-                            ) : null}
-
-                            {capabilities && showAlarmSettingsActions ? (
-                                <View style={styles.actionRow}>
-                                    {showNotificationSettingsAction ? (
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel="앱 알림 설정 열기"
-                                            disabled={pendingAction !== null}
-                                            onPress={() => {
-                                                openAlarmSetting("notification").catch(() => undefined);
-                                            }}
-                                            style={[styles.actionButton, { borderColor: accentBlue }]}
-                                        >
-                                            <Text style={[styles.actionButtonText, { color: accentBlue }]}>
-                                                {capabilities.platform === "ios"
-                                                    ? "iOS 알람 설정"
-                                                    : "앱 알림 설정"}
-                                            </Text>
-                                        </Pressable>
-                                    ) : null}
-                                    {capabilities.platform === "android" &&
-                                    !capabilities.exactAlarmAuthorized ? (
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel="정확한 알람 설정 열기"
-                                            disabled={pendingAction !== null}
-                                            onPress={() => {
-                                                openAlarmSetting("exact").catch(() => undefined);
-                                            }}
-                                            style={[styles.actionButton, { borderColor: accentBlue }]}
-                                        >
-                                            <Text style={[styles.actionButtonText, { color: accentBlue }]}>
-                                                정확한 알람 설정
-                                            </Text>
-                                        </Pressable>
-                                    ) : null}
-                                    {capabilities.platform === "android" &&
-                                    !capabilities.fullScreenAuthorized ? (
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel="전체 화면 알람 설정 열기"
-                                            disabled={pendingAction !== null}
-                                            onPress={() => {
-                                                openAlarmSetting("fullScreen").catch(() => undefined);
-                                            }}
-                                            style={[styles.actionButton, { borderColor: accentBlue }]}
-                                        >
-                                            <Text style={[styles.actionButtonText, { color: accentBlue }]}>
-                                                전체 화면 설정
-                                            </Text>
-                                        </Pressable>
-                                    ) : null}
-                                </View>
-                            ) : null}
-
+                    <View style={styles.reminderMetaRow}>
+                        <Text style={[styles.description, styles.reminderMetaText, { color: colors.textSecondary }]}>
+                            {flat
+                                ? `이동 약 ${formatRouteDuration(routeMinutes)} · ${leadMinutes}분 전부터 확인`
+                                : `${formatRouteDuration(routeMinutes)} 소요 · ${leadMinutes}분 전부터 ${intervalMinutes}분 간격 확인`}
+                        </Text>
+                        {!flat ? (
                             <Pressable
                                 accessibilityRole="button"
-                                accessibilityLabel="10초 뒤 테스트 알람"
-                                disabled={testAlarmDisabled}
+                                accessibilityLabel="추천 알림 설정 적용"
                                 onPress={() => {
-                                    runTestAlarm().catch(() => undefined);
+                                    onLeadMinutesChange(Math.min(60, policy.maxNotificationLeadMinutes));
+                                    onIntervalMinutesChange(Math.max(intervalMinutes, policy.minEtaRefreshIntervalMinutes));
                                 }}
-                                style={[
-                                    styles.testButton,
-                                    { backgroundColor: accentBlue },
-                                    testAlarmDisabled && styles.disabledButton,
-                                ]}
+                                style={[styles.useButton, { borderColor: accentBlue }]}
                             >
-                                <Text style={styles.testButtonText}>
-                                    {pendingAction === "test" ? "예약 중..." : "10초 뒤 테스트 알람"}
-                                </Text>
+                                <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 설정 적용</Text>
                             </Pressable>
+                        ) : null}
+                    </View>
+
+                    <View
+                        style={[styles.modeSection, { borderTopColor: colors.border }, flat && styles.flatModeSection]}
+                    >
+                        <View style={styles.modeHeading}>
+                            <Text style={[styles.modeHeadingTitle, { color: colors.textPrimary }]}>알림 방식</Text>
+                        </View>
+                        <View
+                            testID="notification-alert-mode-picker"
+                            accessibilityRole="radiogroup"
+                            accessibilityLabel="출발 알림 방식"
+                            style={[
+                                styles.modeRow,
+                                {
+                                    borderColor: colors.inputBorder,
+                                    backgroundColor: colors.inputBackground,
+                                },
+                            ]}
+                        >
+                            <AlarmModeOption
+                                mode="STANDARD"
+                                selected={alertMode === "STANDARD"}
+                                accentBlue={accentBlue}
+                                selectedBackground={selectedBackground}
+                                borderColor={colors.inputBorder}
+                                textPrimary={colors.textPrimary}
+                                textSecondary={colors.textSecondary}
+                                onPress={() => onAlertModeChange("STANDARD")}
+                            />
+                            <AlarmModeOption
+                                mode="ALARM"
+                                selected={alertMode === "ALARM"}
+                                accentBlue={accentBlue}
+                                selectedBackground={selectedBackground}
+                                borderColor={colors.inputBorder}
+                                textPrimary={colors.textPrimary}
+                                textSecondary={colors.textSecondary}
+                                onPress={() => onAlertModeChange("ALARM")}
+                            />
+                        </View>
+                    </View>
+
+                    {alertMode === "ALARM" ? (
+                        <View
+                            accessible
+                            accessibilityLabel="교통 상황이 바뀌면 푸시로 알려드려요"
+                            style={styles.modeFootnote}
+                        >
+                            <Ionicons accessible={false} name="notifications-outline" size={16} color={accentBlue} />
+                            <Text style={[styles.modeFootnoteText, { color: colors.textSecondary }]}>
+                                교통 상황이 바뀌면 푸시로 알려드려요.
+                            </Text>
+                        </View>
+                    ) : null}
+
+                    {showAlarmControls ? (
+                        <View testID="notification-alarm-simple-controls" style={styles.flatAlarmPanel}>
+                            {customAlarmUnsupported ? (
+                                <View
+                                    testID="notification-alarm-unavailable"
+                                    style={[styles.flatAlarmIssueRow, { backgroundColor: warningBackground }]}
+                                >
+                                    <View
+                                        style={[styles.flatAlarmIssueIcon, { backgroundColor: colors.inputBackground }]}
+                                    >
+                                        <Ionicons
+                                            accessible={false}
+                                            name="alert-circle-outline"
+                                            size={19}
+                                            color={warningColor}
+                                        />
+                                    </View>
+                                    <View style={styles.flatAlarmIssueCopy}>
+                                        <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
+                                            출발 알람을 사용할 수 없어요
+                                        </Text>
+                                        <Text
+                                            style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}
+                                        >
+                                            푸시 알림으로 바꿔 주세요.
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="푸시 알림으로 전환"
+                                        hitSlop={8}
+                                        onPress={() => onAlertModeChange("STANDARD")}
+                                        style={({ pressed }) => [
+                                            styles.flatAlarmIssueAction,
+                                            pressed && styles.pressedRow,
+                                        ]}
+                                    >
+                                        <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
+                                            푸시로 전환
+                                        </Text>
+                                    </Pressable>
+                                </View>
+                            ) : null}
+
+                            {customAlarmIssue ? (
+                                <View
+                                    testID="notification-alarm-setting-notice"
+                                    style={[
+                                        styles.flatAlarmIssueRow,
+                                        {
+                                            backgroundColor:
+                                                customAlarmIssue.tone === "notice"
+                                                    ? selectedBackground
+                                                    : warningBackground,
+                                        },
+                                    ]}
+                                >
+                                    <View
+                                        style={[styles.flatAlarmIssueIcon, { backgroundColor: colors.inputBackground }]}
+                                    >
+                                        <Ionicons
+                                            accessible={false}
+                                            name={
+                                                customAlarmIssue.tone === "notice"
+                                                    ? "notifications-outline"
+                                                    : "volume-mute-outline"
+                                            }
+                                            size={19}
+                                            color={customAlarmIssue.tone === "notice" ? accentBlue : warningColor}
+                                        />
+                                    </View>
+                                    <View style={styles.flatAlarmIssueCopy}>
+                                        <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
+                                            {customAlarmIssue.title}
+                                        </Text>
+                                        <Text
+                                            style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}
+                                        >
+                                            {customAlarmIssue.description}
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel={customAlarmIssue.accessibilityLabel}
+                                        accessibilityState={{ busy: customAlarmIssueActionPending }}
+                                        hitSlop={8}
+                                        disabled={pendingAction !== null}
+                                        onPress={() => {
+                                            if (customAlarmIssue.action === "requestNotification") {
+                                                requestNotificationPermission().catch(() => undefined);
+                                            } else {
+                                                openAlarmSetting(customAlarmIssue.settingKind).catch(() => undefined);
+                                            }
+                                        }}
+                                        style={({ pressed }) => [
+                                            styles.flatAlarmIssueAction,
+                                            pressed && pendingAction === null && styles.pressedRow,
+                                        ]}
+                                    >
+                                        <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
+                                            {customAlarmIssueActionPending
+                                                ? customAlarmIssue.action === "requestNotification"
+                                                    ? "요청 중"
+                                                    : "여는 중"
+                                                : customAlarmIssue.actionLabel}
+                                        </Text>
+                                    </Pressable>
+                                </View>
+                            ) : null}
+
+                            {capabilityError && !capabilityLoading ? (
+                                <View
+                                    testID="notification-alarm-load-error"
+                                    style={[styles.flatAlarmIssueRow, { backgroundColor: colors.inputBackground }]}
+                                >
+                                    <View style={[styles.flatAlarmIssueIcon, { backgroundColor: selectedBackground }]}>
+                                        <Ionicons
+                                            accessible={false}
+                                            name="refresh-outline"
+                                            size={19}
+                                            color={colors.textSecondary}
+                                        />
+                                    </View>
+                                    <View style={styles.flatAlarmIssueCopy}>
+                                        <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
+                                            출발 알람을 확인하지 못했어요
+                                        </Text>
+                                        <Text
+                                            style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}
+                                        >
+                                            잠시 후 다시 시도해 주세요.
+                                        </Text>
+                                    </View>
+                                    <Pressable
+                                        accessibilityRole="button"
+                                        accessibilityLabel="출발 알람 다시 확인"
+                                        hitSlop={8}
+                                        disabled={capabilityLoading}
+                                        onPress={() => {
+                                            refreshCapabilities().catch(() => undefined);
+                                        }}
+                                        style={({ pressed }) => [
+                                            styles.flatAlarmIssueAction,
+                                            pressed && styles.pressedRow,
+                                        ]}
+                                    >
+                                        <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
+                                            다시 시도
+                                        </Text>
+                                    </Pressable>
+                                </View>
+                            ) : null}
+
+                            {!customAlarmUnsupported ? (
+                                <Pressable
+                                    testID="notification-alarm-sound-row"
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`알람음, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
+                                    accessibilityState={{
+                                        disabled: soundPreviewDisabled,
+                                    }}
+                                    disabled={soundPreviewDisabled}
+                                    onPress={openSoundPicker}
+                                    style={({ pressed }) => [
+                                        styles.flatTestRow,
+                                        {
+                                            borderColor: colors.inputBorder,
+                                            backgroundColor: colors.inputBackground,
+                                        },
+                                        soundPreviewDisabled && styles.disabledButton,
+                                        pressed && !soundPreviewDisabled && styles.pressedRow,
+                                    ]}
+                                >
+                                    <View style={[styles.flatTestIcon, { backgroundColor: selectedBackground }]}>
+                                        <Ionicons
+                                            accessible={false}
+                                            name="musical-notes-outline"
+                                            size={20}
+                                            color={accentBlue}
+                                        />
+                                    </View>
+                                    <View style={styles.flatTestCopy}>
+                                        <Text style={[styles.flatTestTitle, { color: colors.textPrimary }]}>
+                                            알람음
+                                        </Text>
+                                        <Text style={[styles.flatTestDescription, { color: colors.textSecondary }]}>
+                                            {selectedSound.label} · 모든 출발 알람에 적용
+                                        </Text>
+                                    </View>
+                                    <Ionicons accessible={false} name="chevron-forward" size={20} color={colors.textSecondary} />
+                                </Pressable>
+                            ) : null}
 
                             {alarmFeedback ? (
                                 <Text
@@ -471,39 +733,24 @@ export default function NotificationSettingsCard({
                             ) : null}
                         </View>
                     ) : null}
-
-                    <View style={[styles.recommendationCard, { borderColor: colors.border }]}>
-                        <View style={styles.recommendationCol}>
-                            <Text style={[styles.label, { color: colors.textSecondary }]}>추천 출발 시간</Text>
-                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
-                                {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
-                            </Text>
-                        </View>
-                        <View style={styles.recommendationCol}>
-                            <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정 시간</Text>
-                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
-                                {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
-                            </Text>
-                        </View>
-                    </View>
-                    <View style={styles.reminderMetaRow}>
-                        <Text style={[styles.description, { color: colors.textSecondary }]}>
-                            예상 이동시간 {formatRouteDuration(routeMinutes)} · {leadMinutes}분 전부터 확인
-                        </Text>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel="추천 알림 설정 적용"
-                            onPress={() => {
-                                onLeadMinutesChange(Math.min(60, policy.maxNotificationLeadMinutes));
-                                onIntervalMinutesChange(Math.max(intervalMinutes, policy.minEtaRefreshIntervalMinutes));
-                            }}
-                            style={[styles.useButton, { borderColor: accentBlue }]}
-                        >
-                            <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 설정 적용</Text>
-                        </Pressable>
-                    </View>
                 </View>
             ) : null}
+            <AlarmSoundPickerSheet
+                visible={soundPickerVisible && !customAlarmUnsupported}
+                selectedSoundId={selectedSoundId}
+                previewingSoundId={previewingSoundId}
+                busy={pendingAction === "soundPreference" || pendingAction === "soundPreview"}
+                accentColor={accentBlue}
+                backgroundColor={colors.background}
+                surfaceColor={mode === "dark" ? "#1C1C1E" : "#F6F6F8"}
+                borderColor={colors.inputBorder}
+                textPrimary={colors.textPrimary}
+                textSecondary={colors.textSecondary}
+                onSelect={soundId => {
+                    selectAlarmSound(soundId).catch(() => undefined);
+                }}
+                onClose={closeSoundPicker}
+            />
         </View>
     );
 }
@@ -511,9 +758,16 @@ export default function NotificationSettingsCard({
 const styles = StyleSheet.create({
     container: {
         borderWidth: 1,
-        borderRadius: 12,
-        padding: 14,
+        borderRadius: 16,
+        padding: 16,
         marginBottom: 14,
+    },
+    flatContainer: {
+        borderWidth: 0,
+        borderRadius: 0,
+        padding: 0,
+        marginBottom: 24,
+        backgroundColor: "transparent",
     },
     header: {
         flexDirection: "row",
@@ -521,41 +775,277 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         minHeight: 38,
     },
+    flatHeader: {
+        minHeight: 58,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingHorizontal: 0,
+        paddingBottom: 12,
+    },
     headerText: { flex: 1, paddingRight: 12 },
-    title: { fontSize: 14, fontWeight: "700" },
-    usage: { marginTop: 3, fontSize: 11, fontWeight: "600" },
+    title: { fontSize: 15, lineHeight: 20, fontWeight: "900" },
+    usage: { marginTop: 3, fontSize: 11.5, lineHeight: 16, fontWeight: "600" },
     notice: { marginTop: 10, fontSize: 12 },
     settings: { marginTop: 14 },
     label: { marginBottom: 7, fontSize: 12, fontWeight: "600" },
     description: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
-    modeRow: {
-        flexDirection: "row",
-        gap: 8,
-        marginBottom: 12,
+    modeSection: {
+        marginTop: 16,
+        paddingTop: 14,
+        borderTopWidth: StyleSheet.hairlineWidth,
     },
-    modeButton: {
-        flex: 1,
-        minHeight: 76,
+    flatModeSection: {
+        marginTop: 22,
+        paddingTop: 0,
+        borderTopWidth: 0,
+    },
+    flatModePicker: {
         borderWidth: 1,
-        borderRadius: 10,
-        paddingHorizontal: 11,
+        borderRadius: 16,
+        overflow: "hidden",
+    },
+    flatModeSummary: {
+        minHeight: 82,
+        paddingHorizontal: 13,
+        paddingVertical: 11,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    flatModeSummaryIcon: {
+        width: 38,
+        height: 38,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    flatModeSummaryCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    flatModeSummaryLabel: {
+        marginBottom: 2,
+        fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "700",
+    },
+    flatModeSummaryValue: {
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "800",
+    },
+    flatModeSummaryDescription: {
+        marginTop: 4,
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "600",
+    },
+    flatModeOptions: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+    flatModeOption: {
+        minHeight: 66,
+        paddingHorizontal: 13,
         paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
     },
-    modeTitle: {
-        fontSize: 13,
-        fontWeight: "900",
+    flatModeOptionIcon: {
+        width: 32,
+        height: 32,
+        alignItems: "center",
+        justifyContent: "center",
     },
-    modeDescription: {
-        marginTop: 5,
-        fontSize: 10,
+    flatModeOptionCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    flatModeOptionTitle: {
+        fontSize: 13.5,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    flatModeOptionDescription: {
+        marginTop: 2,
+        fontSize: 10.5,
         lineHeight: 15,
         fontWeight: "600",
     },
+    flatModeDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginLeft: 55,
+    },
+    pressedRow: {
+        opacity: 0.68,
+    },
+    modeHeading: {
+        marginBottom: 10,
+    },
+    modeHeadingTitle: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "900",
+    },
+    modeRow: {
+        borderWidth: 1,
+        borderRadius: 16,
+        overflow: "hidden",
+    },
+    modeButton: {
+        minHeight: 76,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    modeIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 11,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    modeCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    modeTitleRow: {
+        flexDirection: "row",
+        alignItems: "center",
+    },
+    modeTitle: {
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "800",
+    },
+    modeDescription: {
+        marginTop: 3,
+        fontSize: 11.5,
+        lineHeight: 17,
+        fontWeight: "600",
+    },
+    modeFootnote: {
+        minHeight: 38,
+        paddingHorizontal: 4,
+        paddingTop: 10,
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 7,
+    },
+    modeFootnoteText: {
+        flex: 1,
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "600",
+    },
+    pushActionPanel: {
+        borderWidth: 1,
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 11,
+        marginBottom: 12,
+    },
+    flatPushOutcome: {
+        minHeight: 42,
+        marginTop: 10,
+        marginBottom: 2,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    flatPushOutcomeText: {
+        flex: 1,
+        fontSize: 11.5,
+        lineHeight: 17,
+        fontWeight: "700",
+    },
+    pushActionHeading: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    pushActionTitle: {
+        fontSize: 11.5,
+        lineHeight: 16,
+        fontWeight: "900",
+    },
+    pushActionList: {
+        marginTop: 8,
+        gap: 6,
+    },
+    pushActionItem: {
+        minHeight: 23,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    pushActionLabel: {
+        width: 62,
+        fontSize: 10.5,
+        fontWeight: "700",
+    },
+    pushActionValue: {
+        flex: 1,
+        fontSize: 10.5,
+        fontWeight: "900",
+    },
     alarmPanel: {
         borderWidth: 1,
-        borderRadius: 10,
-        padding: 12,
+        borderRadius: 14,
+        padding: 13,
         marginBottom: 12,
+    },
+    flatAlarmPanel: {
+        borderWidth: 0,
+        borderRadius: 0,
+        paddingHorizontal: 0,
+        paddingTop: 6,
+        paddingBottom: 0,
+    },
+    flatAlarmIssueRow: {
+        minHeight: 68,
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    flatAlarmIssueIcon: {
+        width: 34,
+        height: 34,
+        borderRadius: 11,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    flatAlarmIssueCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    flatAlarmIssueTitle: {
+        fontSize: 12.5,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    flatAlarmIssueDescription: {
+        marginTop: 2,
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    flatAlarmIssueAction: {
+        minHeight: 44,
+        paddingHorizontal: 4,
+        justifyContent: "center",
+    },
+    flatAlarmIssueActionText: {
+        fontSize: 11,
+        lineHeight: 16,
+        fontWeight: "800",
     },
     alarmPanelHeader: {
         flexDirection: "row",
@@ -622,16 +1112,61 @@ const styles = StyleSheet.create({
     },
     testButton: {
         marginTop: 11,
-        minHeight: 38,
-        borderRadius: 9,
+        minHeight: 44,
+        borderWidth: 1,
+        borderRadius: 11,
         alignItems: "center",
         justifyContent: "center",
         paddingHorizontal: 12,
     },
     testButtonText: {
-        color: "#FFFFFF",
         fontSize: 12,
         fontWeight: "900",
+    },
+    flatTestRow: {
+        minHeight: 62,
+        marginTop: 4,
+        borderWidth: 1,
+        borderRadius: 14,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    flatTestIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    flatTestCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    flatTestTitle: {
+        fontSize: 12.5,
+        lineHeight: 18,
+        fontWeight: "800",
+    },
+    flatTestDescription: {
+        marginTop: 2,
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    testHelperRow: {
+        marginTop: 8,
+        flexDirection: "row",
+        alignItems: "flex-start",
+        gap: 5,
+    },
+    testHelperText: {
+        flex: 1,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "600",
     },
     disabledButton: {
         opacity: 0.45,
@@ -644,17 +1179,36 @@ const styles = StyleSheet.create({
     },
     recommendationCard: {
         borderWidth: 1,
-        borderRadius: 10,
-        padding: 12,
+        borderRadius: 14,
+        padding: 13,
         flexDirection: "row",
         gap: 14,
+    },
+    flatRecommendationCard: {
+        borderWidth: 0,
+        borderRadius: 0,
+        padding: 0,
+        gap: 10,
+        backgroundColor: "transparent",
     },
     recommendationCol: {
         flex: 1,
     },
+    flatRecommendationField: {
+        minHeight: 76,
+        borderWidth: 1,
+        borderRadius: 16,
+        paddingHorizontal: 13,
+        paddingVertical: 11,
+        justifyContent: "center",
+    },
     recommendationValue: {
-        fontSize: 14,
+        fontSize: 17,
+        lineHeight: 22,
         fontWeight: "900",
+    },
+    recommendationDivider: {
+        width: StyleSheet.hairlineWidth,
     },
     reminderMetaRow: {
         marginTop: 10,
@@ -663,11 +1217,17 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
         gap: 10,
     },
+    reminderMetaText: {
+        flex: 1,
+        minWidth: 0,
+    },
     useButton: {
+        minHeight: 44,
         borderWidth: 1,
         borderRadius: 999,
-        paddingVertical: 5,
+        paddingVertical: 6,
         paddingHorizontal: 10,
+        justifyContent: "center",
     },
     useButtonText: {
         fontSize: 11,
@@ -675,233 +1235,170 @@ const styles = StyleSheet.create({
     },
 });
 
-function PermissionStatusRow({
-    label,
-    ready,
-    readyColor,
-    textColor,
-    warningColor,
+function AlarmModeOption({
+    mode,
+    selected,
+    accentBlue,
+    selectedBackground,
+    borderColor,
+    textPrimary,
+    textSecondary,
+    onPress,
 }: {
-    label: string;
-    ready: boolean;
-    readyColor: string;
-    textColor: string;
-    warningColor: string;
+    mode: ScheduleAlertMode;
+    selected: boolean;
+    accentBlue: string;
+    selectedBackground: string;
+    borderColor: string;
+    textPrimary: string;
+    textSecondary: string;
+    onPress: () => void;
 }) {
+    const presentation = SCHEDULE_ALERT_MODE_PRESENTATION[mode];
+
     return (
-        <View
-            accessible
-            accessibilityLabel={`${label}: ${ready ? "준비됨" : "설정 필요"}`}
-            style={styles.permissionRow}
+        <Pressable
+            testID={`notification-alert-mode-${mode.toLowerCase()}`}
+            accessibilityRole="radio"
+            accessibilityLabel={presentation.accessibilityLabel}
+            accessibilityHint={presentation.description}
+            accessibilityState={{ checked: selected }}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.modeButton,
+                {
+                    borderBottomWidth: mode === "STANDARD" ? StyleSheet.hairlineWidth : 0,
+                    borderBottomColor: borderColor,
+                    backgroundColor: selected ? selectedBackground : "transparent",
+                    opacity: pressed ? 0.7 : 1,
+                },
+            ]}
         >
-            <Text style={[styles.permissionLabel, { color: textColor }]}>{label}</Text>
-            <Text style={[styles.permissionValue, { color: ready ? readyColor : warningColor }]}>
-                {ready ? "준비됨" : "설정 필요"}
-            </Text>
-        </View>
+            <View style={[styles.modeIcon, { backgroundColor: selected ? accentBlue : selectedBackground }]}>
+                <Ionicons
+                    accessible={false}
+                    name={mode === "ALARM" ? "alarm-outline" : "notifications-outline"}
+                    size={20}
+                    color={selected ? "#FFFFFF" : accentBlue}
+                />
+            </View>
+            <View style={styles.modeCopy}>
+                <View style={styles.modeTitleRow}>
+                    <Text style={[styles.modeTitle, { color: textPrimary }]}>{presentation.label}</Text>
+                </View>
+                <Text style={[styles.modeDescription, { color: textSecondary }]}>{presentation.description}</Text>
+            </View>
+            <Ionicons
+                accessible={false}
+                name={selected ? "checkmark-circle" : "ellipse-outline"}
+                size={21}
+                color={selected ? accentBlue : textSecondary}
+            />
+        </Pressable>
     );
 }
 
-function getCapabilityCopy(capabilities: DepartureAlarmCapabilities | null): {
+type AlarmSettingKind = "notification" | "exact" | "fullScreen";
+
+type CustomAlarmIssue = {
     title: string;
     description: string;
-} {
-    if (!capabilities) {
-        return {
-            title: "알람 준비 상태를 확인해 주세요",
-            description: "상태를 확인하지 못했어요. 새로고침해 일반 알림과 알람 권한을 확인해 주세요.",
-        };
-    }
-    if (!capabilities.supported) {
-        return {
-            title: "이 기기에서는 일반 알림으로 동작해요",
-            description: "현재 앱 빌드는 강력한 알람을 지원하지 않아 푸시 알림으로 대신 알려드려요.",
-        };
-    }
-    if (capabilities.platform === "android") {
-        if (
-            capabilities.notificationAuthorized &&
-            capabilities.exactAlarmAuthorized &&
-            capabilities.fullScreenAuthorized
-        ) {
-            return {
-                title: "강력한 알람 준비 완료",
-                description: "정확한 시각에 벨소리와 전체 화면 알람으로 알려드려요.",
-            };
-        }
-        if (!capabilities.notificationAuthorized) {
-            return {
-                title: "Android 알림 권한이 필요해요",
-                description: "알림 권한이 꺼져 있어 알람과 일반 푸시가 표시되지 않을 수 있어요. 앱 알림 설정을 켜 주세요.",
-            };
-        }
-        return {
-            title: "알람 권한 설정이 필요해요",
-            description: "설정 전에도 일반 푸시 알림은 계속 도착하며, 권한을 켜면 더 강하게 알려드려요.",
-        };
-    }
-    if (capabilities.platform === "ios") {
-        if (isIOSSystemAlarmReady(capabilities)) {
-            return {
-                title: "강력한 알람 준비 완료",
-                description: "NoLate 강력 알림 권한이 준비됐어요. 일반 푸시 알림과 별개로 강력하게 알려드려요.",
-            };
-        }
-        if (capabilities.reason === "ALARM_AUTHORIZATION_NOT_DETERMINED") {
-            return {
-                title: "NoLate 강력 알림 권한을 확인해 주세요",
-                description: "10초 테스트 알림을 실행하면 iOS가 NoLate 강력 알림 권한을 요청해요.",
-            };
-        }
-        if (capabilities.reason === "ALARM_AUTHORIZATION_DENIED") {
-            if (!isIOSNotificationDisplayReady(capabilities)) {
-                return {
-                    title: "NoLate 강력 알림과 일반 알림이 모두 꺼져 있어요",
-                    description: "NoLate 강력 알림과 일반 알림 권한이 모두 꺼져 있어 출발 알림이 표시되지 않을 수 있어요.",
-                };
-            }
-            return {
-                title: "NoLate 강력 알림 권한이 꺼져 있어요",
-                description: "NoLate 강력 알림 권한을 켜기 전에는 허용된 일반 푸시 알림으로 대신 알려드려요.",
-            };
-        }
-        if (capabilities.reason === "NOTIFICATION_ALERTS_DISABLED") {
-            return {
-                title: "iOS 앱 알림 표시가 꺼져 있어요",
-                description: "앱 알림 설정에서 알림 허용과 배너 표시를 켜 주세요.",
-            };
-        }
-        if (!isIOSNotificationDisplayReady(capabilities)) {
-            return {
-                title: "iOS 알림 권한이 필요해요",
-                description: "앱 알림 설정에서 알림과 사운드를 허용한 뒤 다시 확인해 주세요.",
-            };
-        }
-        if (capabilities.reason === "TIME_SENSITIVE_DISABLED") {
-            return {
-                title: "iOS 시간 지정 알림이 꺼져 있어요",
-                description: "iOS 알람 설정에서 시간 지정 알림을 켜면 출발 시간을 더 눈에 띄게 알려드려요.",
-            };
-        }
-        if (capabilities.reason === "SOUND_DISABLED") {
-            return {
-                title: "iOS 알림 사운드가 꺼져 있어요",
-                description: "iOS 알람 설정에서 사운드를 켜야 출발 알람 소리를 들을 수 있어요.",
-            };
-        }
-        if (capabilities.reason === "TIME_SENSITIVE_FALLBACK") {
-            return {
-                title: "iOS 사운드 알림으로 동작해요",
-                description: "이 기기에서는 시간 지정 사운드 알림으로 출발 시간을 알려드려요.",
-            };
-        }
-        if (capabilities.notificationAuthorized) {
-            return {
-                title: "iOS 사운드 알림으로 동작해요",
-                description: "시간 지정 알림 또는 사운드 설정을 확인하면 더 눈에 띄게 알려드릴 수 있어요.",
-            };
-        }
-    }
+    tone: "notice" | "warning";
+    accessibilityLabel: string;
+} & (
+    | {
+          action: "requestNotification";
+          actionLabel: "알림 켜기";
+      }
+    | {
+          action: "openSetting";
+          actionLabel: "설정 열기";
+          settingKind: AlarmSettingKind;
+      }
+);
+
+function createNotificationRequestIssue(): CustomAlarmIssue {
     return {
-        title: "일반 알림으로 동작해요",
-        description: "강력한 알람을 지원하지 않는 플랫폼에서는 푸시 알림으로 대신 알려드려요.",
+        title: "알림을 켜 주세요",
+        description: "출발 알람을 받으려면 알림 허용이 필요해요.",
+        tone: "notice",
+        action: "requestNotification",
+        actionLabel: "알림 켜기",
+        accessibilityLabel: "알림을 켜 주세요, 알림 켜기",
     };
 }
 
-function isIOSSystemAlarmReady(capabilities: DepartureAlarmCapabilities): boolean {
-    return capabilities.platform === "ios" &&
-        capabilities.exactAlarmAuthorized &&
-        capabilities.fullScreenAuthorized;
+function createSettingsIssue({
+    title,
+    description,
+    settingKind,
+}: {
+    title: string;
+    description: string;
+    settingKind: AlarmSettingKind;
+}): CustomAlarmIssue {
+    return {
+        title,
+        description,
+        tone: "warning",
+        action: "openSetting",
+        actionLabel: "설정 열기",
+        settingKind,
+        accessibilityLabel: `${title}, 설정 열기`,
+    };
 }
 
-function isIOSAlarmKitMode(capabilities: DepartureAlarmCapabilities): boolean {
-    if (capabilities.platform !== "ios") return false;
-    if (capabilities.deliveryMode === "alarmKit") return true;
-    if (
-        capabilities.alarmKitAuthorization === "authorized" ||
-        capabilities.alarmKitAuthorization === "denied" ||
-        capabilities.alarmKitAuthorization === "notDetermined"
-    ) {
-        return true;
-    }
-    return isIOSSystemAlarmReady(capabilities) ||
-        capabilities.reason === "ALARM_AUTHORIZATION_NOT_DETERMINED" ||
-        capabilities.reason === "ALARM_AUTHORIZATION_DENIED" ||
-        capabilities.reason === "ALARM_AUTHORIZATION_UNKNOWN";
-}
+function getCustomAlarmIssue(capabilities: DepartureAlarmCapabilities | null): CustomAlarmIssue | null {
+    if (!capabilities?.supported) return null;
 
-function isIOSNotificationDisplayReady(capabilities: DepartureAlarmCapabilities): boolean {
-    if (
-        capabilities.platform !== "ios" ||
-        !capabilities.notificationAuthorized ||
-        capabilities.reason === "NOTIFICATION_ALERTS_DISABLED"
-    ) {
-        return false;
-    }
-    switch (capabilities.notificationAuthorization) {
-        case undefined:
-        case "authorized":
-        case "provisional":
-        case "ephemeral":
-            return true;
-        case "notDetermined":
-        case "denied":
-        case "unknown":
-            return false;
-    }
-}
-
-function getIOSFallbackPermissionStatus(
-    capabilities: DepartureAlarmCapabilities,
-): {
-    notificationDisplayReady: boolean;
-    timeSensitiveReady: boolean;
-    soundReady: boolean;
-} | null {
-    if (capabilities.platform !== "ios" || isIOSAlarmKitMode(capabilities)) {
+    if (capabilities.platform === "android") {
+        if (!capabilities.notificationAuthorized) {
+            return createSettingsIssue({
+                title: "알림이 꺼져 있어요",
+                description: "출발 알람을 받으려면 앱 알림을 켜 주세요.",
+                settingKind: "notification",
+            });
+        }
+        if (!capabilities.exactAlarmAuthorized) {
+            return createSettingsIssue({
+                title: "예약 시각 알림을 켜 주세요",
+                description: "제시간에 울리도록 기기 설정을 확인해 주세요.",
+                settingKind: "exact",
+            });
+        }
+        if (!capabilities.fullScreenAuthorized) {
+            return createSettingsIssue({
+                title: "알람 화면 표시를 켜 주세요",
+                description: "잠금 화면에 알람을 띄우려면 켜 주세요.",
+                settingKind: "fullScreen",
+            });
+        }
         return null;
     }
 
-    const timeSensitiveReady = capabilities.timeSensitiveAuthorization === "enabled" ||
-        (
-            capabilities.timeSensitiveAuthorization === undefined &&
-            (
-                capabilities.reason === "SOUND_DISABLED" ||
-                capabilities.reason === "TIME_SENSITIVE_FALLBACK"
-            )
-        );
-    const soundReady = capabilities.soundAuthorization === "enabled" ||
-        (
-            capabilities.soundAuthorization === undefined &&
-            capabilities.reason === "TIME_SENSITIVE_FALLBACK"
-        );
-    return {
-        notificationDisplayReady: isIOSNotificationDisplayReady(capabilities),
-        timeSensitiveReady,
-        soundReady,
-    };
-}
+    if (capabilities.platform !== "ios") return null;
 
-function requiresIOSAlarmSettings(capabilities: DepartureAlarmCapabilities): boolean {
-    return !isIOSSystemAlarmReady(capabilities) &&
-        capabilities.platform === "ios" && (
-        capabilities.reason === "ALARM_AUTHORIZATION_DENIED" ||
-        capabilities.reason === "TIME_SENSITIVE_DISABLED" ||
-        capabilities.reason === "SOUND_DISABLED"
-    );
-}
-
-function getAlarmMutationFailureMessage(reason?: string): string {
-    switch (reason) {
-        case "NOTIFICATION_PERMISSION_REQUIRED":
-            return "알림 권한이 꺼져 있어 테스트 알람을 예약하지 못했어요.";
-        case "EXACT_ALARM_PERMISSION_REQUIRED":
-            return "정확한 알람 권한을 켠 뒤 다시 테스트해 주세요.";
-        case "FULL_SCREEN_PERMISSION_REQUIRED":
-            return "전체 화면 알람 권한을 켠 뒤 다시 테스트해 주세요.";
-        case "NATIVE_MODULE_UNAVAILABLE":
-            return "현재 앱 빌드에서는 강력한 알람을 테스트할 수 없어요.";
-        default:
-            return "테스트 알람을 예약하지 못했어요. 권한 상태를 확인해 주세요.";
+    if (capabilities.notificationAuthorization === "notDetermined") {
+        return createNotificationRequestIssue();
     }
+    if (
+        !capabilities.notificationAuthorized ||
+        capabilities.notificationAuthorization === "denied" ||
+        capabilities.notificationAuthorization === "unknown" ||
+        capabilities.reason === "NOTIFICATION_ALERTS_DISABLED"
+    ) {
+        return createSettingsIssue({
+            title: "알림이 꺼져 있어요",
+            description: "출발 알람을 받으려면 알림을 켜 주세요.",
+            settingKind: "notification",
+        });
+    }
+    if (capabilities.soundAuthorization === "disabled" || capabilities.reason === "SOUND_DISABLED") {
+        return createSettingsIssue({
+            title: "알림 소리가 꺼져 있어요",
+            description: "기기 설정에서 알림 소리를 켜 주세요.",
+            settingKind: "notification",
+        });
+    }
+    return null;
 }

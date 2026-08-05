@@ -11,6 +11,7 @@ import {
 } from "../src/modules/notification/departureAlarm";
 import { recoverDepartureAlarmsAfterMutation } from "../src/modules/notification/departureAlarmMutationRecovery";
 import { isDepartureAlarmAccountCleanupPending } from "../src/modules/notification/departureAlarmSync";
+import { acknowledgePushDelivery } from "../src/modules/notification/pushDeliveryAck";
 import {
     configureNativeDepartureActionNavigation,
     deactivateNativeDepartureActionJournalRetry,
@@ -33,6 +34,9 @@ jest.mock("../src/modules/notification/departureAlarmMutationRecovery", () => ({
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     isDepartureAlarmAccountCleanupPending: jest.fn(),
 }));
+jest.mock("../src/modules/notification/pushDeliveryAck", () => ({
+    acknowledgePushDelivery: jest.fn().mockResolvedValue(true),
+}));
 
 const event = {
     eventId: "action-1",
@@ -45,6 +49,11 @@ const event = {
     occurredAt: "2026-08-04T01:00:00.000Z",
     requiresRouteNavigation: false,
     routeNavigationDelivered: false,
+};
+const notificationEvent = {
+    ...event,
+    notificationLogicalEventKey: "event:00000000-0000-4000-8000-000000000041",
+    providerMessageId: "provider-41",
 };
 
 describe("durable departure action journal", () => {
@@ -60,6 +69,7 @@ describe("durable departure action journal", () => {
         jest.mocked(markNativeDepartureActionNavigationDelivered).mockResolvedValue(true);
         jest.mocked(removePendingNativeDepartureActionEvent).mockResolvedValue(true);
         jest.mocked(enqueueNativeDepartureActionEvent).mockResolvedValue(true);
+        jest.mocked(acknowledgePushDelivery).mockResolvedValue(true);
     });
 
     afterEach(() => {
@@ -116,6 +126,56 @@ describe("durable departure action journal", () => {
         await expect(drainNativeDepartureActionJournal()).resolves.toMatchObject({ terminal: 1 });
         expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith("action-1");
         expect(terminal).toHaveBeenCalledWith(event, "key conflict");
+    });
+
+    it("records notification tap evidence for retryable and terminal action outcomes", async () => {
+        jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([notificationEvent]);
+        jest.mocked(markScheduleDeparted).mockRejectedValueOnce(new Error("offline"));
+
+        await drainNativeDepartureActionJournal();
+        expect(acknowledgePushDelivery).toHaveBeenCalledTimes(3);
+        expect(acknowledgePushDelivery).toHaveBeenCalledWith(
+            expect.objectContaining({
+                logicalEventKey: notificationEvent.notificationLogicalEventKey,
+            }),
+            "ACTIONED",
+            expect.objectContaining({ actionIdentifier: "schedule_depart_now_action" }),
+        );
+
+        resetNativeDepartureActionJournalForTests();
+        jest.clearAllMocks();
+        jest.mocked(getAuthMember).mockResolvedValue({ id: 7 });
+        jest.mocked(isDepartureAlarmAccountCleanupPending).mockResolvedValue(false);
+        jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([notificationEvent]);
+        jest.mocked(markScheduleDeparted).mockRejectedValueOnce(
+            new ApiResponseError("key conflict", { status: 409 }),
+        );
+        jest.mocked(removePendingNativeDepartureActionEvent).mockResolvedValue(true);
+        jest.mocked(acknowledgePushDelivery).mockResolvedValue(true);
+
+        await expect(drainNativeDepartureActionJournal()).resolves.toMatchObject({ terminal: 1 });
+        expect(acknowledgePushDelivery).toHaveBeenCalledTimes(3);
+        expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith(
+            notificationEvent.eventId,
+        );
+    });
+
+    it("does not let telemetry rejection block a successful business action", async () => {
+        jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([notificationEvent]);
+        jest.mocked(acknowledgePushDelivery).mockRejectedValue(new Error("ack storage failed"));
+
+        await expect(drainNativeDepartureActionJournal()).resolves.toMatchObject({
+            completed: 1,
+            failed: 0,
+        });
+        expect(markScheduleDeparted).toHaveBeenCalledWith(
+            notificationEvent.scheduleId,
+            notificationEvent.actionEventKey,
+            notificationEvent.recipientMemberId,
+        );
+        expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith(
+            notificationEvent.eventId,
+        );
     });
 
     it("does not reuse an old in-flight drain after account lifecycle deactivation", async () => {

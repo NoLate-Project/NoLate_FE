@@ -26,7 +26,7 @@ import type {
 
 const NATIVE_MODULE_NAME = "NoLateTMap";
 const MAP_INITIALIZATION_TIMEOUT_MS = 15_000;
-const MAP_LOAD_ERROR_MESSAGE = "지도를 불러오지 못했습니다. 지도 앱키와 네트워크 연결을 확인해 주세요.";
+const MAP_LOAD_ERROR_MESSAGE = "지도를 불러오지 못했어요. 네트워크 연결을 확인한 뒤 다시 시도해 주세요.";
 const MIN_ZOOM = 6;
 const MAX_ZOOM = 18;
 const MAX_COMMAND_HISTORY = 24;
@@ -358,7 +358,7 @@ const TmapNativeMapView = forwardRef<TmapMapViewHandle, TmapMapViewProps>(functi
 
     if (!NativeTMapView || !appKey) {
         const message = !NativeTMapView
-            ? "이 빌드에서는 네이티브 지도를 사용할 수 없습니다."
+            ? "이 기기에서는 지도를 사용할 수 없어요."
             : "지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요.";
         return (
             <View

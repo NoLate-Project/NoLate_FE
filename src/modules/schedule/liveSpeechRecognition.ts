@@ -195,7 +195,7 @@ function normalizeAvailability(value: unknown): LiveSpeechAvailability {
         return {
             serviceAvailable: false,
             supportsOnDevice: false,
-            reason: "음성 인식 지원 상태를 확인하지 못했습니다.",
+            reason: "음성 입력을 준비하지 못했어요.",
         };
     }
 
@@ -422,7 +422,7 @@ export async function getLiveSpeechRecognitionAvailability(
         return {
             serviceAvailable: false,
             supportsOnDevice: false,
-            reason: "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.",
+            reason: "이 기기에서는 음성 입력을 사용할 수 없어요.",
         };
     }
 
@@ -436,7 +436,7 @@ export async function startLiveSpeechRecognition(
     options: LiveSpeechStartOptions = {}
 ): Promise<string> {
     if (!nativeLiveSpeech) {
-        throw new Error("이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.");
+        throw new Error("이 기기에서는 음성 입력을 사용할 수 없어요.");
     }
 
     const requestedSessionId = normalizeSessionId(options.sessionId)
@@ -451,7 +451,7 @@ export async function startLiveSpeechRecognition(
     });
     const sessionId = normalizeSessionId(result?.sessionId);
     if (!sessionId || sessionId !== requestedSessionId) {
-        throw new Error("실시간 음성 인식 세션을 시작하지 못했습니다.");
+        throw new Error("음성 입력을 시작하지 못했어요. 다시 시도해 주세요.");
     }
     return sessionId;
 }
@@ -460,15 +460,15 @@ export async function stopLiveSpeechRecognition(
     sessionId: string
 ): Promise<LiveSpeechFinalResult> {
     if (!nativeLiveSpeech) {
-        throw new Error("이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.");
+        throw new Error("이 기기에서는 음성 입력을 사용할 수 없어요.");
     }
     const normalizedSessionId = normalizeSessionId(sessionId);
-    if (!normalizedSessionId) throw new Error("종료할 음성 인식 세션이 없습니다.");
+    if (!normalizedSessionId) throw new Error("음성 입력을 마치지 못했어요. 다시 시도해 주세요.");
 
     const result = await nativeLiveSpeech.stop(normalizedSessionId);
     const transcript = normalizeTranscript({ ...result, isFinal: true });
     if (!transcript) {
-        throw new Error("음성 인식 결과를 마무리하지 못했습니다.");
+        throw new Error("말한 내용을 불러오지 못했어요. 다시 시도해 주세요.");
     }
     return transcript;
 }

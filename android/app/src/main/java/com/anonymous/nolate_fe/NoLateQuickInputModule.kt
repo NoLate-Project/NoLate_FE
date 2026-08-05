@@ -67,7 +67,7 @@ class NoLateQuickInputModule(
     fun recognizeTextFromImageWithRequestId(uri: String, requestId: String, promise: Promise) {
         val normalizedRequestId = requestId.trim()
         if (normalizedRequestId.isEmpty()) {
-            promise.reject("quick_input_invalid_request_id", "사진 인식 요청 식별자가 올바르지 않습니다.")
+            promise.reject("quick_input_invalid_request_id", "선택한 사진이 바뀌었어요. 다시 읽어 주세요.")
             return
         }
         recognize(uri, normalizedRequestId, promise)
@@ -76,7 +76,7 @@ class NoLateQuickInputModule(
     private fun recognize(uri: String, requestId: String, promise: Promise) {
         val normalizedUri = uri.trim()
         if (normalizedUri.isEmpty()) {
-            promise.reject("quick_input_invalid_image_uri", "분석할 사진 파일 경로가 올바르지 않습니다.")
+            promise.reject("quick_input_invalid_image_uri", "사진을 열지 못했어요. 다시 선택해 주세요.")
             return
         }
         val requestGeneration = synchronized(requestLock) {
@@ -334,7 +334,7 @@ class NoLateQuickInputModule(
     ) {
         promise.reject(
             "quick_input_audio_file_unsupported",
-            "Android에서는 실시간 음성 인식을 사용해 주세요.",
+            "Android에서는 마이크로 바로 말해 주세요.",
         )
     }
 

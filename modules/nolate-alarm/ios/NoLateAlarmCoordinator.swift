@@ -1,5 +1,4 @@
 import Foundation
-import SwiftUI
 import UIKit
 import UserNotifications
 
@@ -220,38 +219,7 @@ actor NoLateAlarmCoordinator {
     )
     let soundAuthorization = Self.settingLabel(notificationSettings.soundSetting)
 
-    #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
-    if #available(iOS 26.0, *) {
-      let alarmKitAuthorization = Self.alarmKitAuthorizationLabel(
-        AlarmManager.shared.authorizationState
-      )
-      let isAuthorized = AlarmManager.shared.authorizationState == .authorized
-      let reason: String?
-      switch AlarmManager.shared.authorizationState {
-      case .authorized:
-        reason = nil
-      case .notDetermined:
-        reason = "ALARM_AUTHORIZATION_NOT_DETERMINED"
-      case .denied:
-        reason = "ALARM_AUTHORIZATION_DENIED"
-      @unknown default:
-        reason = "ALARM_AUTHORIZATION_UNKNOWN"
-      }
-      return NoLateAlarmCapabilities(
-        exactAlarmAuthorized: isAuthorized,
-        fullScreenAuthorized: isAuthorized,
-        notificationAuthorized: notificationAuthorized,
-        deliveryMode: "alarmKit",
-        alarmKitAuthorization: alarmKitAuthorization,
-        notificationAuthorization: notificationAuthorization,
-        timeSensitiveAuthorization: timeSensitiveAuthorization,
-        soundAuthorization: soundAuthorization,
-        reason: reason
-      )
-    }
-    #endif
-
-    let reason: String
+    let reason: String?
     if !Self.canDeliverNotifications(notificationSettings.authorizationStatus) {
       reason = notificationSettings.authorizationStatus == .notDetermined
         ? "NOTIFICATION_PERMISSION_NOT_DETERMINED"
@@ -262,19 +230,15 @@ actor NoLateAlarmCoordinator {
       reason = "TIME_SENSITIVE_DISABLED"
     } else if notificationSettings.soundSetting != .enabled {
       reason = "SOUND_DISABLED"
-    } else if NoLateAlarmRuntime.isIOS26OrNewer {
-      reason = "ALARMKIT_SDK_UNAVAILABLE"
     } else {
-      reason = "TIME_SENSITIVE_FALLBACK"
+      reason = nil
     }
     return NoLateAlarmCapabilities(
       exactAlarmAuthorized: false,
       fullScreenAuthorized: false,
       notificationAuthorized: notificationAuthorized,
       deliveryMode: "timeSensitive",
-      alarmKitAuthorization: NoLateAlarmRuntime.isIOS26OrNewer
-        ? "unavailable"
-        : "notSupported",
+      alarmKitAuthorization: "notSupported",
       notificationAuthorization: notificationAuthorization,
       timeSensitiveAuthorization: timeSensitiveAuthorization,
       soundAuthorization: soundAuthorization,
@@ -354,10 +318,9 @@ actor NoLateAlarmCoordinator {
       break
     }
 
-    let desiredDeliveryMode: NoLateAlarmDeliveryMode =
-      NoLateAlarmRuntime.isAlarmKitAvailable
-        ? .alarmKit
-        : .timeSensitive
+    // ALARM now means a NoLate-owned custom alarm screen entered from an ordinary
+    // time-sensitive notification. AlarmKit remains linked only to remove legacy reservations.
+    let desiredDeliveryMode: NoLateAlarmDeliveryMode = .timeSensitive
     let desired = NoLateStoredAlarm(
       alarmId: command.alarmId,
       scheduleId: command.scheduleId,
@@ -478,29 +441,10 @@ actor NoLateAlarmCoordinator {
     delaySeconds: Int,
     nowMilliseconds: Int64 = NoLateAlarmCoordinator.currentTimeMilliseconds()
   ) async throws -> NoLateAlarmMutationResult {
-    guard (3...60).contains(delaySeconds) else {
-      throw NoLateAlarmValidationError.invalid(
-        "delaySeconds must be between 3 and 60."
-      )
-    }
-    return try await upsert(
-      NoLateValidatedUpsertCommand(
-        alarmId: "test:\(UUID().uuidString.lowercased())",
-        logicalAlarmId: "test",
-        scheduleId: "test",
-        title: "NoLate 테스트 알람",
-        body: "강력한 출발 알람 테스트입니다.",
-        occurrenceId: nil,
-        decision: nil,
-        minutesBeforeDeparture: nil,
-        actionEventKey: nil,
-        generation: min(nowMilliseconds, noLateMaximumSafeJavaScriptInteger),
-        recipientMemberId: 1,
-        logicalEventKey: nil,
-        triggerAtMilliseconds: nowMilliseconds + Int64(delaySeconds) * 1_000,
-        snoozeMinutes: 5
-      ),
-      nowMilliseconds: nowMilliseconds
+    _ = nowMilliseconds
+    return try await NoLateCustomAlarmNotificationScheduler.shared.schedulePreview(
+      delaySeconds: delaySeconds,
+      scheduleId: nil
     )
   }
 
@@ -591,26 +535,13 @@ actor NoLateAlarmCoordinator {
       snapshot = .empty
       initialPersistenceError = nil
 
-      let pendingIdentifiers = Set(
-        await notificationCenter.pendingNotificationRequests()
-          .map(\.identifier)
-          .filter { $0.hasPrefix(Self.notificationIdentifierPrefix) }
-      )
-      let deliveredIdentifiers = Set(
-        await notificationCenter.deliveredNotifications()
-          .map(\.request.identifier)
-          .filter { $0.hasPrefix(Self.notificationIdentifierPrefix) }
-      )
-      if !pendingIdentifiers.isEmpty {
-        notificationCenter.removePendingNotificationRequests(
-          withIdentifiers: Array(pendingIdentifiers)
-        )
-      }
-      if !deliveredIdentifiers.isEmpty {
-        notificationCenter.removeDeliveredNotifications(
-          withIdentifiers: Array(deliveredIdentifiers)
-        )
-      }
+      // clearAllAlarms is an account cleanup/fresh-login privacy boundary, not a normal alarm
+      // mutation. Remote pushes do not use the alarm identifier prefix, so remove every app-owned
+      // pending/delivered notification to prevent the previous account's content surviving logout.
+      let pendingNotificationCount = await notificationCenter.pendingNotificationRequests().count
+      let deliveredNotificationCount = await notificationCenter.deliveredNotifications().count
+      notificationCenter.removeAllPendingNotificationRequests()
+      notificationCenter.removeAllDeliveredNotifications()
 
       var alarmKitDeliveryCount = 0
       #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
@@ -645,8 +576,8 @@ actor NoLateAlarmCoordinator {
         hadActionEvidence ||
         hadNavigationEvidence ||
         !storedAlarms.isEmpty ||
-        !pendingIdentifiers.isEmpty ||
-        !deliveredIdentifiers.isEmpty ||
+        pendingNotificationCount > 0 ||
+        deliveredNotificationCount > 0 ||
         alarmKitDeliveryCount > 0
     } catch {
       await systemMutex.release()
@@ -692,10 +623,9 @@ actor NoLateAlarmCoordinator {
         ) == .expire
       {
         snapshot.alarms.removeValue(forKey: alarm.alarmId)
-        let tombstone = NoLateAlarmTombstone(
-          alarmId: alarm.alarmId,
-          generation: alarm.generation,
-          updatedAtMilliseconds: nowMilliseconds
+        let tombstone = NoLateAlarmRecoveryPolicy.expiredTombstone(
+          for: alarm,
+          nowMilliseconds: nowMilliseconds
         )
         snapshot.tombstones[alarm.alarmId] = tombstone
         try persistSnapshot()
@@ -710,15 +640,9 @@ actor NoLateAlarmCoordinator {
           Self.notificationIdentifier(for: alarm)
         )
       case .alarmKit:
-        #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
-        if #available(iOS 26.0, *) {
-          isScheduled = alarmKitIds.contains(Self.systemUUID(for: alarm))
-        } else {
-          isScheduled = false
-        }
-        #else
+        // Every still-future AlarmKit record is migrated through schedulePersisted(). That method
+        // cancels the stable legacy AlarmKit id before installing the custom notification.
         isScheduled = false
-        #endif
       }
       if
         NoLateAlarmRecoveryPolicy.shouldReschedule(
@@ -824,22 +748,42 @@ actor NoLateAlarmCoordinator {
     _ response: NoLateValidatedNotificationResponseFire
   ) async throws -> Bool {
     try requireHealthyStore()
+    let nowMilliseconds = NoLateAlarmCoordinator.currentTimeMilliseconds()
+    let activeAlarm = snapshot.alarms[response.nativeAlarmId]
+    let expiredTombstone = activeAlarm == nil
+      ? snapshot.tombstones[response.nativeAlarmId]
+      : nil
     guard
-      let alarm = snapshot.alarms[response.nativeAlarmId],
-      NoLateAlarmNotificationResponsePolicy.matches(alarm: alarm, response: response)
+      let evidence = NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+        activeAlarm: activeAlarm,
+        tombstone: expiredTombstone,
+        response: response,
+        nowMilliseconds: nowMilliseconds
+      )
     else {
       // Ordinary remote visible pushes do not own a stored physical native alarm.
       return false
     }
     try recordObservedFireEvent(
-      for: alarm,
+      for: evidence,
       occurredAtMilliseconds: response.occurredAtMilliseconds,
       timingBasis: .observedAlerting
     )
-    try await finishAlarmAfterCommittedUserIntent(
-      alarm,
-      nowMilliseconds: NoLateAlarmCoordinator.currentTimeMilliseconds()
-    )
+    if let expiredTombstone {
+      // Fire journal first, then durably consume the replay capability. A failed save rejects the
+      // bridge call so Expo retains its OS response; fire-journal merge makes that retry idempotent.
+      var committedSnapshot = snapshot
+      committedSnapshot.tombstones[expiredTombstone.alarmId] =
+        expiredTombstone.withoutExpiredResponseEvidence()
+      try store.save(committedSnapshot)
+      snapshot = committedSnapshot
+    }
+    if let activeAlarm {
+      try await finishAlarmAfterCommittedUserIntent(
+        activeAlarm,
+        nowMilliseconds: nowMilliseconds
+      )
+    }
     return true
   }
 
@@ -1091,6 +1035,18 @@ actor NoLateAlarmCoordinator {
     ))
   }
 
+  private func recordObservedFireEvent(
+    for evidence: NoLateAlarmNotificationResponseEvidence,
+    occurredAtMilliseconds: Int64,
+    timingBasis: NoLateAlarmFireTimingBasis
+  ) throws {
+    try fireJournal.record(evidence.fireEvent(
+      eventId: UUID().uuidString.lowercased(),
+      occurredAtMilliseconds: occurredAtMilliseconds,
+      timingBasis: timingBasis
+    ))
+  }
+
   private func schedulePersisted(
     _ alarm: NoLateStoredAlarm,
     requestAuthorization: Bool,
@@ -1172,14 +1128,14 @@ actor NoLateAlarmCoordinator {
     for alarm: NoLateStoredAlarm,
     requestAuthorization: Bool
   ) async -> NoLateSystemScheduleOutcome {
-    #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
-    if #available(iOS 26.0, *) {
-      return await scheduleAlarmKit(
-        alarm,
-        requestAuthorization: requestAuthorization
-      )
+    // This synchronous cancellation runs under the same system mutex as scheduling. It removes a
+    // legacy AlarmKit reservation with the stable physical id before the replacement notification
+    // is installed, preventing both surfaces from firing during migration.
+    do {
+      try cancelSystemDeliveryUnlocked(alarmId: alarm.alarmId)
+    } catch {
+      return .failed(.timeSensitive, reason: "LEGACY_ALARM_CANCEL_FAILED")
     }
-    #endif
     return await scheduleTimeSensitiveNotification(
       alarm,
       requestAuthorization: requestAuthorization
@@ -1220,23 +1176,34 @@ actor NoLateAlarmCoordinator {
       )
     }
 
+    await NoLateCustomAlarmNotificationScheduler.shared.registerCategories()
     let content = UNMutableNotificationContent()
     content.title = alarm.title ?? "출발 시간입니다"
     content.body = alarm.body ?? "지금 출발하면 예정된 시간에 도착할 수 있어요."
-    content.sound = .default
-    content.categoryIdentifier = "schedule_depart_now"
-    content.threadIdentifier = "departure-reminder"
+    content.sound = NoLateCustomAlarmNotificationScheduler.resolvedSound()
+    content.categoryIdentifier = NoLateCustomAlarmNotificationContract.categoryIdentifier
+    content.threadIdentifier = "nolate-custom-alarm"
     content.interruptionLevel = .timeSensitive
     let actionEventKey = Self.actionEventKey(for: alarm)
-    var userInfo: [AnyHashable: Any] = [
-      "type": "SCHEDULE_DEPARTURE_REMINDER",
-      "scheduleId": alarm.scheduleId,
+    let customAlarmPayload = NoLateCustomAlarmNotificationContract.payload(
+      alarmId: alarm.backendAlarmId,
+      previewId: nil,
+      scheduleId: alarm.scheduleId,
+      title: content.title,
+      body: content.body,
+      isPreview: false
+    )
+    var userInfo: [AnyHashable: Any] = [:]
+    for (key, value) in customAlarmPayload {
+      userInfo[key] = value
+    }
+    userInfo.merge([
       "alarmId": alarm.backendAlarmId,
       "nativeAlarmId": alarm.alarmId,
       "alarmGeneration": String(alarm.generation),
       "recipientMemberId": String(alarm.recipientMemberId ?? 0),
       "actionEventKey": actionEventKey
-    ]
+    ]) { _, incoming in incoming }
     if let occurrenceId = alarm.occurrenceId {
       userInfo["occurrenceId"] = occurrenceId
     }
@@ -1246,7 +1213,6 @@ actor NoLateAlarmCoordinator {
     if let decision = alarm.decision {
       userInfo["decision"] = decision
     }
-    userInfo["body"] = content.body
     content.userInfo = userInfo
 
     let fireDate = Date(
@@ -1287,122 +1253,6 @@ actor NoLateAlarmCoordinator {
     }
     return .scheduled(.timeSensitive, warning: warning)
   }
-
-  #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
-  @available(iOS 26.0, *)
-  private func scheduleAlarmKit(
-    _ alarm: NoLateStoredAlarm,
-    requestAuthorization: Bool
-  ) async -> NoLateSystemScheduleOutcome {
-    let manager = AlarmManager.shared
-    var authorizationState = manager.authorizationState
-    if authorizationState == .notDetermined, requestAuthorization {
-      do {
-        authorizationState = try await manager.requestAuthorization()
-      } catch {
-        return .failed(.alarmKit, reason: "ALARM_AUTHORIZATION_ERROR")
-      }
-    }
-    guard authorizationState == .authorized else {
-      let reason = authorizationState == .notDetermined
-        ? "ALARM_AUTHORIZATION_NOT_DETERMINED"
-        : "ALARM_AUTHORIZATION_DENIED"
-      return .permissionRequired(.alarmKit, reason: reason)
-    }
-
-    // AlarmKit exposes one alert-title slot and no body slot. Keep both server strings by
-    // synthesizing a bounded, readable title instead of dropping the occurrence body.
-    let title = LocalizedStringResource(
-      String.LocalizationValue(NoLateAlarmPresentationPolicy.alarmKitAlertTitle(
-        title: alarm.title,
-        body: alarm.body
-      ))
-    )
-    let stopButton = AlarmButton(
-      text: "중지",
-      textColor: .white,
-      systemImageName: "stop.circle.fill"
-    )
-    let departButton = AlarmButton(
-      text: "지금 출발 완료",
-      textColor: .white,
-      systemImageName: "figure.walk.circle.fill"
-    )
-    let alert: AlarmPresentation.Alert
-    if #available(iOS 26.1, *) {
-      alert = AlarmPresentation.Alert(
-        title: title,
-        secondaryButton: departButton,
-        secondaryButtonBehavior: .custom
-      )
-    } else {
-      alert = AlarmPresentation.Alert(
-        title: title,
-        stopButton: stopButton,
-        secondaryButton: departButton,
-        secondaryButtonBehavior: .custom
-      )
-    }
-    let attributes = AlarmAttributes(
-      presentation: AlarmPresentation(alert: alert),
-      metadata: NoLateAlarmMetadata(
-        alarmId: alarm.alarmId,
-        logicalAlarmId: alarm.backendAlarmId,
-        scheduleId: alarm.scheduleId,
-        generation: alarm.generation,
-        occurrenceId: alarm.occurrenceId,
-        actionEventKey: Self.actionEventKey(for: alarm)
-      ),
-      tintColor: Color(red: 0.95, green: 0.38, blue: 0.17)
-    )
-    let configuration = AlarmManager.AlarmConfiguration.alarm(
-      schedule: .fixed(
-        Date(
-          timeIntervalSince1970:
-            Double(alarm.effectiveTriggerAtMilliseconds) / 1_000
-        )
-      ),
-      attributes: attributes,
-      // AlarmKit has no independent body-tap intent. The system stop/default path is the closest
-      // supported route entry and remains navigation-only; it never commits departure.
-      stopIntent: NoLateOpenRouteAlarmIntent(physicalAlarmId: alarm.alarmId),
-      secondaryIntent: NoLateDepartNowAlarmIntent(physicalAlarmId: alarm.alarmId),
-      sound: .default
-    )
-    let id = Self.systemUUID(for: alarm)
-    notificationCenter.removePendingNotificationRequests(
-      withIdentifiers: [Self.notificationIdentifier(for: alarm)]
-    )
-    notificationCenter.removeDeliveredNotifications(
-      withIdentifiers: [Self.notificationIdentifier(for: alarm)]
-    )
-    try? manager.cancel(id: id)
-    do {
-      _ = try await manager.schedule(id: id, configuration: configuration)
-      return .scheduled(.alarmKit, warning: nil)
-    } catch AlarmManager.AlarmError.maximumLimitReached {
-      return .failed(.alarmKit, reason: "ALARM_MAXIMUM_LIMIT_REACHED")
-    } catch {
-      return .failed(.alarmKit, reason: "ALARM_SCHEDULE_FAILED")
-    }
-  }
-
-  @available(iOS 26.0, *)
-  private static func alarmKitAuthorizationLabel(
-    _ state: AlarmManager.AuthorizationState
-  ) -> String {
-    switch state {
-    case .notDetermined:
-      return "notDetermined"
-    case .denied:
-      return "denied"
-    case .authorized:
-      return "authorized"
-    @unknown default:
-      return "unknown"
-    }
-  }
-  #endif
 
   private func cancelSystemDelivery(for alarm: NoLateStoredAlarm) async throws {
     try await cancelSystemDelivery(alarmId: alarm.alarmId)
@@ -1700,18 +1550,6 @@ actor NoLateAlarmCoordinator {
     return nil
   }
 }
-
-#if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
-@available(iOS 26.0, *)
-private struct NoLateAlarmMetadata: AlarmMetadata {
-  let alarmId: String
-  let logicalAlarmId: String
-  let scheduleId: String
-  let generation: Int64
-  let occurrenceId: String?
-  let actionEventKey: String
-}
-#endif
 
 enum NoLateAlarmSettingsOpener {
   @MainActor

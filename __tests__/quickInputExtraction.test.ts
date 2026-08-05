@@ -147,7 +147,7 @@ describe("quick schedule media input extraction", () => {
 
         await expect(
             recognizeQuickSchedulePhoto("file:///tmp/new.png", "new-photo-request")
-        ).rejects.toThrow("다른 사진의 인식 결과");
+        ).rejects.toThrow("선택한 사진이 바뀌었어요");
     });
 
     test("사용자가 확인한 사진 OCR 문장은 재인식 없이 그대로 반환한다", async () => {
@@ -303,6 +303,8 @@ describe("quick schedule media input extraction", () => {
         await expect(resolveQuickScheduleParseInput("사진으로 입력한 일정", {
             inputMode: "photo",
             photoUri: "file:///tmp/schedule.png",
-        })).rejects.toThrow("이 기기에서는 사진/음성 텍스트 추출을 사용할 수 없습니다.");
+        })).rejects.toThrow(
+            "이 기기에서는 사진과 음성 내용을 자동으로 읽을 수 없어요. 직접 입력해 주세요."
+        );
     });
 });

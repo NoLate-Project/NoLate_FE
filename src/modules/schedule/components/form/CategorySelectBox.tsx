@@ -16,6 +16,9 @@ type Props = {
     value: string;
     onChange: (id: string) => void;
     onManageCategories?: () => void;
+    expanded?: boolean;
+    hideTrigger?: boolean;
+    onExpandedChange?: (expanded: boolean) => void;
 };
 
 const ITEM_HEIGHT = 49;
@@ -28,9 +31,18 @@ export default function CategorySelectBox({
     value,
     onChange,
     onManageCategories,
+    expanded,
+    hideTrigger = false,
+    onExpandedChange,
 }: Props) {
     const { colors } = useTheme();
-    const [open, setOpen] = useState(false);
+    const [internalOpen, setInternalOpen] = useState(false);
+    const open = expanded ?? internalOpen;
+
+    const updateOpen = (nextOpen: boolean) => {
+        if (expanded === undefined) setInternalOpen(nextOpen);
+        onExpandedChange?.(nextOpen);
+    };
 
     const expandAnim = useRef(new Animated.Value(0)).current;
     const prevOpenRef = useRef(false);
@@ -77,42 +89,49 @@ export default function CategorySelectBox({
 
     return (
         <View style={styles.root}>
-            <Text style={[styles.label, { color: colors.textSecondary }]}>
-                {label}
-            </Text>
-
-            <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`${label} 선택, 현재 ${selected?.title ?? "선택 안 됨"}`}
-                accessibilityState={{ expanded: open, disabled: !canOpen }}
-                disabled={!canOpen}
-                onPress={() => setOpen((current) => !current)}
-                style={[
-                    styles.selector,
-                    {
-                        borderColor: open ? colors.selectedDayBg : colors.border,
-                        backgroundColor: colors.surface2,
-                    },
-                ]}
-            >
-                <View style={styles.selectedRow}>
-                    <View
-                        style={[
-                            styles.selectedDot,
-                            { backgroundColor: selected?.color ?? colors.textDisabled },
-                        ]}
-                    />
-                    <Text style={[styles.selectedText, { color: colors.textPrimary }]}>
-                        {selected?.title ?? "선택"}
+            {!hideTrigger ? (
+                <>
+                    <Text style={[styles.label, { color: colors.textSecondary }]}>
+                        {label}
                     </Text>
-                </View>
 
-                <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
-                    <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
-                </Animated.View>
-            </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${label} 선택, 현재 ${selected?.title ?? "선택 안 됨"}`}
+                        accessibilityState={{ expanded: open, disabled: !canOpen }}
+                        disabled={!canOpen}
+                        onPress={() => updateOpen(!open)}
+                        style={[
+                            styles.selector,
+                            {
+                                borderColor: open ? colors.selectedDayBg : colors.border,
+                                backgroundColor: colors.surface2,
+                            },
+                        ]}
+                    >
+                        <View style={styles.selectedRow}>
+                            <View
+                                style={[
+                                    styles.selectedDot,
+                                    { backgroundColor: selected?.color ?? colors.textDisabled },
+                                ]}
+                            />
+                            <Text style={[styles.selectedText, { color: colors.textPrimary }]}>
+                                {selected?.title ?? "선택"}
+                            </Text>
+                        </View>
+
+                        <Animated.View style={{ transform: [{ rotate: arrowRotate }] }}>
+                            <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
+                        </Animated.View>
+                    </Pressable>
+                </>
+            ) : null}
 
             <Animated.View
+                accessibilityElementsHidden={!open}
+                importantForAccessibility={open ? "auto" : "no-hide-descendants"}
+                pointerEvents={open ? "auto" : "none"}
                 style={[
                     styles.dropdownWrap,
                     {
@@ -124,6 +143,7 @@ export default function CategorySelectBox({
                 <View
                     style={[
                         styles.dropdown,
+                        hideTrigger && styles.inlineDropdown,
                         {
                             borderColor: colors.border,
                             backgroundColor: colors.surface,
@@ -136,11 +156,11 @@ export default function CategorySelectBox({
                             <Pressable
                                 key={category.id}
                                 accessibilityRole="radio"
-                                accessibilityState={{ selected: active }}
+                                accessibilityState={{ checked: active }}
                                 accessibilityLabel={`${category.title} 카테고리`}
                                 onPress={() => {
                                     onChange(category.id);
-                                    setOpen(false);
+                                    updateOpen(false);
                                 }}
                                 style={[
                                     styles.categoryItem,
@@ -189,7 +209,7 @@ export default function CategorySelectBox({
                                 accessibilityRole="button"
                                 accessibilityLabel="카테고리 관리 열기"
                                 onPress={() => {
-                                    setOpen(false);
+                                    updateOpen(false);
                                     onManageCategories();
                                 }}
                                 style={({ pressed }) => [
@@ -252,6 +272,9 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderRadius: 12,
         overflow: "hidden",
+    },
+    inlineDropdown: {
+        marginTop: 0,
     },
     categoryItem: {
         minHeight: ITEM_HEIGHT,

@@ -256,7 +256,7 @@ describe("QuickScheduleModal live speech", () => {
         });
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.onPress();
             await Promise.resolve();
         });
@@ -411,7 +411,7 @@ describe("QuickScheduleModal live speech", () => {
         });
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.onPress();
             await Promise.resolve();
         });
@@ -829,7 +829,7 @@ describe("QuickScheduleModal live speech", () => {
         mockGetLiveSpeechRecognitionAvailability.mockResolvedValueOnce({
             serviceAvailable: true,
             supportsOnDevice: false,
-            reason: "한국어 온디바이스 모델이 없습니다.",
+            reason: "이 기기에서는 오프라인 음성 입력을 사용할 수 없어요.",
         });
         const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
 
@@ -861,12 +861,12 @@ describe("QuickScheduleModal live speech", () => {
 
         expect(mockStartLiveSpeechRecognition).not.toHaveBeenCalled();
         expect(alertSpy).toHaveBeenCalledWith(
-            "기기 내 음성 인식 미지원",
-            expect.stringContaining("Apple 서버에서 처리될 수 있습니다"),
+            "음성 입력 방법을 선택해 주세요",
+            expect.stringContaining("Apple 음성 인식 서비스로 전송될 수 있지만"),
             expect.any(Array)
         );
         const buttons = alertSpy.mock.calls.at(-1)?.[2];
-        const onlineButton = buttons?.find((button) => button.text === "온라인 인식 사용");
+        const onlineButton = buttons?.find((button) => button.text === "인터넷 음성 입력");
 
         await act(async () => {
             onlineButton?.onPress?.();
@@ -930,7 +930,7 @@ describe("QuickScheduleModal live speech", () => {
         mockGetLiveSpeechRecognitionAvailability.mockResolvedValueOnce({
             serviceAvailable: true,
             supportsOnDevice: false,
-            reason: "한국어 온디바이스 모델이 없습니다.",
+            reason: "이 기기에서는 오프라인 음성 입력을 사용할 수 없어요.",
         });
         const alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
         const renderModal = (visible: boolean) => (
@@ -961,7 +961,7 @@ describe("QuickScheduleModal live speech", () => {
             await Promise.resolve();
         });
         const buttons = alertSpy.mock.calls.at(-1)?.[2];
-        const staleOnlineButton = buttons?.find((button) => button.text === "온라인 인식 사용");
+        const staleOnlineButton = buttons?.find((button) => button.text === "인터넷 음성 입력");
 
         await act(async () => {
             renderer!.root

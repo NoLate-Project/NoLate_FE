@@ -74,6 +74,17 @@ jest.mock("../src/modules/notification/foregroundPushPresentationClaim", () => (
         .mockResolvedValue(true),
 }));
 
+jest.mock("../src/modules/notification/nativeDepartureReminderPresentationJournal", () => ({
+    activateNativeDepartureReminderPresentationJournal: jest.fn().mockResolvedValue({
+        discovered: 0,
+        acknowledged: 0,
+        unresolved: 0,
+        accountMismatch: 0,
+        blocked: false,
+    }),
+    deactivateNativeDepartureReminderPresentationJournal: jest.fn(),
+}));
+
 jest.mock("../src/modules/schedule/scheduleArrivalObservationQueue", () => ({
     activateScheduleArrivalObservationQueueForAuthenticatedMember: jest
         .fn()
