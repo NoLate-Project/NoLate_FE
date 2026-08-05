@@ -70,6 +70,10 @@ import {
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
+const editDateText = (d: Date) => {
+    const weekday = ["일", "월", "화", "수", "목", "금", "토"][d.getDay()];
+    return `${formatScheduleFormDate(d)} (${weekday})`;
+};
 
 // 날짜 객체와 시간 객체를 하나의 일정 시각으로 합친다.
 function mergeDateTime(datePart: Date, timePart: Date) {
@@ -94,7 +98,7 @@ const hasCompletePersonalTravelPlanCoordinates = (
 ) => Number.isFinite(place?.lat) && Number.isFinite(place?.lng);
 
 export default function ScheduleEdit() {
-    const { id }     = useLocalSearchParams<{ id: string }>();
+    const { id, preview } = useLocalSearchParams<{ id: string; preview?: string }>();
     const pathname = usePathname();
     const router     = useRouter();
     const navigation = useNavigation();
@@ -104,6 +108,7 @@ export default function ScheduleEdit() {
 
     const item = id ? state.itemsById[id] : undefined;
     const canDeleteSchedule = canDeletePresentedSchedule(item);
+    const developmentPreview = __DEV__ && preview === "1";
 
     const [title,           setTitle]           = useState(item?.title ?? "");
     const [notes,           setNotes]           = useState(getUserVisibleScheduleNotes(item?.notes) ?? "");
@@ -267,6 +272,11 @@ export default function ScheduleEdit() {
     const routeReady = !!routeInfo;
 
     useEffect(() => {
+        if (developmentPreview) {
+            setDetailLoading(false);
+            setDetailError(null);
+            return;
+        }
         if (!id) return;
         // 경로 선택 화면을 오가는 동안에는 이미 불러온 일정과 로컬 경로 초안을 유지한다.
         // 복귀 직후 재조회가 시작되면 detailLoading 때문에 실제 변경사항이 있어도 저장 버튼이
@@ -295,9 +305,14 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [dispatch, id, retryKey, routePlannerSessionId]);
+    }, [developmentPreview, dispatch, id, retryKey, routePlannerSessionId]);
 
     useEffect(() => {
+        if (developmentPreview) {
+            setCategoryLoading(false);
+            setCategoryError(null);
+            return;
+        }
         let cancelled = false;
         setCategoryLoading(true);
 
@@ -317,13 +332,14 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [categoryRetryKey, dispatch]);
+    }, [categoryRetryKey, developmentPreview, dispatch]);
 
     const retryCategoryLoad = useCallback(() => {
         setCategoryRetryKey((value) => value + 1);
     }, []);
 
     useEffect(() => {
+        if (developmentPreview) return;
         let cancelled = false;
         getMySubscriptionPolicy()
             .then((policy) => {
@@ -344,7 +360,7 @@ export default function ScheduleEdit() {
         return () => {
             cancelled = true;
         };
-    }, [item?.notificationEnabled]);
+    }, [developmentPreview, item?.notificationEnabled]);
 
     useEffect(() => {
         if (!item) return;
@@ -842,15 +858,6 @@ export default function ScheduleEdit() {
     const calendarSelected = isDisplayDate
         ? getScheduleCalendarDateKey(displayPicker === "startDate" ? startDay : endDay)
         : "";
-    const fieldStyle = (type: PickerType) => ({
-        borderWidth: 1,
-        borderRadius: 16,
-        paddingVertical: 12,
-        paddingHorizontal: 12,
-        borderColor:     picker === type ? colors.inputBorderFocused : colors.inputBorder,
-        backgroundColor: colors.inputBackground,
-    });
-
     return (
         <View style={[styles.editRoot, { backgroundColor: colors.background }]}>
         <View
@@ -994,111 +1001,140 @@ export default function ScheduleEdit() {
                 onClear={routeInfo ? clearRoute : undefined}
             />
 
+            <Text style={[styles.label, { color: colors.textSecondary }]}>일시</Text>
             <View
+                testID="schedule-edit-datetime-card"
                 style={[
-                    styles.endTimeToggleRow,
+                    styles.dateTimeCard,
                     {
                         borderColor: colors.inputBorder,
                         backgroundColor: colors.inputBackground,
                     },
                 ]}
             >
-                <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종일</Text>
-                <Switch
-                    accessibilityLabel="종일 일정"
-                    accessibilityHint="켜면 시간 없이 날짜만 설정합니다"
-                    value={allDay}
-                    onValueChange={handleAllDayChange}
-                    trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
-                    thumbColor="#FFFFFF"
-                    style={styles.toggleSwitch}
-                />
-            </View>
-
-            <View style={styles.twoColRow}>
-                <View style={styles.col}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>시작 날짜</Text>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
-                        accessibilityState={{ expanded: picker === "startDate" }}
-                        onPress={() => togglePicker("startDate")}
-                        style={fieldStyle("startDate")}
-                    >
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(startDay)}</Text>
-                    </Pressable>
-                </View>
-                <View style={styles.col}>
-                    <Text style={[styles.label, { color: colors.textSecondary }]}>
-                        {allDay ? "종료 날짜" : "시작 시간"}
-                    </Text>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={allDay
-                            ? `종료 날짜 ${formatScheduleFormDate(endDay)}`
-                            : `시작 시간 ${hhmmText(startTime)}`}
-                        accessibilityState={{ expanded: picker === (allDay ? "endDate" : "startTime") }}
-                        onPress={() => togglePicker(allDay ? "endDate" : "startTime")}
-                        style={fieldStyle(allDay ? "endDate" : "startTime")}
-                    >
-                        <Text style={[styles.fieldText, { color: colors.textPrimary }]}>
-                            {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
-                        </Text>
-                    </Pressable>
-                </View>
-            </View>
-
-            {!allDay ? (
-                <View
-                    style={[
-                        styles.endTimeToggleRow,
-                        {
-                            borderColor: colors.inputBorder,
-                            backgroundColor: colors.inputBackground,
-                        },
-                    ]}
-                >
-                    <Text style={[styles.endTimeToggleTitle, { color: colors.textPrimary }]}>종료 시간</Text>
+                <View style={styles.dateTimeToggleRow}>
+                    <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>종일</Text>
                     <Switch
-                        accessibilityLabel="종료 시간"
-                        accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
-                        value={hasEndTime}
-                        onValueChange={handleEndTimeEnabledChange}
+                        accessibilityLabel="종일 일정"
+                        accessibilityHint="켜면 시간 없이 날짜만 설정합니다"
+                        value={allDay}
+                        onValueChange={handleAllDayChange}
                         trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
                         thumbColor="#FFFFFF"
                         style={styles.toggleSwitch}
                     />
                 </View>
-            ) : null}
 
-            {!allDay && hasEndTime ? (
-                <View style={styles.twoColRow}>
-                    <View style={styles.col}>
-                        <Text style={[styles.label, { color: colors.textSecondary }]}>종료 날짜</Text>
+                <View style={[styles.dateTimeDivider, { backgroundColor: colors.border }]} />
+
+                <View testID="schedule-edit-start-row" style={styles.dateTimeValueRow}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
+                        accessibilityState={{ expanded: picker === "startDate" }}
+                        onPress={() => togglePicker("startDate")}
+                        style={({ pressed }) => [
+                            styles.dateTimeDateAction,
+                            {
+                                backgroundColor: picker === "startDate"
+                                    ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
+                                    : "transparent",
+                                opacity: pressed ? 0.62 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>시작</Text>
+                        <Text style={[styles.dateTimeDateText, { color: colors.textSecondary }]}>
+                            {editDateText(startDay)}
+                        </Text>
+                    </Pressable>
+                    {!allDay ? (
                         <Pressable
                             accessibilityRole="button"
-                            accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
-                            accessibilityState={{ expanded: picker === "endDate" }}
-                            onPress={() => togglePicker("endDate")}
-                            style={fieldStyle("endDate")}
+                            accessibilityLabel={`시작 시간 ${hhmmText(startTime)}`}
+                            accessibilityState={{ expanded: picker === "startTime" }}
+                            onPress={() => togglePicker("startTime")}
+                            style={({ pressed }) => [
+                                styles.dateTimeClockAction,
+                                {
+                                    backgroundColor: picker === "startTime"
+                                        ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
+                                        : "transparent",
+                                    opacity: pressed ? 0.62 : 1,
+                                },
+                            ]}
                         >
-                            <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{formatScheduleFormDate(endDay)}</Text>
+                            <Text style={[styles.dateTimeClockText, { color: colors.textPrimary }]}>{hhmmText(startTime)}</Text>
+                            <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
                         </Pressable>
-                    </View>
-                    <View style={styles.col}>
-                        <Text style={[styles.label, { color: colors.textSecondary }]}>종료 시간</Text>
-                        <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`종료 시간 ${hhmmText(endTime)}`}
-                            accessibilityState={{ expanded: picker === "endTime" }}
-                            onPress={() => togglePicker("endTime")}
-                            style={fieldStyle("endTime")}
-                        >
-                            <Text style={[styles.fieldText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
-                        </Pressable>
-                    </View>
+                    ) : (
+                        <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
+                    )}
                 </View>
-            ) : null}
+
+                <View style={[styles.dateTimeDivider, { backgroundColor: colors.border }]} />
+
+                <View testID="schedule-edit-end-row" style={styles.dateTimeValueRow}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
+                        accessibilityState={{
+                            disabled: !allDay && !hasEndTime,
+                            expanded: picker === "endDate",
+                        }}
+                        disabled={!allDay && !hasEndTime}
+                        onPress={() => togglePicker("endDate")}
+                        style={({ pressed }) => [
+                            styles.dateTimeDateAction,
+                            {
+                                backgroundColor: picker === "endDate"
+                                    ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
+                                    : "transparent",
+                                opacity: !allDay && !hasEndTime ? 0.55 : pressed ? 0.62 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.dateTimeRowTitle, { color: colors.textPrimary }]}>종료</Text>
+                        <Text style={[styles.dateTimeDateText, { color: colors.textSecondary }]}>
+                            {!allDay && !hasEndTime ? "설정 안 함" : editDateText(endDay)}
+                        </Text>
+                    </Pressable>
+                    {allDay ? (
+                        <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
+                    ) : (
+                        <View style={styles.dateTimeEndControls}>
+                            {hasEndTime ? (
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`종료 시간 ${hhmmText(endTime)}`}
+                                    accessibilityState={{ expanded: picker === "endTime" }}
+                                    onPress={() => togglePicker("endTime")}
+                                    style={({ pressed }) => [
+                                        styles.dateTimeClockAction,
+                                        {
+                                            backgroundColor: picker === "endTime"
+                                                ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
+                                                : "transparent",
+                                            opacity: pressed ? 0.62 : 1,
+                                        },
+                                    ]}
+                                >
+                                    <Text style={[styles.dateTimeClockText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
+                                </Pressable>
+                            ) : null}
+                            <Switch
+                                accessibilityLabel="종료 시간"
+                                accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
+                                value={hasEndTime}
+                                onValueChange={handleEndTimeEnabledChange}
+                                trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                                thumbColor="#FFFFFF"
+                                style={styles.toggleSwitch}
+                            />
+                        </View>
+                    )}
+                </View>
+            </View>
 
             <Animated.View style={[styles.pickerContainer, {
                 borderColor:  colors.inputBorder,
@@ -1224,7 +1260,7 @@ const styles = StyleSheet.create({
         alignSelf: "center",
     },
     formPageContent: {
-        paddingTop: 24,
+        paddingTop: 8,
     },
     navigationHeader: {
         minHeight: 44,
@@ -1258,22 +1294,72 @@ const styles = StyleSheet.create({
         lineHeight: 20,
         fontWeight: "800",
     },
-    label:        { marginBottom: 6, fontSize: 13, lineHeight: 18, fontWeight: "600" },
-    endTimeToggleRow: {
-        minHeight: 52,
+    label:        { marginBottom: 6, fontSize: 13, lineHeight: 18, fontWeight: "700" },
+    dateTimeCard: {
         borderWidth: 1,
         borderRadius: 16,
+        marginBottom: 14,
+        overflow: "hidden",
+    },
+    dateTimeToggleRow: {
+        minHeight: 52,
         paddingHorizontal: 13,
-        marginBottom: 12,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
     },
-    endTimeToggleTitle: {
+    dateTimeValueRow: {
+        minHeight: 64,
+        paddingLeft: 4,
+        paddingRight: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    dateTimeDateAction: {
         flex: 1,
-        fontSize: 15,
+        minWidth: 0,
+        minHeight: 56,
+        borderRadius: 12,
+        paddingHorizontal: 9,
+        paddingVertical: 8,
+        justifyContent: "center",
+    },
+    dateTimeRowTitle: {
+        fontSize: 14,
+        lineHeight: 19,
         fontWeight: "800",
+    },
+    dateTimeDateText: {
+        marginTop: 2,
+        fontSize: 11.5,
+        lineHeight: 16,
+        fontWeight: "600",
+    },
+    dateTimeClockAction: {
+        minHeight: 44,
+        borderRadius: 12,
+        paddingHorizontal: 7,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 3,
+    },
+    dateTimeClockText: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "800",
+        fontVariant: ["tabular-nums"],
+    },
+    dateTimeEndControls: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+    },
+    dateTimeDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginLeft: 13,
     },
     toggleSwitch: {
         alignSelf: "center",
@@ -1323,9 +1409,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: "800",
     },
-    twoColRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
-    col:       { flex: 1 },
-    fieldText: { fontWeight: "700", fontSize: 13 },
     pickerContainer: {
         borderRadius: 16, borderWidth: 1, overflow: "hidden",
     },

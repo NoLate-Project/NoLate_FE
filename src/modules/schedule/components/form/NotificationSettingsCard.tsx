@@ -387,7 +387,7 @@ export default function NotificationSettingsCard({
                 <View style={styles.headerText}>
                     <Text style={[styles.title, { color: colors.textPrimary }]}>출발 알림</Text>
                     <Text style={[styles.usage, { color: colors.textSecondary }]}>
-                        교통 상황을 반영해 출발 시간을 알려드려요.
+                        {flat ? "교통 상황 반영" : "교통 상황을 반영해 출발 시간을 알려드려요."}
                     </Text>
                 </View>
                 <Switch
@@ -411,57 +411,89 @@ export default function NotificationSettingsCard({
 
             {enabled ? (
                 <View style={styles.settings}>
-                    <View
-                        style={[
-                            styles.recommendationCard,
-                            {
-                                borderColor: colors.inputBorder,
-                                backgroundColor: colors.inputBackground,
-                            },
-                            flat && styles.flatRecommendationCard,
-                        ]}
-                    >
+                    {flat ? (
                         <View
+                            testID="notification-flat-summary"
                             style={[
-                                styles.recommendationCol,
-                                flat && styles.flatRecommendationField,
-                                flat && {
+                                styles.flatSummaryCard,
+                                {
                                     borderColor: colors.inputBorder,
                                     backgroundColor: colors.inputBackground,
                                 },
                             ]}
                         >
-                            <Text style={[styles.label, { color: colors.textSecondary }]}>추천 출발</Text>
-                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
-                                {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
-                            </Text>
+                            <View style={styles.flatSummaryMain}>
+                                <View style={styles.flatSummaryCopy}>
+                                    <Text style={[styles.flatSummaryLabel, { color: colors.textSecondary }]}>
+                                        추천 출발 시간
+                                    </Text>
+                                    <Text style={[styles.flatSummaryTime, { color: colors.textPrimary }]}>
+                                        {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
+                                    </Text>
+                                    <Text style={[styles.flatSummaryArrival, { color: colors.textSecondary }]}>
+                                        {arrivalAt ? `${formatRouteClock(arrivalAt)} 도착 예정` : "도착 시간 미정"}
+                                    </Text>
+                                </View>
+                                <View style={[styles.flatDurationPill, { backgroundColor: colors.border }]}>
+                                    <Text style={[styles.flatDurationText, { color: colors.textSecondary }]}>
+                                        {`${formatRouteDuration(routeMinutes)} 소요`}
+                                    </Text>
+                                </View>
+                            </View>
+                            <View style={[styles.flatSummaryDivider, { backgroundColor: colors.border }]} />
+                            <View
+                                testID="notification-alert-mode-picker"
+                                accessibilityRole="radiogroup"
+                                accessibilityLabel="출발 알림 방식"
+                                style={[styles.flatModeControl, { backgroundColor: colors.background }]}
+                            >
+                                <CompactAlarmModeOption
+                                    mode="STANDARD"
+                                    selected={alertMode === "STANDARD"}
+                                    accentBlue={accentBlue}
+                                    selectedBackground={selectedBackground}
+                                    textSecondary={colors.textSecondary}
+                                    onPress={() => onAlertModeChange("STANDARD")}
+                                />
+                                <CompactAlarmModeOption
+                                    mode="ALARM"
+                                    selected={alertMode === "ALARM"}
+                                    accentBlue={accentBlue}
+                                    selectedBackground={selectedBackground}
+                                    textSecondary={colors.textSecondary}
+                                    onPress={() => onAlertModeChange("ALARM")}
+                                />
+                            </View>
                         </View>
-                        {flat ? null : (
+                    ) : (
+                        <>
+                            <View
+                                style={[
+                                    styles.recommendationCard,
+                                    {
+                                        borderColor: colors.inputBorder,
+                                        backgroundColor: colors.inputBackground,
+                                    },
+                                ]}
+                            >
+                            <View style={styles.recommendationCol}>
+                                <Text style={[styles.label, { color: colors.textSecondary }]}>추천 출발</Text>
+                                <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                    {recommendedDepartureAt ? formatRouteClock(recommendedDepartureAt) : "-"}
+                                </Text>
+                            </View>
                             <View style={[styles.recommendationDivider, { backgroundColor: colors.border }]} />
-                        )}
-                        <View
-                            style={[
-                                styles.recommendationCol,
-                                flat && styles.flatRecommendationField,
-                                flat && {
-                                    borderColor: colors.inputBorder,
-                                    backgroundColor: colors.inputBackground,
-                                },
-                            ]}
-                        >
-                            <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정</Text>
-                            <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
-                                {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
+                            <View style={styles.recommendationCol}>
+                                <Text style={[styles.label, { color: colors.textSecondary }]}>도착 예정</Text>
+                                <Text style={[styles.recommendationValue, { color: colors.textPrimary }]}>
+                                    {arrivalAt ? formatRouteClock(arrivalAt) : "-"}
+                                </Text>
+                            </View>
+                            </View>
+                            <View style={styles.reminderMetaRow}>
+                            <Text style={[styles.description, styles.reminderMetaText, { color: colors.textSecondary }]}>
+                                {`${formatRouteDuration(routeMinutes)} 소요 · ${leadMinutes}분 전부터 ${intervalMinutes}분 간격 확인`}
                             </Text>
-                        </View>
-                    </View>
-                    <View style={styles.reminderMetaRow}>
-                        <Text style={[styles.description, styles.reminderMetaText, { color: colors.textSecondary }]}>
-                            {flat
-                                ? `이동 약 ${formatRouteDuration(routeMinutes)} · ${leadMinutes}분 전부터 확인`
-                                : `${formatRouteDuration(routeMinutes)} 소요 · ${leadMinutes}분 전부터 ${intervalMinutes}분 간격 확인`}
-                        </Text>
-                        {!flat ? (
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="추천 알림 설정 적용"
@@ -473,51 +505,52 @@ export default function NotificationSettingsCard({
                             >
                                 <Text style={[styles.useButtonText, { color: accentBlue }]}>추천 설정 적용</Text>
                             </Pressable>
-                        ) : null}
-                    </View>
-
-                    <View
-                        style={[styles.modeSection, { borderTopColor: colors.border }, flat && styles.flatModeSection]}
-                    >
-                        <View style={styles.modeHeading}>
-                            <Text style={[styles.modeHeadingTitle, { color: colors.textPrimary }]}>알림 방식</Text>
                         </View>
+
                         <View
-                            testID="notification-alert-mode-picker"
-                            accessibilityRole="radiogroup"
-                            accessibilityLabel="출발 알림 방식"
-                            style={[
-                                styles.modeRow,
-                                {
-                                    borderColor: colors.inputBorder,
-                                    backgroundColor: colors.inputBackground,
-                                },
-                            ]}
+                            style={[styles.modeSection, { borderTopColor: colors.border }]}
                         >
-                            <AlarmModeOption
-                                mode="STANDARD"
-                                selected={alertMode === "STANDARD"}
-                                accentBlue={accentBlue}
-                                selectedBackground={selectedBackground}
-                                borderColor={colors.inputBorder}
-                                textPrimary={colors.textPrimary}
-                                textSecondary={colors.textSecondary}
-                                onPress={() => onAlertModeChange("STANDARD")}
-                            />
-                            <AlarmModeOption
-                                mode="ALARM"
-                                selected={alertMode === "ALARM"}
-                                accentBlue={accentBlue}
-                                selectedBackground={selectedBackground}
-                                borderColor={colors.inputBorder}
-                                textPrimary={colors.textPrimary}
-                                textSecondary={colors.textSecondary}
-                                onPress={() => onAlertModeChange("ALARM")}
-                            />
+                            <View style={styles.modeHeading}>
+                                <Text style={[styles.modeHeadingTitle, { color: colors.textPrimary }]}>알림 방식</Text>
+                            </View>
+                            <View
+                                testID="notification-alert-mode-picker"
+                                accessibilityRole="radiogroup"
+                                accessibilityLabel="출발 알림 방식"
+                                style={[
+                                    styles.modeRow,
+                                    {
+                                        borderColor: colors.inputBorder,
+                                        backgroundColor: colors.inputBackground,
+                                    },
+                                ]}
+                            >
+                                <AlarmModeOption
+                                    mode="STANDARD"
+                                    selected={alertMode === "STANDARD"}
+                                    accentBlue={accentBlue}
+                                    selectedBackground={selectedBackground}
+                                    borderColor={colors.inputBorder}
+                                    textPrimary={colors.textPrimary}
+                                    textSecondary={colors.textSecondary}
+                                    onPress={() => onAlertModeChange("STANDARD")}
+                                />
+                                <AlarmModeOption
+                                    mode="ALARM"
+                                    selected={alertMode === "ALARM"}
+                                    accentBlue={accentBlue}
+                                    selectedBackground={selectedBackground}
+                                    borderColor={colors.inputBorder}
+                                    textPrimary={colors.textPrimary}
+                                    textSecondary={colors.textSecondary}
+                                    onPress={() => onAlertModeChange("ALARM")}
+                                />
+                            </View>
                         </View>
-                    </View>
+                        </>
+                    )}
 
-                    {alertMode === "ALARM" ? (
+                    {!flat && alertMode === "ALARM" ? (
                         <View
                             accessible
                             accessibilityLabel="교통 상황이 바뀌면 푸시로 알려드려요"
@@ -687,7 +720,9 @@ export default function NotificationSettingsCard({
                                 <Pressable
                                     testID="notification-alarm-sound-row"
                                     accessibilityRole="button"
-                                    accessibilityLabel={`알람음, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
+                                    accessibilityLabel={flat
+                                        ? `알림음, 현재 ${selectedSound.label}`
+                                        : `알람음, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
                                     accessibilityState={{
                                         disabled: soundPreviewDisabled,
                                     }}
@@ -713,10 +748,10 @@ export default function NotificationSettingsCard({
                                     </View>
                                     <View style={styles.flatTestCopy}>
                                         <Text style={[styles.flatTestTitle, { color: colors.textPrimary }]}>
-                                            알람음
+                                            {flat ? "알림음" : "알람음"}
                                         </Text>
                                         <Text style={[styles.flatTestDescription, { color: colors.textSecondary }]}>
-                                            {selectedSound.label} · 모든 출발 알람에 적용
+                                            {flat ? selectedSound.label : `${selectedSound.label} · 모든 출발 알람에 적용`}
                                         </Text>
                                     </View>
                                     <Ionicons accessible={false} name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -766,7 +801,7 @@ const styles = StyleSheet.create({
         borderWidth: 0,
         borderRadius: 0,
         padding: 0,
-        marginBottom: 24,
+        marginBottom: 20,
         backgroundColor: "transparent",
     },
     header: {
@@ -776,10 +811,10 @@ const styles = StyleSheet.create({
         minHeight: 38,
     },
     flatHeader: {
-        minHeight: 58,
-        borderBottomWidth: StyleSheet.hairlineWidth,
+        minHeight: 52,
+        borderBottomWidth: 0,
         paddingHorizontal: 0,
-        paddingBottom: 12,
+        paddingBottom: 8,
     },
     headerText: { flex: 1, paddingRight: 12 },
     title: { fontSize: 15, lineHeight: 20, fontWeight: "900" },
@@ -797,6 +832,79 @@ const styles = StyleSheet.create({
         marginTop: 22,
         paddingTop: 0,
         borderTopWidth: 0,
+    },
+    flatSummaryCard: {
+        borderWidth: 1,
+        borderRadius: 16,
+        overflow: "hidden",
+    },
+    flatSummaryMain: {
+        minHeight: 96,
+        paddingHorizontal: 13,
+        paddingVertical: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+    flatSummaryCopy: {
+        flex: 1,
+        minWidth: 0,
+    },
+    flatSummaryLabel: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+    },
+    flatSummaryTime: {
+        marginTop: 2,
+        fontSize: 21,
+        lineHeight: 27,
+        fontWeight: "900",
+        fontVariant: ["tabular-nums"],
+    },
+    flatSummaryArrival: {
+        marginTop: 2,
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "600",
+    },
+    flatDurationPill: {
+        minHeight: 28,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    flatDurationText: {
+        fontSize: 10.5,
+        lineHeight: 15,
+        fontWeight: "800",
+    },
+    flatSummaryDivider: {
+        height: StyleSheet.hairlineWidth,
+        marginHorizontal: 13,
+    },
+    flatModeControl: {
+        minHeight: 42,
+        margin: 10,
+        borderRadius: 12,
+        padding: 3,
+        flexDirection: "row",
+        alignItems: "stretch",
+        gap: 3,
+    },
+    compactModeButton: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 36,
+        borderRadius: 9,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    compactModeText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "800",
     },
     flatModePicker: {
         borderWidth: 1,
@@ -1234,6 +1342,51 @@ const styles = StyleSheet.create({
         fontWeight: "800",
     },
 });
+
+function CompactAlarmModeOption({
+    mode,
+    selected,
+    accentBlue,
+    selectedBackground,
+    textSecondary,
+    onPress,
+}: {
+    mode: ScheduleAlertMode;
+    selected: boolean;
+    accentBlue: string;
+    selectedBackground: string;
+    textSecondary: string;
+    onPress: () => void;
+}) {
+    const presentation = SCHEDULE_ALERT_MODE_PRESENTATION[mode];
+
+    return (
+        <Pressable
+            testID={`notification-alert-mode-${mode.toLowerCase()}`}
+            accessibilityRole="radio"
+            accessibilityLabel={presentation.accessibilityLabel}
+            accessibilityHint={presentation.description}
+            accessibilityState={{ checked: selected }}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.compactModeButton,
+                {
+                    backgroundColor: selected ? selectedBackground : "transparent",
+                    opacity: pressed ? 0.65 : 1,
+                },
+            ]}
+        >
+            <Text
+                style={[
+                    styles.compactModeText,
+                    { color: selected ? accentBlue : textSecondary },
+                ]}
+            >
+                {presentation.label}
+            </Text>
+        </Pressable>
+    );
+}
 
 function AlarmModeOption({
     mode,

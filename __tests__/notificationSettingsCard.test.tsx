@@ -140,6 +140,16 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
                     scheduleId="42"
                     leadMinutes={60}
                     intervalMinutes={20}
+                    routeInfo={{
+                        id: "route-42",
+                        originName: "서울역",
+                        destinationName: "강남역",
+                        totalDurationMinutes: 36,
+                        departureTime: "2026-07-29T02:24:00Z",
+                        arrivalTime: "2026-07-29T03:00:00Z",
+                        timeBasis: "estimated",
+                        steps: [],
+                    }}
                     startAt={new Date("2026-07-29T03:00:00Z")}
                     policy={policy}
                     onEnabledChange={jest.fn()}
@@ -194,7 +204,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(onAlertModeChange.mock.calls).toEqual([["ALARM"], ["STANDARD"]]);
     });
 
-    test("flat UI는 바깥 박스를 제거하고 지원 기기·AlarmKit·권한 표를 노출하지 않는다", async () => {
+    test("flat UI는 추천 출발 요약과 알림 방식을 한 카드에 모으고 내부 권한 표는 숨긴다", async () => {
         await renderCard("ALARM", "flat");
 
         expect(
@@ -208,12 +218,16 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(
             StyleSheet.flatten(renderer!.root.findByProps({ testID: "notification-settings-toggle-row" }).props.style),
         ).toMatchObject({
-            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomWidth: 0,
             paddingHorizontal: 0,
         });
+        expect(renderer!.root.findByProps({ testID: "notification-flat-summary" })).toBeTruthy();
         const rendered = JSON.stringify(renderer!.toJSON());
-        expect(rendered).toContain("교통 상황이 바뀌면 푸시로 알려드려요.");
-        expect(rendered).toContain("모든 출발 알람에 적용");
+        expect(rendered).toContain("교통 상황 반영");
+        expect(rendered).toContain("추천 출발 시간");
+        expect(rendered).toContain("36분 소요");
+        expect(rendered).toContain("오후 12:00 도착 예정");
+        expect(rendered).toContain("알림음");
         expect(rendered).not.toContain("권장값 적용");
         expect(rendered).toContain("차임");
         expect(rendered).not.toContain("NoLate가 직접 만든 알람 화면");
@@ -227,7 +241,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         const soundRow = renderer!.root.findByProps({
-            accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용",
+            accessibilityLabel: "알림음, 현재 차임",
         });
         expect(soundRow.props.disabled).toBe(false);
 
@@ -281,7 +295,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -307,7 +321,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BELL");
         expect(mockStartAlarmAudio).not.toHaveBeenCalled();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 벨, 모든 출발 알람에 적용" }).props.disabled,
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 벨" }).props.disabled,
         ).toBe(false);
     });
 
@@ -317,7 +331,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -343,7 +357,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -367,7 +381,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -399,7 +413,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(renderer!.root.findByProps({ children: "알림을 켜 주세요" })).toBeTruthy();
         expect(
             renderer!.root.findByProps({
-                accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용",
+                accessibilityLabel: "알림음, 현재 차임",
             }).props.disabled,
         ).toBe(false);
 
@@ -458,7 +472,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         ).toBeTruthy();
         expect(
             renderer!.root.findByProps({
-                accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용",
+                accessibilityLabel: "알림음, 현재 차임",
             }).props.disabled,
         ).toBe(false);
     });
@@ -496,7 +510,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -598,7 +612,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람음, 현재 차임, 모든 출발 알람에 적용" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {

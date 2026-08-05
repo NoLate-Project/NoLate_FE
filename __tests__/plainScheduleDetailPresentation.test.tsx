@@ -31,19 +31,17 @@ function makeSchedule(overrides: Partial<ScheduleItem> = {}): ScheduleItem {
 }
 
 describe("plain schedule detail presentation", () => {
-    test("시간 일정의 수정 폼용 표시값을 만든다", () => {
+    test("시간 일정의 상세 요약값을 만든다", () => {
         expect(buildPlainScheduleDetailPresentation(makeSchedule())).toEqual({
             title: "QA0713A 일반 일정",
             categoryTitle: "개인",
             categoryColor: "#2F80FF",
             location: "회의실 A",
             notes: "자료를 미리 준비하기",
-            allDay: false,
-            hasEndTime: true,
-            startDate: "2026. 7. 14.",
-            startTime: "오전 10:00",
-            endDate: "2026. 7. 14.",
-            endTime: "오전 11:30",
+            dateLabel: "2026년 7월 14일 (화)",
+            timeRangeLabel: "오전 10:00 – 11:30",
+            durationLabel: "1시간 30분",
+            notificationLabel: "없음",
         });
     });
 
@@ -55,21 +53,22 @@ describe("plain schedule detail presentation", () => {
             hasEndTime: false,
         }));
 
-        expect(presentation.startDate).toBe("2026. 7. 14.");
-        expect(presentation.endDate).toBe("2026. 7. 15.");
-        expect(presentation.startTime).toBeUndefined();
-        expect(presentation.endTime).toBeUndefined();
+        expect(presentation.dateLabel).toBe(
+            "2026년 7월 14일 (화) – 2026년 7월 15일 (수)",
+        );
+        expect(presentation.timeRangeLabel).toBe("종일");
+        expect(presentation.durationLabel).toBeUndefined();
     });
 
-    test("종료 시각이 없는 일정은 종료 필드 값을 만들지 않는다", () => {
+    test("종료 시각이 없는 일정은 시작 시각만 표시한다", () => {
         const presentation = buildPlainScheduleDetailPresentation(makeSchedule({
             hasEndTime: false,
             endAt: "2026-07-14T10:00:00",
         }));
 
-        expect(presentation.hasEndTime).toBe(false);
-        expect(presentation.endDate).toBeUndefined();
-        expect(presentation.endTime).toBeUndefined();
+        expect(presentation.dateLabel).toBe("2026년 7월 14일 (화)");
+        expect(presentation.timeRangeLabel).toBe("오전 10:00");
+        expect(presentation.durationLabel).toBeUndefined();
     });
 
     test("locationName이 없으면 저장된 도착지 이름을 장소로 사용한다", () => {
@@ -85,6 +84,29 @@ describe("plain schedule detail presentation", () => {
 
         expect(presentation.location).toBe("서울역");
     });
+
+    test.each([
+        ["STANDARD", 60, "1시간 전 · 푸시 알림"],
+        ["ALARM", 30, "30분 전 · 출발 알람"],
+    ] as const)("켜진 %s 알림의 실제 방식을 표시한다", (alertMode, leadMinutes, expected) => {
+        const presentation = buildPlainScheduleDetailPresentation(makeSchedule({
+            notificationEnabled: true,
+            notificationLeadMinutes: leadMinutes,
+            alertMode,
+        }));
+
+        expect(presentation.notificationLabel).toBe(expected);
+    });
+
+    test("꺼진 알림은 저장된 ALARM 선호가 남아 있어도 없음으로 표시한다", () => {
+        const presentation = buildPlainScheduleDetailPresentation(makeSchedule({
+            notificationEnabled: false,
+            notificationLeadMinutes: 60,
+            alertMode: "ALARM",
+        }));
+
+        expect(presentation.notificationLabel).toBe("없음");
+    });
 });
 
 describe("PlainScheduleDetailView", () => {
@@ -95,7 +117,7 @@ describe("PlainScheduleDetailView", () => {
         renderer = undefined;
     });
 
-    test("일정 수정 화면 순서의 읽기 전용 필드를 보여 준다", async () => {
+    test("카테고리와 제목 뒤에 일시·장소·알림을 한 그룹으로 보여 준다", async () => {
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
@@ -116,17 +138,22 @@ describe("PlainScheduleDetailView", () => {
             .join(" ");
 
         expect(text).toContain("일정 정보");
-        expect(text).toContain("제목");
         expect(text).toContain("QA0713A 일반 일정");
         expect(text).toContain("개인");
+        expect(text).toContain("일시");
+        expect(text).toContain("2026년 7월 14일 (화)");
+        expect(text).toContain("오전 10:00 – 11:30");
+        expect(text).toContain("1시간 30분");
         expect(text).toContain("장소");
         expect(text).toContain("회의실 A");
-        expect(text).toContain("시작 날짜");
-        expect(text).toContain("시작 시간");
-        expect(text).toContain("종료 날짜");
-        expect(text).toContain("종료 시간");
+        expect(text).toContain("알림");
+        expect(text).toContain("없음");
         expect(text).toContain("메모");
         expect(text).toContain("자료를 미리 준비하기");
+        expect(renderer!.root.findByProps({ testID: "plain-schedule-detail-info-group" })).toBeTruthy();
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "알림 없음",
+        })).toBeTruthy();
         expect(renderer!.root.findAllByType(TextInput)).toHaveLength(0);
         expect(renderer!.root.findAllByType(Switch)).toHaveLength(0);
     });
@@ -144,8 +171,30 @@ describe("PlainScheduleDetailView", () => {
             );
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 등록된 장소 없음" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "메모 등록된 메모 없음" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장소 없음" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "메모 없음" })).toBeTruthy();
+    });
+
+    test("켜진 알림은 상세 정보 그룹에 실제 시점과 방식을 함께 표시한다", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <PlainScheduleDetailView
+                        item={makeSchedule({
+                            notificationEnabled: true,
+                            notificationLeadMinutes: 60,
+                            alertMode: "STANDARD",
+                        })}
+                        contentTopInset={120}
+                        contentBottomInset={40}
+                    />
+                </ThemeProvider>
+            );
+        });
+
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "알림 1시간 전 · 푸시 알림",
+        })).toBeTruthy();
     });
 
     test("공유 일정의 개인 이동 경로 상태와 설정 액션을 표시한다", async () => {

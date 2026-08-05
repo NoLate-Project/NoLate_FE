@@ -36,14 +36,13 @@ export default function LocationInputRow({
             ? `${originValue} → ${destinationValue}`
             : hasRoute
                 ? originValue || destinationValue
-                : "출발지와 도착지 추가";
+                : "출발지·도착지 추가";
     const modeText = travelMode ? getTravelModeLabel(travelMode) : "이동수단 미지정";
     const expectedMinutes = routeInfo?.totalDurationMinutes ?? travelMinutes;
     const routeMeta = typeof expectedMinutes === "number"
         ? `${modeText} · 약 ${formatRouteDuration(expectedMinutes)}`
         : modeText;
-    const accentBlue = mode === "dark" ? "#4B9DFF" : "#2979FF";
-    const cardBg = mode === "dark" ? "rgba(17,18,22,0.82)" : colors.inputBackground;
+    const cardBg = mode === "dark" ? "rgba(44,44,46,0.72)" : colors.inputBackground;
 
     return (
         <View style={{ marginBottom: 14 }}>
@@ -52,7 +51,7 @@ export default function LocationInputRow({
                 style={{
                     borderWidth: 1,
                     borderColor: colors.inputBorder,
-                    borderRadius: 16,
+                    borderRadius: 17,
                     backgroundColor: cardBg,
                     overflow: "hidden",
                 }}
@@ -66,47 +65,30 @@ export default function LocationInputRow({
                         style={{
                             flex: 1,
                             minWidth: 0,
-                            minHeight: 52,
-                            paddingLeft: 12,
-                            paddingRight: hasRoute && onClear ? 2 : 12,
-                            paddingVertical: 11,
+                            minHeight: 64,
+                            paddingLeft: 14,
+                            paddingRight: hasRoute && onClear ? 2 : 10,
+                            paddingVertical: 12,
                             flexDirection: "row",
                             alignItems: "center",
-                            gap: 10,
+                            gap: 8,
                         }}
                     >
-                        <View
-                            style={{
-                                width: 28,
-                                height: 28,
-                                borderRadius: 14,
-                                alignItems: "center",
-                                justifyContent: "center",
-                                backgroundColor: "transparent",
-                            }}
-                        >
-                            <Ionicons
-                                accessible={false}
-                                name={hasRoute ? "navigate-outline" : "location-outline"}
-                                size={17}
-                                color={hasRoute ? accentBlue : colors.textSecondary}
-                            />
-                        </View>
                         <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text numberOfLines={1} style={{ color: hasRoute ? colors.textPrimary : colors.inputPlaceholder, fontWeight: "800" }}>
+                            <Text numberOfLines={1} style={{ color: colors.textPrimary, fontSize: 14, fontWeight: "800" }}>
                                 {routeText}
                             </Text>
                             {hasRoute ? (
-                                <Text style={{ color: accentBlue, fontSize: 12, marginTop: 2, fontWeight: "800" }}>
+                                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4, fontWeight: "600" }}>
                                     {routeMeta}
                                 </Text>
                             ) : (
-                                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                                    경로를 추가하면 출발 알림을 설정할 수 있어요.
+                                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4, fontWeight: "600" }}>
+                                    경로·출발 알림 설정
                                 </Text>
                             )}
                         </View>
-                        <Ionicons accessible={false} name="chevron-forward" size={18} color={colors.textSecondary} />
+                        <Ionicons accessible={false} name="chevron-forward" size={17} color={colors.textSecondary} />
                     </Pressable>
                     {hasRoute && onClear ? (
                         <Pressable

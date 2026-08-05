@@ -1,17 +1,61 @@
 import { fromISO } from "../../../lib/util/data";
 
+import { getScheduleAllDayFormEndDay } from "./scheduleFormDate";
+import { formatRouteDuration } from "./routeInfo";
 import {
-    formatScheduleFormDate,
-    getScheduleAllDayFormEndDay,
-} from "./scheduleFormDate";
+    getScheduleAlertModeLabel,
+    normalizeScheduleAlertMode,
+} from "./scheduleAlertMode";
 import type { ScheduleItem } from "./types";
 import { getUserVisibleScheduleNotes } from "./calendarImportNotes";
 
 const pad2 = (value: number) => String(value).padStart(2, "0");
+const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"] as const;
 
-function formatScheduleFormTime(date: Date): string {
+function formatScheduleDetailTime(date: Date): string {
     const hour = date.getHours();
     return `${hour < 12 ? "오전" : "오후"} ${hour % 12 || 12}:${pad2(date.getMinutes())}`;
+}
+
+function formatScheduleDetailDate(date: Date): string {
+    return `${date.getFullYear()}년 ${date.getMonth() + 1}월 ${date.getDate()}일 (${WEEKDAYS[date.getDay()]})`;
+}
+
+function isSameLocalDay(left: Date, right: Date): boolean {
+    return left.getFullYear() === right.getFullYear()
+        && left.getMonth() === right.getMonth()
+        && left.getDate() === right.getDate();
+}
+
+function formatDateRange(startAt: Date, endAt?: Date): string {
+    if (!endAt || isSameLocalDay(startAt, endAt)) return formatScheduleDetailDate(startAt);
+    return `${formatScheduleDetailDate(startAt)} – ${formatScheduleDetailDate(endAt)}`;
+}
+
+function formatTimeRange(startAt: Date, endAt?: Date): string {
+    const start = formatScheduleDetailTime(startAt);
+    if (!endAt) return start;
+
+    const end = formatScheduleDetailTime(endAt);
+    const startPeriod = startAt.getHours() < 12 ? "오전" : "오후";
+    const endPeriod = endAt.getHours() < 12 ? "오전" : "오후";
+    const compactEnd = startPeriod === endPeriod ? end.replace(`${endPeriod} `, "") : end;
+    return `${start} – ${compactEnd}`;
+}
+
+function formatNotificationLead(minutes: number): string {
+    const normalized = Math.max(0, Math.round(minutes));
+    if (normalized >= 60 && normalized % 60 === 0) return `${normalized / 60}시간 전`;
+    return `${normalized}분 전`;
+}
+
+function getNotificationLabel(item: ScheduleItem): string {
+    if (item.notificationEnabled !== true) return "없음";
+
+    const modeLabel = getScheduleAlertModeLabel(normalizeScheduleAlertMode(item.alertMode));
+    return typeof item.notificationLeadMinutes === "number" && Number.isFinite(item.notificationLeadMinutes)
+        ? `${formatNotificationLead(item.notificationLeadMinutes)} · ${modeLabel}`
+        : modeLabel;
 }
 
 function getPlainScheduleLocation(item: ScheduleItem): string | undefined {
@@ -30,15 +74,13 @@ export type PlainScheduleDetailPresentation = {
     categoryColor: string;
     location?: string;
     notes?: string;
-    allDay: boolean;
-    hasEndTime: boolean;
-    startDate: string;
-    startTime?: string;
-    endDate?: string;
-    endTime?: string;
+    dateLabel: string;
+    timeRangeLabel: string;
+    durationLabel?: string;
+    notificationLabel: string;
 };
 
-/** 일반 일정을 수정 폼과 같은 순서로 읽어 줄 표시 전용 데이터다. */
+/** 일반 일정 상세의 핵심 정보를 짧은 읽기 전용 문구로 만든다. */
 export function buildPlainScheduleDetailPresentation(
     item: ScheduleItem
 ): PlainScheduleDetailPresentation {
@@ -49,6 +91,9 @@ export function buildPlainScheduleDetailPresentation(
     const displayEndDay = allDay
         ? getScheduleAllDayFormEndDay(startAt, endAt)
         : endAt;
+    const durationMinutes = hasEndTime
+        ? Math.round((endAt.getTime() - startAt.getTime()) / 60_000)
+        : undefined;
 
     return {
         title: item.title.trim(),
@@ -56,13 +101,16 @@ export function buildPlainScheduleDetailPresentation(
         categoryColor: item.category.color,
         location: getPlainScheduleLocation(item),
         notes: getUserVisibleScheduleNotes(item.notes),
-        allDay,
-        hasEndTime,
-        startDate: formatScheduleFormDate(startAt),
-        startTime: allDay ? undefined : formatScheduleFormTime(startAt),
-        endDate: allDay || hasEndTime
-            ? formatScheduleFormDate(displayEndDay)
+        dateLabel: formatDateRange(
+            startAt,
+            allDay || hasEndTime ? displayEndDay : undefined,
+        ),
+        timeRangeLabel: allDay
+            ? "종일"
+            : formatTimeRange(startAt, hasEndTime ? endAt : undefined),
+        durationLabel: typeof durationMinutes === "number" && durationMinutes > 0
+            ? formatRouteDuration(durationMinutes)
             : undefined,
-        endTime: hasEndTime ? formatScheduleFormTime(endAt) : undefined,
+        notificationLabel: getNotificationLabel(item),
     };
 }
