@@ -340,6 +340,16 @@ describe("QuickScheduleModal flow", () => {
 
         expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
             .toMatchObject({ selected: true });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
+        )).toMatchObject({
+            left: 2,
+            top: 11,
+            bottom: 11,
+            width: 4,
+            borderRadius: 2,
+            backgroundColor: personalCategory.color,
+        });
         expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" })).toBeDefined();
         expect(renderer!.root.findByProps({ accessibilityLabel: "프로젝트 카테고리 선택" })).toBeDefined();
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리 선택" })).toHaveLength(0);
@@ -354,6 +364,9 @@ describe("QuickScheduleModal flow", () => {
             .toMatchObject({ selected: false });
         expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.accessibilityState)
             .toMatchObject({ selected: true });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
+        )).toMatchObject({ backgroundColor: workCategory.color });
 
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.onPress();
@@ -401,6 +414,9 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 카테고리 선택" })).toHaveLength(0);
         expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
             .toMatchObject({ selected: true });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
+        )).toMatchObject({ backgroundColor: personalCategory.color });
 
         await act(async () => {
             findButtonByText("일정 저장").props.onPress();

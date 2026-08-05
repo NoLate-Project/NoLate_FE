@@ -3600,6 +3600,17 @@ export default function QuickScheduleModal({
                             { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                         ]}
                     >
+                        {selectedCategory ? (
+                            <View
+                                testID="quick-schedule-preview-title-category-pin"
+                                pointerEvents="none"
+                                accessible={false}
+                                style={[
+                                    styles.previewTitleCategoryPin,
+                                    { backgroundColor: selectedCategory.color },
+                                ]}
+                            />
+                        ) : null}
                         <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
                         <View style={styles.previewTitleValueRow}>
                             <Text numberOfLines={2} style={[styles.previewTitleValue, { color: colors.textPrimary }]}>
@@ -5330,7 +5341,8 @@ const styles = StyleSheet.create({
     previewTitleRow: {
         minHeight: 54,
         justifyContent: "center",
-        paddingHorizontal: 3,
+        paddingLeft: 14,
+        paddingRight: 3,
         paddingVertical: 6,
     },
     previewLabel: {
@@ -5344,6 +5356,14 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 6,
         flexWrap: "wrap",
+    },
+    previewTitleCategoryPin: {
+        position: "absolute",
+        left: 2,
+        top: 11,
+        bottom: 11,
+        width: 4,
+        borderRadius: 2,
     },
     previewTitleValue: {
         fontSize: 18,
