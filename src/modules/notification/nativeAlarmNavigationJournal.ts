@@ -4,6 +4,7 @@ import {
     removePendingNativeAlarmNavigationEvent,
 } from "./departureAlarm";
 import { isDepartureAlarmAccountCleanupPending } from "./departureAlarmSync";
+import { acknowledgePushDelivery } from "./pushDeliveryAck";
 
 export type NativeAlarmNavigationDrainResult = {
     discovered: number;
@@ -87,6 +88,7 @@ async function drainEpoch(epoch: number): Promise<NativeAlarmNavigationDrainResu
             result.blocked = true;
             break;
         }
+        await acknowledgeNotificationInteractionBestEffort(event);
         try {
             await navigationHandler(event.scheduleId);
         } catch {
@@ -105,6 +107,31 @@ async function drainEpoch(epoch: number): Promise<NativeAlarmNavigationDrainResu
         }
     }
     return result;
+}
+
+async function acknowledgeNotificationInteractionBestEffort(
+    event: Awaited<ReturnType<typeof getPendingNativeAlarmNavigationEvents>>[number],
+): Promise<void> {
+    if (!event.notificationLogicalEventKey) return;
+    const notificationData = {
+        logicalEventKey: event.notificationLogicalEventKey,
+        recipientMemberId: String(event.recipientMemberId),
+    };
+    await Promise.all([
+        acknowledgePushDelivery(notificationData, "RECEIVED", {
+            providerMessageId: event.providerMessageId,
+            occurredAt: event.occurredAt,
+        }),
+        acknowledgePushDelivery(notificationData, "PRESENTED", {
+            providerMessageId: event.providerMessageId,
+            occurredAt: event.occurredAt,
+        }),
+        acknowledgePushDelivery(notificationData, "ACTIONED", {
+            providerMessageId: event.providerMessageId,
+            actionIdentifier: "DEFAULT",
+            occurredAt: event.occurredAt,
+        }),
+    ]).then(() => undefined, () => undefined);
 }
 
 async function isCurrentAccount(epoch: number, memberId: number): Promise<boolean> {

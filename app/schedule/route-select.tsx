@@ -1894,7 +1894,7 @@ export default function RouteSelectScreen() {
 
     const openFavoriteSaveSheet = useCallback((place: Place) => {
         if (!placeHasCoords(place)) {
-            Alert.alert("즐겨찾기 저장", "좌표가 있는 장소만 저장할 수 있습니다.");
+            Alert.alert("즐겨찾기 저장", "지도에서 위치를 확인할 수 있는 장소만 저장할 수 있어요.");
             return;
         }
 
@@ -1954,7 +1954,7 @@ export default function RouteSelectScreen() {
 
     const savePlaceAsFavorite = useCallback(async (place: Place, categoryId?: string) => {
         if (!placeHasCoords(place)) {
-            Alert.alert("즐겨찾기 저장", "좌표가 있는 장소만 저장할 수 있습니다.");
+            Alert.alert("즐겨찾기 저장", "지도에서 위치를 확인할 수 있는 장소만 저장할 수 있어요.");
             return;
         }
 
@@ -2094,9 +2094,9 @@ export default function RouteSelectScreen() {
         const savingKey = getPlaceActionKey(place);
         setDefaultOriginSavingKey(savingKey);
         try {
-            if (!place.id) throw new Error("즐겨찾기 ID가 없습니다.");
+            if (!place.id) throw new Error("즐겨찾기 정보를 확인하지 못했어요. 다시 선택해 주세요.");
             const saved = await saveFavoriteDepartureFavorite(place);
-            if (!saved) throw new Error("기본 출발지 저장 결과가 없습니다.");
+            if (!saved) throw new Error("기본 출발지를 저장하지 못했어요. 다시 시도해 주세요.");
 
             favoriteMutationRevisionRef.current += 1;
             setFavoritePlaces((current) => upsertFavoritePlace(

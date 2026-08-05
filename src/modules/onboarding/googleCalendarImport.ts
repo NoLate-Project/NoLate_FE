@@ -190,12 +190,12 @@ async function googleFetch<T>(url: string, accessToken: string): Promise<T> {
             await clearStoredGoogleCalendarAccessToken();
         }
 
-        throw new Error(`Google Calendar 요청 실패 (${response.status})`);
+        throw new Error("Google Calendar에서 일정을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
     return withCalendarImportTimeout(response.json() as Promise<T>, {
         timeoutMs: GOOGLE_API_TIMEOUT_MS,
-        operationName: "Google Calendar 응답 처리",
+        operationName: "Google Calendar 일정 불러오기",
         onTimeout: () => controller.abort(),
     });
 }

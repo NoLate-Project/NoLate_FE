@@ -54,9 +54,6 @@ import {
     type SocialSdkLoginResult,
 } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
-import {
-    activateDepartureAlarmSyncForAuthenticatedAccount,
-} from "../../src/modules/notification/departureAlarmSync";
 import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import {
@@ -102,12 +99,7 @@ export default function Login() {
         if (!authenticated) {
             throw new Error("로그인 상태를 저장하지 못했어요. 다시 시도해 주세요.");
         }
-        const alarmSyncActivated =
-            await activateDepartureAlarmSyncForAuthenticatedAccount(authenticatedMember.id);
-        if (!alarmSyncActivated) {
-            await clearAuthTokens();
-            throw new Error("기기의 출발 알람 상태를 안전하게 초기화하지 못했어요. 다시 로그인해 주세요.");
-        }
+        // confirmedFreshLogin resolves only after the native account cleanup/bind boundary commits.
         registerPushAfterLogin(authenticatedMember.id).catch((error) => {
             console.warn("[push] token registration failed", error);
         });
@@ -272,6 +264,12 @@ export default function Login() {
                     "자동 로그인만 완료하지 못했어요. 같은 간편 로그인 버튼을 다시 눌러 로그인해 주세요.",
                 );
                 return;
+            }
+            // Apple authorization codes are short-lived and single-use. A failed signup may have
+            // consumed the code at the provider boundary, so never let the agreement screen retry
+            // the same proof. Returning to login forces a fresh Apple authorization request.
+            if (pendingSocialProfile.loginType === "APPLE") {
+                setPendingSocialProfile(null);
             }
             const presentation = getAuthErrorPresentation(error, "social-signup");
             Alert.alert(presentation.title, presentation.message);

@@ -29,7 +29,7 @@ export async function getTransitRouteViaProxy<T>(request: TransitRouteProxyReque
         request
     );
     if (!response.success || !response.data) {
-        throw new Error(response.errorMessage || "대중교통 경로 프록시 응답이 비어 있습니다.");
+        throw new Error("대중교통 경로를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
     return response.data;
 }

@@ -255,7 +255,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(hasPhotoScanOverlay()).toBe(true);
         expect(
             renderer!.root.findAll((node) => (
-                node.props.accessibilityLabel === "사진에서 일정 문장 인식 중"
+                node.props.accessibilityLabel === "사진에서 일정 내용 읽는 중"
                 && typeof node.type === "string"
             ))
         ).toHaveLength(1);
@@ -263,7 +263,7 @@ describe("QuickScheduleModal photo OCR", () => {
             renderer!.root.findAllByProps({ accessibilityLabel: "선택한 사진 정보 및 변경" })
         ).toHaveLength(0);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.accessibilityState.disabled
         ).toBe(true);
 
@@ -279,10 +279,10 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
         ).toBe("7월 24일 오후 두 시 서울역 회의");
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.accessibilityState.disabled
         ).toBe(false);
         const photoChangeButton = renderer!.root.findByProps({
@@ -324,18 +324,18 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
             renderer!.root.findAll((node) => (
-                node.props.children === "인식이 불확실해요. 날짜·시간·장소를 확인해 주세요."
+                node.props.children === "일부 내용을 정확히 읽지 못했어요. 날짜·시간·장소를 확인해 주세요."
             )).length
         ).toBeGreaterThan(0);
 
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+                .findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.onChangeText("7월 24일 오후 세 시 서울역 회의");
         });
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.onPress();
             await Promise.resolve();
         });
@@ -366,7 +366,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(hasPhotoScanOverlay()).toBe(true);
 
         await act(async () => {
-            recognition.reject(new Error("사진에서 일정 텍스트를 찾지 못했습니다."));
+            recognition.reject(new Error("사진에서 일정 내용을 찾지 못했어요."));
             await recognition.promise.catch(() => undefined);
             await Promise.resolve();
             await Promise.resolve();
@@ -374,25 +374,25 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 텍스트 다시 인식" })
+            renderer!.root.findByProps({ accessibilityLabel: "사진 내용 다시 읽기" })
         ).toBeDefined();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.placeholder
-        ).toBe("인식하지 못한 내용을 직접 입력해 주세요.");
+        ).toBe("읽지 못한 내용을 직접 입력해 주세요.");
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.editable
         ).toBe(true);
 
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+                .findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.onChangeText("7월 24일 오후 네 시 서울역 회의");
         });
         await act(async () => {
             renderer!.root
-                .findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+                .findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.onPress();
             await Promise.resolve();
         });
@@ -430,10 +430,10 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 텍스트 다시 인식" })
+            renderer!.root.findByProps({ accessibilityLabel: "사진 내용 다시 읽기" })
         ).toBeDefined();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" })
                 .props.editable
         ).toBe(true);
 
@@ -448,7 +448,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
         ).toBe("");
     });
 
@@ -491,7 +491,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
         ).toBe("7월 25일 오후 다섯 시 부산역 회의");
 
         await act(async () => {
@@ -505,7 +505,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
         ).toBe("7월 25일 오후 다섯 시 부산역 회의");
     });
 
@@ -534,7 +534,7 @@ describe("QuickScheduleModal photo OCR", () => {
         expect(mockCancelQuickSchedulePhotoRecognition).toHaveBeenCalledWith(requestId);
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findAllByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+            renderer!.root.findAllByProps({ accessibilityLabel: "사진에서 읽은 내용" })
         ).toHaveLength(0);
 
         await act(async () => {
@@ -548,7 +548,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findAllByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" })
+            renderer!.root.findAllByProps({ accessibilityLabel: "사진에서 읽은 내용" })
         ).toHaveLength(0);
     });
 
@@ -606,7 +606,7 @@ describe("QuickScheduleModal photo OCR", () => {
         });
 
         const textSubmitButton = renderer!.root.findByProps({
-            accessibilityLabel: "빠른 일정 문장 분석",
+            accessibilityLabel: "입력 내용으로 일정 미리보기",
         });
         expect(textSubmitButton.props.accessibilityState.disabled).toBe(false);
 
@@ -632,7 +632,7 @@ describe("QuickScheduleModal photo OCR", () => {
 
         expect(hasPhotoScanOverlay()).toBe(false);
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "사진 OCR 인식 텍스트" }).props.value
+            renderer!.root.findByProps({ accessibilityLabel: "사진에서 읽은 내용" }).props.value
         ).toBe("7월 26일 오전 열 시 모드 전환 회의");
     });
 
@@ -663,7 +663,7 @@ describe("QuickScheduleModal photo OCR", () => {
         });
 
         const textSubmitButton = renderer!.root.findByProps({
-            accessibilityLabel: "빠른 일정 문장 분석",
+            accessibilityLabel: "입력 내용으로 일정 미리보기",
         });
         expect(textSubmitButton.props.accessibilityState.disabled).toBe(false);
 
@@ -889,7 +889,7 @@ describe("QuickScheduleModal photo OCR", () => {
                 .props.placeholder
         ).toBe("필요하면 내용을 직접 적어 주세요.");
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 문장 분석" })
+            renderer!.root.findByProps({ accessibilityLabel: "입력 내용으로 일정 미리보기" })
                 .props.accessibilityState.disabled
         ).toBe(false);
         expect(Audio.Recording).toHaveBeenCalledTimes(1);

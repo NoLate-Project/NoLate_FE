@@ -1,9 +1,8 @@
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as SecureStore from "../storage/secureStorage";
-import { PermissionsAndroid, Platform } from "react-native";
+import { Platform } from "react-native";
 import {
-    AuthorizationStatus,
     deleteToken,
     type FirebaseMessagingTypes,
     getAPNSToken,
@@ -12,7 +11,6 @@ import {
     isDeviceRegisteredForRemoteMessages,
     onTokenRefresh,
     registerDeviceForRemoteMessages,
-    requestPermission,
     setAPNSToken,
 } from "@react-native-firebase/messaging";
 
@@ -24,7 +22,11 @@ import {
 } from "./pushRegistrationCoordinator";
 import { retryPushRegistration } from "./pushRegistrationRetry";
 import { shouldRegisterRemotePush } from "./pushRegistrationDevicePolicy";
-import { reconcileDepartureAlarmSnapshot } from "./departureAlarmSync";
+import { requestPushNotificationPermission } from "./pushPermission";
+import {
+    activateDepartureReminderAccountForAuthenticatedSession,
+    reconcileDepartureAlarmSnapshot,
+} from "./departureAlarmSync";
 import { getOrCreatePushDeviceId } from "./pushDeviceIdentity";
 import { createLatestPushTokenRetryCoordinator } from "./pushTokenRefreshRetry";
 
@@ -42,7 +44,16 @@ function logPushDevelopment(message: string, error?: unknown): void {
     console.warn(message, error);
 }
 
-async function registerToken(memberId: number, token: string): Promise<void> {
+async function registerToken(
+    memberId: number,
+    token: string,
+    isCurrent: () => boolean = () => true,
+): Promise<void> {
+    if (!isCurrent()) return;
+    if (!(await activateDepartureReminderAccountForAuthenticatedSession(memberId))) {
+        throw new Error("Native departure reminder account binding is unavailable.");
+    }
+    if (!isCurrent()) return;
     await registerPushToken({
         memberId,
         deviceId: await getOrCreatePushDeviceId(),
@@ -133,21 +144,10 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     if (!shouldRegisterRemotePush(Platform.OS, Device.isDevice)) return;
 
     const messaging = getMessaging();
-    let allowed = true;
     let apnsToken: string | undefined;
     let apnsTokenType: "prod" | "sandbox" | undefined;
 
-    if (Platform.OS === "android" && Platform.Version >= 33) {
-        allowed =
-            (await PermissionsAndroid.request(
-                PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-            )) === PermissionsAndroid.RESULTS.GRANTED;
-    } else if (Platform.OS === "ios") {
-        const permission = await requestPermission(messaging);
-        allowed =
-            permission === AuthorizationStatus.AUTHORIZED ||
-            permission === AuthorizationStatus.PROVISIONAL;
-    }
+    const allowed = await requestPushNotificationPermission(messaging);
 
     if (!allowed) return;
     if (!isPushRegistrationGenerationCurrent(generation)) return;
@@ -171,7 +171,11 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     const token = await getToken(messaging);
     if (!isPushRegistrationGenerationCurrent(generation)) return;
 
-    await registerToken(memberId, token);
+    await registerToken(
+        memberId,
+        token,
+        () => isPushRegistrationGenerationCurrent(generation),
+    );
     if (!isPushRegistrationGenerationCurrent(generation)) return;
     await SecureStore.setItemAsync(PUSH_NATIVE_CONTEXT_KEY, nativeContext);
 }

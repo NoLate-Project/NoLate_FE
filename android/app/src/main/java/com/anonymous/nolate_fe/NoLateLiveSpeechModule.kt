@@ -57,9 +57,9 @@ class NoLateLiveSpeechModule(
                 putBoolean("serviceAvailable", serviceAvailable)
                 putBoolean("supportsOnDevice", supportsOnDevice)
                 if (!serviceAvailable) {
-                    putString("reason", "이 기기에는 사용할 수 있는 음성 인식 서비스가 없습니다.")
+                    putString("reason", "이 기기에서는 음성 입력을 사용할 수 없어요.")
                 } else if (!supportsOnDevice) {
-                    putString("reason", "이 기기에는 한국어 온디바이스 음성 인식 모델이 없습니다.")
+                    putString("reason", "이 기기에서는 오프라인 음성 입력을 사용할 수 없어요.")
                 }
             }
             promise.resolve(result)
@@ -70,7 +70,7 @@ class NoLateLiveSpeechModule(
     fun start(options: ReadableMap, promise: Promise) {
         val sessionId = options.getString("sessionId")?.trim().orEmpty()
         if (sessionId.isEmpty()) {
-            promise.reject("live_speech_invalid_session", "음성 인식 세션 식별자가 올바르지 않습니다.")
+            promise.reject("live_speech_invalid_session", "음성 입력을 이어갈 수 없어요. 다시 시도해 주세요.")
             return
         }
         val locale = options.getString("localeIdentifier")?.trim().takeUnless { it.isNullOrEmpty() }
@@ -165,10 +165,10 @@ class NoLateLiveSpeechModule(
         val normalized = sessionId.trim()
         mainHandler.post {
             if (normalized.isEmpty() || activeSessionId != normalized || speechRecognizer == null) {
-                promise.reject("live_speech_invalid_session", "종료할 음성 인식 세션이 없습니다.")
+                promise.reject("live_speech_invalid_session", "음성 입력을 마치지 못했어요. 다시 시도해 주세요.")
                 return@post
             }
-            stopPromise?.reject("live_speech_stop_replaced", "이전 음성 인식 종료 요청이 대체되었습니다.")
+            stopPromise?.reject("live_speech_stop_replaced", "새 음성 입력을 시작해 이전 작업을 취소했어요.")
             stopPromise = promise
             durationStop?.let(mainHandler::removeCallbacks)
             durationStop = null

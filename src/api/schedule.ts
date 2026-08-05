@@ -145,7 +145,7 @@ let calendarCacheRevisionSyncInFlight: Promise<boolean> | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
-        throw new Error("일정 id가 응답에 없습니다.");
+        throw new Error("일정 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.");
     }
 
     return {

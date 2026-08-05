@@ -4901,7 +4901,6 @@ export default function ScheduleIndex() {
                 defaultDay={selectedDay}
                 initialValues={formInitialValues}
                 onManageCategories={openCategoryManager}
-                onManageCalendars={openSharedCalendarManager}
                 presentation={usesLiquidViewModeControl ? "morph" : "sheet"}
                 sourceTopOffset={LIQUID_TOOLBAR_TOP_OFFSET}
                 sourceWidth={addMenuSourceWidth}

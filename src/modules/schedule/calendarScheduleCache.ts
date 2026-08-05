@@ -49,7 +49,7 @@ function getMonthDescriptors(startAt: string, endAt: string): CalendarMonthDescr
         Number.isNaN(end.getTime()) ||
         end.getTime() < start.getTime()
     ) {
-        throw new Error("일정 캐시 조회 범위가 올바르지 않습니다.");
+        throw new Error("일정을 불러올 날짜를 확인하지 못했어요. 다시 시도해 주세요.");
     }
 
     const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
@@ -258,7 +258,7 @@ export async function refreshCalendarScheduleCache(
     // A mutation invalidates any response that started before it. Retrying once
     // handles the normal create/update overlap; a second mutation must not turn
     // an empty or partially cached range into a successful refresh result.
-    throw new Error("일정 캐시가 연속으로 변경되어 조회를 완료하지 못했습니다.");
+    throw new Error("일정이 변경되어 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
 }
 
 export function upsertCalendarScheduleCacheItem(item: ScheduleItem): void {

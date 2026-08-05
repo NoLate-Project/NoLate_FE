@@ -810,7 +810,7 @@ RCT_EXPORT_MODULE();
                                   code:1
                               userInfo:@{
                                 NSLocalizedDescriptionKey:
-                                  @"계속할 음성 인식 세션을 찾지 못했습니다.",
+                                  @"음성 입력을 이어갈 수 없어요. 다시 시도해 주세요.",
                               }];
     }
     return NO;
@@ -985,7 +985,7 @@ RCT_REMAP_METHOD(getAvailability,
     } else if (!serviceAvailable) {
       reason = @"현재 선택한 언어의 음성 인식 서비스를 사용할 수 없습니다.";
     } else if (!supportsOnDevice) {
-      reason = @"이 기기에는 선택한 언어의 온디바이스 음성 인식 모델이 없습니다.";
+      reason = @"이 기기에서는 선택한 언어의 오프라인 음성 입력을 사용할 수 없어요.";
     }
 
     NSMutableDictionary *result = [@{
@@ -1069,13 +1069,13 @@ RCT_REMAP_METHOD(start,
       if (requiresOnDeviceRecognition) {
         if (@available(iOS 13.0, *)) {
           if (!recognizer.supportsOnDeviceRecognition) {
-            NSString *errorMessage = @"이 기기에는 선택한 언어의 온디바이스 음성 인식이 준비되지 않았습니다. iOS 설정과 언어 다운로드 상태를 확인해 주세요.";
+            NSString *errorMessage = @"이 기기에서는 선택한 언어의 오프라인 음성 입력을 사용할 수 없어요. iPhone의 받아쓰기 언어 설정을 확인해 주세요.";
             [self emitState:@"failed" sessionId:sessionId message:errorMessage];
             rejectPendingStart(@"live_speech_on_device_unavailable", errorMessage, nil);
             return;
           }
         } else {
-          NSString *errorMessage = @"이 iOS 버전에서는 온디바이스 음성 인식을 사용할 수 없습니다.";
+          NSString *errorMessage = @"이 iOS 버전에서는 오프라인 음성 입력을 사용할 수 없어요.";
           [self emitState:@"failed" sessionId:sessionId message:errorMessage];
           rejectPendingStart(@"live_speech_on_device_unavailable", errorMessage, nil);
           return;
@@ -1092,7 +1092,7 @@ RCT_REMAP_METHOD(start,
       if (!audioError) [audioSession setActive:YES error:&audioError];
       if (audioError) {
         [self restoreAudioSessionConfiguration];
-        NSString *errorMessage = @"마이크 세션을 시작하지 못했습니다. 다른 녹음 앱을 종료하고 다시 시도해 주세요.";
+        NSString *errorMessage = @"마이크를 시작하지 못했어요. 다른 녹음 앱을 종료하고 다시 시도해 주세요.";
         [self emitState:@"failed" sessionId:sessionId message:errorMessage];
         rejectPendingStart(@"live_speech_audio_session", errorMessage, audioError);
         return;
@@ -1152,7 +1152,7 @@ RCT_REMAP_METHOD(stop,
 {
   dispatch_async(_sessionQueue, ^{
     if (![self->_sessionId isEqualToString:sessionId]) {
-      reject(@"live_speech_session_mismatch", @"종료할 음성 인식 세션을 찾지 못했습니다.", nil);
+      reject(@"live_speech_session_mismatch", @"음성 입력을 마치지 못했어요. 다시 시도해 주세요.", nil);
       return;
     }
     if (self->_pendingStopResolve || self->_pendingStopReject) {
@@ -1185,7 +1185,7 @@ RCT_REMAP_METHOD(cancel,
   dispatch_sync(_sessionQueue, ^{
     if (self->_pendingStartSessionId.length > 0) {
       [self cancelPendingStartForSessionId:self->_pendingStartSessionId
-                                   message:@"음성 인식 모듈이 종료되어 시작을 취소했습니다."];
+                                   message:@"음성 입력을 시작하지 못했어요. 다시 시도해 주세요."];
     }
     if (self->_sessionId.length > 0) {
       [self finishSession:self->_sessionId state:@"cancelled" errorMessage:nil];

@@ -6,6 +6,7 @@ import {
     type DepartureAlarmSyncCommand,
     type DepartureAlarmSyncPlanCommand,
 } from "./departureAlarmContract";
+import type { NoLateAlarmSoundId } from "./customAlarmSounds";
 
 const NATIVE_MODULE_NAME = "NoLateAlarm";
 
@@ -68,6 +69,8 @@ export type NativeDepartureActionEvent = {
     occurredAt: string;
     requiresRouteNavigation: boolean;
     routeNavigationDelivered: boolean;
+    notificationLogicalEventKey?: string;
+    providerMessageId?: string;
 };
 
 export type NativeDepartureActionInput = {
@@ -84,6 +87,17 @@ export type NativeAlarmNavigationEvent = {
     eventId: string;
     scheduleId: string;
     recipientMemberId: number;
+    occurredAt: string;
+    notificationLogicalEventKey?: string;
+    providerMessageId?: string;
+};
+
+export type NativeDepartureReminderPresentationEvent = {
+    eventId: string;
+    notificationTag: string;
+    recipientMemberId: number;
+    logicalEventKey: string;
+    providerMessageId?: string;
     occurredAt: string;
 };
 
@@ -113,6 +127,12 @@ type NativeAlarmModule = {
     openExactAlarmSettings(): Promise<boolean>;
     openFullScreenSettings(): Promise<boolean>;
     scheduleTestAlarm(delaySeconds: number): Promise<DepartureAlarmMutationResult>;
+    scheduleCustomAlarmPreview?(
+        delaySeconds: number,
+        scheduleId: string | null,
+    ): Promise<DepartureAlarmMutationResult>;
+    getAlarmSoundPreference?(): Promise<string>;
+    setAlarmSoundPreference?(soundId: string): Promise<boolean>;
     stopRinging(): Promise<boolean>;
     clearAllAlarms(): Promise<boolean>;
     getPendingAlarmFireEvents?(): Promise<unknown[]>;
@@ -132,6 +152,20 @@ type NativeAlarmModule = {
     removeDepartureActionEvent?(eventId: string): Promise<boolean>;
     getPendingAlarmNavigationEvents?(): Promise<unknown[]>;
     removeAlarmNavigationEvent?(eventId: string): Promise<boolean>;
+    activateDepartureReminderAccount?(recipientMemberId: number): Promise<boolean>;
+    getPendingDepartureReminderPresentationEvents?(): Promise<unknown[]>;
+    markDepartureReminderPresentationDelivered?(notificationTag: string): Promise<boolean>;
+    presentDepartureReminder?(command: {
+        type: string;
+        scheduleId: string;
+        recipientMemberId: string;
+        logicalEventKey: string;
+        etaEventExpiresAt: string;
+        nolateNotificationTitle: string;
+        nolateNotificationBody: string;
+        nolateNotificationTag: string;
+        providerMessageId?: string;
+    }): Promise<string>;
 };
 
 let cachedNativeModule: NativeAlarmModule | null | undefined;
@@ -189,7 +223,8 @@ export async function applyDepartureAlarmCommand(
             generation: command.generation,
         });
     }
-    const { validationRevision: _validationRevision, ...nativeCommand } = command;
+    const nativeCommand = { ...command };
+    delete nativeCommand.validationRevision;
     return module.upsertAlarm({
         ...nativeCommand,
         alarmId: command.nativeAlarmId ?? command.alarmId,
@@ -392,6 +427,15 @@ export async function openFullScreenAlarmSettings(): Promise<boolean> {
     return getNativeAlarmModule()?.openFullScreenSettings() ?? false;
 }
 
+export async function getNativeNoLateAlarmSoundPreference(): Promise<NoLateAlarmSoundId | undefined> {
+    const value = await getNativeAlarmModule()?.getAlarmSoundPreference?.();
+    return value === "CHIME" || value === "BELL" || value === "BEEP" ? value : undefined;
+}
+
+export async function setNativeNoLateAlarmSoundPreference(soundId: NoLateAlarmSoundId): Promise<boolean> {
+    return getNativeAlarmModule()?.setAlarmSoundPreference?.(soundId) ?? false;
+}
+
 export async function scheduleDepartureTestAlarm(
     delaySeconds = 10,
 ): Promise<DepartureAlarmMutationResult> {
@@ -403,12 +447,156 @@ export async function scheduleDepartureTestAlarm(
     };
 }
 
+/**
+ * Schedules an ordinary iOS notification that enters NoLate's custom alarm screen after a tap.
+ * It never uses AlarmKit and deliberately has no direct departure-state mutation action.
+ */
+export async function scheduleNoLateCustomAlarmPreview(
+    delaySeconds = 10,
+    scheduleId?: string,
+): Promise<DepartureAlarmMutationResult> {
+    const normalizedDelay = Math.max(3, Math.min(60, Math.round(delaySeconds)));
+    // Android already owns a NoLate-drawn full-screen alarm preview. Keep that native path behind
+    // the shared public API while iOS uses the notification-to-custom-screen bridge below.
+    if (Platform.OS === "android") {
+        return scheduleDepartureTestAlarm(normalizedDelay);
+    }
+    if (Platform.OS !== "ios") {
+        return {
+            applied: false,
+            scheduled: false,
+            reason: "CUSTOM_ALARM_PREVIEW_IOS_ONLY",
+        };
+    }
+    const normalizedScheduleId = scheduleId?.trim();
+    if (
+        scheduleId !== undefined &&
+        (
+            !normalizedScheduleId ||
+            normalizedScheduleId.length > 200 ||
+            !/^[1-9]\d*$/.test(normalizedScheduleId)
+        )
+    ) {
+        return {
+            applied: false,
+            scheduled: false,
+            reason: "INVALID_SCHEDULE_ID",
+        };
+    }
+    const module = getNativeAlarmModule();
+    if (!module?.scheduleCustomAlarmPreview) {
+        return {
+            applied: false,
+            scheduled: false,
+            reason: "CUSTOM_ALARM_PREVIEW_UNAVAILABLE",
+        };
+    }
+    return module.scheduleCustomAlarmPreview(
+        normalizedDelay,
+        normalizedScheduleId ?? null,
+    );
+}
+
 export async function stopRingingDepartureAlarm(): Promise<boolean> {
     return getNativeAlarmModule()?.stopRinging() ?? false;
 }
 
 export async function clearAllDepartureAlarms(): Promise<boolean> {
     return getNativeAlarmModule()?.clearAllAlarms() ?? false;
+}
+
+/** Binds native background reminder display to the authenticated Android account. */
+export async function activateNativeDepartureReminderAccount(
+    recipientMemberId: number,
+): Promise<boolean> {
+    if (!Number.isSafeInteger(recipientMemberId) || recipientMemberId <= 0) return false;
+    if (Platform.OS !== "android") return true;
+    const module = getNativeAlarmModule();
+    // An older native binary has no custom service, so absence must not block snapshot recovery.
+    if (!module?.activateDepartureReminderAccount) return true;
+    return module.activateDepartureReminderAccount(recipientMemberId);
+}
+
+export async function getPendingNativeDepartureReminderPresentationEvents(
+): Promise<NativeDepartureReminderPresentationEvent[]> {
+    const rawEvents = await (
+        getNativeAlarmModule()?.getPendingDepartureReminderPresentationEvents?.() ?? []
+    );
+    if (!Array.isArray(rawEvents)) return [];
+    return rawEvents.map(parseNativeDepartureReminderPresentationEvent).filter(
+        (event): event is NativeDepartureReminderPresentationEvent => event !== undefined,
+    );
+}
+
+export async function markNativeDepartureReminderPresentationDelivered(
+    notificationTag: string,
+): Promise<boolean> {
+    if (!/^nolate-visible-[0-9a-f]{64}$/.test(notificationTag)) return false;
+    return getNativeAlarmModule()?.markDepartureReminderPresentationDelivered?.(
+        notificationTag,
+    ) ?? false;
+}
+
+export type ForegroundNativeDepartureReminderPresentationResult =
+    | "presented"
+    | "duplicate"
+    | "failed"
+    | "unsupported"
+    | "rejected";
+
+/**
+ * Low-level bridge call. Callers must hold the account lifecycle mutation queue and bind the
+ * verified account first; the native module independently rechecks that binding under its lock.
+ */
+export async function presentNativeDepartureReminderWithBoundAccount(
+    data: Record<string, unknown> | undefined,
+    providerMessageId?: string,
+): Promise<ForegroundNativeDepartureReminderPresentationResult> {
+    if (Platform.OS !== "android" || data?.type !== "SCHEDULE_DEPARTURE_REMINDER") {
+        return "unsupported";
+    }
+    const recipientText = typeof data.recipientMemberId === "string"
+        ? data.recipientMemberId
+        : undefined;
+    const recipientMemberId = recipientText && /^[1-9]\d*$/.test(recipientText)
+        ? Number(recipientText)
+        : undefined;
+    // A pre-extension payload must remain eligible for the existing Expo foreground fallback.
+    if (!recipientText) return "unsupported";
+    if (!recipientMemberId || !Number.isSafeInteger(recipientMemberId)) return "rejected";
+    const module = getNativeAlarmModule();
+    if (!module?.presentDepartureReminder) return "unsupported";
+    const requiredFields = [
+        "scheduleId",
+        "logicalEventKey",
+        "etaEventExpiresAt",
+        "nolateNotificationTitle",
+        "nolateNotificationBody",
+        "nolateNotificationTag",
+    ] as const;
+    if (requiredFields.some((field) => typeof data[field] !== "string")) {
+        return "unsupported";
+    }
+    try {
+        const result = await module.presentDepartureReminder({
+            type: data.type,
+            scheduleId: data.scheduleId as string,
+            recipientMemberId: recipientText,
+            logicalEventKey: data.logicalEventKey as string,
+            etaEventExpiresAt: data.etaEventExpiresAt as string,
+            nolateNotificationTitle: data.nolateNotificationTitle as string,
+            nolateNotificationBody: data.nolateNotificationBody as string,
+            nolateNotificationTag: data.nolateNotificationTag as string,
+            ...(providerMessageId ? { providerMessageId } : {}),
+        });
+        if (
+            result === "PRESENTED" || result === "DUPLICATE" || result === "FAILED" ||
+            result === "UNSUPPORTED" || result === "REJECTED"
+        ) return result.toLowerCase() as ForegroundNativeDepartureReminderPresentationResult;
+        return "failed";
+    } catch {
+        return "failed";
+    }
 }
 
 export async function getPendingNativeAlarmFireEvents(): Promise<NativeAlarmFireEvent[]> {
@@ -432,7 +620,10 @@ export function recordNativeAlarmNotificationResponseFire(
     data: Record<string, unknown> | undefined,
     occurredAtMilliseconds: number,
 ): Promise<boolean> | undefined {
-    if (data?.type !== "SCHEDULE_DEPARTURE_REMINDER") return undefined;
+    if (
+        data?.type !== "SCHEDULE_DEPARTURE_REMINDER" &&
+        data?.type !== "NOLATE_CUSTOM_ALARM"
+    ) return undefined;
     const scheduleId = typeof data.scheduleId === "string" ? data.scheduleId : undefined;
     const recipientMemberIdText = typeof data.recipientMemberId === "string"
         ? data.recipientMemberId
@@ -603,7 +794,15 @@ function parseNativeDepartureActionEvent(value: unknown): NativeDepartureActionE
         typeof event.actionEventKey !== "string" || !isActionEventKey(event.actionEventKey) ||
         typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt)) ||
         typeof event.requiresRouteNavigation !== "boolean" ||
-        typeof event.routeNavigationDelivered !== "boolean"
+        typeof event.routeNavigationDelivered !== "boolean" ||
+        (event.notificationLogicalEventKey !== undefined && (
+            typeof event.notificationLogicalEventKey !== "string" ||
+            !isActionEventKey(event.notificationLogicalEventKey)
+        )) ||
+        (event.providerMessageId !== undefined && (
+            typeof event.providerMessageId !== "string" ||
+            !event.providerMessageId || event.providerMessageId.length > 300
+        ))
     ) return undefined;
     return event as NativeDepartureActionEvent;
 }
@@ -615,9 +814,37 @@ function parseNativeAlarmNavigationEvent(value: unknown): NativeAlarmNavigationE
         typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 200 ||
         typeof event.scheduleId !== "string" || !/^[1-9]\d*$/.test(event.scheduleId) ||
         !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
-        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt))
+        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt)) ||
+        (event.notificationLogicalEventKey !== undefined && (
+            typeof event.notificationLogicalEventKey !== "string" ||
+            !isActionEventKey(event.notificationLogicalEventKey)
+        )) ||
+        (event.providerMessageId !== undefined && (
+            typeof event.providerMessageId !== "string" ||
+            !event.providerMessageId || event.providerMessageId.length > 300
+        ))
     ) return undefined;
     return event as NativeAlarmNavigationEvent;
+}
+
+function parseNativeDepartureReminderPresentationEvent(
+    value: unknown,
+): NativeDepartureReminderPresentationEvent | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const event = value as Partial<NativeDepartureReminderPresentationEvent>;
+    if (
+        typeof event.eventId !== "string" ||
+        !/^nolate-visible-[0-9a-f]{64}$/.test(event.eventId) ||
+        event.notificationTag !== event.eventId ||
+        !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
+        typeof event.logicalEventKey !== "string" || !isActionEventKey(event.logicalEventKey) ||
+        (event.providerMessageId !== undefined && (
+            typeof event.providerMessageId !== "string" ||
+            !event.providerMessageId || event.providerMessageId.length > 300
+        )) ||
+        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt))
+    ) return undefined;
+    return event as NativeDepartureReminderPresentationEvent;
 }
 
 function isOccurrenceId(value: unknown): value is "M15" | "M10" | "M5" | "M0" {

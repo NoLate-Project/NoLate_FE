@@ -7,15 +7,19 @@ import {
 import {
     applyDepartureAlarmCommand,
     applyDepartureAlarmPlanCommand,
+    activateNativeDepartureReminderAccount,
     clearAllDepartureAlarms,
     isDepartureAlarmNativeAvailable,
+    presentNativeDepartureReminderWithBoundAccount,
 } from "../src/modules/notification/departureAlarm";
 import {
+    activateDepartureReminderAccountForAuthenticatedSession,
     activateDepartureAlarmSyncForAuthenticatedAccount,
     clearDepartureAlarmsForAccountCleanup,
     handleDepartureAlarmSyncData,
     reconcileDepartureAlarmSnapshot,
     reconcileDepartureAlarmSnapshotForCurrentAccount,
+    presentForegroundDepartureReminderForAuthenticatedSession,
     resetDepartureAlarmSyncForTests,
     runWithDepartureAlarmWithdrawalGuard,
 } from "../src/modules/notification/departureAlarmSync";
@@ -38,8 +42,10 @@ jest.mock("../src/modules/auth/authStorage", () => ({
 jest.mock("../src/modules/notification/departureAlarm", () => ({
     applyDepartureAlarmCommand: jest.fn(),
     applyDepartureAlarmPlanCommand: jest.fn(),
+    activateNativeDepartureReminderAccount: jest.fn(),
     clearAllDepartureAlarms: jest.fn(),
     isDepartureAlarmNativeAvailable: jest.fn(),
+    presentNativeDepartureReminderWithBoundAccount: jest.fn(),
 }));
 
 jest.mock("../src/modules/notification/pushDeliveryAck", () => ({
@@ -72,8 +78,10 @@ const mockedGetAuthMember = jest.mocked(getAuthMember);
 const mockedGetRefreshToken = jest.mocked(getRefreshToken);
 const mockedApplyCommand = jest.mocked(applyDepartureAlarmCommand);
 const mockedApplyPlan = jest.mocked(applyDepartureAlarmPlanCommand);
+const mockedActivateReminderAccount = jest.mocked(activateNativeDepartureReminderAccount);
 const mockedClearAll = jest.mocked(clearAllDepartureAlarms);
 const mockedNativeAvailable = jest.mocked(isDepartureAlarmNativeAvailable);
+const mockedPresentReminder = jest.mocked(presentNativeDepartureReminderWithBoundAccount);
 const mockedCleanupMarkerGet = jest.mocked(SecureStore.getItemAsync);
 const mockedCleanupMarkerSet = jest.mocked(SecureStore.setItemAsync);
 const mockedCleanupMarkerDelete = jest.mocked(SecureStore.deleteItemAsync);
@@ -145,7 +153,7 @@ function deferred<T>(): {
 }
 
 async function flushMicrotasksUntil(predicate: () => boolean): Promise<void> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
         if (predicate()) return;
         await Promise.resolve();
     }
@@ -174,7 +182,9 @@ describe("departure alarm data-only synchronization", () => {
             return [{ command, result: await mockedApplyCommand(command) }];
         });
         mockedClearAll.mockResolvedValue(true);
+        mockedActivateReminderAccount.mockResolvedValue(true);
         mockedNativeAvailable.mockReturnValue(true);
+        mockedPresentReminder.mockResolvedValue("presented");
         mockedCleanupMarkerGet.mockResolvedValue(null);
         mockedCleanupMarkerSet.mockResolvedValue(undefined);
         mockedCleanupMarkerDelete.mockResolvedValue(undefined);
@@ -597,6 +607,80 @@ describe("departure alarm data-only synchronization", () => {
         expect(mockedApplyCommand).not.toHaveBeenCalled();
     });
 
+    it("never lets queued bind or foreground presentation reopen a logout fence", async () => {
+        const pendingClear = deferred<boolean>();
+        mockedClearAll.mockReturnValue(pendingClear.promise);
+
+        const cleanup = clearDepartureAlarmsForAccountCleanup();
+        await flushMicrotasksUntil(() => mockedClearAll.mock.calls.length === 1);
+        const bind = activateDepartureReminderAccountForAuthenticatedSession(7);
+        const presentation = presentForegroundDepartureReminderForAuthenticatedSession({
+            type: "SCHEDULE_DEPARTURE_REMINDER",
+            recipientMemberId: "7",
+        });
+
+        pendingClear.resolve(true);
+        await expect(cleanup).resolves.toBe(true);
+        await expect(bind).resolves.toBe(false);
+        await expect(presentation).resolves.toBe("rejected");
+        expect(mockedActivateReminderAccount).not.toHaveBeenCalled();
+        expect(mockedPresentReminder).not.toHaveBeenCalled();
+        expect(mockedCleanupMarkerDelete).not.toHaveBeenCalled();
+    });
+
+    it("keeps the newer logout marker when cleanup starts during explicit activation", async () => {
+        const pendingBind = deferred<boolean>();
+        mockedActivateReminderAccount.mockReturnValueOnce(pendingBind.promise);
+
+        const activation = activateDepartureAlarmSyncForAuthenticatedAccount(7);
+        await flushMicrotasksUntil(() => mockedActivateReminderAccount.mock.calls.length === 1);
+        const cleanup = clearDepartureAlarmsForAccountCleanup();
+        pendingBind.resolve(true);
+
+        await expect(activation).resolves.toBe(false);
+        await expect(cleanup).resolves.toBe(true);
+        expect(mockedCleanupMarkerSet).toHaveBeenCalledWith(
+            "nolate_departure_alarm_cleanup_block_v1",
+            "1",
+        );
+        expect(mockedCleanupMarkerSet).toHaveBeenCalledTimes(3);
+        expect(mockedCleanupMarkerDelete).toHaveBeenCalledTimes(1);
+        expect(mockedCleanupMarkerDelete.mock.invocationCallOrder[0])
+            .toBeLessThan(mockedCleanupMarkerSet.mock.invocationCallOrder[1]);
+        expect(mockedClearAll).toHaveBeenCalledTimes(2);
+    });
+
+    it("fences fresh activation, clears while inactive, then deletes before native bind", async () => {
+        await expect(activateDepartureAlarmSyncForAuthenticatedAccount(7)).resolves.toBe(true);
+
+        expect(mockedCleanupMarkerSet).toHaveBeenCalledTimes(1);
+        expect(mockedCleanupMarkerDelete).toHaveBeenCalledTimes(1);
+        expect(mockedCleanupMarkerSet.mock.invocationCallOrder[0])
+            .toBeLessThan(mockedClearAll.mock.invocationCallOrder[0]);
+        expect(mockedClearAll.mock.invocationCallOrder[0])
+            .toBeLessThan(mockedCleanupMarkerDelete.mock.invocationCallOrder[0]);
+        expect(mockedCleanupMarkerDelete.mock.invocationCallOrder[0])
+            .toBeLessThan(mockedActivateReminderAccount.mock.invocationCallOrder[0]);
+    });
+
+    it("forbids conditional fence deletion when logout starts during native clear", async () => {
+        const pendingClear = deferred<boolean>();
+        mockedClearAll
+            .mockReturnValueOnce(pendingClear.promise)
+            .mockResolvedValueOnce(true);
+
+        const activation = activateDepartureAlarmSyncForAuthenticatedAccount(7);
+        await flushMicrotasksUntil(() => mockedClearAll.mock.calls.length === 1);
+        const cleanup = clearDepartureAlarmsForAccountCleanup();
+        pendingClear.resolve(true);
+
+        await expect(activation).resolves.toBe(false);
+        await expect(cleanup).resolves.toBe(true);
+        expect(mockedCleanupMarkerSet).toHaveBeenCalledTimes(2);
+        expect(mockedCleanupMarkerDelete).not.toHaveBeenCalled();
+        expect(mockedActivateReminderAccount).not.toHaveBeenCalled();
+    });
+
     it("fails closed before native purge when the crash marker cannot be persisted", async () => {
         mockedCleanupMarkerSet.mockRejectedValue(new Error("keychain unavailable"));
 
@@ -611,7 +695,7 @@ describe("departure alarm data-only synchronization", () => {
         mockedNativeAvailable.mockReturnValue(false);
 
         await expect(clearDepartureAlarmsForAccountCleanup())
-            .rejects.toThrow("native module is unavailable");
+            .rejects.toThrow("로그아웃 중 출발 알림을 정리하지 못했어요");
 
         expect(mockedCleanupMarkerSet).toHaveBeenCalled();
         expect(mockedClearAll).not.toHaveBeenCalled();

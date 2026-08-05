@@ -1716,7 +1716,7 @@ function formatAlternativeInfo(option: RouteAlternativeOption): string {
 function getAlternativeMetricTags(option: RouteAlternativeOption): string[] {
     const metrics: string[] = [];
     if (option.routePlausibility === "geometry_suspected") {
-        metrics.push("좌표 검증 필요");
+        metrics.push("경로 확인 필요");
     }
     if (typeof option.transferCount === "number") {
         metrics.push(`환승 ${option.transferCount}회`);

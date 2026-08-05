@@ -216,7 +216,7 @@ export async function saveFavoritePlaceToApi(
     options: SaveFavoritePlaceOptions = {}
 ): Promise<FavoritePlace> {
     if (typeof place.lat !== "number" || typeof place.lng !== "number") {
-        throw new Error("즐겨찾기 저장에는 좌표가 필요합니다.");
+        throw new Error("이 장소의 위치를 확인하지 못해 즐겨찾기에 저장할 수 없어요.");
     }
 
     const label = place.name?.trim() || place.address?.trim() || "즐겨찾기 장소";
@@ -296,7 +296,7 @@ export async function reorderFavoritePlacesToApi(items: FavoritePlaceReorderItem
 
 export async function saveDefaultOriginToApi(place: Place): Promise<FavoritePlace> {
     if (typeof place.lat !== "number" || typeof place.lng !== "number") {
-        throw new Error("기본 출발지 저장에는 좌표가 필요합니다.");
+        throw new Error("이 장소의 위치를 확인하지 못해 기본 출발지로 저장할 수 없어요.");
     }
 
     const label = place.name?.trim() || place.address?.trim() || "기본 출발지";

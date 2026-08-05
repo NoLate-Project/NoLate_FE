@@ -36,12 +36,14 @@ export default function LocationInputRow({
             ? `${originValue} → ${destinationValue}`
             : hasRoute
                 ? originValue || destinationValue
-                : "출발지 / 도착지 설정";
+                : "출발지와 도착지 추가";
     const modeText = travelMode ? getTravelModeLabel(travelMode) : "이동수단 미지정";
     const expectedMinutes = routeInfo?.totalDurationMinutes ?? travelMinutes;
+    const routeMeta = typeof expectedMinutes === "number"
+        ? `${modeText} · 약 ${formatRouteDuration(expectedMinutes)}`
+        : modeText;
     const accentBlue = mode === "dark" ? "#4B9DFF" : "#2979FF";
     const cardBg = mode === "dark" ? "rgba(17,18,22,0.82)" : colors.inputBackground;
-    const iconButtonBg = mode === "dark" ? "rgba(255,255,255,0.07)" : "rgba(41,121,255,0.08)";
 
     return (
         <View style={{ marginBottom: 14 }}>
@@ -50,7 +52,7 @@ export default function LocationInputRow({
                 style={{
                     borderWidth: 1,
                     borderColor: colors.inputBorder,
-                    borderRadius: 12,
+                    borderRadius: 16,
                     backgroundColor: cardBg,
                     overflow: "hidden",
                 }}
@@ -58,7 +60,7 @@ export default function LocationInputRow({
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={hasRoute ? `이동 경로 수정, ${routeText}` : "출발지와 도착지 설정"}
+                        accessibilityLabel={hasRoute ? `이동 경로 수정, ${routeText}` : "출발지와 도착지 추가"}
                         accessibilityHint="경로 선택 화면을 엽니다"
                         onPress={onPress}
                         style={{
@@ -80,7 +82,7 @@ export default function LocationInputRow({
                                 borderRadius: 14,
                                 alignItems: "center",
                                 justifyContent: "center",
-                                backgroundColor: hasRoute ? "rgba(41,121,255,0.14)" : "rgba(255,255,255,0.055)",
+                                backgroundColor: "transparent",
                             }}
                         >
                             <Ionicons
@@ -96,32 +98,15 @@ export default function LocationInputRow({
                             </Text>
                             {hasRoute ? (
                                 <Text style={{ color: accentBlue, fontSize: 12, marginTop: 2, fontWeight: "800" }}>
-                                    {typeof expectedMinutes === "number"
-                                        ? `예상 이동시간 ${formatRouteDuration(expectedMinutes)}`
-                                        : modeText}
+                                    {routeMeta}
                                 </Text>
                             ) : (
                                 <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                                    경로를 설정하면 예상 이동시간을 보여드려요.
+                                    경로를 추가하면 출발 알림을 설정할 수 있어요.
                                 </Text>
                             )}
                         </View>
-                        {hasRoute ? (
-                            <View
-                                style={{
-                                    width: 30,
-                                    height: 30,
-                                    borderRadius: 15,
-                                    alignItems: "center",
-                                    justifyContent: "center",
-                                    backgroundColor: iconButtonBg,
-                                }}
-                            >
-                                <Ionicons accessible={false} name="pencil" size={15} color={colors.textPrimary} />
-                            </View>
-                        ) : (
-                            <Ionicons accessible={false} name="chevron-forward" size={18} color={colors.textSecondary} />
-                        )}
+                        <Ionicons accessible={false} name="chevron-forward" size={18} color={colors.textSecondary} />
                     </Pressable>
                     {hasRoute && onClear ? (
                         <Pressable
@@ -136,10 +121,10 @@ export default function LocationInputRow({
                                 borderRadius: 22,
                                 alignItems: "center",
                                 justifyContent: "center",
-                                backgroundColor: iconButtonBg,
+                                backgroundColor: "transparent",
                             }}
                         >
-                            <Ionicons accessible={false} name="close" size={17} color={colors.textSecondary} />
+                            <Ionicons accessible={false} name="close-circle" size={21} color={colors.textSecondary} />
                         </Pressable>
                     ) : null}
                 </View>

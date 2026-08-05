@@ -9,6 +9,7 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -137,6 +138,7 @@ class DepartureAlarmService : Service() {
 
   private fun startAlarmAudio() {
     val candidateUris = listOfNotNull(
+      selectedBundledAlarmSoundUri(),
       RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM),
       RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
       RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_NOTIFICATION),
@@ -159,6 +161,21 @@ class DepartureAlarmService : Service() {
         null
       }
     }
+  }
+
+  private fun selectedBundledAlarmSoundUri(): Uri? {
+    val sound = runCatching {
+      AlarmSoundPreferenceStore(this).get()
+    }.getOrDefault(NoLateAlarmSound.default)
+    val resourceId = runCatching {
+      resources.getIdentifier(
+        sound.rawResourceName,
+        "raw",
+        packageName
+      )
+    }.getOrDefault(0)
+    if (resourceId == 0) return null
+    return Uri.parse("android.resource://$packageName/$resourceId")
   }
 
   private fun requestAudioFocus() {

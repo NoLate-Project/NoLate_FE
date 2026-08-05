@@ -16,7 +16,10 @@ internal data class StoredDepartureActionEvent(
   val actionEventKey: String,
   val occurredAtMillis: Long,
   val requiresRouteNavigation: Boolean = false,
-  val routeNavigationDelivered: Boolean = false
+  val routeNavigationDelivered: Boolean = false,
+  /** Present only when the action came from an ordinary data-only push notification. */
+  val notificationLogicalEventKey: String? = null,
+  val providerMessageId: String? = null
 ) {
   fun toBridgeMap(): Map<String, Any?> = buildMap {
     put("eventId", eventId)
@@ -29,6 +32,8 @@ internal data class StoredDepartureActionEvent(
     put("occurredAt", formatIsoInstant(occurredAtMillis))
     put("requiresRouteNavigation", requiresRouteNavigation)
     put("routeNavigationDelivered", routeNavigationDelivered)
+    notificationLogicalEventKey?.let { put("notificationLogicalEventKey", it) }
+    providerMessageId?.let { put("providerMessageId", it) }
   }
 }
 
@@ -136,6 +141,11 @@ internal class DepartureAlarmActionJournal(context: Context) {
     .put("occurredAtMillis", event.occurredAtMillis)
     .put("requiresRouteNavigation", event.requiresRouteNavigation)
     .put("routeNavigationDelivered", event.routeNavigationDelivered)
+    .put(
+      "notificationLogicalEventKey",
+      event.notificationLogicalEventKey ?: JSONObject.NULL
+    )
+    .put("providerMessageId", event.providerMessageId ?: JSONObject.NULL)
     .toString()
 
   private fun decode(raw: String?): StoredDepartureActionEvent? {
@@ -156,7 +166,13 @@ internal class DepartureAlarmActionJournal(context: Context) {
         actionEventKey = json.getString("actionEventKey"),
         occurredAtMillis = json.getLong("occurredAtMillis"),
         requiresRouteNavigation = json.optBoolean("requiresRouteNavigation", false),
-        routeNavigationDelivered = json.optBoolean("routeNavigationDelivered", false)
+        routeNavigationDelivered = json.optBoolean("routeNavigationDelivered", false),
+        notificationLogicalEventKey = if (
+          !json.has("notificationLogicalEventKey") || json.isNull("notificationLogicalEventKey")
+        ) null else json.getString("notificationLogicalEventKey"),
+        providerMessageId = if (!json.has("providerMessageId") || json.isNull("providerMessageId")) {
+          null
+        } else json.getString("providerMessageId")
       ).takeIf(::isValid)
     }.getOrNull()
   }
@@ -169,7 +185,11 @@ internal class DepartureAlarmActionJournal(context: Context) {
       event.recipientMemberId in 1..MAX_SAFE_JS_INTEGER &&
       (event.occurrenceId == null || event.occurrenceId in setOf("M15", "M10", "M5", "M0")) &&
       isValidActionEventKey(event.actionEventKey) &&
-      event.occurredAtMillis in 0..MAX_SAFE_JS_INTEGER
+      event.occurredAtMillis in 0..MAX_SAFE_JS_INTEGER &&
+      (event.notificationLogicalEventKey == null ||
+        isValidActionEventKey(event.notificationLogicalEventKey)) &&
+      (event.providerMessageId == null ||
+        (event.providerMessageId.isNotBlank() && event.providerMessageId.length <= 300))
 
   private fun isValidEventId(value: String): Boolean = value.isNotBlank() && value.length <= 200
 
@@ -189,14 +209,48 @@ internal data class StoredAlarmNavigationEvent(
   val eventId: String,
   val scheduleId: String,
   val recipientMemberId: Long,
-  val occurredAtMillis: Long
+  val occurredAtMillis: Long,
+  val notificationLogicalEventKey: String? = null,
+  val providerMessageId: String? = null,
+  /** Processed push-origin entries remain as bounded tombstones for PendingIntent replay dedupe. */
+  val delivered: Boolean = false
 ) {
-  fun toBridgeMap(): Map<String, Any?> = mapOf(
-    "eventId" to eventId,
-    "scheduleId" to scheduleId,
-    "recipientMemberId" to recipientMemberId.toDouble(),
-    "occurredAt" to formatIsoInstant(occurredAtMillis)
-  )
+  fun toBridgeMap(): Map<String, Any?> = buildMap {
+    put("eventId", eventId)
+    put("scheduleId", scheduleId)
+    put("recipientMemberId", recipientMemberId.toDouble())
+    put("occurredAt", formatIsoInstant(occurredAtMillis))
+    notificationLogicalEventKey?.let { put("notificationLogicalEventKey", it) }
+    providerMessageId?.let { put("providerMessageId", it) }
+  }
+}
+
+internal object AlarmNavigationEventPolicy {
+  const val MAX_EVENTS = 100
+
+  fun isDuplicate(
+    existing: List<StoredAlarmNavigationEvent>,
+    incoming: StoredAlarmNavigationEvent
+  ): Boolean {
+    val logicalEventKey = incoming.notificationLogicalEventKey ?: return false
+    return existing.any {
+      it.recipientMemberId == incoming.recipientMemberId &&
+        it.notificationLogicalEventKey == logicalEventKey
+    }
+  }
+
+  fun merge(
+    existing: List<StoredAlarmNavigationEvent>,
+    incoming: StoredAlarmNavigationEvent
+  ): List<StoredAlarmNavigationEvent> {
+    if (isDuplicate(existing, incoming)) return existing
+    return (existing + incoming)
+      .sortedWith(compareBy(
+        StoredAlarmNavigationEvent::occurredAtMillis,
+        StoredAlarmNavigationEvent::eventId
+      ))
+      .takeLast(MAX_EVENTS)
+  }
 }
 
 internal class DepartureAlarmNavigationJournal(context: Context) {
@@ -204,31 +258,59 @@ internal class DepartureAlarmNavigationJournal(context: Context) {
     .createDeviceProtectedStorageContext()
     .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-  fun record(alarm: StoredAlarm, occurredAtMillis: Long): Boolean = synchronized(JOURNAL_LOCK) {
-    val recipientMemberId = alarm.recipientMemberId ?: return@synchronized false
-    if (!alarm.scheduleId.matches(Regex("^[1-9]\\d*$"))) return@synchronized false
+  fun record(alarm: StoredAlarm, occurredAtMillis: Long): Boolean {
+    val recipientMemberId = alarm.recipientMemberId ?: return false
+    return record(alarm.scheduleId, recipientMemberId, occurredAtMillis)
+  }
+
+  fun record(
+    scheduleId: String,
+    recipientMemberId: Long,
+    occurredAtMillis: Long,
+    notificationLogicalEventKey: String? = null,
+    providerMessageId: String? = null
+  ): Boolean = synchronized(JOURNAL_LOCK) {
+    if (!scheduleId.matches(Regex("^[1-9]\\d*$")) || scheduleId.length > 200) {
+      return@synchronized false
+    }
+    if (recipientMemberId !in 1..MAX_SAFE_JS_INTEGER) return@synchronized false
+    if (occurredAtMillis !in 0..MAX_SAFE_JS_INTEGER) return@synchronized false
+    if (notificationLogicalEventKey != null && !isValidActionEventKey(notificationLogicalEventKey)) {
+      return@synchronized false
+    }
+    if (providerMessageId != null &&
+      (providerMessageId.isBlank() || providerMessageId.length > 300)) return@synchronized false
     val incoming = StoredAlarmNavigationEvent(
       eventId = UUID.randomUUID().toString(),
-      scheduleId = alarm.scheduleId,
+      scheduleId = scheduleId,
       recipientMemberId = recipientMemberId,
-      occurredAtMillis = occurredAtMillis
+      occurredAtMillis = occurredAtMillis,
+      notificationLogicalEventKey = notificationLogicalEventKey,
+      providerMessageId = providerMessageId
     )
     val existing = readAllUnlocked()
-    val merged = (existing + incoming)
-      .sortedWith(compareBy(StoredAlarmNavigationEvent::occurredAtMillis, StoredAlarmNavigationEvent::eventId))
-      .takeLast(MAX_EVENTS)
-    writeAllUnlocked(merged)
+    // A replayed PendingIntent/double tap for one push is an idempotent success. Returning true
+    // avoids leaving the notification posted even though its first durable navigation is present.
+    if (AlarmNavigationEventPolicy.isDuplicate(existing, incoming)) return@synchronized true
+    writeAllUnlocked(AlarmNavigationEventPolicy.merge(existing, incoming))
   }
 
   fun getAll(): List<StoredAlarmNavigationEvent> = synchronized(JOURNAL_LOCK) {
-    readAllUnlocked()
+    readAllUnlocked().filterNot(StoredAlarmNavigationEvent::delivered)
   }
 
   fun remove(eventId: String): Boolean = synchronized(JOURNAL_LOCK) {
     if (eventId.isBlank() || eventId.length > 200) return@synchronized false
     val current = readAllUnlocked()
-    if (current.none { it.eventId == eventId }) return@synchronized false
-    writeAllUnlocked(current.filterNot { it.eventId == eventId })
+    val existing = current.find { it.eventId == eventId } ?: return@synchronized false
+    if (existing.notificationLogicalEventKey != null) {
+      if (existing.delivered) return@synchronized true
+      writeAllUnlocked(current.map {
+        if (it.eventId == eventId) it.copy(delivered = true) else it
+      })
+    } else {
+      writeAllUnlocked(current.filterNot { it.eventId == eventId })
+    }
   }
 
   fun clear(): Boolean = synchronized(JOURNAL_LOCK) {
@@ -238,7 +320,7 @@ internal class DepartureAlarmNavigationJournal(context: Context) {
   private fun readAllUnlocked(): List<StoredAlarmNavigationEvent> = preferences.all.values
     .mapNotNull { raw -> decode(raw as? String) }
     .sortedWith(compareBy(StoredAlarmNavigationEvent::occurredAtMillis, StoredAlarmNavigationEvent::eventId))
-    .takeLast(MAX_EVENTS)
+    .takeLast(AlarmNavigationEventPolicy.MAX_EVENTS)
 
   private fun writeAllUnlocked(events: List<StoredAlarmNavigationEvent>): Boolean {
     val editor = preferences.edit().clear()
@@ -248,6 +330,12 @@ internal class DepartureAlarmNavigationJournal(context: Context) {
         .put("scheduleId", event.scheduleId)
         .put("recipientMemberId", event.recipientMemberId)
         .put("occurredAtMillis", event.occurredAtMillis)
+        .put(
+          "notificationLogicalEventKey",
+          event.notificationLogicalEventKey ?: JSONObject.NULL
+        )
+        .put("providerMessageId", event.providerMessageId ?: JSONObject.NULL)
+        .put("delivered", event.delivered)
         .toString())
     }
     return editor.commit()
@@ -261,19 +349,29 @@ internal class DepartureAlarmNavigationJournal(context: Context) {
         eventId = json.getString("eventId"),
         scheduleId = json.getString("scheduleId"),
         recipientMemberId = json.getLong("recipientMemberId"),
-        occurredAtMillis = json.getLong("occurredAtMillis")
+        occurredAtMillis = json.getLong("occurredAtMillis"),
+        notificationLogicalEventKey = if (
+          !json.has("notificationLogicalEventKey") || json.isNull("notificationLogicalEventKey")
+        ) null else json.getString("notificationLogicalEventKey"),
+        providerMessageId = if (!json.has("providerMessageId") || json.isNull("providerMessageId")) {
+          null
+        } else json.getString("providerMessageId"),
+        delivered = json.optBoolean("delivered", false)
       ).takeIf {
         it.eventId.isNotBlank() && it.eventId.length <= 200 &&
           it.scheduleId.matches(Regex("^[1-9]\\d*$")) &&
           it.recipientMemberId in 1..MAX_SAFE_JS_INTEGER &&
-          it.occurredAtMillis in 0..MAX_SAFE_JS_INTEGER
+          it.occurredAtMillis in 0..MAX_SAFE_JS_INTEGER &&
+          (it.notificationLogicalEventKey == null ||
+            isValidActionEventKey(it.notificationLogicalEventKey)) &&
+          (it.providerMessageId == null ||
+            (it.providerMessageId.isNotBlank() && it.providerMessageId.length <= 300))
       }
     }.getOrNull()
   }
 
   private companion object {
     const val PREFERENCES_NAME = "nolate_alarm_navigation_journal_v1"
-    const val MAX_EVENTS = 100
     val JOURNAL_LOCK = Any()
   }
 }

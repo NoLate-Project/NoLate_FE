@@ -2,7 +2,7 @@ export class CalendarImportTimeoutError extends Error {
     readonly operation: string;
 
     constructor(operation: string) {
-        super(`${operation} 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요.`);
+        super(`${operation} 시간이 오래 걸리고 있어요. 잠시 후 다시 시도해 주세요.`);
         this.name = "CalendarImportTimeoutError";
         this.operation = operation;
     }

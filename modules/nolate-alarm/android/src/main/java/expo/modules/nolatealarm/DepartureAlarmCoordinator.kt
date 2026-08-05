@@ -349,7 +349,7 @@ internal class DepartureAlarmCoordinator(context: Context) {
     return upsert(
       alarmId = alarmId,
       scheduleId = "test",
-      title = "NoLate 테스트 알람",
+      title = "출발 알람 미리보기",
       generation = nowMillis.coerceAtMost(MAX_SAFE_JS_INTEGER),
       recipientMemberId = null,
       logicalEventKey = null,

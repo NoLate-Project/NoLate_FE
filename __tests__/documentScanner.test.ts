@@ -115,6 +115,8 @@ describe("document scanner bridge", () => {
         const { canScanDocuments, scanDocuments } = await loadModuleWithNative();
 
         await expect(canScanDocuments()).resolves.toBe(false);
-        await expect(scanDocuments()).rejects.toThrow("이 기기에서는 문서 스캔을 사용할 수 없습니다.");
+        await expect(scanDocuments()).rejects.toThrow(
+            "이 기기에서는 문서 스캔을 사용할 수 없어요. 사진을 선택해 주세요."
+        );
     });
 });

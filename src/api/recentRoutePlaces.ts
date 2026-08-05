@@ -56,7 +56,7 @@ export async function getRecentRoutePlacesFromApi(limit = 20): Promise<RecentRou
 
 export async function saveRecentRoutePlaceToApi(place: Place): Promise<RecentRoutePlace> {
     if (typeof place.lat !== "number" || typeof place.lng !== "number") {
-        throw new Error("최근 검색 장소 저장에는 좌표가 필요합니다.");
+        throw new Error("이 장소의 위치를 확인하지 못해 최근 검색에 저장할 수 없어요.");
     }
 
     const label = place.name?.trim() || place.address?.trim() || "최근 검색 장소";

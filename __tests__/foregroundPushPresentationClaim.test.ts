@@ -17,8 +17,25 @@ jest.mock("expo-crypto", () => ({
     CryptoDigestAlgorithm: { SHA256: "SHA-256" },
     CryptoEncoding: { HEX: "hex" },
     digestStringAsync: jest.fn(async (_algorithm: string, value: string) => {
-        const { createHash } = require("crypto") as typeof import("crypto");
-        return createHash("sha256").update(value, "utf8").digest("hex");
+        const hashes = [
+            0x811c9dc5,
+            0x9e3779b9,
+            0x85ebca6b,
+            0xc2b2ae35,
+            0x27d4eb2f,
+            0x165667b1,
+            0xd3a2646c,
+            0xfd7046c5,
+        ];
+        for (const character of value) {
+            const codePoint = character.codePointAt(0) ?? 0;
+            for (let index = 0; index < hashes.length; index += 1) {
+                hashes[index] = (
+                    hashes[index] * (257 + index * 2) + codePoint + index
+                ) % 0x1_0000_0000;
+            }
+        }
+        return hashes.map((hash) => hash.toString(16).padStart(8, "0")).join("");
     }),
 }));
 
@@ -61,7 +78,7 @@ describe("foreground push durable presentation claim", () => {
     });
 
     it("lets only one concurrent delivery present and survives process-state reset", async () => {
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
 
         const results = await Promise.all([
             presentForegroundPushOnce(canonicalData(), "provider-a", present, NOW),
@@ -85,7 +102,7 @@ describe("foreground push durable presentation claim", () => {
     });
 
     it("uses distinct stable OS identifiers for distinct logical events", async () => {
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
         const second = "event:00000000-0000-4000-8000-000000000042";
 
         await expect(presentForegroundPushOnce(
@@ -104,11 +121,11 @@ describe("foreground push durable presentation claim", () => {
         await expect(presentForegroundPushOnce(
             canonicalData(),
             "provider-a",
-            jest.fn(async () => { throw failure; }),
+            jest.fn(async (_identifier: string) => { throw failure; }),
             NOW,
         )).rejects.toBe(failure);
 
-        const retry = jest.fn(async () => true);
+        const retry = jest.fn(async (_identifier: string) => true);
         await expect(presentForegroundPushOnce(
             canonicalData(), "provider-a", retry, NOW + 1,
         )).resolves.toBe("presented");
@@ -117,7 +134,7 @@ describe("foreground push durable presentation claim", () => {
 
     it("reclaims a stale pending lease with the same opaque OS identifier", async () => {
         const firstAcceptance = deferred<boolean>();
-        const firstPresenter = jest.fn(() => firstAcceptance.promise);
+        const firstPresenter = jest.fn((_identifier: string) => firstAcceptance.promise);
         const first = presentForegroundPushOnce(
             canonicalData(), "provider-a", firstPresenter, NOW,
         );
@@ -126,7 +143,7 @@ describe("foreground push durable presentation claim", () => {
 
         // Model a process death: memory-only flight state disappears while durable PENDING stays.
         resetForegroundPushPresentationClaimsForTests();
-        const replayPresenter = jest.fn(async () => true);
+        const replayPresenter = jest.fn(async (_identifier: string) => true);
         await expect(presentForegroundPushOnce(
             canonicalData(),
             "provider-a",
@@ -141,13 +158,13 @@ describe("foreground push durable presentation claim", () => {
         await expect(presentForegroundPushOnce(
             canonicalData(),
             "provider-a",
-            jest.fn(async () => true),
+            jest.fn(async (_identifier: string) => true),
             NOW + constants.pendingLeaseMs + 1,
         )).resolves.toBe("duplicate");
     });
 
     it("fails closed for stale, malformed, or cross-account payloads", async () => {
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
         const stale = { ...canonicalData(), etaEventExpiresAt: "2026-08-04T04:59:59Z" };
         const malformed = { ...canonicalData(), etaEventExpiresAt: "not-a-date" };
         const crossAccount = { ...canonicalData(), recipientMemberId: "8" };
@@ -167,7 +184,7 @@ describe("foreground push durable presentation claim", () => {
         jest.spyOn(AsyncStorage, "getItem").mockRejectedValueOnce(
             new Error("storage unavailable"),
         );
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
 
         await expect(presentForegroundPushOnce(
             canonicalData(), "provider-a", present, NOW,
@@ -176,7 +193,7 @@ describe("foreground push durable presentation claim", () => {
     });
 
     it("supports legacy provider identity and fences account cleanup until activation", async () => {
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
         await expect(presentForegroundPushOnce(
             { type: "LEGACY_VISIBLE_PUSH" },
             "0:legacy%provider-id",
@@ -205,7 +222,7 @@ describe("foreground push durable presentation claim", () => {
     });
 
     it("prunes expired entries and keeps the account envelope bounded", async () => {
-        const present = jest.fn(async () => true);
+        const present = jest.fn(async (_identifier: string) => true);
         for (let index = 0; index < constants.maximumSize + 2; index += 1) {
             const suffix = index.toString(16).padStart(12, "0");
             await presentForegroundPushOnce(
@@ -221,11 +238,17 @@ describe("foreground push durable presentation claim", () => {
         expect(envelope.entries).toHaveLength(constants.maximumSize);
 
         const afterTtl = NOW + constants.claimTtlMs + constants.maximumSize + 3;
+        const freshAfterTtl = {
+            ...canonicalData(),
+            etaEventExpiresAt: new Date(afterTtl + 2 * 60_000).toISOString(),
+        };
         await expect(presentForegroundPushOnce(
-            canonicalData(), "provider-fresh", present, afterTtl,
-        )).resolves.toBe("rejected");
-        // The ETA payload itself expired; no old dedupe entry is allowed to turn that into a
-        // false presentation success.
-        expect(present).toHaveBeenCalledTimes(constants.maximumSize + 2);
+            freshAfterTtl, "provider-fresh", present, afterTtl,
+        )).resolves.toBe("presented");
+        const prunedEnvelope = JSON.parse(
+            (await AsyncStorage.getItem(constants.storageKeyForMember(7)))!,
+        ) as { entries: unknown[] };
+        expect(prunedEnvelope.entries).toHaveLength(1);
+        expect(present).toHaveBeenCalledTimes(constants.maximumSize + 3);
     });
 });

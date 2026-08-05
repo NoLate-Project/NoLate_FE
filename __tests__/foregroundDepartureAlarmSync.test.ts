@@ -17,7 +17,10 @@ const mockEnqueueStandardDepartureAction = jest.fn();
 const mockActivateDepartureActionJournal = jest.fn();
 const mockRecordNativeAlarmResponseFire = jest.fn();
 const mockActivateNativeAlarmFireJournal = jest.fn();
+const mockPresentForegroundDepartureReminder = jest.fn();
 let mockExpoResponseHandler: ((response: unknown) => void) | undefined;
+let mockExpoReceivedHandler: ((notification: unknown) => void) | undefined;
+let mockNotificationPresentationHandler: ((notification: unknown) => Promise<unknown>) | undefined;
 
 jest.mock("@react-native-firebase/messaging", () => ({
     getInitialNotification: (...args: unknown[]) => mockGetInitialNotification(...args),
@@ -68,6 +71,8 @@ jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     handleDepartureAlarmSyncData: (...args: unknown[]) => (
         mockHandleDepartureAlarmSyncData(...args)
     ),
+    presentForegroundDepartureReminderForAuthenticatedSession: (...args: unknown[]) =>
+        mockPresentForegroundDepartureReminder(...args),
 }));
 
 jest.mock("../src/modules/notification/departureAlarmMutationRecovery", () => ({
@@ -91,6 +96,7 @@ import {
     handleForegroundPushMessage,
     snoozeDepartureFromNotificationAction,
     setForegroundNotificationsModuleForTests,
+    setCustomAlarmNotificationsModuleForTests,
 } from "../src/modules/notification/foregroundPush";
 import { ApiResponseError } from "../src/api/response";
 
@@ -104,6 +110,8 @@ describe("foreground departure alarm sync routing", () => {
         mockAcknowledgePushDelivery.mockResolvedValue(true);
         mockNotificationOpenedHandler = undefined;
         mockExpoResponseHandler = undefined;
+        mockExpoReceivedHandler = undefined;
+        mockNotificationPresentationHandler = undefined;
         mockGetAuthMember.mockResolvedValue({ id: 7 });
         mockEnqueueStandardDepartureAction.mockResolvedValue(true);
         mockActivateDepartureActionJournal.mockResolvedValue({ completed: 0 });
@@ -111,6 +119,7 @@ describe("foreground departure alarm sync routing", () => {
             data?.nativeAlarmId ? Promise.resolve(true) : undefined
         ));
         mockActivateNativeAlarmFireJournal.mockResolvedValue({ sent: 1 });
+        mockPresentForegroundDepartureReminder.mockResolvedValue("unsupported");
         setForegroundNotificationsModuleForTests(undefined);
     });
 
@@ -136,6 +145,486 @@ describe("foreground departure alarm sync routing", () => {
             handleForegroundPushMessage,
         );
         expect(typeof unsubscribe).toBe("function");
+    });
+
+    it("opens one foreground custom alarm and suppresses the duplicate OS presentation", async () => {
+        const removeReceived = jest.fn();
+        const removeResponse = jest.fn();
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests({
+            addNotificationReceivedListener: jest.fn((handler) => {
+                mockExpoReceivedHandler = handler as (notification: unknown) => void;
+                return { remove: removeReceived };
+            }),
+            addNotificationResponseReceivedListener: jest.fn((handler) => {
+                mockExpoResponseHandler = handler as (response: unknown) => void;
+                return { remove: removeResponse };
+            }),
+            clearLastNotificationResponse: jest.fn(),
+            getLastNotificationResponse: jest.fn(() => null),
+            setNotificationHandler: jest.fn((handler) => {
+                mockNotificationPresentationHandler = handler.handleNotification;
+            }),
+        } as never);
+        const openCustomAlarm = jest.fn();
+        const cleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            openCustomAlarm,
+        );
+        const request = {
+            identifier: "nolate.departure.00000000-0000-5000-8000-000000000042",
+            content: {
+                data: {
+                    type: "NOLATE_CUSTOM_ALARM",
+                    alarmId: "schedule:42:member:7",
+                    nativeAlarmId: "schedule:42:member:7:occurrence:M0",
+                    scheduleId: "42",
+                    alarmGeneration: "8",
+                    recipientMemberId: "7",
+                    occurrenceId: "M0",
+                    actionEventKey: `key:${"a".repeat(64)}`,
+                    isPreview: false,
+                },
+            },
+        };
+
+        const behavior = await mockNotificationPresentationHandler?.({
+            date: Date.now(),
+            request,
+        });
+        expect(behavior).toEqual({
+            shouldShowBanner: false,
+            shouldShowList: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+        });
+        mockExpoReceivedHandler?.({ date: Date.now(), request });
+        for (let attempt = 0; attempt < 10 && openCustomAlarm.mock.calls.length === 0; attempt += 1) {
+            await Promise.resolve();
+        }
+        expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+        expect(openCustomAlarm).toHaveBeenLastCalledWith(expect.objectContaining({
+            alarmId: "schedule:42:member:7",
+            requestedAction: "open",
+        }));
+
+        mockExpoResponseHandler?.({
+            actionIdentifier: "DEFAULT",
+            notification: { request },
+        });
+        await Promise.resolve();
+        expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+
+        mockExpoResponseHandler?.({
+            actionIdentifier: "nolate_custom_alarm_confirm_departure_action",
+            notification: { request },
+        });
+        for (let attempt = 0; attempt < 10; attempt += 1) await Promise.resolve();
+        expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+
+        mockExpoReceivedHandler?.({
+            request: {
+                identifier: "ordinary-push-1",
+                content: { data: { type: "SCHEDULE_TRAFFIC", scheduleId: "42" } },
+            },
+        });
+        expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+
+        cleanup();
+        expect(removeReceived).toHaveBeenCalledTimes(1);
+        expect(removeResponse).toHaveBeenCalledTimes(1);
+    });
+
+    it("replays an initial local custom-alarm response without APNs token support", async () => {
+        const clearLastResponse = jest.fn();
+        const response = {
+            actionIdentifier: "DEFAULT",
+            notification: {
+                request: {
+                    identifier: "nolate.custom-alarm.preview.current",
+                    content: {
+                        data: {
+                            type: "NOLATE_CUSTOM_ALARM",
+                            alarmId: "preview:5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                            previewId: "5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                            isPreview: true,
+                        },
+                    },
+                },
+            },
+        };
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests({
+            addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => response),
+        } as never);
+        const openCustomAlarm = jest.fn();
+
+        const cleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            openCustomAlarm,
+        );
+
+        expect(openCustomAlarm).toHaveBeenCalledWith(expect.objectContaining({
+            isPreview: true,
+            requestedAction: "open",
+        }));
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+        cleanup();
+    });
+
+    it("keeps the OS banner and sound when NoLate cannot open its foreground alarm screen", async () => {
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests({
+            addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: jest.fn(),
+            getLastNotificationResponse: jest.fn(() => null),
+            setNotificationHandler: jest.fn((handler) => {
+                mockNotificationPresentationHandler = handler.handleNotification;
+            }),
+        } as never);
+        const cleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            jest.fn(() => "deferred" as const),
+        );
+        const behavior = await mockNotificationPresentationHandler?.({
+            date: Date.now(),
+            request: {
+                identifier: "nolate.custom-alarm.preview.current",
+                content: {
+                    data: {
+                        type: "NOLATE_CUSTOM_ALARM",
+                        alarmId: "preview:5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                        previewId: "5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                        isPreview: true,
+                    },
+                },
+            },
+        });
+
+        expect(behavior).toEqual({
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldPlaySound: true,
+            shouldSetBadge: false,
+        });
+        cleanup();
+    });
+
+    it("suppresses a foreground custom alarm that belongs to another account", async () => {
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests({
+            addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: jest.fn(),
+            getLastNotificationResponse: jest.fn(() => null),
+            setNotificationHandler: jest.fn((handler) => {
+                mockNotificationPresentationHandler = handler.handleNotification;
+            }),
+        } as never);
+        mockGetAuthMember.mockResolvedValue({ id: 8 });
+        const openCustomAlarm = jest.fn();
+        const cleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            openCustomAlarm,
+        );
+
+        const behavior = await mockNotificationPresentationHandler?.({
+            date: Date.now(),
+            request: {
+                identifier: "nolate.departure.00000000-0000-5000-8000-000000000042",
+                content: {
+                    data: {
+                        type: "NOLATE_CUSTOM_ALARM",
+                        alarmId: "schedule:42:member:7",
+                        nativeAlarmId: "schedule:42:member:7:occurrence:M0",
+                        scheduleId: "42",
+                        alarmGeneration: "8",
+                        recipientMemberId: "7",
+                        occurrenceId: "M0",
+                        actionEventKey: `key:${"a".repeat(64)}`,
+                        isPreview: false,
+                    },
+                },
+            },
+        });
+
+        expect(behavior).toEqual({
+            shouldShowBanner: false,
+            shouldShowList: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+        });
+        expect(openCustomAlarm).not.toHaveBeenCalled();
+        cleanup();
+    });
+
+    it("opens distinct preview UUIDs even though their native request identifier is reused", async () => {
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests({
+            addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: jest.fn(),
+            getLastNotificationResponse: jest.fn(() => null),
+            setNotificationHandler: jest.fn((handler) => {
+                mockNotificationPresentationHandler = handler.handleNotification;
+            }),
+        } as never);
+        const openedPreviewIds: string[] = [];
+        const openCustomAlarm = jest.fn((target: { previewId?: string }) => {
+            if (target.previewId) openedPreviewIds.push(target.previewId);
+            return "opened" as const;
+        });
+        const cleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            openCustomAlarm,
+        );
+        const previewIds = [
+            "5ef854e8-32de-4fde-98fa-280c2e9772dd",
+            "6ef854e8-32de-4fde-98fa-280c2e9772ee",
+        ];
+
+        const behaviors = [];
+        for (const previewId of previewIds) {
+            behaviors.push(await mockNotificationPresentationHandler?.({
+                date: Date.now(),
+                request: {
+                    identifier: "nolate.custom-alarm.preview.current",
+                    content: {
+                        data: {
+                            type: "NOLATE_CUSTOM_ALARM",
+                            alarmId: `preview:${previewId}`,
+                            previewId,
+                            isPreview: true,
+                        },
+                    },
+                },
+            }));
+        }
+
+        expect(openCustomAlarm).toHaveBeenCalledTimes(2);
+        expect(openedPreviewIds).toEqual(previewIds);
+        expect(behaviors).toEqual([
+            {
+                shouldShowBanner: false,
+                shouldShowList: false,
+                shouldPlaySound: false,
+                shouldSetBadge: false,
+            },
+            {
+                shouldShowBanner: false,
+                shouldShowList: false,
+                shouldPlaySound: false,
+                shouldSetBadge: false,
+            },
+        ]);
+        cleanup();
+    });
+
+    it("returns the OS fallback before a slow native fire commit can miss Expo's deadline", async () => {
+        jest.useFakeTimers();
+        let cleanup: (() => void) | undefined;
+        let resolveSlowCommit: ((recorded: boolean) => void) | undefined;
+        try {
+            setForegroundNotificationsModuleForTests(null);
+            setCustomAlarmNotificationsModuleForTests({
+                addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+                addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+                clearLastNotificationResponse: jest.fn(),
+                getLastNotificationResponse: jest.fn(() => null),
+                setNotificationHandler: jest.fn((handler) => {
+                    mockNotificationPresentationHandler = handler.handleNotification;
+                }),
+            } as never);
+            const openCustomAlarm = jest.fn(() => "opened" as const);
+            mockRecordNativeAlarmResponseFire.mockImplementationOnce(() => (
+                new Promise<boolean>((resolve) => {
+                    resolveSlowCommit = resolve;
+                })
+            ));
+            cleanup = await configurePushNavigation(
+                jest.fn(),
+                jest.fn(),
+                undefined,
+                openCustomAlarm,
+            );
+            const notification = {
+                date: Date.now(),
+                request: {
+                    identifier: "nolate.departure.00000000-0000-5000-8000-000000000042",
+                    content: {
+                        data: {
+                            type: "NOLATE_CUSTOM_ALARM",
+                            alarmId: "schedule:42:member:7",
+                            nativeAlarmId: "schedule:42:member:7:occurrence:M0",
+                            scheduleId: "42",
+                            alarmGeneration: "8",
+                            recipientMemberId: "7",
+                            occurrenceId: "M0",
+                            actionEventKey: `key:${"a".repeat(64)}`,
+                            isPreview: false,
+                        },
+                    },
+                },
+            };
+
+            const behaviorPromise = mockNotificationPresentationHandler?.(notification);
+            await Promise.resolve();
+            jest.advanceTimersByTime(2_500);
+            await expect(behaviorPromise).resolves.toEqual({
+                shouldShowBanner: true,
+                shouldShowList: true,
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+            });
+
+            jest.advanceTimersByTime(60_000);
+            resolveSlowCommit?.(true);
+            for (let attempt = 0; attempt < 10; attempt += 1) await Promise.resolve();
+            expect(openCustomAlarm).not.toHaveBeenCalled();
+        } finally {
+            cleanup?.();
+            jest.useRealTimers();
+        }
+    });
+
+    it("cancels a late automatic open after auth delay but lets one explicit response open", async () => {
+        jest.useFakeTimers();
+        let cleanup: (() => void) | undefined;
+        let resolveSlowAuth: ((member: { id: number }) => void) | undefined;
+        try {
+            setForegroundNotificationsModuleForTests(null);
+            setCustomAlarmNotificationsModuleForTests({
+                addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+                addNotificationResponseReceivedListener: jest.fn((handler) => {
+                    mockExpoResponseHandler = handler as (response: unknown) => void;
+                    return { remove: jest.fn() };
+                }),
+                clearLastNotificationResponse: jest.fn(),
+                getLastNotificationResponse: jest.fn(() => null),
+                setNotificationHandler: jest.fn((handler) => {
+                    mockNotificationPresentationHandler = handler.handleNotification;
+                }),
+            } as never);
+            const openCustomAlarm = jest.fn(() => "opened" as const);
+            mockGetAuthMember
+                .mockImplementationOnce(() => new Promise((resolve) => {
+                    resolveSlowAuth = resolve;
+                }))
+                .mockResolvedValue({ id: 7 });
+            cleanup = await configurePushNavigation(
+                jest.fn(),
+                jest.fn(),
+                undefined,
+                openCustomAlarm,
+            );
+            const notification = {
+                date: Date.now(),
+                request: {
+                    identifier: "nolate.departure.00000000-0000-5000-8000-000000000042",
+                    content: {
+                        data: {
+                            type: "NOLATE_CUSTOM_ALARM",
+                            alarmId: "schedule:42:member:7",
+                            nativeAlarmId: "schedule:42:member:7:occurrence:M0",
+                            scheduleId: "42",
+                            alarmGeneration: "8",
+                            recipientMemberId: "7",
+                            occurrenceId: "M0",
+                            actionEventKey: `key:${"a".repeat(64)}`,
+                            isPreview: false,
+                        },
+                    },
+                },
+            };
+
+            const behaviorPromise = mockNotificationPresentationHandler?.(notification);
+            for (let attempt = 0; attempt < 5; attempt += 1) await Promise.resolve();
+            jest.advanceTimersByTime(2_500);
+            await expect(behaviorPromise).resolves.toEqual({
+                shouldShowBanner: true,
+                shouldShowList: true,
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+            });
+
+            resolveSlowAuth?.({ id: 7 });
+            for (let attempt = 0; attempt < 10; attempt += 1) await Promise.resolve();
+            expect(openCustomAlarm).not.toHaveBeenCalled();
+
+            mockExpoResponseHandler?.({
+                actionIdentifier: "DEFAULT",
+                notification,
+            });
+            for (let attempt = 0; attempt < 15 && openCustomAlarm.mock.calls.length === 0; attempt += 1) {
+                await Promise.resolve();
+            }
+            expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+        } finally {
+            cleanup?.();
+            jest.useRealTimers();
+        }
+    });
+
+    it("retains a deferred cold-start custom alarm response until navigation becomes ready", async () => {
+        const clearLastResponse = jest.fn();
+        const response = {
+            actionIdentifier: "DEFAULT",
+            notification: {
+                request: {
+                    identifier: "nolate.custom-alarm.preview.current",
+                    content: {
+                        data: {
+                            type: "NOLATE_CUSTOM_ALARM",
+                            alarmId: "preview:5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                            previewId: "5ef854e8-32de-4fde-98fa-280c2e9772dd",
+                            isPreview: true,
+                        },
+                    },
+                },
+            },
+        };
+        const module = {
+            addNotificationReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+            clearLastNotificationResponse: clearLastResponse,
+            getLastNotificationResponse: jest.fn(() => response),
+        };
+        setForegroundNotificationsModuleForTests(null);
+        setCustomAlarmNotificationsModuleForTests(module as never);
+
+        const deferredCleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            jest.fn(() => "deferred" as const),
+        );
+        expect(clearLastResponse).not.toHaveBeenCalled();
+        deferredCleanup();
+
+        const openCustomAlarm = jest.fn(() => "opened" as const);
+        const openedCleanup = await configurePushNavigation(
+            jest.fn(),
+            jest.fn(),
+            undefined,
+            openCustomAlarm,
+        );
+        expect(openCustomAlarm).toHaveBeenCalledTimes(1);
+        expect(clearLastResponse).toHaveBeenCalledTimes(1);
+        openedCleanup();
     });
 
     it("keeps the existing standard push presentation path", async () => {

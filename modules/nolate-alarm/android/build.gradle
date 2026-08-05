@@ -29,5 +29,11 @@ android {
 
 dependencies {
   implementation 'androidx.core:core-ktx:1.13.1'
+  // Runtime copies are already supplied by the host's pinned RNFirebase dependency. Compile-only
+  // keeps this local module from introducing a second Firebase version while retaining inherited
+  // onNewToken/onSendError callbacks in NoLateFirebaseMessagingService.
+  compileOnly project(':react-native-firebase_messaging')
+  compileOnly platform('com.google.firebase:firebase-bom:34.14.0')
+  compileOnly 'com.google.firebase:firebase-messaging'
   testImplementation 'junit:junit:4.13.2'
 }

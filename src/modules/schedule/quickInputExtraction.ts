@@ -204,10 +204,10 @@ export async function recognizeQuickSchedulePhoto(
     requestId?: string
 ): Promise<QuickScheduleRecognitionResult> {
     if (!nativeQuickInput) {
-        throw new Error("이 기기에서는 사진 텍스트 인식을 사용할 수 없습니다.");
+        throw new Error("이 기기에서는 사진 내용을 자동으로 읽을 수 없어요. 직접 입력해 주세요.");
     }
     if (!photoUri.trim()) {
-        throw new Error("분석할 사진을 먼저 선택해 주세요.");
+        throw new Error("사진을 먼저 선택해 주세요.");
     }
 
     const normalizedRequestId = requestId?.trim() ?? "";
@@ -220,12 +220,12 @@ export async function recognizeQuickSchedulePhoto(
         && typeof recognition.requestId === "string"
         && recognition.requestId !== normalizedRequestId
     ) {
-        throw new Error("다른 사진의 인식 결과가 도착했습니다. 다시 시도해 주세요.");
+        throw new Error("선택한 사진이 바뀌었어요. 다시 읽어 주세요.");
     }
     const normalizedText = normalizeExtractedText(recognition);
     const extractedText = prioritizeQuickScheduleOcrText(normalizedText);
     if (!extractedText) {
-        throw new Error("사진에서 일정 텍스트를 찾지 못했습니다.");
+        throw new Error("사진에서 일정 내용을 찾지 못했어요.");
     }
     const recognitionConfidence = normalizeConfidence(recognition);
     const attemptCount = typeof recognition === "string"
@@ -311,12 +311,12 @@ export async function resolveQuickScheduleParseInput(
     }
 
     if (!nativeQuickInput) {
-        throw new Error("이 기기에서는 사진/음성 텍스트 추출을 사용할 수 없습니다.");
+        throw new Error("이 기기에서는 사진과 음성 내용을 자동으로 읽을 수 없어요. 직접 입력해 주세요.");
     }
 
     if (inputMode === "photo") {
         if (!media?.photoUri) {
-            throw new Error("분석할 사진을 먼저 선택해 주세요.");
+            throw new Error("사진을 먼저 선택해 주세요.");
         }
 
         const recognition = await recognizeQuickSchedulePhoto(media.photoUri);
@@ -331,7 +331,7 @@ export async function resolveQuickScheduleParseInput(
     }
 
     if (!media?.voiceUri) {
-        throw new Error("분석할 음성을 먼저 녹음해 주세요.");
+        throw new Error("음성을 먼저 녹음해 주세요.");
     }
 
     const recognition = await nativeQuickInput.transcribeAudioFile(
@@ -341,7 +341,7 @@ export async function resolveQuickScheduleParseInput(
     );
     const extractedText = normalizeExtractedText(recognition);
     if (!extractedText) {
-        throw new Error("음성에서 일정 텍스트를 찾지 못했습니다.");
+        throw new Error("말한 내용에서 일정 정보를 찾지 못했어요.");
     }
     const recognitionConfidence = normalizeConfidence(recognition);
     const recognitionAlternatives = normalizeRecognitionAlternatives(

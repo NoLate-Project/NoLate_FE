@@ -311,6 +311,31 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     )
   }
 
+  func testLegacyTombstoneWithoutExpiredResponseEvidenceRemainsDecodable() throws {
+    let suiteName = "NoLateLegacyTombstoneTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    defaults.set(
+      try JSONSerialization.data(withJSONObject: [
+        "alarms": [:],
+        "tombstones": [
+          "schedule:41:member:7": [
+            "alarmId": "schedule:41:member:7",
+            "generation": 8,
+            "updatedAtMilliseconds": 123_000
+          ]
+        ]
+      ]),
+      forKey: NoLateAlarmStore.storageKey
+    )
+
+    let tombstone = try XCTUnwrap(
+      NoLateAlarmStore(defaults: defaults).load().tombstones["schedule:41:member:7"]
+    )
+    XCTAssertEqual(tombstone.generation, 8)
+    XCTAssertNil(tombstone.expiredResponseEvidence)
+  }
+
   func testV2PhysicalAndLogicalAlarmIdentityRoundTrips() throws {
     let suiteName = "NoLateAlarmV2StoreTests.\(UUID().uuidString)"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -629,6 +654,157 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     ))
   }
 
+  func testExpiredTimeSensitiveResponseProducesDurableFireEvidenceAfterColdStart() throws {
+    let suiteName = "NoLateExpiredAlarmResponseTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let alarm = timeSensitiveResponseAlarm(generation: 8)
+    let recoveryNow = alarm.effectiveTriggerAtMilliseconds +
+      noLateMissedAlarmGraceMilliseconds + 1
+    XCTAssertEqual(
+      NoLateAlarmRecoveryPolicy.disposition(
+        triggerAtMilliseconds: alarm.effectiveTriggerAtMilliseconds,
+        nowMilliseconds: recoveryNow
+      ),
+      .expire
+    )
+
+    let expired = NoLateAlarmRecoveryPolicy.expiredTombstone(
+      for: alarm,
+      nowMilliseconds: recoveryNow
+    )
+    let store = NoLateAlarmStore(defaults: defaults)
+    try store.save(NoLateAlarmStoreSnapshot(
+      alarms: [:],
+      tombstones: [alarm.alarmId: expired]
+    ))
+
+    // Reinitialize both stores to model module creation/reconciliation completing before JS reads
+    // the OS last response on a cold start.
+    let restored = try NoLateAlarmStore(defaults: defaults).load()
+    let response = try NoLateAlarmInput.notificationResponseFire(
+      nativeAlarmId: alarm.alarmId,
+      alarmId: alarm.backendAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: Double(alarm.generation),
+      recipientMemberId: 7,
+      occurrenceId: alarm.occurrenceId,
+      occurredAt: "1970-01-01T00:00:02.100Z"
+    )
+    let evidence = try XCTUnwrap(
+      NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+        activeAlarm: nil,
+        tombstone: restored.tombstones[alarm.alarmId],
+        response: response,
+        nowMilliseconds: recoveryNow
+      )
+    )
+    let event = evidence.fireEvent(
+      eventId: "cold-start-response",
+      occurredAtMilliseconds: response.occurredAtMilliseconds,
+      timingBasis: .observedAlerting
+    )
+    let journal = NoLateAlarmFireJournal(defaults: defaults)
+    try journal.record(event)
+
+    XCTAssertEqual(try NoLateAlarmFireJournal(defaults: defaults).load(), [event])
+    XCTAssertEqual(event.alarmId, "schedule:41:member:7")
+    XCTAssertEqual(event.generation, 8)
+    XCTAssertEqual(event.recipientMemberId, 7)
+    XCTAssertEqual(event.occurrenceId, "M0")
+
+    let consumedTombstone = expired.withoutExpiredResponseEvidence()
+    try store.save(NoLateAlarmStoreSnapshot(
+      alarms: [:],
+      tombstones: [alarm.alarmId: consumedTombstone]
+    ))
+    let consumedSnapshot = try NoLateAlarmStore(defaults: defaults).load()
+    XCTAssertNil(consumedSnapshot.tombstones[alarm.alarmId]?.expiredResponseEvidence)
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: consumedSnapshot.tombstones[alarm.alarmId],
+      response: response,
+      nowMilliseconds: recoveryNow
+    ))
+  }
+
+  func testExpiredResponseEvidencePreservesGenerationAndAccountBoundaries() throws {
+    let alarm = timeSensitiveResponseAlarm(generation: 8)
+    let recoveryNow = alarm.effectiveTriggerAtMilliseconds +
+      noLateMissedAlarmGraceMilliseconds + 1
+    let tombstone = NoLateAlarmRecoveryPolicy.expiredTombstone(
+      for: alarm,
+      nowMilliseconds: recoveryNow
+    )
+    let response = try NoLateAlarmInput.notificationResponseFire(
+      nativeAlarmId: alarm.alarmId,
+      alarmId: alarm.backendAlarmId,
+      scheduleId: alarm.scheduleId,
+      generation: Double(alarm.generation),
+      recipientMemberId: 7,
+      occurrenceId: alarm.occurrenceId,
+      occurredAt: "1970-01-01T00:00:02.100Z"
+    )
+
+    XCTAssertNotNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: tombstone,
+      response: response,
+      nowMilliseconds: recoveryNow
+    ))
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: tombstone,
+      response: NoLateValidatedNotificationResponseFire(
+        nativeAlarmId: response.nativeAlarmId,
+        alarmId: response.alarmId,
+        scheduleId: response.scheduleId,
+        generation: response.generation + 1,
+        recipientMemberId: response.recipientMemberId,
+        occurrenceId: response.occurrenceId,
+        occurredAtMilliseconds: response.occurredAtMilliseconds
+      ),
+      nowMilliseconds: recoveryNow
+    ))
+
+    let otherAccountResponse = try NoLateAlarmInput.notificationResponseFire(
+      nativeAlarmId: "schedule:41:member:9:occurrence:M0",
+      alarmId: "schedule:41:member:9",
+      scheduleId: "41",
+      generation: Double(alarm.generation),
+      recipientMemberId: 9,
+      occurrenceId: "M0",
+      occurredAt: "1970-01-01T00:00:02.100Z"
+    )
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: tombstone,
+      response: otherAccountResponse,
+      nowMilliseconds: recoveryNow
+    ))
+
+    // A newer active generation is authoritative. Never fall back to an older tombstone merely
+    // because the old response is otherwise internally canonical.
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: timeSensitiveResponseAlarm(generation: 9),
+      tombstone: tombstone,
+      response: response,
+      nowMilliseconds: recoveryNow
+    ))
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: nil,
+      response: response,
+      nowMilliseconds: recoveryNow
+    ))
+    XCTAssertNil(NoLateAlarmNotificationResponsePolicy.matchingEvidence(
+      activeAlarm: nil,
+      tombstone: tombstone,
+      response: response,
+      nowMilliseconds: recoveryNow + noLateTombstoneRetentionMilliseconds + 1
+    ))
+  }
+
   func testFallbackActionIdentityIsStableAndCanonical() {
     let first = NoLateAlarmActionIdentity.fallbackKey(
       physicalAlarmId: "schedule:41:member:7:occurrence:M0",
@@ -640,6 +816,176 @@ final class NoLateAlarmPolicyTests: XCTestCase {
     )
     XCTAssertEqual(first, replay)
     XCTAssertNotNil(first.range(of: #"^key:[a-f0-9]{64}$"#, options: .regularExpression))
+  }
+
+  func testCustomAlarmNotificationIdentifiersCannotCommitLegacyDepartureAction() {
+    let identifiers = [
+      NoLateCustomAlarmNotificationContract.openActionIdentifier,
+      NoLateCustomAlarmNotificationContract.confirmDepartureActionIdentifier,
+      NoLateCustomAlarmNotificationContract.previewRouteActionIdentifier,
+      NoLateCustomAlarmNotificationContract.previewDepartureActionIdentifier
+    ]
+
+    XCTAssertEqual(Set(identifiers).count, identifiers.count)
+    XCTAssertFalse(identifiers.contains("schedule_depart_now_action"))
+    XCTAssertNotEqual(
+      NoLateCustomAlarmNotificationContract.categoryIdentifier,
+      NoLateCustomAlarmNotificationContract.previewCategoryIdentifier
+    )
+  }
+
+  func testNativeCategoryRegistrationOwnsAllNoLateCategoriesAndPreservesOthers() {
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.managedCategoryIdentifiers,
+      [
+        "nolate_custom_alarm",
+        "nolate_custom_alarm_preview",
+        "schedule_depart_now"
+      ]
+    )
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.legacyDepartureActionIdentifier,
+      "schedule_depart_now_action"
+    )
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.legacySnoozeActionIdentifier,
+      "schedule_snooze_action"
+    )
+
+    let registered = NoLateCustomAlarmNotificationContract
+      .categoryIdentifiersAfterRegistration(
+        preserving: [
+          "unrelated_calendar_category",
+          "schedule_depart_now"
+        ]
+      )
+    XCTAssertEqual(
+      registered,
+      [
+        "unrelated_calendar_category",
+        "nolate_custom_alarm",
+        "nolate_custom_alarm_preview",
+        "schedule_depart_now"
+      ]
+    )
+  }
+
+  func testPreviewCleanupTargetsOnlyNoLateCustomAlarmPreviews() {
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.previewRequestIdentifierPrefix,
+      "nolate.custom-alarm.preview."
+    )
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.previewRequestIdentifier,
+      "nolate.custom-alarm.preview.current"
+    )
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.previewRequestIdentifiers(
+        from: [
+          "nolate.custom-alarm.preview.first",
+          "nolate.departure.schedule-41",
+          "nolate.custom-alarm.preview.second",
+          "nolate.custom-alarm.preview",
+          "another.preview.request"
+        ]
+      ),
+      [
+        "nolate.custom-alarm.preview.first",
+        "nolate.custom-alarm.preview.second"
+      ]
+    )
+  }
+
+  func testAlarmSoundPreferenceMapsOnlySupportedIdsToLongNotificationFiles() {
+    XCTAssertEqual(NoLateAlarmSoundPreference.defaultValue, .chime)
+    XCTAssertEqual(
+      NoLateAlarmSoundPreference.chime.notificationResourceName,
+      "nolate_departure_alert"
+    )
+    XCTAssertEqual(
+      NoLateAlarmSoundPreference.bell.notificationResourceName,
+      "nolate_alarm_bell_alert"
+    )
+    XCTAssertEqual(
+      NoLateAlarmSoundPreference.beep.notificationResourceName,
+      "nolate_alarm_beep_alert"
+    )
+    XCTAssertEqual(
+      Set(NoLateAlarmSoundPreference.allCases.map(\.rawValue)),
+      ["CHIME", "BELL", "BEEP"]
+    )
+    XCTAssertNil(NoLateAlarmSoundPreference(rawValue: "DEFAULT"))
+  }
+
+  func testAlarmSoundPreferenceStoreDefaultsAndRejectsUnknownValues() throws {
+    let suiteName = "NoLateAlarmSoundPreferenceStoreTests.\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = NoLateAlarmSoundPreferenceStore(defaults: defaults)
+
+    XCTAssertEqual(store.load(), .chime)
+    XCTAssertTrue(store.save(rawValue: "BELL"))
+    XCTAssertEqual(store.load(), .bell)
+    XCTAssertFalse(store.save(rawValue: "LOUD"))
+    XCTAssertEqual(store.load(), .bell)
+
+    defaults.set("UNSUPPORTED", forKey: NoLateAlarmSoundPreferenceStore.storageKey)
+    XCTAssertEqual(store.load(), .chime)
+  }
+
+  func testSoundRefreshTargetsOnlyCustomAlarmCategories() {
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.soundManagedCategoryIdentifiers,
+      ["nolate_custom_alarm", "nolate_custom_alarm_preview"]
+    )
+    XCTAssertTrue(NoLateCustomAlarmNotificationContract.shouldRefreshSound(
+      categoryIdentifier: "nolate_custom_alarm"
+    ))
+    XCTAssertTrue(NoLateCustomAlarmNotificationContract.shouldRefreshSound(
+      categoryIdentifier: "nolate_custom_alarm_preview"
+    ))
+    XCTAssertFalse(NoLateCustomAlarmNotificationContract.shouldRefreshSound(
+      categoryIdentifier: "schedule_depart_now"
+    ))
+    XCTAssertFalse(NoLateCustomAlarmNotificationContract.shouldRefreshSound(
+      categoryIdentifier: "unrelated_calendar_category"
+    ))
+  }
+
+  func testCustomAlarmPreviewPayloadIsExplicitAndCanonical() throws {
+    XCTAssertEqual(
+      try NoLateCustomAlarmNotificationContract.normalizedScheduleId(" 41 "),
+      "41"
+    )
+    XCTAssertNil(
+      try NoLateCustomAlarmNotificationContract.normalizedScheduleId(nil)
+    )
+    XCTAssertThrowsError(
+      try NoLateCustomAlarmNotificationContract.normalizedScheduleId("schedule:41")
+    )
+    XCTAssertThrowsError(
+      try NoLateCustomAlarmNotificationContract.normalizedScheduleId("0")
+    )
+
+    XCTAssertEqual(
+      NoLateCustomAlarmNotificationContract.payload(
+        alarmId: "preview:preview-id",
+        previewId: "preview-id",
+        scheduleId: "41",
+        title: "NoLate 출발 알림",
+        body: "미리보기",
+        isPreview: true
+      ),
+      [
+        "type": "NOLATE_CUSTOM_ALARM",
+        "alarmId": "preview:preview-id",
+        "previewId": "preview-id",
+        "scheduleId": "41",
+        "title": "NoLate 출발 알림",
+        "body": "미리보기",
+        "isPreview": "true"
+      ]
+    )
   }
 
   private func storedAlarm(generation: Int64) -> NoLateStoredAlarm {
@@ -662,6 +1008,29 @@ final class NoLateAlarmPolicyTests: XCTestCase {
       decision: nil,
       minutesBeforeDeparture: nil,
       actionEventKey: nil
+    )
+  }
+
+  private func timeSensitiveResponseAlarm(generation: Int64) -> NoLateStoredAlarm {
+    NoLateStoredAlarm(
+      alarmId: "schedule:41:member:7:occurrence:M0",
+      scheduleId: "41",
+      title: "지금 출발",
+      generation: generation,
+      recipientMemberId: 7,
+      logicalEventKey: "event:alarm-41",
+      sourceTriggerAtMilliseconds: 2_000,
+      effectiveTriggerAtMilliseconds: 2_000,
+      snoozeMinutes: 5,
+      deliveryMode: .timeSensitive,
+      state: .scheduled,
+      updatedAtMilliseconds: 1_000,
+      logicalAlarmId: "schedule:41:member:7",
+      occurrenceId: "M0",
+      body: "지금 출발하세요.",
+      decision: "DEPART_NOW",
+      minutesBeforeDeparture: 0,
+      actionEventKey: "key:\(String(repeating: "a", count: 64))"
     )
   }
 

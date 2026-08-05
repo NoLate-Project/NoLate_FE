@@ -222,10 +222,10 @@ describe("live speech recognition bridge", () => {
         await expect(bridge.getLiveSpeechRecognitionAvailability()).resolves.toEqual({
             serviceAvailable: false,
             supportsOnDevice: false,
-            reason: "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다.",
+            reason: "이 기기에서는 음성 입력을 사용할 수 없어요.",
         });
         await expect(bridge.startLiveSpeechRecognition()).rejects.toThrow(
-            "이 기기에서는 실시간 음성 인식을 사용할 수 없습니다."
+            "이 기기에서는 음성 입력을 사용할 수 없어요."
         );
     });
 });

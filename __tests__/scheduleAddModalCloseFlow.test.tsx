@@ -24,12 +24,12 @@ jest.mock("../src/modules/schedule/components/calendar/CalendarGlassSurface", ()
     const { View: MockView } = require("react-native");
     return {
         __esModule: true,
-        default: ({ children, ...props }: any) => (
-            mockReact.createElement(MockView, props, children)
-        ),
+        default: ({ children, ...props }: any) => mockReact.createElement(MockView, props, children),
     };
 });
-jest.mock("../src/modules/map/tmapApi", () => ({ searchAddressByKeyword: jest.fn() }));
+jest.mock("../src/modules/map/tmapApi", () => ({
+    searchAddressByKeyword: jest.fn(),
+}));
 jest.mock("../src/api/subscription", () => ({
     FREE_SUBSCRIPTION_POLICY: {
         maxNotificationLeadMinutes: 60,
@@ -70,19 +70,20 @@ describe("ScheduleAddModal close flow", () => {
     const originalPlatform = Platform.OS;
 
     beforeAll(() => {
-        (
-            globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
-        ).IS_REACT_ACT_ENVIRONMENT = true;
+        (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     });
 
     beforeEach(() => {
         mockPathname = "/schedule";
         mockRouterPush.mockReset();
-        springSpy = jest.spyOn(Animated, "spring").mockImplementation(() => ({
-            start: (callback?: (result: { finished: boolean }) => void) => callback?.({ finished: true }),
-            stop: jest.fn(),
-            reset: jest.fn(),
-        }) as unknown as Animated.CompositeAnimation);
+        springSpy = jest.spyOn(Animated, "spring").mockImplementation(
+            () =>
+                ({
+                    start: (callback?: (result: { finished: boolean }) => void) => callback?.({ finished: true }),
+                    stop: jest.fn(),
+                    reset: jest.fn(),
+                } as unknown as Animated.CompositeAnimation),
+        );
         alertSpy = jest.spyOn(Alert, "alert").mockImplementation(jest.fn());
     });
 
@@ -102,7 +103,7 @@ describe("ScheduleAddModal close flow", () => {
     }: {
         onClose?: jest.Mock;
         onSubmit?: jest.Mock;
-        categories?: typeof category[];
+        categories?: (typeof category)[];
     } = {}) {
         await act(async () => {
             renderer = TestRenderer.create(
@@ -114,7 +115,7 @@ describe("ScheduleAddModal close flow", () => {
                         categories={categories}
                         defaultDay="2026-07-17"
                     />
-                </ThemeProvider>
+                </ThemeProvider>,
             );
             await Promise.resolve();
         });
@@ -165,11 +166,14 @@ describe("ScheduleAddModal close flow", () => {
             "작성 중인 일정을 닫을까요?",
             expect.any(String),
             expect.any(Array),
-            expect.any(Object)
+            expect.any(Object),
         );
 
-        const buttons = alertSpy.mock.calls[0][2] as Array<{ text: string; onPress?: () => void }>;
-        await act(async () => buttons.find((button) => button.text === "버리기")?.onPress?.());
+        const buttons = alertSpy.mock.calls[0][2] as Array<{
+            text: string;
+            onPress?: () => void;
+        }>;
+        await act(async () => buttons.find(button => button.text === "버리기")?.onPress?.());
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
@@ -178,7 +182,7 @@ describe("ScheduleAddModal close flow", () => {
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
             renderer!.root
-                .findAll((node) => node.props.accessible === false && typeof node.props.onPress === "function")[0]
+                .findAll(node => node.props.accessible === false && typeof node.props.onPress === "function")[0]
                 .props.onPress();
         });
 
@@ -189,7 +193,7 @@ describe("ScheduleAddModal close flow", () => {
     test("시트를 아래로 끌어 닫을 때도 원위치한 뒤 초안을 보호한다", async () => {
         let panConfig: Parameters<typeof PanResponder.create>[0] | undefined;
         const createPanResponder = PanResponder.create.bind(PanResponder);
-        jest.spyOn(PanResponder, "create").mockImplementation((config) => {
+        jest.spyOn(PanResponder, "create").mockImplementation(config => {
             panConfig = config;
             return createPanResponder(config);
         });
@@ -197,18 +201,12 @@ describe("ScheduleAddModal close flow", () => {
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
             renderer!.root.findByProps({ testID: "schedule-add-drag-handle" });
-            panConfig?.onPanResponderRelease?.(
-                undefined as never,
-                { dy: 180, dx: 0, vy: 1 } as never
-            );
+            panConfig?.onPanResponderRelease?.(undefined as never, { dy: 180, dx: 0, vy: 1 } as never);
         });
 
         expect(alertSpy).toHaveBeenCalledTimes(1);
         expect(onClose).not.toHaveBeenCalled();
-        expect(springSpy).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({ toValue: 0 })
-        );
+        expect(springSpy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ toValue: 0 }));
     });
 
     test("저장 성공은 dirty 확인을 다시 띄우지 않고 닫는다", async () => {
@@ -221,10 +219,12 @@ describe("ScheduleAddModal close flow", () => {
         });
 
         expect(onSubmit).toHaveBeenCalledTimes(1);
-        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-            notificationEnabled: false,
-            alertMode: "STANDARD",
-        }));
+        expect(onSubmit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                notificationEnabled: false,
+                alertMode: "STANDARD",
+            }),
+        );
         expect(alertSpy).not.toHaveBeenCalled();
         expect(onClose).toHaveBeenCalledTimes(1);
     });
@@ -250,7 +250,7 @@ describe("ScheduleAddModal close flow", () => {
         });
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("경로 회의");
-            renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 설정" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "출발지와 도착지 추가" }).props.onPress();
             await Promise.resolve();
         });
 
@@ -288,44 +288,51 @@ describe("ScheduleAddModal close flow", () => {
             renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.onValueChange(true);
         });
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "강력한 알람 모드" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "출발 알람 선택" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
             await renderer!.root.findByProps({ accessibilityLabel: "일정 저장" }).props.onPress();
         });
 
-        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-            origin: { name: "집", lat: 37.5, lng: 126.9 },
-            destination: { name: "회사", lat: 37.49, lng: 127.02 },
-            travelMode: "TRANSIT",
-            travelMinutes: 35,
-            departAt: "2026-07-17T00:25:00.000Z",
-            notificationEnabled: true,
-            alertMode: "ALARM",
-            route: expect.objectContaining({
-                id: "updated-route",
-                mode: "TRANSIT",
-                source: "api",
-                pathCoords: [
-                    { lat: 37.5, lng: 126.9 },
-                    { lat: 37.49, lng: 127.02 },
-                ],
+        expect(onSubmit).toHaveBeenCalledWith(
+            expect.objectContaining({
+                origin: { name: "집", lat: 37.5, lng: 126.9 },
+                destination: { name: "회사", lat: 37.49, lng: 127.02 },
+                travelMode: "TRANSIT",
+                travelMinutes: 35,
+                departAt: "2026-07-17T00:25:00.000Z",
+                notificationEnabled: true,
+                alertMode: "ALARM",
+                route: expect.objectContaining({
+                    id: "updated-route",
+                    mode: "TRANSIT",
+                    source: "api",
+                    pathCoords: [
+                        { lat: 37.5, lng: 126.9 },
+                        { lat: 37.49, lng: 127.02 },
+                    ],
+                }),
             }),
-        }));
+        );
     });
 
     test("저장 버튼을 빠르게 연속으로 눌러도 일정 생성 요청은 한 번만 보낸다", async () => {
         let resolveSubmit!: () => void;
-        const onSubmit = jest.fn(() => new Promise<void>((resolve) => {
-            resolveSubmit = resolve;
-        }));
+        const onSubmit = jest.fn(
+            () =>
+                new Promise<void>(resolve => {
+                    resolveSubmit = resolve;
+                }),
+        );
         await renderModal({ onSubmit });
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
         });
 
-        const saveButton = renderer!.root.findByProps({ accessibilityLabel: "일정 저장" });
+        const saveButton = renderer!.root.findByProps({
+            accessibilityLabel: "일정 저장",
+        });
         await act(async () => {
             saveButton.props.onPress();
             saveButton.props.onPress();
@@ -384,8 +391,7 @@ describe("ScheduleAddModal close flow", () => {
             await Promise.resolve();
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "시작 시간 오후 5:45" }))
-            .toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "시작 시간 오후 5:45" })).toBeDefined();
         jest.useRealTimers();
     });
 });

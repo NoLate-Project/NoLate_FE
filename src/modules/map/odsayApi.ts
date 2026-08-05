@@ -551,7 +551,7 @@ function responseError(data: any): Error | undefined {
     const error = data?.result?.error ?? data?.error;
     if (!error) return undefined;
     const code = textValue(error?.code);
-    const message = textValue(error?.msg ?? error?.message) ?? "ODsay 경로를 찾지 못했습니다.";
+    const message = textValue(error?.msg ?? error?.message) ?? "대중교통 경로를 찾지 못했어요.";
     return new Error(code ? `${message} (${code})` : message);
 }
 
@@ -561,7 +561,7 @@ export function odsayApiErrorMessage(error: unknown): string {
     }
     const apiError = responseError(error.response?.data);
     if (apiError) return apiError.message;
-    return error.message || "ODsay 요청에 실패했습니다.";
+    return error.message || "대중교통 경로를 불러오지 못했어요.";
 }
 
 /** 플랫폼에 등록된 모바일 키로 시간표 기반 정밀 대중교통 경로를 조회한다. */
@@ -571,7 +571,7 @@ export async function getOdsayTransitRouteOptions(
     departureAt = new Date()
 ): Promise<TransitRouteOption[]> {
     const apiKey = resolveOdsayApiKey();
-    if (!apiKey) throw new Error("현재 플랫폼에 맞는 ODsay API 키가 없습니다.");
+    if (!apiKey) throw new Error("대중교통 경로를 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
 
     const response = await axios.get(`${ODSAY_API_BASE_URL}/maasRP`, {
         timeout: ODSAY_REQUEST_TIMEOUT_MS,
