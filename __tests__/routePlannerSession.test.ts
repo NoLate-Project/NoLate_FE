@@ -4,6 +4,7 @@ import {
     consumeScheduleRouteUpdatePayload,
     consumeRoutePlannerResult,
     getRoutePlannerInitial,
+    isRoutePlannerFlowPath,
     observeRoutePlannerReturn,
     setRoutePlannerInitial,
     setRoutePlannerResult,
@@ -30,6 +31,27 @@ describe("route planner session", () => {
             "/schedule/77",
             onRouteScreen.hasVisitedRouteFlow
         )).toEqual({
+            hasVisitedRouteFlow: false,
+            shouldConsumeResult: true,
+        });
+    });
+
+    test("경로 화면에서 연 장소 설정은 폼 복귀가 아니라 같은 경로 흐름으로 유지한다", () => {
+        expect(isRoutePlannerFlowPath("/settings/places")).toBe(true);
+
+        const onPlaceSettings = observeRoutePlannerReturn("/settings/places", true);
+        expect(onPlaceSettings).toEqual({
+            hasVisitedRouteFlow: true,
+            shouldConsumeResult: false,
+        });
+        expect(observeRoutePlannerReturn(
+            "/schedule/route-select",
+            onPlaceSettings.hasVisitedRouteFlow,
+        )).toEqual({
+            hasVisitedRouteFlow: true,
+            shouldConsumeResult: false,
+        });
+        expect(observeRoutePlannerReturn("/schedule/77", true)).toEqual({
             hasVisitedRouteFlow: false,
             shouldConsumeResult: true,
         });

@@ -3,7 +3,10 @@ import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Alert, StyleSheet, Switch } from "react-native";
 
 import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
-import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
+import {
+    getRoutePlannerInitial,
+    setRoutePlannerResult,
+} from "../src/modules/schedule/routePlannerSession";
 import type { ScheduleItem, ScheduleTravelPlan } from "../src/modules/schedule/types";
 
 const mockCategory = { id: "work", title: "업무", color: "#FF3B30" };
@@ -373,7 +376,7 @@ describe("ScheduleEditScreen route return", () => {
         expect(mockRouterSetParams).not.toHaveBeenCalled();
     });
 
-    test("제목의 카테고리 칩을 한 번 누르면 중복 선택 상자 없이 항목을 바로 고른다", async () => {
+    test("카테고리 칩을 닫아도 같은 목록을 유지해 닫힘 애니메이션을 끝까지 실행한다", async () => {
         mockGetSchedule.mockResolvedValue(mockItem);
 
         await act(async () => {
@@ -382,19 +385,167 @@ describe("ScheduleEditScreen route return", () => {
             await Promise.resolve();
         });
 
-        expect(renderer!.root.findAllByProps({ testID: "mock-category-options" })).toHaveLength(0);
+        const picker = renderer!.root.findByProps({ testID: "mock-category-options" });
+        expect(picker.props).toMatchObject({
+            expanded: false,
+            hideTrigger: true,
+        });
+
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
         });
 
-        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props).toMatchObject({
+        expect(picker.props).toMatchObject({
             expanded: true,
             hideTrigger: true,
+        });
+        expect(renderer!.root.findByProps({
+            testID: "schedule-edit-category-dismiss-layer",
+        })).toBeTruthy();
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
+        });
+
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" })).toBe(picker);
+        expect(picker.props.expanded).toBe(false);
+        expect(renderer!.root.findAllByProps({
+            testID: "schedule-edit-category-dismiss-layer",
+        })).toHaveLength(0);
+    });
+
+    test("빠른 반복 탭과 바깥 탭 뒤에도 카테고리 열림 상태가 일관된다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const categoryChip = renderer!.root.findByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        });
+
+        await act(async () => categoryChip.props.onPress());
+        await act(async () => categoryChip.props.onPress());
+        await act(async () => categoryChip.props.onPress());
+
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(true);
+
+        await act(async () => {
+            renderer!.root.findByProps({
+                testID: "schedule-edit-category-dismiss-layer",
+            }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(false);
+
+        await act(async () => categoryChip.props.onPress());
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(true);
+    });
+
+    test("카테고리를 고르면 목록을 유지한 채 닫고 바깥 탭 영역을 제거한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.onPress();
         });
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 항목" }).props.onPress();
         });
-        expect(renderer!.root.findAllByProps({ testID: "mock-category-options" })).toHaveLength(0);
+
+        expect(renderer!.root.findByProps({ testID: "mock-category-options" }).props.expanded).toBe(false);
+        expect(renderer!.root.findAllByProps({
+            testID: "schedule-edit-category-dismiss-layer",
+        })).toHaveLength(0);
+    });
+
+    test("이동 경로를 열 때 현재 출발지·도착지·수단·소요시간·출발시각·경로를 세션에 보존한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "이동 경로 수정" }).props.onPress();
+        });
+
+        const pushedRoute = mockRouterPush.mock.calls[0]?.[0];
+        const sessionId = pushedRoute?.params?.sessionId as string;
+        expect(pushedRoute).toEqual({
+            pathname: "/schedule/route-select",
+            params: { sessionId },
+        });
+        expect(getRoutePlannerInitial(sessionId)).toEqual({
+            origin: mockItem.origin,
+            destination: mockItem.destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 36,
+            locationName: "집 → 회사",
+            targetArrivalAt: mockItem.startAt,
+            departureAt: mockItem.departAt,
+            route: mockOriginalRoute,
+        });
+    });
+
+    test("경로 선택을 취소해도 기존 경로와 출발 알림 초안을 그대로 저장한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+        mockUpdateSchedule.mockImplementation(async (_id, payload) => ({
+            ...mockItem,
+            ...payload,
+        }));
+        const tree = () => <ScheduleEditScreen />;
+
+        await act(async () => {
+            renderer = TestRenderer.create(tree());
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
+                .props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "이동 경로 수정" }).props.onPress();
+        });
+
+        mockPathname = "/schedule/route-select";
+        await act(async () => {
+            renderer!.update(tree());
+            await Promise.resolve();
+        });
+
+        // 결과를 쓰지 않고 헤더/제스처/시스템 뒤로가기로 편집 화면에 복귀한 경우다.
+        mockPathname = "/schedule/1";
+        await act(async () => {
+            renderer!.update(tree());
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "일정 수정 저장" })
+                .props.onPress();
+        });
+
+        expect(mockUpdateSchedule).toHaveBeenCalledWith("1", expect.objectContaining({
+            origin: mockItem.origin,
+            destination: mockItem.destination,
+            travelMode: "TRANSIT",
+            travelMinutes: 36,
+            departAt: mockItem.departAt,
+            route: mockOriginalRoute,
+            notificationEnabled: true,
+            notificationLeadMinutes: 60,
+            notificationIntervalMinutes: 20,
+            alertMode: "ALARM",
+        }));
     });
 
     test("느린 상세 재조회와 무관하게 경로 변경 직후 저장할 수 있다", async () => {
@@ -412,6 +563,9 @@ describe("ScheduleEditScreen route return", () => {
         });
 
         await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
+                .props.onPress();
             renderer!.root.findByProps({ accessibilityLabel: "이동 경로 수정" }).props.onPress();
             await Promise.resolve();
         });
@@ -463,11 +617,6 @@ describe("ScheduleEditScreen route return", () => {
         expect(mockGetSchedule).toHaveBeenCalledTimes(1);
 
         await act(async () => {
-            renderer!.root
-                .findByProps({ accessibilityLabel: "강력한 알람 설정 테스트" })
-                .props.onPress();
-        });
-        await act(async () => {
             await saveButton.props.onPress();
         });
 
@@ -477,6 +626,8 @@ describe("ScheduleEditScreen route return", () => {
             departAt: "2026-07-20T10:36:00.000Z",
             route: nextRoute,
             notificationEnabled: true,
+            notificationLeadMinutes: 60,
+            notificationIntervalMinutes: 20,
             alertMode: "ALARM",
         }));
         expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();

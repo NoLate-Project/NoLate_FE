@@ -34,10 +34,13 @@ describe("plain schedule detail route layout", () => {
     });
 
     test("내부 미리보기에서 수정 화면과 빠른 일정의 개별 필드를 직접 검증할 수 있다", () => {
-        expect(previewSource).toContain("function EditPreview({ initialScrollToEnd = false }");
+        expect(previewSource).toContain("function EditPreview({");
         expect(previewSource).toContain('dispatch({ type: "UPDATE_ITEM", item: previewItem })');
         expect(previewSource).toContain("initialPreviewField={quickPreviewField}");
-        expect(previewSource).toContain('<EditPreview initialScrollToEnd={params.section === "bottom"} />');
+        expect(previewSource).toContain('initialCategoryPickerOpen={params.category === "open"}');
+        expect(previewSource).toContain('if (screen === "route") return <RouteInputPreview />');
+        expect(previewSource).toContain('return <RouteSelectScreen />');
+        expect(previewSource).toContain('router.setParams({ sessionId, editTarget: "destination" })');
         expect(previewSource).toContain('type QuickPreviewField = "title" | "date" | "time" | "location" | "notification" | "memo"');
     });
 });

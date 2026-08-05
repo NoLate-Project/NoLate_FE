@@ -11,7 +11,9 @@ import PlainScheduleDetailView, {
 import QuickScheduleModal from "../../src/modules/schedule/components/form/QuickScheduleModal";
 import ScheduleAddModal from "../../src/modules/schedule/components/form/ScheduleAddModal";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
+import RouteSelectScreen from "../schedule/route-select";
 import { useScheduleStore } from "../../src/modules/schedule/store";
+import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import type {
     ScheduleCategory,
@@ -19,7 +21,7 @@ import type {
     ScheduleParseResult,
 } from "../../src/modules/schedule/types";
 
-type PreviewScreen = "create" | "quick" | "edit" | "detail";
+type PreviewScreen = "create" | "quick" | "edit" | "detail" | "route";
 type QuickPreviewField = "title" | "date" | "time" | "location" | "notification" | "memo";
 
 const PREVIEW_ID = "schedule-ui-preview";
@@ -211,7 +213,13 @@ function DetailPreview() {
     );
 }
 
-function EditPreview({ initialScrollToEnd = false }: { initialScrollToEnd?: boolean }) {
+function EditPreview({
+    initialScrollToEnd = false,
+    initialCategoryPickerOpen = false,
+}: {
+    initialScrollToEnd?: boolean;
+    initialCategoryPickerOpen?: boolean;
+}) {
     const { state, dispatch } = useScheduleStore();
 
     useEffect(() => {
@@ -223,7 +231,44 @@ function EditPreview({ initialScrollToEnd = false }: { initialScrollToEnd?: bool
         return <PreviewBackdrop label="일정 수정 화면을 준비하고 있어요" />;
     }
 
-    return <ScheduleEditScreen initialScrollToEnd={initialScrollToEnd} />;
+    return (
+        <ScheduleEditScreen
+            initialScrollToEnd={initialScrollToEnd}
+            initialCategoryPickerOpen={initialCategoryPickerOpen}
+        />
+    );
+}
+
+function RouteInputPreview() {
+    const router = useRouter();
+    const params = useLocalSearchParams<{ sessionId?: string; editTarget?: string }>();
+    const sessionId = "schedule-ui-preview-route";
+    const paramsReady = params.sessionId === sessionId && params.editTarget === "destination";
+
+    useEffect(() => {
+        setRoutePlannerInitial(sessionId, {
+            origin: previewItem.origin,
+            destination: previewItem.destination,
+            travelMode: previewItem.travelMode ?? "TRANSIT",
+            travelMinutes: previewItem.travelMinutes,
+            locationName: "서울역 → 강남역",
+            targetArrivalAt: previewItem.startAt,
+            departureAt: previewItem.departAt,
+            route: previewItem.route,
+        });
+
+        if (paramsReady) return;
+        const frame = requestAnimationFrame(() => {
+            router.setParams({ sessionId, editTarget: "destination" });
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [paramsReady, router, sessionId]);
+
+    if (!paramsReady) {
+        return <PreviewBackdrop label="이동 경로 입력 화면을 준비하고 있어요" />;
+    }
+
+    return <RouteSelectScreen />;
 }
 
 export default function ScheduleUiPreviewScreen() {
@@ -233,6 +278,7 @@ export default function ScheduleUiPreviewScreen() {
         preview?: string;
         field?: QuickPreviewField;
         section?: "top" | "bottom";
+        category?: "open";
     }>();
     const router = useRouter();
     const { dispatch } = useScheduleStore();
@@ -274,10 +320,16 @@ export default function ScheduleUiPreviewScreen() {
         if (params.id !== PREVIEW_ID || params.preview !== "1") {
             return <PreviewBackdrop label="일정 수정 화면을 준비하고 있어요" />;
         }
-        return <EditPreview initialScrollToEnd={params.section === "bottom"} />;
+        return (
+            <EditPreview
+                initialScrollToEnd={params.section === "bottom"}
+                initialCategoryPickerOpen={params.category === "open"}
+            />
+        );
     }
 
     if (screen === "detail") return <DetailPreview />;
+    if (screen === "route") return <RouteInputPreview />;
 
     if (screen === "quick") {
         return (

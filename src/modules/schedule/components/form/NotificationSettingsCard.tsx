@@ -397,9 +397,11 @@ export default function NotificationSettingsCard({
             >
                 <View style={styles.headerText}>
                     <Text style={[styles.title, { color: colors.textPrimary }]}>출발 알림</Text>
-                    <Text style={[styles.usage, { color: colors.textSecondary }]}>
-                        {flat ? "교통 상황 반영" : "교통 상황을 반영해 출발 시간을 알려드려요."}
-                    </Text>
+                    {!flat ? (
+                        <Text style={[styles.usage, { color: colors.textSecondary }]}>
+                            교통 상황을 반영해 출발 시간을 알려드려요.
+                        </Text>
+                    ) : null}
                 </View>
                 <Switch
                     accessibilityLabel="출발 알림"
@@ -826,10 +828,10 @@ const styles = StyleSheet.create({
         minHeight: 38,
     },
     flatHeader: {
-        minHeight: 48,
+        minHeight: 44,
         borderBottomWidth: 0,
         paddingHorizontal: 0,
-        paddingBottom: 8,
+        paddingBottom: 6,
     },
     headerText: { flex: 1, paddingRight: 12 },
     title: { fontSize: 15, lineHeight: 20, fontWeight: "700" },

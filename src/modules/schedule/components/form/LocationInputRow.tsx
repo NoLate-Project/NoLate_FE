@@ -59,11 +59,12 @@ export default function LocationInputRow({
                         accessibilityLabel={hasRoute ? `이동 경로 수정, ${routeText}` : "출발지와 도착지 추가"}
                         accessibilityHint="경로 선택 화면을 엽니다"
                         onPress={onPress}
-                        style={[
+                        style={({ pressed }) => [
                             styles.routeButton,
                             hasRoute && onClear
                                 ? styles.routeButtonWithClear
                                 : styles.routeButtonWithoutClear,
+                            pressed && { backgroundColor: colors.surface },
                         ]}
                     >
                         <View style={styles.textGroup}>

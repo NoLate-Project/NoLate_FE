@@ -275,7 +275,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             fontWeight: "700",
         });
         const rendered = JSON.stringify(renderer!.toJSON());
-        expect(rendered).toContain("교통 상황 반영");
+        expect(rendered).not.toContain("교통 상황 반영");
         expect(rendered).toContain("추천 출발 시간");
         expect(rendered).toContain("36분 소요");
         expect(rendered).toContain("오후 12:00 도착 예정");

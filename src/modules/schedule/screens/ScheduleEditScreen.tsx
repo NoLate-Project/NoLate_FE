@@ -84,6 +84,7 @@ function mergeDateTime(datePart: Date, timePart: Date) {
 
 const DATE_H = 312;
 const TIME_H = 216;
+const CATEGORY_PICKER_MARGIN = 12;
 
 type PickerType = "startDate" | "endDate" | "startTime" | "endTime";
 
@@ -99,9 +100,13 @@ const hasCompletePersonalTravelPlanCoordinates = (
 
 type ScheduleEditScreenProps = {
     initialScrollToEnd?: boolean;
+    initialCategoryPickerOpen?: boolean;
 };
 
-export default function ScheduleEdit({ initialScrollToEnd = false }: ScheduleEditScreenProps) {
+export default function ScheduleEdit({
+    initialScrollToEnd = false,
+    initialCategoryPickerOpen = false,
+}: ScheduleEditScreenProps) {
     const { id, preview } = useLocalSearchParams<{ id: string; preview?: string }>();
     const pathname = usePathname();
     const router     = useRouter();
@@ -123,7 +128,8 @@ export default function ScheduleEdit({ initialScrollToEnd = false }: ScheduleEdi
     const [categoryId,      setCategoryId]      = useState(
         resolveWritableScheduleCategoryId(item?.category, state.categories)
     );
-    const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+    const [categoryPickerOpen, setCategoryPickerOpen] = useState(initialCategoryPickerOpen);
+    const categoryPickerSpacingAnim = useRef(new Animated.Value(0)).current;
     const [originText,      setOriginText]      = useState(item?.origin?.name ?? "");
     const [destinationText, setDestinationText] = useState(item?.destination?.name ?? "");
     const [originAddress, setOriginAddress]     = useState(item?.origin?.address);
@@ -166,6 +172,38 @@ export default function ScheduleEdit({ initialScrollToEnd = false }: ScheduleEdi
         formDirtyRef.current = true;
         setFormDirty(true);
     }, []);
+
+    const closeCategoryPicker = useCallback(() => {
+        setCategoryPickerOpen(false);
+    }, []);
+
+    const toggleCategoryPicker = useCallback(() => {
+        setCategoryPickerOpen((current) => !current);
+    }, []);
+
+    useEffect(() => {
+        const animation = categoryPickerOpen
+            ? Animated.spring(categoryPickerSpacingAnim, {
+                toValue: 1,
+                useNativeDriver: false,
+                damping: 18,
+                stiffness: 160,
+                mass: 0.8,
+            })
+            : Animated.timing(categoryPickerSpacingAnim, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: false,
+            });
+
+        animation.start();
+        return () => animation.stop();
+    }, [categoryPickerOpen, categoryPickerSpacingAnim]);
+
+    const categoryPickerMarginBottom = categoryPickerSpacingAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-CATEGORY_PICKER_MARGIN, 0],
+    });
 
     const discardChanges = useCallback(() => {
         formDirtyRef.current = false;
@@ -953,63 +991,85 @@ export default function ScheduleEdit({ initialScrollToEnd = false }: ScheduleEdi
                 />
             ) : null}
 
-            <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
-            <View
-                testID="schedule-edit-title-field"
-                style={[
-                    styles.titleInputWrap,
-                    {
-                        borderWidth: titleFocused ? 1 : StyleSheet.hairlineWidth,
-                        borderColor: titleFocused ? fieldAccent : colors.border,
-                        backgroundColor: titleFocused ? colors.surface : colors.surface2,
-                    },
-                ]}
-            >
-                <TextInput
-                    value={title}
-                    onFocus={() => setTitleFocused(true)}
-                    onBlur={() => setTitleFocused(false)}
-                    onChangeText={(value) => {
-                        markFormDirty();
-                        setTitle(value);
-                    }}
-                    accessibilityLabel="일정 제목"
-                    maxLength={120}
-                    placeholder="예) 회의"
-                    placeholderTextColor={colors.inputPlaceholder}
-                    style={[styles.titleInput, { color: colors.textPrimary }]}
-                />
+            {categoryPickerOpen ? (
                 <Pressable
+                    testID="schedule-edit-category-dismiss-layer"
                     accessibilityRole="button"
-                    accessibilityLabel={`카테고리 선택, 현재 ${category?.title ?? "없음"}`}
-                    accessibilityState={{ expanded: categoryPickerOpen, disabled: categoryOptions.length === 0 }}
-                    onPress={() => setCategoryPickerOpen((current) => !current)}
-                    disabled={categoryOptions.length === 0}
-                    hitSlop={5}
-                    style={[styles.categoryInlineChip, { borderColor: colors.border }]}
-                >
-                    <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
-                    <Text numberOfLines={1} style={[styles.categoryInlineText, { color: colors.textPrimary }]}>
-                        {category?.title ?? "카테고리"}
-                    </Text>
-                </Pressable>
-            </View>
-
-            {categoryPickerOpen && (
-                <CategoryPickerRow
-                    categories={categoryOptions}
-                    value={categoryId}
-                    expanded={categoryPickerOpen}
-                    hideTrigger
-                    onExpandedChange={setCategoryPickerOpen}
-                    onChange={(nextCategoryId) => {
-                        markFormDirty();
-                        setCategoryId(nextCategoryId);
-                        setCategoryPickerOpen(false);
-                    }}
-                    onManageCategories={() => router.push("/schedule/categories")}
+                    accessibilityLabel="카테고리 선택 닫기"
+                    onPress={closeCategoryPicker}
+                    style={styles.categoryDismissLayer}
                 />
-            )}
+            ) : null}
+
+            <View style={styles.categorySection}>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
+                <View
+                    testID="schedule-edit-title-field"
+                    style={[
+                        styles.titleInputWrap,
+                        {
+                            borderWidth: titleFocused ? 1 : StyleSheet.hairlineWidth,
+                            borderColor: titleFocused ? fieldAccent : colors.border,
+                            backgroundColor: titleFocused ? colors.surface : colors.surface2,
+                        },
+                    ]}
+                >
+                    <TextInput
+                        value={title}
+                        onPressIn={closeCategoryPicker}
+                        onFocus={() => setTitleFocused(true)}
+                        onBlur={() => setTitleFocused(false)}
+                        onChangeText={(value) => {
+                            markFormDirty();
+                            setTitle(value);
+                        }}
+                        accessibilityLabel="일정 제목"
+                        maxLength={120}
+                        placeholder="예) 회의"
+                        placeholderTextColor={colors.inputPlaceholder}
+                        style={[styles.titleInput, { color: colors.textPrimary }]}
+                    />
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`카테고리 선택, 현재 ${category?.title ?? "없음"}`}
+                        accessibilityState={{ expanded: categoryPickerOpen, disabled: categoryOptions.length === 0 }}
+                        onPress={toggleCategoryPicker}
+                        disabled={categoryOptions.length === 0}
+                        hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
+                        style={({ pressed }) => [
+                            styles.categoryInlineChip,
+                            {
+                                borderColor: categoryPickerOpen ? fieldAccent : colors.border,
+                                opacity: pressed ? 0.62 : 1,
+                            },
+                        ]}
+                    >
+                        <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
+                        <Text numberOfLines={1} style={[styles.categoryInlineText, { color: colors.textPrimary }]}>
+                            {category?.title ?? "카테고리"}
+                        </Text>
+                    </Pressable>
+                </View>
+
+                <Animated.View
+                    testID="schedule-edit-category-picker-slot"
+                    style={{ marginBottom: categoryPickerMarginBottom }}
+                >
+                    <CategoryPickerRow
+                        categories={categoryOptions}
+                        value={categoryId}
+                        expanded={categoryPickerOpen}
+                        hideTrigger
+                        onExpandedChange={setCategoryPickerOpen}
+                        onChange={(nextCategoryId) => {
+                            markFormDirty();
+                            setCategoryId(nextCategoryId);
+                            closeCategoryPicker();
+                        }}
+                        onManageCategories={() => router.push("/schedule/categories")}
+                    />
+                </Animated.View>
+            </View>
 
             <LocationInputRow
                 originValue={originText}
@@ -1291,6 +1351,14 @@ const styles = StyleSheet.create({
     },
     formPageContent: {
         paddingTop: 6,
+    },
+    categoryDismissLayer: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 1,
+    },
+    categorySection: {
+        position: "relative",
+        zIndex: 2,
     },
     navigationHeader: {
         minHeight: 44,

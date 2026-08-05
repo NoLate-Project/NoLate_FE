@@ -17,6 +17,7 @@ import {
     View,
 } from "react-native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
+import { useNavigation } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
 import DateTimePicker, { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
@@ -169,6 +170,10 @@ import {
 } from "../../src/modules/schedule/scheduleRouteTiming";
 import { getMapPickedPlaceFallbackName } from "../../src/modules/schedule/routePointSelection";
 import { resolveRouteSelectionHandoff } from "../../src/modules/schedule/routeSelectionHandoff";
+import {
+    resolveRoutePlannerBackAction,
+    shouldEnableRoutePlannerGesture,
+} from "../../src/modules/schedule/routePlannerNavigation";
 import {
     getRouteSelectionAccessibilityProps,
     getRouteSelectionConfirmAccessibilityProps,
@@ -3863,6 +3868,7 @@ function buildRouteEndpointAccessOverlays(
 
 export default function RoutePlannerScreen() {
     const router = useRouter();
+    const navigation = useNavigation();
     const pathname = usePathname();
     const insets = useSafeAreaInsets();
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -4172,6 +4178,18 @@ export default function RoutePlannerScreen() {
     const transitDetailControlText = shouldRenderTransitDetailDark ? "#F3F4F6" : "#111827";
     const isRoutePointLocked = hasRouteReady && !isRoutePointEditMode;
     const isRouteSelectionStage = isRouteSelectionScreen;
+    const routePlannerBackAction = resolveRoutePlannerBackAction({
+        isRouteSelectionStage,
+        shouldReturnToScheduleDetail,
+    });
+    useEffect(() => {
+        navigation.setOptions({
+            gestureEnabled: shouldEnableRoutePlannerGesture({
+                isRouteSelectionStage,
+                shouldReturnToScheduleDetail,
+            }),
+        });
+    }, [isRouteSelectionStage, navigation, shouldReturnToScheduleDetail]);
     const hasActiveTarget = activeTarget === "origin" || activeTarget === "destination";
     const originDisplay = originName.trim() || originAddress.trim() || "출발지 미선택";
     const destinationDisplay = destinationName.trim() || destinationAddress.trim() || "도착지 미선택";
@@ -7888,6 +7906,23 @@ export default function RoutePlannerScreen() {
         router.replace("/schedule");
     }, [router]);
 
+    const goBack = useCallback(() => {
+        if (routePlannerBackAction === "close") {
+            closePlanner();
+            return;
+        }
+
+        const targetSessionId = sessionId || `route-reset-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        persistCurrentRoutePlannerInitial(targetSessionId);
+        router.replace({ pathname: "/schedule/route-select", params: { sessionId: targetSessionId } });
+    }, [
+        closePlanner,
+        persistCurrentRoutePlannerInitial,
+        routePlannerBackAction,
+        router,
+        sessionId,
+    ]);
+
     useEffect(() => {
         if (Platform.OS !== "android") return;
         const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
@@ -7899,15 +7934,21 @@ export default function RoutePlannerScreen() {
                 snapBottomSheetTo("collapsed");
                 return true;
             }
+            if (routePlannerBackAction === "return-to-selection") {
+                goBack();
+                return true;
+            }
             return false;
         });
         return () => subscription.remove();
     }, [
         bottomSheetSnap,
         closeLocationPrompt,
+        goBack,
         isBottomSheetHidden,
         isRouteDetailMode,
         locationPromptTarget,
+        routePlannerBackAction,
         snapBottomSheetTo,
     ]);
 
@@ -7969,21 +8010,6 @@ export default function RoutePlannerScreen() {
         setIsTransitDeparturePickerOpen(false);
         setRouteRefreshTick((current) => current + 1);
     }, [draftTransitDepartureAt]);
-
-    const goBack = useCallback(() => {
-        if (shouldReturnToScheduleDetail) {
-            closePlanner();
-            return;
-        }
-        if (!isRouteSelectionStage) {
-            const targetSessionId = sessionId || `route-reset-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-            persistCurrentRoutePlannerInitial(targetSessionId);
-            router.replace({ pathname: "/schedule/route-select", params: { sessionId: targetSessionId } });
-            return;
-        }
-
-        closePlanner();
-    }, [closePlanner, isRouteSelectionStage, persistCurrentRoutePlannerInitial, router, sessionId, shouldReturnToScheduleDetail]);
 
     const buildCurrentRoutePlaces = useCallback(() => {
         const normalizedOriginName = originName.trim();

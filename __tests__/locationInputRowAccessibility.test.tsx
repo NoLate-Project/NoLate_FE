@@ -103,9 +103,9 @@ describe("LocationInputRow accessibility", () => {
         const cardStyle = StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "location-input-card" }).props.style,
         );
-        const pressableStyle = StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "location-input-pressable" }).props.style,
-        );
+        const routePressable = renderer!.root.findByProps({ testID: "location-input-pressable" });
+        const pressableStyle = StyleSheet.flatten(routePressable.props.style({ pressed: false }));
+        const pressedStyle = StyleSheet.flatten(routePressable.props.style({ pressed: true }));
         const labelStyle = StyleSheet.flatten(
             renderer!.root.findByProps({ children: "이동 경로" }).props.style,
         );
@@ -116,6 +116,7 @@ describe("LocationInputRow accessibility", () => {
             backgroundColor: "#f7f7f8",
         });
         expect(pressableStyle).toMatchObject({ minHeight: 58, paddingVertical: 10 });
+        expect(pressedStyle).toMatchObject({ backgroundColor: "#fff" });
         expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "600" });
         const chevron = renderer!.root.findByProps({ name: "chevron-forward" });
         expect(chevron.props).toMatchObject({ size: 16, color: "#6e6e73" });

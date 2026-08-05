@@ -160,6 +160,7 @@ const SHEET_TARGET_MAX_HEIGHT = 600;
 const FORM_ACCENT = "#246BFE";
 const DATE_H         = 312;
 const TIME_H         = 216;
+const CATEGORY_PICKER_MARGIN = 12;
 
 type PickerType = "startDate" | "endDate" | "startTime" | "endTime";
 
@@ -231,6 +232,7 @@ export default function ScheduleNewModal({
     const [notes, setNotes]                           = useState("");
     const [selectedCategoryId, setSelectedCategoryId] = useState(writableCategories[0]?.id ?? "");
     const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
+    const categoryPickerSpacingAnim = useRef(new Animated.Value(0)).current;
     const [originText, setOriginText]                 = useState("");
     const [destinationText, setDestinationText]       = useState("");
     const [originAddress, setOriginAddress]           = useState<string | undefined>();
@@ -276,6 +278,30 @@ export default function ScheduleNewModal({
     const markFormDirty = useCallback(() => {
         formDirtyRef.current = true;
     }, []);
+
+    useEffect(() => {
+        const animation = categoryPickerOpen
+            ? Animated.spring(categoryPickerSpacingAnim, {
+                toValue: 1,
+                useNativeDriver: false,
+                damping: 18,
+                stiffness: 160,
+                mass: 0.8,
+            })
+            : Animated.timing(categoryPickerSpacingAnim, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: false,
+            });
+
+        animation.start();
+        return () => animation.stop();
+    }, [categoryPickerOpen, categoryPickerSpacingAnim]);
+
+    const categoryPickerMarginBottom = categoryPickerSpacingAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-CATEGORY_PICKER_MARGIN, 0],
+    });
 
     const discardDraft = useCallback(() => {
         formDirtyRef.current = false;
@@ -1806,10 +1832,16 @@ export default function ScheduleNewModal({
                             </Text>
                         ) : null}
 
-                        {categoryPickerOpen && (
+                        <Animated.View
+                            testID="schedule-add-category-picker-slot"
+                            style={{ marginBottom: categoryPickerMarginBottom }}
+                        >
                             <CategoryPickerRow
                                 categories={writableCategories}
                                 value={selectedCategoryId}
+                                expanded={categoryPickerOpen}
+                                hideTrigger
+                                onExpandedChange={setCategoryPickerOpen}
                                 onChange={(nextCategoryId) => {
                                     markFormDirty();
                                     setSelectedCategoryId(nextCategoryId);
@@ -1817,7 +1849,7 @@ export default function ScheduleNewModal({
                                 }}
                                 onManageCategories={onManageCategories}
                             />
-                        )}
+                        </Animated.View>
 
                         <Text style={[styles.label, { color: colors.textSecondary }]}>일시</Text>
                         <View

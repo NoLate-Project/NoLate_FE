@@ -3,6 +3,7 @@ import { Alert, Animated, BackHandler, Dimensions, PanResponder, Platform, Style
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
+import CategorySelectBox from "../src/modules/schedule/components/form/CategorySelectBox";
 import { setRoutePlannerResult } from "../src/modules/schedule/routePlannerSession";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
@@ -62,6 +63,7 @@ jest.mock("../src/modules/notification/departureAlarm", () => ({
 }));
 
 const category = { id: "work", title: "업무", color: "#FF3B30" };
+const personalCategory = { id: "personal", title: "개인", color: "#4B9DFF" };
 
 describe("ScheduleAddModal close flow", () => {
     let renderer: ReactTestRenderer | undefined;
@@ -187,6 +189,63 @@ describe("ScheduleAddModal close flow", () => {
         expect(closeButton.props.hitSlop).toBe(6);
         expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(20);
         expect(backdropStyle.backgroundColor).toBe("rgba(0,0,0,0.30)");
+    });
+
+    test("제목의 카테고리 chip 아래에 중복 selector 없이 같은 목록을 열고 닫는다", async () => {
+        await renderModal({ categories: [category, personalCategory] });
+
+        const picker = renderer!.root.findByType(CategorySelectBox);
+        expect(picker.props).toMatchObject({
+            expanded: false,
+            hideTrigger: true,
+        });
+        expect(picker.findAllByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        })).toHaveLength(0);
+
+        const categoryChip = renderer!.root.findByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        });
+        await act(async () => categoryChip.props.onPress());
+
+        expect(picker.props.expanded).toBe(true);
+        expect(picker.findAllByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        })).toHaveLength(0);
+
+        await act(async () => categoryChip.props.onPress());
+
+        expect(renderer!.root.findByType(CategorySelectBox)).toBe(picker);
+        expect(picker.props.expanded).toBe(false);
+    });
+
+    test("카테고리 chip을 빠르게 반복 탭하고 항목을 골라도 열림 상태가 일관된다", async () => {
+        await renderModal({ categories: [category, personalCategory] });
+
+        const picker = renderer!.root.findByType(CategorySelectBox);
+        const categoryChip = renderer!.root.findByProps({
+            accessibilityLabel: "카테고리 선택, 현재 업무",
+        });
+
+        await act(async () => categoryChip.props.onPress());
+        await act(async () => categoryChip.props.onPress());
+        await act(async () => categoryChip.props.onPress());
+
+        expect(picker.props.expanded).toBe(true);
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리" }).props.onPress();
+        });
+
+        expect(renderer!.root.findByType(CategorySelectBox)).toBe(picker);
+        expect(picker.props).toMatchObject({
+            value: "personal",
+            expanded: false,
+            hideTrigger: true,
+        });
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "카테고리 선택, 현재 개인",
+        }).props.accessibilityState.expanded).toBe(false);
     });
 
     test("제목 포커스·오류와 날짜 선택 상태를 시각적으로 구분한다", async () => {

@@ -39,12 +39,25 @@ export type RoutePlannerReturnObservation = {
     shouldConsumeResult: boolean;
 };
 
+const ROUTE_PLANNER_FLOW_PATHS = new Set([
+    "/schedule/route-select",
+    "/schedule/route-planner",
+    // 경로 선택 화면에서 기본 출발지와 즐겨찾기를 관리할 때 여는 보조 화면이다.
+    // 이 화면을 실제 폼 복귀로 오인하면 활성 sessionId가 먼저 정리되어 이후 완료
+    // 결과를 일정 폼이 소비하지 못한다.
+    "/settings/places",
+]);
+
+export function isRoutePlannerFlowPath(pathname: string): boolean {
+    return ROUTE_PLANNER_FLOW_PATHS.has(pathname);
+}
+
 /** state 갱신이 navigation보다 먼저 끝나도 경로 화면을 실제로 다녀온 뒤에만 결과를 소비한다. */
 export function observeRoutePlannerReturn(
     pathname: string,
     hasVisitedRouteFlow: boolean
 ): RoutePlannerReturnObservation {
-    if (pathname === "/schedule/route-select" || pathname === "/schedule/route-planner") {
+    if (isRoutePlannerFlowPath(pathname)) {
         return { hasVisitedRouteFlow: true, shouldConsumeResult: false };
     }
     if (!hasVisitedRouteFlow) {
