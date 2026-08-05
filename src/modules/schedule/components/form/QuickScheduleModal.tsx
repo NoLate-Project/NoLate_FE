@@ -105,6 +105,8 @@ type Props = {
     initialText?: string;
     initialRequestId?: string;
     initialInputType?: QuickScheduleMediaInput["inputTypeOverride"];
+    /** Development preview entry point used to render each field flow in Simulator QA. */
+    initialPreviewField?: PreviewField;
     onClose: () => void;
     onCloseStart?: () => void;
     onAnalyze: (text: string, media?: QuickScheduleMediaInput) => Promise<ScheduleParseResult>;
@@ -177,7 +179,7 @@ const OPEN_DURATION_MS = ADD_HANDOFF_MOTION.quickOpenMs;
 const CLOSE_SURFACE_DELAY_MS = 0;
 const CLOSE_TARGET_WIDTH = 150;
 const CLOSE_TARGET_HEIGHT = 44;
-const EXPANDED_CARD_RADIUS = 28;
+const EXPANDED_CARD_RADIUS = 26;
 const OPEN_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.openBezier);
 const CLOSE_EASING = ReanimatedEasing.bezier(...ADD_HANDOFF_MOTION.closeBezier);
 const MODE_PILL_SPRING = {
@@ -219,10 +221,18 @@ const VOICE_SPECTRUM_COLORS = ["#58D7F7", "#3B9DFF", BLUE, "#3887FF", "#45C7A5"]
 const FLOW_CARD_HEIGHT_BY_STEP: Record<Exclude<FlowStep, "input">, number> = {
     analyzing: 360,
     analysisError: 368,
-    preview: 472,
+    preview: 452,
     edit: 520,
     saving: 368,
     saved: 368,
+};
+const EDIT_CARD_HEIGHT_BY_FIELD: Record<PreviewField, number> = {
+    title: 290,
+    date: 365,
+    time: 410,
+    location: 285,
+    notification: 520,
+    memo: 310,
 };
 const INPUT_MODES: Array<{
     key: InputMode;
@@ -508,6 +518,7 @@ export default function QuickScheduleModal({
     initialText,
     initialRequestId,
     initialInputType,
+    initialPreviewField,
     onClose,
     onCloseStart,
     onAnalyze,
@@ -611,6 +622,7 @@ export default function QuickScheduleModal({
     const routePlannerAwayRef = useRef(false);
     const routePlannerReturnFieldRef = useRef<PreviewField | null>(null);
     const initialRequestHandledRef = useRef<string | null>(null);
+    const initialPreviewFieldHandledRef = useRef<string | null>(null);
     const analysisSequenceRef = useRef(0);
     const photoRecognitionSequenceRef = useRef(0);
     const photoSourceOperationRef = useRef(0);
@@ -808,6 +820,8 @@ export default function QuickScheduleModal({
             ? inputMode === "photo" && !selectedPhoto
                 ? 378
                 : CARD_HEIGHT_BY_MODE[inputMode]
+            : flowStep === "edit" && editingField
+            ? EDIT_CARD_HEIGHT_BY_FIELD[editingField]
             : FLOW_CARD_HEIGHT_BY_STEP[flowStep];
     const targetCardHeight = baseCardHeight + (categoryError && onRetryCategories ? 58 : 0);
     const cardHeight = Math.min(targetCardHeight, height - cardTop - Math.max(insets.bottom, 16) - 12);
@@ -1462,6 +1476,15 @@ export default function QuickScheduleModal({
         },
         [previewDraft, submitting],
     );
+
+    useEffect(() => {
+        if (!visible || !initialPreviewField || flowStep !== "preview" || !previewDraft) return;
+
+        const previewKey = `${initialRequestId ?? "preview"}:${initialPreviewField}`;
+        if (initialPreviewFieldHandledRef.current === previewKey) return;
+        initialPreviewFieldHandledRef.current = previewKey;
+        openEditField(initialPreviewField);
+    }, [flowStep, initialPreviewField, initialRequestId, openEditField, previewDraft, visible]);
 
     const confirmEditField = useCallback(() => {
         if (!editingField) return;
@@ -2517,7 +2540,7 @@ export default function QuickScheduleModal({
     const cardBorderColor = colors.border;
     // Keep the scaled layer lightweight. A live native blur is re-rasterized
     // while the card grows and was producing visible 26-35ms frame gaps.
-    const cardSurfaceBackground = mode === "dark" ? "#0E0F12" : "#FFFFFF";
+    const cardSurfaceBackground = mode === "dark" ? "#1C1C1E" : "#FFFFFF";
     const segmentedBackground = colors.surface2;
     const selectedModeBackground = colors.surface;
     const inputBackground = colors.inputBackground;
@@ -2636,12 +2659,10 @@ export default function QuickScheduleModal({
     const warningBackground = mode === "dark" ? "rgba(255,176,32,0.18)" : "rgba(255,176,32,0.16)";
     const warningTextColor = mode === "dark" ? "#FFD27A" : "#A45B00";
     const successColor = "#22C55E";
-    const previewIconBackground = mode === "dark" ? "rgba(36,107,254,0.14)" : "rgba(36,107,254,0.065)";
+    const previewIconBackground = mode === "dark" ? "rgba(36,107,254,0.14)" : "rgba(36,107,254,0.09)";
     const previewDividerColor = mode === "dark" ? "rgba(84,84,88,0.65)" : "rgba(60,60,67,0.12)";
     const previewLabelColor = mode === "dark" ? "rgba(235,235,245,0.60)" : "rgba(60,60,67,0.60)";
-    const previewChevronColor = mode === "dark" ? "#8E8E93" : "#AEAEB2";
-    const previewSecondaryBackground =
-        mode === "dark" ? "rgba(255,255,255,0.055)" : "rgba(118,118,128,0.055)";
+    const previewChevronColor = mode === "dark" ? "#AEAEB2" : "#8E8E93";
 
     const getPreviewValue = useCallback((draft: PreviewDraft, field: PreviewField) => {
         switch (field) {
@@ -3337,7 +3358,7 @@ export default function QuickScheduleModal({
         };
         const getPreviewBadge = (field: PreviewField) =>
             field === "notification" && !canUseRouteNotification(previewDraft)
-                ? "선택 설정"
+                ? "경로 설정 필요"
                 : previewDraft.badges[field];
         const getPreviewAccessibilityValue = (field: PreviewField) =>
             [getPreviewValue(previewDraft, field), getPreviewBadge(field)].filter(Boolean).join(", ");
@@ -3353,7 +3374,7 @@ export default function QuickScheduleModal({
         };
         const primaryActionLabel = blockingReviewField
             ? blockingReviewField === "review"
-                ? "전체 내용 확인 완료"
+                ? "확인했어요"
                 : `${FIELD_LABEL[blockingReviewField]} 확인하기`
             : "일정 저장";
         const displayedSourceText = previewSourceText || "입력한 내용";
@@ -3379,7 +3400,7 @@ export default function QuickScheduleModal({
                             styles.previewSourceStrip,
                             {
                                 borderBottomColor: previewDividerColor,
-                                opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
+                                opacity: pressed ? 0.82 : submitting ? 0.42 : 1,
                             },
                         ]}
                     >
@@ -3387,7 +3408,10 @@ export default function QuickScheduleModal({
                             <Text style={[styles.previewSourceLabel, { color: previewLabelColor }]}>
                                 입력한 내용
                             </Text>
-                            <Text numberOfLines={1} style={[styles.previewSourceValue, { color: colors.textPrimary }]}>
+                            <Text
+                                numberOfLines={1}
+                                style={[styles.previewSourceValue, { color: colors.textSecondary }]}
+                            >
                                 {displayedSourceText}
                             </Text>
                         </View>
@@ -3403,7 +3427,7 @@ export default function QuickScheduleModal({
                         accessibilityState={{ disabled: submitting }}
                         style={({ pressed }) => [
                             styles.previewTitleRow,
-                            { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                            { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                         ]}
                     >
                         <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
@@ -3412,6 +3436,14 @@ export default function QuickScheduleModal({
                                 {getPreviewValue(previewDraft, "title")}
                             </Text>
                             {renderPreviewBadge("title")}
+                            <Ionicons
+                                testID="quick-schedule-preview-title-chevron"
+                                accessible={false}
+                                name="chevron-forward"
+                                size={14}
+                                color={previewChevronColor}
+                                style={styles.previewValueChevron}
+                            />
                         </View>
                     </Pressable>
 
@@ -3441,7 +3473,7 @@ export default function QuickScheduleModal({
                                     style={({ pressed }) => [
                                         styles.previewInlineField,
                                         previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked,
-                                        { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
+                                        { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                                     ]}
                                 >
                                     <View style={styles.previewInlineContent}>
@@ -3449,6 +3481,14 @@ export default function QuickScheduleModal({
                                             {getPreviewValue(previewDraft, "date")}
                                         </Text>
                                         {renderPreviewBadge("date")}
+                                        <Ionicons
+                                            testID="quick-schedule-preview-date-chevron"
+                                            accessible={false}
+                                            name="chevron-forward"
+                                            size={14}
+                                            color={previewChevronColor}
+                                            style={styles.previewValueChevron}
+                                        />
                                     </View>
                                 </Pressable>
                                 {!previewDraft.hasExplicitEndTime && (
@@ -3472,7 +3512,7 @@ export default function QuickScheduleModal({
                                     style={({ pressed }) => [
                                         styles.previewInlineField,
                                         previewDraft.hasExplicitEndTime && styles.previewInlineFieldStacked,
-                                        { opacity: pressed ? 0.58 : submitting ? 0.48 : 1 },
+                                        { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                                     ]}
                                 >
                                     <View style={styles.previewInlineContent}>
@@ -3480,11 +3520,18 @@ export default function QuickScheduleModal({
                                             {getPreviewValue(previewDraft, "time")}
                                         </Text>
                                         {renderPreviewBadge("time")}
+                                        <Ionicons
+                                            testID="quick-schedule-preview-time-chevron"
+                                            accessible={false}
+                                            name="chevron-forward"
+                                            size={14}
+                                            color={previewChevronColor}
+                                            style={styles.previewValueChevron}
+                                        />
                                     </View>
                                 </Pressable>
                             </View>
                         </View>
-                        <Ionicons accessible={false} name="chevron-forward" size={15} color={previewChevronColor} />
                     </View>
 
                     <Pressable
@@ -3501,7 +3548,7 @@ export default function QuickScheduleModal({
                             styles.previewPlaceRow,
                             {
                                 borderTopColor: previewDividerColor,
-                                opacity: pressed ? 0.62 : submitting ? 0.48 : 1,
+                                opacity: pressed ? 0.82 : submitting ? 0.42 : 1,
                             },
                         ]}
                     >
@@ -3535,7 +3582,7 @@ export default function QuickScheduleModal({
                             accessibilityState={{ disabled: submitting }}
                             style={({ pressed }) => [
                                 styles.previewOptionalItem,
-                                { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                                { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                             ]}
                         >
                             <View style={styles.previewOptionalCopy}>
@@ -3570,7 +3617,7 @@ export default function QuickScheduleModal({
                             style={({ pressed }) => [
                                 styles.previewOptionalItem,
                                 styles.previewOptionalItemTrailing,
-                                { opacity: pressed ? 0.62 : submitting ? 0.48 : 1 },
+                                { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                             ]}
                         >
                             <View style={styles.previewOptionalCopy}>
@@ -3605,9 +3652,9 @@ export default function QuickScheduleModal({
                             styles.secondaryButton,
                             styles.previewSecondaryButton,
                             {
-                                backgroundColor: previewSecondaryBackground,
+                                backgroundColor: "transparent",
                                 borderColor: previewDividerColor,
-                                opacity: pressed ? 0.72 : 1,
+                                opacity: pressed ? 0.72 : submitting ? 0.42 : 1,
                             },
                         ]}
                     >
@@ -3618,7 +3665,7 @@ export default function QuickScheduleModal({
                                 { color: colors.textPrimary },
                             ]}
                         >
-                            문장 수정
+                            입력 수정
                         </Text>
                     </Pressable>
                     <Pressable
@@ -3682,7 +3729,7 @@ export default function QuickScheduleModal({
                             {
                                 color: colors.textPrimary,
                                 backgroundColor: inputBackground,
-                                borderColor: cardBorderColor,
+                                borderColor: previewDividerColor,
                             },
                         ]}
                     />
@@ -3703,7 +3750,7 @@ export default function QuickScheduleModal({
                                 {
                                     color: colors.textPrimary,
                                     backgroundColor: inputBackground,
-                                    borderColor: cardBorderColor,
+                                    borderColor: previewDividerColor,
                                 },
                             ]}
                         />
@@ -3712,14 +3759,13 @@ export default function QuickScheduleModal({
                                 styles.routeEditNotice,
                                 {
                                     backgroundColor: inputBackground,
-                                    borderColor: cardBorderColor,
+                                    borderColor: previewDividerColor,
                                 },
                             ]}
                         >
                             <Ionicons accessible={false} name="location-outline" size={17} color={BLUE} />
                             <Text style={[styles.routeEditNoticeText, { color: colors.textSecondary }]}>
-                                여기서는 목적지만 수정합니다. 이동 경로와 출발 알림은 알림 항목에서 별도로 설정할 수
-                                있어요.
+                                목적지만 바꿀 수 있어요. 이동 경로와 출발 알림은 알림에서 설정해 주세요.
                             </Text>
                         </View>
                     </View>
@@ -3768,7 +3814,7 @@ export default function QuickScheduleModal({
                             styles.pickerPanel,
                             {
                                 backgroundColor: inputBackground,
-                                borderColor: cardBorderColor,
+                                borderColor: previewDividerColor,
                             },
                         ]}
                     >
@@ -3808,7 +3854,7 @@ export default function QuickScheduleModal({
                             {
                                 color: colors.textPrimary,
                                 backgroundColor: inputBackground,
-                                borderColor: cardBorderColor,
+                                borderColor: previewDividerColor,
                             },
                         ]}
                     />
@@ -3829,7 +3875,7 @@ export default function QuickScheduleModal({
                                 styles.notificationFeatureList,
                                 {
                                     backgroundColor: inputBackground,
-                                    borderColor: cardBorderColor,
+                                    borderColor: previewDividerColor,
                                 },
                             ]}
                         >
@@ -3839,7 +3885,9 @@ export default function QuickScheduleModal({
                                     교통 변화에 맞춰 추천 출발 시각 계산
                                 </Text>
                             </View>
-                            <View style={[styles.notificationFeatureDivider, { backgroundColor: cardBorderColor }]} />
+                            <View
+                                style={[styles.notificationFeatureDivider, { backgroundColor: previewDividerColor }]}
+                            />
                             <View style={styles.notificationFeatureRow}>
                                 <Ionicons accessible={false} name="notifications-outline" size={17} color={BLUE} />
                                 <Text style={[styles.notificationFeatureText, { color: colors.textPrimary }]}>
@@ -3944,7 +3992,7 @@ export default function QuickScheduleModal({
                                 styles.notificationControlCard,
                                 {
                                     backgroundColor: inputBackground,
-                                    borderColor: cardBorderColor,
+                                    borderColor: previewDividerColor,
                                 },
                             ]}
                         >
@@ -3973,7 +4021,9 @@ export default function QuickScheduleModal({
                             </View>
 
                             {notificationEnabled ? (
-                                <View style={[styles.notificationLeadSection, { borderTopColor: cardBorderColor }]}>
+                                <View
+                                    style={[styles.notificationLeadSection, { borderTopColor: previewDividerColor }]}
+                                >
                                     <View style={styles.notificationLeadHeading}>
                                         <Text style={[styles.notificationLeadTitle, { color: colors.textPrimary }]}>
                                             교통 확인 시작
@@ -4002,7 +4052,7 @@ export default function QuickScheduleModal({
                                                             backgroundColor: selected
                                                                 ? selectedModeBackground
                                                                 : "transparent",
-                                                            borderColor: selected ? BLUE : cardBorderColor,
+                                                            borderColor: selected ? BLUE : previewDividerColor,
                                                             opacity: pressed ? 0.72 : 1,
                                                         },
                                                     ]}
@@ -4027,7 +4077,9 @@ export default function QuickScheduleModal({
                                             );
                                         })}
                                     </View>
-                                    <View style={[styles.notificationModeSection, { borderTopColor: cardBorderColor }]}>
+                                    <View
+                                        style={[styles.notificationModeSection, { borderTopColor: previewDividerColor }]}
+                                    >
                                         <Text style={[styles.notificationLeadTitle, { color: colors.textPrimary }]}>
                                             알림 방식
                                         </Text>
@@ -4064,7 +4116,7 @@ export default function QuickScheduleModal({
                                                                 backgroundColor: checked
                                                                     ? selectedModeBackground
                                                                     : "transparent",
-                                                                borderColor: checked ? BLUE : cardBorderColor,
+                                                                borderColor: checked ? BLUE : previewDividerColor,
                                                                 opacity: pressed ? 0.72 : 1,
                                                             },
                                                         ]}
@@ -4073,7 +4125,7 @@ export default function QuickScheduleModal({
                                                             style={[
                                                                 styles.notificationModeIcon,
                                                                 {
-                                                                    backgroundColor: checked ? BLUE : cardBorderColor,
+                                                                    backgroundColor: checked ? BLUE : previewDividerColor,
                                                                 },
                                                             ]}
                                                         >
@@ -4108,7 +4160,7 @@ export default function QuickScheduleModal({
                                                             accessible={false}
                                                             name={checked ? "checkmark-circle" : "ellipse-outline"}
                                                             size={20}
-                                                            color={checked ? BLUE : cardBorderColor}
+                                                            color={checked ? BLUE : previewChevronColor}
                                                         />
                                                     </Pressable>
                                                 );
@@ -4139,7 +4191,9 @@ export default function QuickScheduleModal({
                                     </View>
                                 </View>
                             ) : (
-                                <View style={[styles.notificationOffState, { borderTopColor: cardBorderColor }]}>
+                                <View
+                                    style={[styles.notificationOffState, { borderTopColor: previewDividerColor }]}
+                                >
                                     <Ionicons
                                         accessible={false}
                                         name="notifications-off-outline"
@@ -4172,9 +4226,10 @@ export default function QuickScheduleModal({
                         accessibilityRole="button"
                         style={({ pressed }) => [
                             styles.secondaryButton,
+                            styles.editSecondaryButton,
                             {
-                                backgroundColor: inputBackground,
-                                borderColor: cardBorderColor,
+                                backgroundColor: "transparent",
+                                borderColor: previewDividerColor,
                                 opacity: pressed ? 0.72 : 1,
                             },
                         ]}
@@ -4187,7 +4242,11 @@ export default function QuickScheduleModal({
                         onPress={notificationNeedsRoute ? openRoutePlannerFromPreview : confirmEditField}
                         accessibilityRole="button"
                         accessibilityLabel={notificationNeedsRoute ? "빠른 일정 경로 설정" : "수정 확인"}
-                        style={({ pressed }) => [styles.primaryButton, { opacity: pressed ? 0.78 : 1 }]}
+                        style={({ pressed }) => [
+                            styles.primaryButton,
+                            styles.editPrimaryButton,
+                            { opacity: pressed ? 0.78 : 1 },
+                        ]}
                     >
                         <Text style={styles.primaryButtonText}>
                             {notificationNeedsRoute ? "경로 설정하기" : "적용"}
@@ -4266,7 +4325,7 @@ export default function QuickScheduleModal({
                         styles.backdrop,
                         backdropAnimatedStyle,
                         {
-                            backgroundColor: mode === "dark" ? "rgba(0,0,0,0.58)" : "rgba(0,0,0,0.24)",
+                            backgroundColor: mode === "dark" ? "rgba(0,0,0,0.58)" : "rgba(0,0,0,0.30)",
                         },
                     ]}
                 />
@@ -4330,7 +4389,7 @@ export default function QuickScheduleModal({
                                             style={[
                                                 styles.header,
                                                 flowStep !== "input" && styles.headerCentered,
-                                                flowStep === "preview" && styles.previewHeader,
+                                                (flowStep === "preview" || flowStep === "edit") && styles.flowHeader,
                                             ]}
                                         >
                                             {flowStep === "edit" && (
@@ -4355,7 +4414,8 @@ export default function QuickScheduleModal({
                                             <Text
                                                 style={[
                                                     styles.title,
-                                                    flowStep === "preview" && styles.previewHeaderTitle,
+                                                    (flowStep === "preview" || flowStep === "edit") &&
+                                                        styles.flowHeaderTitle,
                                                     { color: colors.textPrimary },
                                                 ]}
                                             >
@@ -4414,10 +4474,10 @@ const styles = StyleSheet.create({
         position: "absolute",
         transformOrigin: [0, 0, 0],
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 14 },
-        shadowOpacity: 0.18,
-        shadowRadius: 24,
-        elevation: 18,
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.16,
+        shadowRadius: 22,
+        elevation: 16,
     },
     cardClip: {
         width: "100%",
@@ -4492,7 +4552,7 @@ const styles = StyleSheet.create({
         alignItems: "center",
         paddingHorizontal: 36,
     },
-    previewHeader: {
+    flowHeader: {
         marginBottom: 12,
     },
     title: {
@@ -4501,7 +4561,7 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         letterSpacing: -0.3,
     },
-    previewHeaderTitle: {
+    flowHeaderTitle: {
         fontSize: 19,
         lineHeight: 24,
         fontWeight: "700",
@@ -5038,14 +5098,14 @@ const styles = StyleSheet.create({
         paddingBottom: 4,
     },
     previewSourceStrip: {
-        minHeight: 52,
+        minHeight: 46,
         borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 12,
         paddingHorizontal: 2,
-        paddingVertical: 7,
+        paddingVertical: 5,
     },
     previewSourceCopy: {
         flex: 1,
@@ -5055,29 +5115,31 @@ const styles = StyleSheet.create({
         marginBottom: 3,
         fontSize: 10.5,
         lineHeight: 14,
-        fontWeight: "600",
+        fontWeight: "500",
     },
     previewSourceValue: {
         fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "600",
+        lineHeight: 16,
+        fontWeight: "500",
     },
     previewSourceAction: {
         color: BLUE,
         fontSize: 12,
         lineHeight: 17,
-        fontWeight: "700",
+        fontWeight: "600",
+        alignSelf: "flex-end",
+        marginBottom: 2,
     },
     previewTitleRow: {
-        minHeight: 58,
+        minHeight: 54,
         justifyContent: "center",
         paddingHorizontal: 3,
-        paddingVertical: 7,
+        paddingVertical: 6,
     },
     previewLabel: {
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "600",
+        fontWeight: "500",
         marginBottom: 2,
     },
     previewTitleValueRow: {
@@ -5087,14 +5149,14 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
     },
     previewTitleValue: {
-        fontSize: 19,
-        lineHeight: 24,
+        fontSize: 18,
+        lineHeight: 23,
         fontWeight: "700",
         letterSpacing: -0.35,
         flexShrink: 1,
     },
     previewInfoRow: {
-        minHeight: 60,
+        minHeight: 54,
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
@@ -5105,9 +5167,9 @@ const styles = StyleSheet.create({
         borderTopWidth: StyleSheet.hairlineWidth,
     },
     previewInfoIcon: {
-        width: 28,
-        height: 28,
-        borderRadius: 9,
+        width: 26,
+        height: 26,
+        borderRadius: 8,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -5143,10 +5205,13 @@ const styles = StyleSheet.create({
         flexWrap: "wrap",
         gap: 5,
     },
+    previewValueChevron: {
+        flexShrink: 0,
+    },
     previewInlineValue: {
-        fontSize: 13,
-        lineHeight: 18,
-        fontWeight: "700",
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "600",
         flexShrink: 1,
     },
     previewDateTimeSeparator: {
@@ -5161,16 +5226,16 @@ const styles = StyleSheet.create({
         gap: 6,
     },
     previewInfoValue: {
-        fontSize: 13.5,
-        lineHeight: 19,
-        fontWeight: "700",
+        fontSize: 14.5,
+        lineHeight: 20,
+        fontWeight: "600",
         flexShrink: 1,
     },
     previewOptional: {
-        minHeight: 55,
+        minHeight: 52,
         marginHorizontal: 2,
         marginTop: 2,
-        paddingTop: 8,
+        paddingTop: 6,
         borderTopWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
         alignItems: "stretch",
@@ -5178,7 +5243,7 @@ const styles = StyleSheet.create({
     previewOptionalItem: {
         flex: 1,
         minWidth: 0,
-        minHeight: 46,
+        minHeight: 44,
         paddingRight: 10,
         flexDirection: "row",
         alignItems: "center",
@@ -5204,8 +5269,8 @@ const styles = StyleSheet.create({
         gap: 5,
     },
     previewOptionalValue: {
-        fontSize: 12,
-        lineHeight: 17,
+        fontSize: 14,
+        lineHeight: 19,
         fontWeight: "600",
         flexShrink: 1,
     },
@@ -5221,7 +5286,7 @@ const styles = StyleSheet.create({
     previewButtons: {
         flexDirection: "row",
         gap: 8,
-        paddingTop: 8,
+        paddingTop: 6,
     },
     previewSecondaryButton: {
         height: 46,
@@ -5252,7 +5317,7 @@ const styles = StyleSheet.create({
     },
     secondaryButtonText: {
         fontSize: 14,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     primaryButton: {
         flex: 1.22,
@@ -5269,7 +5334,7 @@ const styles = StyleSheet.create({
     primaryButtonText: {
         color: "#fff",
         fontSize: 14,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     editStep: {
         flex: 1,
@@ -5277,21 +5342,21 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     editInput: {
-        minHeight: 96,
-        borderRadius: 17,
+        minHeight: 88,
+        borderRadius: 16,
         borderWidth: 1,
         paddingHorizontal: 14,
         paddingVertical: 12,
         fontSize: 15,
         lineHeight: 22,
-        fontWeight: "700",
+        fontWeight: "600",
         textAlignVertical: "top",
     },
     editInputMemo: {
-        minHeight: 150,
+        minHeight: 132,
     },
     locationEditInput: {
-        minHeight: 56,
+        minHeight: 54,
         textAlignVertical: "center",
     },
     routeEditPanel: {
@@ -5301,7 +5366,7 @@ const styles = StyleSheet.create({
     },
     routeEditNotice: {
         borderWidth: 1,
-        borderRadius: 16,
+        borderRadius: 14,
         paddingHorizontal: 12,
         paddingVertical: 11,
         flexDirection: "row",
@@ -5312,10 +5377,10 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 11.5,
         lineHeight: 17,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     pickerPanel: {
-        borderRadius: 18,
+        borderRadius: 16,
         borderWidth: 1,
         overflow: "hidden",
         paddingBottom: 10,
@@ -5335,7 +5400,7 @@ const styles = StyleSheet.create({
     },
     editSegmentText: {
         fontSize: 12,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     dateTimePicker: {
         alignSelf: "stretch",
@@ -5354,7 +5419,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 11,
         lineHeight: 16,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     notificationEditor: {
         flex: 1,
@@ -5366,7 +5431,7 @@ const styles = StyleSheet.create({
     },
     notificationHero: {
         borderWidth: 1,
-        borderRadius: 18,
+        borderRadius: 16,
         padding: 12,
     },
     notificationHeroHeader: {
@@ -5388,7 +5453,7 @@ const styles = StyleSheet.create({
     notificationHeroTitle: {
         fontSize: 14,
         lineHeight: 19,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationHeroBody: {
         marginTop: 2,
@@ -5410,13 +5475,13 @@ const styles = StyleSheet.create({
     notificationRouteMetricLabel: {
         fontSize: 9.5,
         lineHeight: 13,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     notificationRouteMetricValue: {
         marginTop: 2,
         fontSize: 12.5,
         lineHeight: 17,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationRouteMetricDivider: {
         width: StyleSheet.hairlineWidth,
@@ -5424,7 +5489,7 @@ const styles = StyleSheet.create({
     },
     notificationControlCard: {
         borderWidth: 1,
-        borderRadius: 17,
+        borderRadius: 16,
         padding: 12,
     },
     notificationToggleRow: {
@@ -5441,7 +5506,7 @@ const styles = StyleSheet.create({
     notificationToggleTitle: {
         fontSize: 13.5,
         lineHeight: 18,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationToggleBody: {
         marginTop: 2,
@@ -5463,12 +5528,12 @@ const styles = StyleSheet.create({
     notificationLeadTitle: {
         fontSize: 12,
         lineHeight: 16,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationLeadCaption: {
         fontSize: 9.5,
         lineHeight: 13,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     notificationOptions: {
         marginTop: 8,
@@ -5489,7 +5554,7 @@ const styles = StyleSheet.create({
     },
     notificationChipText: {
         fontSize: 12,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationModeSection: {
         marginTop: 10,
@@ -5502,7 +5567,7 @@ const styles = StyleSheet.create({
     },
     notificationModeButton: {
         minWidth: 0,
-        minHeight: 82,
+        minHeight: 76,
         borderRadius: 12,
         borderWidth: 1,
         paddingHorizontal: 10,
@@ -5524,7 +5589,7 @@ const styles = StyleSheet.create({
     },
     notificationModeText: {
         fontSize: 11.5,
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationModeDescription: {
         marginTop: 3,
@@ -5544,7 +5609,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 9.5,
         lineHeight: 14,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     notificationOffState: {
         marginTop: 10,
@@ -5559,7 +5624,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 10.5,
         lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     notificationBehaviorNote: {
         flexDirection: "row",
@@ -5574,7 +5639,7 @@ const styles = StyleSheet.create({
         fontWeight: "600",
     },
     notificationBehaviorStrong: {
-        fontWeight: "900",
+        fontWeight: "700",
     },
     notificationRouteRequired: {
         flex: 1,
@@ -5594,21 +5659,21 @@ const styles = StyleSheet.create({
     notificationRouteTitle: {
         fontSize: 16,
         lineHeight: 22,
-        fontWeight: "900",
+        fontWeight: "700",
         textAlign: "center",
     },
     notificationRouteBody: {
         maxWidth: 270,
         fontSize: 11.5,
         lineHeight: 17,
-        fontWeight: "700",
+        fontWeight: "600",
         textAlign: "center",
     },
     notificationFeatureList: {
         alignSelf: "stretch",
         marginTop: 5,
         borderWidth: 1,
-        borderRadius: 15,
+        borderRadius: 14,
         paddingHorizontal: 12,
     },
     notificationFeatureRow: {
@@ -5625,7 +5690,7 @@ const styles = StyleSheet.create({
         flex: 1,
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     notificationOptionalNotice: {
         minHeight: 22,
@@ -5636,11 +5701,23 @@ const styles = StyleSheet.create({
     notificationOptionalText: {
         fontSize: 10.5,
         lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     editButtons: {
         flexDirection: "row",
         gap: 8,
+    },
+    editSecondaryButton: {
+        height: 46,
+        borderRadius: 14,
+    },
+    editPrimaryButton: {
+        height: 46,
+        borderRadius: 14,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 10,
+        elevation: 3,
     },
     savedSummary: {
         alignSelf: "stretch",

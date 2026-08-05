@@ -246,11 +246,33 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         )).toMatchObject({
             transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
         });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "출발 알림" }).props.trackColor)
+            .toEqual({ false: "#D1D1D6", true: "#2979FF" });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "추천 출발 시간" }).props.style,
+        )).toMatchObject({ fontWeight: "600" });
+        expect(StyleSheet.flatten(
+            renderer!.root
+                .findByProps({ testID: "notification-alert-mode-standard" })
+                .findByProps({ children: "푸시 알림" }).props.style,
+        )).toMatchObject({
+            color: "rgba(0,0,0,0.62)",
+            fontWeight: "700",
+        });
         const soundRow = renderer!.root.findByProps({ testID: "notification-alarm-sound-row" });
         expect(StyleSheet.flatten(soundRow.props.style({ pressed: false }))).toMatchObject({
             minHeight: 56,
             borderWidth: StyleSheet.hairlineWidth,
             backgroundColor: "#F7F7F8",
+        });
+        expect(soundRow.findByProps({ name: "musical-notes-outline" }).props.size).toBe(18);
+        expect(soundRow.findByProps({ name: "chevron-forward" }).props.size).toBe(16);
+        expect(StyleSheet.flatten(
+            soundRow.findByProps({ children: "알림음" }).props.style,
+        )).toMatchObject({
+            fontSize: 14,
+            lineHeight: 19,
+            fontWeight: "700",
         });
         const rendered = JSON.stringify(renderer!.toJSON());
         expect(rendered).toContain("교통 상황 반영");

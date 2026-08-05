@@ -9,6 +9,9 @@ import {
 } from "../../plainScheduleDetailPresentation";
 import type { ScheduleItem } from "../../types";
 
+export const PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT = 60;
+export const PLAIN_SCHEDULE_DETAIL_CONTENT_GAP = 14;
+
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
 }
@@ -50,26 +53,22 @@ function DetailInfoRow({
 }: DetailInfoRowProps) {
     const { colors, mode } = useTheme();
     const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
-    const iconBackground = mode === "dark" ? "rgba(75,157,255,0.16)" : "#EAF2FF";
+    const iconBackground = mode === "dark"
+        ? "rgba(75,157,255,0.12)"
+        : "rgba(41,121,255,0.08)";
 
     return (
         <View
             testID={testID}
             accessible
             accessibilityLabel={[label, value, secondaryValue, badge].filter(Boolean).join(" ")}
-            style={[
-                styles.infoRow,
-                !last && {
-                    borderBottomWidth: StyleSheet.hairlineWidth,
-                    borderBottomColor: colors.border,
-                },
-            ]}
+            style={styles.infoRow}
         >
             <View
                 testID={`${testID}-icon`}
                 style={[styles.infoIcon, { backgroundColor: iconBackground }]}
             >
-                <Ionicons name={icon} size={17} color={accent} />
+                <Ionicons name={icon} size={16} color={accent} />
             </View>
             <View style={styles.infoCopy}>
                 <Text style={[styles.infoKicker, { color: colors.textSecondary }]}>{label}</Text>
@@ -92,6 +91,13 @@ function DetailInfoRow({
                     </View>
                 ) : null}
             </View>
+            {!last ? (
+                <View
+                    pointerEvents="none"
+                    testID={`${testID}-divider`}
+                    style={[styles.infoDivider, { backgroundColor: colors.border }]}
+                />
+            ) : null}
         </View>
     );
 }
@@ -152,7 +158,7 @@ export default function PlainScheduleDetailView({
             <View testID="plain-schedule-detail-page" style={styles.pageContent}>
                 <ScheduleHero presentation={presentation} />
 
-                <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>일정 정보</Text>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>일정 정보</Text>
                 <View
                     testID="plain-schedule-detail-info-group"
                     style={[
@@ -250,7 +256,7 @@ export default function PlainScheduleDetailView({
                     accessibilityLabel={presentation.notes ? `메모 ${presentation.notes}` : "메모 없음"}
                     style={styles.memoSection}
                 >
-                    <Text style={[styles.sectionTitle, styles.memoTitle, { color: colors.textPrimary }]}>메모</Text>
+                    <Text style={[styles.sectionTitle, styles.memoTitle, { color: colors.textSecondary }]}>메모</Text>
                     <View style={[styles.memoDivider, { backgroundColor: colors.border }]} />
                     <Text
                         style={[
@@ -279,29 +285,30 @@ const styles = StyleSheet.create({
         alignSelf: "center",
     },
     hero: {
-        marginBottom: 16,
+        marginBottom: 14,
     },
     heroTitle: {
         marginTop: 8,
-        fontSize: 26,
-        lineHeight: 32,
-        fontWeight: "800",
+        fontSize: 24,
+        lineHeight: 30,
+        fontWeight: "700",
         letterSpacing: -0.3,
     },
     sectionTitle: {
         marginBottom: 8,
-        fontSize: 14,
-        lineHeight: 20,
-        fontWeight: "800",
+        fontSize: 12,
+        lineHeight: 17,
+        fontWeight: "600",
     },
     label: {
         marginBottom: 6,
         fontSize: 13,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     categoryChip: {
+        alignSelf: "flex-start",
         maxWidth: 116,
-        minHeight: 28,
+        minHeight: 26,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 999,
         paddingHorizontal: 9,
@@ -318,26 +325,34 @@ const styles = StyleSheet.create({
         flexShrink: 1,
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     infoGroup: {
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        marginBottom: 16,
+        borderRadius: 14,
+        marginBottom: 14,
         overflow: "hidden",
     },
     infoRow: {
-        minHeight: 68,
+        position: "relative",
+        minHeight: 64,
         paddingHorizontal: 14,
-        paddingVertical: 11,
+        paddingVertical: 10,
         flexDirection: "row",
         alignItems: "flex-start",
         gap: 10,
     },
+    infoDivider: {
+        position: "absolute",
+        left: 54,
+        right: 0,
+        bottom: 0,
+        height: StyleSheet.hairlineWidth,
+    },
     infoIcon: {
-        width: 32,
-        height: 32,
-        borderRadius: 10,
+        width: 30,
+        height: 30,
+        borderRadius: 9,
         alignItems: "center",
         justifyContent: "center",
     },
@@ -352,9 +367,9 @@ const styles = StyleSheet.create({
     },
     infoValue: {
         marginTop: 2,
-        fontSize: 15,
-        lineHeight: 20,
-        fontWeight: "700",
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "600",
     },
     infoSecondaryRow: {
         marginTop: 6,
@@ -366,13 +381,13 @@ const styles = StyleSheet.create({
     infoSecondaryValue: {
         flex: 1,
         minWidth: 0,
-        fontSize: 18,
-        lineHeight: 24,
-        fontWeight: "800",
+        fontSize: 17,
+        lineHeight: 22,
+        fontWeight: "700",
         fontVariant: ["tabular-nums"],
     },
     infoBadge: {
-        minHeight: 28,
+        minHeight: 24,
         borderRadius: 999,
         paddingHorizontal: 9,
         alignItems: "center",
@@ -381,7 +396,7 @@ const styles = StyleSheet.create({
     infoBadgeText: {
         fontSize: 10.5,
         lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     travelPlanSection: {
         marginBottom: 14,
@@ -413,7 +428,7 @@ const styles = StyleSheet.create({
     travelPlanTitle: {
         fontSize: 13,
         lineHeight: 18,
-        fontWeight: "800",
+        fontWeight: "700",
         letterSpacing: 0,
     },
     travelPlanStatus: {
@@ -437,7 +452,7 @@ const styles = StyleSheet.create({
         color: "#FFFFFF",
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "700",
         letterSpacing: 0,
     },
     memoSection: {
@@ -452,8 +467,8 @@ const styles = StyleSheet.create({
     notesText: {
         paddingTop: 12,
         paddingHorizontal: 1,
-        fontSize: 13,
-        lineHeight: 20,
-        fontWeight: "600",
+        fontSize: 14,
+        lineHeight: 21,
+        fontWeight: "500",
     },
 });

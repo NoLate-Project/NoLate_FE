@@ -92,7 +92,19 @@ jest.mock("../src/modules/schedule/store", () => ({
     }),
 }));
 jest.mock("../src/modules/theme/ThemeContext", () => ({
-    useTheme: () => ({ colors: {}, mode: "light" }),
+    useTheme: () => ({
+        mode: "light",
+        colors: {
+            background: "#FFFFFF",
+            surface: "#FFFFFF",
+            surface2: "#F7F7F8",
+            border: "#E6E6EA",
+            textPrimary: "#000000",
+            textSecondary: "#6E6E73",
+            inputPlaceholder: "#AEAEB2",
+            selectedDayBg: "#000000",
+        },
+    }),
 }));
 jest.mock("../src/api/schedule", () => ({
     getSchedule: (...args: unknown[]) => mockGetSchedule(...args),
@@ -250,9 +262,9 @@ describe("ScheduleEditScreen route return", () => {
         expect(StyleSheet.flatten(
             navigation.findByProps({ children: "일정 수정" }).props.style,
         )).toMatchObject({
-            fontSize: 19,
-            lineHeight: 25,
-            fontWeight: "800",
+            fontSize: 18,
+            lineHeight: 24,
+            fontWeight: "700",
         });
         expect(navigation.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
         expect(renderer!.root.findAllByProps({ children: "일정 정보" })).toHaveLength(0);
@@ -260,6 +272,8 @@ describe("ScheduleEditScreen route return", () => {
         expect(renderer!.root.findByProps({ testID: "schedule-edit-datetime-card" })).toBeTruthy();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-start-row" })).toBeTruthy();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ testID: "schedule-edit-end-row" })
+            .findAllByProps({ name: "chevron-forward" })).toHaveLength(1);
         expect(renderer!.root.findByProps({ accessibilityLabel: "종료 시간" })).toBeTruthy();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-delete-action" })).toBeTruthy();
         expect(StyleSheet.flatten(
@@ -268,7 +282,7 @@ describe("ScheduleEditScreen route return", () => {
             width: "100%",
             maxWidth: 560,
             alignSelf: "center",
-            paddingTop: 8,
+            paddingTop: 6,
         });
         expect(renderer!.root.findByProps({
             testID: "mock-notification-settings",
@@ -278,18 +292,59 @@ describe("ScheduleEditScreen route return", () => {
         )).toMatchObject({
             fontSize: 16,
             lineHeight: 22,
-            fontWeight: "700",
+            fontWeight: "600",
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "schedule-edit-start-row" }).props.style,
         )).toMatchObject({ minHeight: 58 });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ accessibilityLabel: "일정 메모" }).props.style,
-        )).toMatchObject({ minHeight: 76 });
+        )).toMatchObject({
+            minHeight: 76,
+            fontSize: 15,
+            lineHeight: 21,
+            fontWeight: "400",
+        });
         renderer!.root.findAllByType(Switch).forEach((toggle) => {
             expect(StyleSheet.flatten(toggle.props.style)).toMatchObject({
                 transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
             });
+        });
+    });
+
+    test("제목과 메모는 포커스된 입력 필드만 흰 면과 강조 테두리로 구분한다", async () => {
+        mockGetSchedule.mockResolvedValue(mockItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        const titleInput = renderer!.root.findByProps({ accessibilityLabel: "일정 제목" });
+        await act(async () => titleInput.props.onFocus());
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-title-field" }).props.style,
+        )).toMatchObject({
+            borderWidth: 1,
+            borderColor: "#2979FF",
+            backgroundColor: "#FFFFFF",
+        });
+
+        await act(async () => titleInput.props.onBlur());
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-title-field" }).props.style,
+        )).toMatchObject({
+            borderWidth: StyleSheet.hairlineWidth,
+            backgroundColor: "#F7F7F8",
+        });
+
+        const notesInput = renderer!.root.findByProps({ accessibilityLabel: "일정 메모" });
+        await act(async () => notesInput.props.onFocus());
+        expect(StyleSheet.flatten(notesInput.props.style)).toMatchObject({
+            borderWidth: 1,
+            borderColor: "#2979FF",
+            backgroundColor: "#FFFFFF",
         });
     });
 

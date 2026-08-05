@@ -152,32 +152,80 @@ describe("ScheduleAddModal close flow", () => {
         const switchStyle = StyleSheet.flatten(allDaySwitch.props.style);
         const memoButton = renderer!.root.findByProps({ testID: "schedule-add-memo-collapsed" });
         const memoStyle = StyleSheet.flatten(memoButton.props.style({ pressed: false }));
-        const saveStyle = StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "schedule-add-save" }).props.style,
-        );
-        const handleStyle = StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "schedule-add-handle" }).props.style,
+        const saveButton = renderer!.root.findByProps({ testID: "schedule-add-save" });
+        const saveStyle = StyleSheet.flatten(saveButton.props.style({ pressed: false }));
+        const closeButton = renderer!.root.findByProps({ accessibilityLabel: "새 일정 닫기" });
+        const closeStyle = StyleSheet.flatten(closeButton.props.style({ pressed: false }));
+        const backdropStyle = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-backdrop" }).props.style,
         );
 
         expect(titleFieldStyle).toMatchObject({
             minHeight: 56,
             borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: 16,
+            borderRadius: 14,
             backgroundColor: "#f7f7f8",
         });
         expect(timeCardStyle).toMatchObject({
             borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: 16,
+            borderRadius: 14,
             backgroundColor: "#f7f7f8",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
             .toBe("rgba(60,60,67,0.46)");
         expect(switchStyle.transform).toEqual([{ scale: 0.88 }]);
         expect(allDaySwitch.props.hitSlop).toEqual({ top: 8, right: 6, bottom: 8, left: 6 });
-        expect(memoStyle).toMatchObject({ minHeight: 52, borderRadius: 16, marginBottom: 14 });
-        expect(saveStyle).toMatchObject({ height: 50, borderRadius: 14, backgroundColor: "#ECECF1" });
-        expect(handleStyle).toMatchObject({ width: 36, height: 4, opacity: 0.24 });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "새 일정 닫기" }).props.hitSlop).toBe(6);
+        expect(memoStyle).toMatchObject({
+            minHeight: 52,
+            borderRadius: 14,
+            marginBottom: 12,
+            backgroundColor: "#fff",
+        });
+        expect(saveStyle).toMatchObject({ height: 48, borderRadius: 14, backgroundColor: "#E9E9EE" });
+        expect(renderer!.root.findAllByProps({ testID: "schedule-add-handle" })).toHaveLength(0);
+        expect(closeStyle).toMatchObject({ width: 34, height: 34, borderRadius: 17 });
+        expect(closeButton.props.hitSlop).toBe(6);
+        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(20);
+        expect(backdropStyle.backgroundColor).toBe("rgba(0,0,0,0.30)");
+    });
+
+    test("제목 포커스·오류와 날짜 선택 상태를 시각적으로 구분한다", async () => {
+        await renderModal({ presentation: "morph" });
+
+        const titleInput = renderer!.root.findByProps({ accessibilityLabel: "일정 제목" });
+        await act(async () => titleInput.props.onFocus());
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-title-field" }).props.style,
+        )).toMatchObject({ borderColor: "#246BFE", borderWidth: 1 });
+
+        await act(async () => {
+            titleInput.props.onBlur();
+            await renderer!.root.findByProps({ testID: "schedule-add-save" }).props.onPress();
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-add-title-field" }).props.style,
+        )).toMatchObject({ borderColor: "#D70015", borderWidth: 1 });
+
+        const startDateButton = renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("시작 날짜 ")
+        ))[0];
+        expect(StyleSheet.flatten(startDateButton.props.style({ pressed: true })).backgroundColor)
+            .toBe("rgba(60,60,67,0.05)");
+
+        await act(async () => startDateButton.props.onPress());
+        const activeStartDateButton = renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("시작 날짜 ")
+        ))[0];
+        expect(StyleSheet.flatten(activeStartDateButton.props.style({ pressed: false })).backgroundColor)
+            .toBe("rgba(36,107,254,0.08)");
+
+        await act(async () => titleInput.props.onChangeText("저녁 약속"));
+        const enabledSaveButton = renderer!.root.findByProps({ testID: "schedule-add-save" });
+        expect(StyleSheet.flatten(enabledSaveButton.props.style({ pressed: false })).backgroundColor)
+            .toBe("#246BFE");
+        expect(StyleSheet.flatten(enabledSaveButton.props.style({ pressed: true })).opacity).toBe(0.82);
     });
 
     test("모프 카드는 측정한 내용 높이에 맞춰 떠 있는 카드 크기를 정한다", async () => {
@@ -192,7 +240,7 @@ describe("ScheduleAddModal close flow", () => {
             renderer!.root.findByProps({ testID: "schedule-add-card-motion" }).props.style,
         );
         expect(motionStyle.position).toBe("absolute");
-        expect(motionStyle.height).toBe(450);
+        expect(motionStyle.height).toBe(430);
         expect(motionStyle).toMatchObject({
             shadowOpacity: 0.16,
             shadowRadius: 22,

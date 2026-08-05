@@ -4,7 +4,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
+import PlainScheduleDetailView, {
+    PLAIN_SCHEDULE_DETAIL_CONTENT_GAP,
+    PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT,
+} from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import QuickScheduleModal from "../../src/modules/schedule/components/form/QuickScheduleModal";
 import ScheduleAddModal from "../../src/modules/schedule/components/form/ScheduleAddModal";
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
@@ -17,6 +20,7 @@ import type {
 } from "../../src/modules/schedule/types";
 
 type PreviewScreen = "create" | "quick" | "edit" | "detail";
+type QuickPreviewField = "title" | "date" | "time" | "location" | "notification" | "memo";
 
 const PREVIEW_ID = "schedule-ui-preview";
 const PREVIEW_DAY = "2026-08-08";
@@ -134,22 +138,25 @@ function PreviewBackdrop({ label }: { label: string }) {
 }
 
 function DetailPreview() {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
     const router = useRouter();
+    const accent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const headerHeight = insets.top + PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT;
 
     return (
         <View style={[styles.detailRoot, { backgroundColor: colors.background }]}>
             <PlainScheduleDetailView
                 item={previewItem}
-                contentTopInset={insets.top + 80}
-                contentBottomInset={insets.bottom + 28}
+                contentTopInset={headerHeight + PLAIN_SCHEDULE_DETAIL_CONTENT_GAP}
+                contentBottomInset={Math.max(insets.bottom + 32, 48)}
             />
             <View
                 style={[
                     styles.detailHeader,
                     {
                         paddingTop: insets.top + 8,
+                        height: headerHeight,
                         borderBottomColor: colors.border,
                         backgroundColor: colors.background,
                     },
@@ -162,25 +169,61 @@ function DetailPreview() {
                     hitSlop={10}
                     style={styles.headerButton}
                 >
-                    <Ionicons name="chevron-back" size={25} color={colors.textPrimary} />
+                    <Ionicons name="chevron-back" size={21} color={colors.textPrimary} />
                 </Pressable>
                 <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>일정 상세</Text>
-                <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="일정 수정 열기"
-                    onPress={() => router.setParams({
-                        screen: "edit",
-                        id: PREVIEW_ID,
-                        preview: "1",
-                    })}
-                    hitSlop={10}
-                    style={styles.headerButton}
-                >
-                    <Ionicons name="create-outline" size={20} color={colors.textPrimary} />
-                </Pressable>
+                <View style={styles.headerActions}>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 공유"
+                        onPress={() => undefined}
+                        hitSlop={10}
+                        style={styles.headerButton}
+                    >
+                        <Ionicons name="share-social-outline" size={20} color={colors.textPrimary} />
+                    </Pressable>
+                    <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="일정 수정 열기"
+                        onPress={() => router.setParams({
+                            screen: "edit",
+                            id: PREVIEW_ID,
+                            preview: "1",
+                        })}
+                        hitSlop={10}
+                        style={({ pressed }) => [
+                            styles.headerButton,
+                            {
+                                backgroundColor: pressed
+                                    ? mode === "dark"
+                                        ? "rgba(75,157,255,0.14)"
+                                        : "rgba(41,121,255,0.08)"
+                                    : "transparent",
+                                opacity: pressed ? 0.58 : 1,
+                            },
+                        ]}
+                    >
+                        <Ionicons name="pencil-outline" size={19} color={accent} />
+                    </Pressable>
+                </View>
             </View>
         </View>
     );
+}
+
+function EditPreview({ initialScrollToEnd = false }: { initialScrollToEnd?: boolean }) {
+    const { state, dispatch } = useScheduleStore();
+
+    useEffect(() => {
+        dispatch({ type: "SET_CATEGORIES", categories: [previewCategory] });
+        dispatch({ type: "UPDATE_ITEM", item: previewItem });
+    }, [dispatch]);
+
+    if (!state.itemsById[PREVIEW_ID]) {
+        return <PreviewBackdrop label="일정 수정 화면을 준비하고 있어요" />;
+    }
+
+    return <ScheduleEditScreen initialScrollToEnd={initialScrollToEnd} />;
 }
 
 export default function ScheduleUiPreviewScreen() {
@@ -188,6 +231,8 @@ export default function ScheduleUiPreviewScreen() {
         screen?: PreviewScreen;
         id?: string;
         preview?: string;
+        field?: QuickPreviewField;
+        section?: "top" | "bottom";
     }>();
     const router = useRouter();
     const { dispatch } = useScheduleStore();
@@ -216,6 +261,12 @@ export default function ScheduleUiPreviewScreen() {
         () => "8월 8일 낮 12시 강남역에서 점심 약속, 서울역에서 출발",
         [],
     );
+    const quickPreviewField = useMemo<QuickPreviewField | undefined>(() => {
+        const field = params.field;
+        return field && ["title", "date", "time", "location", "notification", "memo"].includes(field)
+            ? field
+            : undefined;
+    }, [params.field]);
 
     if (!__DEV__) return null;
 
@@ -223,7 +274,7 @@ export default function ScheduleUiPreviewScreen() {
         if (params.id !== PREVIEW_ID || params.preview !== "1") {
             return <PreviewBackdrop label="일정 수정 화면을 준비하고 있어요" />;
         }
-        return <ScheduleEditScreen />;
+        return <EditPreview initialScrollToEnd={params.section === "bottom"} />;
     }
 
     if (screen === "detail") return <DetailPreview />;
@@ -235,7 +286,8 @@ export default function ScheduleUiPreviewScreen() {
                 <QuickScheduleModal
                     visible={visibleModalScreen === "quick"}
                     initialText={quickInitialText}
-                    initialRequestId="schedule-ui-preview-request"
+                    initialRequestId={`schedule-ui-preview-request-${quickPreviewField ?? "preview"}`}
+                    initialPreviewField={quickPreviewField}
                     defaultDay={PREVIEW_DAY}
                     defaultCategory={previewCategory}
                     sourceTopOffset={4}
@@ -292,8 +344,7 @@ const styles = StyleSheet.create({
         top: 0,
         left: 0,
         right: 0,
-        minHeight: 92,
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
         paddingBottom: 12,
         borderBottomWidth: StyleSheet.hairlineWidth,
         flexDirection: "row",
@@ -301,18 +352,24 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
     },
     headerButton: {
-        minWidth: 48,
-        minHeight: 44,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: "center",
         justifyContent: "center",
     },
+    headerActions: {
+        marginLeft: "auto",
+        flexDirection: "row",
+        alignItems: "center",
+    },
     headerTitle: {
         position: "absolute",
-        left: 96,
-        right: 96,
+        left: 88,
+        right: 88,
         bottom: 22,
         fontSize: 17,
-        fontWeight: "800",
+        fontWeight: "700",
         textAlign: "center",
     },
 });

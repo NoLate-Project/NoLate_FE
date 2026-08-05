@@ -331,7 +331,7 @@ export function buildQuickSchedulePreviewDraft(
 
     if (!isQuickScheduleRouteReady(draft)) {
         draft.notificationLeadMinutes = undefined;
-        badges.notification = "선택 설정";
+        badges.notification = "경로 설정 필요";
     } else {
         draft.departAt = getQuickSchedulePreviewRouteInfo(draft)?.departureTime;
         if (!parsed.notificationEnabled) {
@@ -431,7 +431,7 @@ function clearTimeDependentRoute(
         || !!draft.departAt
         || typeof draft.travelMinutes === "number"
         || draft.notificationLeadMinutes !== undefined;
-    nextBadges.notification = hadRoute ? "경로 다시 확인" : "선택 설정";
+    nextBadges.notification = hadRoute ? "경로 다시 확인" : "경로 설정 필요";
 
     return {
         travelMinutes: undefined,
@@ -509,7 +509,7 @@ export function updateQuickSchedulePreviewDraft(
         }
 
         const destination = quickSchedulePlaceFromLocation(normalizedLocation);
-        nextBadges.notification = "선택 설정";
+        nextBadges.notification = "경로 설정 필요";
         return {
             ...draft,
             location: normalizedLocation,
@@ -654,7 +654,7 @@ export function applyQuickScheduleRouteResult(
     }
     nextBadges.notification = hasRoute
         ? nextNotificationLeadMinutes === undefined ? "알림 미설정" : undefined
-        : "선택 설정";
+        : "경로 설정 필요";
     if (nextBadges.notification === undefined) delete nextBadges.notification;
 
     return {

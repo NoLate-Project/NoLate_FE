@@ -30,7 +30,10 @@ import {
 } from "../../src/api/scheduleTravelPlans";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import { getUserVisibleScheduleNotes } from "../../src/modules/schedule/calendarImportNotes";
-import PlainScheduleDetailView from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
+import PlainScheduleDetailView, {
+    PLAIN_SCHEDULE_DETAIL_CONTENT_GAP,
+    PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT,
+} from "../../src/modules/schedule/components/detail/PlainScheduleDetailView";
 import ScheduleArrivalObservationAction from "../../src/modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import ScheduleMemoSheet from "../../src/modules/schedule/components/detail/ScheduleMemoSheet";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
@@ -1092,6 +1095,7 @@ function ScheduleDetail() {
         routeSummaryKind,
         routeSetupRequired: item.routeSetupRequired,
     }) === "plain";
+    const plainHeaderHeight = insets.top + PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT;
     const showTopRouteBar = !isPlainSchedule;
     const notesText = getUserVisibleScheduleNotes(item.notes);
     const routeDetailMeta = [
@@ -1353,7 +1357,7 @@ function ScheduleDetail() {
             ) : isPlainSchedule ? (
                 <PlainScheduleDetailView
                     item={item}
-                    contentTopInset={insets.top + 80}
+                    contentTopInset={plainHeaderHeight + PLAIN_SCHEDULE_DETAIL_CONTENT_GAP}
                     contentBottomInset={Math.max(insets.bottom + 32, 48)}
                     travelPlan={item.routeSetupRequired === true || travelPlanParticipants.length > 1
                         ? {
@@ -1520,6 +1524,7 @@ function ScheduleDetail() {
                         {
                             paddingTop: insets.top + 6,
                             borderBottomColor: sheetBorder,
+                            ...(isPlainSchedule ? { height: plainHeaderHeight } : null),
                         },
                     ]}
                 >
@@ -1607,12 +1612,22 @@ function ScheduleDetail() {
                                         style={({ pressed }) => [
                                             styles.topHeaderIconButton,
                                             {
-                                                backgroundColor: pressed ? topCardControlBg : "transparent",
+                                                backgroundColor: pressed
+                                                    ? isPlainSchedule
+                                                        ? isDark
+                                                            ? "rgba(75,157,255,0.14)"
+                                                            : "rgba(41,121,255,0.08)"
+                                                        : topCardControlBg
+                                                    : "transparent",
                                                 opacity: pressed ? 0.58 : 1,
                                             },
                                         ]}
                                     >
-                                        <Ionicons name="create-outline" size={20} color={primaryText} />
+                                        <Ionicons
+                                            name={isPlainSchedule ? "pencil-outline" : "create-outline"}
+                                            size={isPlainSchedule ? 19 : 20}
+                                            color={isPlainSchedule ? topCardAccentText : primaryText}
+                                        />
                                     </Pressable>
                                 ) : null}
                             </View>
@@ -2234,6 +2249,7 @@ const styles = StyleSheet.create({
         elevation: 0,
     },
     plainPageHeader: {
+        minHeight: 0,
         borderBottomLeftRadius: 0,
         borderBottomRightRadius: 0,
         paddingBottom: 10,
@@ -2297,7 +2313,7 @@ const styles = StyleSheet.create({
     },
     plainTopHeaderTitle: {
         textAlign: "center",
-        fontWeight: "800",
+        fontWeight: "700",
     },
     topHeaderActions: {
         flexDirection: "row",

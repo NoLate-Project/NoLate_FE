@@ -58,6 +58,15 @@ describe("LocationInputRow accessibility", () => {
         });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onClear).toHaveBeenCalledTimes(1);
+        expect(renderer!.root.findByProps({ name: "close" }).props.size).toBe(16);
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "location-input-clear-surface" }).props.style,
+        )).toMatchObject({
+            width: 32,
+            height: 32,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: 16,
+        });
     });
 
     test("빈 경로는 짧은 문구로 다음 행동과 결과를 안내한다", async () => {
@@ -103,11 +112,13 @@ describe("LocationInputRow accessibility", () => {
 
         expect(cardStyle).toMatchObject({
             borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: 16,
+            borderRadius: 14,
             backgroundColor: "#f7f7f8",
         });
-        expect(pressableStyle).toMatchObject({ minHeight: 60, paddingVertical: 10 });
-        expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "700" });
-        expect(renderer!.root.findByProps({ name: "chevron-forward" }).props.size).toBe(16);
+        expect(pressableStyle).toMatchObject({ minHeight: 58, paddingVertical: 10 });
+        expect(labelStyle).toMatchObject({ marginBottom: 6, fontSize: 12, fontWeight: "600" });
+        const chevron = renderer!.root.findByProps({ name: "chevron-forward" });
+        expect(chevron.props).toMatchObject({ size: 16, color: "#6e6e73" });
+        expect(StyleSheet.flatten(chevron.parent?.props.style)).toMatchObject({ opacity: 0.7 });
     });
 });

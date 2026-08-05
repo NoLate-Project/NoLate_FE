@@ -93,6 +93,13 @@ export default function NotificationSettingsCard({
         ? "rgba(118,118,128,0.24)"
         : "rgba(118,118,128,0.12)";
     const segmentedSelectedBackground = colors.surface;
+    const segmentedUnselectedText = mode === "dark"
+        ? "rgba(255,255,255,0.68)"
+        : "rgba(0,0,0,0.62)";
+    const inactiveSwitchTrack = mode === "dark" ? "#3A3A3C" : "#D1D1D6";
+    const subtleAccentBackground = mode === "dark"
+        ? "rgba(75,157,255,0.12)"
+        : "rgba(41,121,255,0.08)";
     const warningColor = mode === "dark" ? "#FFBF69" : "#A85C00";
     const routeMinutes = routeInfo?.totalDurationMinutes;
     const eventStartAt = startAt && !Number.isNaN(startAt.getTime()) ? startAt : undefined;
@@ -400,7 +407,7 @@ export default function NotificationSettingsCard({
                     value={enabled}
                     disabled={!canEnable && !enabled}
                     onValueChange={onEnabledChange}
-                    trackColor={{ false: colors.border, true: accentBlue }}
+                    trackColor={{ false: inactiveSwitchTrack, true: accentBlue }}
                     thumbColor="#FFFFFF"
                     style={styles.compactSwitch}
                 />
@@ -460,7 +467,7 @@ export default function NotificationSettingsCard({
                                     selected={alertMode === "STANDARD"}
                                     accentBlue={accentBlue}
                                     selectedBackground={segmentedSelectedBackground}
-                                    textSecondary={colors.textSecondary}
+                                    textSecondary={segmentedUnselectedText}
                                     onPress={() => onAlertModeChange("STANDARD")}
                                 />
                                 <CompactAlarmModeOption
@@ -468,7 +475,7 @@ export default function NotificationSettingsCard({
                                     selected={alertMode === "ALARM"}
                                     accentBlue={accentBlue}
                                     selectedBackground={segmentedSelectedBackground}
-                                    textSecondary={colors.textSecondary}
+                                    textSecondary={segmentedUnselectedText}
                                     onPress={() => onAlertModeChange("ALARM")}
                                 />
                             </View>
@@ -746,11 +753,11 @@ export default function NotificationSettingsCard({
                                         pressed && !soundPreviewDisabled && styles.pressedRow,
                                     ]}
                                 >
-                                    <View style={[styles.flatTestIcon, { backgroundColor: selectedBackground }]}>
+                                    <View style={[styles.flatTestIcon, { backgroundColor: subtleAccentBackground }]}>
                                         <Ionicons
                                             accessible={false}
                                             name="musical-notes-outline"
-                                            size={20}
+                                            size={18}
                                             color={accentBlue}
                                         />
                                     </View>
@@ -762,7 +769,7 @@ export default function NotificationSettingsCard({
                                             {flat ? selectedSound.label : `${selectedSound.label} · 모든 출발 알람에 적용`}
                                         </Text>
                                     </View>
-                                    <Ionicons accessible={false} name="chevron-forward" size={20} color={colors.textSecondary} />
+                                    <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />
                                 </Pressable>
                             ) : null}
 
@@ -809,7 +816,7 @@ const styles = StyleSheet.create({
         borderWidth: 0,
         borderRadius: 0,
         padding: 0,
-        marginBottom: 16,
+        marginBottom: 14,
         backgroundColor: "transparent",
     },
     header: {
@@ -825,13 +832,13 @@ const styles = StyleSheet.create({
         paddingBottom: 8,
     },
     headerText: { flex: 1, paddingRight: 12 },
-    title: { fontSize: 15, lineHeight: 20, fontWeight: "800" },
+    title: { fontSize: 15, lineHeight: 20, fontWeight: "700" },
     usage: { marginTop: 3, fontSize: 11.5, lineHeight: 16, fontWeight: "600" },
     compactSwitch: {
         transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
     },
     notice: { marginTop: 10, fontSize: 12 },
-    settings: { marginTop: 10 },
+    settings: { marginTop: 8 },
     label: { marginBottom: 7, fontSize: 12, fontWeight: "600" },
     description: { fontSize: 11, lineHeight: 16, fontWeight: "600" },
     modeSection: {
@@ -864,7 +871,7 @@ const styles = StyleSheet.create({
     flatSummaryLabel: {
         fontSize: 11,
         lineHeight: 15,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     flatSummaryTime: {
         marginTop: 2,
@@ -875,9 +882,9 @@ const styles = StyleSheet.create({
     },
     flatSummaryArrival: {
         marginTop: 2,
-        fontSize: 10.5,
+        fontSize: 11,
         lineHeight: 15,
-        fontWeight: "600",
+        fontWeight: "500",
     },
     flatDurationPill: {
         minHeight: 28,
@@ -889,7 +896,7 @@ const styles = StyleSheet.create({
     flatDurationText: {
         fontSize: 10.5,
         lineHeight: 15,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     flatSummaryDivider: {
         height: StyleSheet.hairlineWidth,
@@ -914,7 +921,7 @@ const styles = StyleSheet.create({
     },
     compactModeButtonSelected: {
         shadowColor: "#000000",
-        shadowOpacity: 0.08,
+        shadowOpacity: 0.06,
         shadowRadius: 2,
         shadowOffset: { width: 0, height: 1 },
         elevation: 1,
@@ -922,7 +929,7 @@ const styles = StyleSheet.create({
     compactModeText: {
         fontSize: 12,
         lineHeight: 16,
-        fontWeight: "800",
+        fontWeight: "700",
     },
     flatModePicker: {
         borderWidth: 1,
@@ -1272,15 +1279,15 @@ const styles = StyleSheet.create({
         minWidth: 0,
     },
     flatTestTitle: {
-        fontSize: 12.5,
-        lineHeight: 18,
-        fontWeight: "800",
+        fontSize: 14,
+        lineHeight: 19,
+        fontWeight: "700",
     },
     flatTestDescription: {
         marginTop: 2,
-        fontSize: 10.5,
-        lineHeight: 15,
-        fontWeight: "600",
+        fontSize: 11.5,
+        lineHeight: 16,
+        fontWeight: "500",
     },
     testHelperRow: {
         marginTop: 8,

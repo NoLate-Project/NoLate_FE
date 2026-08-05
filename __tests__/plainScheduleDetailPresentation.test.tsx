@@ -158,43 +158,63 @@ describe("PlainScheduleDetailView", () => {
             renderer!.root.findByProps({ testID: "plain-schedule-detail-info-group" }).props.style,
         )).toMatchObject({
             borderWidth: StyleSheet.hairlineWidth,
-            borderRadius: 16,
+            borderRadius: 14,
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({
                 accessibilityLabel: "일시 2026년 7월 14일 (화) 오전 10:00 – 11:30 1시간 30분",
             }).props.style,
         )).toMatchObject({
-            minHeight: 68,
-            paddingVertical: 11,
+            minHeight: 64,
+            paddingVertical: 10,
             gap: 10,
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "plain-schedule-detail-time-icon" }).props.style,
         )).toMatchObject({
-            width: 32,
-            height: 32,
-            borderRadius: 10,
+            width: 30,
+            height: 30,
+            borderRadius: 9,
+            backgroundColor: "rgba(41,121,255,0.08)",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "plain-schedule-detail-time-divider" }).props.style,
+        )).toMatchObject({
+            left: 54,
+            right: 0,
+            height: StyleSheet.hairlineWidth,
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 개인" }).props.style,
+        )).toMatchObject({
+            alignSelf: "flex-start",
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ children: "QA0713A 일반 일정" }).props.style,
         )).toMatchObject({
-            fontSize: 26,
-            lineHeight: 32,
-            fontWeight: "800",
+            fontSize: 24,
+            lineHeight: 30,
+            fontWeight: "700",
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ children: "2026년 7월 14일 (화)" }).props.style,
         )).toMatchObject({
-            fontSize: 15,
-            fontWeight: "700",
+            fontSize: 14,
+            fontWeight: "600",
         });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ children: "오전 10:00 – 11:30" }).props.style,
         )).toMatchObject({
-            fontSize: 18,
-            lineHeight: 24,
-            fontWeight: "800",
+            fontSize: 17,
+            lineHeight: 22,
+            fontWeight: "700",
+        });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ children: "자료를 미리 준비하기" }).props.style,
+        )).toMatchObject({
+            fontSize: 14,
+            lineHeight: 21,
+            fontWeight: "500",
         });
         expect(renderer!.root.findAllByType(TextInput)).toHaveLength(0);
         expect(renderer!.root.findAllByType(Switch)).toHaveLength(0);

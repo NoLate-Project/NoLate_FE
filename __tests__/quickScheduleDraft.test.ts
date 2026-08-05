@@ -523,7 +523,7 @@ describe("quick schedule draft", () => {
             departAt: undefined,
             notificationLeadMinutes: undefined,
             alertMode: "ALARM",
-            badges: { notification: "선택 설정" },
+            badges: { notification: "경로 설정 필요" },
         });
         const next = applyQuickScheduleRouteResult(initial, {
             origin,

@@ -283,11 +283,31 @@ describe("QuickScheduleModal flow", () => {
             text: "서울역",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "알림 수정" }).props.accessibilityValue).toEqual({
-            text: "없음, 선택 설정",
+            text: "없음, 경로 설정 필요",
         });
         expect(renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.accessibilityValue).toEqual({
             text: "없음",
         });
+        expect(findButtonByText("입력 수정").props.accessibilityLabel).toBe("빠른 일정 입력 수정");
+    });
+
+    test("제목·날짜·시간은 각각의 편집 이동 표시를 제공한다", async () => {
+        await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
+
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-title-chevron" }).props.name).toBe(
+            "chevron-forward",
+        );
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-date-chevron" }).props.name).toBe(
+            "chevron-forward",
+        );
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-time-chevron" }).props.name).toBe(
+            "chevron-forward",
+        );
+        expect(
+            renderer!.root
+                .findByProps({ testID: "quick-schedule-preview-date-time" })
+                .findAllByProps({ name: "chevron-forward" }),
+        ).toHaveLength(2);
     });
 
     test("날짜와 시간은 같은 일시 행에서 각각 해당 편집기를 연다", async () => {

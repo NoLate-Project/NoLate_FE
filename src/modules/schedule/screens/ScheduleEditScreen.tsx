@@ -97,7 +97,11 @@ const hasCompletePersonalTravelPlanCoordinates = (
     place: { lat?: number; lng?: number } | undefined,
 ) => Number.isFinite(place?.lat) && Number.isFinite(place?.lng);
 
-export default function ScheduleEdit() {
+type ScheduleEditScreenProps = {
+    initialScrollToEnd?: boolean;
+};
+
+export default function ScheduleEdit({ initialScrollToEnd = false }: ScheduleEditScreenProps) {
     const { id, preview } = useLocalSearchParams<{ id: string; preview?: string }>();
     const pathname = usePathname();
     const router     = useRouter();
@@ -105,6 +109,8 @@ export default function ScheduleEdit() {
     const insets     = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
+    const fieldAccent = mode === "dark" ? "#4B9DFF" : "#2979FF";
+    const inactiveSwitchTrack = mode === "dark" ? "#3A3A3C" : "#D1D1D6";
 
     const item = id ? state.itemsById[id] : undefined;
     const canDeleteSchedule = canDeletePresentedSchedule(item);
@@ -112,6 +118,8 @@ export default function ScheduleEdit() {
 
     const [title,           setTitle]           = useState(item?.title ?? "");
     const [notes,           setNotes]           = useState(getUserVisibleScheduleNotes(item?.notes) ?? "");
+    const [titleFocused, setTitleFocused] = useState(false);
+    const [notesFocused, setNotesFocused] = useState(false);
     const [categoryId,      setCategoryId]      = useState(
         resolveWritableScheduleCategoryId(item?.category, state.categories)
     );
@@ -150,6 +158,8 @@ export default function ScheduleEdit() {
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
     const [formDirty, setFormDirty] = useState(false);
     const formDirtyRef = useRef(false);
+    const editScrollRef = useRef<ScrollView>(null);
+    const initialScrollAppliedRef = useRef(false);
     const allowNavigationRef = useRef(false);
     const mutationPendingRef = useRef(false);
     const markFormDirty = useCallback(() => {
@@ -918,6 +928,7 @@ export default function ScheduleEdit() {
             </View>
         </View>
         <ScrollView
+            ref={editScrollRef}
             style={styles.editBody}
             contentContainerStyle={[
                 styles.scrollContent,
@@ -927,6 +938,11 @@ export default function ScheduleEdit() {
             ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            onContentSizeChange={() => {
+                if (!developmentPreview || !initialScrollToEnd || initialScrollAppliedRef.current) return;
+                initialScrollAppliedRef.current = true;
+                requestAnimationFrame(() => editScrollRef.current?.scrollToEnd({ animated: false }));
+            }}
         >
             <View testID="schedule-edit-page" style={[styles.pageContent, styles.formPageContent]}>
 
@@ -939,16 +955,20 @@ export default function ScheduleEdit() {
 
             <Text style={[styles.label, { color: colors.textSecondary }]}>제목</Text>
             <View
+                testID="schedule-edit-title-field"
                 style={[
                     styles.titleInputWrap,
                     {
-                        borderColor: colors.border,
-                        backgroundColor: colors.surface2,
+                        borderWidth: titleFocused ? 1 : StyleSheet.hairlineWidth,
+                        borderColor: titleFocused ? fieldAccent : colors.border,
+                        backgroundColor: titleFocused ? colors.surface : colors.surface2,
                     },
                 ]}
             >
                 <TextInput
                     value={title}
+                    onFocus={() => setTitleFocused(true)}
+                    onBlur={() => setTitleFocused(false)}
                     onChangeText={(value) => {
                         markFormDirty();
                         setTitle(value);
@@ -1019,7 +1039,7 @@ export default function ScheduleEdit() {
                         accessibilityHint="켜면 시간 없이 날짜만 설정합니다"
                         value={allDay}
                         onValueChange={handleAllDayChange}
-                        trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                        trackColor={{ false: inactiveSwitchTrack, true: fieldAccent }}
                         thumbColor="#FFFFFF"
                         style={styles.toggleSwitch}
                     />
@@ -1111,6 +1131,7 @@ export default function ScheduleEdit() {
                                     onPress={() => togglePicker("endTime")}
                                     style={({ pressed }) => [
                                         styles.dateTimeClockAction,
+                                        styles.dateTimeEndClockAction,
                                         {
                                             backgroundColor: picker === "endTime"
                                                 ? mode === "dark" ? "rgba(75,157,255,0.12)" : "rgba(41,121,255,0.07)"
@@ -1120,6 +1141,12 @@ export default function ScheduleEdit() {
                                     ]}
                                 >
                                     <Text style={[styles.dateTimeClockText, { color: colors.textPrimary }]}>{hhmmText(endTime)}</Text>
+                                    <Ionicons
+                                        accessible={false}
+                                        name="chevron-forward"
+                                        size={16}
+                                        color={colors.textSecondary}
+                                    />
                                 </Pressable>
                             ) : null}
                             <Switch
@@ -1127,7 +1154,7 @@ export default function ScheduleEdit() {
                                 accessibilityHint="켜면 종료 날짜와 시간을 설정합니다"
                                 value={hasEndTime}
                                 onValueChange={handleEndTimeEnabledChange}
-                                trackColor={{ false: colors.border, true: mode === "dark" ? "#4B9DFF" : "#2979FF" }}
+                                trackColor={{ false: inactiveSwitchTrack, true: fieldAccent }}
                                 thumbColor="#FFFFFF"
                                 style={styles.toggleSwitch}
                             />
@@ -1196,6 +1223,8 @@ export default function ScheduleEdit() {
             <Text style={[styles.label, { color: colors.textSecondary }]}>메모</Text>
             <TextInput
                 value={notes}
+                onFocus={() => setNotesFocused(true)}
+                onBlur={() => setNotesFocused(false)}
                 onChangeText={(value) => {
                     markFormDirty();
                     setNotes(value);
@@ -1209,8 +1238,9 @@ export default function ScheduleEdit() {
                     styles.input,
                     styles.notesInput,
                     {
-                        borderColor: colors.border,
-                        backgroundColor: colors.surface2,
+                        borderWidth: notesFocused ? 1 : StyleSheet.hairlineWidth,
+                        borderColor: notesFocused ? fieldAccent : colors.border,
+                        backgroundColor: notesFocused ? colors.surface : colors.surface2,
                         color: colors.textPrimary,
                     },
                 ]}
@@ -1260,7 +1290,7 @@ const styles = StyleSheet.create({
         alignSelf: "center",
     },
     formPageContent: {
-        paddingTop: 8,
+        paddingTop: 6,
     },
     navigationHeader: {
         minHeight: 44,
@@ -1278,9 +1308,9 @@ const styles = StyleSheet.create({
     navigationTitle: {
         flex: 1,
         minWidth: 0,
-        fontSize: 19,
-        lineHeight: 25,
-        fontWeight: "800",
+        fontSize: 18,
+        lineHeight: 24,
+        fontWeight: "700",
     },
     navigationSaveButton: {
         width: 64,
@@ -1292,13 +1322,13 @@ const styles = StyleSheet.create({
     navigationSaveText: {
         fontSize: 15,
         lineHeight: 20,
-        fontWeight: "800",
+        fontWeight: "700",
     },
-    label:        { marginBottom: 6, fontSize: 12, lineHeight: 17, fontWeight: "700" },
+    label:        { marginBottom: 6, fontSize: 12, lineHeight: 17, fontWeight: "600" },
     dateTimeCard: {
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        marginBottom: 16,
+        borderRadius: 14,
+        marginBottom: 14,
         overflow: "hidden",
     },
     dateTimeToggleRow: {
@@ -1329,7 +1359,7 @@ const styles = StyleSheet.create({
     dateTimeRowTitle: {
         fontSize: 14,
         lineHeight: 19,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     dateTimeDateText: {
         marginTop: 2,
@@ -1349,13 +1379,16 @@ const styles = StyleSheet.create({
     dateTimeClockText: {
         fontSize: 15,
         lineHeight: 20,
-        fontWeight: "700",
+        fontWeight: "600",
         fontVariant: ["tabular-nums"],
+    },
+    dateTimeEndClockAction: {
+        paddingHorizontal: 4,
     },
     dateTimeEndControls: {
         flexDirection: "row",
         alignItems: "center",
-        gap: 2,
+        gap: 8,
     },
     dateTimeDivider: {
         height: StyleSheet.hairlineWidth,
@@ -1366,10 +1399,13 @@ const styles = StyleSheet.create({
         transform: [{ scaleX: 0.88 }, { scaleY: 0.88 }],
     },
     input: {
-        borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, marginBottom: 16,
+        borderWidth: StyleSheet.hairlineWidth, borderRadius: 14, padding: 12, marginBottom: 14,
     },
     notesInput: {
         minHeight: 76,
+        fontSize: 15,
+        lineHeight: 21,
+        fontWeight: "400",
         textAlignVertical: "top",
     },
     titleInputWrap: {
@@ -1378,7 +1414,7 @@ const styles = StyleSheet.create({
         borderRadius: 14,
         paddingLeft: 12,
         paddingRight: 8,
-        marginBottom: 16,
+        marginBottom: 14,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -1389,7 +1425,7 @@ const styles = StyleSheet.create({
         paddingVertical: 11,
         fontSize: 16,
         lineHeight: 22,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     categoryInlineChip: {
         maxWidth: 116,
@@ -1409,7 +1445,7 @@ const styles = StyleSheet.create({
     categoryInlineText: {
         flexShrink: 1,
         fontSize: 12,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     pickerContainer: {
         borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden",

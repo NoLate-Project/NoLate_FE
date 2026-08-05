@@ -80,7 +80,14 @@ export default function LocationInputRow({
                                 </Text>
                             )}
                         </View>
-                        <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.inputPlaceholder} />
+                        <View style={styles.chevronIcon}>
+                            <Ionicons
+                                accessible={false}
+                                name="chevron-forward"
+                                size={16}
+                                color={colors.textSecondary}
+                            />
+                        </View>
                     </Pressable>
                     {hasRoute && onClear ? (
                         <Pressable
@@ -90,7 +97,15 @@ export default function LocationInputRow({
                             onPress={onClear}
                             style={styles.clearButton}
                         >
-                            <Ionicons accessible={false} name="close-circle" size={21} color={colors.textSecondary} />
+                            <View
+                                testID="location-input-clear-surface"
+                                style={[
+                                    styles.clearIconSurface,
+                                    { borderColor: colors.border, backgroundColor: colors.background },
+                                ]}
+                            >
+                                <Ionicons accessible={false} name="close" size={16} color={colors.textSecondary} />
+                            </View>
                         </Pressable>
                     ) : null}
                 </View>
@@ -106,11 +121,11 @@ const styles = StyleSheet.create({
     label: {
         marginBottom: 6,
         fontSize: 12,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     card: {
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
+        borderRadius: 14,
         overflow: "hidden",
     },
     contentRow: {
@@ -121,7 +136,7 @@ const styles = StyleSheet.create({
     routeButton: {
         flex: 1,
         minWidth: 0,
-        minHeight: 60,
+        minHeight: 58,
         paddingLeft: 12,
         paddingVertical: 10,
         flexDirection: "row",
@@ -140,12 +155,15 @@ const styles = StyleSheet.create({
     },
     routeTitle: {
         fontSize: 14,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     routeMeta: {
         marginTop: 3,
         fontSize: 12,
         fontWeight: "500",
+    },
+    chevronIcon: {
+        opacity: 0.7,
     },
     clearButton: {
         width: 44,
@@ -155,5 +173,13 @@ const styles = StyleSheet.create({
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: "transparent",
+    },
+    clearIconSurface: {
+        width: 32,
+        height: 32,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 16,
+        alignItems: "center",
+        justifyContent: "center",
     },
 });

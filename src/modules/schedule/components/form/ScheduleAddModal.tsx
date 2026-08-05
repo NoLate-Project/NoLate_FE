@@ -155,9 +155,9 @@ const MORPH_SOURCE_HEIGHT = 164;
 const MORPH_CLOSE_TARGET_WIDTH = 150;
 const MORPH_CLOSE_TARGET_HEIGHT = 44;
 const MORPH_TARGET_FALLBACK_HEIGHT = 580;
-const MORPH_HANDLE_HEIGHT = 20;
 const SHEET_TARGET_HEIGHT_RATIO = 0.7;
 const SHEET_TARGET_MAX_HEIGHT = 600;
+const FORM_ACCENT = "#246BFE";
 const DATE_H         = 312;
 const TIME_H         = 216;
 
@@ -256,6 +256,7 @@ export default function ScheduleNewModal({
     const pendingRouteTimingTargetArrivalRef = useRef<string | undefined>(undefined);
     const [submitting, setSubmitting]                 = useState(false);
     const [formError, setFormError]                   = useState<string | null>(null);
+    const [titleFocused, setTitleFocused]             = useState(false);
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
     const [memoExpanded, setMemoExpanded]             = useState(false);
     const [rendered, setRendered] = useState(visible || prewarm);
@@ -320,6 +321,7 @@ export default function ScheduleNewModal({
         setNotificationIntervalMinutes(30);
         setRoutePlannerSessionId(undefined);
         setSubmitting(false);
+        setTitleFocused(false);
         submitInFlightRef.current = false;
         setFormError(null);
         setRoutePlannerHidden(false);
@@ -785,7 +787,7 @@ export default function ScheduleNewModal({
     const handleMorphContentSizeChange = useCallback((_width: number, height: number) => {
         if (!isMorphPresentation || !Number.isFinite(height) || height <= 0) return;
 
-        const measuredHeight = Math.ceil(height + MORPH_HANDLE_HEIGHT);
+        const measuredHeight = Math.ceil(height);
         if (morphMeasuredContentHeightRef.current === measuredHeight) return;
 
         morphMeasuredContentHeightRef.current = measuredHeight;
@@ -1380,12 +1382,24 @@ export default function ScheduleNewModal({
     const formPlaceholderColor = mode === "dark"
         ? "rgba(235,235,245,0.42)"
         : "rgba(60,60,67,0.46)";
+    const pressedFieldColor = mode === "dark"
+        ? "rgba(255,255,255,0.06)"
+        : "rgba(60,60,67,0.05)";
+    const selectedFieldColor = mode === "dark"
+        ? "rgba(36,107,254,0.16)"
+        : "rgba(36,107,254,0.08)";
+    const titleError = formError === "제목을 입력해 주세요.";
+    const titleBorderColor = titleError
+        ? mode === "dark" ? "#FF453A" : "#D70015"
+        : titleFocused
+        ? FORM_ACCENT
+        : colors.border;
     const saveDisabled = submitting || !title.trim() || !category;
     const saveBackgroundColor = saveDisabled
-        ? mode === "dark" ? "#2C2C2E" : "#ECECF1"
-        : mode === "dark" ? "#0A84FF" : "#007AFF";
+        ? mode === "dark" ? "#2C2C2E" : "#E9E9EE"
+        : FORM_ACCENT;
     const saveTextColor = saveDisabled
-        ? mode === "dark" ? "#636366" : "#AEAEB2"
+        ? mode === "dark" ? "#8E8E93" : "#7D7D82"
         : "#FFFFFF";
 
     const isDisplayDate = displayPicker === "startDate" || displayPicker === "endDate";
@@ -1606,8 +1620,13 @@ export default function ScheduleNewModal({
             pointerEvents={isPrewarmOnly ? "none" : "box-none"}
         >
             <Reanimated.View
+                testID="schedule-add-backdrop"
                 pointerEvents="auto"
-                style={[styles.dim, isMorphPresentation && morphDimStyle]}
+                style={[
+                    styles.dim,
+                    mode === "dark" ? styles.dimDark : styles.dimLight,
+                    isMorphPresentation && morphDimStyle,
+                ]}
             >
                 <Pressable
                     accessible={false}
@@ -1658,23 +1677,28 @@ export default function ScheduleNewModal({
                     <SheetContentView style={[
                         isMorphPresentation ? styles.morphInnerContent : styles.sheetInnerContent,
                     ]}>
-                    <View
-                        testID="schedule-add-drag-handle"
-                        {...(!isMorphPresentation ? panResponder.panHandlers : {})}
-                        style={styles.handleWrap}
-                    >
+                    {!isMorphPresentation ? (
                         <View
-                            testID="schedule-add-handle"
-                            style={[styles.handle, { backgroundColor: colors.textSecondary }]}
-                        />
-                    </View>
+                            testID="schedule-add-drag-handle"
+                            {...panResponder.panHandlers}
+                            style={styles.handleWrap}
+                        >
+                            <View
+                                testID="schedule-add-handle"
+                                style={[styles.handle, { backgroundColor: colors.textSecondary }]}
+                            />
+                        </View>
+                    ) : null}
 
                     <ScrollView
                         testID="schedule-add-scroll"
                         style={styles.scrollView}
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
-                        contentContainerStyle={styles.scrollContent}
+                        contentContainerStyle={[
+                            styles.scrollContent,
+                            isMorphPresentation && styles.morphScrollContent,
+                        ]}
                         onContentSizeChange={handleMorphContentSizeChange}
                     >
                         <View style={styles.headerRow}>
@@ -1689,15 +1713,21 @@ export default function ScheduleNewModal({
                                     accessibilityHint="작성 중인 내용이 있으면 확인합니다"
                                     hitSlop={6}
                                     onPress={() => requestClose()}
-                                    style={[
+                                    style={({ pressed }) => [
                                         styles.closeBtn,
                                         {
                                             backgroundColor: colors.surface2,
                                             borderColor: colors.border,
+                                            opacity: pressed ? 0.78 : 1,
                                         },
                                     ]}
                                 >
-                                    <Text style={[styles.closeBtnText, { color: colors.textPrimary }]}>닫기</Text>
+                                    <Ionicons
+                                        accessible={false}
+                                        name="close"
+                                        size={20}
+                                        color={colors.textSecondary}
+                                    />
                                 </Pressable>
                             </View>
                         </View>
@@ -1716,8 +1746,9 @@ export default function ScheduleNewModal({
                             testID="schedule-add-title-field"
                             style={[
                                 styles.titleInputWrap,
+                                (titleFocused || titleError) && styles.titleInputWrapEmphasized,
                                 {
-                                    borderColor: colors.border,
+                                    borderColor: titleBorderColor,
                                     backgroundColor: colors.surface2,
                                 },
                             ]}
@@ -1733,6 +1764,8 @@ export default function ScheduleNewModal({
                                 maxLength={120}
                                 placeholder="일정 제목"
                                 placeholderTextColor={formPlaceholderColor}
+                                onFocus={() => setTitleFocused(true)}
+                                onBlur={() => setTitleFocused(false)}
                                 style={[styles.titleInput, { color: colors.textPrimary }]}
                             />
                             <Pressable
@@ -1742,9 +1775,16 @@ export default function ScheduleNewModal({
                                 onPress={() => setCategoryPickerOpen((current) => !current)}
                                 disabled={writableCategories.length === 0}
                                 hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
-                                style={[
+                                style={({ pressed }) => [
                                     styles.categoryInlineChip,
-                                    { borderColor: colors.border, backgroundColor: colors.surface },
+                                    {
+                                        borderColor: categoryPickerOpen ? FORM_ACCENT : colors.border,
+                                        backgroundColor: categoryPickerOpen
+                                            ? selectedFieldColor
+                                            : pressed
+                                            ? pressedFieldColor
+                                            : colors.surface,
+                                    },
                                 ]}
                             >
                                 <View style={[styles.categoryInlineDot, { backgroundColor: category?.color ?? "#8E8E93" }]} />
@@ -1796,7 +1836,7 @@ export default function ScheduleNewModal({
                                     accessibilityLabel="종일 일정"
                                     value={allDay}
                                     onValueChange={handleAllDayChange}
-                                    trackColor={{ false: colors.border, true: mode === "dark" ? "#0A84FF" : "#007AFF" }}
+                                    trackColor={{ false: colors.border, true: FORM_ACCENT }}
                                     thumbColor="#FFFFFF"
                                     hitSlop={{ top: 8, right: 6, bottom: 8, left: 6 }}
                                     style={styles.toggleSwitch}
@@ -1811,9 +1851,21 @@ export default function ScheduleNewModal({
                                     accessibilityLabel={`시작 날짜 ${formatScheduleFormDate(startDay)}`}
                                     accessibilityState={{ expanded: picker === "startDate" }}
                                     onPress={() => togglePicker("startDate")}
-                                    style={styles.compactDatePressable}
+                                    style={({ pressed }) => [
+                                        styles.compactDatePressable,
+                                        {
+                                            backgroundColor: picker === "startDate"
+                                                ? selectedFieldColor
+                                                : pressed
+                                                ? pressedFieldColor
+                                                : "transparent",
+                                        },
+                                    ]}
                                 >
-                                    <Text style={[styles.compactRowTitle, { color: colors.textPrimary }]}>시작</Text>
+                                    <Text style={[
+                                        styles.compactRowTitle,
+                                        { color: picker === "startDate" ? FORM_ACCENT : colors.textPrimary },
+                                    ]}>시작</Text>
                                     <Text style={[styles.compactRowSub, { color: colors.textSecondary }]}>
                                         {formDateText(startDay)}
                                     </Text>
@@ -1825,15 +1877,38 @@ export default function ScheduleNewModal({
                                         : `시작 시간 ${hhmmText(startTime)}`}
                                     accessibilityState={{ expanded: picker === (allDay ? "endDate" : "startTime") }}
                                     onPress={() => togglePicker(allDay ? "endDate" : "startTime")}
-                                    style={styles.compactValuePressable}
+                                    style={({ pressed }) => [
+                                        styles.compactValuePressable,
+                                        {
+                                            backgroundColor: picker === (allDay ? "endDate" : "startTime")
+                                                ? selectedFieldColor
+                                                : pressed
+                                                ? pressedFieldColor
+                                                : "transparent",
+                                        },
+                                    ]}
                                 >
                                     {allDay ? (
                                         <Text style={[styles.compactValueCaption, { color: colors.textSecondary }]}>마지막 날</Text>
                                     ) : null}
-                                    <Text style={[styles.compactRowValue, { color: colors.textPrimary }]}>
+                                    <Text style={[
+                                        styles.compactRowValue,
+                                        {
+                                            color: picker === (allDay ? "endDate" : "startTime")
+                                                ? FORM_ACCENT
+                                                : colors.textPrimary,
+                                        },
+                                    ]}>
                                         {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
                                     </Text>
-                                    <Ionicons accessible={false} name="chevron-forward" size={16} color={formPlaceholderColor} />
+                                    <Ionicons
+                                        accessible={false}
+                                        name="chevron-forward"
+                                        size={16}
+                                        color={picker === (allDay ? "endDate" : "startTime")
+                                            ? FORM_ACCENT
+                                            : formPlaceholderColor}
+                                    />
                                 </Pressable>
                             </View>
 
@@ -1846,7 +1921,7 @@ export default function ScheduleNewModal({
                                             accessibilityLabel="종료 시각 설정"
                                             value={hasEndTime}
                                             onValueChange={handleEndTimeEnabledChange}
-                                            trackColor={{ false: colors.border, true: mode === "dark" ? "#0A84FF" : "#007AFF" }}
+                                            trackColor={{ false: colors.border, true: FORM_ACCENT }}
                                             thumbColor="#FFFFFF"
                                             hitSlop={{ top: 8, right: 6, bottom: 8, left: 6 }}
                                             style={styles.toggleSwitch}
@@ -1864,9 +1939,21 @@ export default function ScheduleNewModal({
                                             accessibilityLabel={`종료 날짜 ${formatScheduleFormDate(endDay)}`}
                                             accessibilityState={{ expanded: picker === "endDate" }}
                                             onPress={() => togglePicker("endDate")}
-                                            style={styles.compactDatePressable}
+                                            style={({ pressed }) => [
+                                                styles.compactDatePressable,
+                                                {
+                                                    backgroundColor: picker === "endDate"
+                                                        ? selectedFieldColor
+                                                        : pressed
+                                                        ? pressedFieldColor
+                                                        : "transparent",
+                                                },
+                                            ]}
                                         >
-                                            <Text style={[styles.compactRowTitle, { color: colors.textPrimary }]}>종료 일시</Text>
+                                            <Text style={[
+                                                styles.compactRowTitle,
+                                                { color: picker === "endDate" ? FORM_ACCENT : colors.textPrimary },
+                                            ]}>종료 일시</Text>
                                             <Text style={[styles.compactRowSub, { color: colors.textSecondary }]}>
                                                 {formDateText(endDay)}
                                             </Text>
@@ -1876,12 +1963,29 @@ export default function ScheduleNewModal({
                                             accessibilityLabel={`종료 시간 ${hhmmText(endTime)}`}
                                             accessibilityState={{ expanded: picker === "endTime" }}
                                             onPress={() => togglePicker("endTime")}
-                                            style={styles.compactValuePressable}
+                                            style={({ pressed }) => [
+                                                styles.compactValuePressable,
+                                                {
+                                                    backgroundColor: picker === "endTime"
+                                                        ? selectedFieldColor
+                                                        : pressed
+                                                        ? pressedFieldColor
+                                                        : "transparent",
+                                                },
+                                            ]}
                                         >
-                                            <Text style={[styles.compactRowValue, { color: colors.textPrimary }]}>
+                                            <Text style={[
+                                                styles.compactRowValue,
+                                                { color: picker === "endTime" ? FORM_ACCENT : colors.textPrimary },
+                                            ]}>
                                                 {hhmmText(endTime)}
                                             </Text>
-                                            <Ionicons accessible={false} name="chevron-forward" size={16} color={formPlaceholderColor} />
+                                            <Ionicons
+                                                accessible={false}
+                                                name="chevron-forward"
+                                                size={16}
+                                                color={picker === "endTime" ? FORM_ACCENT : formPlaceholderColor}
+                                            />
                                         </Pressable>
                                     </View>
                                 </>
@@ -2003,8 +2107,8 @@ export default function ScheduleNewModal({
                                     styles.memoCollapsedCard,
                                     {
                                         borderColor: colors.border,
-                                        backgroundColor: colors.surface2,
-                                        opacity: pressed ? 0.72 : 1,
+                                        backgroundColor: pressed ? colors.surface2 : colors.surface,
+                                        opacity: pressed ? 0.82 : 1,
                                     },
                                 ]}
                             >
@@ -2020,11 +2124,12 @@ export default function ScheduleNewModal({
                             accessibilityState={{ disabled: saveDisabled, busy: submitting }}
                             disabled={saveDisabled}
                             onPress={submit}
-                            style={[
+                            style={({ pressed }) => [
                                 styles.saveBtn,
                                 {
                                     backgroundColor: saveBackgroundColor,
                                     borderColor: saveBackgroundColor,
+                                    opacity: pressed && !saveDisabled ? 0.82 : 1,
                                 },
                             ]}
                         >
@@ -2072,7 +2177,9 @@ const styles = StyleSheet.create({
         zIndex: -1,
         elevation: 0,
     },
-    dim:      { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0, 0, 0, 0.52)" },
+    dim:      { ...StyleSheet.absoluteFillObject },
+    dimLight: { backgroundColor: "rgba(0,0,0,0.30)" },
+    dimDark:  { backgroundColor: "rgba(0,0,0,0.58)" },
     sheetMotion: {
         width: "100%",
         maxHeight: "92%",
@@ -2126,10 +2233,11 @@ const styles = StyleSheet.create({
     handleWrap:    { alignItems: "center", paddingTop: 8, paddingBottom: 8 },
     handle:        { width: 36, height: 4, borderRadius: 2, opacity: 0.24 },
     scrollView: { maxHeight: "100%" },
-    scrollContent: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 16 },
+    scrollContent: { paddingHorizontal: 20, paddingTop: 6, paddingBottom: 14 },
+    morphScrollContent: { paddingTop: 14 },
     headerRow: {
         flexDirection: "row", alignItems: "center",
-        justifyContent: "flex-end", minHeight: 36, marginBottom: 14,
+        justifyContent: "flex-end", minHeight: 36, marginBottom: 12,
     },
     headerTitleGroup: {
         flex: 1,
@@ -2138,8 +2246,14 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     headerTitle:  { fontSize: 19, fontWeight: "700", letterSpacing: -0.25 },
-    closeBtn:     { minHeight: 34, justifyContent: "center", paddingHorizontal: 15, borderRadius: 17, borderWidth: StyleSheet.hairlineWidth },
-    closeBtnText: { fontWeight: "600", fontSize: 13 },
+    closeBtn: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+        borderWidth: StyleSheet.hairlineWidth,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     previewCard: {
         borderWidth: 1,
         borderRadius: 18,
@@ -2160,13 +2274,13 @@ const styles = StyleSheet.create({
     },
     previewTitle: {
         fontSize: 20,
-        fontWeight: "900",
+        fontWeight: "600",
         letterSpacing: 0,
     },
     previewMeta: {
         marginTop: 4,
         fontSize: 13,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     previewChipRow: {
         marginTop: 10,
@@ -2184,14 +2298,14 @@ const styles = StyleSheet.create({
     },
     previewChipText: {
         fontSize: 11,
-        fontWeight: "800",
+        fontWeight: "600",
     },
     previewSub: {
         marginTop: 10,
         fontSize: 12,
-        fontWeight: "700",
+        fontWeight: "600",
     },
-    label:        { marginBottom: 6, fontSize: 12, fontWeight: "700" },
+    label:        { marginBottom: 6, fontSize: 12, fontWeight: "600" },
     formError: {
         marginTop: -6,
         marginBottom: 12,
@@ -2201,13 +2315,16 @@ const styles = StyleSheet.create({
     titleInputWrap: {
         minHeight: 56,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
+        borderRadius: 14,
         paddingLeft: 15,
         paddingRight: 12,
-        marginBottom: 14,
+        marginBottom: 12,
         flexDirection: "row",
         alignItems: "center",
         gap: 10,
+    },
+    titleInputWrapEmphasized: {
+        borderWidth: 1,
     },
     titleInput: {
         flex: 1,
@@ -2234,12 +2351,12 @@ const styles = StyleSheet.create({
     categoryInlineText: {
         flexShrink: 1,
         fontSize: 12,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     compactSectionCard: {
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        marginBottom: 14,
+        borderRadius: 14,
+        marginBottom: 12,
         overflow: "hidden",
     },
     compactToggleRow: {
@@ -2250,7 +2367,7 @@ const styles = StyleSheet.create({
         justifyContent: "space-between",
     },
     compactDateTimeRow: {
-        minHeight: 58,
+        minHeight: 56,
         paddingLeft: 14,
         paddingRight: 10,
         flexDirection: "row",
@@ -2260,9 +2377,10 @@ const styles = StyleSheet.create({
     compactDatePressable: {
         flex: 1,
         minWidth: 0,
-        minHeight: 48,
+        minHeight: 52,
         justifyContent: "center",
         paddingVertical: 6,
+        borderRadius: 10,
     },
     compactValuePressable: {
         minHeight: 48,
@@ -2272,25 +2390,26 @@ const styles = StyleSheet.create({
         justifyContent: "flex-end",
         gap: 3,
         paddingVertical: 6,
+        borderRadius: 10,
     },
     compactRowTitle: {
         fontSize: 14,
-        fontWeight: "700",
+        fontWeight: "600",
     },
     compactRowSub: {
-        marginTop: 3,
-        fontSize: 12,
-        fontWeight: "500",
+        marginTop: 2,
+        fontSize: 11,
+        fontWeight: "600",
     },
     compactRowValue: {
         flexShrink: 1,
-        fontSize: 14,
-        fontWeight: "700",
+        fontSize: 15,
+        fontWeight: "600",
         textAlign: "right",
     },
     compactValueCaption: {
         fontSize: 11,
-        fontWeight: "500",
+        fontWeight: "600",
     },
     compactDivider: {
         height: StyleSheet.hairlineWidth,
@@ -2304,8 +2423,8 @@ const styles = StyleSheet.create({
     memoCollapsedCard: {
         minHeight: 52,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        marginBottom: 14,
+        borderRadius: 14,
+        marginBottom: 12,
         paddingHorizontal: 14,
         flexDirection: "row",
         alignItems: "center",
@@ -2315,13 +2434,13 @@ const styles = StyleSheet.create({
     memoCollapsedText: {
         flex: 1,
         fontSize: 14,
-        fontWeight: "500",
+        fontWeight: "600",
     },
     memoInputCard: {
         minHeight: 86,
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 16,
-        marginBottom: 14,
+        borderRadius: 14,
+        marginBottom: 12,
         overflow: "hidden",
     },
     memoTextInput: {
@@ -2333,9 +2452,9 @@ const styles = StyleSheet.create({
         fontWeight: "500",
         textAlignVertical: "top",
     },
-    pickerContainer: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+    pickerContainer: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
     saveBtn: {
-        height: 50, borderRadius: 14,
+        height: 48, borderRadius: 14,
         alignItems: "center", justifyContent: "center",
         borderWidth: StyleSheet.hairlineWidth,
     },
