@@ -33,7 +33,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "46");
+assert.equal(app.ios.buildNumber, "50");
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -127,7 +127,7 @@ for (const permission of ["CAMERA", "RECORD_AUDIO"]) {
 assert.match(androidManifest, /android\.speech\.RecognitionService/);
 assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1/);
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 46;/g) ?? []).length >= 6);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 50;/g) ?? []).length >= 6);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
