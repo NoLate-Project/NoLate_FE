@@ -173,7 +173,7 @@ function DetailPreview() {
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="일정 상세 닫기"
-                    onPress={() => router.setParams({ screen: "create" })}
+                    onPress={() => router.setParams({ view: "create" })}
                     hitSlop={10}
                     style={styles.headerButton}
                 >
@@ -194,7 +194,7 @@ function DetailPreview() {
                         accessibilityRole="button"
                         accessibilityLabel="일정 수정 열기"
                         onPress={() => router.setParams({
-                            screen: "edit",
+                            view: "edit",
                             id: PREVIEW_ID,
                             preview: "1",
                         })}
@@ -279,7 +279,7 @@ function RouteInputPreview() {
 
 export default function ScheduleUiPreviewScreen() {
     const params = useLocalSearchParams<{
-        screen?: PreviewScreen;
+        view?: PreviewScreen;
         id?: string;
         preview?: string;
         field?: QuickPreviewField;
@@ -288,7 +288,7 @@ export default function ScheduleUiPreviewScreen() {
     }>();
     const router = useRouter();
     const { dispatch } = useScheduleStore();
-    const screen = params.screen ?? "create";
+    const screen = params.view ?? "create";
     const [visibleModalScreen, setVisibleModalScreen] = useState<"create" | "quick" | null>(null);
 
     useEffect(() => {

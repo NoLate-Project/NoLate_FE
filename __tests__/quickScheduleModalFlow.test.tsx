@@ -298,9 +298,12 @@ describe("QuickScheduleModal flow", () => {
         });
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 입력 수정" })).toHaveLength(0);
         expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" })).toBeDefined();
+        const titleAction = renderer!.root.findByProps({ accessibilityLabel: "제목 수정" });
+        expect(StyleSheet.flatten(titleAction.props.style({ pressed: false }))).toMatchObject({ minHeight: 44 });
         expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ accessibilityLabel: "제목 수정" }).props.style({ pressed: false }),
-        )).toMatchObject({ minHeight: 54 });
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-line" }).props.style,
+        )).toMatchObject({ minHeight: 44, flexDirection: "row", alignItems: "center" });
+        expect(titleAction.findAllByProps({ numberOfLines: 1 }).length).toBeGreaterThan(0);
         expect(
             StyleSheet.flatten(findButtonByText("일정 저장").props.style({ pressed: false })),
         ).toMatchObject({ width: "100%", height: 46 });
@@ -343,7 +346,7 @@ describe("QuickScheduleModal flow", () => {
 
         const categoryTrigger = renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" });
         expect(categoryTrigger.props.accessibilityState).toMatchObject({ expanded: false, disabled: false });
-        expect(categoryTrigger.props.hitSlop).toEqual({ top: 7, right: 4, bottom: 7, left: 4 });
+        expect(categoryTrigger.props.hitSlop).toEqual({ top: 5, right: 4, bottom: 5, left: 4 });
         expect(StyleSheet.flatten(categoryTrigger.props.style({ pressed: false }))).toMatchObject({
             maxWidth: 128,
             minHeight: 34,

@@ -3564,7 +3564,27 @@ export default function QuickScheduleModal({
                     </Pressable>
 
                     <View style={styles.previewTitleRow}>
-                        <View style={styles.previewTitleControlRow}>
+                        <View
+                            accessible={false}
+                            accessibilityElementsHidden
+                            importantForAccessibility="no-hide-descendants"
+                            style={styles.previewTitleMetaRow}
+                        >
+                            <Text
+                                style={[
+                                    styles.previewLabel,
+                                    styles.previewTitleMetaLabel,
+                                    { color: previewLabelColor },
+                                ]}
+                            >
+                                제목
+                            </Text>
+                            {renderPreviewBadge("title")}
+                        </View>
+                        <View
+                            testID="quick-schedule-preview-title-category-line"
+                            style={styles.previewTitleControlRow}
+                        >
                             <Pressable
                                 onPress={() => openEditField("title")}
                                 disabled={submitting}
@@ -3577,15 +3597,13 @@ export default function QuickScheduleModal({
                                     { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                                 ]}
                             >
-                                <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
                                 <View style={styles.previewTitleValueRow}>
                                     <Text
-                                        numberOfLines={2}
+                                        numberOfLines={1}
                                         style={[styles.previewTitleValue, { color: colors.textPrimary }]}
                                     >
                                         {getPreviewValue(previewDraft, "title")}
                                     </Text>
-                                    {renderPreviewBadge("title")}
                                     <Ionicons
                                         testID="quick-schedule-preview-title-chevron"
                                         accessible={false}
@@ -3605,7 +3623,7 @@ export default function QuickScheduleModal({
                                     disabled: submitting || writableCategories.length === 0,
                                 }}
                                 disabled={submitting || writableCategories.length === 0}
-                                hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
+                                hitSlop={{ top: 5, right: 4, bottom: 5, left: 4 }}
                                 onPress={() => setPreviewCategoryPickerOpen(current => !current)}
                                 style={({ pressed }) => [
                                     styles.previewCategoryInlineChip,
@@ -5344,12 +5362,25 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
     previewTitleValueRow: {
+        flex: 1,
+        minWidth: 0,
         flexDirection: "row",
         alignItems: "center",
         gap: 6,
-        flexWrap: "wrap",
+        flexWrap: "nowrap",
+    },
+    previewTitleMetaRow: {
+        minHeight: 17,
+        marginBottom: 2,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    previewTitleMetaLabel: {
+        marginBottom: 0,
     },
     previewTitleControlRow: {
+        minHeight: 44,
         flexDirection: "row",
         alignItems: "center",
         gap: 8,
@@ -5357,7 +5388,7 @@ const styles = StyleSheet.create({
     previewTitleAction: {
         flex: 1,
         minWidth: 0,
-        minHeight: 54,
+        minHeight: 44,
         justifyContent: "center",
     },
     previewCategoryInlineChip: {
@@ -5392,11 +5423,12 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     previewTitleValue: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 18,
         lineHeight: 23,
         fontWeight: "700",
         letterSpacing: -0.35,
-        flexShrink: 1,
     },
     previewInfoRow: {
         minHeight: 54,
