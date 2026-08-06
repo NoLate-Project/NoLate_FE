@@ -273,7 +273,6 @@ function toCandidate(
         locationName,
         notes,
         requiresTimeReview,
-        recommended: isRecommendedCandidate(start.date, title, locationName, requiresTimeReview),
     };
 }
 
@@ -297,25 +296,7 @@ function getProviderScopedCalendarId(calendarId: string): string {
     return `GOOGLE:${calendarId}`;
 }
 
-function isRecommendedCandidate(
-    startDate: Date,
-    title: string,
-    locationName: string | undefined,
-    requiresTimeReview: boolean
-): boolean {
-    return (
-        !requiresTimeReview &&
-        startDate.getTime() >= startOfToday().getTime() &&
-        title !== UNTITLED_EVENT &&
-        Boolean(locationName)
-    );
-}
-
 function compareCandidates(a: DeviceCalendarCandidate, b: DeviceCalendarCandidate): number {
-    if (a.recommended !== b.recommended) {
-        return a.recommended ? -1 : 1;
-    }
-
     if (a.requiresTimeReview !== b.requiresTimeReview) {
         return a.requiresTimeReview ? 1 : -1;
     }
@@ -332,10 +313,4 @@ function addDays(date: Date, days: number): Date {
     const next = new Date(date);
     next.setDate(next.getDate() + days);
     return next;
-}
-
-function startOfToday(): Date {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    return date;
 }

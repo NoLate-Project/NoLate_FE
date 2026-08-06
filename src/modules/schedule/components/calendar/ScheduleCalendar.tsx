@@ -51,6 +51,7 @@ import {
 } from "../../calendarMotion";
 import { shiftCalendarMonth } from "../../calendarNavigation";
 import CustomDay from "./CustomDay";
+import { getCalendarTodayAccent } from "./calendarTodayAccent";
 import StackWeekEventLabels from "./StackWeekEventLabels";
 import {
     createStackCalendarLayout,
@@ -1229,7 +1230,7 @@ function DetailMonthGridCell({
         0,
         events.length - DETAIL_MONTH_EVENT_MARKER_LIMIT
     );
-    const todayAccent = colorMode === "dark" ? "#ff453a" : "#ff3b30";
+    const todayAccent = getCalendarTodayAccent(colorMode);
     const holidayAccent = colorMode === "dark" ? "#ff6961" : "#d92d20";
     const weekendDateColor = colorMode === "dark"
         ? "rgba(235,235,245,0.52)"

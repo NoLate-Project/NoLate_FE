@@ -2,6 +2,7 @@ import {
     enableCalendarImportNotification,
     enrichCalendarCandidateWithRoute,
     extractCalendarRouteHints,
+    shouldPrepareCalendarImportRoutes,
 } from "../src/modules/onboarding/calendarImportRouteEnrichment";
 import type { DeviceCalendarCandidate } from "../src/modules/onboarding/deviceCalendarImport";
 import { buildSavedRouteMapPresentation } from "../src/modules/map/savedRouteMapPresentation";
@@ -19,7 +20,6 @@ const CANDIDATE: DeviceCalendarCandidate = {
     locationName: "코엑스",
     notes: "출발지: 서울역\n도착지: 코엑스",
     requiresTimeReview: false,
-    recommended: true,
 };
 
 const SETTINGS = {
@@ -30,6 +30,12 @@ const SETTINGS = {
 };
 
 describe("calendar import route enrichment", () => {
+    test("기본 출발지가 없어도 경로 준비만 건너뛰고 일정 가져오기는 허용한다", () => {
+        expect(shouldPrepareCalendarImportRoutes(true, true)).toBe(true);
+        expect(shouldPrepareCalendarImportRoutes(true, false)).toBe(false);
+        expect(shouldPrepareCalendarImportRoutes(false, true)).toBe(false);
+    });
+
     test("캘린더 장소와 메모 라벨에서 출발지·도착지를 추출한다", () => {
         expect(extractCalendarRouteHints(CANDIDATE)).toEqual({
             originQuery: "서울역",

@@ -5,8 +5,11 @@ import { Ionicons } from "@expo/vector-icons";
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
 import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
 import { useTheme } from "../../../theme/ThemeContext";
+import {
+    FLOATING_ACTION_BAR_HEIGHT,
+    getFloatingActionBarBottomOffset,
+} from "./floatingActionBarLayout";
 
-const FLOATING_PILL_HEIGHT = 44;
 const FLOATING_ICON_ONLY_WIDTH = 72;
 const FLOATING_LABEL_WIDTH = 76;
 
@@ -99,7 +102,7 @@ export default function GlobalFloatingActionBar({
                         symbolName={nativeSymbolName}
                         label={!action.icon ? action.label : undefined}
                         buttonWidth={buttonWidth}
-                        buttonHeight={FLOATING_PILL_HEIGHT}
+                        buttonHeight={FLOATING_ACTION_BAR_HEIGHT}
                         disabled={action.disabled}
                         colorScheme={mode}
                         accessibilityLabel={action.accessibilityLabel}
@@ -155,7 +158,7 @@ export default function GlobalFloatingActionBar({
             style={[
                 styles.host,
                 {
-                    bottom: Math.max(bottomInset, 10) + 8,
+                    bottom: getFloatingActionBarBottomOffset(bottomInset),
                     opacity: progress,
                     transform: [{ translateY }, { scale }],
                 },
@@ -325,8 +328,8 @@ const styles = StyleSheet.create({
         justifyContent: "flex-end",
     },
     actionSurface: {
-        height: FLOATING_PILL_HEIGHT,
-        borderRadius: FLOATING_PILL_HEIGHT / 2,
+        height: FLOATING_ACTION_BAR_HEIGHT,
+        borderRadius: FLOATING_ACTION_BAR_HEIGHT / 2,
         borderWidth: StyleSheet.hairlineWidth,
         overflow: "hidden",
     },
@@ -334,14 +337,14 @@ const styles = StyleSheet.create({
         width: FLOATING_ICON_ONLY_WIDTH,
     },
     nativeActionHost: {
-        height: FLOATING_PILL_HEIGHT,
+        height: FLOATING_ACTION_BAR_HEIGHT,
         position: "relative",
     },
     nativeActionButton: {
-        height: FLOATING_PILL_HEIGHT,
+        height: FLOATING_ACTION_BAR_HEIGHT,
     },
     actionGroup: {
-        height: FLOATING_PILL_HEIGHT,
+        height: FLOATING_ACTION_BAR_HEIGHT,
         flexDirection: "row",
         alignItems: "center",
     },
@@ -350,10 +353,10 @@ const styles = StyleSheet.create({
         justifyContent: "center",
     },
     action: {
-        minWidth: FLOATING_PILL_HEIGHT,
-        height: FLOATING_PILL_HEIGHT,
+        minWidth: FLOATING_ACTION_BAR_HEIGHT,
+        height: FLOATING_ACTION_BAR_HEIGHT,
         paddingHorizontal: 0,
-        borderRadius: FLOATING_PILL_HEIGHT / 2,
+        borderRadius: FLOATING_ACTION_BAR_HEIGHT / 2,
         alignItems: "center",
         justifyContent: "center",
         flexDirection: "row",

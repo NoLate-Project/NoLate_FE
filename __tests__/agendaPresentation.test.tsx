@@ -422,7 +422,11 @@ describe("schedule agenda presentation", () => {
         })).toBeDefined();
         expect(StyleSheet.flatten(renderer!.root.findByProps({
             testID: "selected-day-agenda-group",
-        }).props.style).borderRadius).toBe(5);
+        }).props.style).borderRadius).toBe(9);
+        const detailScroll = renderer!.root.findByType(ScrollView);
+        expect(StyleSheet.flatten(detailScroll.props.style).marginBottom).toBe(70);
+        expect(StyleSheet.flatten(detailScroll.props.contentContainerStyle).paddingBottom)
+            .toBe(24);
         expect(renderer!.root.findAllByProps({
             testID: "selected-day-agenda-divider",
         }).length).toBeGreaterThan(0);

@@ -41,6 +41,14 @@ export type CalendarRouteEnrichmentDependencies = {
     ) => Promise<RouteAlternativeOption[]>;
 };
 
+/** Optional route enrichment is ready only after the user has a usable origin. */
+export function shouldPrepareCalendarImportRoutes(
+    routePreparationRequested: boolean,
+    defaultOriginReady: boolean,
+): boolean {
+    return routePreparationRequested && defaultOriginReady;
+}
+
 const MAX_PLACE_QUERY_LENGTH = 100;
 const ROUTE_ARROW_PATTERN = /\s*(?:-{1,2}>|→|➡|➜|⇒)\s*/;
 const URL_PATTERN = /(?:https?:\/\/|www\.|zoom\.us|meet\.google\.com)/i;

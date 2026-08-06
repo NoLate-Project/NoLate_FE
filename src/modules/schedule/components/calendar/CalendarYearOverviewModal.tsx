@@ -1,6 +1,8 @@
 import React, { useRef } from "react";
 import {
     type LayoutChangeEvent,
+    type NativeScrollEvent,
+    type NativeSyntheticEvent,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -11,6 +13,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useTheme } from "../../../theme/ThemeContext";
 import { getYearTodayScrollOffset } from "../../calendarNavigation";
+import type { ScheduleItem } from "../../types";
+import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout";
+import {
+    buildCalendarYearScheduleCounts,
+    getCalendarYearScheduleDensityPresentation,
+    type CalendarYearScheduleCounts,
+} from "./calendarYearScheduleDensity";
+import { getCalendarTodayAccent } from "./calendarTodayAccent";
 
 type Props = {
     year: number;
@@ -20,7 +30,9 @@ type Props = {
     presentationRequest?: number;
     todayRequest?: number;
     reduceMotionEnabled?: boolean;
+    items?: ScheduleItem[];
     onSelectMonth: (year: number, month: number) => void;
+    onVisibleYearChange?: (year: number) => void;
 };
 
 const YEAR_OVERVIEW_CHROME_CLEARANCE = 63;
@@ -58,10 +70,13 @@ type YearMonthPreviewProps = {
     firstDay: 0 | 1;
     selectedDay: number | null;
     todayDay: number | null;
-    accentColor: string;
+    calendarAccentColor: string;
+    todayAccentColor: string;
     textPrimary: string;
     selectedDayBg: string;
     selectedDayText: string;
+    mode: "light" | "dark";
+    scheduleCountsByDate: CalendarYearScheduleCounts;
     onSelectMonth: (year: number, month: number) => void;
     onLayout?: (event: LayoutChangeEvent) => void;
     testID?: string;
@@ -73,10 +88,13 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
     firstDay,
     selectedDay,
     todayDay,
-    accentColor,
+    calendarAccentColor,
+    todayAccentColor,
     textPrimary,
     selectedDayBg,
     selectedDayText,
+    mode,
+    scheduleCountsByDate,
     onSelectMonth,
     onLayout,
     testID,
@@ -87,6 +105,27 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
     );
     const isSelectedMonth = selectedDay !== null;
     const isCurrentMonth = todayDay !== null;
+    const monthKeyPrefix = `${year}-${String(month).padStart(2, "0")}-`;
+    const getScheduleCount = (day: number | null) => day === null
+        ? 0
+        : scheduleCountsByDate[
+            `${monthKeyPrefix}${String(day).padStart(2, "0")}`
+        ] ?? 0;
+    const scheduleSummary = cells.reduce(
+        (summary, day) => {
+            const count = getScheduleCount(day);
+            return {
+                dayCount: summary.dayCount + (count > 0 ? 1 : 0),
+                maxCount: Math.max(summary.maxCount, count),
+            };
+        },
+        { dayCount: 0, maxCount: 0 }
+    );
+    const todayScheduleCount = getScheduleCount(todayDay);
+    const selectedScheduleCount = getScheduleCount(selectedDay);
+    const selectedDayIsToday = selectedDay !== null
+        && todayDay !== null
+        && selectedDay === todayDay;
 
     return (
         <Pressable
@@ -94,7 +133,21 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
             onPress={() => onSelectMonth(year, month)}
             onLayout={onLayout}
             accessibilityRole="button"
-            accessibilityLabel={`${year}년 ${month}월 보기`}
+            accessibilityLabel={[
+                `${year}년 ${month}월 보기`,
+                scheduleSummary.dayCount > 0
+                    ? `일정 있는 날 ${scheduleSummary.dayCount}일`
+                    : undefined,
+                scheduleSummary.maxCount > 0
+                    ? `하루 최대 ${scheduleSummary.maxCount}개`
+                    : undefined,
+                todayScheduleCount > 0
+                    ? `오늘 ${todayDay}일 일정 ${todayScheduleCount}개`
+                    : undefined,
+                !selectedDayIsToday && selectedScheduleCount > 0
+                    ? `선택한 ${selectedDay}일 일정 ${selectedScheduleCount}개`
+                    : undefined,
+            ].filter(Boolean).join(", ")}
             style={({ pressed }) => [
                 styles.monthPreview,
                 { opacity: pressed ? 0.55 : 1 },
@@ -105,7 +158,7 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                     styles.monthTitle,
                     {
                         color: isCurrentMonth
-                            ? accentColor
+                            ? calendarAccentColor
                             : isSelectedMonth
                                 ? selectedDayBg
                                 : textPrimary,
@@ -119,30 +172,57 @@ const YearMonthPreview = React.memo(function YearMonthPreview({
                 {cells.map((day, cellIndex) => {
                     const isSelectedDay = day !== null && day === selectedDay;
                     const isToday = day !== null && day === todayDay;
+                    const dateKey = day === null
+                        ? null
+                        : `${monthKeyPrefix}${String(day).padStart(2, "0")}`;
+                    const scheduleCount = dateKey
+                        ? scheduleCountsByDate[dateKey] ?? 0
+                        : 0;
+                    const density = getCalendarYearScheduleDensityPresentation(
+                        scheduleCount,
+                        mode
+                    );
+                    const showDensity = density !== null && !isSelectedDay && !isToday;
                     const badgeFill = isToday
-                        ? accentColor
+                        ? todayAccentColor
                         : isSelectedDay
                             ? selectedDayBg
-                            : "transparent";
+                            : showDensity
+                                ? density.backgroundColor
+                                : "transparent";
                     const badgeTextColor = isToday
                         ? "#ffffff"
                         : isSelectedDay
                             ? selectedDayText
-                            : textPrimary;
+                            : showDensity
+                                ? density.textColor
+                                : textPrimary;
 
                     return (
                         <View key={cellIndex} style={styles.dayCell}>
                             {day !== null && (
                                 <View
+                                    testID={density
+                                        ? `calendar-year-schedule-density-${dateKey}`
+                                        : undefined}
                                     style={[
                                         styles.dayBadge,
-                                        (isSelectedDay || isToday) && {
+                                        showDensity && styles.scheduleDensityBadge,
+                                        (showDensity || isSelectedDay || isToday) && {
                                             backgroundColor: badgeFill,
                                             borderColor: "transparent",
                                         },
                                     ]}
                                 >
-                                    <Text style={[styles.dayText, { color: badgeTextColor }]}>
+                                    <Text
+                                        style={[
+                                            styles.dayText,
+                                            showDensity
+                                            && density.level >= 2
+                                            && styles.scheduleDensityTextStrong,
+                                            { color: badgeTextColor },
+                                        ]}
+                                    >
                                         {day}
                                     </Text>
                                 </View>
@@ -163,7 +243,9 @@ function CalendarYearOverviewModal({
     presentationRequest = 0,
     todayRequest = 0,
     reduceMotionEnabled = false,
+    items = [],
     onSelectMonth,
+    onVisibleYearChange,
 }: Props) {
     const { colors, mode } = useTheme();
     const insets = useSafeAreaInsets();
@@ -173,8 +255,9 @@ function CalendarYearOverviewModal({
     const todayMonth = today.getMonth() + 1;
     const todayDate = today.getDate();
     const currentYear = todayYear;
-    const accentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
-    const visibleYears = Array.from(new Set([
+    const calendarAccentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
+    const todayAccentColor = getCalendarTodayAccent(mode);
+    const visibleYears = React.useMemo(() => Array.from(new Set([
         currentYear - 2,
         currentYear - 1,
         currentYear,
@@ -183,8 +266,7 @@ function CalendarYearOverviewModal({
         year - 1,
         year,
         year + 1,
-    ]))
-        .sort((left, right) => left - right);
+    ])).sort((left, right) => left - right), [currentYear, year]);
     const scrollRef = useRef<ScrollView>(null);
     const yearOffsetsRef = useRef<Record<number, number>>({});
     const todayMonthGridOffsetRef = useRef<{ year: number; offset: number } | null>(null);
@@ -199,6 +281,10 @@ function CalendarYearOverviewModal({
     const topClearance = getYearOverviewTopClearance(topInset, insets.top);
     const todayMonthKey = `${todayYear}-${todayMonth}`;
     const visibleYearsLayoutKey = visibleYears.join(",");
+    const scheduleCountsByDate = React.useMemo(
+        () => buildCalendarYearScheduleCounts(items),
+        [items]
+    );
 
     if (visibleYearsLayoutKeyRef.current !== visibleYearsLayoutKey) {
         visibleYearsLayoutKeyRef.current = visibleYearsLayoutKey;
@@ -287,6 +373,42 @@ function CalendarYearOverviewModal({
         scheduleTodayScroll();
     }, [scheduleTodayScroll, todayMonthKey]);
 
+    const lastNotifiedVisibleYearRef = useRef<number | null>(null);
+    const handleYearScroll = React.useCallback((
+        event: NativeSyntheticEvent<NativeScrollEvent>
+    ) => {
+        if (!onVisibleYearChange) return;
+
+        const focusY = event.nativeEvent.contentOffset.y
+            + event.nativeEvent.layoutMeasurement.height * 0.28;
+        let nextVisibleYear: number | null = null;
+        let nextVisibleYearOffset = Number.NEGATIVE_INFINITY;
+
+        visibleYears.forEach((sectionYear) => {
+            const sectionOffset = yearOffsetsRef.current[sectionYear];
+            if (
+                Number.isFinite(sectionOffset)
+                && sectionOffset <= focusY
+                && sectionOffset > nextVisibleYearOffset
+            ) {
+                nextVisibleYear = sectionYear;
+                nextVisibleYearOffset = sectionOffset;
+            }
+        });
+
+        if (
+            nextVisibleYear === null
+            || lastNotifiedVisibleYearRef.current === nextVisibleYear
+        ) return;
+
+        lastNotifiedVisibleYearRef.current = nextVisibleYear;
+        onVisibleYearChange(nextVisibleYear);
+    }, [onVisibleYearChange, visibleYears]);
+
+    React.useEffect(() => {
+        lastNotifiedVisibleYearRef.current = null;
+    }, [presentationRequest, year]);
+
     React.useEffect(() => {
         const presentationKey = `${year}:${presentationRequest}`;
         if (handledPresentationRef.current === presentationKey) return;
@@ -326,23 +448,26 @@ function CalendarYearOverviewModal({
             <ScrollView
                 ref={scrollRef}
                 testID="calendar-year-overview-scroll"
-                style={styles.scrollView}
+                style={[
+                    styles.scrollView,
+                    { marginBottom: getFloatingActionBarClearance(insets.bottom) },
+                ]}
                 contentInsetAdjustmentBehavior="never"
                 showsVerticalScrollIndicator={false}
+                onScroll={handleYearScroll}
+                scrollEventThrottle={80}
                 onContentSizeChange={() => {
                     scheduleInitialYearScroll();
                     scheduleTodayScroll();
                 }}
                 contentContainerStyle={[
                     styles.content,
-                    {
-                        paddingBottom: Math.max(insets.bottom + 118, 148),
-                    },
+                    styles.floatingBarContentEnd,
                 ]}
             >
                 {visibleYears.map((sectionYear) => {
                     const sectionYearColor = sectionYear === currentYear
-                        ? accentColor
+                        ? calendarAccentColor
                         : colors.textPrimary;
 
                     return (
@@ -392,10 +517,13 @@ function CalendarYearOverviewModal({
                                             firstDay={firstDay}
                                             selectedDay={isSelectedMonth ? selectedDate.getDate() : null}
                                             todayDay={isCurrentMonth ? todayDate : null}
-                                            accentColor={accentColor}
+                                            calendarAccentColor={calendarAccentColor}
+                                            todayAccentColor={todayAccentColor}
                                             textPrimary={colors.textPrimary}
                                             selectedDayBg={colors.selectedDayBg}
                                             selectedDayText={colors.selectedDayText}
+                                            mode={mode}
+                                            scheduleCountsByDate={scheduleCountsByDate}
                                             onSelectMonth={onSelectMonth}
                                             onLayout={isCurrentMonth ? handleTodayMonthLayout : undefined}
                                             testID={isCurrentMonth
@@ -424,6 +552,9 @@ const styles = StyleSheet.create({
     },
     content: {
         paddingHorizontal: 24,
+    },
+    floatingBarContentEnd: {
+        paddingBottom: 24,
     },
     yearSection: {
         marginBottom: 44,
@@ -480,5 +611,11 @@ const styles = StyleSheet.create({
     dayText: {
         fontSize: 10,
         fontWeight: "600",
+    },
+    scheduleDensityBadge: {
+        borderRadius: 2,
+    },
+    scheduleDensityTextStrong: {
+        fontWeight: "700",
     },
 });

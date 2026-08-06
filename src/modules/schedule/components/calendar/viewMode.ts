@@ -1,8 +1,8 @@
 export type CalendarViewMode = "stack" | "detail" | "week" | "list";
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
-    // 스택형은 날짜 아래 일정 pill이 안정적으로 보이도록 기존 고정 높이를 사용한다.
-    stack: 130,
+    // 휴일이 있는 날의 두 일정 lane과 overflow까지 유지하면서 남는 세로 공간만 줄인다.
+    stack: 116,
     detail: 72,
     week: 86,
     list: 68,

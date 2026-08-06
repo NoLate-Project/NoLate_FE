@@ -165,7 +165,7 @@ describe("ScheduleCalendar stack month navigation", () => {
         });
     }
 
-    test("스택형에서 과거부터 미래까지 이어지는 130pt 고정 월 목록을 사용한다", async () => {
+    test("스택형에서 과거부터 미래까지 이어지는 간결한 고정 월 목록을 사용한다", async () => {
         const root = await renderCalendar("stack");
         const list = root.findByType(FlatList);
         const data = list.props.data as StackMonthTestItem[];
@@ -175,8 +175,9 @@ describe("ScheduleCalendar stack month navigation", () => {
         expect(julyIndex).toBeGreaterThan(0);
         expect(data[julyIndex - 1].key).toBe("2026-06");
         expect(data[julyIndex + 1].key).toBe("2026-08");
-        expect(data[julyIndex].dayHeight).toBe(130);
-        expect(data[julyIndex].height).toBeGreaterThan(600);
+        expect(data[julyIndex].dayHeight).toBe(116);
+        expect(data[julyIndex].height).toBeGreaterThan(580);
+        expect(data[julyIndex].height).toBeLessThan(600);
     });
 
     test("상세형과 목록형은 연속 월 목록을 사용하지 않는다", async () => {

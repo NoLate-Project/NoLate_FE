@@ -1,6 +1,9 @@
 import {
+    getCalendarImportSourceKey,
     getWritableCalendarImportCategories,
+    hasCalendarImportCategoryOverride,
     resolveCalendarImportCategory,
+    resolveCalendarImportCategoryAssignment,
 } from "../src/modules/onboarding/calendarImportCategory";
 import type { ScheduleCategory } from "../src/modules/schedule/types";
 
@@ -35,5 +38,60 @@ describe("calendar import categories", () => {
         expect(resolveCalendarImportCategory(categories, "second")?.id).toBe("second");
         expect(resolveCalendarImportCategory(categories, "removed")?.id).toBe("first");
         expect(resolveCalendarImportCategory([], "removed")).toBeUndefined();
+    });
+
+    test("keeps calendar assignments separate across providers", () => {
+        expect(getCalendarImportSourceKey({
+            provider: "APPLE_DEVICE",
+            calendarId: "primary",
+        })).not.toBe(getCalendarImportSourceKey({
+            provider: "GOOGLE",
+            calendarId: "primary",
+        }));
+    });
+
+    test("uses a source override and falls back when the assigned category was removed", () => {
+        const categories = [category("default"), category("work")];
+        const sourceKey = getCalendarImportSourceKey({
+            provider: "GOOGLE",
+            calendarId: "team/calendar",
+        });
+
+        expect(resolveCalendarImportCategoryAssignment(
+            categories,
+            "default",
+            { [sourceKey]: "work" },
+            sourceKey,
+        )?.id).toBe("work");
+        expect(resolveCalendarImportCategoryAssignment(
+            categories,
+            "default",
+            { [sourceKey]: "removed" },
+            sourceKey,
+        )?.id).toBe("default");
+    });
+
+    test("marks only a valid category that differs from the current default as an override", () => {
+        const categories = [category("default"), category("work")];
+        const sourceKey = "GOOGLE:team";
+
+        expect(hasCalendarImportCategoryOverride(
+            categories,
+            "default",
+            { [sourceKey]: "work" },
+            sourceKey,
+        )).toBe(true);
+        expect(hasCalendarImportCategoryOverride(
+            categories,
+            "default",
+            { [sourceKey]: "default" },
+            sourceKey,
+        )).toBe(false);
+        expect(hasCalendarImportCategoryOverride(
+            categories,
+            "default",
+            { [sourceKey]: "removed" },
+            sourceKey,
+        )).toBe(false);
     });
 });
