@@ -3604,14 +3604,6 @@ export default function QuickScheduleModal({
                                     >
                                         {getPreviewValue(previewDraft, "title")}
                                     </Text>
-                                    <Ionicons
-                                        testID="quick-schedule-preview-title-chevron"
-                                        accessible={false}
-                                        name="chevron-forward"
-                                        size={14}
-                                        color={previewChevronColor}
-                                        style={styles.previewValueChevron}
-                                    />
                                 </View>
                             </Pressable>
                             <Pressable
@@ -3722,14 +3714,6 @@ export default function QuickScheduleModal({
                                             {getPreviewValue(previewDraft, "date")}
                                         </Text>
                                         {renderPreviewBadge("date")}
-                                        <Ionicons
-                                            testID="quick-schedule-preview-date-chevron"
-                                            accessible={false}
-                                            name="chevron-forward"
-                                            size={14}
-                                            color={previewChevronColor}
-                                            style={styles.previewValueChevron}
-                                        />
                                     </View>
                                 </Pressable>
                                 {!previewDraft.hasExplicitEndTime && (
@@ -3761,14 +3745,6 @@ export default function QuickScheduleModal({
                                             {getPreviewValue(previewDraft, "time")}
                                         </Text>
                                         {renderPreviewBadge("time")}
-                                        <Ionicons
-                                            testID="quick-schedule-preview-time-chevron"
-                                            accessible={false}
-                                            name="chevron-forward"
-                                            size={14}
-                                            color={previewChevronColor}
-                                            style={styles.previewValueChevron}
-                                        />
                                     </View>
                                 </Pressable>
                             </View>
@@ -5479,9 +5455,6 @@ const styles = StyleSheet.create({
         alignItems: "center",
         flexWrap: "wrap",
         gap: 5,
-    },
-    previewValueChevron: {
-        flexShrink: 0,
     },
     previewInlineValue: {
         fontSize: 14,

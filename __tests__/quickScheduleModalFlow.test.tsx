@@ -513,23 +513,22 @@ describe("QuickScheduleModal flow", () => {
         expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 내 일정" })).toBeDefined();
     });
 
-    test("제목·날짜·시간은 각각의 편집 이동 표시를 제공한다", async () => {
+    test("제목·날짜·시간은 반복 화살표 없이 편집 동작을 제공한다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-title-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-date-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-time-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
+        expect(renderer!.root.findByProps({ accessibilityLabel: "제목 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "날짜 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "시간 수정" })).toBeDefined();
         expect(
             renderer!.root
                 .findByProps({ testID: "quick-schedule-preview-date-time" })
                 .findAllByProps({ name: "chevron-forward" }),
-        ).toHaveLength(2);
+        ).toHaveLength(0);
+        expect(
+            renderer!.root
+                .findByProps({ testID: "quick-schedule-preview-title-category-line" })
+                .findAllByProps({ name: "chevron-forward" }),
+        ).toHaveLength(0);
     });
 
     test("날짜와 시간은 같은 일시 행에서 각각 해당 편집기를 연다", async () => {
