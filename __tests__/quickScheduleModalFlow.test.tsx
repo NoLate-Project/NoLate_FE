@@ -297,16 +297,27 @@ describe("QuickScheduleModal flow", () => {
             text: "없음",
         });
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 입력 수정" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-source-summary" }).props.accessibilityRole)
+            .toBeUndefined();
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-edit-button" }).props.accessibilityLabel)
+            .toBe("입력 내용 수정");
         const titleAction = renderer!.root.findByProps({ accessibilityLabel: "제목 수정" });
         expect(StyleSheet.flatten(titleAction.props.style({ pressed: false }))).toMatchObject({ minHeight: 44 });
         expect(StyleSheet.flatten(
             renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-line" }).props.style,
         )).toMatchObject({ minHeight: 44, flexDirection: "row", alignItems: "center" });
         expect(titleAction.findAllByProps({ numberOfLines: 1 }).length).toBeGreaterThan(0);
-        expect(
-            StyleSheet.flatten(findButtonByText("일정 저장").props.style({ pressed: false })),
-        ).toMatchObject({ width: "100%", height: 46 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-edit-button" }).props.style({ pressed: false }),
+        )).toMatchObject({ flex: 1, height: 46 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-primary-button" }).props.style({ pressed: false }),
+        )).toMatchObject({ flex: 1.22, height: 46 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-actions" }).props.style,
+        )).toMatchObject({ flexDirection: "row", alignItems: "center", gap: 8 });
+        expect(findButtonByText("수정")).toBeDefined();
+        expect(findButtonByText("일정 저장")).toBeDefined();
     });
 
     test("제목 옆 선택 박스에서 쓰기 가능한 카테고리를 고르고 그대로 저장한다", async () => {

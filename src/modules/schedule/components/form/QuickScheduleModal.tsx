@@ -3526,6 +3526,10 @@ export default function QuickScheduleModal({
         const stackedDateTimeHitSlop = previewDraft.hasExplicitEndTime
             ? { top: 6, bottom: 6, left: 4, right: 4 }
             : undefined;
+        const editSourceText = () => {
+            setPreviewCategoryPickerOpen(false);
+            setFlowStep("input");
+        };
 
         return (
             <View style={styles.previewStep}>
@@ -3534,19 +3538,11 @@ export default function QuickScheduleModal({
                     contentContainerStyle={styles.previewScrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    <Pressable
-                        onPress={() => setFlowStep("input")}
-                        disabled={submitting}
-                        accessibilityRole="button"
-                        accessibilityLabel="입력 내용 수정"
-                        accessibilityValue={{ text: displayedSourceText }}
-                        accessibilityState={{ disabled: submitting }}
-                        style={({ pressed }) => [
+                    <View
+                        testID="quick-schedule-preview-source-summary"
+                        style={[
                             styles.previewSourceStrip,
-                            {
-                                borderBottomColor: previewDividerColor,
-                                opacity: pressed ? 0.82 : submitting ? 0.42 : 1,
-                            },
+                            { borderBottomColor: previewDividerColor },
                         ]}
                     >
                         <View style={styles.previewSourceCopy}>
@@ -3560,8 +3556,7 @@ export default function QuickScheduleModal({
                                 {displayedSourceText}
                             </Text>
                         </View>
-                        <Text style={styles.previewSourceAction}>수정</Text>
-                    </Pressable>
+                    </View>
 
                     <View style={styles.previewTitleRow}>
                         <View
@@ -3858,8 +3853,30 @@ export default function QuickScheduleModal({
                         </Pressable>
                     </View>
                 </ScrollView>
-                <View style={styles.previewButtons}>
+                <View testID="quick-schedule-preview-actions" style={styles.previewButtons}>
                     <Pressable
+                        testID="quick-schedule-preview-edit-button"
+                        onPress={editSourceText}
+                        disabled={submitting}
+                        accessibilityRole="button"
+                        accessibilityLabel="입력 내용 수정"
+                        accessibilityValue={{ text: displayedSourceText }}
+                        accessibilityHint="처음 입력한 문장을 다시 수정합니다"
+                        accessibilityState={{ disabled: submitting }}
+                        style={({ pressed }) => [
+                            styles.secondaryButton,
+                            styles.previewSecondaryButton,
+                            {
+                                backgroundColor: "transparent",
+                                borderColor: previewDividerColor,
+                                opacity: pressed ? 0.72 : submitting ? 0.42 : 1,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.secondaryButtonText, { color: colors.textPrimary }]}>수정</Text>
+                    </Pressable>
+                    <Pressable
+                        testID="quick-schedule-preview-primary-button"
                         onPress={
                             blockingReviewField === "review"
                                 ? confirmGlobalReview
@@ -5296,10 +5313,7 @@ const styles = StyleSheet.create({
     previewSourceStrip: {
         minHeight: 46,
         borderBottomWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
+        justifyContent: "center",
         paddingHorizontal: 2,
         paddingVertical: 5,
     },
@@ -5317,14 +5331,6 @@ const styles = StyleSheet.create({
         fontSize: 12,
         lineHeight: 16,
         fontWeight: "500",
-    },
-    previewSourceAction: {
-        color: BLUE,
-        fontSize: 12,
-        lineHeight: 17,
-        fontWeight: "600",
-        alignSelf: "flex-end",
-        marginBottom: 2,
     },
     previewTitleRow: {
         minHeight: 54,
@@ -5531,11 +5537,18 @@ const styles = StyleSheet.create({
         fontWeight: "900",
     },
     previewButtons: {
-        paddingTop: 6,
+        paddingTop: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    previewSecondaryButton: {
+        flex: 1,
+        height: 46,
+        borderRadius: 14,
     },
     previewPrimaryButton: {
-        flex: 0,
-        width: "100%",
+        flex: 1.22,
         height: 46,
         borderRadius: 14,
         shadowOffset: { width: 0, height: 4 },
