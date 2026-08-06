@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
     ActivityIndicator,
     Alert,
+    Animated,
     AppState,
     ActionSheetIOS,
     BackHandler,
@@ -98,6 +99,7 @@ import QuickScheduleLogoLoader from "./QuickScheduleLogoLoader";
 import QuickSchedulePhotoScanEffect from "./QuickSchedulePhotoScanEffect";
 import BrandedLoader from "../../../../ui/BrandedLoader";
 import CategoryLoadErrorBanner from "./CategoryLoadErrorBanner";
+import CategoryPickerRow from "./CategorySelectBox";
 
 type Props = {
     visible: boolean;
@@ -545,7 +547,7 @@ export default function QuickScheduleModal({
     const { width, height } = useWindowDimensions();
     const insets = useSafeAreaInsets();
     const writableCategories = useMemo(() => {
-        const available = [...(categories ?? []), ...(defaultCategory ? [defaultCategory] : [])];
+        const available = categories ?? (defaultCategory ? [defaultCategory] : []);
         const seenIds = new Set<string>();
 
         return available.filter(category => {
@@ -554,8 +556,10 @@ export default function QuickScheduleModal({
             return true;
         });
     }, [categories, defaultCategory]);
-    const initialCategoryId = canWriteScheduleCategory(defaultCategory)
-        ? defaultCategory!.id
+    const initialCategoryId = defaultCategory
+        && canWriteScheduleCategory(defaultCategory)
+        && writableCategories.some(category => category.id === defaultCategory.id)
+        ? defaultCategory.id
         : writableCategories[0]?.id ?? "";
     const [rendered, setRendered] = useState(visible || prewarm);
     const [text, setText] = useState("");
@@ -594,10 +598,24 @@ export default function QuickScheduleModal({
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const [routePlannerHidden, setRoutePlannerHidden] = useState(false);
     const [selectedCategoryId, setSelectedCategoryId] = useState(initialCategoryId);
+    const [previewCategoryPickerOpen, setPreviewCategoryPickerOpen] = useState(false);
     const selectedCategory = useMemo(
         () => writableCategories.find(category => category.id === selectedCategoryId),
         [selectedCategoryId, writableCategories],
     );
+    const previewCategoryChevronAnim = useRef(new Animated.Value(0)).current;
+    const previewCategoryChevronRotation = previewCategoryChevronAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
+    });
+    const previewCategoryPickerMarginBottom = previewCategoryChevronAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-12, 0],
+    });
+    const previewCategoryPickerPaddingTop = previewCategoryChevronAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 6],
+    });
     const recorderState = {
         isRecording: isVoiceRecording,
         durationMillis: voiceDurationMillis,
@@ -653,6 +671,32 @@ export default function QuickScheduleModal({
     const analysisInFlightRef = useRef(false);
     const saveInFlightRef = useRef(false);
 
+    useEffect(() => {
+        const animation = previewCategoryPickerOpen
+            ? Animated.spring(previewCategoryChevronAnim, {
+                toValue: 1,
+                useNativeDriver: false,
+                damping: 18,
+                stiffness: 160,
+                mass: 0.8,
+            })
+            : Animated.timing(previewCategoryChevronAnim, {
+                toValue: 0,
+                duration: 200,
+                useNativeDriver: false,
+            });
+        animation.start();
+        return () => animation.stop();
+    }, [previewCategoryChevronAnim, previewCategoryPickerOpen]);
+
+    useEffect(() => {
+        if (flowStep !== "preview") setPreviewCategoryPickerOpen(false);
+    }, [flowStep]);
+
+    useEffect(() => {
+        if (writableCategories.length === 0) setPreviewCategoryPickerOpen(false);
+    }, [writableCategories.length]);
+
     const cancelPendingPhotoAction = useCallback(() => {
         pendingPhotoActionCancelRef.current?.();
         pendingPhotoActionCancelRef.current = null;
@@ -670,7 +714,9 @@ export default function QuickScheduleModal({
     useEffect(() => {
         if (!visible || selectedCategory) return;
 
-        const initialCategory = canWriteScheduleCategory(defaultCategory)
+        const initialCategory = defaultCategory
+            && canWriteScheduleCategory(defaultCategory)
+            && writableCategories.some(category => category.id === defaultCategory.id)
             ? defaultCategory
             : writableCategories[0];
         if (!initialCategory) return;
@@ -1060,6 +1106,7 @@ export default function QuickScheduleModal({
             setRoutePlannerSessionId(undefined);
             setRoutePlannerHidden(false);
             setSelectedCategoryId("");
+            setPreviewCategoryPickerOpen(false);
             discardConfirmationVisibleRef.current = false;
             saveInFlightRef.current = false;
             invalidatePendingAnalysis();
@@ -1561,6 +1608,7 @@ export default function QuickScheduleModal({
         (field: PreviewField) => {
             if (!previewDraft || submitting) return;
 
+            setPreviewCategoryPickerOpen(false);
             setEditingField(field);
             setEditingValue(
                 field === "notification"
@@ -3515,118 +3563,112 @@ export default function QuickScheduleModal({
                         <Text style={styles.previewSourceAction}>수정</Text>
                     </Pressable>
 
-                    <View
-                        accessibilityRole="radiogroup"
-                        accessibilityLabel="일정 카테고리"
-                        style={[styles.previewCategorySection, { borderBottomColor: previewDividerColor }]}
-                    >
-                        <Text style={[styles.previewLabel, styles.previewCategoryLabel, { color: previewLabelColor }]}>
-                            카테고리
-                        </Text>
-                        {writableCategories.length > 0 ? (
-                            <ScrollView
-                                horizontal
-                                contentContainerStyle={styles.previewCategoryList}
-                                showsHorizontalScrollIndicator={false}
-                            >
-                                {writableCategories.map(category => {
-                                    const selected = category.id === selectedCategoryId;
-
-                                    return (
-                                        <Pressable
-                                            key={category.id}
-                                            accessibilityRole="radio"
-                                            accessibilityLabel={`${category.title} 카테고리 선택`}
-                                            accessibilityState={{ selected, disabled: submitting }}
-                                            accessibilityValue={{ text: selected ? "선택됨" : "선택 안 됨" }}
-                                            disabled={submitting}
-                                            hitSlop={{ top: 7, bottom: 7 }}
-                                            onPress={() => setSelectedCategoryId(category.id)}
-                                            style={({ pressed }) => [
-                                                styles.previewCategoryChip,
-                                                {
-                                                    backgroundColor: selected
-                                                        ? mode === "dark"
-                                                            ? "rgba(255,255,255,0.09)"
-                                                            : "rgba(36,107,254,0.06)"
-                                                        : "transparent",
-                                                    borderColor: selected ? category.color : previewDividerColor,
-                                                    opacity: pressed ? 0.72 : submitting ? 0.42 : 1,
-                                                },
-                                            ]}
-                                        >
-                                            <View
-                                                accessible={false}
-                                                style={[styles.previewCategoryDot, { backgroundColor: category.color }]}
-                                            />
-                                            <Text
-                                                numberOfLines={1}
-                                                style={[
-                                                    styles.previewCategoryChipText,
-                                                    { color: colors.textPrimary },
-                                                    selected && styles.previewCategoryChipTextSelected,
-                                                ]}
-                                            >
-                                                {category.title}
-                                            </Text>
-                                            {selected && (
-                                                <Ionicons
-                                                    accessible={false}
-                                                    name="checkmark"
-                                                    size={13}
-                                                    color={category.color}
-                                                />
-                                            )}
-                                        </Pressable>
-                                    );
-                                })}
-                            </ScrollView>
-                        ) : (
-                            <Text style={[styles.previewCategoryEmpty, { color: colors.textSecondary }]}>
-                                저장할 카테고리가 없어요
-                            </Text>
-                        )}
-                    </View>
-
-                    <Pressable
-                        onPress={() => openEditField("title")}
-                        disabled={submitting}
-                        accessibilityRole="button"
-                        accessibilityLabel="제목 수정"
-                        accessibilityValue={{ text: getPreviewAccessibilityValue("title") }}
-                        accessibilityState={{ disabled: submitting }}
-                        style={({ pressed }) => [
-                            styles.previewTitleRow,
-                            { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
-                        ]}
-                    >
-                        {selectedCategory ? (
-                            <View
-                                testID="quick-schedule-preview-title-category-pin"
-                                pointerEvents="none"
-                                accessible={false}
-                                style={[
-                                    styles.previewTitleCategoryPin,
-                                    { backgroundColor: selectedCategory.color },
+                    <View style={styles.previewTitleRow}>
+                        <View style={styles.previewTitleControlRow}>
+                            <Pressable
+                                onPress={() => openEditField("title")}
+                                disabled={submitting}
+                                accessibilityRole="button"
+                                accessibilityLabel="제목 수정"
+                                accessibilityValue={{ text: getPreviewAccessibilityValue("title") }}
+                                accessibilityState={{ disabled: submitting }}
+                                style={({ pressed }) => [
+                                    styles.previewTitleAction,
+                                    { opacity: pressed ? 0.82 : submitting ? 0.42 : 1 },
                                 ]}
-                            />
-                        ) : null}
-                        <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
-                        <View style={styles.previewTitleValueRow}>
-                            <Text numberOfLines={2} style={[styles.previewTitleValue, { color: colors.textPrimary }]}>
-                                {getPreviewValue(previewDraft, "title")}
-                            </Text>
-                            {renderPreviewBadge("title")}
-                            <Ionicons
-                                testID="quick-schedule-preview-title-chevron"
-                                accessible={false}
-                                name="chevron-forward"
-                                size={14}
-                                color={previewChevronColor}
-                                style={styles.previewValueChevron}
-                            />
+                            >
+                                <Text style={[styles.previewLabel, { color: previewLabelColor }]}>제목</Text>
+                                <View style={styles.previewTitleValueRow}>
+                                    <Text
+                                        numberOfLines={2}
+                                        style={[styles.previewTitleValue, { color: colors.textPrimary }]}
+                                    >
+                                        {getPreviewValue(previewDraft, "title")}
+                                    </Text>
+                                    {renderPreviewBadge("title")}
+                                    <Ionicons
+                                        testID="quick-schedule-preview-title-chevron"
+                                        accessible={false}
+                                        name="chevron-forward"
+                                        size={14}
+                                        color={previewChevronColor}
+                                        style={styles.previewValueChevron}
+                                    />
+                                </View>
+                            </Pressable>
+                            <Pressable
+                                testID="quick-schedule-preview-category-trigger"
+                                accessibilityRole="button"
+                                accessibilityLabel={`카테고리 선택, 현재 ${selectedCategory?.title ?? "없음"}`}
+                                accessibilityState={{
+                                    expanded: previewCategoryPickerOpen,
+                                    disabled: submitting || writableCategories.length === 0,
+                                }}
+                                disabled={submitting || writableCategories.length === 0}
+                                hitSlop={{ top: 7, right: 4, bottom: 7, left: 4 }}
+                                onPress={() => setPreviewCategoryPickerOpen(current => !current)}
+                                style={({ pressed }) => [
+                                    styles.previewCategoryInlineChip,
+                                    {
+                                        borderColor: previewCategoryPickerOpen
+                                            ? mode === "dark" ? "#4B9DFF" : "#2979FF"
+                                            : previewDividerColor,
+                                        backgroundColor: colors.surface2,
+                                        opacity: pressed ? 0.68 : submitting ? 0.42 : 1,
+                                    },
+                                ]}
+                            >
+                                <View
+                                    accessible={false}
+                                    style={[
+                                        styles.previewCategoryInlineDot,
+                                        { backgroundColor: selectedCategory?.color ?? colors.textDisabled },
+                                    ]}
+                                />
+                                <Text
+                                    numberOfLines={1}
+                                    style={[styles.previewCategoryInlineText, { color: colors.textPrimary }]}
+                                >
+                                    {selectedCategory?.title ?? "카테고리"}
+                                </Text>
+                                <Animated.View
+                                    testID="quick-schedule-preview-category-chevron"
+                                    style={[
+                                        styles.previewCategoryInlineChevron,
+                                        { transform: [{ rotate: previewCategoryChevronRotation }] },
+                                    ]}
+                                >
+                                    <Ionicons
+                                        accessible={false}
+                                        name="chevron-down"
+                                        size={13}
+                                        color={previewCategoryPickerOpen
+                                            ? mode === "dark" ? "#4B9DFF" : "#2979FF"
+                                            : colors.textSecondary}
+                                    />
+                                </Animated.View>
+                            </Pressable>
                         </View>
-                    </Pressable>
+                        <Animated.View
+                            testID="quick-schedule-preview-category-picker-slot"
+                            style={{
+                                marginBottom: previewCategoryPickerMarginBottom,
+                                paddingTop: previewCategoryPickerPaddingTop,
+                            }}
+                        >
+                            <CategoryPickerRow
+                                categories={writableCategories}
+                                value={selectedCategoryId}
+                                expanded={previewCategoryPickerOpen}
+                                hideTrigger
+                                onExpandedChange={setPreviewCategoryPickerOpen}
+                                onChange={(nextCategoryId) => {
+                                    setSelectedCategoryId(nextCategoryId);
+                                    setPreviewCategoryPickerOpen(false);
+                                }}
+                            />
+                        </Animated.View>
+                    </View>
 
                     <View style={styles.previewInfoRow}>
                         <View style={[styles.previewInfoIcon, { backgroundColor: previewIconBackground }]}>
@@ -5290,60 +5332,10 @@ const styles = StyleSheet.create({
         alignSelf: "flex-end",
         marginBottom: 2,
     },
-    previewCategorySection: {
-        minHeight: 52,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        justifyContent: "center",
-        paddingHorizontal: 2,
-        paddingTop: 6,
-        paddingBottom: 7,
-    },
-    previewCategoryLabel: {
-        marginBottom: 4,
-    },
-    previewCategoryList: {
-        alignItems: "center",
-        gap: 6,
-        paddingRight: 2,
-    },
-    previewCategoryChip: {
-        minWidth: 0,
-        maxWidth: 152,
-        minHeight: 30,
-        borderRadius: 15,
-        borderWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-        paddingHorizontal: 10,
-    },
-    previewCategoryDot: {
-        width: 7,
-        height: 7,
-        borderRadius: 3.5,
-        flexShrink: 0,
-    },
-    previewCategoryChipText: {
-        minWidth: 0,
-        flexShrink: 1,
-        fontSize: 12,
-        lineHeight: 16,
-        fontWeight: "600",
-    },
-    previewCategoryChipTextSelected: {
-        fontWeight: "800",
-    },
-    previewCategoryEmpty: {
-        fontSize: 12,
-        lineHeight: 18,
-        fontWeight: "600",
-    },
     previewTitleRow: {
         minHeight: 54,
         justifyContent: "center",
-        paddingLeft: 14,
-        paddingRight: 3,
-        paddingVertical: 6,
+        paddingHorizontal: 2,
     },
     previewLabel: {
         fontSize: 11,
@@ -5357,13 +5349,47 @@ const styles = StyleSheet.create({
         gap: 6,
         flexWrap: "wrap",
     },
-    previewTitleCategoryPin: {
-        position: "absolute",
-        left: 2,
-        top: 11,
-        bottom: 11,
-        width: 4,
-        borderRadius: 2,
+    previewTitleControlRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 8,
+    },
+    previewTitleAction: {
+        flex: 1,
+        minWidth: 0,
+        minHeight: 54,
+        justifyContent: "center",
+    },
+    previewCategoryInlineChip: {
+        maxWidth: 128,
+        minHeight: 34,
+        borderWidth: 1,
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+        flexShrink: 0,
+    },
+    previewCategoryInlineDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        flexShrink: 0,
+    },
+    previewCategoryInlineText: {
+        maxWidth: 72,
+        flexShrink: 1,
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "600",
+    },
+    previewCategoryInlineChevron: {
+        width: 13,
+        height: 16,
+        alignItems: "center",
+        justifyContent: "center",
     },
     previewTitleValue: {
         fontSize: 18,

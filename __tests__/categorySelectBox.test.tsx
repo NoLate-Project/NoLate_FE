@@ -110,7 +110,7 @@ describe("CategorySelectBox inline options", () => {
             renderer!.update(renderTree(false));
         });
         expect(renderer!.root.findByProps({ testID: "category-dropdown-transition" }).props.pointerEvents)
-            .toBe("auto");
+            .toBe("box-only");
 
         await act(async () => finishClosing?.({ finished: true }));
         expect(renderer!.root.findByProps({ testID: "category-dropdown-transition" }).props.pointerEvents)
