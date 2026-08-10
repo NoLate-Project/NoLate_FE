@@ -423,6 +423,14 @@ export async function openExactAlarmSettings(): Promise<boolean> {
     return getNativeAlarmModule()?.openExactAlarmSettings() ?? false;
 }
 
+export async function openNotificationSettings(): Promise<boolean> {
+    if (Platform.OS !== "ios") return false;
+    // The iOS native implementation of this entry point already prefers
+    // UIApplication.openNotificationSettingsURLString. Keep that precise deep
+    // link behind a correctly named JS API while Android uses its app settings.
+    return getNativeAlarmModule()?.openExactAlarmSettings() ?? false;
+}
+
 export async function openFullScreenAlarmSettings(): Promise<boolean> {
     return getNativeAlarmModule()?.openFullScreenSettings() ?? false;
 }

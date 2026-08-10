@@ -8,6 +8,7 @@ import {
     getNativeNoLateAlarmSoundPreference,
     openExactAlarmSettings,
     openFullScreenAlarmSettings,
+    openNotificationSettings,
     setNativeNoLateAlarmSoundPreference,
     type DepartureAlarmCapabilities,
 } from "../../../notification/departureAlarm";
@@ -19,7 +20,7 @@ import {
     setNoLateAlarmSoundPreference,
     type NoLateAlarmSoundId,
 } from "../../../notification/customAlarmSounds";
-import { requestPushNotificationPermission } from "../../../notification/pushPermission";
+import { requestPushPermissionAndRegisterCurrentDevice } from "../../../notification/pushPermission";
 import { useTheme } from "../../../theme/ThemeContext";
 import { formatRouteClock, formatRouteDuration, type RouteInfo } from "../../routeInfo";
 import { SCHEDULE_ALERT_MODE_PRESENTATION } from "../../scheduleAlertMode";
@@ -168,20 +169,12 @@ export default function NotificationSettingsCard({
     }, []);
 
     useEffect(() => {
-        if (!showAlarmControls) {
+        if (!enabled) {
             capabilityRequestRef.current += 1;
-            soundPreferenceRequestRef.current += 1;
-            soundPickerGenerationRef.current += 1;
-            soundPickerVisibleRef.current = false;
-            setAlarmFeedback(null);
-            setSoundPickerVisible(false);
-            setPendingAction(current =>
-                current === "soundPreference" || current === "soundPreview" ? null : current,
-            );
-            stopSoundPreview().catch(() => undefined);
+            setCapabilities(null);
+            setCapabilityError(null);
             return undefined;
         }
-
         if (AppState.currentState === "active") appStateActiveRef.current = true;
         if (AppState.currentState === "background" || AppState.currentState === "inactive") {
             appStateActiveRef.current = false;
@@ -199,7 +192,19 @@ export default function NotificationSettingsCard({
             subscription.remove();
             capabilityRequestRef.current += 1;
         };
-    }, [refreshCapabilities, showAlarmControls, stopSoundPreview]);
+    }, [enabled, refreshCapabilities, stopSoundPreview]);
+
+    useEffect(() => {
+        if (showAlarmControls) return;
+        soundPreferenceRequestRef.current += 1;
+        soundPickerGenerationRef.current += 1;
+        soundPickerVisibleRef.current = false;
+        setSoundPickerVisible(false);
+        setPendingAction(current =>
+            current === "soundPreference" || current === "soundPreview" ? null : current,
+        );
+        stopSoundPreview().catch(() => undefined);
+    }, [showAlarmControls, stopSoundPreview]);
 
     useEffect(() => {
         if (!showAlarmControls) return undefined;
@@ -233,7 +238,8 @@ export default function NotificationSettingsCard({
         try {
             const opened =
                 kind === "notification"
-                    ? await Linking.openSettings().then(() => true)
+                    ? (await openNotificationSettings().catch(() => false)) ||
+                        (await Linking.openSettings().then(() => true))
                     : kind === "exact"
                     ? await openExactAlarmSettings()
                     : await openFullScreenAlarmSettings();
@@ -343,23 +349,30 @@ export default function NotificationSettingsCard({
         setPendingAction("notificationPermission");
         setAlarmFeedback(null);
         try {
-            await requestPushNotificationPermission();
+            const granted = await requestPushPermissionAndRegisterCurrentDevice();
             if (!mountedRef.current) return;
             await refreshCapabilities();
+            if (!granted && mountedRef.current) {
+                setAlarmFeedback("알림을 허용해야 출발 알림을 받을 수 있어요.");
+            }
         } catch {
             if (!mountedRef.current) return;
-            setAlarmFeedback("알림 요청을 열지 못했어요. 잠시 후 다시 시도해 주세요.");
+            await refreshCapabilities().catch(() => undefined);
+            if (!mountedRef.current) return;
+            setAlarmFeedback("알림 권한은 확인했지만 기기 등록을 마치지 못했어요. 잠시 후 다시 시도해 주세요.");
         } finally {
             if (mountedRef.current) setPendingAction(null);
         }
     }, [refreshCapabilities]);
 
-    const customAlarmIssue = getCustomAlarmIssue(capabilities);
-    const customAlarmIssueActionPending =
-        customAlarmIssue?.action === "requestNotification"
+    const notificationPermissionIssue = getNotificationPermissionIssue(capabilities);
+    const alarmSpecificIssue = showAlarmControls ? getCustomAlarmIssue(capabilities) : null;
+    const visibleNotificationIssue = notificationPermissionIssue ?? alarmSpecificIssue;
+    const visibleNotificationIssueActionPending =
+        visibleNotificationIssue?.action === "requestNotification"
             ? pendingAction === "notificationPermission"
-            : customAlarmIssue?.action === "openSetting"
-            ? pendingAction === customAlarmIssue.settingKind
+            : visibleNotificationIssue?.action === "openSetting"
+            ? pendingAction === visibleNotificationIssue.settingKind
             : false;
     const customAlarmUnsupported =
         capabilities !== null && (capabilities.supported !== true || capabilities.platform === "other");
@@ -582,6 +595,123 @@ export default function NotificationSettingsCard({
                         </View>
                     ) : null}
 
+                    {visibleNotificationIssue ? (
+                        <View
+                            testID={notificationPermissionIssue
+                                ? "notification-permission-notice"
+                                : "notification-alarm-setting-notice"}
+                            style={[
+                                styles.flatAlarmIssueRow,
+                                styles.notificationIssueRow,
+                                {
+                                    backgroundColor:
+                                        visibleNotificationIssue.tone === "notice"
+                                            ? selectedBackground
+                                            : warningBackground,
+                                },
+                            ]}
+                        >
+                            <View style={[styles.flatAlarmIssueIcon, { backgroundColor: colors.inputBackground }]}>
+                                <Ionicons
+                                    accessible={false}
+                                    name={
+                                        visibleNotificationIssue.tone === "notice"
+                                            ? "notifications-outline"
+                                            : "volume-mute-outline"
+                                    }
+                                    size={19}
+                                    color={visibleNotificationIssue.tone === "notice" ? accentBlue : warningColor}
+                                />
+                            </View>
+                            <View style={styles.flatAlarmIssueCopy}>
+                                <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
+                                    {visibleNotificationIssue.title}
+                                </Text>
+                                <Text style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}>
+                                    {visibleNotificationIssue.description}
+                                </Text>
+                            </View>
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={visibleNotificationIssue.accessibilityLabel}
+                                accessibilityState={{ busy: visibleNotificationIssueActionPending }}
+                                hitSlop={8}
+                                disabled={pendingAction !== null}
+                                onPress={() => {
+                                    if (visibleNotificationIssue.action === "requestNotification") {
+                                        requestNotificationPermission().catch(() => undefined);
+                                    } else {
+                                        openAlarmSetting(visibleNotificationIssue.settingKind).catch(() => undefined);
+                                    }
+                                }}
+                                style={({ pressed }) => [
+                                    styles.flatAlarmIssueAction,
+                                    pressed && pendingAction === null && styles.pressedRow,
+                                ]}
+                            >
+                                <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
+                                    {visibleNotificationIssueActionPending
+                                        ? visibleNotificationIssue.action === "requestNotification"
+                                            ? "요청 중"
+                                            : "여는 중"
+                                        : visibleNotificationIssue.actionLabel}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    ) : null}
+
+                    {capabilityError && !capabilityLoading ? (
+                        <View
+                            testID="notification-permission-load-error"
+                            style={[
+                                styles.flatAlarmIssueRow,
+                                styles.notificationIssueRow,
+                                { backgroundColor: colors.inputBackground },
+                            ]}
+                        >
+                            <View style={[styles.flatAlarmIssueIcon, { backgroundColor: selectedBackground }]}>
+                                <Ionicons
+                                    accessible={false}
+                                    name="refresh-outline"
+                                    size={19}
+                                    color={colors.textSecondary}
+                                />
+                            </View>
+                            <View style={styles.flatAlarmIssueCopy}>
+                                <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
+                                    알림 권한을 확인하지 못했어요
+                                </Text>
+                                <Text style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}>
+                                    잠시 후 다시 확인해 주세요.
+                                </Text>
+                            </View>
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel="알림 권한 다시 확인"
+                                hitSlop={8}
+                                disabled={capabilityLoading}
+                                onPress={() => {
+                                    refreshCapabilities().catch(() => undefined);
+                                }}
+                                style={({ pressed }) => [
+                                    styles.flatAlarmIssueAction,
+                                    pressed && styles.pressedRow,
+                                ]}
+                            >
+                                <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>다시 확인</Text>
+                            </Pressable>
+                        </View>
+                    ) : null}
+
+                    {alarmFeedback ? (
+                        <Text
+                            accessibilityLiveRegion="polite"
+                            style={[styles.feedback, { color: colors.textSecondary }]}
+                        >
+                            {alarmFeedback}
+                        </Text>
+                    ) : null}
+
                     {showAlarmControls ? (
                         <View testID="notification-alarm-simple-controls" style={styles.flatAlarmPanel}>
                             {customAlarmUnsupported ? (
@@ -621,115 +751,6 @@ export default function NotificationSettingsCard({
                                     >
                                         <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
                                             푸시로 전환
-                                        </Text>
-                                    </Pressable>
-                                </View>
-                            ) : null}
-
-                            {customAlarmIssue ? (
-                                <View
-                                    testID="notification-alarm-setting-notice"
-                                    style={[
-                                        styles.flatAlarmIssueRow,
-                                        {
-                                            backgroundColor:
-                                                customAlarmIssue.tone === "notice"
-                                                    ? selectedBackground
-                                                    : warningBackground,
-                                        },
-                                    ]}
-                                >
-                                    <View
-                                        style={[styles.flatAlarmIssueIcon, { backgroundColor: colors.inputBackground }]}
-                                    >
-                                        <Ionicons
-                                            accessible={false}
-                                            name={
-                                                customAlarmIssue.tone === "notice"
-                                                    ? "notifications-outline"
-                                                    : "volume-mute-outline"
-                                            }
-                                            size={19}
-                                            color={customAlarmIssue.tone === "notice" ? accentBlue : warningColor}
-                                        />
-                                    </View>
-                                    <View style={styles.flatAlarmIssueCopy}>
-                                        <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
-                                            {customAlarmIssue.title}
-                                        </Text>
-                                        <Text
-                                            style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}
-                                        >
-                                            {customAlarmIssue.description}
-                                        </Text>
-                                    </View>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        accessibilityLabel={customAlarmIssue.accessibilityLabel}
-                                        accessibilityState={{ busy: customAlarmIssueActionPending }}
-                                        hitSlop={8}
-                                        disabled={pendingAction !== null}
-                                        onPress={() => {
-                                            if (customAlarmIssue.action === "requestNotification") {
-                                                requestNotificationPermission().catch(() => undefined);
-                                            } else {
-                                                openAlarmSetting(customAlarmIssue.settingKind).catch(() => undefined);
-                                            }
-                                        }}
-                                        style={({ pressed }) => [
-                                            styles.flatAlarmIssueAction,
-                                            pressed && pendingAction === null && styles.pressedRow,
-                                        ]}
-                                    >
-                                        <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
-                                            {customAlarmIssueActionPending
-                                                ? customAlarmIssue.action === "requestNotification"
-                                                    ? "요청 중"
-                                                    : "여는 중"
-                                                : customAlarmIssue.actionLabel}
-                                        </Text>
-                                    </Pressable>
-                                </View>
-                            ) : null}
-
-                            {capabilityError && !capabilityLoading ? (
-                                <View
-                                    testID="notification-alarm-load-error"
-                                    style={[styles.flatAlarmIssueRow, { backgroundColor: colors.inputBackground }]}
-                                >
-                                    <View style={[styles.flatAlarmIssueIcon, { backgroundColor: selectedBackground }]}>
-                                        <Ionicons
-                                            accessible={false}
-                                            name="refresh-outline"
-                                            size={19}
-                                            color={colors.textSecondary}
-                                        />
-                                    </View>
-                                    <View style={styles.flatAlarmIssueCopy}>
-                                        <Text style={[styles.flatAlarmIssueTitle, { color: colors.textPrimary }]}>
-                                            출발 알람을 확인하지 못했어요
-                                        </Text>
-                                        <Text
-                                            style={[styles.flatAlarmIssueDescription, { color: colors.textSecondary }]}
-                                        >
-                                            잠시 후 다시 시도해 주세요.
-                                        </Text>
-                                    </View>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        accessibilityLabel="출발 알람 다시 확인"
-                                        hitSlop={8}
-                                        disabled={capabilityLoading}
-                                        onPress={() => {
-                                            refreshCapabilities().catch(() => undefined);
-                                        }}
-                                        style={({ pressed }) => [
-                                            styles.flatAlarmIssueAction,
-                                            pressed && styles.pressedRow,
-                                        ]}
-                                    >
-                                        <Text style={[styles.flatAlarmIssueActionText, { color: accentBlue }]}>
-                                            다시 시도
                                         </Text>
                                     </Pressable>
                                 </View>
@@ -777,14 +798,6 @@ export default function NotificationSettingsCard({
                                 </Pressable>
                             ) : null}
 
-                            {alarmFeedback ? (
-                                <Text
-                                    accessibilityLiveRegion="polite"
-                                    style={[styles.feedback, { color: colors.textSecondary }]}
-                                >
-                                    {alarmFeedback}
-                                </Text>
-                            ) : null}
                         </View>
                     ) : null}
                 </View>
@@ -1152,6 +1165,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
         gap: 10,
     },
+    notificationIssueRow: {
+        marginTop: 10,
+    },
     flatAlarmIssueIcon: {
         width: 34,
         height: 34,
@@ -1492,7 +1508,7 @@ type CustomAlarmIssue = {
 } & (
     | {
           action: "requestNotification";
-          actionLabel: "알림 켜기";
+          actionLabel: "알림 허용";
       }
     | {
           action: "openSetting";
@@ -1503,12 +1519,12 @@ type CustomAlarmIssue = {
 
 function createNotificationRequestIssue(): CustomAlarmIssue {
     return {
-        title: "알림을 켜 주세요",
-        description: "출발 알람을 받으려면 알림 허용이 필요해요.",
+        title: "알림 권한이 필요해요",
+        description: "출발 알림을 받으려면 NoLate 알림을 허용해 주세요.",
         tone: "notice",
         action: "requestNotification",
-        actionLabel: "알림 켜기",
-        accessibilityLabel: "알림을 켜 주세요, 알림 켜기",
+        actionLabel: "알림 허용",
+        accessibilityLabel: "알림 권한이 필요해요, 알림 허용",
     };
 }
 
@@ -1532,17 +1548,46 @@ function createSettingsIssue({
     };
 }
 
-function getCustomAlarmIssue(capabilities: DepartureAlarmCapabilities | null): CustomAlarmIssue | null {
+function getNotificationPermissionIssue(
+    capabilities: DepartureAlarmCapabilities | null,
+): CustomAlarmIssue | null {
     if (!capabilities?.supported) return null;
 
     if (capabilities.platform === "android") {
         if (!capabilities.notificationAuthorized) {
             return createSettingsIssue({
                 title: "알림이 꺼져 있어요",
-                description: "출발 알람을 받으려면 앱 알림을 켜 주세요.",
+                description: "일정은 저장되지만 출발 알림은 오지 않아요. 설정에서 NoLate 알림을 켜 주세요.",
                 settingKind: "notification",
             });
         }
+        return null;
+    }
+
+    if (capabilities.platform !== "ios") return null;
+
+    if (capabilities.notificationAuthorization === "notDetermined") {
+        return createNotificationRequestIssue();
+    }
+    if (
+        !capabilities.notificationAuthorized ||
+        capabilities.notificationAuthorization === "denied" ||
+        capabilities.notificationAuthorization === "unknown" ||
+        capabilities.reason === "NOTIFICATION_ALERTS_DISABLED"
+    ) {
+        return createSettingsIssue({
+            title: "알림이 꺼져 있어요",
+            description: "일정은 저장되지만 출발 알림은 오지 않아요. 설정에서 NoLate 알림을 켜 주세요.",
+            settingKind: "notification",
+        });
+    }
+    return null;
+}
+
+function getCustomAlarmIssue(capabilities: DepartureAlarmCapabilities | null): CustomAlarmIssue | null {
+    if (!capabilities?.supported) return null;
+
+    if (capabilities.platform === "android") {
         if (!capabilities.exactAlarmAuthorized) {
             return createSettingsIssue({
                 title: "예약 시각 알림을 켜 주세요",
@@ -1562,21 +1607,6 @@ function getCustomAlarmIssue(capabilities: DepartureAlarmCapabilities | null): C
 
     if (capabilities.platform !== "ios") return null;
 
-    if (capabilities.notificationAuthorization === "notDetermined") {
-        return createNotificationRequestIssue();
-    }
-    if (
-        !capabilities.notificationAuthorized ||
-        capabilities.notificationAuthorization === "denied" ||
-        capabilities.notificationAuthorization === "unknown" ||
-        capabilities.reason === "NOTIFICATION_ALERTS_DISABLED"
-    ) {
-        return createSettingsIssue({
-            title: "알림이 꺼져 있어요",
-            description: "출발 알람을 받으려면 알림을 켜 주세요.",
-            settingKind: "notification",
-        });
-    }
     if (capabilities.soundAuthorization === "disabled" || capabilities.reason === "SOUND_DISABLED") {
         return createSettingsIssue({
             title: "알림 소리가 꺼져 있어요",
