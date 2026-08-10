@@ -119,6 +119,7 @@ import {
     getDepartureStatusRefreshDelay,
     isDepartureStatusLocallyExpired,
 } from "../../src/modules/schedule/departureStatusRefreshPolicy";
+import { classifyDepartureNudgeResult } from "../../src/modules/schedule/departureNudgeResult";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -237,6 +238,7 @@ type ScheduleDetailPreviewProps = {
     initialParticipantsExpanded?: boolean;
     previewNowMs?: number;
     previewCurrentMemberId?: number;
+    onPreviewOpenEditor?: () => void;
 };
 
 type DepartureDisplayState =
@@ -349,6 +351,7 @@ export function ScheduleDetail({
     initialParticipantsExpanded = false,
     previewNowMs,
     previewCurrentMemberId,
+    onPreviewOpenEditor,
 }: ScheduleDetailPreviewProps = {}) {
     const { id, openRouteSetup, openRouteDetail } = useLocalSearchParams<{
         id: string;
@@ -482,12 +485,15 @@ export function ScheduleDetail({
     }, [currentMemberId, item]);
     const canEditSchedule = canEditPresentedSchedule(item, canManageSchedule);
     const openScheduleEditor = useCallback(() => {
-        if (internalPreviewItem) return;
         setMemoSheetVisible(false);
         requestAnimationFrame(() => {
+            if (internalPreviewItem) {
+                onPreviewOpenEditor?.();
+                return;
+            }
             router.setParams({ mode: "edit" });
         });
-    }, [internalPreviewItem, router]);
+    }, [internalPreviewItem, onPreviewOpenEditor, router]);
     const currentMemberDepartedAt = previewDepartedAt
         ?? item?.myDepartedAt
         ?? (canManageSchedule ? item?.departedAt : undefined);
@@ -1169,11 +1175,17 @@ export function ScheduleDetail({
         setDepartureNudgePendingMemberId(targetMemberId);
         try {
             const result = await sendScheduleDepartureNudge(id, targetMemberId);
-            if (result.sentCount > 0) {
-                Alert.alert("알림을 보냈어요", `${targetLabel}님에게 출발 확인 알림을 보냈습니다.`);
+            const outcome = classifyDepartureNudgeResult(result);
+            if (outcome === "accepted") {
+                Alert.alert(
+                    "알림을 접수했어요",
+                    result.requestedCount > 0
+                        ? `${targetLabel}님에게 보낼 출발 확인 알림을 등록했습니다.`
+                        : `${targetLabel}님의 앱 알림함에 출발 확인 요청을 등록했습니다.`,
+                );
                 return;
             }
-            if (result.requestedCount === 0) {
+            if (outcome === "no_registered_device") {
                 Alert.alert(
                     "알림을 보낼 수 없어요",
                     `${targetLabel}님의 기기에 등록된 푸시 알림 정보가 없습니다.`

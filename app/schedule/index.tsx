@@ -53,6 +53,8 @@ import {
 import { getCalendarTodayAccent } from "../../src/modules/schedule/components/calendar/calendarTodayAccent";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import CalendarSettingsModal from "../../src/modules/schedule/components/calendar/CalendarSettingsModal";
+import CalendarScopeContextLabel from "../../src/modules/schedule/components/calendar/CalendarScopeContextLabel";
+import CalendarScopeSheet from "../../src/modules/schedule/components/calendar/CalendarScopeSheet";
 import CalendarViewModeGlyph from "../../src/modules/schedule/components/calendar/CalendarViewModeGlyph";
 import ScheduleRouteFocusBoundary from "../../src/modules/schedule/components/ScheduleRouteFocusBoundary";
 import {
@@ -71,14 +73,22 @@ import LiquidCalendarMenuPrototype, {
 import {
     CALENDAR_DAY_HEIGHTS,
     CALENDAR_VIEW_OPTIONS,
+    DEFAULT_CALENDAR_VIEW_MODE,
     getPrimaryPillWeekdayGap,
     isContinuousMonthViewMode,
     prefetchesAdjacentMonths,
     showsStickyMonthTitle as shouldShowStickyMonthTitle,
     type CalendarViewMode,
+    type CalendarViewModePreference,
     usesMonthInPrimaryPill,
 } from "../../src/modules/schedule/components/calendar/viewMode";
+import {
+    getCachedCalendarViewModePreference,
+    loadCalendarViewModePreference,
+    rememberCalendarViewModePreference,
+} from "../../src/modules/schedule/components/calendar/calendarViewModePreference";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
+import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { getFloatingActionBarClearance } from "../../src/modules/schedule/components/shared/floatingActionBarLayout";
 import {
     MonthAgendaList,
@@ -108,6 +118,11 @@ import {
 } from "../../src/modules/schedule/quickScheduleReliabilityFeedbackQueue";
 import { getCalendarDays } from "../../src/api/calendar";
 import { getScheduleCategoriesFromApi } from "../../src/api/scheduleCategories";
+import {
+    getScheduleCalendars,
+    updateScheduleCalendar,
+    type ScheduleCalendar,
+} from "../../src/api/scheduleCalendars";
 import { getShareInbox } from "../../src/api/scheduleSharing";
 import { getAppNotificationUnreadCount } from "../../src/api/notification";
 import { getMonthRange } from "../../src/modules/schedule/calendarRange";
@@ -142,6 +157,14 @@ import { getScheduleAccessibilityVisibility } from "../../src/modules/schedule/a
 import { createScheduleForAddItem } from "../../src/modules/schedule/scheduleCreateMutation";
 import { subscribeScheduleMutation } from "../../src/modules/schedule/scheduleMutationEvents";
 import { getWritableScheduleCategories } from "../../src/modules/schedule/categoryPermissions";
+import {
+    getCalendarScopePresentation,
+    getScheduleTargetCalendarId,
+    isCategoryInCalendarScope,
+    isScheduleInCalendarScope,
+    normalizeCalendarScope,
+    type CalendarScope,
+} from "../../src/modules/schedule/calendarScope";
 import {
     DAY_MINUTES,
     DAY_TIMELINE_END_PADDING,
@@ -243,6 +266,7 @@ type CalendarDay = {
 };
 
 const CALENDAR_TOOLBAR_HEIGHT = 56;
+const CALENDAR_CONTEXT_HEIGHT = 24;
 const STICKY_MONTH_HEADER_HEIGHT = 50;
 const STICKY_WEEKDAY_HEADER_HEIGHT = 18;
 const STICKY_CALENDAR_HEADER_HEIGHT = STICKY_MONTH_HEADER_HEIGHT + STICKY_WEEKDAY_HEADER_HEIGHT;
@@ -478,6 +502,54 @@ const MemoizedScheduleNewModal = React.memo(
 );
 
 export default function ScheduleIndex() {
+    const isFocused = useIsFocused();
+    const { mode, colors } = useTheme();
+    const [initialCalendarViewMode, setInitialCalendarViewMode] =
+        useState<CalendarViewModePreference | null>(
+            () => getCachedCalendarViewModePreference()
+        );
+
+    useEffect(() => {
+        if (initialCalendarViewMode) return;
+
+        let cancelled = false;
+        loadCalendarViewModePreference()
+            .then((restoredMode) => {
+                if (!cancelled) setInitialCalendarViewMode(restoredMode);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setInitialCalendarViewMode(DEFAULT_CALENDAR_VIEW_MODE);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [initialCalendarViewMode]);
+
+    if (!initialCalendarViewMode) {
+        return (
+            <ScheduleRouteFocusBoundary
+                focused={isFocused}
+                testID="schedule-index-route-root"
+                style={[styles.root, { backgroundColor: colors.calendarBackground }]}
+            >
+                <StatusBar barStyle={mode === "dark" ? "light-content" : "dark-content"} />
+            </ScheduleRouteFocusBoundary>
+        );
+    }
+
+    return (
+        <ScheduleIndexContent initialCalendarViewMode={initialCalendarViewMode} />
+    );
+}
+
+function ScheduleIndexContent({
+    initialCalendarViewMode,
+}: {
+    initialCalendarViewMode: CalendarViewModePreference;
+}) {
     const router = useRouter();
     const isFocused = useIsFocused();
     const params = useLocalSearchParams<{
@@ -503,7 +575,9 @@ export default function ScheduleIndex() {
     const [shareAttention, setShareAttention] = useState<ShareAttentionSummary>(EMPTY_SHARE_ATTENTION);
     const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
     const [formInitialValues, setFormInitialValues] = useState<ScheduleParseResult | null>(null);
-    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>("detail");
+    const [calendarViewMode, setCalendarViewMode] = useState<CalendarViewMode>(
+        initialCalendarViewMode
+    );
     const [calendarDepth, setCalendarDepth] = useState<CalendarDepth>("month");
     const [dayViewMode, setDayViewMode] = useState<DayViewMode>("singleDay");
     const [dayLayerMounted, setDayLayerMounted] = useState(false);
@@ -525,6 +599,11 @@ export default function ScheduleIndex() {
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
+    const [scheduleCalendars, setScheduleCalendars] = useState<ScheduleCalendar[]>([]);
+    const [activeCalendarScope, setActiveCalendarScope] = useState<CalendarScope>("all");
+    const [calendarShareTarget, setCalendarShareTarget] = useState<ScheduleCalendar | null>(null);
+    const pendingCalendarShareTargetRef = useRef<ScheduleCalendar | null>(null);
+    const calendarShareFallbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchSequenceRef = useRef(0);
     const searchAbortControllerRef = useRef<AbortController | null>(null);
     const handledSearchRetryKeyRef = useRef(searchRetryKey);
@@ -548,6 +627,7 @@ export default function ScheduleIndex() {
     );
     const [keyboardVisible, setKeyboardVisible] = useState(false);
     const [firstDay, setFirstDay] = useState<0 | 1>(0);
+    const [calendarScopeSelectorVisible, setCalendarScopeSelectorVisible] = useState(false);
     const [calendarSettingsVisible, setCalendarSettingsVisible] = useState(false);
     const [calendarScrollRequest, setCalendarScrollRequest] = useState(0);
     const [dayTodayRequest, setDayTodayRequest] = useState(0);
@@ -587,20 +667,24 @@ export default function ScheduleIndex() {
         };
     }, []);
     const [retainedMonthAgendaPanelKind, setRetainedMonthAgendaPanelKind] =
-        useState<MonthAgendaPanelKind>("detail");
+        useState<MonthAgendaPanelKind>(
+            () => getMonthAgendaPanelKind(initialCalendarViewMode) ?? "detail"
+        );
     const [outgoingMonthAgendaPanelKind, setOutgoingMonthAgendaPanelKind] =
         useState<MonthAgendaPanelKind | null>(null);
     const shouldHideHandoffSurface = quickHandoffHidden && (quickModalVisible || modalVisible);
     const calendarTransition = useRef(new Animated.Value(1)).current;
     const todayFocusOpacity = useRef(new Animated.Value(1)).current;
     const todayFocusTranslateY = useRef(new Animated.Value(0)).current;
-    const monthAgendaProgress = useRef(new Animated.Value(1)).current;
+    const monthAgendaProgress = useRef(new Animated.Value(
+        getMonthAgendaPanelKind(initialCalendarViewMode) ? 1 : 0
+    )).current;
     const monthAgendaSwapProgress = useRef(new Animated.Value(1)).current;
     const monthCalendarTransitionProgress = useRef(new Animated.Value(1)).current;
     const monthCalendarAnimatedHeight = useSharedValue(0);
     const monthCalendarTargetHeight = useSharedValue(0);
     const monthCalendarAnimatedDayHeight = useSharedValue(
-        CALENDAR_DAY_HEIGHTS.detail
+        CALENDAR_DAY_HEIGHTS[initialCalendarViewMode]
     );
     const detailMonthMotionActive = useSharedValue(false);
     const yearOverviewProgress = useRef(new Animated.Value(0)).current;
@@ -615,7 +699,9 @@ export default function ScheduleIndex() {
     const searchInputRef = useRef<TextInput>(null);
     const dayDisplayPrepareRef = useRef<((day: string) => void) | null>(null);
     const monthCalendarHeightRef = useRef(0);
-    const monthCalendarDayHeightRef = useRef(CALENDAR_DAY_HEIGHTS.detail);
+    const monthCalendarDayHeightRef = useRef(
+        CALENDAR_DAY_HEIGHTS[initialCalendarViewMode]
+    );
     const monthDisplayHeightRef = useRef(0);
     const [monthDisplayHeight, setMonthDisplayHeight] = useState(0);
     const monthViewTransitionGenerationRef = useRef(0);
@@ -1008,6 +1094,7 @@ export default function ScheduleIndex() {
         const targetHeaderHeight = getStickyCalendarHeaderHeight(viewMode);
         const targetHeaderOffset = insets.top
             + CALENDAR_TOOLBAR_HEIGHT
+            + CALENDAR_CONTEXT_HEIGHT
             + targetHeaderHeight;
         const fixedCalendarHeight = getFixedScheduleCalendarHeight({
             viewMode,
@@ -1040,7 +1127,9 @@ export default function ScheduleIndex() {
         const viewportLayout = resolveMonthAgendaViewportLayout(viewMode, {
             fullCalendarHeight,
             panelCalendarHeight,
-            expandedListTop: insets.top + CALENDAR_TOOLBAR_HEIGHT,
+            expandedListTop: insets.top
+                + CALENDAR_TOOLBAR_HEIGHT
+                + CALENDAR_CONTEXT_HEIGHT,
         });
 
         return {
@@ -1581,7 +1670,7 @@ export default function ScheduleIndex() {
         })
     ), [firstDay]);
     const stickyCalendarHeaderPosition = useMemo<ViewStyle>(() => ({
-        top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
+        top: insets.top + CALENDAR_TOOLBAR_HEIGHT + CALENDAR_CONTEXT_HEIGHT,
     }), [insets.top]);
     const showsStickyMonthTitle = shouldShowStickyMonthTitle(calendarViewMode);
     const primaryPillWeekdayGap = getPrimaryPillWeekdayGap(calendarViewMode);
@@ -1594,7 +1683,11 @@ export default function ScheduleIndex() {
     const nonSearchToolbarMenuActive =
         activeToolbarMenu !== null && activeToolbarMenu !== "search";
     const isFormOverlayVisible = modalVisible || quickModalVisible;
-    const calendarOverlayOwnsAccessibility = isFormOverlayVisible || calendarSettingsVisible;
+    const calendarOverlayOwnsAccessibility =
+        isFormOverlayVisible
+        || calendarScopeSelectorVisible
+        || calendarSettingsVisible
+        || calendarShareTarget !== null;
     const reservesStickyCalendarHeader =
         isStickyCalendarMode &&
         (calendarDepth !== "day" || isMonthToDayTransition || isDayToMonthTransition) &&
@@ -1632,6 +1725,7 @@ export default function ScheduleIndex() {
     const calendarHeaderOffset = useMemo(
         () => insets.top
             + CALENDAR_TOOLBAR_HEIGHT
+            + CALENDAR_CONTEXT_HEIGHT
             + (reservesStickyCalendarHeader ? reservedStickyCalendarHeaderHeight : 0),
         [
             insets.top,
@@ -2266,15 +2360,36 @@ export default function ScheduleIndex() {
         return () => {
             cancelled = true;
         };
-    }, [categoryRetryKey, dispatch]);
+    }, [categoryRetryKey, dispatch, isFocused]);
+
+    useEffect(() => {
+        if (!isFocused) return undefined;
+        let cancelled = false;
+        getScheduleCalendars()
+            .then((calendars) => {
+                if (cancelled) return;
+                setScheduleCalendars(calendars);
+                setActiveCalendarScope((current) => normalizeCalendarScope(current, calendars));
+            })
+            .catch(() => {
+                // 개인/전체 캘린더는 네트워크 오류에도 계속 사용할 수 있다.
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isFocused]);
 
     const retryCategoryLoad = useCallback(() => {
         setCategoryRetryKey((value) => value + 1);
     }, []);
 
-    const itemsArray = useMemo(
+    const allItemsArray = useMemo(
         () => Object.values(state.itemsById),
         [state.itemsById]
+    );
+    const itemsArray = useMemo(
+        () => allItemsArray.filter((item) => isScheduleInCalendarScope(item, activeCalendarScope)),
+        [activeCalendarScope, allItemsArray]
     );
     const loadYearOverviewSchedules = useCallback((targetYear: number) => {
         if (!Number.isInteger(targetYear)) return;
@@ -2322,8 +2437,8 @@ export default function ScheduleIndex() {
         () => mergeCalendarYearScheduleItems([
             ...Object.values(yearOverviewItemsByYear).flat(),
             ...itemsArray,
-        ]),
-        [itemsArray, yearOverviewItemsByYear]
+        ]).filter((item) => isScheduleInCalendarScope(item, activeCalendarScope)),
+        [activeCalendarScope, itemsArray, yearOverviewItemsByYear]
     );
 
     useEffect(() => {
@@ -2348,11 +2463,24 @@ export default function ScheduleIndex() {
         [itemsArray]
     );
     const writableCategories = useMemo(
-        () => getWritableScheduleCategories(state.categories),
-        [state.categories]
+        () => getWritableScheduleCategories(state.categories).filter((category) => (
+            isCategoryInCalendarScope(category, activeCalendarScope)
+        )),
+        [activeCalendarScope, state.categories]
     );
+    const activeScopeCalendar = useMemo(
+        () => typeof activeCalendarScope === "number"
+            ? scheduleCalendars.find((calendar) => calendar.id === activeCalendarScope) ?? null
+            : null,
+        [activeCalendarScope, scheduleCalendars],
+    );
+    const requireActiveCalendarWriteAccess = useCallback(() => {
+        if (activeScopeCalendar?.myRole !== "VIEWER") return true;
+        Alert.alert("보기 전용 캘린더", "이 캘린더에는 일정을 추가할 수 없어요.");
+        return false;
+    }, [activeScopeCalendar]);
     const normalizedSearchKeyword = searchQuery.trim().replace(/\s+/g, " ");
-    const normalizedSearchCacheKey = normalizedSearchKeyword.toLowerCase();
+    const normalizedSearchCacheKey = `${String(activeCalendarScope)}:${normalizedSearchKeyword.toLowerCase()}`;
     const searchKeywordLength = Array.from(normalizedSearchKeyword).length;
     useEffect(() => {
         const sequence = searchSequenceRef.current + 1;
@@ -2401,6 +2529,7 @@ export default function ScheduleIndex() {
                         || searchSequenceRef.current !== sequence
                     ) return;
                     const visibleItems = [...items]
+                        .filter((item) => isScheduleInCalendarScope(item, activeCalendarScope))
                         .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
                         .slice(0, SEARCH_RESULT_LIMIT);
                     cache.delete(normalizedSearchCacheKey);
@@ -2445,6 +2574,7 @@ export default function ScheduleIndex() {
         isFocused,
         normalizedSearchCacheKey,
         normalizedSearchKeyword,
+        activeCalendarScope,
         searchInvalidationKey,
         searchKeywordLength,
         searchRetryKey,
@@ -2463,7 +2593,10 @@ export default function ScheduleIndex() {
         scheduleLoadSequenceRef.current = mutationFenceSequence;
         pendingScheduleSnapshotRef.current = null;
         try {
-            const item = await createScheduleForAddItem(payload);
+            const item = await createScheduleForAddItem({
+                ...payload,
+                calendarId: getScheduleTargetCalendarId(activeCalendarScope),
+            });
             dispatch({ type: "ADD_ITEM", item });
             dispatch({ type: "SET_LOADING", loading: false });
             // Existing month entries were updated optimistically by the API
@@ -2697,6 +2830,7 @@ export default function ScheduleIndex() {
     }, [isSearchToolbarOpen, usesLiquidViewModeControl]);
 
     const openBlankSchedule = useCallback(() => {
+        if (!requireActiveCalendarWriteAccess()) return;
         prepareAddHandoff();
         if (usesLiquidViewModeControl) {
             const startedPrewarmedMorph = manualMorphPresenterRef.current?.() ?? false;
@@ -2715,9 +2849,10 @@ export default function ScheduleIndex() {
             setFormInitialValues(null);
             setModalVisible(true);
         });
-    }, [commitAddHandoffPresentation, prepareAddHandoff, runToolbarAction, usesLiquidViewModeControl]);
+    }, [commitAddHandoffPresentation, prepareAddHandoff, requireActiveCalendarWriteAccess, runToolbarAction, usesLiquidViewModeControl]);
 
     const openQuickSchedule = useCallback(() => {
+        if (!requireActiveCalendarWriteAccess()) return;
         prepareAddHandoff();
         if (usesLiquidViewModeControl) {
             const startedPrewarmedMorph = quickMorphPresenterRef.current?.() ?? false;
@@ -2734,11 +2869,20 @@ export default function ScheduleIndex() {
         runToolbarAction(() => {
             setQuickModalVisible(true);
         });
-    }, [commitAddHandoffPresentation, prepareAddHandoff, runToolbarAction, usesLiquidViewModeControl]);
+    }, [commitAddHandoffPresentation, prepareAddHandoff, requireActiveCalendarWriteAccess, runToolbarAction, usesLiquidViewModeControl]);
 
     const openCategoryManager = () => {
         runToolbarAction(() => {
-            router.push("/schedule/categories");
+            const calendar = typeof activeCalendarScope === "number"
+                ? scheduleCalendars.find((item) => item.id === activeCalendarScope)
+                : null;
+            router.push(calendar ? {
+                pathname: "/schedule/categories",
+                params: {
+                    calendarId: String(calendar.id),
+                    calendarTitle: calendar.title,
+                },
+            } : "/schedule/categories");
         });
     };
 
@@ -3397,7 +3541,10 @@ export default function ScheduleIndex() {
     ]);
 
     const handleCalendarViewModeChange = useCallback((nextMode: CalendarViewMode) => {
-        if (nextMode === calendarViewMode || viewTransitioningRef.current) return;
+        if (viewTransitioningRef.current) return;
+
+        rememberCalendarViewModePreference(nextMode);
+        if (nextMode === calendarViewMode) return;
 
         detailMonthMotionCancelRef.current?.();
         closeToolbarMenu();
@@ -3749,13 +3896,60 @@ export default function ScheduleIndex() {
         openYearOverview();
     }, [calendarDepth, closeDayDisplay, closeYearOverview, openYearOverview]);
 
-    const openProfile = useCallback(() => {
+    const openAccountSettings = useCallback(() => {
         router.push("/profile");
     }, [router]);
 
-    const openCalendarSettings = useCallback(() => {
-        closeToolbarMenu(() => setCalendarSettingsVisible(true));
+    const openCalendarScopeSelector = useCallback(() => {
+        closeToolbarMenu(() => setCalendarScopeSelectorVisible(true));
     }, [closeToolbarMenu]);
+
+    const openCalendarSettingsFromSelector = useCallback(() => {
+        requestAnimationFrame(() => setCalendarSettingsVisible(true));
+    }, []);
+
+    const flushPendingCalendarShare = useCallback(() => {
+        if (calendarShareFallbackTimeoutRef.current) {
+            clearTimeout(calendarShareFallbackTimeoutRef.current);
+            calendarShareFallbackTimeoutRef.current = null;
+        }
+        const pendingCalendar = pendingCalendarShareTargetRef.current;
+        pendingCalendarShareTargetRef.current = null;
+        if (pendingCalendar) setCalendarShareTarget(pendingCalendar);
+    }, []);
+
+    const openCalendarShareFromSelector = useCallback((calendar: ScheduleCalendar) => {
+        pendingCalendarShareTargetRef.current = calendar;
+        if (Platform.OS !== "ios") {
+            calendarShareFallbackTimeoutRef.current = setTimeout(
+                flushPendingCalendarShare,
+                360,
+            );
+        }
+    }, [flushPendingCalendarShare]);
+
+    useEffect(() => () => {
+        if (calendarShareFallbackTimeoutRef.current) {
+            clearTimeout(calendarShareFallbackTimeoutRef.current);
+        }
+    }, []);
+
+    const updateSharedCalendarContentMode = useCallback(async (
+        nextMode: ScheduleCalendar["defaultContentMode"],
+    ) => {
+        if (!calendarShareTarget) return;
+        const updated = await updateScheduleCalendar(calendarShareTarget.id, {
+            defaultContentMode: nextMode,
+        });
+        setScheduleCalendars((current) => current.map((calendar) => (
+            calendar.id === updated.id ? updated : calendar
+        )));
+        setCalendarShareTarget(updated);
+    }, [calendarShareTarget]);
+
+    const openSharedCalendarManagerFromSelector = useCallback(() => {
+        requestAnimationFrame(() => router.push("/schedule/calendars"));
+    }, [router]);
 
     const routeSetupTarget = useMemo(() => {
         const now = Date.now();
@@ -3796,6 +3990,12 @@ export default function ScheduleIndex() {
     }, [router]);
 
     const shareBadgeCount = shareAttention.unseenCount;
+    const activeCalendarPresentation = useMemo(
+        () => getCalendarScopePresentation(activeCalendarScope, scheduleCalendars),
+        [activeCalendarScope, scheduleCalendars],
+    );
+    const activeCalendarIconColor = activeCalendarPresentation.color
+        ?? (activeCalendarScope === "personal" ? "#8E8E93" : colors.textSecondary);
     const hasMonthAgendaCache = hasCalendarScheduleMonthCache(
         monthDisplayFocusedMonth
     );
@@ -3803,6 +4003,12 @@ export default function ScheduleIndex() {
         && (state.loading || scheduleError === null);
 
     const bottomRightActions = useMemo<FloatingBarAction[]>(() => [{
+        key: "calendar-scope-selector",
+        icon: "calendar-outline",
+        accessibilityLabel: `현재 ${activeCalendarPresentation.title}, 캘린더 선택`,
+        accessibilityState: { expanded: calendarScopeSelectorVisible },
+        onPress: openCalendarScopeSelector,
+    }, {
         key: "notification-inbox-shortcut",
         icon: "notifications-outline",
         badgeCount: notificationUnreadCount,
@@ -3821,21 +4027,18 @@ export default function ScheduleIndex() {
             : "공유함",
         onPress: openInvitesShortcut,
     }, {
-        key: "calendar-settings-shortcut",
-        icon: "settings-outline",
-        accessibilityLabel: "캘린더 설정",
-        onPress: openCalendarSettings,
-    }, {
-        key: "profile-shortcut",
+        key: "account-settings-shortcut",
         icon: "person-circle-outline",
-        accessibilityLabel: "프로필",
-        onPress: openProfile,
+        accessibilityLabel: "내 정보 및 설정",
+        onPress: openAccountSettings,
     }], [
+        activeCalendarPresentation.title,
+        calendarScopeSelectorVisible,
         notificationUnreadCount,
-        openCalendarSettings,
+        openAccountSettings,
+        openCalendarScopeSelector,
         openInvitesShortcut,
         openNotificationInbox,
-        openProfile,
         shareBadgeCount,
     ]);
 
@@ -3885,7 +4088,13 @@ export default function ScheduleIndex() {
                     }
                     style={[
                         styles.categoryErrorLayer,
-                        { top: insets.top + LIQUID_TOOLBAR_TOP_OFFSET + LIQUID_TOOLBAR_BUTTON_SIZE + 10 },
+                        {
+                            top: insets.top
+                                + LIQUID_TOOLBAR_TOP_OFFSET
+                                + LIQUID_TOOLBAR_BUTTON_SIZE
+                                + CALENDAR_CONTEXT_HEIGHT
+                                + 10,
+                        },
                     ]}
                 >
                     <CategoryLoadErrorBanner
@@ -4041,6 +4250,23 @@ export default function ScheduleIndex() {
                     </Animated.View>
                 )}
 
+                <Animated.View
+                    pointerEvents="none"
+                    style={[
+                        styles.calendarScopeContextLayer,
+                        {
+                            top: insets.top + CALENDAR_TOOLBAR_HEIGHT,
+                            opacity: todayFocusOpacity,
+                            transform: [{ translateY: todayFocusTranslateY }],
+                        },
+                    ]}
+                >
+                    <CalendarScopeContextLabel
+                        title={activeCalendarPresentation.title}
+                        color={activeCalendarIconColor}
+                    />
+                </Animated.View>
+
                 {usesLiquidViewModeControl ? (
                     <Animated.View
                         pointerEvents={shouldHideHandoffSurface ? "none" : "box-none"}
@@ -4109,6 +4335,7 @@ export default function ScheduleIndex() {
                             onQuickAdd={openQuickSchedule}
                             onManualAdd={openBlankSchedule}
                             onManageCategories={openCategoryManager}
+                            onManageCalendars={openSharedCalendarManager}
                         />
                     </Animated.View>
                 ) : (
@@ -4873,7 +5100,9 @@ export default function ScheduleIndex() {
                                 items={itemsArray}
                                 loading={state.loading}
                                 error={sanitizeCalendarTransitionError(scheduleError)}
-                                topOffset={insets.top + DAY_WEEK_STRIP_TOP_OFFSET}
+                                topOffset={insets.top
+                                    + DAY_WEEK_STRIP_TOP_OFFSET
+                                    + CALENDAR_CONTEXT_HEIGHT}
                                 bottomInset={insets.bottom}
                                 modeTransitionProgress={dayModeTransition}
                                 modeTransitionFrom={dayModeTransitionFrom}
@@ -4914,7 +5143,7 @@ export default function ScheduleIndex() {
                     selectedDay={selectedDay}
                     firstDay={firstDay}
                     items={yearOverviewItems}
-                    topInset={insets.top}
+                    topInset={insets.top + CALENDAR_CONTEXT_HEIGHT}
                     presentationRequest={yearOverviewPresentationRequest}
                     todayRequest={yearTodayRequest}
                     reduceMotionEnabled={reduceMotionEnabled}
@@ -4931,6 +5160,33 @@ export default function ScheduleIndex() {
                     disabled={isAnyDepthTransitionActive || calendarOverlayOwnsAccessibility}
                 />
             )}
+
+            <CalendarScopeSheet
+                visible={calendarScopeSelectorVisible}
+                calendars={scheduleCalendars}
+                value={activeCalendarScope}
+                onChange={setActiveCalendarScope}
+                onShareCalendar={openCalendarShareFromSelector}
+                onManage={openSharedCalendarManagerFromSelector}
+                onOpenSettings={openCalendarSettingsFromSelector}
+                onClose={() => setCalendarScopeSelectorVisible(false)}
+                onDismiss={flushPendingCalendarShare}
+            />
+
+            <ShareInvitationSheet
+                visible={calendarShareTarget !== null}
+                resourceType="calendar"
+                resourceId={calendarShareTarget?.id.toString()}
+                title={calendarShareTarget?.title ?? "공유 캘린더"}
+                subtitle={calendarShareTarget
+                    ? calendarShareTarget.defaultContentMode === "SCHEDULE_AND_TRAVEL"
+                        ? "일정 + 각자 경로"
+                        : "일정만"
+                    : undefined}
+                initialContentMode={calendarShareTarget?.defaultContentMode}
+                onCalendarContentModeChange={updateSharedCalendarContentMode}
+                onClose={() => setCalendarShareTarget(null)}
+            />
 
             <CalendarSettingsModal
                 visible={calendarSettingsVisible}
@@ -6839,6 +7095,14 @@ const styles = StyleSheet.create({
         zIndex: 40,
         elevation: 40,
         overflow: "visible",
+    },
+    calendarScopeContextLayer: {
+        position: "absolute",
+        left: 0,
+        right: 0,
+        height: CALENDAR_CONTEXT_HEIGHT,
+        zIndex: 41,
+        elevation: 41,
     },
     categoryErrorLayer: {
         position: "absolute",

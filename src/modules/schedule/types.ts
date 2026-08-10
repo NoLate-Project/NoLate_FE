@@ -9,6 +9,7 @@ export type ScheduleCategory = {
     title: string;
     color: string;
     ownerMemberId?: number;
+    calendarId?: number | null;
     shared?: boolean;
     sharePermission?: ScheduleSharePermission;
 }

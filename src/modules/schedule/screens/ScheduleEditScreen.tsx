@@ -35,9 +35,16 @@ import CategoryPickerRow from "../components/form/CategorySelectBox";
 import LocationInputRow from "../components/form/LocationInputRow";
 import NotificationSettingsCard from "../components/form/NotificationSettingsCard";
 import CategoryLoadErrorBanner from "../components/form/CategoryLoadErrorBanner";
+import ScheduleCalendarSelectBox from "../components/form/ScheduleCalendarSelectBox";
 import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedule";
 import { upsertMyScheduleTravelPlan } from "../../../api/scheduleTravelPlans";
 import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
+import {
+    getScheduleCalendars,
+    type ScheduleCalendar,
+} from "../../../api/scheduleCalendars";
+import { getWritableScheduleCalendars } from "../calendarPermissions";
+import { isCategoryInCalendarScope } from "../calendarScope";
 import {
     FREE_SUBSCRIPTION_POLICY,
     getMySubscriptionPolicy,
@@ -60,13 +67,17 @@ import {
     normalizeScheduleAlertMode,
     resolveScheduleAlertModePayload,
 } from "../scheduleAlertMode";
-import { canDeletePresentedSchedule } from "../schedulePermissions";
+import {
+    canChangePresentedScheduleCalendar,
+    canDeletePresentedSchedule,
+} from "../schedulePermissions";
 import { applyTravelPlanToScheduleItem } from "../travelPlanPresentation";
 import { recoverDepartureAlarmsAfterMutation } from "../../notification/departureAlarmMutationRecovery";
 import {
     getUserVisibleScheduleNotes,
     preserveLegacyCalendarImportMetadata,
 } from "../calendarImportNotes";
+import { getAuthMember } from "../../auth/authStorage";
 
 const pad2    = (n: number) => String(n).padStart(2, "0");
 const hhmmText = (d: Date)  => `${d.getHours() < 12 ? "오전" : "오후"} ${d.getHours() % 12 || 12}:${pad2(d.getMinutes())}`;
@@ -85,6 +96,7 @@ function mergeDateTime(datePart: Date, timePart: Date) {
 const DATE_H = 312;
 const TIME_H = 216;
 const CATEGORY_PICKER_MARGIN = 12;
+export const SCHEDULE_EDIT_DARK_PAGE_BACKGROUND = "#101217";
 
 type PickerType = "startDate" | "endDate" | "startTime" | "endTime";
 
@@ -119,10 +131,16 @@ export default function ScheduleEdit({
     const formPlaceholderColor = mode === "dark"
         ? "rgba(235,235,245,0.50)"
         : "rgba(60,60,67,0.56)";
+    const editPageBackground = mode === "dark"
+        ? SCHEDULE_EDIT_DARK_PAGE_BACKGROUND
+        : colors.background;
+    const editPageBackgroundStyle = { backgroundColor: editPageBackground };
 
     const item = id ? state.itemsById[id] : undefined;
-    const canDeleteSchedule = canDeletePresentedSchedule(item);
     const developmentPreview = __DEV__ && preview === "1";
+    const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
+    const canDeleteSchedule = canDeletePresentedSchedule(item, currentMemberId);
+    const canChangeCalendar = canChangePresentedScheduleCalendar(item, currentMemberId);
 
     const [title,           setTitle]           = useState(item?.title ?? "");
     const [notes,           setNotes]           = useState(getUserVisibleScheduleNotes(item?.notes) ?? "");
@@ -167,6 +185,11 @@ export default function ScheduleEdit({
     const [categoryLoading, setCategoryLoading] = useState(false);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryRetryKey, setCategoryRetryKey] = useState(0);
+    const [calendarId, setCalendarId] = useState<number | null>(item?.calendarId ?? null);
+    const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
+    const [calendarLoading, setCalendarLoading] = useState(false);
+    const [calendarError, setCalendarError] = useState<string | null>(null);
+    const [calendarRetryKey, setCalendarRetryKey] = useState(0);
     const [formDirty, setFormDirty] = useState(false);
     const formDirtyRef = useRef(false);
     const editScrollRef = useRef<ScrollView>(null);
@@ -177,6 +200,23 @@ export default function ScheduleEdit({
         formDirtyRef.current = true;
         setFormDirty(true);
     }, []);
+
+    useEffect(() => {
+        if (developmentPreview) return undefined;
+        let cancelled = false;
+
+        getAuthMember()
+            .then((member) => {
+                if (!cancelled) setCurrentMemberId(member?.id ?? null);
+            })
+            .catch(() => {
+                if (!cancelled) setCurrentMemberId(null);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [developmentPreview]);
 
     const setCategoryPickerExpanded = useCallback((expanded: boolean) => {
         const wasOpen = categoryPickerOpenRef.current;
@@ -302,16 +342,28 @@ export default function ScheduleEdit({
     const [displayPicker, setDisplayPicker] = useState<PickerType | null>(null);
 
     const categoryOptions = useMemo(() => {
-        const writableCategories = getWritableScheduleCategories(state.categories);
+        const writableCategories = getWritableScheduleCategories(state.categories)
+            .filter((candidate) => isCategoryInCalendarScope(
+                candidate,
+                calendarId === null ? "personal" : calendarId,
+            ));
+        const currentCategory = item?.category
+            ? { ...item.category, calendarId: item.calendarId ?? null }
+            : undefined;
         if (
-            !item?.category
-            || !canWriteScheduleCategory(item.category)
-            || writableCategories.some((categoryItem) => categoryItem.id === item.category.id)
+            !currentCategory
+            || currentCategory.calendarId !== calendarId
+            || !canWriteScheduleCategory(currentCategory)
+            || writableCategories.some((categoryItem) => categoryItem.id === currentCategory.id)
         ) {
             return writableCategories;
         }
-        return [item.category, ...writableCategories];
-    }, [item?.category, state.categories]);
+        return [currentCategory, ...writableCategories];
+    }, [calendarId, item?.calendarId, item?.category, state.categories]);
+    const writableCalendars = useMemo(
+        () => getWritableScheduleCalendars(calendars),
+        [calendars],
+    );
 
     const category = useMemo<ScheduleCategory | undefined>(
         () => categoryOptions.find((c) => c.id === categoryId) ?? categoryOptions[0],
@@ -404,6 +456,31 @@ export default function ScheduleEdit({
         };
     }, [categoryRetryKey, developmentPreview, dispatch]);
 
+    useEffect(() => {
+        if (developmentPreview) {
+            setCalendarLoading(false);
+            setCalendarError(null);
+            return;
+        }
+        let cancelled = false;
+        setCalendarLoading(true);
+        getScheduleCalendars()
+            .then((items) => {
+                if (cancelled) return;
+                setCalendars(items);
+                setCalendarError(null);
+            })
+            .catch(() => {
+                if (!cancelled) setCalendarError("공유 캘린더를 불러오지 못했어요.");
+            })
+            .finally(() => {
+                if (!cancelled) setCalendarLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [calendarRetryKey, developmentPreview]);
+
     const retryCategoryLoad = useCallback(() => {
         setCategoryRetryKey((value) => value + 1);
     }, []);
@@ -438,7 +515,12 @@ export default function ScheduleEdit({
 
         setTitle(item.title);
         setNotes(getUserVisibleScheduleNotes(item.notes) ?? "");
-        setCategoryId(resolveWritableScheduleCategoryId(item.category, state.categories));
+        const nextCalendarId = item.calendarId ?? null;
+        setCalendarId(nextCalendarId);
+        const scopedCategories = state.categories.filter((candidate) => (
+            (candidate.calendarId ?? null) === nextCalendarId
+        ));
+        setCategoryId(resolveWritableScheduleCategoryId(item.category, scopedCategories));
         setOriginText(item.origin?.name ?? "");
         setDestinationText(item.destination?.name ?? "");
         setOriginAddress(item.origin?.address);
@@ -679,7 +761,7 @@ export default function ScheduleEdit({
     if (!item) {
         if (detailLoading) {
             return (
-                <View style={{ flex: 1, backgroundColor: colors.background }}>
+                <View style={[styles.editLoadingRoot, editPageBackgroundStyle]}>
                     <BrandedLoadingState
                         fill
                         size="full"
@@ -692,7 +774,11 @@ export default function ScheduleEdit({
         }
 
         return (
-            <View style={{ flex: 1, backgroundColor: colors.background, padding: 20, paddingTop: insets.top + 16 }}>
+            <View style={[
+                styles.editErrorRoot,
+                editPageBackgroundStyle,
+                { paddingTop: insets.top + 16 },
+            ]}>
                 <Text style={{ fontSize: 16, fontWeight: "700", color: colors.textPrimary }}>
                     {detailError ?? "일정을 찾을 수 없어요."}
                 </Text>
@@ -815,8 +901,7 @@ export default function ScheduleEdit({
             const updated = await updateSchedule(item.id, {
                 title: t,
                 category,
-                // 수정 화면에서는 공유 캘린더 소속을 노출하거나 변경하지 않고 그대로 보존한다.
-                calendarId: item.calendarId ?? null,
+                calendarId: canChangeCalendar ? calendarId : item.calendarId ?? null,
                 calendarContentModeOverride: item.calendarContentModeOverride ?? null,
                 startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
@@ -929,13 +1014,17 @@ export default function ScheduleEdit({
         ? getScheduleCalendarDateKey(displayPicker === "startDate" ? startDay : endDay)
         : "";
     return (
-        <View style={[styles.editRoot, { backgroundColor: colors.background }]}>
         <View
+            testID="schedule-edit-root"
+            style={[styles.editRoot, editPageBackgroundStyle]}
+        >
+        <View
+            testID="schedule-edit-header"
             style={[
                 styles.topHeader,
+                editPageBackgroundStyle,
                 {
                     paddingTop: insets.top + 6,
-                    backgroundColor: colors.background,
                 },
             ]}
         >
@@ -1012,6 +1101,26 @@ export default function ScheduleEdit({
                     onRetry={retryCategoryLoad}
                 />
             ) : null}
+
+            <ScheduleCalendarSelectBox
+                calendars={writableCalendars}
+                value={calendarId}
+                loading={calendarLoading}
+                error={calendarError}
+                locked={!canChangeCalendar}
+                onRetry={() => setCalendarRetryKey((value) => value + 1)}
+                onChange={(nextCalendarId) => {
+                    if (!canChangeCalendar || nextCalendarId === calendarId) return;
+                    markFormDirty();
+                    closeCategoryPicker();
+                    setCalendarId(nextCalendarId);
+                    const nextCategories = getWritableScheduleCategories(state.categories).filter((candidate) => (
+                        (candidate.calendarId ?? null) === nextCalendarId
+                    ));
+                    setCategoryId(nextCategories[0]?.id ?? "");
+                }}
+                onManageCalendars={() => router.push("/schedule/calendars")}
+            />
 
             {categoryPickerOpen || categoryPickerClosing ? (
                 <Pressable
@@ -1103,7 +1212,16 @@ export default function ScheduleEdit({
                             setCategoryId(nextCategoryId);
                             closeCategoryPicker();
                         }}
-                        onManageCategories={() => router.push("/schedule/categories")}
+                        onManageCategories={() => {
+                            const selectedCalendar = calendars.find((candidate) => candidate.id === calendarId);
+                            router.push(selectedCalendar ? {
+                                pathname: "/schedule/categories",
+                                params: {
+                                    calendarId: String(selectedCalendar.id),
+                                    calendarTitle: selectedCalendar.title,
+                                },
+                            } : "/schedule/categories");
+                        }}
                     />
                 </Animated.View>
             </View>
@@ -1369,6 +1487,13 @@ export default function ScheduleEdit({
 const styles = StyleSheet.create({
     editRoot: {
         flex: 1,
+    },
+    editLoadingRoot: {
+        flex: 1,
+    },
+    editErrorRoot: {
+        flex: 1,
+        padding: 20,
     },
     editBody: {
         flex: 1,

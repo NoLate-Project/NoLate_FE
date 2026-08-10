@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { Animated, Pressable, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import {
+    Animated,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
+    type AccessibilityState,
+    type ViewStyle,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
@@ -20,6 +28,7 @@ export type FloatingBarAction = {
     nativeSymbolName?: string;
     badgeCount?: number;
     accessibilityLabel: string;
+    accessibilityState?: AccessibilityState;
     onPress: () => void;
     disabled?: boolean;
     emphasized?: boolean;
@@ -249,6 +258,7 @@ function ActionButton({
         <Pressable
             accessibilityRole="button"
             accessibilityLabel={action.accessibilityLabel}
+            accessibilityState={action.accessibilityState}
             disabled={action.disabled}
             onPress={action.onPress}
             style={({ pressed }) => [
@@ -291,12 +301,7 @@ function ActionButton({
                     numberOfLines={1}
                     adjustsFontSizeToFit
                     minimumFontScale={0.82}
-                    style={[
-                        styles.actionText,
-                        {
-                            color: action.emphasized ? colors.textPrimary : colors.textPrimary,
-                        },
-                    ]}
+                    style={[styles.actionText, { color: colors.textPrimary }]}
                 >
                     {action.label}
                 </Text>

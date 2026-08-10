@@ -412,6 +412,36 @@ describe("schedule category api wrappers", () => {
         });
     });
 
+    test("shared-calendar category wrapper preserves and sends calendar id", async () => {
+        mockedApiPost.mockResolvedValue({
+            success: true,
+            data: {
+                id: 31,
+                title: "Owner Cat",
+                color: "#ff3b30",
+                calendarId: 16,
+                shared: true,
+                sharePermission: "OWNER",
+            },
+        });
+
+        await expect(
+            createScheduleCategoryToApi(" Owner Cat ", "#ff3b30", undefined, 16)
+        ).resolves.toMatchObject({
+            id: "31",
+            title: "Owner Cat",
+            calendarId: 16,
+            shared: true,
+            sharePermission: "OWNER",
+        });
+        expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-categories", {
+            title: "Owner Cat",
+            color: "#ff3b30",
+            iconKey: undefined,
+            calendarId: 16,
+        });
+    });
+
     test("keeps VIEWER and EDITOR metadata for received categories", async () => {
         mockedApiGet.mockResolvedValue({
             success: true,

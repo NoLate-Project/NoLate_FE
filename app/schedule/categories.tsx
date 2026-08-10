@@ -12,7 +12,7 @@ import {
     TextInput,
     View,
 } from "react-native";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
@@ -27,7 +27,10 @@ import CategoryLoadErrorBanner from "../../src/modules/schedule/components/form/
 import { useScheduleStore } from "../../src/modules/schedule/store";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { getCategorySharePermissionLabel } from "../../src/modules/share/sharePermissionPresentation";
-import { countOwnedScheduleCategories } from "../../src/modules/schedule/categoryPermissions";
+import {
+    canWriteScheduleCategory,
+    countOwnedScheduleCategories,
+} from "../../src/modules/schedule/categoryPermissions";
 import BrandedLoader from "../../src/ui/BrandedLoader";
 
 const CATEGORY_COLORS = [
@@ -46,6 +49,15 @@ const getErrorMessage = (error: unknown) =>
 
 export default function ScheduleCategoriesScreen() {
     const router = useRouter();
+    const params = useLocalSearchParams<{ calendarId?: string; calendarTitle?: string }>();
+    const calendarId = useMemo(() => {
+        const raw = Array.isArray(params.calendarId) ? params.calendarId[0] : params.calendarId;
+        const parsed = raw ? Number(raw) : NaN;
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    }, [params.calendarId]);
+    const calendarTitle = Array.isArray(params.calendarTitle)
+        ? params.calendarTitle[0]
+        : params.calendarTitle;
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
@@ -64,12 +76,14 @@ export default function ScheduleCategoriesScreen() {
     const controlsBusy = loading || saving;
 
     const categoryList = useMemo(
-        () => [...state.categories].filter((category) => category.id) as ScheduleCategoryItem[],
-        [state.categories]
+        () => [...state.categories].filter((category) => (
+            category.id && (category.calendarId ?? null) === calendarId
+        )) as ScheduleCategoryItem[],
+        [calendarId, state.categories]
     );
     const ownedCategoryCount = useMemo(
-        () => countOwnedScheduleCategories(categoryList),
-        [categoryList]
+        () => calendarId === null ? countOwnedScheduleCategories(categoryList) : categoryList.length,
+        [calendarId, categoryList]
     );
 
     const loadCategories = useCallback(async () => {
@@ -109,7 +123,7 @@ export default function ScheduleCategoriesScreen() {
         mutationPendingRef.current = true;
         setSaving(true);
         try {
-            const category = await createScheduleCategoryToApi(title, newColor);
+            const category = await createScheduleCategoryToApi(title, newColor, undefined, calendarId);
             dispatch({ type: "UPSERT_CATEGORY", category });
             setNewTitle("");
             setNewColor(CATEGORY_COLORS[categoryList.length % CATEGORY_COLORS.length]);
@@ -216,7 +230,9 @@ export default function ScheduleCategoriesScreen() {
                 >
                     <Ionicons accessible={false} name="chevron-back" size={24} color={colors.textPrimary} />
                 </Pressable>
-                <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
+                <Text numberOfLines={1} style={[styles.headerTitle, { color: colors.textPrimary }]}>
+                    {calendarId === null ? "개인 카테고리" : `${calendarTitle || "공유 캘린더"} 카테고리`}
+                </Text>
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="공유 캘린더 관리"
@@ -309,7 +325,9 @@ export default function ScheduleCategoriesScreen() {
 
                 {categoryList.map((category) => {
                     const editing = editingId === category.id;
-                    const isShared = category.shared === true;
+                    const isCalendarCategory = category.calendarId != null;
+                    const isReceivedLegacyShare = !isCalendarCategory && category.shared === true;
+                    const writable = canWriteScheduleCategory(category);
                     return (
                         <View
                             key={category.id}
@@ -389,7 +407,13 @@ export default function ScheduleCategoriesScreen() {
                                                 <Text style={[styles.categoryTitle, { color: colors.textPrimary }]} numberOfLines={1}>
                                                     {category.title}
                                                 </Text>
-                                                {isShared && (
+                                                {isCalendarCategory && (
+                                                    <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
+                                                        <Ionicons accessible={false} name="calendar-outline" size={13} color={colors.textSecondary} />
+                                                        <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>캘린더 소속</Text>
+                                                    </View>
+                                                )}
+                                                {isReceivedLegacyShare && (
                                                     <View style={[styles.sharedBadge, { backgroundColor: colors.surface2, borderColor: colors.border }]}>
                                                         <Ionicons accessible={false} name="people-outline" size={13} color={colors.textSecondary} />
                                                         <Text style={[styles.sharedBadgeText, { color: colors.textSecondary }]}>
@@ -398,7 +422,7 @@ export default function ScheduleCategoriesScreen() {
                                                     </View>
                                                 )}
                                             </View>
-                                            {isShared && (
+                                            {isReceivedLegacyShare && (
                                                 <Text style={[styles.categoryAssist, { color: colors.textSecondary }]} numberOfLines={1}>
                                                     받은 카테고리 · {getCategorySharePermissionLabel(category.sharePermission)}
                                                 </Text>
@@ -406,7 +430,7 @@ export default function ScheduleCategoriesScreen() {
                                         </View>
                                     </View>
                                     <View style={styles.rowActions}>
-                                        {!isShared && (
+                                        {!isCalendarCategory && !isReceivedLegacyShare && (
                                             <Pressable
                                                 accessibilityRole="button"
                                                 onPress={() => setSharingCategory(category)}
@@ -424,12 +448,12 @@ export default function ScheduleCategoriesScreen() {
                                         <Pressable
                                             accessibilityRole="button"
                                             accessibilityLabel={`${category.title} 수정`}
-                                            accessibilityState={{ disabled: isShared || controlsBusy }}
+                                            accessibilityState={{ disabled: !writable || controlsBusy }}
                                             onPress={() => startEditing(category)}
-                                            disabled={isShared || controlsBusy}
+                                            disabled={!writable || controlsBusy}
                                             style={({ pressed }) => [
                                                 styles.iconAction,
-                                                { opacity: isShared || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
+                                                { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
                                             ]}
                                         >
                                             <Ionicons accessible={false} name="create-outline" size={20} color={colors.textPrimary} />
@@ -437,12 +461,12 @@ export default function ScheduleCategoriesScreen() {
                                         <Pressable
                                             accessibilityRole="button"
                                             accessibilityLabel={`${category.title} 삭제`}
-                                            accessibilityState={{ disabled: isShared || controlsBusy }}
+                                            accessibilityState={{ disabled: !writable || controlsBusy }}
                                             onPress={() => confirmDelete(category.id)}
-                                            disabled={isShared || controlsBusy}
+                                            disabled={!writable || controlsBusy}
                                             style={({ pressed }) => [
                                                 styles.iconAction,
-                                                { opacity: isShared || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
+                                                { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
                                             ]}
                                         >
                                             <Ionicons
