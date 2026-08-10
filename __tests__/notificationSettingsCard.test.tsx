@@ -65,6 +65,7 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 
 const policy = {
     plan: "FREE" as const,
+    adsEnabled: false,
     maxSmartSchedulesPerMonth: 5,
     usedSmartSchedulesThisMonth: 0,
     maxNotificationLeadMinutes: 60,

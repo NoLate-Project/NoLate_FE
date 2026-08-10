@@ -2,6 +2,12 @@
   "name": "NoLate",
   "icon": "./assets/icon.png",
   "version": "1.3.0",
+  "react-native-google-mobile-ads": {
+    "android_app_id": "ca-app-pub-3940256099942544~3347511713",
+    "ios_app_id": "ca-app-pub-3940256099942544~1458002511",
+    "delay_app_measurement_init": true,
+    "user_tracking_usage_description": "맞춤형 광고 제공 여부를 선택하기 위해 기기 식별자 사용 권한이 필요합니다."
+  },
   "scheme": "nolate",
   "orientation": "portrait",
   "userInterfaceStyle": "automatic",
@@ -37,6 +43,7 @@
       {
         "android": {
           "usesCleartextTraffic": false,
+          "extraProguardRules": "-keep class com.google.android.gms.internal.consent_sdk.** { *; }",
           "extraMavenRepos": [
             "https://devrepo.kakao.com/nexus/content/groups/public/"
           ]
@@ -44,6 +51,17 @@
         "ios": {
           "deploymentTarget": "16.6"
         }
+      }
+    ],
+    [
+      "react-native-google-mobile-ads",
+      {
+        "androidAppId": "ca-app-pub-3940256099942544~3347511713",
+        "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+        "delayAppMeasurementInit": true,
+        "optimizeInitialization": true,
+        "optimizeAdLoading": true,
+        "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 식별자 사용 권한이 필요합니다."
       }
     ],
     [

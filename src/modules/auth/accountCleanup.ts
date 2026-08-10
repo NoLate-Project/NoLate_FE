@@ -27,9 +27,13 @@ import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../performance/navigationPerformanceQueue";
 import { clearLiveActivitiesForAccountCleanup } from "../notification/liveActivitySync";
+import { disableRouteDetailAdvertising } from "../advertising/routeDetailInterstitial";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
+    // The backend decision is account-specific. Never let a fresh account inherit the previous
+    // member's cached FREE/PREMIUM advertising state.
+    disableRouteDetailAdvertising();
     // Commit the lock-screen privacy boundary before the alarm coordinator clears
     // its durable departure-action journal. If Live Activity end or remote token
     // retirement fails, preserving that journal keeps the completed action

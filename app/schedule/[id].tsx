@@ -120,6 +120,10 @@ import {
     isDepartureStatusLocallyExpired,
 } from "../../src/modules/schedule/departureStatusRefreshPolicy";
 import { classifyDepartureNudgeResult } from "../../src/modules/schedule/departureNudgeResult";
+import {
+    primeRouteDetailAdvertising,
+    showRouteDetailInterstitialIfEligible,
+} from "../../src/modules/advertising/routeDetailInterstitial";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -453,6 +457,7 @@ export function ScheduleDetail({
     const currentLocationRequestGuardRef = useRef(createLatestRequestGuard());
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string>();
     const [routeSavePending, setRouteSavePending] = useState(false);
+    const routeDetailAdPendingRef = useRef(false);
     const [inspectedTravelPlan, setInspectedTravelPlan] = useState<ScheduleTravelPlan>();
     const [travelPlanDetailPendingMemberId, setTravelPlanDetailPendingMemberId] = useState<number>();
     const routePlannerWasActiveRef = useRef(false);
@@ -1242,8 +1247,13 @@ export function ScheduleDetail({
         }
     }, [currentMemberId, id, internalPreviewItem, snapSheet, travelPlanDetailPendingMemberId]);
 
-    const openCurrentRoutePlanner = useCallback(() => {
-        if (internalPreviewItem || !item || routeSavePending) return;
+    const openCurrentRoutePlanner = useCallback(async () => {
+        if (
+            internalPreviewItem ||
+            !item ||
+            routeSavePending ||
+            routeDetailAdPendingRef.current
+        ) return;
         const targetSessionId = `schedule-detail-${item.id}-${Date.now()}`;
         const travelMode = item.travelMode ?? routeOption?.mode ?? "CAR";
         const hasDetailedRoute = hasRenderableSavedRouteGeometry(
@@ -1264,18 +1274,31 @@ export function ScheduleDetail({
         }));
         routePlannerWasActiveRef.current = false;
         setRoutePlannerSessionId(targetSessionId);
-        router.push({
-            pathname: entryPath,
-            params: {
-                sessionId: targetSessionId,
-                routeId: hasDetailedRoute ? routeOption?.id : undefined,
-                routeIndex: "0",
-                sheetState: "middle",
-                entrySource: "schedule-detail",
-                departureAt: item.departAt,
-            },
-        });
-    }, [internalPreviewItem, item, routeOption, routeSavePending, router]);
+        routeDetailAdPendingRef.current = true;
+        try {
+            await showRouteDetailInterstitialIfEligible({
+                suppress: isRouteDetailEntryRequested(openRouteDetail),
+            });
+            router.push({
+                pathname: entryPath,
+                params: {
+                    sessionId: targetSessionId,
+                    routeId: hasDetailedRoute ? routeOption?.id : undefined,
+                    routeIndex: "0",
+                    sheetState: "middle",
+                    entrySource: "schedule-detail",
+                    departureAt: item.departAt,
+                },
+            });
+        } finally {
+            routeDetailAdPendingRef.current = false;
+        }
+    }, [internalPreviewItem, item, openRouteDetail, routeOption, routeSavePending, router]);
+
+    useEffect(() => {
+        if (internalPreviewItem) return;
+        primeRouteDetailAdvertising().catch(() => undefined);
+    }, [internalPreviewItem]);
 
     useEffect(() => {
         if (

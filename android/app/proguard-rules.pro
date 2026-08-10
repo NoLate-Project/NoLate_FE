@@ -12,3 +12,6 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# Google User Messaging Platform consent form classes are loaded reflectively.
+-keep class com.google.android.gms.internal.consent_sdk.** { *; }

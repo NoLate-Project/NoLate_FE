@@ -51,6 +51,23 @@ assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
 assert.equal(app.ios.buildNumber, "52");
+assert.equal(pkg.dependencies["react-native-google-mobile-ads"], "^16.4.0");
+const adsPlugin = app.plugins.find(
+  (entry) => Array.isArray(entry) && entry[0] === "react-native-google-mobile-ads",
+);
+assert.ok(adsPlugin, "Expo Google Mobile Ads config plugin is missing");
+assert.equal(
+  app["react-native-google-mobile-ads"]?.android_app_id,
+  adsPlugin[1]?.androidAppId,
+  "Bare Android and Expo AdMob App IDs must match",
+);
+assert.equal(
+  app["react-native-google-mobile-ads"]?.ios_app_id,
+  adsPlugin[1]?.iosAppId,
+  "Bare iOS and Expo AdMob App IDs must match",
+);
+assert.equal(app["react-native-google-mobile-ads"]?.delay_app_measurement_init, true);
+assert.equal(adsPlugin[1]?.delayAppMeasurementInit, true);
 assert.ok(
   app.plugins.includes("./plugins/withNoLateLiveActivity"),
   "The Live Activity config plugin must survive native regeneration",
@@ -154,6 +171,8 @@ for (const permission of ["CAMERA", "RECORD_AUDIO"]) {
 }
 assert.match(androidManifest, /android\.speech\.RecognitionService/);
 assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1/);
+assert.ok(androidManifest.includes(adsPlugin[1].androidAppId));
+assert.match(androidManifest, /com\.google\.android\.gms\.ads\.DELAY_APP_MEASUREMENT_INIT[\s\S]*?android:value="true"/);
 
 assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length >= 6);
 assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 4);
@@ -219,6 +238,9 @@ assert.match(iosInfo, /UISupportedInterfaceOrientations[\s\S]*?UIInterfaceOrient
 assert.doesNotMatch(iosInfo, /UIInterfaceOrientationLandscape|UIInterfaceOrientationPortraitUpsideDown/);
 assert.match(iosInfo, /NSRemindersUsageDescription/);
 assert.match(iosInfo, /NSRemindersFullAccessUsageDescription/);
+assert.ok(iosInfo.includes(adsPlugin[1].iosAppId));
+assert.match(iosInfo, /GADDelayAppMeasurementInit[\s\S]*?<true\/>/);
+assert.match(iosInfo, /NSUserTrackingUsageDescription/);
 assert.ok(app.ios.infoPlist.NSRemindersUsageDescription);
 assert.ok(app.ios.infoPlist.NSRemindersFullAccessUsageDescription);
 assert.match(privacyManifest, /NSPrivacyCollectedDataTypeEmailAddress/);
