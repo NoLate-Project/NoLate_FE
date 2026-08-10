@@ -58,6 +58,7 @@
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",
+    "versionCode": 42,
     "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {

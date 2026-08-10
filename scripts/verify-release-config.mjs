@@ -45,12 +45,12 @@ const dependencyPatches = readdirSync(resolve(root, "patches"))
   .filter((name) => name.endsWith(".patch"))
   .map((name) => ({ name, source: read(`patches/${name}`) }));
 
-assert.equal(app.version, "1.2.0");
+assert.equal(app.version, "1.3.0");
 assert.equal(app.orientation, "portrait", "The phone UI is designed and verified for portrait only");
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "50");
+assert.equal(app.ios.buildNumber, "52");
 assert.ok(
   app.plugins.includes("./plugins/withNoLateLiveActivity"),
   "The Live Activity config plugin must survive native regeneration",
@@ -111,8 +111,9 @@ assert.ok(
 assert.ok(rootAndroidFirebaseConfig === nativeAndroidFirebaseConfig, "Android Firebase config copies must match");
 assert.ok(rootIosFirebaseConfig === nativeIosFirebaseConfig, "iOS Firebase config copies must match");
 
-assert.match(androidGradle, /versionCode 41/);
-assert.match(androidGradle, /versionName "1\.2\.0"/);
+assert.equal(app.android.versionCode, 42);
+assert.match(androidGradle, /versionCode 42/);
+assert.match(androidGradle, /versionName "1\.3\.0"/);
 assert.match(androidGradle, /release \{\s+signingConfig signingConfigs\.release/);
 assert.match(androidGradle, /Release signing is not configured/);
 assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
@@ -154,8 +155,8 @@ for (const permission of ["CAMERA", "RECORD_AUDIO"]) {
 assert.match(androidManifest, /android\.speech\.RecognitionService/);
 assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1/);
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 50;/g) ?? []).length >= 6);
-assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length >= 6);
+assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
 assert.ok(/APS_ENVIRONMENT = production;/.test(iosProject), "Release APNs environment must be production");
