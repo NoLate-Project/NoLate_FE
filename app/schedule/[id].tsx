@@ -3,6 +3,7 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
+    AppState,
     BackHandler,
     Easing,
     LayoutAnimation,
@@ -20,6 +21,7 @@ import {
     type LayoutChangeEvent,
 } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
+import { useIsFocused } from "@react-navigation/native";
 import { useLocalSearchParams, usePathname, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -110,8 +112,10 @@ import { completeScheduleDeparture } from "../../src/modules/schedule/scheduleDe
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
 import {
     buildEffectiveTransitRoutePresentation,
+    retainFreshDepartureStatus,
     resolveScheduleDetailDepartureTiming,
 } from "../../src/modules/schedule/effectiveTransitRoutePresentation";
+import { getDepartureStatusRefreshDelay } from "../../src/modules/schedule/departureStatusRefreshPolicy";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -350,6 +354,7 @@ export function ScheduleDetail({
     }>();
     const pathname = usePathname();
     const router = useRouter();
+    const isFocused = useIsFocused();
     const goBack = useCallback(() => goBackFromScheduleDetail(router), [router]);
     const insets = useSafeAreaInsets();
     const { height: windowHeight } = useWindowDimensions();
@@ -369,6 +374,10 @@ export function ScheduleDetail({
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [departureStatus, setDepartureStatus] = useState<ScheduleDepartureStatus>();
+    const [acceptedDepartureStatus, setAcceptedDepartureStatus] = useState<ScheduleDepartureStatus>();
+    const [departureStatusNextCheckAt, setDepartureStatusNextCheckAt] = useState<string | null>();
+    const [departureStatusRefreshRevision, setDepartureStatusRefreshRevision] = useState(0);
+    const [appStateStatus, setAppStateStatus] = useState(AppState.currentState);
     const [retryKey, setRetryKey] = useState(0);
     const baseSheetHeights = getScheduleDetailSheetHeights(windowHeight);
     const sheetMaxHeight = baseSheetHeights.maxHeight;
@@ -443,6 +452,11 @@ export function ScheduleDetail({
     const routePlannerWasActiveRef = useRef(false);
     const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
     const autoOpenedRouteDetailItemIdRef = useRef<string | undefined>(undefined);
+    const activeDepartureStatusScheduleIdRef = useRef<string | undefined>(id);
+    const departureStatusRequestRef = useRef<{
+        scheduleId: string;
+        promise: Promise<void>;
+    } | undefined>(undefined);
 
     const item = internalPreviewItem ?? (id ? state.itemsById[id] : undefined);
     const canManageSchedule = useMemo(() => {
@@ -485,7 +499,7 @@ export function ScheduleDetail({
     }, [inspectedTravelPlan, item]);
     const displayedDepartureTiming = useMemo(
         () => resolveScheduleDetailDepartureTiming({
-            status: departureStatus,
+            status: acceptedDepartureStatus,
             savedRecommendedDepartureAt,
             savedTravelMinutes: item?.travelMinutes,
             isInspectingTravelPlan: Boolean(inspectedTravelPlan),
@@ -493,7 +507,7 @@ export function ScheduleDetail({
             inspectedTravelMinutes: inspectedTravelPlan?.travelMinutes,
         }),
         [
-            departureStatus,
+            acceptedDepartureStatus,
             inspectedRecommendedDepartureAt,
             inspectedTravelPlan,
             item?.travelMinutes,
@@ -536,12 +550,24 @@ export function ScheduleDetail({
         setDepartureNudgePendingMemberId(undefined);
         setPreviewDepartedAt(undefined);
         setDepartureStatus(undefined);
+        setAcceptedDepartureStatus(undefined);
+        setDepartureStatusNextCheckAt(undefined);
+        setDepartureStatusRefreshRevision(0);
         autoOpenedRouteDetailItemIdRef.current = undefined;
     }, [id, participantDisclosureProgress, previewParticipantsExpanded]);
 
     useEffect(() => () => {
         currentLocationRequestGuardRef.current.invalidate();
     }, []);
+
+    useEffect(() => {
+        activeDepartureStatusScheduleIdRef.current = id;
+        return () => {
+            if (activeDepartureStatusScheduleIdRef.current === id) {
+                activeDepartureStatusScheduleIdRef.current = undefined;
+            }
+        };
+    }, [id]);
 
     useEffect(() => {
         if (internalPreviewItem) return undefined;
@@ -559,6 +585,91 @@ export function ScheduleDetail({
             cancelled = true;
         };
     }, [internalPreviewItem]);
+
+    const refreshDepartureStatus = useCallback((): Promise<void> => {
+        if (!id || internalPreviewItem || routePlannerSessionId || routeSavePending) {
+            return Promise.resolve();
+        }
+
+        const inFlight = departureStatusRequestRef.current;
+        if (inFlight?.scheduleId === id) return inFlight.promise;
+
+        const scheduleId = id;
+        let request: Promise<void>;
+        request = getScheduleDepartureStatus(scheduleId)
+            .then((status) => {
+                if (activeDepartureStatusScheduleIdRef.current !== scheduleId) return;
+                setDepartureStatus(status);
+                setAcceptedDepartureStatus((current) => retainFreshDepartureStatus(current, status));
+                setDepartureStatusNextCheckAt(status.nextCheckAt);
+            })
+            .catch(() => {
+                // 보조 ETA 재조회 실패는 현재 화면 상태와 저장 일정 조회에 영향을 주지 않는다.
+            })
+            .finally(() => {
+                if (activeDepartureStatusScheduleIdRef.current === scheduleId) {
+                    setDepartureStatusRefreshRevision((current) => current + 1);
+                }
+                if (departureStatusRequestRef.current?.promise === request) {
+                    departureStatusRequestRef.current = undefined;
+                }
+            });
+        departureStatusRequestRef.current = { scheduleId, promise: request };
+        return request;
+    }, [id, internalPreviewItem, routePlannerSessionId, routeSavePending]);
+
+    useEffect(() => {
+        let observedAppState = AppState.currentState;
+        setAppStateStatus(observedAppState);
+        const subscription = AppState.addEventListener("change", (nextState) => {
+            if (nextState === observedAppState) return;
+            observedAppState = nextState;
+            setAppStateStatus(nextState);
+        });
+        return () => subscription.remove();
+    }, []);
+
+    useEffect(() => {
+        if (!isFocused || appStateStatus !== "active") return;
+        refreshDepartureStatus();
+    }, [appStateStatus, isFocused, refreshDepartureStatus]);
+
+    useEffect(() => {
+        if (
+            !id ||
+            internalPreviewItem ||
+            !isFocused ||
+            appStateStatus !== "active" ||
+            routePlannerSessionId ||
+            routeSavePending
+        ) return undefined;
+
+        const delay = getDepartureStatusRefreshDelay({
+            nextCheckAt: departureStatusNextCheckAt,
+            nowMs: Date.now(),
+        });
+        const timeoutId = setTimeout(() => {
+            refreshDepartureStatus();
+        }, delay);
+        return () => clearTimeout(timeoutId);
+    }, [
+        appStateStatus,
+        departureStatusNextCheckAt,
+        departureStatusRefreshRevision,
+        id,
+        internalPreviewItem,
+        isFocused,
+        refreshDepartureStatus,
+        routePlannerSessionId,
+        routeSavePending,
+    ]);
+
+    useEffect(() => {
+        if (!routeSavePending) return;
+        setDepartureStatus(undefined);
+        setAcceptedDepartureStatus(undefined);
+        setDepartureStatusNextCheckAt(undefined);
+    }, [routeSavePending]);
 
     const sheetQuickSummaryAnimatedStyle = useMemo(() => ({
         height: sheetTranslateY.interpolate({
@@ -698,16 +809,6 @@ export function ScheduleDetail({
         let cancelled = false;
         setLoading(true);
         setLoadError(null);
-        setDepartureStatus(undefined);
-
-        getScheduleDepartureStatus(id)
-            .then((status) => {
-                if (!cancelled) setDepartureStatus(status);
-            })
-            .catch(() => {
-                // ETA 상태는 보조 정보다. 실패해도 저장된 일정과 경로는 정상 표시한다.
-                if (!cancelled) setDepartureStatus(undefined);
-            });
 
         getSchedule(id)
             .then((detail) => {
@@ -1353,8 +1454,17 @@ export function ScheduleDetail({
             ? departureDisplayState.text
             : scheduleCountdown.compactValue;
     const routeArrivalSummary = hasRouteSummary
-        ? `${arrivalTimeLabel} 도착 · 총 ${currentRouteDurationLabel}`
+        ? `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`
         : scheduleRangeLabel;
+    const effectiveRouteAccessibilityLabel = effectiveTransitRoutePresentation
+        ? [
+            "실시간 추천 경로",
+            effectiveTransitRoutePresentation.summary,
+            effectiveTransitRoutePresentation.itinerary,
+            effectiveTransitRoutePresentation.waitMeta,
+            effectiveTransitRoutePresentation.mapNote,
+        ].filter(Boolean).join(", ")
+        : undefined;
     const routeWalkingMinutes = routeDetailInfo?.steps.reduce((total, step) => (
         step.type === "WALK" && typeof step.durationMinutes === "number"
             ? total + step.durationMinutes
@@ -2014,9 +2124,7 @@ export function ScheduleDetail({
                                         `권장 출발 ${recommendedDepartureTimeLabel}`,
                                         departureRemainingLabel,
                                         routeArrivalSummary,
-                                        effectiveTransitRoutePresentation
-                                            ? `실시간 추천 경로, ${effectiveTransitRoutePresentation.itinerary}, ${effectiveTransitRoutePresentation.mapNote}`
-                                            : undefined,
+                                        effectiveRouteAccessibilityLabel,
                                         ...routeFactLabels,
                                         routeProgressSegments.length > 0
                                             ? getTransitRouteSummaryAccessibilityLabel(routeProgressSegments)
@@ -2282,7 +2390,7 @@ export function ScheduleDetail({
                             <View
                                 accessible
                                 accessibilityRole="summary"
-                                accessibilityLabel={`실시간 추천 경로, ${effectiveTransitRoutePresentation.summary}, ${effectiveTransitRoutePresentation.itinerary}, ${effectiveTransitRoutePresentation.mapNote}`}
+                                accessibilityLabel={effectiveRouteAccessibilityLabel}
                                 style={[
                                     styles.effectiveRouteCard,
                                     isDark
@@ -2316,6 +2424,14 @@ export function ScheduleDetail({
                                 >
                                     {effectiveTransitRoutePresentation.itinerary}
                                 </Text>
+                                {effectiveTransitRoutePresentation.waitMeta ? (
+                                    <View style={styles.effectiveRouteWaitMetaRow}>
+                                        <Ionicons name="time-outline" size={13} color={topCardAccentText} />
+                                        <Text style={[styles.effectiveRouteWaitMeta, { color: topCardAccentText }]}>
+                                            {effectiveTransitRoutePresentation.waitMeta}
+                                        </Text>
+                                    </View>
+                                ) : null}
                                 <View style={styles.effectiveRouteMapNoteRow}>
                                     <Ionicons name="map-outline" size={13} color={secondaryText} />
                                     <Text style={[styles.effectiveRouteMapNote, { color: secondaryText }]}>
@@ -3186,6 +3302,21 @@ const styles = StyleSheet.create({
         marginTop: 9,
         fontSize: 12,
         lineHeight: 18,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    effectiveRouteWaitMetaRow: {
+        minWidth: 0,
+        marginTop: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    effectiveRouteWaitMeta: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 10,
+        lineHeight: 14,
         fontWeight: "700",
         letterSpacing: 0,
     },

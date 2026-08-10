@@ -8,9 +8,20 @@ const detailSource = readFileSync("app/schedule/[id].tsx", "utf8");
 
 describe("schedule detail effective transit route integration", () => {
     it("loads departure status independently without replacing the saved schedule request", () => {
-        expect(detailSource).toContain("getScheduleDepartureStatus(id)");
+        expect(detailSource).toContain("getScheduleDepartureStatus(scheduleId)");
         expect(detailSource).toContain("getSchedule(id)");
-        expect(detailSource).toContain("ETA 상태는 보조 정보다. 실패해도 저장된 일정과 경로는 정상 표시한다.");
+        expect(detailSource).toContain("보조 ETA 재조회 실패는 현재 화면 상태와 저장 일정 조회에 영향을 주지 않는다.");
+        expect(detailSource).toContain("retainFreshDepartureStatus(current, status)");
+    });
+
+    it("refreshes on focus, foreground activation, and a bounded nextCheckAt timer", () => {
+        expect(detailSource).toContain("const isFocused = useIsFocused();");
+        expect(detailSource).toContain('AppState.addEventListener("change"');
+        expect(detailSource).toContain('appStateStatus !== "active"');
+        expect(detailSource).toContain("getDepartureStatusRefreshDelay({");
+        expect(detailSource).toContain("nextCheckAt: departureStatusNextCheckAt");
+        expect(detailSource).toContain("const timeoutId = setTimeout(() => {");
+        expect(detailSource).toContain("departureStatusRequestRef.current");
     });
 
     it("keeps saved map geometry and renders an alternative only as text guidance", () => {
@@ -24,5 +35,6 @@ describe("schedule detail effective transit route integration", () => {
         expect(detailSource).toContain("effectiveTransitRoutePresentation.mapNote");
         expect(detailSource).not.toContain("displayRoute = departureStatus");
         expect(detailSource).not.toContain("route: departureStatus.effectiveTransitRoute");
+        expect(detailSource).toContain("`일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`");
     });
 });

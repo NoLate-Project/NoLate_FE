@@ -17,6 +17,7 @@ export type ScheduleDetailDepartureTiming = {
 export type EffectiveTransitRoutePresentation = {
     summary: string;
     itinerary: string;
+    waitMeta?: string;
     mapNote: string;
 };
 
@@ -32,12 +33,33 @@ function parseDate(value: string | null | undefined): Date | undefined {
     return Number.isFinite(parsed.getTime()) ? parsed : undefined;
 }
 
-function formatClock(value: string | null | undefined): string | undefined {
-    const parsed = parseDate(value);
-    if (!parsed) return undefined;
+function formatLocalClock(parsed: Date): string {
     const hours = String(parsed.getHours()).padStart(2, "0");
     const minutes = String(parsed.getMinutes()).padStart(2, "0");
     return `${hours}:${minutes}`;
+}
+
+function formatClock(
+    value: string | null | undefined,
+    timeZone: string | null | undefined,
+): string | undefined {
+    const parsed = parseDate(value);
+    if (!parsed) return undefined;
+
+    if (timeZone) {
+        try {
+            return new Intl.DateTimeFormat("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+                hour12: false,
+                timeZone,
+            }).format(parsed);
+        } catch {
+            // Older Hermes runtimes and invalid IANA zones fall back to device-local display.
+        }
+    }
+
+    return formatLocalClock(parsed);
 }
 
 /**
@@ -58,6 +80,14 @@ export function getFreshDepartureTiming(
         recommendedDepartureAt,
         travelMinutes: status.travelMinutes,
     };
+}
+
+/** Stale/failure refreshes may update retry metadata, but never replace accepted UI timing. */
+export function retainFreshDepartureStatus(
+    current: ScheduleDepartureStatus | undefined,
+    candidate: ScheduleDepartureStatus,
+): ScheduleDepartureStatus | undefined {
+    return getFreshDepartureTiming(candidate) ? candidate : current;
 }
 
 /**
@@ -105,17 +135,11 @@ function compactPlaceRange(segment: EffectiveTransitRouteSegment): string | unde
 }
 
 function segmentLabel(segment: EffectiveTransitRouteSegment): string {
-    const duration = isPositiveMinute(segment.durationMinutes)
-        ? `${Math.ceil(segment.durationMinutes)}분`
-        : undefined;
-    const wait = isPositiveMinute(segment.waitingMinutes)
-        ? `대기 ${Math.ceil(segment.waitingMinutes)}분`
-        : undefined;
     const places = compactPlaceRange(segment);
     const direction = segment.directionName?.trim();
 
     if (segment.kind === "WALK") {
-        return ["도보", duration, places].filter(Boolean).join(" ");
+        return ["도보", places].filter(Boolean).join(" · ");
     }
 
     const mode = segment.kind === "BUS"
@@ -124,7 +148,7 @@ function segmentLabel(segment: EffectiveTransitRouteSegment): string {
             ? "지하철"
             : "이동";
     const line = segment.lineName?.trim() || mode;
-    return [line, places, direction, duration, wait].filter(Boolean).join(" · ");
+    return [line, places, direction].filter(Boolean).join(" · ");
 }
 
 function itineraryLabel(route: EffectiveTransitRoute): string {
@@ -146,8 +170,8 @@ export function buildEffectiveTransitRoutePresentation(
     const route = status.effectiveTransitRoute;
     if (!route) return undefined;
 
-    const departureAt = formatClock(route.departureAt);
-    const arrivalAt = formatClock(route.arrivalAt);
+    const departureAt = formatClock(route.departureAt, status.timeZone);
+    const arrivalAt = formatClock(route.arrivalAt, status.timeZone);
     const totalMinutes = isPositiveMinute(route.totalMinutes)
         ? `${Math.ceil(route.totalMinutes)}분`
         : undefined;
@@ -164,6 +188,9 @@ export function buildEffectiveTransitRoutePresentation(
             .filter(Boolean)
             .join(" · "),
         itinerary: itineraryLabel(route),
+        waitMeta: isPositiveMinute(status.firstBoardingWaitMinutes)
+            ? `첫 승차 대기 ${Math.ceil(status.firstBoardingWaitMinutes)}분 · 총시간에 포함`
+            : undefined,
         mapNote: MAP_SAVED_ROUTE_NOTE,
     };
 }

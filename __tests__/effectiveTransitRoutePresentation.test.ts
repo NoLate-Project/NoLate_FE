@@ -2,6 +2,7 @@ import type { ScheduleDepartureStatus } from "../src/api/schedule";
 import {
     buildEffectiveTransitRoutePresentation,
     getFreshDepartureTiming,
+    retainFreshDepartureStatus,
     resolveScheduleDetailDepartureTiming,
 } from "../src/modules/schedule/effectiveTransitRoutePresentation";
 
@@ -25,6 +26,7 @@ function departureStatus(
         preparationStartAt: null,
         safetyBufferMinutes: null,
         timeZone: "Asia/Seoul",
+        firstBoardingWaitMinutes: 6,
         routeChanged: true,
         effectiveTransitRoute: {
             provider: "odsay",
@@ -81,9 +83,53 @@ describe("effective transit route presentation", () => {
 
         expect(presentation).toEqual({
             summary: "09:10 출발 · 10:08 도착 · 총 58분",
-            itinerary: "도보 4분 현재 위치→강남역  →  간선 740 · 강남역→교대역 · 26분 · 대기 6분  →  2호선 · 교대역→시청역 · 외선순환 · 22분",
+            itinerary: "도보 · 현재 위치→강남역  →  간선 740 · 강남역→교대역  →  2호선 · 교대역→시청역 · 외선순환",
+            waitMeta: "첫 승차 대기 6분 · 총시간에 포함",
             mapNote: "지도에는 저장한 경로가 표시돼요",
         });
+        expect(presentation?.itinerary).not.toContain("26분");
+        expect(presentation?.itinerary).not.toContain("대기 6분");
+    });
+
+    it("formats effective route clocks in the server schedule timezone", () => {
+        const seoul = buildEffectiveTransitRoutePresentation(departureStatus({
+            timeZone: "Asia/Seoul",
+        }));
+        const utc = buildEffectiveTransitRoutePresentation(departureStatus({
+            timeZone: "UTC",
+        }));
+
+        expect(seoul?.summary).toBe("09:10 출발 · 10:08 도착 · 총 58분");
+        expect(utc?.summary).toBe("00:10 출발 · 01:08 도착 · 총 58분");
+    });
+
+    it("falls back to the device timezone when the server timezone is unsupported", () => {
+        const departureAt = new Date("2026-08-10T09:10:00+09:00");
+        const arrivalAt = new Date("2026-08-10T10:08:00+09:00");
+        const localClock = (date: Date) => [date.getHours(), date.getMinutes()]
+            .map((part) => String(part).padStart(2, "0"))
+            .join(":");
+
+        const presentation = buildEffectiveTransitRoutePresentation(departureStatus({
+            timeZone: "Unsupported/Timezone",
+        }));
+
+        expect(presentation?.summary).toBe(
+            `${localClock(departureAt)} 출발 · ${localClock(arrivalAt)} 도착 · 총 58분`,
+        );
+    });
+
+    it("retains accepted timing when a refresh is stale or failed", () => {
+        const accepted = departureStatus();
+        const replacement = departureStatus({ travelMinutes: 62 });
+
+        expect(retainFreshDepartureStatus(accepted, departureStatus({ stale: true })))
+            .toBe(accepted);
+        expect(retainFreshDepartureStatus(
+            accepted,
+            departureStatus({ failureReason: "PROVIDER_TIMEOUT" }),
+        )).toBe(accepted);
+        expect(retainFreshDepartureStatus(accepted, replacement)).toBe(replacement);
     });
 
     it("never mixes the current member status into an inspected participant plan", () => {
