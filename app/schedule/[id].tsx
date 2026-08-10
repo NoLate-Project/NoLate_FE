@@ -461,7 +461,7 @@ export function ScheduleDetail({
         promise: Promise<void>;
     } | undefined>(undefined);
     const departureStatusRequestGenerationRef = useRef(0);
-    const departureStatusNextCheckAtRef = useRef<string | null | undefined>(undefined);
+    const departureStatusEtaRefreshDueAtRef = useRef<string | null | undefined>(undefined);
     const departureStatusEvaluatedAtRef = useRef<string | undefined>(undefined);
     const departureStatusRefreshEligible = Boolean(
         id &&
@@ -570,7 +570,7 @@ export function ScheduleDetail({
         setDepartureStatusNextCheckAt(undefined);
         departureStatusRequestGenerationRef.current += 1;
         departureStatusRequestRef.current = undefined;
-        departureStatusNextCheckAtRef.current = undefined;
+        departureStatusEtaRefreshDueAtRef.current = undefined;
         departureStatusEvaluatedAtRef.current = undefined;
         setDepartureStatusRefreshRevision(0);
         autoOpenedRouteDetailItemIdRef.current = undefined;
@@ -628,7 +628,7 @@ export function ScheduleDetail({
                 setDepartureStatus(status);
                 setAcceptedDepartureStatus(resolveAcceptedDepartureStatus(status));
                 setDepartureStatusNextCheckAt(status.nextCheckAt);
-                departureStatusNextCheckAtRef.current = status.nextCheckAt;
+                departureStatusEtaRefreshDueAtRef.current = status.etaRefreshDueAt;
                 departureStatusEvaluatedAtRef.current = status.evaluatedAt;
             })
             .catch(() => {
@@ -636,7 +636,7 @@ export function ScheduleDetail({
                 if (!isCurrentRequest()) return;
 
                 const locallyExpired = isDepartureStatusLocallyExpired({
-                    nextCheckAt: departureStatusNextCheckAtRef.current,
+                    etaRefreshDueAt: departureStatusEtaRefreshDueAtRef.current,
                     evaluatedAt: departureStatusEvaluatedAtRef.current,
                     nowMs: Date.now(),
                 });
@@ -645,7 +645,7 @@ export function ScheduleDetail({
                 if (locallyExpired) {
                     setDepartureStatus(undefined);
                     setAcceptedDepartureStatus(undefined);
-                    departureStatusNextCheckAtRef.current = undefined;
+                    departureStatusEtaRefreshDueAtRef.current = undefined;
                     departureStatusEvaluatedAtRef.current = undefined;
                 }
             })
@@ -707,7 +707,7 @@ export function ScheduleDetail({
         setDepartureStatus(undefined);
         setAcceptedDepartureStatus(undefined);
         setDepartureStatusNextCheckAt(undefined);
-        departureStatusNextCheckAtRef.current = undefined;
+        departureStatusEtaRefreshDueAtRef.current = undefined;
         departureStatusEvaluatedAtRef.current = undefined;
     }, [routeSavePending]);
 

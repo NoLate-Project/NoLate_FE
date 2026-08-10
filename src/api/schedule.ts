@@ -85,6 +85,7 @@ export type ScheduleDepartureStatus = {
     lastTrafficChangeMinutes: number | null;
     lastChangedAt: string | null;
     nextCheckAt: string | null;
+    etaRefreshDueAt?: string | null;
     preparationMinutes: number | null;
     preparationStartAt: string | null;
     safetyBufferMinutes: number | null;

@@ -30,18 +30,20 @@ export function getDepartureStatusRefreshDelay({
 
 /** Fails closed when the server cannot be reached beyond the normal worker grace window. */
 export function isDepartureStatusLocallyExpired({
-    nextCheckAt,
+    etaRefreshDueAt,
     evaluatedAt,
     nowMs,
 }: {
-    nextCheckAt: string | null | undefined;
+    etaRefreshDueAt: string | null | undefined;
     evaluatedAt?: string | null;
     nowMs: number;
 }): boolean {
-    const parsedNextCheckAt = nextCheckAt ? Date.parse(nextCheckAt) : Number.NaN;
+    const parsedEtaRefreshDueAt = etaRefreshDueAt
+        ? Date.parse(etaRefreshDueAt)
+        : Number.NaN;
     const parsedEvaluatedAt = evaluatedAt ? Date.parse(evaluatedAt) : Number.NaN;
-    const freshnessBaseline = Number.isFinite(parsedNextCheckAt)
-        ? parsedNextCheckAt
+    const freshnessBaseline = Number.isFinite(parsedEtaRefreshDueAt)
+        ? parsedEtaRefreshDueAt
         : parsedEvaluatedAt;
     if (!Number.isFinite(freshnessBaseline) || !Number.isFinite(nowMs)) return true;
     return nowMs > freshnessBaseline + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS;

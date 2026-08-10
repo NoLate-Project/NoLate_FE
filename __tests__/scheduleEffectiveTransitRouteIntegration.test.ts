@@ -26,6 +26,7 @@ describe("schedule detail effective transit route integration", () => {
         expect(detailSource).toContain("departureStatusRequestGenerationRef.current === requestGeneration");
         expect(detailSource).toContain("Losing focus/foreground or entering route edit/save invalidates the old request context.");
         expect(detailSource).toContain("isDepartureStatusLocallyExpired({");
+        expect(detailSource).toContain("etaRefreshDueAt: departureStatusEtaRefreshDueAtRef.current");
         expect(detailSource).toContain("evaluatedAt: departureStatusEvaluatedAtRef.current");
         expect(detailSource).toContain("A failed overdue request retries on the fallback cadence");
         expect(detailSource).toContain("setAcceptedDepartureStatus(undefined)");

@@ -38,6 +38,7 @@ describe("schedule departure status API", () => {
             lastTrafficChangeMinutes: 7,
             lastChangedAt: "2026-08-10T00:00:00Z",
             nextCheckAt: "2026-08-10T00:05:00Z",
+            etaRefreshDueAt: "2026-08-10T00:05:00Z",
             preparationMinutes: null,
             preparationStartAt: null,
             safetyBufferMinutes: null,

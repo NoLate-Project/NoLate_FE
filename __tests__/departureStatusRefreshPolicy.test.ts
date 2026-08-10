@@ -40,34 +40,45 @@ describe("departure status refresh timer policy", () => {
         },
     );
 
-    it("expires an unreachable snapshot only after the local worker grace", () => {
-        const nextCheckAt = "2026-08-10T00:01:00Z";
+    it("expires an unreachable snapshot only after its immutable ETA refresh due boundary", () => {
+        const etaRefreshDueAt = "2026-08-10T00:01:00Z";
 
         expect(isDepartureStatusLocallyExpired({
-            nextCheckAt,
-            nowMs: Date.parse(nextCheckAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS,
+            etaRefreshDueAt,
+            nowMs: Date.parse(etaRefreshDueAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS,
         })).toBe(false);
         expect(isDepartureStatusLocallyExpired({
-            nextCheckAt,
-            nowMs: Date.parse(nextCheckAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS + 1,
+            etaRefreshDueAt,
+            nowMs: Date.parse(etaRefreshDueAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS + 1,
         })).toBe(true);
     });
 
-    it("uses evaluatedAt as a fail-closed TTL when nextCheckAt is unavailable", () => {
+    it("does not let a later retry nextCheckAt revive an expired ETA snapshot", () => {
+        const etaRefreshDueAt = "2026-08-10T00:05:00Z";
+        const mutableRetryNextCheckAt = "2026-08-10T00:20:00Z";
+
+        expect(Date.parse(mutableRetryNextCheckAt)).toBeGreaterThan(Date.parse(etaRefreshDueAt));
+        expect(isDepartureStatusLocallyExpired({
+            etaRefreshDueAt,
+            nowMs: Date.parse(etaRefreshDueAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS + 1,
+        })).toBe(true);
+    });
+
+    it("uses evaluatedAt as a fail-closed TTL for legacy responses without etaRefreshDueAt", () => {
         const evaluatedAt = "2026-08-10T00:00:00Z";
 
         expect(isDepartureStatusLocallyExpired({
-            nextCheckAt: null,
+            etaRefreshDueAt: null,
             evaluatedAt,
             nowMs: Date.parse(evaluatedAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS,
         })).toBe(false);
         expect(isDepartureStatusLocallyExpired({
-            nextCheckAt: null,
+            etaRefreshDueAt: null,
             evaluatedAt,
             nowMs: Date.parse(evaluatedAt) + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS + 1,
         })).toBe(true);
         expect(isDepartureStatusLocallyExpired({
-            nextCheckAt: null,
+            etaRefreshDueAt: null,
             evaluatedAt: undefined,
             nowMs,
         })).toBe(true);
