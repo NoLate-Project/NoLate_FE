@@ -8,6 +8,7 @@ import type { DepartureAlarmCapabilities } from "../src/modules/notification/dep
 const mockGetCapabilities = jest.fn();
 const mockOpenExactAlarmSettings = jest.fn();
 const mockOpenFullScreenAlarmSettings = jest.fn();
+const mockOpenNotificationSettings = jest.fn();
 const mockRequestPushNotificationPermission = jest.fn();
 const mockStartAlarmAudio = jest.fn();
 const mockStopAlarmAudio = jest.fn();
@@ -22,6 +23,7 @@ jest.mock("../src/modules/notification/departureAlarm", () => ({
     getNativeNoLateAlarmSoundPreference: (...args: unknown[]) => mockGetNativeAlarmSound(...args),
     openExactAlarmSettings: (...args: unknown[]) => mockOpenExactAlarmSettings(...args),
     openFullScreenAlarmSettings: (...args: unknown[]) => mockOpenFullScreenAlarmSettings(...args),
+    openNotificationSettings: (...args: unknown[]) => mockOpenNotificationSettings(...args),
     setNativeNoLateAlarmSoundPreference: (...args: unknown[]) => mockSetNativeAlarmSound(...args),
 }));
 jest.mock("../src/modules/notification/customAlarmAudio", () => ({
@@ -42,7 +44,8 @@ jest.mock("../src/modules/notification/customAlarmSounds", () => {
     };
 });
 jest.mock("../src/modules/notification/pushPermission", () => ({
-    requestPushNotificationPermission: (...args: unknown[]) => mockRequestPushNotificationPermission(...args),
+    requestPushPermissionAndRegisterCurrentDevice: (...args: unknown[]) =>
+        mockRequestPushNotificationPermission(...args),
 }));
 jest.mock("../src/modules/theme/ThemeContext", () => ({
     useTheme: () => ({
@@ -107,6 +110,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         mockGetCapabilities.mockReset().mockResolvedValue(iosReady);
         mockOpenExactAlarmSettings.mockReset().mockResolvedValue(true);
         mockOpenFullScreenAlarmSettings.mockReset().mockResolvedValue(true);
+        mockOpenNotificationSettings.mockReset().mockResolvedValue(true);
         mockStopAlarmAudio.mockReset().mockResolvedValue(undefined);
         mockStartAlarmAudio.mockReset().mockResolvedValue({
             setMuted: jest.fn().mockResolvedValue(undefined),
@@ -168,7 +172,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
     test("푸시 알림과 출발 알람을 한 목록에서 바로 비교하고 선택한다", async () => {
         await renderCard("STANDARD", "flat");
 
-        expect(mockGetCapabilities).not.toHaveBeenCalled();
+        expect(mockGetCapabilities).toHaveBeenCalledTimes(1);
         expect(
             renderer!.root.findByProps({
                 accessibilityLabel: "출발 알림 방식",
@@ -204,6 +208,64 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         });
 
         expect(onAlertModeChange.mock.calls).toEqual([["ALARM"], ["STANDARD"]]);
+    });
+
+    test("푸시 알림도 권한이 없으면 알림 허용과 기기 등록을 바로 요청한다", async () => {
+        mockGetCapabilities
+            .mockResolvedValueOnce({
+                ...iosReady,
+                notificationAuthorized: false,
+                notificationAuthorization: "notDetermined",
+                reason: "NOTIFICATION_PERMISSION_NOT_DETERMINED",
+            })
+            .mockResolvedValue(iosReady);
+        await renderCard("STANDARD", "flat");
+
+        expect(renderer!.root.findByProps({ testID: "notification-permission-notice" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "알림 권한이 필요해요" })).toBeTruthy();
+        expect(
+            renderer!.root.findByProps({
+                children: "출발 알림을 받으려면 NoLate 알림을 허용해 주세요.",
+            }),
+        ).toBeTruthy();
+
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "알림 권한이 필요해요, 알림 허용" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockRequestPushNotificationPermission).toHaveBeenCalledTimes(1);
+        expect(renderer!.root.findAllByProps({ testID: "notification-permission-notice" })).toHaveLength(0);
+    });
+
+    test("푸시 알림 권한이 거부됐으면 저장 영향과 설정 경로를 함께 안내한다", async () => {
+        mockGetCapabilities.mockResolvedValue({
+            ...iosReady,
+            notificationAuthorized: false,
+            notificationAuthorization: "denied",
+            reason: "NOTIFICATION_PERMISSION_REQUIRED",
+        });
+        await renderCard("STANDARD", "flat");
+
+        expect(renderer!.root.findByProps({ children: "알림이 꺼져 있어요" })).toBeTruthy();
+        expect(
+            renderer!.root.findByProps({
+                children: "일정은 저장되지만 출발 알림은 오지 않아요. 설정에서 NoLate 알림을 켜 주세요.",
+            }),
+        ).toBeTruthy();
+
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "알림이 꺼져 있어요, 설정 열기" })
+                .props.onPress();
+        });
+
+        expect(mockOpenNotificationSettings).toHaveBeenCalledTimes(1);
+        expect(linkingSpy).not.toHaveBeenCalled();
+        expect(mockRequestPushNotificationPermission).not.toHaveBeenCalled();
     });
 
     test("flat UI는 추천 출발 요약과 알림 방식을 한 카드에 모으고 내부 권한 표는 숨긴다", async () => {
@@ -456,7 +518,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(renderer!.root.findAllByProps({ children: "알람음을 바꾸지 못했어요." })).toHaveLength(0);
     });
 
-    test("최초 iOS 알림 요청은 앱 안의 알림 켜기 버튼으로 시작한다", async () => {
+    test("최초 iOS 알림 요청은 앱 안의 알림 허용 버튼으로 시작한다", async () => {
         mockGetCapabilities.mockResolvedValue({
             ...iosReady,
             notificationAuthorized: false,
@@ -465,7 +527,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         });
         await renderCard("ALARM", "flat");
 
-        expect(renderer!.root.findByProps({ children: "알림을 켜 주세요" })).toBeTruthy();
+        expect(renderer!.root.findByProps({ children: "알림 권한이 필요해요" })).toBeTruthy();
         expect(
             renderer!.root.findByProps({
                 accessibilityLabel: "알림음, 현재 차임",
@@ -475,12 +537,13 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await act(async () => {
             await renderer!.root
                 .findByProps({
-                    accessibilityLabel: "알림을 켜 주세요, 알림 켜기",
+                    accessibilityLabel: "알림 권한이 필요해요, 알림 허용",
                 })
                 .props.onPress();
         });
 
         expect(mockRequestPushNotificationPermission).toHaveBeenCalledTimes(1);
+        expect(mockOpenNotificationSettings).not.toHaveBeenCalled();
         expect(linkingSpy).not.toHaveBeenCalled();
     });
 
@@ -508,7 +571,8 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
                 .props.onPress();
         });
 
-        expect(linkingSpy).toHaveBeenCalledTimes(1);
+        expect(mockOpenNotificationSettings).toHaveBeenCalledTimes(1);
+        expect(linkingSpy).not.toHaveBeenCalled();
         expect(mockRequestPushNotificationPermission).not.toHaveBeenCalled();
     });
 
@@ -643,7 +707,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         });
         expect(
             renderer!.root.findAllByProps({
-                testID: "notification-alarm-setting-notice",
+                testID: "notification-permission-notice",
             }),
         ).toHaveLength(0);
 
@@ -657,7 +721,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         });
         expect(
             renderer!.root.findAllByProps({
-                testID: "notification-alarm-setting-notice",
+                testID: "notification-permission-notice",
             }),
         ).toHaveLength(0);
     });

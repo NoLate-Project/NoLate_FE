@@ -39,3 +39,29 @@ export async function requestPushNotificationPermission(
     }
     return true;
 }
+
+/**
+ * Handles the explicit, user-initiated permission flow from notification settings.
+ *
+ * Permission and remote-token registration normally happen during the authenticated
+ * app bootstrap. When that bootstrap previously stopped because permission was
+ * denied, granting permission in-place must also restart registration; otherwise
+ * the UI can look ready while the server still has no token for this device.
+ */
+export async function requestPushPermissionAndRegisterCurrentDevice(): Promise<boolean> {
+    const allowed = await requestPushNotificationPermission();
+    if (!allowed) return false;
+
+    // Load these only after the user taps the permission CTA. Importing
+    // pushRegistration while rendering the form would initialize the native
+    // messaging bridge before it is needed.
+    const { getAuthMember } = require("../auth/authStorage") as typeof import("../auth/authStorage");
+    const { registerPushAfterLogin } = require("./pushRegistration") as typeof import("./pushRegistration");
+    const memberId = (await getAuthMember())?.id;
+    if (typeof memberId !== "number" || !Number.isSafeInteger(memberId) || memberId <= 0) {
+        throw new Error("Authenticated member is unavailable for push registration.");
+    }
+
+    await registerPushAfterLogin(memberId);
+    return true;
+}
