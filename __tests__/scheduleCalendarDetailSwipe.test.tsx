@@ -170,6 +170,7 @@ const WEEK_COUNT_TEST_PAGE_LAYOUTS: DetailMonthPageLayouts = {
 const EMPTY_SCHEDULE_ITEMS: React.ComponentProps<
     typeof ScheduleCalendar
 >["items"] = [];
+let mockThemeMode: "light" | "dark" = "light";
 
 jest.mock("@expo/vector-icons", () => ({
     Ionicons: () => null,
@@ -197,7 +198,7 @@ jest.mock("../src/modules/schedule/components/calendar/CustomDay", () => () => {
 
 jest.mock("../src/modules/theme/ThemeContext", () => ({
     useTheme: () => ({
-        mode: "light",
+        mode: mockThemeMode,
         colors: {
             arrowColor: "#111111",
             border: "#dddddd",
@@ -255,6 +256,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
     });
 
     beforeEach(() => {
+        mockThemeMode = "light";
         mockCalendarProps = null;
         mockCalendarInitialDates = [];
         mockCalendarPropsByInitialDate = new Map();
@@ -1599,7 +1601,11 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(getDetailMonthSelectionText("next")).toBe("");
     });
 
-    test("오늘 선택은 overlay를 숨기고 정적 빨간 today circle을 유지한다", async () => {
+    test.each([
+        ["light", "#2979FF"],
+        ["dark", "#4B9DFF"],
+    ] as const)("오늘 선택은 overlay를 숨기고 %s 모드 NoLate 파란 원형을 유지한다", async (mode, expectedColor) => {
+        mockThemeMode = mode;
         const now = new Date();
         const today = [
             now.getFullYear(),
@@ -1626,7 +1632,7 @@ describe("ScheduleCalendar detail month swipe motion", () => {
         expect(cell.props.accessibilityLabel).not.toContain("선택됨");
         const circle = cell.findByProps({ testID: "calendar-day-circle" });
         expect(StyleSheet.flatten(circle.props.style).backgroundColor).toBe(
-            "#ff3b30"
+            expectedColor
         );
     });
 

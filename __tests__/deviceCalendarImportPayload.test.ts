@@ -1,6 +1,7 @@
 import {
     buildCalendarImportSource,
     buildSchedulePayloadFromCandidate,
+    getDefaultSelectedCandidateIds,
     type DeviceCalendarCandidate,
 } from "../src/modules/onboarding/deviceCalendarImport";
 
@@ -16,7 +17,6 @@ const CANDIDATE: DeviceCalendarCandidate = {
     allDay: false,
     locationName: "서울역",
     requiresTimeReview: false,
-    recommended: true,
 };
 
 const SETTINGS = {
@@ -27,6 +27,20 @@ const SETTINGS = {
 };
 
 describe("calendar import schedule payload", () => {
+    test("모든 후보를 기본 선택해 전체 가져오기를 기본값으로 사용한다", () => {
+        const allDayCandidate = {
+            ...CANDIDATE,
+            id: "APPLE_DEVICE:calendar:all-day:2099-01-03T00:00:00.000Z",
+            eventId: "all-day",
+            allDay: true,
+            requiresTimeReview: true,
+        };
+
+        expect(getDefaultSelectedCandidateIds([CANDIDATE, allDayCandidate])).toEqual(
+            new Set([CANDIDATE.id, allDayCandidate.id])
+        );
+    });
+
     test("원본 캘린더 발생 건 식별자를 반복 가져오기 API 형식으로 보존한다", () => {
         expect(buildCalendarImportSource(CANDIDATE)).toEqual({
             provider: "APPLE_DEVICE",

@@ -11,6 +11,8 @@ import type {
     StackEventPresentation,
 } from "../src/modules/schedule/components/calendar/stackCalendarLayout";
 
+let mockThemeMode: "light" | "dark" = "light";
+
 jest.mock("@expo/vector-icons", () => {
     const ReactActual = jest.requireActual("react");
     const ReactNative = jest.requireActual("react-native");
@@ -44,7 +46,7 @@ jest.mock("react-native-reanimated", () => {
 
 jest.mock("../src/modules/theme/ThemeContext", () => ({
     useTheme: () => ({
-        mode: "light",
+        mode: mockThemeMode,
         colors: {
             selectedDayBg: "#111111",
             selectedDayText: "#ffffff",
@@ -88,6 +90,7 @@ describe("CustomDay stack indicators", () => {
             renderer?.unmount();
         });
         renderer = undefined;
+        mockThemeMode = "light";
     });
 
     async function renderDay({
@@ -179,6 +182,18 @@ describe("CustomDay stack indicators", () => {
         };
     }
 
+    test.each([
+        ["light", "#2979FF"],
+        ["dark", "#4B9DFF"],
+    ] as const)("%s 모드 오늘 날짜는 NoLate 파란 원형을 사용한다", async (mode, expectedColor) => {
+        mockThemeMode = mode;
+        const root = await renderDay({ state: "today" });
+        const [circle] = findViewsByTestId(root, "calendar-day-circle");
+
+        expect(StyleSheet.flatten(circle.props.style).backgroundColor)
+            .toBe(expectedColor);
+    });
+
     test("스택형은 이동수단 아이콘이 포함된 날짜별 pill 두 줄을 표시한다", async () => {
         const root = await renderDay({ eventCount: 2 });
         const chips = findStackChips(root);
@@ -195,7 +210,7 @@ describe("CustomDay stack indicators", () => {
         expect(icons[0].props.name).toBe("bus-outline");
     });
 
-    test("스택형은 기존 130pt 행과 pill 기준선을 사용한다", async () => {
+    test("스택형은 pill 두 줄을 보존하는 116pt 행과 기존 기준선을 사용한다", async () => {
         const root = await renderDay({ eventCount: 1, holiday: true });
         const [chips] = findViewsByTestId(root, "stack-event-chips");
         const pressable = root.findByProps({ accessibilityRole: "button" });
@@ -203,7 +218,7 @@ describe("CustomDay stack indicators", () => {
         const chipsStyle = StyleSheet.flatten(chips.props.style);
         const pressableStyle = StyleSheet.flatten(pressable.props.style({ pressed: false }));
 
-        expect(pressableStyle.height).toBe(130);
+        expect(pressableStyle.height).toBe(116);
         expect(pressableStyle.paddingTop).toBe(8);
         expect(chipsStyle.top).toBe(62);
     });

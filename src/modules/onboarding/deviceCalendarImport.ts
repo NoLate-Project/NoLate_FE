@@ -21,7 +21,6 @@ export type DeviceCalendarCandidate = {
     locationName?: string;
     notes?: string;
     requiresTimeReview: boolean;
-    recommended: boolean;
 };
 
 export type CalendarImportSettings = {
@@ -185,11 +184,7 @@ export async function loadDeviceCalendarSources(): Promise<DeviceCalendarSource[
 }
 
 export function getDefaultSelectedCandidateIds(candidates: DeviceCalendarCandidate[]): Set<string> {
-    const selectable = candidates.filter((candidate) => !candidate.requiresTimeReview);
-    const recommended = selectable.filter((candidate) => candidate.recommended).slice(0, 5);
-    const fallback = selectable.slice(0, 3);
-
-    return new Set((recommended.length > 0 ? recommended : fallback).map((candidate) => candidate.id));
+    return new Set(candidates.map((candidate) => candidate.id));
 }
 
 export function buildSchedulePayloadFromCandidate(
@@ -278,8 +273,7 @@ function toCandidate(
     const notes = normalizeText(event.notes);
     const allDay = Boolean(event.allDay);
 
-    // MVP에서는 종일 일정에 시간을 묻는 별도 분기까지 만들지 않는다.
-    // 대신 후보에 보여주되 기본 선택에서 제외해 사용자의 흐름이 멈추지 않게 한다.
+    // 종일 일정도 가져오기 후보에 포함한다. 시간 기반 경로 준비만 이후 단계에서 제외한다.
     const requiresTimeReview = allDay;
 
     return {
@@ -301,7 +295,6 @@ function toCandidate(
         locationName,
         notes,
         requiresTimeReview,
-        recommended: isRecommendedCandidate(startDate, title, locationName, requiresTimeReview),
     };
 }
 
@@ -334,25 +327,7 @@ function toCalendarSource(calendar: ExpoCalendarCalendar): DeviceCalendarSource 
     };
 }
 
-function isRecommendedCandidate(
-    startDate: Date,
-    title: string,
-    locationName: string | undefined,
-    requiresTimeReview: boolean
-): boolean {
-    return (
-        !requiresTimeReview &&
-        startDate.getTime() >= startOfToday().getTime() &&
-        title !== UNTITLED_EVENT &&
-        Boolean(locationName)
-    );
-}
-
 function compareCandidates(a: DeviceCalendarCandidate, b: DeviceCalendarCandidate): number {
-    if (a.recommended !== b.recommended) {
-        return a.recommended ? -1 : 1;
-    }
-
     if (a.requiresTimeReview !== b.requiresTimeReview) {
         return a.requiresTimeReview ? 1 : -1;
     }
@@ -380,10 +355,4 @@ function addDays(date: Date, days: number): Date {
     const next = new Date(date);
     next.setDate(next.getDate() + days);
     return next;
-}
-
-function startOfToday(): Date {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    return date;
 }

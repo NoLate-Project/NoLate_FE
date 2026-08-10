@@ -17,8 +17,8 @@ describe("calendar view modes", () => {
         ]);
     });
 
-    test("uses the original fixed stack height only for the continuous month view", () => {
-        expect(CALENDAR_DAY_HEIGHTS.stack).toBe(130);
+    test("keeps enough stack height for event lanes without the unused tail space", () => {
+        expect(CALENDAR_DAY_HEIGHTS.stack).toBe(116);
         expect(isContinuousMonthViewMode("stack")).toBe(true);
         expect(isContinuousMonthViewMode("detail")).toBe(false);
         expect(isContinuousMonthViewMode("week")).toBe(false);

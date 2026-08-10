@@ -297,13 +297,30 @@ describe("QuickScheduleModal flow", () => {
             text: "없음",
         });
         expect(renderer!.root.findAllByProps({ accessibilityLabel: "빠른 일정 입력 수정" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "입력 내용 수정" })).toBeDefined();
-        expect(
-            StyleSheet.flatten(findButtonByText("일정 저장").props.style({ pressed: false })),
-        ).toMatchObject({ width: "100%", height: 46 });
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-source-summary" }).props.accessibilityRole)
+            .toBeUndefined();
+        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-edit-button" }).props.accessibilityLabel)
+            .toBe("입력 내용 수정");
+        const titleAction = renderer!.root.findByProps({ accessibilityLabel: "제목 수정" });
+        expect(StyleSheet.flatten(titleAction.props.style({ pressed: false }))).toMatchObject({ minHeight: 44 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-line" }).props.style,
+        )).toMatchObject({ minHeight: 44, flexDirection: "row", alignItems: "center" });
+        expect(titleAction.findAllByProps({ numberOfLines: 1 }).length).toBeGreaterThan(0);
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-edit-button" }).props.style({ pressed: false }),
+        )).toMatchObject({ flex: 1, height: 46 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-primary-button" }).props.style({ pressed: false }),
+        )).toMatchObject({ flex: 1.22, height: 46 });
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-actions" }).props.style,
+        )).toMatchObject({ flexDirection: "row", alignItems: "center", gap: 8 });
+        expect(findButtonByText("수정")).toBeDefined();
+        expect(findButtonByText("일정 저장")).toBeDefined();
     });
 
-    test("쓰기 가능한 카테고리를 모두 보여주고 화면에서 고른 카테고리로 저장한다", async () => {
+    test("제목 옆 선택 박스에서 쓰기 가능한 카테고리를 고르고 그대로 저장한다", async () => {
         const onSave = jest.fn().mockResolvedValue(undefined);
         const personalCategory: ScheduleCategory = {
             id: "personal",
@@ -338,35 +355,37 @@ describe("QuickScheduleModal flow", () => {
             [personalCategory, workCategory, sharedEditorCategory, sharedViewerCategory],
         );
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: true });
-        expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
-        )).toMatchObject({
-            left: 2,
-            top: 11,
-            bottom: 11,
-            width: 4,
-            borderRadius: 2,
-            backgroundColor: personalCategory.color,
+        const categoryTrigger = renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" });
+        expect(categoryTrigger.props.accessibilityState).toMatchObject({ expanded: false, disabled: false });
+        expect(categoryTrigger.props.hitSlop).toEqual({ top: 5, right: 4, bottom: 5, left: 4 });
+        expect(StyleSheet.flatten(categoryTrigger.props.style({ pressed: false }))).toMatchObject({
+            maxWidth: 128,
+            minHeight: 34,
+            borderWidth: 1,
         });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" })).toBeDefined();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "프로젝트 카테고리 선택" })).toBeDefined();
-        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리 선택" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityRole: "radiogroup" })).toHaveLength(0);
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.onPress();
+            categoryTrigger.props.onPress();
         });
-        const workChip = renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" });
-        expect(workChip.props.hitSlop).toEqual({ top: 7, bottom: 7 });
-        expect(StyleSheet.flatten(workChip.props.style({ pressed: false }))).toMatchObject({ minHeight: 30 });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: false });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: true });
-        expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
-        )).toMatchObject({ backgroundColor: workCategory.color });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" }).props.accessibilityState)
+            .toMatchObject({ expanded: true });
+        const openPickerSlot = StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "quick-schedule-preview-category-picker-slot" }).props.style,
+        );
+        expect(openPickerSlot.marginBottom._config.outputRange).toEqual([-12, 0]);
+        expect(openPickerSlot.paddingTop._config.outputRange).toEqual([0, 6]);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "프로젝트 카테고리" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리" }).props.accessibilityState)
+            .toMatchObject({ checked: true });
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리" }).props.onPress();
+        });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" }).props.accessibilityState)
+            .toMatchObject({ expanded: false, disabled: false });
 
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "메모 수정" }).props.onPress();
@@ -375,8 +394,7 @@ describe("QuickScheduleModal flow", () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 미리보기로 돌아가기" }).props.onPress();
         });
         expect(alertSpy).not.toHaveBeenCalled();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: true });
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" })).toBeDefined();
 
         await act(async () => {
             findButtonByText("일정 저장").props.onPress();
@@ -407,22 +425,77 @@ describe("QuickScheduleModal flow", () => {
         );
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리 선택" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "업무 카테고리" }).props.onPress();
         });
         await rerender([personalCategory]);
 
-        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 카테고리 선택" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "개인 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: true });
-        expect(StyleSheet.flatten(
-            renderer!.root.findByProps({ testID: "quick-schedule-preview-title-category-pin" }).props.style,
-        )).toMatchObject({ backgroundColor: personalCategory.color });
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 카테고리" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" })).toBeDefined();
 
         await act(async () => {
             findButtonByText("일정 저장").props.onPress();
             await Promise.resolve();
         });
         expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ category: personalCategory }));
+    });
+
+    test("기본 카테고리가 서버 목록에서 사라지면 남아 있는 카테고리로 복구한다", async () => {
+        const onSave = jest.fn().mockResolvedValue(undefined);
+        const personalCategory: ScheduleCategory = {
+            id: "personal",
+            title: "개인",
+            color: "#34C759",
+        };
+        const workCategory: ScheduleCategory = {
+            id: "work",
+            title: "업무",
+            color: "#FF9500",
+        };
+        const rerender = await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed()),
+            onSave,
+            personalCategory,
+            jest.fn(),
+            [personalCategory, workCategory],
+        );
+
+        await rerender([workCategory]);
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "개인 카테고리" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 업무" })).toBeDefined();
+
+        await act(async () => {
+            findButtonByText("일정 저장").props.onPress();
+            await Promise.resolve();
+        });
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ category: workCategory }));
+    });
+
+    test("열린 상태에서 카테고리가 비면 선택 박스를 닫고 비활성화한다", async () => {
+        const personalCategory: ScheduleCategory = {
+            id: "personal",
+            title: "개인",
+            color: "#34C759",
+        };
+        const rerender = await renderAndAnalyze(
+            jest.fn().mockResolvedValue(parsed()),
+            jest.fn(),
+            personalCategory,
+            jest.fn(),
+            [personalCategory],
+        );
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 개인" }).props.onPress();
+        });
+        await rerender([]);
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "개인 카테고리" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 없음" }).props.accessibilityState)
+            .toMatchObject({ expanded: false, disabled: true });
     });
 
     test("읽기 전용 기본값은 건너뛰고 첫 쓰기 가능 카테고리를 최초 선택한다", async () => {
@@ -447,28 +520,26 @@ describe("QuickScheduleModal flow", () => {
             [viewerCategory, writableCategory],
         );
 
-        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리 선택" })).toHaveLength(0);
-        expect(renderer!.root.findByProps({ accessibilityLabel: "내 일정 카테고리 선택" }).props.accessibilityState)
-            .toMatchObject({ selected: true });
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "받은 일정 카테고리" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "카테고리 선택, 현재 내 일정" })).toBeDefined();
     });
 
-    test("제목·날짜·시간은 각각의 편집 이동 표시를 제공한다", async () => {
+    test("제목·날짜·시간은 반복 화살표 없이 편집 동작을 제공한다", async () => {
         await renderAndAnalyze(jest.fn().mockResolvedValue(parsed()));
 
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-title-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-date-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
-        expect(renderer!.root.findByProps({ testID: "quick-schedule-preview-time-chevron" }).props.name).toBe(
-            "chevron-forward",
-        );
+        expect(renderer!.root.findByProps({ accessibilityLabel: "제목 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "날짜 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "시간 수정" })).toBeDefined();
         expect(
             renderer!.root
                 .findByProps({ testID: "quick-schedule-preview-date-time" })
                 .findAllByProps({ name: "chevron-forward" }),
-        ).toHaveLength(2);
+        ).toHaveLength(0);
+        expect(
+            renderer!.root
+                .findByProps({ testID: "quick-schedule-preview-title-category-line" })
+                .findAllByProps({ name: "chevron-forward" }),
+        ).toHaveLength(0);
     });
 
     test("날짜와 시간은 같은 일시 행에서 각각 해당 편집기를 연다", async () => {

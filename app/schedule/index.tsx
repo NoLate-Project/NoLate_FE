@@ -46,6 +46,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import CalendarWrapper, { type DayTransitionContext } from "../../src/modules/schedule/components/calendar/CalendarWrapper";
 import CalendarYearOverviewModal from "../../src/modules/schedule/components/calendar/CalendarYearOverviewModal";
+import {
+    getCalendarYearScheduleFetchRanges,
+    mergeCalendarYearScheduleItems,
+} from "../../src/modules/schedule/components/calendar/calendarYearScheduleDensity";
+import { getCalendarTodayAccent } from "../../src/modules/schedule/components/calendar/calendarTodayAccent";
 import CalendarGlassSurface from "../../src/modules/schedule/components/calendar/CalendarGlassSurface";
 import CalendarSettingsModal from "../../src/modules/schedule/components/calendar/CalendarSettingsModal";
 import CalendarViewModeGlyph from "../../src/modules/schedule/components/calendar/CalendarViewModeGlyph";
@@ -74,6 +79,7 @@ import {
     usesMonthInPrimaryPill,
 } from "../../src/modules/schedule/components/calendar/viewMode";
 import GlobalFloatingActionBar, { type FloatingBarAction } from "../../src/modules/schedule/components/shared/GlobalFloatingActionBar";
+import { getFloatingActionBarClearance } from "../../src/modules/schedule/components/shared/floatingActionBarLayout";
 import {
     MonthAgendaList,
     SelectedDayAgendaPanel,
@@ -504,6 +510,12 @@ export default function ScheduleIndex() {
     const [dayTransitionTargetDay, setDayTransitionTargetDay] = useState<string | null>(null);
     const [yearOverviewVisible, setYearOverviewVisible] = useState(false);
     const [yearOverviewClosing, setYearOverviewClosing] = useState(false);
+    const [yearOverviewItemsByYear, setYearOverviewItemsByYear] = useState<
+        Record<number, ScheduleItem[]>
+    >({});
+    const yearOverviewLoadedYearsRef = useRef(new Set<number>());
+    const yearOverviewLoadInFlightRef = useRef(new Map<number, Promise<void>>());
+    const yearOverviewLoadSessionRef = useRef(0);
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState<ScheduleItem[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
@@ -1643,7 +1655,7 @@ export default function ScheduleIndex() {
         keyboardVisible;
     const stackBottomContentInset = bottomBarHidden
         ? 0
-        : 44 + Math.max(insets.bottom, 10) + 16;
+        : getFloatingActionBarClearance(insets.bottom);
     const isAnyDepthTransitionActive =
         isDayTransitionActive ||
         isYearDepthTransitionActive ||
@@ -2264,6 +2276,70 @@ export default function ScheduleIndex() {
         () => Object.values(state.itemsById),
         [state.itemsById]
     );
+    const loadYearOverviewSchedules = useCallback((targetYear: number) => {
+        if (!Number.isInteger(targetYear)) return;
+        if (
+            yearOverviewLoadedYearsRef.current.has(targetYear)
+            || yearOverviewLoadInFlightRef.current.has(targetYear)
+        ) return;
+
+        const loadSession = yearOverviewLoadSessionRef.current;
+        let request: Promise<void>;
+        request = Promise.allSettled(
+            getCalendarYearScheduleFetchRanges(targetYear).map((range) => (
+                refreshCalendarScheduleCache(
+                    range.startAt,
+                    range.endAt,
+                    getCalendarSchedules
+                )
+            ))
+        )
+            .then((results) => {
+                if (loadSession !== yearOverviewLoadSessionRef.current) return;
+
+                const snapshots = results.flatMap((result) => (
+                    result.status === "fulfilled" ? [result.value] : []
+                ));
+                if (snapshots.length === 0) return;
+
+                yearOverviewLoadedYearsRef.current.add(targetYear);
+                setYearOverviewItemsByYear((current) => ({
+                    ...current,
+                    [targetYear]: mergeCalendarYearScheduleItems(
+                        snapshots.flatMap((snapshot) => snapshot.items)
+                    ),
+                }));
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                if (yearOverviewLoadInFlightRef.current.get(targetYear) === request) {
+                    yearOverviewLoadInFlightRef.current.delete(targetYear);
+                }
+            });
+        yearOverviewLoadInFlightRef.current.set(targetYear, request);
+    }, []);
+    const yearOverviewItems = useMemo(
+        () => mergeCalendarYearScheduleItems([
+            ...Object.values(yearOverviewItemsByYear).flat(),
+            ...itemsArray,
+        ]),
+        [itemsArray, yearOverviewItemsByYear]
+    );
+
+    useEffect(() => {
+        yearOverviewLoadSessionRef.current += 1;
+        yearOverviewLoadedYearsRef.current.clear();
+        yearOverviewLoadInFlightRef.current.clear();
+        setYearOverviewItemsByYear({});
+        if (!yearOverviewVisible) return;
+
+        loadYearOverviewSchedules(overviewYear);
+    }, [
+        loadYearOverviewSchedules,
+        overviewYear,
+        yearOverviewPresentationRequest,
+        yearOverviewVisible,
+    ]);
     // The calendar range already contains the nearby schedules needed by the
     // agenda notice. Reuse it instead of issuing an unbounded /api/schedules
     // request on every focus/foreground transition.
@@ -4837,11 +4913,13 @@ export default function ScheduleIndex() {
                     year={overviewYear}
                     selectedDay={selectedDay}
                     firstDay={firstDay}
+                    items={yearOverviewItems}
                     topInset={insets.top}
                     presentationRequest={yearOverviewPresentationRequest}
                     todayRequest={yearTodayRequest}
                     reduceMotionEnabled={reduceMotionEnabled}
                     onSelectMonth={selectOverviewMonth}
+                    onVisibleYearChange={loadYearOverviewSchedules}
                 />
             </Animated.View>
 
@@ -5104,7 +5182,7 @@ function DayDisplay({
     const currentMinute = timelineNow.getHours() * 60 + timelineNow.getMinutes() + timelineNow.getSeconds() / 60;
     const currentTimeLabel = formatCurrentTimeLabel(timelineNow);
     const isSelectedToday = selectedDay === todayKey;
-    const accentColor = mode === "dark" ? "#ff453a" : "#ff3b30";
+    const accentColor = getCalendarTodayAccent(mode);
     const multiDayRangeTitle = useMemo(() => formatWeekRangeTitle(multiDayDays), [multiDayDays]);
     const contentTitle = dayViewMode === "singleDay"
         ? formatDayTitle(selectedDay)
@@ -5703,11 +5781,14 @@ function DayDisplay({
             ref={attachSingleDayTimelineRef}
             style={[
                 styles.dayTimelineScroll,
-                { backgroundColor: colors.calendarBackground },
+                {
+                    backgroundColor: colors.calendarBackground,
+                    marginBottom: getFloatingActionBarClearance(bottomInset),
+                },
             ]}
             contentContainerStyle={[
                 styles.dayTimelineContent,
-                { paddingBottom: Math.max(bottomInset + 146, 162) },
+                styles.floatingBarContentEnd,
             ]}
             showsVerticalScrollIndicator={false}
             contentOffset={{ x: 0, y: initialTimelineOffset }}
@@ -5834,11 +5915,14 @@ function DayDisplay({
             ref={attachMultiDayTimelineRef}
             style={[
                 styles.dayTimelineScroll,
-                { backgroundColor: colors.calendarBackground },
+                {
+                    backgroundColor: colors.calendarBackground,
+                    marginBottom: getFloatingActionBarClearance(bottomInset),
+                },
             ]}
             contentContainerStyle={[
                 styles.dayTimelineContent,
-                { paddingBottom: Math.max(bottomInset + 146, 162) },
+                styles.floatingBarContentEnd,
             ]}
             showsVerticalScrollIndicator={false}
             contentOffset={{ x: 0, y: initialTimelineOffset }}
@@ -7361,6 +7445,9 @@ const styles = StyleSheet.create({
     dayTimelineContent: {
         paddingHorizontal: 0,
         paddingTop: 0,
+    },
+    floatingBarContentEnd: {
+        paddingBottom: 24,
     },
     timelineInlineState: {
         position: "absolute",

@@ -58,14 +58,18 @@ import {
     shouldConsumeCalendarImportHardwareBack,
 } from "../../src/modules/onboarding/calendarImportNavigation";
 import {
+    getCalendarImportSourceKey,
     getWritableCalendarImportCategories,
+    hasCalendarImportCategoryOverride,
     resolveCalendarImportCategory,
+    resolveCalendarImportCategoryAssignment,
 } from "../../src/modules/onboarding/calendarImportCategory";
 import CalendarImportCategoryCreator from "../../src/modules/onboarding/CalendarImportCategoryCreator";
 import {
     enableCalendarImportNotification,
     enrichCalendarCandidateWithRoute,
     extractCalendarRouteHints,
+    shouldPrepareCalendarImportRoutes,
 } from "../../src/modules/onboarding/calendarImportRouteEnrichment";
 import { createCalendarImportAlarmRecoveryBatch } from "../../src/modules/onboarding/calendarImportAlarmRecoveryBatch";
 import {
@@ -156,7 +160,7 @@ const IMPORT_BATCH_SIZE = 3;
 const CANDIDATE_PAGE_SIZE = 20;
 const CURATION_PROGRESS_SEGMENT_COUNT = 6;
 
-const APP_LOGO = require("../../assets/icon.png");
+const CURATION_APP_LOGO = require("../../assets/curation/nolate-logo.png");
 const BRAND_BLUE = "#246BFE";
 
 export default function CalendarImportOnboarding() {
@@ -205,7 +209,11 @@ export default function CalendarImportOnboarding() {
     const [candidates, setCandidates] = useState<DeviceCalendarCandidate[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
     const [visibleCandidateCount, setVisibleCandidateCount] = useState(CANDIDATE_PAGE_SIZE);
+    const [individualSchedulesExpanded, setIndividualSchedulesExpanded] = useState(false);
     const [categoryId, setCategoryId] = useState("");
+    const [categoryIdBySource, setCategoryIdBySource] = useState<Record<string, string>>({});
+    const [categoryAssignmentsExpanded, setCategoryAssignmentsExpanded] = useState(false);
+    const [expandedCategorySourceKey, setExpandedCategorySourceKey] = useState<string | null>(null);
     const [categoryLoading, setCategoryLoading] = useState(true);
     const [categoryError, setCategoryError] = useState<string | null>(null);
     const [categoryCreating, setCategoryCreating] = useState(false);
@@ -213,7 +221,7 @@ export default function CalendarImportOnboarding() {
     const originSearchSequenceRef = useRef(0);
     const [travelMode, setTravelMode] = useState<TravelMode>("TRANSIT");
     const [travelMinutes, setTravelMinutes] = useState(30);
-    const [prepareDepartureAlert, setPrepareDepartureAlert] = useState(true);
+    const [prepareDepartureAlert, setPrepareDepartureAlert] = useState(false);
     const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
     const [favoriteDeparturePlaces, setFavoriteDeparturePlaces] = useState<Place[]>([]);
     const [defaultOrigin, setDefaultOrigin] = useState<Place | undefined>();
@@ -229,9 +237,9 @@ export default function CalendarImportOnboarding() {
     const [preparedRouteCount, setPreparedRouteCount] = useState(0);
     const [notificationReadyCount, setNotificationReadyCount] = useState(0);
     const [failedImportCount, setFailedImportCount] = useState(0);
+    const [lastImportPreparedRoutes, setLastImportPreparedRoutes] = useState(false);
     const [completingCuration, setCompletingCuration] = useState(false);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
     const categories = useMemo(
         () => getWritableCalendarImportCategories(state.categories),
         [state.categories]
@@ -248,6 +256,10 @@ export default function CalendarImportOnboarding() {
         () => buildCandidateSourceGroups(candidates, selectedIds),
         [candidates, selectedIds]
     );
+    const selectedCandidateSourceGroups = useMemo(
+        () => candidateSourceGroups.filter((group) => group.selectedCount > 0),
+        [candidateSourceGroups]
+    );
     const allCandidatesSelected = candidates.length > 0 && selectedIds.size === candidates.length;
     const routeCandidateCount = useMemo(
         () => selectedCandidates.filter(isCalendarRouteCandidate).length,
@@ -263,7 +275,18 @@ export default function CalendarImportOnboarding() {
         routeCandidateCount > 0 &&
         remainingNotificationQuota > 0;
     const defaultOriginReady = hasFavoriteDepartureCoords(defaultOrigin);
-    const canImportSelectedSchedules = !routePreparationEnabled || defaultOriginReady;
+    const routesReadyForImport = shouldPrepareCalendarImportRoutes(
+        routePreparationEnabled,
+        defaultOriginReady,
+    );
+    const categoryOverrideCount = selectedCandidateSourceGroups.filter(
+        (group) => hasCalendarImportCategoryOverride(
+            categories,
+            selectedCategory?.id ?? "",
+            categoryIdBySource,
+            group.key,
+        )
+    ).length;
     const providerOptions = useMemo(
         () => buildCalendarProviderOptions(deviceProviderLabel),
         [deviceProviderLabel]
@@ -281,7 +304,7 @@ export default function CalendarImportOnboarding() {
     );
     const providerCtaLabel = selectedProviderIds.size === 0
         ? "캘린더를 선택해 주세요"
-        : "선택한 캘린더로 계속";
+        : `${selectedProviderIds.size}개 캘린더로 계속`;
     const permissionProviderLabel = useMemo(() => {
         const labels = [
             selectedProviderIds.has("device") ? deviceProviderLabel : null,
@@ -438,9 +461,17 @@ export default function CalendarImportOnboarding() {
 
     const handleCategoryCreated = useCallback((category: ScheduleCategory) => {
         dispatch({ type: "UPSERT_CATEGORY", category });
-        setCategoryId(category.id);
+        if (expandedCategorySourceKey) {
+            setCategoryIdBySource((current) => ({
+                ...current,
+                [expandedCategorySourceKey]: category.id,
+            }));
+            setExpandedCategorySourceKey(null);
+        } else {
+            setCategoryId(category.id);
+        }
         setCategoryError(null);
-    }, [dispatch]);
+    }, [dispatch, expandedCategorySourceKey]);
 
     useEffect(() => {
         loadCategories().catch(() => undefined);
@@ -448,6 +479,23 @@ export default function CalendarImportOnboarding() {
             categoryLoadSequenceRef.current += 1;
         };
     }, [loadCategories]);
+
+    useEffect(() => {
+        if (!expandedCategorySourceKey) return;
+
+        // 선택 화면으로 돌아가 캘린더를 해제했을 때, 보이지 않는 이전 대상에
+        // 새 카테고리가 배정되지 않도록 더 이상 유효하지 않은 확장 상태를 닫는다.
+        const sourceStillSelected = selectedCandidateSourceGroups.some(
+            (group) => group.key === expandedCategorySourceKey
+        );
+        if (!sourceStillSelected) setExpandedCategorySourceKey(null);
+    }, [expandedCategorySourceKey, selectedCandidateSourceGroups]);
+
+    useEffect(() => {
+        if (selectedCandidateSourceGroups.length > 1) return;
+        setCategoryAssignmentsExpanded(false);
+        setExpandedCategorySourceKey(null);
+    }, [selectedCandidateSourceGroups.length]);
 
     useEffect(() => () => {
         scanAttemptRef.current += 1;
@@ -720,7 +768,11 @@ export default function CalendarImportOnboarding() {
             );
             setCandidates(loadedCandidates);
             setSelectedIds(getDefaultSelectedCandidateIds(loadedCandidates));
+            setCategoryIdBySource({});
+            setCategoryAssignmentsExpanded(false);
+            setExpandedCategorySourceKey(null);
             setVisibleCandidateCount(CANDIDATE_PAGE_SIZE);
+            setIndividualSchedulesExpanded(false);
             goToStep("select");
         } catch (error) {
             if (!isCurrentAttempt()) return;
@@ -827,7 +879,7 @@ export default function CalendarImportOnboarding() {
 
     const toggleCandidateSourceGroup = (sourceKey: string) => {
         const targetIds = candidates
-            .filter((candidate) => candidate.calendarId === sourceKey)
+            .filter((candidate) => getCalendarImportSourceKey(candidate) === sourceKey)
             .map((candidate) => candidate.id);
 
         if (targetIds.length === 0) return;
@@ -845,6 +897,31 @@ export default function CalendarImportOnboarding() {
             }
 
             return next;
+        });
+    };
+
+    const selectCategoryForSource = (sourceKey: string, nextCategoryId: string) => {
+        setCategoryIdBySource((current) => {
+            const next = { ...current };
+            if (nextCategoryId === selectedCategory?.id) {
+                delete next[sourceKey];
+            } else {
+                next[sourceKey] = nextCategoryId;
+            }
+            return next;
+        });
+        setExpandedCategorySourceKey(null);
+    };
+
+    const selectDefaultCategory = (nextCategoryId: string) => {
+        setCategoryId(nextCategoryId);
+        setCategoryIdBySource((current) => {
+            const retainedAssignments = Object.entries(current).filter(
+                ([, assignedCategoryId]) => assignedCategoryId !== nextCategoryId
+            );
+            return retainedAssignments.length === Object.keys(current).length
+                ? current
+                : Object.fromEntries(retainedAssignments);
         });
     };
 
@@ -921,11 +998,13 @@ export default function CalendarImportOnboarding() {
 
     const importSelectedSchedules = async () => {
         const importCategory = selectedCategory;
+        // A missing default origin should only skip optional route enrichment. The selected
+        // schedules can still be saved, so the final action never becomes a dead end.
+        const shouldPrepareRoutes = routesReadyForImport;
         if (
             selectedCandidates.length === 0 ||
             importing ||
             categoryCreating ||
-            !canImportSelectedSchedules ||
             !importCategory
         ) return;
 
@@ -937,6 +1016,7 @@ export default function CalendarImportOnboarding() {
             setPreparedRouteCount(0);
             setNotificationReadyCount(0);
             setFailedImportCount(0);
+            setLastImportPreparedRoutes(shouldPrepareRoutes);
 
             let successCount = 0;
             let skippedCount = 0;
@@ -949,7 +1029,7 @@ export default function CalendarImportOnboarding() {
                 category: importCategory,
                 travelMode,
                 travelMinutes,
-                prepareDepartureAlert: routePreparationEnabled,
+                prepareDepartureAlert: shouldPrepareRoutes,
             };
             const placeCache = new Map<string, Promise<Place | undefined>>();
             const resolvePlace = (query: string, center?: RoutePathCoord): Promise<Place | undefined> => {
@@ -989,19 +1069,31 @@ export default function CalendarImportOnboarding() {
             // rate limit에 걸리는 것을 막으면서도 일정 하나씩 기다리는 지연은 줄인다.
             for (let offset = 0; offset < selectedCandidates.length; offset += IMPORT_BATCH_SIZE) {
                 const batch = selectedCandidates.slice(offset, offset + IMPORT_BATCH_SIZE);
-                const canAttemptMoreNotifications = routePreparationEnabled &&
-                    defaultOriginReady &&
+                const canAttemptMoreNotifications = shouldPrepareRoutes &&
                     enabledNotificationCount < remainingNotificationQuota;
                 const enrichedBatch = await Promise.all(batch.map(async (candidate) => {
+                    const candidateCategory = resolveCalendarImportCategoryAssignment(
+                        categories,
+                        categoryId,
+                        categoryIdBySource,
+                        getCalendarImportSourceKey(candidate),
+                    );
+                    if (!candidateCategory) {
+                        throw new Error("일정을 저장할 카테고리를 확인하지 못했어요.");
+                    }
+                    const candidateSettings = {
+                        ...settings,
+                        category: candidateCategory,
+                    };
                     const enrichment = canAttemptMoreNotifications
                         ? await enrichCalendarCandidateWithRoute(
                             candidate,
-                            settings,
+                            candidateSettings,
                             defaultOrigin,
                             { resolvePlace, findRoutes }
                         )
                         : {
-                            payload: buildSchedulePayloadFromCandidate(candidate, settings),
+                            payload: buildSchedulePayloadFromCandidate(candidate, candidateSettings),
                             routePrepared: false,
                             hints: extractCalendarRouteHints(candidate),
                         };
@@ -1112,16 +1204,16 @@ export default function CalendarImportOnboarding() {
                 {step === "intro" && (
                     <View style={[styles.stepWrap, styles.introWrap]}>
                         <View style={styles.introLogoWrap}>
-                            <Image source={APP_LOGO} resizeMode="cover" style={styles.introLogoImage} />
+                            <Image source={CURATION_APP_LOGO} resizeMode="cover" style={styles.introLogoImage} />
                         </View>
                         <Text style={styles.title}>캘린더를 연결하면{"\n"}출발 준비가 쉬워져요</Text>
                         <Text style={styles.subtitle}>
-                            가져올 일정만 고르면 출발 준비까지 이어서 설정할 수 있어요.
+                            일정을 가져오면 필요한 출발 시간까지 한 번에 준비할 수 있어요.
                         </Text>
 
                         <View style={styles.introPointList}>
-                            <IntroPoint label="기존 캘린더 일정은 바뀌지 않아요" />
-                            <IntroPoint label="필요한 일정만 직접 선택해요" />
+                            <IntroPoint label="원본 캘린더 일정은 바뀌지 않아요" />
+                            <IntroPoint label="가져올 일정은 직접 확인할 수 있어요" />
                         </View>
                     </View>
                 )}
@@ -1131,7 +1223,7 @@ export default function CalendarImportOnboarding() {
                         <Text style={styles.eyebrow}>캘린더 가져오기</Text>
                         <Text style={styles.title}>어느 캘린더에서{"\n"}가져올까요?</Text>
                         <Text style={styles.subtitle}>
-                            가져올 캘린더를 모두 선택해 주세요.
+                            여러 캘린더를 함께 선택할 수 있어요.
                         </Text>
 
                         <View style={styles.providerList}>
@@ -1152,7 +1244,7 @@ export default function CalendarImportOnboarding() {
                         <StepIcon name={Platform.OS === "ios" ? "calendar-outline" : "phone-portrait-outline"} />
                         <Text style={styles.title}>{permissionProviderLabel}의{"\n"}일정을 확인할게요</Text>
                         <Text style={styles.subtitle}>
-                            일정을 읽기 전에 필요한 항목만 확인해 주세요.
+                            읽는 정보와 저장 범위를 먼저 확인해 주세요.
                         </Text>
                         <CalendarConsentChecklist
                             items={calendarConsentItems}
@@ -1208,14 +1300,14 @@ export default function CalendarImportOnboarding() {
 
                 {step === "select" && (
                     <View style={styles.stepWrap}>
-                        <Text pointerEvents="none" style={styles.eyebrow}>{candidates.length}개 일정 찾음</Text>
-                        <Text pointerEvents="none" style={styles.title}>
-                            {selectedIds.size > 0
-                                ? `일정 ${selectedIds.size}개를\n선택했어요`
-                                : "가져올 일정을\n선택해 주세요"}
+                        <Text pointerEvents="none" style={styles.eyebrow}>
+                            {candidates.length}개 중 {selectedIds.size}개 선택
                         </Text>
+                        <Text pointerEvents="none" style={styles.title}>가져올 일정을{"\n"}확인해 주세요</Text>
                         <Text pointerEvents="none" style={styles.subtitle}>
-                            추천 일정은 미리 선택했어요. 필요 없는 일정은 해제할 수 있어요.
+                            {allCandidatesSelected
+                                ? "다가오는 일정을 모두 선택했어요. 필요 없는 일정만 해제하면 돼요."
+                                : "캘린더별로 선택하거나 개별 일정을 펼쳐 조정할 수 있어요."}
                         </Text>
                         {errorMessage ? (
                             <View accessibilityLiveRegion="polite" style={styles.inlineNotice}>
@@ -1232,54 +1324,50 @@ export default function CalendarImportOnboarding() {
                             </View>
                         ) : (
                             <>
-                                <View style={styles.selectionControlList}>
-                                    <SelectionControlRow
-                                        title={allCandidatesSelected ? "전체 선택됨" : "전체 선택"}
-                                        description={`${candidates.length}개 일정을 한 번에 선택해요`}
-                                        icon="checkmark-done-outline"
-                                        active={allCandidatesSelected}
-                                        onPress={selectAllCandidates}
-                                    />
-                                    <SelectionControlRow
-                                        title="전체 해제"
-                                        description="필요한 일정만 다시 골라요"
-                                        icon="remove-circle-outline"
-                                        active={selectedIds.size === 0}
-                                        onPress={clearSelectedCandidates}
-                                    />
-                                </View>
+                                <CandidateSelectionSummaryRow
+                                    totalCount={candidates.length}
+                                    selectedCount={selectedIds.size}
+                                    onPress={allCandidatesSelected ? clearSelectedCandidates : selectAllCandidates}
+                                />
 
-                                {candidateSourceGroups.length > 1 ? (
-                                    <>
-                                        <SectionTitle label="캘린더별 선택" />
-                                        <View style={styles.sourceGroupList}>
-                                            {candidateSourceGroups.map((group) => (
-                                                <CandidateSourceRow
-                                                    key={group.key}
-                                                    group={group}
-                                                    active={group.selectedCount === group.totalCount}
-                                                    onPress={() => toggleCandidateSourceGroup(group.key)}
-                                                />
-                                            ))}
-                                        </View>
-                                    </>
-                                ) : null}
-
-                                <View style={styles.candidateList}>
-                                    {candidates.slice(0, visibleCandidateCount).map((candidate) => (
-                                        <CandidateRow
-                                            key={candidate.id}
-                                            candidate={candidate}
-                                            selected={selectedIds.has(candidate.id)}
-                                            onPress={() => toggleCandidate(candidate)}
+                                <SectionTitle label="캘린더별 선택" />
+                                <View style={styles.sourceGroupList}>
+                                    {candidateSourceGroups.map((group) => (
+                                        <CandidateSourceRow
+                                            key={group.key}
+                                            group={group}
+                                            active={group.selectedCount === group.totalCount}
+                                            onPress={() => toggleCandidateSourceGroup(group.key)}
                                         />
                                     ))}
                                 </View>
-                                {visibleCandidateCount < candidates.length ? (
-                                    <GhostButton
-                                        label={`일정 더 보기 (${candidates.length - visibleCandidateCount}개 남음)`}
-                                        onPress={() => setVisibleCandidateCount((count) => Math.min(count + CANDIDATE_PAGE_SIZE, candidates.length))}
-                                    />
+
+                                <IndividualScheduleDisclosure
+                                    expanded={individualSchedulesExpanded}
+                                    totalCount={candidates.length}
+                                    selectedCount={selectedIds.size}
+                                    onPress={() => setIndividualSchedulesExpanded((expanded) => !expanded)}
+                                />
+
+                                {individualSchedulesExpanded ? (
+                                    <>
+                                        <View style={styles.candidateList}>
+                                            {candidates.slice(0, visibleCandidateCount).map((candidate) => (
+                                                <CandidateRow
+                                                    key={candidate.id}
+                                                    candidate={candidate}
+                                                    selected={selectedIds.has(candidate.id)}
+                                                    onPress={() => toggleCandidate(candidate)}
+                                                />
+                                            ))}
+                                        </View>
+                                        {visibleCandidateCount < candidates.length ? (
+                                            <GhostButton
+                                                label={`일정 더 보기 (${candidates.length - visibleCandidateCount}개 남음)`}
+                                                onPress={() => setVisibleCandidateCount((count) => Math.min(count + CANDIDATE_PAGE_SIZE, candidates.length))}
+                                            />
+                                        ) : null}
+                                    </>
                                 ) : null}
                             </>
                         )}
@@ -1288,15 +1376,18 @@ export default function CalendarImportOnboarding() {
 
                 {step === "enrich" && (
                     <View style={styles.stepWrap}>
-                        <Text style={styles.eyebrow}>출발 준비 설정</Text>
-                        <Text style={styles.title}>가져오기 전에{"\n"}출발 준비를 설정해요</Text>
+                        <Text style={styles.eyebrow}>마지막 설정</Text>
+                        <Text style={styles.title}>일정을 저장할 곳을{"\n"}확인해 주세요</Text>
                         <Text style={styles.subtitle}>
                             {routeCandidateCount > 0
-                                ? `${selectedCandidates.length}개 일정 중 ${routeCandidateCount}개는 경로와 알림도 준비할 수 있어요.`
-                                : "선택한 일정은 경로 없이도 바로 가져올 수 있어요."}
+                                ? "카테고리를 정하고, 원하면 출발 알림도 함께 준비할 수 있어요."
+                                : `${selectedCandidates.length}개 일정을 저장할 카테고리를 정해 주세요.`}
                         </Text>
 
-                        <SectionTitle label="카테고리 선택" />
+                        <SectionTitle label="저장 카테고리" />
+                        <Text style={styles.sectionDescription}>
+                            선택한 기본값을 모든 일정에 적용해요.
+                        </Text>
                         {categoryLoading && categories.length === 0 ? (
                             <View
                                 accessibilityLiveRegion="polite"
@@ -1307,6 +1398,10 @@ export default function CalendarImportOnboarding() {
                             </View>
                         ) : categories.length > 0 ? (
                             <>
+                                <View style={styles.categoryDefaultHeader}>
+                                    <Text style={styles.categoryDefaultTitle}>기본 카테고리</Text>
+                                    <Text style={styles.categoryDefaultHint}>{selectedCandidates.length}개 일정에 먼저 적용</Text>
+                                </View>
                                 <View style={styles.chipRow}>
                                     {categories.map((category) => (
                                         <OptionChip
@@ -1314,10 +1409,56 @@ export default function CalendarImportOnboarding() {
                                             label={category.title}
                                             active={category.id === selectedCategory?.id}
                                             color={category.color}
-                                            onPress={() => setCategoryId(category.id)}
+                                            onPress={() => selectDefaultCategory(category.id)}
                                         />
                                     ))}
                                 </View>
+                                {selectedCandidateSourceGroups.length > 1 ? (
+                                    <View style={styles.categoryAssignmentSection}>
+                                        <CategoryAssignmentDisclosure
+                                            expanded={categoryAssignmentsExpanded}
+                                            overrideCount={categoryOverrideCount}
+                                            sourceCount={selectedCandidateSourceGroups.length}
+                                            onPress={() => {
+                                                setCategoryAssignmentsExpanded((expanded) => {
+                                                    if (expanded) setExpandedCategorySourceKey(null);
+                                                    return !expanded;
+                                                });
+                                            }}
+                                        />
+                                        {categoryAssignmentsExpanded ? (
+                                            <View style={styles.categoryAssignmentList}>
+                                                {selectedCandidateSourceGroups.map((group, index) => (
+                                                    <CategoryAssignmentRow
+                                                        key={group.key}
+                                                        group={group}
+                                                        categories={categories}
+                                                        category={resolveCalendarImportCategoryAssignment(
+                                                            categories,
+                                                            categoryId,
+                                                            categoryIdBySource,
+                                                            group.key,
+                                                        )}
+                                                        expanded={expandedCategorySourceKey === group.key}
+                                                        usesDefault={!hasCalendarImportCategoryOverride(
+                                                            categories,
+                                                            selectedCategory?.id ?? "",
+                                                            categoryIdBySource,
+                                                            group.key,
+                                                        )}
+                                                        last={index === selectedCandidateSourceGroups.length - 1}
+                                                        onToggle={() => setExpandedCategorySourceKey((current) => (
+                                                            current === group.key ? null : group.key
+                                                        ))}
+                                                        onSelect={(nextCategoryId) => (
+                                                            selectCategoryForSource(group.key, nextCategoryId)
+                                                        )}
+                                                    />
+                                                ))}
+                                            </View>
+                                        ) : null}
+                                    </View>
+                                ) : null}
                                 {categoryError ? (
                                     <Pressable
                                         accessibilityRole="button"
@@ -1361,80 +1502,93 @@ export default function CalendarImportOnboarding() {
                         <CalendarImportCategoryCreator
                             categoryCount={categories.length}
                             disabled={categoryLoading || importing || completingCuration}
+                            assignmentTargetLabel={selectedCandidateSourceGroups.find(
+                                (group) => group.key === expandedCategorySourceKey
+                            )?.title}
                             onBusyChange={setCategoryCreating}
                             onCreated={handleCategoryCreated}
                         />
 
-                        <View style={styles.switchRow}>
-                            <View style={styles.switchTextWrap}>
-                                <Text style={styles.switchTitle}>경로와 출발 알림 준비</Text>
-                                <Text style={styles.switchHint}>
-                                    {routeCandidateCount === 0
-                                        ? "이동 경로를 찾지 못해 일정만 가져와요"
-                                        : remainingNotificationQuota > 0
-                                            ? `이번 달 최대 ${remainingNotificationQuota}개 자동 설정`
-                                            : "이번 달 실시간 알림 한도를 모두 사용했어요"}
-                                </Text>
-                            </View>
-                            <Switch
-                                accessibilityLabel="경로와 출발 알림 준비"
-                                value={routePreparationEnabled}
-                                onValueChange={setPrepareDepartureAlert}
-                                disabled={routeCandidateCount === 0 || remainingNotificationQuota === 0}
-                                trackColor={{
-                                    false: mode === "dark" ? "#34363D" : "#D7D9DF",
-                                    true: BRAND_BLUE,
-                                }}
-                                thumbColor="#FFFFFF"
-                            />
-                        </View>
-
-                        {routePreparationEnabled ? (
+                        {routeCandidateCount > 0 ? (
                             <>
-                                <SectionTitle label="기본 출발지" />
-                                <DefaultOriginPicker
-                                    favorites={favoriteDeparturePlaces}
-                                    selected={defaultOrigin}
-                                    query={originSearchQuery}
-                                    results={originSearchResults}
-                                    searching={originSearching}
-                                    error={originSearchError}
-                                    onQueryChange={changeOriginSearchQuery}
-                                    onSearch={searchDefaultOrigin}
-                                    onSelect={selectDefaultOrigin}
-                                />
-
-                                <View style={styles.routePreparationNotice}>
-                                    <Ionicons name="sparkles-outline" size={17} color={BRAND_BLUE} />
-                                    <Text style={styles.routePreparationNoticeText}>
-                                        일정 메모에 출발지가 있으면 우선 사용하고, 없으면 기본 출발지에서 경로를 만들어요.
-                                    </Text>
+                                <SectionTitle label="출발 알림" />
+                                <Text style={styles.sectionDescription}>
+                                    선택 사항이에요. 필요할 때만 켜도 돼요.
+                                </Text>
+                                <View style={styles.switchRow}>
+                                    <View style={styles.switchTextWrap}>
+                                        <Text style={styles.switchTitle}>출발 알림 함께 준비</Text>
+                                        <Text style={styles.switchHint}>
+                                            {remainingNotificationQuota === 0
+                                                ? "이번 달 실시간 알림 한도를 모두 사용했어요"
+                                                : routePreparationEnabled && !defaultOriginReady
+                                                    ? "기본 출발지를 선택해 주세요"
+                                                    : routePreparationEnabled
+                                                        ? `장소가 있는 일정 중 최대 ${remainingNotificationQuota}개 설정`
+                                                        : "장소가 있는 일정의 경로와 알림을 만들어요"}
+                                        </Text>
+                                    </View>
+                                    <Switch
+                                        accessibilityLabel="출발 알림 함께 준비"
+                                        value={routePreparationEnabled}
+                                        onValueChange={setPrepareDepartureAlert}
+                                        disabled={remainingNotificationQuota === 0}
+                                        trackColor={{
+                                            false: mode === "dark" ? "#34363D" : "#D7D9DF",
+                                            true: BRAND_BLUE,
+                                        }}
+                                        thumbColor="#FFFFFF"
+                                    />
                                 </View>
 
-                                <SectionTitle label="이동수단" />
-                                <View style={styles.chipRow}>
-                                    {TRAVEL_MODES.map((option) => (
-                                        <OptionChip
-                                            key={option.value}
-                                            label={option.label}
-                                            icon={option.icon}
-                                            active={travelMode === option.value}
-                                            onPress={() => setTravelMode(option.value)}
+                                {routePreparationEnabled ? (
+                                    <>
+                                        <SectionTitle label="기본 출발지" />
+                                        <DefaultOriginPicker
+                                            favorites={favoriteDeparturePlaces}
+                                            selected={defaultOrigin}
+                                            query={originSearchQuery}
+                                            results={originSearchResults}
+                                            searching={originSearching}
+                                            error={originSearchError}
+                                            onQueryChange={changeOriginSearchQuery}
+                                            onSearch={searchDefaultOrigin}
+                                            onSelect={selectDefaultOrigin}
                                         />
-                                    ))}
-                                </View>
 
-                                <SectionTitle label="경로가 없을 때 예상 이동시간" />
-                                <View style={styles.chipRow}>
-                                    {TRAVEL_MINUTES.map((minutes) => (
-                                        <OptionChip
-                                            key={minutes}
-                                            label={`${minutes}분`}
-                                            active={travelMinutes === minutes}
-                                            onPress={() => setTravelMinutes(minutes)}
-                                        />
-                                    ))}
-                                </View>
+                                        <View style={styles.routePreparationNotice}>
+                                            <Ionicons name="sparkles-outline" size={17} color={BRAND_BLUE} />
+                                            <Text style={styles.routePreparationNoticeText}>
+                                                일정 메모에 출발지가 있으면 우선 사용하고, 없으면 기본 출발지에서 경로를 만들어요.
+                                            </Text>
+                                        </View>
+
+                                        <SectionTitle label="이동수단" />
+                                        <View style={styles.chipRow}>
+                                            {TRAVEL_MODES.map((option) => (
+                                                <OptionChip
+                                                    key={option.value}
+                                                    label={option.label}
+                                                    icon={option.icon}
+                                                    active={travelMode === option.value}
+                                                    onPress={() => setTravelMode(option.value)}
+                                                />
+                                            ))}
+                                        </View>
+
+                                        <SectionTitle label="경로가 없을 때 예상 이동시간" />
+                                        <View style={styles.chipRow}>
+                                            {TRAVEL_MINUTES.map((minutes) => (
+                                                <OptionChip
+                                                    key={minutes}
+                                                    label={`${minutes}분`}
+                                                    active={travelMinutes === minutes}
+                                                    onPress={() => setTravelMinutes(minutes)}
+                                                />
+                                            ))}
+                                        </View>
+                                    </>
+                                ) : null}
                             </>
                         ) : null}
                     </View>
@@ -1442,14 +1596,14 @@ export default function CalendarImportOnboarding() {
 
                 {step === "complete" && (
                     <View style={styles.stepWrap}>
-                        <View
+                        <Image
                             accessible
                             accessibilityLabel="NoLate"
                             accessibilityRole="image"
-                            style={styles.completeLogoWrap}
-                        >
-                            <Image source={APP_LOGO} resizeMode="cover" style={styles.introLogoImage} />
-                        </View>
+                            source={CURATION_APP_LOGO}
+                            resizeMode="cover"
+                            style={styles.completeLogo}
+                        />
                         <Text style={styles.title}>
                             {importedCount > 0
                                 ? `${importedCount}개 일정을\nNoLate로 가져왔어요`
@@ -1458,18 +1612,17 @@ export default function CalendarImportOnboarding() {
                         <Text style={styles.subtitle}>
                             {importedCount === 0
                                 ? "중복으로 저장하지 않고 기존 일정을 그대로 유지했어요."
-                                : notificationReadyCount > 0
-                                ? `${notificationReadyCount}개 일정은 경로와 출발 알림까지 준비했어요.`
-                                : preparedRouteCount > 0
-                                    ? `${preparedRouteCount}개 일정의 경로를 준비했어요.`
-                                    : routePreparationEnabled
-                                        ? "가져오기는 완료했고, 경로가 없는 일정은 알림을 꺼 두었어요."
-                                        : "선택한 일정을 NoLate 캘린더에 저장했어요."}
-                            {alreadyImportedCount > 0 && importedCount > 0
-                                ? `\n이미 가져온 ${alreadyImportedCount}개 일정은 건너뛰었어요.`
-                                : ""}
-                            {failedImportCount > 0 ? `\n${failedImportCount}개 일정은 저장하지 못했어요.` : ""}
+                                : lastImportPreparedRoutes
+                                    ? "가져온 일정과 준비된 출발 알림을 확인해 보세요."
+                                    : "가져온 일정은 내 일정에서 바로 확인할 수 있어요."}
                         </Text>
+                        <ImportResultSummary
+                            importedCount={importedCount}
+                            alreadyImportedCount={alreadyImportedCount}
+                            preparedRouteCount={preparedRouteCount}
+                            notificationReadyCount={notificationReadyCount}
+                            failedImportCount={failedImportCount}
+                        />
                     </View>
                 )}
                 </Animated.View>
@@ -1511,7 +1664,7 @@ export default function CalendarImportOnboarding() {
                 {step === "permission" && (
                     <>
                         <PrimaryButton
-                            label={allCalendarConsentsAccepted ? "동의하고 일정 확인하기" : "필수 항목을 확인해 주세요"}
+                            label={allCalendarConsentsAccepted ? "동의하고 일정 찾기" : "필수 항목을 확인해 주세요"}
                             disabled={!allCalendarConsentsAccepted}
                             onPress={scanCalendars}
                         />
@@ -1535,7 +1688,7 @@ export default function CalendarImportOnboarding() {
                             />
                         ) : (
                             <PrimaryButton
-                                label={selectedIds.size > 0 ? `일정 ${selectedIds.size}개 계속하기` : "가져올 일정을 선택해 주세요"}
+                                label={selectedIds.size > 0 ? `${selectedIds.size}개 일정 계속하기` : "가져올 일정을 선택해 주세요"}
                                 disabled={selectedIds.size === 0}
                                 onPress={() => goToStep("enrich")}
                             />
@@ -1545,6 +1698,12 @@ export default function CalendarImportOnboarding() {
                 )}
                 {step === "enrich" && (
                     <>
+                        {routePreparationEnabled && !routesReadyForImport && !importing ? (
+                            <View style={styles.footerNotice}>
+                                <Ionicons name="information-circle-outline" size={15} color={colors.textSecondary} />
+                                <Text style={styles.footerNoticeText}>출발지를 고르지 않으면 일정만 가져와요</Text>
+                            </View>
+                        ) : null}
                         <PrimaryButton
                             label={categoryCreating
                                 ? "카테고리를 추가하는 중"
@@ -1554,10 +1713,8 @@ export default function CalendarImportOnboarding() {
                                         ? "카테고리를 불러오는 중"
                                         : !selectedCategory
                                             ? "카테고리를 다시 불러와 주세요"
-                                            : routePreparationEnabled && !defaultOriginReady
-                                                ? "기본 출발지를 선택해 주세요"
-                                                : `일정 ${selectedCandidates.length}개 가져오기`}
-                            disabled={categoryCreating || importing || !canImportSelectedSchedules || !selectedCategory}
+                                            : `${selectedCandidates.length}개 일정 가져오기`}
+                            disabled={categoryCreating || importing || !selectedCategory}
                             onPress={importSelectedSchedules}
                         />
                         <GhostButton
@@ -1679,7 +1836,7 @@ function CalendarConsentChecklist({
                 <View style={styles.consentCopy}>
                     <Text style={styles.consentAllTitle}>필수 항목에 모두 동의해요</Text>
                     <Text style={styles.consentDescription}>
-                        원본은 바꾸지 않고, 선택한 일정만 NoLate에 저장해요.
+                        원본은 바꾸지 않고, 선택한 일정만 NoLate로 가져와요.
                     </Text>
                 </View>
             </Pressable>
@@ -1900,17 +2057,56 @@ function ProviderOptionRow({
     );
 }
 
-function SelectionControlRow({
-    title,
-    description,
-    icon,
-    active,
+function CandidateSelectionSummaryRow({
+    totalCount,
+    selectedCount,
     onPress,
 }: {
-    title: string;
-    description: string;
-    icon: ComponentProps<typeof Ionicons>["name"];
-    active: boolean;
+    totalCount: number;
+    selectedCount: number;
+    onPress: () => void;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+    const allSelected = totalCount > 0 && selectedCount === totalCount;
+    const partiallySelected = selectedCount > 0 && !allSelected;
+
+    return (
+        <Pressable
+            accessibilityRole="checkbox"
+            accessibilityLabel={`전체 일정, ${selectedCount}/${totalCount}개 선택`}
+            accessibilityState={{ checked: allSelected ? true : partiallySelected ? "mixed" : false }}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.selectionSummaryRow,
+                (allSelected || partiallySelected) && styles.selectionSummaryRowSelected,
+                pressed && styles.pressed,
+            ]}
+        >
+            <View style={[styles.checkCircle, (allSelected || partiallySelected) && styles.checkCircleSelected]}>
+                {allSelected ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+                {partiallySelected ? <Ionicons name="remove" size={14} color="#FFFFFF" /> : null}
+            </View>
+            <View style={styles.selectionSummaryCopy}>
+                <Text style={styles.selectionSummaryTitle}>전체 일정</Text>
+                <Text style={styles.selectionSummaryDescription}>
+                    {allSelected ? `${totalCount}개 모두 가져오기` : `${selectedCount}/${totalCount}개 선택`}
+                </Text>
+            </View>
+            <Text style={styles.selectionSummaryAction}>{allSelected ? "선택 해제" : "모두 선택"}</Text>
+        </Pressable>
+    );
+}
+
+function IndividualScheduleDisclosure({
+    expanded,
+    totalCount,
+    selectedCount,
+    onPress,
+}: {
+    expanded: boolean;
+    totalCount: number;
+    selectedCount: number;
     onPress: () => void;
 }) {
     const { colors, mode } = useTheme();
@@ -1919,26 +2115,26 @@ function SelectionControlRow({
     return (
         <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`${title}, ${description}`}
-            accessibilityState={{ selected: active }}
+            accessibilityLabel={`개별 일정 조정, ${selectedCount}/${totalCount}개 선택`}
+            accessibilityState={{ expanded }}
             onPress={onPress}
-            style={({ pressed }) => [
-                styles.selectionControlRow,
-                active && styles.selectionControlRowActive,
-                pressed && styles.pressed,
-            ]}
+            style={({ pressed }) => [styles.individualScheduleDisclosure, pressed && styles.pressed]}
         >
-            <View style={[styles.selectionControlIcon, active && styles.selectionControlIconActive]}>
-                <Ionicons
-                    name={icon}
-                    size={16}
-                    color={active ? "#FFFFFF" : colors.textPrimary}
-                />
+            <View style={styles.individualScheduleDisclosureIcon}>
+                <Ionicons name="list-outline" size={18} color={BRAND_BLUE} />
             </View>
-            <View style={styles.selectionControlCopy}>
-                <Text style={styles.selectionControlTitle}>{title}</Text>
-                <Text style={styles.selectionControlDescription}>{description}</Text>
+            <View style={styles.individualScheduleDisclosureCopy}>
+                <Text style={styles.individualScheduleDisclosureTitle}>개별 일정 조정</Text>
+                <Text style={styles.individualScheduleDisclosureDescription}>
+                    필요한 일정만 하나씩 선택하거나 해제해요
+                </Text>
             </View>
+            <Text style={styles.individualScheduleDisclosureCount}>{selectedCount}개</Text>
+            <Ionicons
+                name={expanded ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.textSecondary}
+            />
         </Pressable>
     );
 }
@@ -1954,6 +2150,7 @@ function CandidateSourceRow({
 }) {
     const { colors, mode } = useTheme();
     const styles = createStyles(colors, mode);
+    const partiallySelected = group.selectedCount > 0 && !active;
 
     return (
         <Pressable
@@ -1969,12 +2166,12 @@ function CandidateSourceRow({
             onPress={onPress}
             style={({ pressed }) => [
                 styles.sourceGroupButton,
-                active && styles.sourceGroupButtonActive,
                 pressed && styles.pressed,
             ]}
         >
-            <View style={[styles.checkCircle, active && styles.checkCircleSelected]}>
+            <View style={[styles.checkCircle, (active || partiallySelected) && styles.checkCircleSelected]}>
                 {active ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+                {partiallySelected ? <Ionicons name="remove" size={14} color="#FFFFFF" /> : null}
             </View>
             <View style={[styles.sourceGroupDot, { backgroundColor: group.color ?? colors.textDisabled }]} />
             <View style={styles.sourceGroupCopy}>
@@ -1986,6 +2183,219 @@ function CandidateSourceRow({
                 </Text>
             </View>
         </Pressable>
+    );
+}
+
+function CategoryAssignmentDisclosure({
+    expanded,
+    sourceCount,
+    overrideCount,
+    onPress,
+}: {
+    expanded: boolean;
+    sourceCount: number;
+    overrideCount: number;
+    onPress: () => void;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+    const description = overrideCount > 0
+        ? `${overrideCount}개 캘린더에 다른 카테고리를 적용했어요`
+        : `${sourceCount}개 캘린더 모두 기본 카테고리를 사용해요`;
+
+    return (
+        <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`캘린더별 카테고리, ${description}`}
+            accessibilityState={{ expanded }}
+            onPress={onPress}
+            style={({ pressed }) => [
+                styles.categoryAssignmentDisclosure,
+                pressed && styles.pressed,
+            ]}
+        >
+            <View style={styles.categoryAssignmentDisclosureIcon}>
+                <Ionicons name="albums-outline" size={18} color={BRAND_BLUE} />
+            </View>
+            <View style={styles.categoryAssignmentDisclosureCopy}>
+                <Text style={styles.categoryAssignmentDisclosureTitle}>캘린더별 카테고리</Text>
+                <Text numberOfLines={2} style={styles.categoryAssignmentDisclosureDescription}>
+                    {description}
+                </Text>
+            </View>
+            {overrideCount > 0 ? (
+                <Text style={styles.categoryAssignmentDisclosureCount}>{overrideCount}개 변경</Text>
+            ) : null}
+            <Ionicons
+                name={expanded ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.textSecondary}
+            />
+        </Pressable>
+    );
+}
+
+function CategoryAssignmentRow({
+    group,
+    categories,
+    category,
+    expanded,
+    usesDefault,
+    last,
+    onToggle,
+    onSelect,
+}: {
+    group: CandidateSourceGroup;
+    categories: readonly ScheduleCategory[];
+    category?: ScheduleCategory;
+    expanded: boolean;
+    usesDefault: boolean;
+    last: boolean;
+    onToggle: () => void;
+    onSelect: (categoryId: string) => void;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+
+    return (
+        <View style={[styles.categoryAssignmentItem, !last && styles.categoryAssignmentItemDivider]}>
+            <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`${group.title}, ${group.selectedCount}개 일정, ${category?.title ?? "카테고리 확인 필요"}, ${usesDefault ? "기본 카테고리 사용" : "개별 설정"}`}
+                accessibilityState={{ expanded }}
+                onPress={onToggle}
+                style={({ pressed }) => [
+                    styles.categoryAssignmentRow,
+                    pressed && styles.pressed,
+                ]}
+            >
+                <View
+                    style={[
+                        styles.categoryAssignmentSourceIcon,
+                        { backgroundColor: group.color ?? colors.textDisabled },
+                    ]}
+                />
+                <View style={styles.categoryAssignmentSourceCopy}>
+                    <Text numberOfLines={1} style={styles.categoryAssignmentSourceTitle}>
+                        {group.title}
+                    </Text>
+                    <Text
+                        style={[
+                            styles.categoryAssignmentSourceCount,
+                            !usesDefault && styles.categoryAssignmentSourceCountCustom,
+                        ]}
+                    >
+                        {group.selectedCount}개 일정 · {usesDefault ? "기본값" : "개별 설정"}
+                    </Text>
+                </View>
+                <View style={styles.categoryAssignmentValue}>
+                    {category ? (
+                        <View style={[styles.categoryAssignmentValueDot, { backgroundColor: category.color }]} />
+                    ) : null}
+                    <Text numberOfLines={1} style={styles.categoryAssignmentValueText}>
+                        {category?.title ?? "확인 필요"}
+                    </Text>
+                    <Ionicons
+                        name={expanded ? "chevron-up" : "chevron-down"}
+                        size={16}
+                        color={colors.textSecondary}
+                    />
+                </View>
+            </Pressable>
+            {expanded ? (
+                <View style={styles.categoryAssignmentOptions}>
+                    {categories.map((item) => (
+                        <OptionChip
+                            key={item.id}
+                            label={item.title}
+                            active={item.id === category?.id}
+                            color={item.color}
+                            onPress={() => onSelect(item.id)}
+                        />
+                    ))}
+                </View>
+            ) : null}
+        </View>
+    );
+}
+
+function ImportResultSummary({
+    importedCount,
+    alreadyImportedCount,
+    preparedRouteCount,
+    notificationReadyCount,
+    failedImportCount,
+}: {
+    importedCount: number;
+    alreadyImportedCount: number;
+    preparedRouteCount: number;
+    notificationReadyCount: number;
+    failedImportCount: number;
+}) {
+    const { colors, mode } = useTheme();
+    const styles = createStyles(colors, mode);
+    const failureColor = mode === "dark" ? "#FF6961" : "#D92D20";
+    const rows: Array<{
+        label: string;
+        value: string;
+        icon: ComponentProps<typeof Ionicons>["name"];
+        tone?: "neutral" | "failure";
+    }> = [];
+
+    if (importedCount > 0) {
+        rows.push({ label: "새로 가져온 일정", value: `${importedCount}개`, icon: "calendar-outline" });
+    }
+    if (alreadyImportedCount > 0) {
+        rows.push({
+            label: "중복 없이 유지한 일정",
+            value: `${alreadyImportedCount}개`,
+            icon: "shield-checkmark-outline",
+            tone: "neutral",
+        });
+    }
+    if (preparedRouteCount > 0) {
+        rows.push({ label: "경로 준비", value: `${preparedRouteCount}개`, icon: "navigate-outline" });
+    }
+    if (notificationReadyCount > 0) {
+        rows.push({ label: "출발 알림 준비", value: `${notificationReadyCount}개`, icon: "notifications-outline" });
+    }
+    if (failedImportCount > 0) {
+        rows.push({
+            label: "확인이 필요한 일정",
+            value: `${failedImportCount}개`,
+            icon: "alert-circle-outline",
+            tone: "failure",
+        });
+    }
+
+    if (rows.length === 0) return null;
+
+    return (
+        <View accessibilityLabel="가져오기 결과" style={styles.importResultSummary}>
+            {rows.map((row, index) => {
+                const iconColor = row.tone === "failure"
+                    ? failureColor
+                    : row.tone === "neutral" ? colors.textSecondary : BRAND_BLUE;
+
+                return (
+                    <View
+                        key={row.label}
+                        style={[
+                            styles.importResultRow,
+                            index > 0 && styles.importResultRowDivider,
+                        ]}
+                    >
+                        <View style={styles.importResultIcon}>
+                            <Ionicons name={row.icon} size={17} color={iconColor} />
+                        </View>
+                        <Text style={styles.importResultLabel}>{row.label}</Text>
+                        <Text style={[styles.importResultValue, row.tone === "failure" && { color: failureColor }]}>
+                            {row.value}
+                        </Text>
+                    </View>
+                );
+            })}
+        </View>
     );
 }
 
@@ -2028,7 +2438,6 @@ function CandidateRow({
                     <Text numberOfLines={1} style={styles.candidateTitle}>
                         {candidate.title}
                     </Text>
-                    {candidate.recommended ? <Text style={styles.recommendedBadge}>추천</Text> : null}
                 </View>
                 <Text numberOfLines={1} style={styles.candidateMeta}>
                     {formatCandidateDate(candidate)}
@@ -2042,7 +2451,8 @@ function CandidateRow({
                         ]}
                     />
                     <Text numberOfLines={1} style={styles.calendarSourceText}>
-                        {candidate.requiresTimeReview ? "시간 확인이 필요한 종일 일정" : candidate.calendarTitle}
+                        {candidate.calendarTitle}
+                        {candidate.requiresTimeReview ? " · 시간 확인 필요" : ""}
                     </Text>
                 </View>
             </View>
@@ -2385,14 +2795,14 @@ function buildCalendarConsentItems(
     items.push(
         {
             id: "candidate_review",
-            title: "가져올 일정 선택",
-            summary: "가져올 일정은 직접 선택해요.",
+            title: "가져올 일정 확인",
+            summary: "캘린더별로 확인하고 필요한 일정만 조정해요.",
             required: true,
             detail: [
-                "장소와 시간이 있는 일정을 먼저 보여드립니다.",
-                "장소나 메모에서 이동 정보를 찾지 못하면 직접 확인할 수 있도록 남겨둡니다.",
+                "다가오는 일정은 전체 선택 상태로 먼저 보여드립니다.",
+                "캘린더 단위로 선택하거나 개별 일정을 펼쳐 조정할 수 있습니다.",
                 "종일 일정이나 시간이 분명하지 않은 일정은 확인이 필요하다고 표시합니다.",
-                "목록에서 전체 선택, 전체 해제, 캘린더별 선택을 할 수 있습니다.",
+                "장소나 메모에서 이동 정보를 찾지 못한 일정도 직접 확인할 수 있도록 남겨둡니다.",
             ],
         },
         {
@@ -2430,10 +2840,6 @@ function mergeCalendarCandidates(candidates: DeviceCalendarCandidate[]): DeviceC
 }
 
 function compareCandidatesForDisplay(a: DeviceCalendarCandidate, b: DeviceCalendarCandidate): number {
-    if (a.recommended !== b.recommended) {
-        return a.recommended ? -1 : 1;
-    }
-
     if (a.requiresTimeReview !== b.requiresTimeReview) {
         return a.requiresTimeReview ? 1 : -1;
     }
@@ -2448,15 +2854,16 @@ function buildCandidateSourceGroups(
     const groups = new Map<string, CandidateSourceGroup>();
 
     for (const candidate of candidates) {
-        const current = groups.get(candidate.calendarId);
+        const sourceKey = getCalendarImportSourceKey(candidate);
+        const current = groups.get(sourceKey);
         if (current) {
             current.totalCount += 1;
             if (selectedIds.has(candidate.id)) current.selectedCount += 1;
             continue;
         }
 
-        groups.set(candidate.calendarId, {
-            key: candidate.calendarId,
+        groups.set(sourceKey, {
+            key: sourceKey,
             title: candidate.calendarTitle,
             color: candidate.calendarColor,
             totalCount: 1,
@@ -2516,14 +2923,14 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         content: {
             flexGrow: 1,
             justifyContent: "flex-start",
-            paddingTop: 52,
-            paddingBottom: 36,
+            paddingTop: 36,
+            paddingBottom: 28,
         },
         stepMotion: {
             width: "100%",
         },
         stepWrap: {
-            gap: 16,
+            gap: 14,
         },
         introWrap: {
             gap: 15,
@@ -2541,13 +2948,52 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             width: "100%",
             height: "100%",
         },
-        completeLogoWrap: {
+        completeLogo: {
             width: 68,
             height: 68,
             borderRadius: 20,
-            overflow: "hidden",
             backgroundColor: BRAND_BLUE,
             marginBottom: 10,
+        },
+        importResultSummary: {
+            marginTop: 10,
+            overflow: "hidden",
+            borderRadius: 14,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border,
+            backgroundColor: colors.surface2,
+        },
+        importResultRow: {
+            minHeight: 50,
+            paddingHorizontal: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+        },
+        importResultRowDivider: {
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+        },
+        importResultIcon: {
+            width: 30,
+            height: 30,
+            borderRadius: 10,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: brandTint,
+        },
+        importResultLabel: {
+            flex: 1,
+            minWidth: 0,
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "800",
+        },
+        importResultValue: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            fontWeight: "900",
         },
         stepIcon: {
             width: 60,
@@ -2873,72 +3319,59 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontWeight: "700",
             textAlign: "center",
         },
-        selectionControlList: {
-            gap: 8,
-        },
-        selectionControlRow: {
-            minHeight: 58,
-            borderRadius: 16,
+        selectionSummaryRow: {
+            minHeight: 64,
+            borderRadius: 14,
             paddingHorizontal: 14,
             paddingVertical: 10,
             flexDirection: "row",
             alignItems: "center",
-            gap: 10,
+            gap: 11,
             backgroundColor: colors.surface2,
             borderWidth: 1,
             borderColor: colors.border,
         },
-        selectionControlRowActive: {
+        selectionSummaryRowSelected: {
             borderColor: BRAND_BLUE,
             backgroundColor: brandTint,
         },
-        selectionControlIcon: {
-            width: 30,
-            height: 30,
-            borderRadius: 15,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: isDark ? "#1D2027" : "#FFFFFF",
-            borderWidth: StyleSheet.hairlineWidth,
-            borderColor: colors.border,
-        },
-        selectionControlIconActive: {
-            backgroundColor: BRAND_BLUE,
-            borderColor: BRAND_BLUE,
-        },
-        selectionControlCopy: {
+        selectionSummaryCopy: {
             flex: 1,
+            minWidth: 0,
             gap: 3,
         },
-        selectionControlTitle: {
+        selectionSummaryTitle: {
             color: colors.textPrimary,
-            fontSize: 14,
+            fontSize: 15,
             fontWeight: "900",
         },
-        selectionControlDescription: {
+        selectionSummaryDescription: {
             color: colors.textSecondary,
             fontSize: 12,
             lineHeight: 16,
             fontWeight: "800",
         },
+        selectionSummaryAction: {
+            flexShrink: 0,
+            color: BRAND_BLUE,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "900",
+        },
         sourceGroupList: {
             gap: 8,
         },
         sourceGroupButton: {
-            minHeight: 58,
-            borderRadius: 16,
-            paddingHorizontal: 14,
-            paddingVertical: 10,
+            minHeight: 54,
+            borderRadius: 12,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
             flexDirection: "row",
             alignItems: "center",
             gap: 10,
             backgroundColor: colors.surface2,
             borderWidth: 1,
             borderColor: colors.border,
-        },
-        sourceGroupButtonActive: {
-            borderColor: BRAND_BLUE,
-            backgroundColor: brandTint,
         },
         sourceGroupDot: {
             width: 8,
@@ -2961,13 +3394,56 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             lineHeight: 16,
             fontWeight: "800",
         },
+        individualScheduleDisclosure: {
+            minHeight: 60,
+            borderRadius: 14,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+            backgroundColor: colors.surface2,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border,
+        },
+        individualScheduleDisclosureIcon: {
+            width: 34,
+            height: 34,
+            borderRadius: 11,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: brandTint,
+        },
+        individualScheduleDisclosureCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 3,
+        },
+        individualScheduleDisclosureTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        individualScheduleDisclosureDescription: {
+            color: colors.textSecondary,
+            fontSize: 10,
+            lineHeight: 14,
+            fontWeight: "800",
+        },
+        individualScheduleDisclosureCount: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "900",
+        },
         candidateList: {
             gap: 10,
         },
         candidateRow: {
-            minHeight: 82,
-            borderRadius: 18,
-            padding: 14,
+            minHeight: 76,
+            borderRadius: 14,
+            padding: 12,
             flexDirection: "row",
             gap: 12,
             alignItems: "center",
@@ -3014,16 +3490,6 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontSize: 15,
             fontWeight: "900",
         },
-        recommendedBadge: {
-            overflow: "hidden",
-            borderRadius: 9,
-            paddingHorizontal: 7,
-            paddingVertical: 3,
-            color: "#FFFFFF",
-            backgroundColor: BRAND_BLUE,
-            fontSize: 10,
-            fontWeight: "900",
-        },
         candidateMeta: {
             color: colors.textSecondary,
             fontSize: 12,
@@ -3048,10 +3514,159 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontWeight: "800",
         },
         sectionTitle: {
-            marginTop: 10,
+            marginTop: 8,
             color: colors.textSecondary,
             fontSize: 12,
             fontWeight: "900",
+        },
+        sectionDescription: {
+            marginTop: -8,
+            color: colors.textSecondary,
+            fontSize: 12,
+            lineHeight: 18,
+            fontWeight: "700",
+        },
+        categoryDefaultHeader: {
+            marginTop: -2,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+        },
+        categoryDefaultTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            fontWeight: "900",
+        },
+        categoryDefaultHint: {
+            flexShrink: 1,
+            color: colors.textSecondary,
+            textAlign: "right",
+            fontSize: 10,
+            lineHeight: 14,
+            fontWeight: "800",
+        },
+        categoryAssignmentSection: {
+            gap: 8,
+            marginTop: 2,
+        },
+        categoryAssignmentDisclosure: {
+            minHeight: 64,
+            paddingHorizontal: 12,
+            paddingVertical: 10,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 9,
+            borderRadius: 12,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border,
+            backgroundColor: colors.surface2,
+        },
+        categoryAssignmentDisclosureIcon: {
+            width: 34,
+            height: 34,
+            borderRadius: 11,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: brandTint,
+        },
+        categoryAssignmentDisclosureCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 2,
+        },
+        categoryAssignmentDisclosureTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        categoryAssignmentDisclosureDescription: {
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 15,
+            fontWeight: "800",
+        },
+        categoryAssignmentDisclosureCount: {
+            color: BRAND_BLUE,
+            fontSize: 10,
+            fontWeight: "900",
+        },
+        categoryAssignmentList: {
+            overflow: "hidden",
+            borderRadius: 12,
+            backgroundColor: colors.surface2,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: colors.border,
+        },
+        categoryAssignmentItem: {
+            backgroundColor: colors.surface2,
+        },
+        categoryAssignmentItemDivider: {
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.border,
+        },
+        categoryAssignmentRow: {
+            minHeight: 58,
+            paddingHorizontal: 12,
+            paddingVertical: 9,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 9,
+        },
+        categoryAssignmentSourceIcon: {
+            width: 8,
+            height: 30,
+            borderRadius: 4,
+        },
+        categoryAssignmentSourceCopy: {
+            flex: 1,
+            minWidth: 0,
+            gap: 2,
+        },
+        categoryAssignmentSourceTitle: {
+            color: colors.textPrimary,
+            fontSize: 13,
+            lineHeight: 18,
+            fontWeight: "900",
+        },
+        categoryAssignmentSourceCount: {
+            color: colors.textSecondary,
+            fontSize: 10,
+            lineHeight: 14,
+            fontWeight: "800",
+        },
+        categoryAssignmentSourceCountCustom: {
+            color: BRAND_BLUE,
+        },
+        categoryAssignmentValue: {
+            maxWidth: "48%",
+            minHeight: 30,
+            paddingLeft: 9,
+            paddingRight: 7,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            borderRadius: 10,
+            backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+        },
+        categoryAssignmentValueDot: {
+            width: 7,
+            height: 7,
+            borderRadius: 4,
+        },
+        categoryAssignmentValueText: {
+            flexShrink: 1,
+            color: colors.textPrimary,
+            fontSize: 11,
+            fontWeight: "900",
+        },
+        categoryAssignmentOptions: {
+            paddingHorizontal: 12,
+            paddingBottom: 12,
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: 7,
         },
         categoryStatus: {
             minHeight: 52,
@@ -3091,7 +3706,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         },
         originSearchRow: {
             minHeight: 54,
-            borderRadius: 16,
+            borderRadius: 14,
             paddingLeft: 14,
             paddingRight: 8,
             flexDirection: "row",
@@ -3244,7 +3859,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         switchRow: {
             marginTop: 10,
             minHeight: 70,
-            borderRadius: 18,
+            borderRadius: 14,
             paddingHorizontal: 15,
             flexDirection: "row",
             alignItems: "center",
@@ -3270,16 +3885,37 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             fontWeight: "800",
         },
         footer: {
-            gap: 12,
+            marginHorizontal: -22,
+            paddingTop: 12,
+            paddingHorizontal: 22,
+            gap: 4,
+            backgroundColor: isDark ? "#0F1115" : "#F8F9FB",
+            borderTopWidth: StyleSheet.hairlineWidth,
+            borderTopColor: colors.border,
+        },
+        footerNotice: {
+            minHeight: 28,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            paddingBottom: 4,
+        },
+        footerNoticeText: {
+            flexShrink: 1,
+            color: colors.textSecondary,
+            fontSize: 11,
+            lineHeight: 16,
+            fontWeight: "800",
         },
         ghostButton: {
-            minHeight: 44,
+            minHeight: 40,
             alignItems: "center",
             justifyContent: "center",
         },
         primaryButton: {
             minHeight: 56,
-            borderRadius: 18,
+            borderRadius: 14,
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "center",

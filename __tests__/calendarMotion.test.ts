@@ -625,8 +625,8 @@ describe("current time indicator motion", () => {
         expect(formatCalendarCurrentTime(new Date(2026, 6, 12, 15, 43))).toBe("3:43");
     });
 
-    test("Today 이동과 초기 진입의 세로 기준을 분리한다", () => {
-        expect(CURRENT_TIME_MOTION.initialLeadHours).toBe(11.75);
+    test("Today 이동과 초기 진입 모두 현재 시간을 하단 버튼 위에 둔다", () => {
+        expect(CURRENT_TIME_MOTION.initialLeadHours).toBe(9.75);
         expect(CURRENT_TIME_MOTION.todayTargetLeadHours).toBe(9.75);
         expect(CURRENT_TIME_MOTION.minuteStepDurationMs).toBe(240);
     });

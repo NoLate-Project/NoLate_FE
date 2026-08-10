@@ -43,6 +43,7 @@ type Props = {
     secondaryTextColor?: string;
     initialExpandedStepId?: string;
     compact?: boolean;
+    realtimeArrivalsEnabled?: boolean;
 };
 
 type IoniconName = React.ComponentProps<typeof Ionicons>["name"];
@@ -334,6 +335,7 @@ export default function RouteStepTimeline({
     secondaryTextColor,
     initialExpandedStepId,
     compact = false,
+    realtimeArrivalsEnabled = true,
 }: Props) {
     const { colors, mode } = useTheme();
     const isDark = forceDark ?? mode === "dark";
@@ -381,7 +383,7 @@ export default function RouteStepTimeline({
     }, [routeInfo.steps, selectedStepId]);
 
     useEffect(() => {
-        if (!compact) {
+        if (!compact || !realtimeArrivalsEnabled) {
             setArrivalByStepId({});
             setArrivalStateByStepId({});
             setArrivalUpdatedAtByStepId({});
@@ -465,7 +467,7 @@ export default function RouteStepTimeline({
             cancelled = true;
             clearInterval(timer);
         };
-    }, [arrivalLookupKey, compact, routeInfo.steps]);
+    }, [arrivalLookupKey, compact, realtimeArrivalsEnabled, routeInfo.steps]);
 
     const toggleStep = (step: RouteStep) => {
         const expandable = (step.type === "SUBWAY" || step.type === "BUS") && Array.isArray(step.passStops) && step.passStops.length > 0;
@@ -495,7 +497,9 @@ export default function RouteStepTimeline({
                 const rideDescription = hasBadge ? buildRideDescription(step) : undefined;
                 const rideDirectionLabel = hasBadge ? getRouteStepDirectionHint(step, rideDescription) : undefined;
                 const boardingGuideItems = hasBadge ? buildBoardingGuideItems(step) : [];
-                const arrivalRequest = hasBadge ? getArrivalRequest(step) : undefined;
+                const arrivalRequest = realtimeArrivalsEnabled && hasBadge
+                    ? getArrivalRequest(step)
+                    : undefined;
                 const realtimeArrivals = hasBadge ? arrivalByStepId[step.id] ?? [] : [];
                 const arrivalState = hasBadge ? arrivalStateByStepId[step.id] : undefined;
                 const arrivalUpdatedAt = hasBadge ? arrivalUpdatedAtByStepId[step.id] : undefined;

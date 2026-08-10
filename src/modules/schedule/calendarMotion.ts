@@ -524,7 +524,7 @@ export function getMonthAgendaTransition(
 export const CURRENT_TIME_MOTION = Object.freeze({
     minuteStepDurationMs: 240,
     maxAnimatedGapMinutes: 1.5,
-    initialLeadHours: 11.75,
+    initialLeadHours: 9.75,
     todayTargetLeadHours: 9.75,
 });
 

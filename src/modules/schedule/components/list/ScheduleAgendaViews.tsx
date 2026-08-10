@@ -29,6 +29,7 @@ import {
     type MonthAgendaSteppedTarget,
 } from "../../calendarMotion";
 import type { ScheduleItem } from "../../types";
+import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout";
 import ScheduleAgendaCard from "./ScheduleAgendaCard";
 import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
 
@@ -410,10 +411,13 @@ export function SelectedDayAgendaPanel({
             />
 
             <ScrollView
-                style={styles.scroll}
+                style={[
+                    styles.scroll,
+                    { marginBottom: getFloatingActionBarClearance(bottomInset) },
+                ]}
                 contentContainerStyle={[
                     styles.selectedDayContent,
-                    { paddingBottom: Math.max(bottomInset + 138, 154) },
+                    styles.floatingBarContentEnd,
                 ]}
                 showsVerticalScrollIndicator={false}
             >
@@ -617,10 +621,13 @@ export function MonthAgendaList({
 
             <ScrollView
                 key={listIdentity}
-                style={styles.scroll}
+                style={[
+                    styles.scroll,
+                    { marginBottom: getFloatingActionBarClearance(bottomInset) },
+                ]}
                 contentContainerStyle={[
                     styles.monthListContent,
-                    { paddingBottom: Math.max(bottomInset + 146, 162) },
+                    styles.floatingBarContentEnd,
                 ]}
                 showsVerticalScrollIndicator={false}
             >
@@ -729,6 +736,9 @@ const styles = StyleSheet.create({
         flex: 1,
         minHeight: 0,
     },
+    floatingBarContentEnd: {
+        paddingBottom: 24,
+    },
     selectedDayContent: {
         paddingHorizontal: 14,
         paddingTop: 6,
@@ -736,7 +746,7 @@ const styles = StyleSheet.create({
     },
     selectedDayGroup: {
         borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 5,
+        borderRadius: 9,
         overflow: "hidden",
     },
     selectedDayGroupDivider: {

@@ -34,6 +34,7 @@ const BRAND_BLUE = "#246BFE";
 type CalendarImportCategoryCreatorProps = {
     categoryCount: number;
     disabled?: boolean;
+    assignmentTargetLabel?: string;
     onBusyChange?: (busy: boolean) => void;
     onCreated: (category: ScheduleCategoryItem) => void;
 };
@@ -46,6 +47,7 @@ function getCreateErrorMessage(error: unknown): string {
 export default function CalendarImportCategoryCreator({
     categoryCount,
     disabled = false,
+    assignmentTargetLabel,
     onBusyChange,
     onCreated,
 }: CalendarImportCategoryCreatorProps) {
@@ -120,7 +122,11 @@ export default function CalendarImportCategoryCreator({
                 </View>
                 <View style={styles.openCopy}>
                     <Text style={styles.openTitle}>새 카테고리 추가</Text>
-                    <Text style={styles.openCaption}>이 화면을 벗어나지 않고 바로 만들 수 있어요</Text>
+                    <Text numberOfLines={1} style={styles.openCaption}>
+                        {assignmentTargetLabel
+                            ? `${assignmentTargetLabel}에 적용할 분류를 만들어요`
+                            : "필요한 분류를 여기서 바로 만들 수 있어요"}
+                    </Text>
                 </View>
                 <Ionicons accessible={false} name="chevron-down" size={17} color={colors.textSecondary} />
             </Pressable>
@@ -135,7 +141,11 @@ export default function CalendarImportCategoryCreator({
                 </View>
                 <View style={styles.openCopy}>
                     <Text style={styles.openTitle}>새 카테고리</Text>
-                    <Text style={styles.openCaption}>추가하면 이번 일정에 바로 선택돼요</Text>
+                    <Text numberOfLines={1} style={styles.openCaption}>
+                        {assignmentTargetLabel
+                            ? `${assignmentTargetLabel}에 바로 적용돼요`
+                            : "추가하면 전체 기본값으로 선택돼요"}
+                    </Text>
                 </View>
             </View>
 
@@ -233,7 +243,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
             flexDirection: "row",
             alignItems: "center",
             gap: 10,
-            borderRadius: 16,
+            borderRadius: 12,
             borderWidth: StyleSheet.hairlineWidth,
             borderColor: colors.border,
             backgroundColor: colors.surface2,
@@ -266,7 +276,7 @@ function createStyles(colors: ReturnType<typeof useTheme>["colors"], mode: "dark
         creatorCard: {
             padding: 13,
             gap: 12,
-            borderRadius: 18,
+            borderRadius: 12,
             borderWidth: StyleSheet.hairlineWidth,
             borderColor: isDark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.16)",
             backgroundColor: colors.surface2,

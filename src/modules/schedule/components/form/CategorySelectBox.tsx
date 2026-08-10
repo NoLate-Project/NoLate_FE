@@ -151,7 +151,7 @@ export default function CategorySelectBox({
                 testID="category-dropdown-transition"
                 accessibilityElementsHidden={!open}
                 importantForAccessibility={open ? "auto" : "no-hide-descendants"}
-                pointerEvents={open || closing ? "auto" : "none"}
+                pointerEvents={open ? "auto" : closing ? "box-only" : "none"}
                 style={[
                     styles.dropdownWrap,
                     {

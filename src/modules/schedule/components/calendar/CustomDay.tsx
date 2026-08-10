@@ -16,6 +16,7 @@ import {
     type CalendarDayMetadata,
 } from "../../calendarMetadata";
 import type { TravelMode } from "../../types";
+import { getCalendarTodayAccent } from "./calendarTodayAccent";
 import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
 import type {
     StackDayPresentation,
@@ -170,7 +171,7 @@ function CustomDay({
     const weekendDateColor = mode === "dark"
         ? "rgba(235,235,245,0.52)"
         : "rgba(60,60,67,0.52)";
-    const todayAccent = mode === "dark" ? "#ff453a" : "#ff3b30";
+    const todayAccent = getCalendarTodayAccent(mode);
     const holidayAccent = mode === "dark" ? "#ff6961" : "#d92d20";
     const selectedCircleColor = isToday ? todayAccent : colors.selectedDayBg;
     const selectedTextColor = isToday ? "#ffffff" : colors.selectedDayText;
