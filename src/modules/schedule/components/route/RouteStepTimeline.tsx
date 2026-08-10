@@ -1,6 +1,16 @@
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+    Animated,
+    Easing,
+    LayoutAnimation,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    UIManager,
+    View,
+} from "react-native";
 
 import {
     getBusArrivals,
@@ -27,6 +37,60 @@ import {
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
+}
+
+const DISCLOSURE_OPEN_DURATION = 200;
+const DISCLOSURE_CLOSE_DURATION = 170;
+
+function configureRouteStepDisclosureAnimation(expanded: boolean) {
+    LayoutAnimation.configureNext({
+        duration: expanded ? DISCLOSURE_OPEN_DURATION : DISCLOSURE_CLOSE_DURATION,
+        create: {
+            type: LayoutAnimation.Types.easeInEaseOut,
+            property: LayoutAnimation.Properties.opacity,
+        },
+        update: {
+            type: LayoutAnimation.Types.easeInEaseOut,
+        },
+        delete: {
+            type: LayoutAnimation.Types.easeInEaseOut,
+            property: LayoutAnimation.Properties.opacity,
+        },
+    });
+}
+
+function DisclosureChevron({
+    expanded,
+    size,
+    color,
+}: {
+    expanded: boolean;
+    size: number;
+    color: string;
+}) {
+    const progress = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+
+    useEffect(() => {
+        const animation = Animated.timing(progress, {
+            toValue: expanded ? 1 : 0,
+            duration: expanded ? DISCLOSURE_OPEN_DURATION : DISCLOSURE_CLOSE_DURATION,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+        });
+        animation.start();
+        return () => animation.stop();
+    }, [expanded, progress]);
+
+    const rotate = progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "180deg"],
+    });
+
+    return (
+        <Animated.View pointerEvents="none" style={{ transform: [{ rotate }] }}>
+            <Ionicons name="chevron-down" size={size} color={color} />
+        </Animated.View>
+    );
 }
 
 type Props = {
@@ -371,6 +435,12 @@ export default function RouteStepTimeline({
     }, [initialExpandedStepId]);
 
     useEffect(() => {
+        if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+            UIManager.setLayoutAnimationEnabledExperimental(true);
+        }
+    }, []);
+
+    useEffect(() => {
         if (!selectedStepId) return;
         const selectedStep = routeInfo.steps.find((step) => step.id === selectedStepId);
         if (!selectedStep || !Array.isArray(selectedStep.passStops) || selectedStep.passStops.length === 0) return;
@@ -469,17 +539,14 @@ export default function RouteStepTimeline({
         };
     }, [arrivalLookupKey, compact, realtimeArrivalsEnabled, routeInfo.steps]);
 
-    const toggleStep = (step: RouteStep) => {
-        const expandable = (step.type === "SUBWAY" || step.type === "BUS") && Array.isArray(step.passStops) && step.passStops.length > 0;
-        if (expandable) {
-            setExpandedStepIds((prev) => {
-                const next = new Set(prev);
-                if (next.has(step.id)) next.delete(step.id);
-                else next.add(step.id);
-                return next;
-            });
-        }
-        onStepPress?.(step);
+    const toggleStepDisclosure = (step: RouteStep) => {
+        configureRouteStepDisclosureAnimation(!expandedStepIds.has(step.id));
+        setExpandedStepIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(step.id)) next.delete(step.id);
+            else next.add(step.id);
+            return next;
+        });
     };
 
     return (
@@ -580,7 +647,13 @@ export default function RouteStepTimeline({
                             )}
                         </View>
                         <View style={[styles.body, compact && styles.bodyCompact]}>
-                            <View style={[styles.titleRow, compact && styles.titleRowCompact]}>
+                            <View
+                                style={[
+                                    styles.titleRow,
+                                    compact && styles.titleRowCompact,
+                                    expandable && styles.titleRowWithDisclosure,
+                                ]}
+                            >
                                 {!!pointLabel && (
                                     <View style={[styles.pointBadge, compact && styles.pointBadgeCompact, { backgroundColor: stepColor }]}>
                                         <Text style={[styles.pointBadgeText, compact && styles.pointBadgeTextCompact]}>{pointLabel}</Text>
@@ -606,13 +679,6 @@ export default function RouteStepTimeline({
                                         <Text style={[styles.titleSuffix, { color: secondaryColor }]}> 승차</Text>
                                     )}
                                 </Text>
-                                {expandable && (
-                                    <Ionicons
-                                        name={expanded ? "chevron-up" : "chevron-down"}
-                                        size={compact ? 14 : 16}
-                                        color={secondaryColor}
-                                    />
-                                )}
                             </View>
                             {hasBadge && !compact && (
                                 <Text numberOfLines={1} style={[styles.description, compact && styles.descriptionCompact, { color: secondaryColor }]}>
@@ -836,29 +902,55 @@ export default function RouteStepTimeline({
                     ].filter(Boolean).join(", ");
 
                 return (
-                    <Pressable
+                    <View
                         key={step.id}
-                        disabled={!stepPressEnabled}
-                        accessibilityRole={stepPressEnabled ? "button" : undefined}
-                        accessibilityLabel={stepPressEnabled ? stepAccessibilityLabel : undefined}
-                        accessibilityState={stepPressEnabled ? {
-                            selected,
-                            expanded: expandable ? expanded : undefined,
-                        } : undefined}
-                        accessibilityHint={stepPressEnabled
-                            ? expandable
-                                ? "지도에서 이 구간을 표시하고 경유지 목록을 열거나 닫습니다"
-                                : "지도에서 이 지점을 표시합니다"
-                            : undefined}
-                        onPress={() => toggleStep(step)}
                         style={[
                             styles.item,
                             compact && styles.itemCompact,
                             selectedStyle,
                         ]}
                     >
-                        {content}
-                    </Pressable>
+                        <Pressable
+                            testID={`route-step-row-${step.id}`}
+                            disabled={!stepPressEnabled}
+                            accessibilityRole={stepPressEnabled ? "button" : undefined}
+                            accessibilityLabel={stepPressEnabled ? stepAccessibilityLabel : undefined}
+                            accessibilityState={stepPressEnabled ? {
+                                selected,
+                            } : undefined}
+                            accessibilityHint={stepPressEnabled
+                                ? "지도에서 이 지점을 표시합니다"
+                                : undefined}
+                            onPress={() => onStepPress?.(step)}
+                            style={styles.itemPressTarget}
+                        >
+                            {content}
+                        </Pressable>
+                        {expandable && (
+                            <Pressable
+                                testID={`route-step-disclosure-${step.id}`}
+                                accessibilityRole="button"
+                                accessibilityLabel={`${step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")} 경유지 ${expanded ? "접기" : "보기"}`}
+                                accessibilityState={{ expanded }}
+                                accessibilityHint="현재 시트를 유지한 채 경유지 목록만 열거나 닫습니다"
+                                hitSlop={10}
+                                onPress={() => toggleStepDisclosure(step)}
+                                style={({ pressed }) => [
+                                    styles.disclosureButton,
+                                    compact
+                                        ? styles.disclosureButtonCompact
+                                        : styles.disclosureButtonRegular,
+                                    { opacity: pressed ? 0.5 : 1 },
+                                ]}
+                            >
+                                <DisclosureChevron
+                                    expanded={expanded}
+                                    size={compact ? 14 : 16}
+                                    color={secondaryColor}
+                                />
+                            </Pressable>
+                        )}
+                    </View>
                 );
             })}
         </View>
@@ -882,6 +974,27 @@ const styles = StyleSheet.create({
     itemCompactFocused: {
         backgroundColor: "transparent",
         borderColor: "transparent",
+    },
+    itemPressTarget: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+    },
+    disclosureButton: {
+        position: "absolute",
+        right: -4,
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 3,
+    },
+    disclosureButtonRegular: {
+        top: 10,
+    },
+    disclosureButtonCompact: {
+        top: 3,
     },
     rail: {
         width: 42,
@@ -975,6 +1088,9 @@ const styles = StyleSheet.create({
     },
     titleRowCompact: {
         gap: 8,
+    },
+    titleRowWithDisclosure: {
+        paddingRight: 28,
     },
     badge: {
         minWidth: 32,
