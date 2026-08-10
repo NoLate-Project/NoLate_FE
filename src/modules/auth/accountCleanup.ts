@@ -26,32 +26,33 @@ import {
 import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../performance/navigationPerformanceQueue";
+import { clearLiveActivitiesForAccountCleanup } from "../notification/liveActivitySync";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
-    // Native alarms are the only account-scoped resource that can keep acting
-    // after the process exits. Start it first and propagate its failure so auth
-    // credentials are not deleted while a previous account alarm may survive.
-    const alarmCleanup = clearDepartureAlarmsForAccountCleanup();
-    const cleanupResults = await Promise.allSettled([
-        alarmCleanup,
+    // Commit the lock-screen privacy boundary before the alarm coordinator clears
+    // its durable departure-action journal. If Live Activity end or remote token
+    // retirement fails, preserving that journal keeps the completed action
+    // recoverable and prevents a new account from inheriting an actionable surface.
+    await clearLiveActivitiesForAccountCleanup();
+    await clearDepartureAlarmsForAccountCleanup();
+    await clearStandardDepartureActionFallbackForCurrentAccount();
+
+    await Promise.allSettled([
         clearStoredGoogleCalendarAccessToken(),
         clearCalendarConnectionSnapshot(),
         clearLocalRoutePlaceCaches(),
         clearSeenShareAttention(),
-        clearPushRegistrationAfterLogout(),
         clearPushDeliveryAckQueueForCurrentAccount(),
         clearScheduleArrivalObservationQueueForCurrentAccount(),
         clearScheduleEtaObservationEngagementQueueForCurrentAccount(),
         clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount(),
         clearDepartureAlarmScheduleReceiptQueueForCurrentAccount(),
-        clearStandardDepartureActionFallbackForCurrentAccount(),
         clearForegroundPushPresentationClaimsForCurrentAccount(),
         clearNavigationPerformanceQueueForCurrentAccount(),
     ]);
 
-    const alarmResult = cleanupResults[0];
-    if (alarmResult.status === "rejected") {
-        throw alarmResult.reason;
-    }
+    // Device-token retirement is the final account-owned mutation. At this
+    // point no journal or native surface can enqueue new old-member work.
+    await clearPushRegistrationAfterLogout();
 }

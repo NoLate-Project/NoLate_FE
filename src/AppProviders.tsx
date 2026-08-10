@@ -6,6 +6,7 @@ import { useAuth } from "./modules/auth/AuthContext";
 import { getAuthMember } from "./modules/auth/authStorage";
 import {
     registerPushAfterLogin,
+    subscribePushRegistrationSuccess,
     subscribePushTokenRefresh,
 } from "./modules/notification/pushRegistration";
 import {
@@ -27,6 +28,12 @@ import {
     activateNativeDepartureReminderPresentationJournal,
     deactivateNativeDepartureReminderPresentationJournal,
 } from "./modules/notification/nativeDepartureReminderPresentationJournal";
+import {
+    activateLiveActivitySyncForAuthenticatedMember,
+    pauseLiveActivitySync,
+    resumeLiveActivitySyncForAuthenticatedMember,
+    setLiveActivityAppearance,
+} from "./modules/notification/liveActivitySync";
 import { createScheduleInitialState } from "./modules/schedule/initialState";
 import {
     activateScheduleArrivalObservationQueueForAuthenticatedMember,
@@ -38,7 +45,7 @@ import {
     activateScheduleEtaObservationEngagementQueueForAuthenticatedMember,
 } from "./modules/schedule/scheduleEtaObservationEngagementQueue";
 import { ScheduleProvider } from "./modules/schedule/store";
-import { ThemeProvider } from "./modules/theme/ThemeContext";
+import { ThemeProvider, useTheme } from "./modules/theme/ThemeContext";
 
 const PUSH_BOOTSTRAP_RETRY_DELAYS_MS = [
     1_500,
@@ -57,6 +64,7 @@ export function AppProviders({ children }: PropsWithChildren) {
 
     return (
         <ThemeProvider>
+            <LiveActivityAppearanceBridge />
             <AuthProvider>
                 <PushRegistrationBootstrap />
                 <ScheduleProvider initialState={initialState}>
@@ -65,6 +73,18 @@ export function AppProviders({ children }: PropsWithChildren) {
             </AuthProvider>
         </ThemeProvider>
     );
+}
+
+function LiveActivityAppearanceBridge() {
+    const { mode } = useTheme();
+
+    useEffect(() => {
+        setLiveActivityAppearance(mode).catch((error) => {
+            console.warn("[live-activity] appearance sync failed", error);
+        });
+    }, [mode]);
+
+    return null;
 }
 
 function PushRegistrationBootstrap() {
@@ -77,6 +97,7 @@ function PushRegistrationBootstrap() {
 
         let cancelled = false;
         let unsubscribe: () => void = () => undefined;
+        let unsubscribePushRegistrationSuccess: () => void = () => undefined;
         let removeAppStateListener: () => void = () => undefined;
         let memberBoundMemberId: number | undefined;
         let memberBootstrapInFlight: Promise<void> | undefined;
@@ -85,7 +106,17 @@ function PushRegistrationBootstrap() {
         let tokenRegistrationInFlight: Promise<void> | undefined;
         let tokenRegistrationRetryTimer: ReturnType<typeof setTimeout> | undefined;
         let tokenRegistrationRetryAttempt = 0;
+        let liveActivityAccountReady = false;
         let appIsActive = AppState.currentState === "active";
+
+        unsubscribePushRegistrationSuccess = subscribePushRegistrationSuccess((memberId) => {
+            if (cancelled || memberBoundMemberId !== memberId) return;
+            liveActivityAccountReady = true;
+            if (!appIsActive) return;
+            activateLiveActivitySyncForAuthenticatedMember(memberId).catch((error) => {
+                console.warn("[live-activity] account bootstrap failed", error);
+            });
+        });
 
         const clearMemberBootstrapRetry = () => {
             if (memberBootstrapRetryTimer) clearTimeout(memberBootstrapRetryTimer);
@@ -276,25 +307,34 @@ function PushRegistrationBootstrap() {
             if (state !== "active") {
                 clearMemberBootstrapRetry();
                 clearTokenRegistrationRetry();
+                pauseLiveActivitySync();
                 return;
             }
             // Recover both a transient SecureStore read failure and a token or
             // snapshot request that failed before the app returned to foreground.
             bootstrapMemberBoundPush();
+            if (memberBoundMemberId && liveActivityAccountReady) {
+                resumeLiveActivitySyncForAuthenticatedMember(memberBoundMemberId).catch((error) => {
+                    console.warn("[live-activity] foreground snapshot failed", error);
+                });
+            }
         });
         removeAppStateListener = () => appStateSubscription.remove();
 
         return () => {
             cancelled = true;
+            liveActivityAccountReady = false;
             clearMemberBootstrapRetry();
             clearTokenRegistrationRetry();
             removeAppStateListener();
             unsubscribe();
+            unsubscribePushRegistrationSuccess();
             receiptAppStateSubscription.remove();
             quickScheduleFeedbackAppStateSubscription.remove();
             fireJournalAppStateSubscription.remove();
             deactivateNativeAlarmFireJournalRetry();
             deactivateNativeDepartureReminderPresentationJournal();
+            pauseLiveActivitySync();
         };
     }, [isAuthenticated, isLoading]);
 

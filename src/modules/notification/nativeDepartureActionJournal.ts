@@ -18,6 +18,7 @@ import {
 import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
 import { isDepartureAlarmAccountCleanupPending } from "./departureAlarmSync";
 import { acknowledgePushDelivery } from "./pushDeliveryAck";
+import { endLiveActivityForSchedule } from "./liveActivitySync";
 
 export type NativeDepartureActionDrainResult = {
     discovered: number;
@@ -226,7 +227,16 @@ async function drainEpoch(epoch: number): Promise<NativeDepartureActionDrainResu
             // Publish the server-returned state at the successful mutation boundary so mounted
             // detail/agenda consumers update before slower alarm reconciliation/navigation.
             emitScheduleMutation(createScheduleDepartureMutationEvent(updatedSchedule));
-            await recoverDepartureAlarmsAfterMutation();
+            await Promise.all([
+                recoverDepartureAlarmsAfterMutation(),
+                endLiveActivityForSchedule(event.scheduleId, event.recipientMemberId).catch(
+                    (error) => {
+                        if (__DEV__) {
+                            console.warn("[live-activity] departure completion cleanup failed", error);
+                        }
+                    },
+                ),
+            ]);
             if (!(await isCurrentEpochAccount(epoch, event.recipientMemberId))) {
                 result.unresolved += 1;
                 result.blocked = true;

@@ -27,9 +27,16 @@ import { clearSeenShareAttention } from "../src/modules/share/shareAttention";
 import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../src/modules/performance/navigationPerformanceQueue";
+import {
+    clearLiveActivitiesForAccountCleanup,
+} from "../src/modules/notification/liveActivitySync";
 
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     clearDepartureAlarmsForAccountCleanup: jest.fn().mockResolvedValue(true),
+}));
+
+jest.mock("../src/modules/notification/liveActivitySync", () => ({
+    clearLiveActivitiesForAccountCleanup: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../src/modules/notification/departureAlarmScheduleReceiptQueue", () => ({
@@ -95,9 +102,14 @@ jest.mock("../src/modules/performance/navigationPerformanceQueue", () => ({
 }));
 
 const mockedAlarmCleanup = jest.mocked(clearDepartureAlarmsForAccountCleanup);
+const mockedLiveActivityCleanup = jest.mocked(clearLiveActivitiesForAccountCleanup);
 const mockedReceiptCleanup = jest.mocked(
     clearDepartureAlarmScheduleReceiptQueueForCurrentAccount
 );
+const mockedDepartureActionJournalCleanup = jest.mocked(
+    clearStandardDepartureActionFallbackForCurrentAccount,
+);
+const mockedPushRegistrationCleanup = jest.mocked(clearPushRegistrationAfterLogout);
 const allOtherCleanupMocks = [
     clearPushDeliveryAckQueueForCurrentAccount,
     clearPushRegistrationAfterLogout,
@@ -117,22 +129,78 @@ describe("clearAccountScopedLocalData", () => {
     afterEach(() => {
         jest.clearAllMocks();
         mockedAlarmCleanup.mockResolvedValue(true);
+        mockedLiveActivityCleanup.mockResolvedValue(undefined);
+        mockedDepartureActionJournalCleanup.mockResolvedValue(undefined);
+        mockedPushRegistrationCleanup.mockResolvedValue(undefined);
     });
 
     it("removes the account-bound alarm schedule receipt queue", async () => {
         await clearAccountScopedLocalData();
 
         expect(mockedReceiptCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedLiveActivityCleanup).toHaveBeenCalledTimes(1);
         for (const cleanup of allOtherCleanupMocks) {
             expect(cleanup).toHaveBeenCalledTimes(1);
         }
     });
 
-    it("still runs receipt cleanup and propagates a native alarm cleanup failure", async () => {
+    it("ends and retires Live Activities before clearing the departure journal", async () => {
+        const order: string[] = [];
+        mockedLiveActivityCleanup.mockImplementationOnce(async () => {
+            order.push("live-activity");
+        });
+        mockedAlarmCleanup.mockImplementationOnce(async () => {
+            order.push("native-alarm-and-journal");
+            return true;
+        });
+        mockedDepartureActionJournalCleanup.mockImplementationOnce(async () => {
+            order.push("fallback-journal");
+        });
+        mockedPushRegistrationCleanup.mockImplementationOnce(async () => {
+            order.push("push-token");
+        });
+
+        await clearAccountScopedLocalData();
+
+        expect(order).toEqual([
+            "live-activity",
+            "native-alarm-and-journal",
+            "fallback-journal",
+            "push-token",
+        ]);
+    });
+
+    it("preserves later journals and propagates a native alarm cleanup failure", async () => {
         const failure = new Error("native alarm cleanup failed");
         mockedAlarmCleanup.mockRejectedValueOnce(failure);
 
         await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
-        expect(mockedReceiptCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedLiveActivityCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedReceiptCleanup).not.toHaveBeenCalled();
+        expect(mockedDepartureActionJournalCleanup).not.toHaveBeenCalled();
+        expect(mockedPushRegistrationCleanup).not.toHaveBeenCalled();
+    });
+
+    it("does not clear journals when Live Activity end or retirement fails", async () => {
+        const failure = new Error("native Live Activity cleanup failed");
+        mockedLiveActivityCleanup.mockRejectedValueOnce(failure);
+
+        await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
+        expect(mockedAlarmCleanup).not.toHaveBeenCalled();
+        expect(mockedReceiptCleanup).not.toHaveBeenCalled();
+        expect(mockedDepartureActionJournalCleanup).not.toHaveBeenCalled();
+        expect(mockedPushRegistrationCleanup).not.toHaveBeenCalled();
+    });
+
+    it("propagates the final push-token retirement failure after journal purge", async () => {
+        const failure = new Error("push retirement failed");
+        mockedPushRegistrationCleanup.mockRejectedValueOnce(failure);
+
+        await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
+
+        expect(mockedLiveActivityCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedAlarmCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedDepartureActionJournalCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedPushRegistrationCleanup).toHaveBeenCalledTimes(1);
     });
 });

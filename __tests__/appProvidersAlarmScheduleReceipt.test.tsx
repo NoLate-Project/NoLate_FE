@@ -19,8 +19,16 @@ import {
 } from "../src/modules/schedule/quickScheduleReliabilityFeedbackQueue";
 import {
     registerPushAfterLogin,
+    subscribePushRegistrationSuccess,
     subscribePushTokenRefresh,
 } from "../src/modules/notification/pushRegistration";
+import {
+    activateLiveActivitySyncForAuthenticatedMember,
+    pauseLiveActivitySync,
+    resumeLiveActivitySyncForAuthenticatedMember,
+    setLiveActivityAppearance,
+} from "../src/modules/notification/liveActivitySync";
+import { useTheme } from "../src/modules/theme/ThemeContext";
 
 jest.mock("../src/modules/auth/authStorage", () => ({
     getAuthMember: jest.fn(),
@@ -33,6 +41,7 @@ jest.mock("../src/modules/auth/AuthContext", () => ({
 
 jest.mock("../src/modules/theme/ThemeContext", () => ({
     ThemeProvider: ({ children }: { children: React.ReactNode }) => children,
+    useTheme: jest.fn(),
 }));
 
 jest.mock("../src/modules/schedule/initialState", () => ({
@@ -45,7 +54,15 @@ jest.mock("../src/modules/schedule/store", () => ({
 
 jest.mock("../src/modules/notification/pushRegistration", () => ({
     registerPushAfterLogin: jest.fn().mockResolvedValue(undefined),
+    subscribePushRegistrationSuccess: jest.fn(() => jest.fn()),
     subscribePushTokenRefresh: jest.fn(),
+}));
+
+jest.mock("../src/modules/notification/liveActivitySync", () => ({
+    activateLiveActivitySyncForAuthenticatedMember: jest.fn().mockResolvedValue(undefined),
+    pauseLiveActivitySync: jest.fn(),
+    resumeLiveActivitySyncForAuthenticatedMember: jest.fn().mockResolvedValue(undefined),
+    setLiveActivityAppearance: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../src/modules/notification/pushDeliveryAckQueue", () => ({
@@ -124,7 +141,21 @@ const mockedActivateQuickScheduleFeedback = jest.mocked(
     activateQuickScheduleReliabilityFeedbackQueueForAuthenticatedMember
 );
 const mockedRegisterPushAfterLogin = jest.mocked(registerPushAfterLogin);
+const mockedSubscribePushRegistrationSuccess = jest.mocked(subscribePushRegistrationSuccess);
 const mockedSubscribePushTokenRefresh = jest.mocked(subscribePushTokenRefresh);
+const mockedActivateLiveActivitySync = jest.mocked(
+    activateLiveActivitySyncForAuthenticatedMember,
+);
+const mockedPauseLiveActivitySync = jest.mocked(pauseLiveActivitySync);
+const mockedResumeLiveActivitySync = jest.mocked(
+    resumeLiveActivitySyncForAuthenticatedMember,
+);
+const mockedSetLiveActivityAppearance = jest.mocked(setLiveActivityAppearance);
+const mockedUseTheme = jest.mocked(useTheme);
+const originalAppStateCurrentStateDescriptor = Object.getOwnPropertyDescriptor(
+    AppState,
+    "currentState",
+);
 
 function deferred<T = void>(): {
     promise: Promise<T>;
@@ -145,17 +176,32 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
     let appStateListeners: Array<(state: AppStateStatus) => void> = [];
     const removeAppStateListener = jest.fn();
     const unsubscribePushRefresh = jest.fn();
+    const unsubscribePushRegistrationSuccess = jest.fn();
+    let pushRegistrationSuccessListener: ((memberId: number) => void) | undefined;
 
     beforeEach(() => {
         appStateListeners = [];
+        pushRegistrationSuccessListener = undefined;
+        Object.defineProperty(AppState, "currentState", {
+            configurable: true,
+            value: "active",
+            writable: true,
+        });
         mockedUseAuth.mockReturnValue({
             isAuthenticated: true,
             isLoading: false,
         } as ReturnType<typeof useAuth>);
+        mockedUseTheme.mockReturnValue({
+            mode: "light",
+        } as ReturnType<typeof useTheme>);
         mockedGetAuthMember.mockResolvedValue({ id: 77 } as Awaited<
             ReturnType<typeof getAuthMember>
         >);
         mockedSubscribePushTokenRefresh.mockReturnValue(unsubscribePushRefresh);
+        mockedSubscribePushRegistrationSuccess.mockImplementation((listener) => {
+            pushRegistrationSuccessListener = listener;
+            return unsubscribePushRegistrationSuccess;
+        });
         mockedRegisterPushAfterLogin.mockResolvedValue(undefined);
         jest.spyOn(AppState, "addEventListener").mockImplementation((_type, listener) => {
             appStateListeners.push(listener);
@@ -171,6 +217,13 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         jest.restoreAllMocks();
         jest.clearAllMocks();
         jest.useRealTimers();
+        if (originalAppStateCurrentStateDescriptor) {
+            Object.defineProperty(
+                AppState,
+                "currentState",
+                originalAppStateCurrentStateDescriptor,
+            );
+        }
     });
 
     it("drains on authenticated cold start and whenever the app becomes active", async () => {
@@ -211,6 +264,88 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         renderer = undefined;
         expect(removeAppStateListener).toHaveBeenCalledTimes(4);
         expect(unsubscribePushRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not bootstrap Live Activity token sync before FCM registration succeeds", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AppProviders>
+                    <Text>child</Text>
+                </AppProviders>,
+            );
+            await Promise.resolve();
+        });
+
+        expect(mockedRegisterPushAfterLogin).toHaveBeenCalledWith(77);
+        expect(mockedActivateLiveActivitySync).not.toHaveBeenCalled();
+
+        await act(async () => {
+            pushRegistrationSuccessListener?.(77);
+            await Promise.resolve();
+        });
+
+        expect(mockedActivateLiveActivitySync).toHaveBeenCalledWith(77);
+    });
+
+    it("syncs effective appearance without restarting the account bootstrap", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AppProviders>
+                    <Text>child</Text>
+                </AppProviders>,
+            );
+            await Promise.resolve();
+        });
+
+        expect(mockedSetLiveActivityAppearance).toHaveBeenCalledTimes(1);
+        expect(mockedSetLiveActivityAppearance).toHaveBeenLastCalledWith("light");
+        expect(mockedGetAuthMember).toHaveBeenCalledTimes(1);
+        expect(mockedSubscribePushRegistrationSuccess).toHaveBeenCalledTimes(1);
+
+        mockedUseTheme.mockReturnValue({
+            mode: "dark",
+        } as ReturnType<typeof useTheme>);
+        await act(async () => {
+            renderer?.update(
+                <AppProviders>
+                    <Text>child</Text>
+                </AppProviders>,
+            );
+            await Promise.resolve();
+        });
+
+        expect(mockedSetLiveActivityAppearance).toHaveBeenCalledTimes(2);
+        expect(mockedSetLiveActivityAppearance).toHaveBeenLastCalledWith("dark");
+        expect(mockedGetAuthMember).toHaveBeenCalledTimes(1);
+        expect(mockedSubscribePushRegistrationSuccess).toHaveBeenCalledTimes(1);
+    });
+
+    it("pauses Live Activity token retries in background and resumes from a fresh snapshot", async () => {
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AppProviders>
+                    <Text>child</Text>
+                </AppProviders>,
+            );
+            await Promise.resolve();
+        });
+        await act(async () => {
+            pushRegistrationSuccessListener?.(77);
+            await Promise.resolve();
+        });
+        expect(mockedActivateLiveActivitySync).toHaveBeenCalledWith(77);
+
+        await act(async () => {
+            appStateListeners.forEach((listener) => listener("background"));
+            await Promise.resolve();
+        });
+        expect(mockedPauseLiveActivitySync).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            appStateListeners.forEach((listener) => listener("active"));
+            await Promise.resolve();
+        });
+        expect(mockedResumeLiveActivitySync).toHaveBeenCalledWith(77);
     });
 
     it("retries the cached member bootstrap on active after a transient storage failure", async () => {

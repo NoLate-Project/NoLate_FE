@@ -1,5 +1,6 @@
 import { markScheduleDeparted } from "../../api/schedule";
 import { recoverDepartureAlarmsAfterMutation } from "../notification/departureAlarmMutationRecovery";
+import { endLiveActivityForSchedule } from "../notification/liveActivitySync";
 import type { ScheduleItem } from "./types";
 
 /**
@@ -11,6 +12,11 @@ export async function completeScheduleDeparture(
     scheduleId: string,
 ): Promise<ScheduleItem> {
     const updated = await markScheduleDeparted(scheduleId);
-    await recoverDepartureAlarmsAfterMutation();
+    await Promise.all([
+        recoverDepartureAlarmsAfterMutation(),
+        endLiveActivityForSchedule(scheduleId).catch((error) => {
+            if (__DEV__) console.warn("[live-activity] departure completion cleanup failed", error);
+        }),
+    ]);
     return updated;
 }

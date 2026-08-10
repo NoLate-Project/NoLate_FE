@@ -243,7 +243,10 @@ function RootNavigator() {
         routeSegments[0] === "legal" ||
         (__DEV__ &&
             routeSegments[0] === "internal" &&
-            routeSegments[1] === "schedule-ui-preview") ||
+            (
+                routeSegments[1] === "schedule-ui-preview" ||
+                routeSegments[1] === "live-activity-preview"
+            )) ||
         (routeSegments[0] === "share" &&
             routeSegments[1] !== "inbox" &&
             routeSegments[1] !== "blocked" &&
@@ -271,6 +274,7 @@ function RootNavigator() {
             <Stack.Screen name="legal/privacy-policy" />
             <Stack.Screen name="share/[token]" />
             {__DEV__ ? <Stack.Screen name="internal/schedule-ui-preview" /> : null}
+            {__DEV__ ? <Stack.Screen name="internal/live-activity-preview" /> : null}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
                     name="onboarding/calendar-import"

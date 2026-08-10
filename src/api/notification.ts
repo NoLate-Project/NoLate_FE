@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiPost } from "./api";
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
 import { assertApiSuccess, unwrapApiResponse, type ApiEnvelope } from "./response";
 
 export type PushPlatform = "IOS" | "ANDROID" | "WEB";
@@ -69,6 +69,31 @@ export type RegisterPushTokenPayload = {
     deliveryAckCapabilityVersion: 1;
 };
 
+export const LIVE_ACTIVITY_TYPE = "NoLateDepartureAttributes" as const;
+export const LIVE_ACTIVITY_SCHEMA_VERSION = 1 as const;
+export type LiveActivityAppearance = "light" | "dark";
+
+export type RegisterLiveActivityStartTokenPayload = {
+    deviceId: string;
+    activityType: typeof LIVE_ACTIVITY_TYPE;
+    pushToStartToken: string;
+    appearance: LiveActivityAppearance;
+    schemaVersion: typeof LIVE_ACTIVITY_SCHEMA_VERSION;
+};
+
+export type RegisterLiveActivityUpdateTokenPayload = {
+    deviceId: string;
+    scheduleId: number;
+    generation: number;
+    updateToken: string;
+    schemaVersion: typeof LIVE_ACTIVITY_SCHEMA_VERSION;
+};
+
+export type RetireLiveActivityPayload = {
+    deviceId: string;
+    scheduleId: number;
+};
+
 export type AppNotification = {
     id: number;
     type: string;
@@ -108,6 +133,57 @@ type DepartureAlarmSnapshotResponse = {
 
 export async function registerPushToken(payload: RegisterPushTokenPayload): Promise<void> {
     const response = await apiPost<ApiEnvelope<null>, RegisterPushTokenPayload>("/api/notifications/token", payload);
+    assertApiSuccess(response);
+}
+
+/**
+ * Registers the installation-wide ActivityKit push-to-start token. Account
+ * ownership comes from the JWT; member/session ids must never be accepted from
+ * client-controlled fields.
+ */
+export async function registerLiveActivityStartToken(
+    payload: RegisterLiveActivityStartTokenPayload,
+): Promise<void> {
+    const response = await apiPut<ApiEnvelope<null>, RegisterLiveActivityStartTokenPayload>(
+        "/api/notifications/live-activities/start-token",
+        payload,
+    );
+    assertApiSuccess(response);
+}
+
+export async function retireLiveActivityStartToken(deviceId: string): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<null>>(
+        "/api/notifications/live-activities/start-token",
+        {
+            params: {
+                deviceId,
+                activityType: LIVE_ACTIVITY_TYPE,
+            },
+        },
+    );
+    assertApiSuccess(response);
+}
+
+export async function registerLiveActivityUpdateToken(
+    activityId: string,
+    payload: RegisterLiveActivityUpdateTokenPayload,
+): Promise<void> {
+    const response = await apiPut<ApiEnvelope<null>, RegisterLiveActivityUpdateTokenPayload>(
+        `/api/notifications/live-activities/${encodeURIComponent(activityId)}/update-token`,
+        payload,
+    );
+    assertApiSuccess(response);
+}
+
+/** Reports that this installation no longer owns a locally active instance. */
+export async function retireLiveActivity(
+    activityId: string,
+    payload: RetireLiveActivityPayload,
+): Promise<void> {
+    const response = await apiDelete<ApiEnvelope<null>>(
+        `/api/notifications/live-activities/${encodeURIComponent(activityId)}`,
+        { params: payload },
+    );
     assertApiSuccess(response);
 }
 

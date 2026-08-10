@@ -79,6 +79,7 @@ eas-builds.json
 /output/
 /screenshots/
 /ios/build-*/
+**/.build/
 
 # testing
 /coverage
