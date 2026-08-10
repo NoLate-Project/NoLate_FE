@@ -25,7 +25,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
     getSchedule,
+    getScheduleDepartureStatus,
     sendScheduleDepartureNudge,
+    type ScheduleDepartureStatus,
 } from "../../src/api/schedule";
 import {
     getScheduleTravelPlan,
@@ -106,6 +108,10 @@ import {
 } from "../../src/modules/schedule/travelPlanPresentation";
 import { completeScheduleDeparture } from "../../src/modules/schedule/scheduleDepartureCompletion";
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
+import {
+    buildEffectiveTransitRoutePresentation,
+    resolveScheduleDetailDepartureTiming,
+} from "../../src/modules/schedule/effectiveTransitRoutePresentation";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -362,6 +368,7 @@ export function ScheduleDetail({
     );
     const [loading, setLoading] = useState(false);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [departureStatus, setDepartureStatus] = useState<ScheduleDepartureStatus>();
     const [retryKey, setRetryKey] = useState(0);
     const baseSheetHeights = getScheduleDetailSheetHeights(windowHeight);
     const sheetMaxHeight = baseSheetHeights.maxHeight;
@@ -464,10 +471,36 @@ export function ScheduleDetail({
                 : participant
         ));
     }, [currentMemberId, item?.departureParticipants, previewDepartedAt]);
-    const recommendedDepartureAt = useMemo(
+    const savedRecommendedDepartureAt = useMemo(
         () => item ? getRecommendedDepartureAt(item) : undefined,
         [item]
     );
+    const inspectedRecommendedDepartureAt = useMemo(() => {
+        if (!inspectedTravelPlan) return undefined;
+        if (inspectedTravelPlan.departAt) return fromISO(inspectedTravelPlan.departAt);
+        if (typeof inspectedTravelPlan.travelMinutes !== "number" || !item) return undefined;
+        return new Date(
+            fromISO(item.startAt).getTime() - (inspectedTravelPlan.travelMinutes * MINUTE_MS),
+        );
+    }, [inspectedTravelPlan, item]);
+    const displayedDepartureTiming = useMemo(
+        () => resolveScheduleDetailDepartureTiming({
+            status: departureStatus,
+            savedRecommendedDepartureAt,
+            savedTravelMinutes: item?.travelMinutes,
+            isInspectingTravelPlan: Boolean(inspectedTravelPlan),
+            inspectedRecommendedDepartureAt,
+            inspectedTravelMinutes: inspectedTravelPlan?.travelMinutes,
+        }),
+        [
+            departureStatus,
+            inspectedRecommendedDepartureAt,
+            inspectedTravelPlan,
+            item?.travelMinutes,
+            savedRecommendedDepartureAt,
+        ],
+    );
+    const recommendedDepartureAt = displayedDepartureTiming.recommendedDepartureAt;
     const departureDisplayState: DepartureDisplayState = item
         ? getDepartureDisplayState(recommendedDepartureAt, item, nowMs, currentMemberDepartedAt)
         : { kind: "status", text: "", tone: "default" };
@@ -502,6 +535,7 @@ export function ScheduleDetail({
         setTravelPlanDetailPendingMemberId(undefined);
         setDepartureNudgePendingMemberId(undefined);
         setPreviewDepartedAt(undefined);
+        setDepartureStatus(undefined);
         autoOpenedRouteDetailItemIdRef.current = undefined;
     }, [id, participantDisclosureProgress, previewParticipantsExpanded]);
 
@@ -664,6 +698,17 @@ export function ScheduleDetail({
         let cancelled = false;
         setLoading(true);
         setLoadError(null);
+        setDepartureStatus(undefined);
+
+        getScheduleDepartureStatus(id)
+            .then((status) => {
+                if (!cancelled) setDepartureStatus(status);
+            })
+            .catch(() => {
+                // ETA 상태는 보조 정보다. 실패해도 저장된 일정과 경로는 정상 표시한다.
+                if (!cancelled) setDepartureStatus(undefined);
+            });
+
         getSchedule(id)
             .then((detail) => {
                 if (!cancelled) dispatch({ type: "UPDATE_ITEM", item: detail });
@@ -684,11 +729,15 @@ export function ScheduleDetail({
     const displayRoute = inspectedTravelPlan?.route ?? item?.route;
     const displayOrigin = inspectedTravelPlan?.origin ?? item?.origin;
     const displayDestination = inspectedTravelPlan?.destination ?? item?.destination;
-    const displayTravelMinutes = inspectedTravelPlan?.travelMinutes ?? item?.travelMinutes;
+    const savedDisplayTravelMinutes = inspectedTravelPlan?.travelMinutes ?? item?.travelMinutes;
+    const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
     const displayTravelMode = inspectedTravelPlan?.travelMode ?? item?.travelMode;
     const displayDepartureAt = inspectedTravelPlan?.departAt
         ? fromISO(inspectedTravelPlan.departAt)
-        : recommendedDepartureAt;
+        : savedRecommendedDepartureAt;
+    const effectiveTransitRoutePresentation = inspectedTravelPlan
+        ? undefined
+        : buildEffectiveTransitRoutePresentation(departureStatus);
     const mapPresentation = useMemo(() => buildSavedRouteMapPresentation({
         route: displayRoute,
         origin: displayOrigin ?? undefined,
@@ -765,7 +814,7 @@ export function ScheduleDetail({
             !item ||
             !isRouteDetailEntryRequested(openRouteDetail) ||
             autoOpenedRouteDetailItemIdRef.current === item.id ||
-            (!routeDetailInfo && !displayTravelMinutes && item.routeSetupRequired !== true)
+            (!routeDetailInfo && !savedDisplayTravelMinutes && item.routeSetupRequired !== true)
         ) return;
 
         // Notification/native alarm entry expands once after the route-backed sheet exists.
@@ -773,7 +822,7 @@ export function ScheduleDetail({
         // repeatedly overriding the user's manual collapse gesture.
         autoOpenedRouteDetailItemIdRef.current = item.id;
         snapSheet("expanded");
-    }, [displayTravelMinutes, item, openRouteDetail, routeDetailInfo, snapSheet]);
+    }, [item, openRouteDetail, routeDetailInfo, savedDisplayTravelMinutes, snapSheet]);
 
     const focusRouteLeg = useCallback((legIndex: number) => {
         const leg = routeLegs[legIndex];
@@ -1205,8 +1254,8 @@ export function ScheduleDetail({
     const routeIdentityTitle = displayOrigin?.name && displayDestination?.name
         ? `${displayOrigin.name} → ${displayDestination.name}`
         : routeTitle;
-    const travelText = displayTravelMinutes
-        ? `${travelModeLabel(displayTravelMode ?? undefined)} ${displayTravelMinutes}분`
+    const travelText = savedDisplayTravelMinutes
+        ? `${travelModeLabel(displayTravelMode ?? undefined)} ${savedDisplayTravelMinutes}분`
         : travelModeLabel(displayTravelMode ?? undefined);
     const hasDepartureInfo = Boolean(recommendedDepartureAt || currentMemberDepartedAt || typeof item.travelMinutes === "number");
     const departureCompleted = Boolean(currentMemberDepartedAt);
@@ -1250,7 +1299,7 @@ export function ScheduleDetail({
     );
     const routeSummaryKind = getSavedRouteSummaryKind(
         hasRenderableDetailedRoute,
-        displayTravelMinutes ?? undefined
+        savedDisplayTravelMinutes ?? undefined
     );
     const hasRouteSummary = routeSummaryKind !== "none";
     const hasDetailedRoute = routeSummaryKind === "detailed";
@@ -1267,7 +1316,9 @@ export function ScheduleDetail({
     const notesText = getUserVisibleScheduleNotes(item.notes);
     const routeDetailMeta = [
         hasDetailedRoute
-            ? `${arrivalTimeLabel} 도착`
+            ? effectiveTransitRoutePresentation
+                ? "지도에 표시된 저장 경로"
+                : `${arrivalTimeLabel} 도착`
             : routeSummaryKind === "duration_only"
                 ? "예상 이동 시간만 저장됨"
                 : "이동 경로 미설정",
@@ -1276,7 +1327,7 @@ export function ScheduleDetail({
             : undefined,
     ].filter(Boolean).join(" · ");
     const routeSummaryTitle = hasDetailedRoute
-        ? "최적 경로"
+        ? effectiveTransitRoutePresentation ? "저장한 경로" : "최적 경로"
         : routeSummaryKind === "duration_only"
             ? "상세 경로 미설정"
             : "저장된 경로 없음";
@@ -1285,8 +1336,15 @@ export function ScheduleDetail({
         : departureCompleted
             ? "완료"
             : "대기";
+    const currentRouteDurationLabel = hasRouteSummary
+        ? typeof currentTravelMinutes === "number"
+            ? `${currentTravelMinutes}분`
+            : routeNumberText(routeOption)
+        : "미설정";
     const routeDurationLabel = hasRouteSummary
-        ? routeNumberText(routeOption, displayTravelMinutes ?? undefined)
+        ? typeof savedDisplayTravelMinutes === "number"
+            ? `${savedDisplayTravelMinutes}분`
+            : routeNumberText(routeOption)
         : "미설정";
     const departureRemainingLabel = getDepartureRemainingLabel(departureDisplayState);
     const recommendedDepartureTimeLabel = recommendedDepartureAt
@@ -1295,14 +1353,14 @@ export function ScheduleDetail({
             ? departureDisplayState.text
             : scheduleCountdown.compactValue;
     const routeArrivalSummary = hasRouteSummary
-        ? `${arrivalTimeLabel} 도착 · 총 ${routeDurationLabel}`
+        ? `${arrivalTimeLabel} 도착 · 총 ${currentRouteDurationLabel}`
         : scheduleRangeLabel;
     const routeWalkingMinutes = routeDetailInfo?.steps.reduce((total, step) => (
         step.type === "WALK" && typeof step.durationMinutes === "number"
             ? total + step.durationMinutes
             : total
     ), 0) ?? 0;
-    const routeFactLabels = [
+    const routeFactLabels = effectiveTransitRoutePresentation ? [] : [
         typeof routeDetailInfo?.transferCount === "number"
             ? `환승 ${routeDetailInfo.transferCount}회`
             : typeof routeOption?.transferCount === "number"
@@ -1956,6 +2014,9 @@ export function ScheduleDetail({
                                         `권장 출발 ${recommendedDepartureTimeLabel}`,
                                         departureRemainingLabel,
                                         routeArrivalSummary,
+                                        effectiveTransitRoutePresentation
+                                            ? `실시간 추천 경로, ${effectiveTransitRoutePresentation.itinerary}, ${effectiveTransitRoutePresentation.mapNote}`
+                                            : undefined,
                                         ...routeFactLabels,
                                         routeProgressSegments.length > 0
                                             ? getTransitRouteSummaryAccessibilityLabel(routeProgressSegments)
@@ -2001,8 +2062,20 @@ export function ScheduleDetail({
                                     <Text numberOfLines={1} style={[styles.improvedArrivalSummary, { color: secondaryText }]}>
                                         {routeArrivalSummary}
                                     </Text>
-                                    <CompactRouteProgressStrip segments={routeProgressSegments} isDark={isDark} />
-                                    {departureCompleted ? (
+                                    {!effectiveTransitRoutePresentation ? (
+                                        <CompactRouteProgressStrip segments={routeProgressSegments} isDark={isDark} />
+                                    ) : null}
+                                    {effectiveTransitRoutePresentation ? (
+                                        <View style={styles.effectiveRouteCompactNotice}>
+                                            <Ionicons name="swap-horizontal" size={14} color={topCardAccentText} />
+                                            <Text
+                                                numberOfLines={1}
+                                                style={[styles.effectiveRouteCompactNoticeText, { color: topCardAccentText }]}
+                                            >
+                                                실시간 추천 경로 · {effectiveTransitRoutePresentation.itinerary}
+                                            </Text>
+                                        </View>
+                                    ) : departureCompleted ? (
                                         <View style={styles.improvedDepartureSharedRow}>
                                             <Ionicons name="checkmark-circle" size={15} color={departureStatusAccent} />
                                             <Text style={[styles.improvedCompactFacts, { color: secondaryText }]}>출발 상태를 공유했어요</Text>
@@ -2204,6 +2277,53 @@ export function ScheduleDetail({
                                 </View>
                             )}
                         </View>
+
+                        {effectiveTransitRoutePresentation ? (
+                            <View
+                                accessible
+                                accessibilityRole="summary"
+                                accessibilityLabel={`실시간 추천 경로, ${effectiveTransitRoutePresentation.summary}, ${effectiveTransitRoutePresentation.itinerary}, ${effectiveTransitRoutePresentation.mapNote}`}
+                                style={[
+                                    styles.effectiveRouteCard,
+                                    isDark
+                                        ? styles.effectiveRouteCardDark
+                                        : styles.effectiveRouteCardLight,
+                                ]}
+                            >
+                                <View style={styles.effectiveRouteCardHeader}>
+                                    <View style={styles.effectiveRouteCardTitleRow}>
+                                        <View
+                                            style={[
+                                                styles.effectiveRouteCardIcon,
+                                                isDark
+                                                    ? styles.effectiveRouteCardIconDark
+                                                    : styles.effectiveRouteCardIconLight,
+                                            ]}
+                                        >
+                                            <Ionicons name="swap-horizontal" size={15} color={topCardAccentText} />
+                                        </View>
+                                        <Text style={[styles.effectiveRouteCardTitle, { color: primaryText }]}>실시간 추천 경로</Text>
+                                    </View>
+                                    {effectiveTransitRoutePresentation.summary ? (
+                                        <Text style={[styles.effectiveRouteCardSummary, { color: topCardAccentText }]}>
+                                            {effectiveTransitRoutePresentation.summary}
+                                        </Text>
+                                    ) : null}
+                                </View>
+                                <Text
+                                    numberOfLines={3}
+                                    style={[styles.effectiveRouteCardItinerary, { color: primaryText }]}
+                                >
+                                    {effectiveTransitRoutePresentation.itinerary}
+                                </Text>
+                                <View style={styles.effectiveRouteMapNoteRow}>
+                                    <Ionicons name="map-outline" size={13} color={secondaryText} />
+                                    <Text style={[styles.effectiveRouteMapNote, { color: secondaryText }]}>
+                                        {effectiveTransitRoutePresentation.mapNote}
+                                    </Text>
+                                </View>
+                            </View>
+                        ) : null}
 
                         <>
                         <View
@@ -2937,6 +3057,21 @@ const styles = StyleSheet.create({
         fontWeight: "600",
         letterSpacing: 0,
     },
+    effectiveRouteCompactNotice: {
+        minWidth: 0,
+        marginTop: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    effectiveRouteCompactNoticeText: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
     improvedDepartureSharedRow: {
         marginTop: 8,
         flexDirection: "row",
@@ -2985,6 +3120,88 @@ const styles = StyleSheet.create({
         fontSize: 11,
         lineHeight: 15,
         fontWeight: "700",
+        letterSpacing: 0,
+    },
+    effectiveRouteCard: {
+        marginTop: 10,
+        marginBottom: 10,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: 16,
+        paddingHorizontal: 13,
+        paddingVertical: 12,
+    },
+    effectiveRouteCardDark: {
+        backgroundColor: "rgba(41,121,255,0.12)",
+        borderColor: "rgba(120,180,255,0.28)",
+    },
+    effectiveRouteCardLight: {
+        backgroundColor: "rgba(41,121,255,0.07)",
+        borderColor: "rgba(41,121,255,0.20)",
+    },
+    effectiveRouteCardHeader: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+    effectiveRouteCardTitleRow: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+    effectiveRouteCardIcon: {
+        width: 28,
+        height: 28,
+        borderRadius: 9,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    effectiveRouteCardIconDark: {
+        backgroundColor: "rgba(41,121,255,0.22)",
+    },
+    effectiveRouteCardIconLight: {
+        backgroundColor: "rgba(41,121,255,0.12)",
+    },
+    effectiveRouteCardTitle: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "900",
+        letterSpacing: -0.1,
+    },
+    effectiveRouteCardSummary: {
+        flexShrink: 1,
+        maxWidth: "56%",
+        textAlign: "right",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+    effectiveRouteCardItinerary: {
+        marginTop: 9,
+        fontSize: 12,
+        lineHeight: 18,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+    effectiveRouteMapNoteRow: {
+        minWidth: 0,
+        marginTop: 8,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+    effectiveRouteMapNote: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "600",
         letterSpacing: 0,
     },
     sheetQuickSummary: {

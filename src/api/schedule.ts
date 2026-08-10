@@ -34,6 +34,70 @@ export type NotificationSendResult = {
     removedTokenCount: number;
 };
 
+export type ScheduleDepartureEtaSource =
+    | "LIVE_PROVIDER"
+    | "TIMETABLE_PROVIDER"
+    | "SELECTED_ROUTE"
+    | "SAVED_FALLBACK";
+
+export type ScheduleDepartureEtaConfidence = "HIGH" | "MEDIUM" | "LOW";
+
+export type TransitRouteProvenance =
+    | "SELECTED_ROUTE_PRESERVED"
+    | "ODSAY_ALTERNATIVE_ROUTE";
+
+export type TransitTimingBasis =
+    | "FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE"
+    | "FIRST_BOARDING_REALTIME_TRANSFER_UNKNOWN"
+    | "TIMETABLE_ONLY"
+    | "TIMETABLE_TRANSFER_UNKNOWN";
+
+export type EffectiveTransitRouteSegment = {
+    sequence: number;
+    kind: "WALK" | "BUS" | "SUBWAY" | "ETC";
+    durationMinutes: number;
+    waitingMinutes?: number | null;
+    lineName?: string | null;
+    fromName?: string | null;
+    toName?: string | null;
+    directionName?: string | null;
+};
+
+export type EffectiveTransitRoute = {
+    provider: string;
+    identity: string;
+    departureAt: string;
+    arrivalAt: string;
+    totalMinutes: number;
+    segments: EffectiveTransitRouteSegment[];
+};
+
+export type ScheduleDepartureStatus = {
+    scheduleId: number;
+    travelMinutes: number | null;
+    recommendedDepartureAt: string | null;
+    evaluatedAt: string;
+    liveFetchedAt: string | null;
+    source: ScheduleDepartureEtaSource | null;
+    stale: boolean;
+    confidence: ScheduleDepartureEtaConfidence | null;
+    failureReason: string | null;
+    lastTrafficChangeMinutes: number | null;
+    lastChangedAt: string | null;
+    nextCheckAt: string | null;
+    preparationMinutes: number | null;
+    preparationStartAt: string | null;
+    safetyBufferMinutes: number | null;
+    timeZone: string;
+    predictedArrivalAt?: string | null;
+    onTimeArrivalPossible?: boolean | null;
+    transitRouteProvenance?: TransitRouteProvenance | null;
+    transitTimingBasis?: TransitTimingBasis | null;
+    firstBoardingWaitMinutes?: number | null;
+    routeChanged?: boolean;
+    effectiveTransitRoute?: EffectiveTransitRoute | null;
+};
+
 export type ScheduleEtaArrivalObservation = {
     scheduleId: number;
     pushJobId?: number | null;
@@ -249,6 +313,15 @@ export async function getSchedule(scheduleId: string): Promise<ScheduleItem> {
     const item = normalizeSchedule(unwrapApiResponse(response));
     upsertCalendarScheduleCacheItem(item);
     return item;
+}
+
+export async function getScheduleDepartureStatus(
+    scheduleId: string,
+): Promise<ScheduleDepartureStatus> {
+    const response = await apiGet<ApiEnvelope<ScheduleDepartureStatus>>(
+        `/api/schedules/${scheduleId}/departure-status`,
+    );
+    return unwrapApiResponse(response);
 }
 
 export async function createSchedule(payload: SchedulePayload): Promise<ScheduleItem> {
