@@ -22,10 +22,12 @@ describe("schedule form calendar simplicity", () => {
         expect(addFormSource).toContain("calendarContentModeOverride: null");
     });
 
-    test("editing preserves the existing calendar assignment without exposing it", () => {
-        expect(editFormSource).not.toContain("ScheduleCalendarSelectBox");
-        expect(editFormSource).not.toContain("getScheduleCalendars");
-        expect(editFormSource).toContain("calendarId: item.calendarId ?? null");
+    test("editing lets only the original author move an event while keeping categories scoped", () => {
+        expect(editFormSource).toContain("ScheduleCalendarSelectBox");
+        expect(editFormSource).toContain("getScheduleCalendars");
+        expect(editFormSource).toContain("isCategoryInCalendarScope");
+        expect(editFormSource).toContain("locked={!canChangeCalendar}");
+        expect(editFormSource).toContain("canChangeCalendar ? calendarId : item.calendarId ?? null");
         expect(editFormSource).toContain(
             "calendarContentModeOverride: item.calendarContentModeOverride ?? null",
         );

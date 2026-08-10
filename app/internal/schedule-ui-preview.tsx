@@ -17,8 +17,9 @@ import ScheduleAddModal from "../../src/modules/schedule/components/form/Schedul
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
 import { ScheduleDetail as ActualScheduleDetail } from "../schedule/[id]";
 import RouteSelectScreen from "../schedule/route-select";
+import { createScheduleInitialState } from "../../src/modules/schedule/initialState";
 import { buildSavedRouteDetailInfo } from "../../src/modules/schedule/savedRouteDetailPresentation";
-import { useScheduleStore } from "../../src/modules/schedule/store";
+import { ScheduleProvider, useScheduleStore } from "../../src/modules/schedule/store";
 import { setRoutePlannerInitial } from "../../src/modules/schedule/routePlannerSession";
 import { buildTransitRouteProgressSegments } from "../../src/modules/schedule/transitRouteProgress";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
@@ -229,6 +230,13 @@ const previewItem: ScheduleItem = {
     notificationIntervalMinutes: 20,
     alertMode: "ALARM",
     notes: "2번 출구 앞에서 만나기",
+};
+
+const previewScheduleState = {
+    ...createScheduleInitialState(new Date("2026-08-08T09:00:00+09:00")),
+    selectedDay: PREVIEW_DAY,
+    categories: previewCategories,
+    itemsById: { [PREVIEW_ID]: previewItem },
 };
 
 const actualRouteDetailItem: ScheduleItem = {
@@ -501,10 +509,13 @@ export default function ScheduleUiPreviewScreen() {
             return <PreviewBackdrop label="일정 수정 화면을 준비하고 있어요" />;
         }
         return (
-            <EditPreview
-                initialScrollToEnd={params.section === "bottom"}
-                initialCategoryPickerOpen={params.category === "open"}
-            />
+            <ScheduleProvider initialState={previewScheduleState}>
+                <EditPreview
+                    key={`edit-${params.section ?? "top"}-${params.category ?? "closed"}`}
+                    initialScrollToEnd={params.section === "bottom"}
+                    initialCategoryPickerOpen={params.category === "open"}
+                />
+            </ScheduleProvider>
         );
     }
 
@@ -530,6 +541,11 @@ export default function ScheduleUiPreviewScreen() {
                 initialParticipantsExpanded={params.people === "expanded"}
                 previewNowMs={new Date("2026-08-08T11:06:00+09:00").getTime()}
                 previewCurrentMemberId={101}
+                onPreviewOpenEditor={() => router.setParams({
+                    view: "edit",
+                    id: PREVIEW_ID,
+                    preview: "1",
+                })}
             />
         );
     }

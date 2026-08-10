@@ -830,6 +830,7 @@ export default function ShareInvitationSheet({
                             <Pressable
                                 accessibilityRole="button"
                                 accessibilityLabel="생성한 공유 링크 다시 공유"
+                                accessibilityValue={{ text: generatedLink }}
                                 onPress={() => shareGeneratedLink(generatedLink).catch(() => undefined)}
                                 style={({ pressed }) => [
                                     styles.generatedLink,

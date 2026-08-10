@@ -2,7 +2,9 @@ import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 import { Alert, Animated, StyleSheet, Switch } from "react-native";
 
-import ScheduleEditScreen from "../src/modules/schedule/screens/ScheduleEditScreen";
+import ScheduleEditScreen, {
+    SCHEDULE_EDIT_DARK_PAGE_BACKGROUND,
+} from "../src/modules/schedule/screens/ScheduleEditScreen";
 import {
     getRoutePlannerInitial,
     setRoutePlannerResult,
@@ -54,6 +56,7 @@ const mockState = {
     error: null,
 };
 
+let mockThemeMode: "light" | "dark" = "light";
 let mockPathname = "/schedule/1";
 let mockRouteParams: { id: string; preview?: string } = { id: "1" };
 const mockRouterPush = jest.fn();
@@ -65,6 +68,8 @@ const mockUpdateSchedule = jest.fn();
 const mockDeleteSchedule = jest.fn();
 const mockUpsertMyScheduleTravelPlan = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
+const mockGetAuthMember = jest.fn();
+const mockGetScheduleCalendars = jest.fn();
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
@@ -86,7 +91,7 @@ jest.mock("react-native-safe-area-context", () => ({
 jest.mock("@react-native-community/datetimepicker", () => "DateTimePicker");
 jest.mock("react-native-calendars", () => ({ Calendar: "Calendar" }));
 jest.mock("../src/api/scheduleCalendars", () => ({
-    getScheduleCalendars: jest.fn().mockResolvedValue([]),
+    getScheduleCalendars: (...args: unknown[]) => mockGetScheduleCalendars(...args),
 }));
 jest.mock("../src/modules/schedule/store", () => ({
     useScheduleStore: () => ({
@@ -95,24 +100,35 @@ jest.mock("../src/modules/schedule/store", () => ({
     }),
 }));
 jest.mock("../src/modules/theme/ThemeContext", () => ({
-    useTheme: () => ({
-        mode: "light",
-        colors: {
-            background: "#FFFFFF",
-            surface: "#FFFFFF",
-            surface2: "#F7F7F8",
-            border: "#E6E6EA",
-            textPrimary: "#000000",
-            textSecondary: "#6E6E73",
-            inputPlaceholder: "#AEAEB2",
-            selectedDayBg: "#000000",
-        },
-    }),
+    useTheme: () => {
+        const dark = mockThemeMode === "dark";
+        return {
+            mode: mockThemeMode,
+            colors: {
+                background: dark ? "#000000" : "#FFFFFF",
+                surface: dark ? "#1C1C1E" : "#FFFFFF",
+                surface2: dark ? "#2C2C2E" : "#F7F7F8",
+                border: dark ? "#2C2C2E" : "#E6E6EA",
+                textPrimary: dark ? "#FFFFFF" : "#000000",
+                textSecondary: dark ? "#8E8E93" : "#6E6E73",
+                textDisabled: dark ? "#3A3A3C" : "#C7C7CC",
+                inputPlaceholder: dark ? "rgba(235,235,245,0.34)" : "#AEAEB2",
+                selectedDayBg: dark ? "#FFFFFF" : "#000000",
+                selectedDayText: dark ? "#000000" : "#FFFFFF",
+                todayBorderColor: dark ? "#FFFFFF" : "#000000",
+                arrowColor: dark ? "#FFFFFF" : "#000000",
+                monthTextColor: dark ? "#FFFFFF" : "#000000",
+            },
+        };
+    },
 }));
 jest.mock("../src/api/schedule", () => ({
     getSchedule: (...args: unknown[]) => mockGetSchedule(...args),
     updateSchedule: (...args: unknown[]) => mockUpdateSchedule(...args),
     deleteSchedule: (...args: unknown[]) => mockDeleteSchedule(...args),
+}));
+jest.mock("../src/modules/auth/authStorage", () => ({
+    getAuthMember: () => mockGetAuthMember(),
 }));
 jest.mock("../src/api/scheduleTravelPlans", () => ({
     upsertMyScheduleTravelPlan: (...args: unknown[]) =>
@@ -217,6 +233,7 @@ describe("ScheduleEditScreen route return", () => {
     });
 
     beforeEach(() => {
+        mockThemeMode = "light";
         mockPathname = "/schedule/1";
         mockRouteParams = { id: "1" };
         mockState.itemsById["1"] = mockItem;
@@ -230,6 +247,10 @@ describe("ScheduleEditScreen route return", () => {
         mockUpsertMyScheduleTravelPlan.mockReset();
         mockRecoverDepartureAlarmsAfterMutation.mockReset();
         mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
+        mockGetAuthMember.mockReset();
+        mockGetAuthMember.mockResolvedValue({ id: 1 });
+        mockGetScheduleCalendars.mockReset();
+        mockGetScheduleCalendars.mockResolvedValue([]);
         jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
     });
 
@@ -249,6 +270,31 @@ describe("ScheduleEditScreen route return", () => {
 
         expect(mockGetSchedule).not.toHaveBeenCalled();
         expect(renderer!.root.findByProps({ testID: "schedule-edit-page" })).toBeTruthy();
+    });
+
+    test("다크 모드는 순수 검정 대신 한 단계 밝은 페이지 배경을 사용한다", async () => {
+        mockThemeMode = "dark";
+        mockRouteParams = { id: "1", preview: "1" };
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+        });
+
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-root" }).props.style,
+        ).backgroundColor).toBe(SCHEDULE_EDIT_DARK_PAGE_BACKGROUND);
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-header" }).props.style,
+        ).backgroundColor).toBe(SCHEDULE_EDIT_DARK_PAGE_BACKGROUND);
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-title-field" }).props.style,
+        ).backgroundColor).toBe("#2C2C2E");
+        expect(StyleSheet.flatten(
+            renderer!.root.findByProps({ testID: "schedule-edit-datetime-card" }).props.style,
+        ).backgroundColor).toBe("#2C2C2E");
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.placeholderTextColor)
+            .toBe("rgba(235,235,245,0.50)");
     });
 
     test("전체 페이지에서 일시를 한 그룹으로 묶고 알림 설정을 flat 변형으로 보여준다", async () => {
@@ -949,6 +995,96 @@ describe("ScheduleEditScreen route return", () => {
             "일정 수정 실패",
             "공용 저장 실패",
         );
+    });
+
+    test("캘린더 OWNER라도 다른 멤버가 만든 일정에는 삭제 버튼을 노출하지 않는다", async () => {
+        const editorCreatedItem: ScheduleItem = {
+            ...mockItem,
+            ownerMemberId: 2,
+            sharePermission: "OWNER",
+        };
+        mockState.itemsById["1"] = editorCreatedItem;
+        mockGetSchedule.mockResolvedValue(editorCreatedItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
+    });
+
+    test("캘린더 EDITOR도 자신이 만든 일정에는 삭제 버튼을 노출한다", async () => {
+        const editorCreatedItem: ScheduleItem = {
+            ...mockItem,
+            ownerMemberId: 1,
+            sharePermission: "EDITOR",
+        };
+        mockState.itemsById["1"] = editorCreatedItem;
+        mockGetSchedule.mockResolvedValue(editorCreatedItem);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 삭제" })).toBeTruthy();
+    });
+
+    test("다른 멤버가 만든 공유 일정은 현재 캘린더만 표시하고 이동 선택지를 잠근다", async () => {
+        const otherMemberSchedule: ScheduleItem = {
+            ...mockItem,
+            calendarId: 21,
+            ownerMemberId: 2,
+            sharePermission: "EDITOR",
+        };
+        mockState.itemsById["1"] = otherMemberSchedule;
+        mockGetSchedule.mockResolvedValue(otherMemberSchedule);
+        mockGetScheduleCalendars.mockResolvedValue([
+            {
+                id: 21,
+                title: "A E2E V2",
+                color: "#2F80FF",
+                defaultContentMode: "SCHEDULE_AND_TRAVEL",
+                status: "ACTIVE",
+                ownerMemberId: 2,
+                myRole: "EDITOR",
+                memberCount: 2,
+                routeReminderEnabled: true,
+            },
+            {
+                id: 22,
+                title: "B E2E V2",
+                color: "#34C759",
+                defaultContentMode: "SCHEDULE_AND_TRAVEL",
+                status: "ACTIVE",
+                ownerMemberId: 1,
+                myRole: "OWNER",
+                memberCount: 2,
+                routeReminderEnabled: true,
+            },
+        ]);
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findByProps({
+            testID: "schedule-calendar-assignment-locked",
+        })).toBeTruthy();
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "A E2E V2, 일정 작성자만 캘린더 변경 가능",
+        })).toBeTruthy();
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "개인 일정 캘린더 선택",
+        })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "B E2E V2 캘린더 선택",
+        })).toHaveLength(0);
     });
 
     test("일정 삭제 성공 후 recovery를 한 번 실행하고 이동한다", async () => {

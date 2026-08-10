@@ -41,6 +41,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
   let handleQuickAdd: () -> Void
   let handleManualAdd: () -> Void
   let handleManageCategories: () -> Void
+  let handleManageCalendars: () -> Void
 
   init(
     selectedMode: String,
@@ -58,7 +59,8 @@ private final class ViewModeGlassControlModel: ObservableObject {
     handleAdd: @escaping () -> Void = {},
     handleQuickAdd: @escaping () -> Void = {},
     handleManualAdd: @escaping () -> Void = {},
-    handleManageCategories: @escaping () -> Void = {}
+    handleManageCategories: @escaping () -> Void = {},
+    handleManageCalendars: @escaping () -> Void = {}
   ) {
     self.selectedMode = selectedMode
     self.disabled = disabled
@@ -76,6 +78,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
     self.handleQuickAdd = handleQuickAdd
     self.handleManualAdd = handleManualAdd
     self.handleManageCategories = handleManageCategories
+    self.handleManageCalendars = handleManageCalendars
   }
 }
 
@@ -216,6 +219,7 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   @objc var onQuickAdd: (([AnyHashable: Any]) -> Void)?
   @objc var onManualAdd: (([AnyHashable: Any]) -> Void)?
   @objc var onManageCategories: (([AnyHashable: Any]) -> Void)?
+  @objc var onManageCalendars: (([AnyHashable: Any]) -> Void)?
 
   private let searchSessionID = UUID().uuidString
   private var lastSearchOpenGeneration = 0
@@ -271,6 +275,9 @@ final class LiquidCalendarMenuPrototypeView: UIView {
     },
     handleManageCategories: { [weak self] in
       self?.onManageCategories?(["action": "manageCategories"])
+    },
+    handleManageCalendars: { [weak self] in
+      self?.onManageCalendars?(["action": "manageCalendars"])
     }
   )
 
@@ -282,7 +289,7 @@ final class LiquidCalendarMenuPrototypeView: UIView {
   }
   private let searchExpandedHitHeight: CGFloat = 52
   private let collapsedHitPadding = UIEdgeInsets.zero
-  private let expandedHitHeight: CGFloat = 180
+  private let expandedHitHeight: CGFloat = 228
   private let expandedHitPadding = UIEdgeInsets(top: 8, left: 0, bottom: 14, right: 0)
 
   override init(frame: CGRect) {
@@ -940,7 +947,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
   private let collapsedSlotWidth: CGFloat = 50
   private let viewExpandedWidth: CGFloat = 251
   private let addExpandedWidth: CGFloat = 238
-  private let addExpandedHeight: CGFloat = 164
+  private let addExpandedHeight: CGFloat = 212
   private let collapsedRadius: CGFloat = 22
   private let expandedRadius: CGFloat = 26
   private let calendarOptions: [ViewModeGlassOption] = [
@@ -1633,6 +1640,13 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         title: "카테고리 관리",
         accessibilityHint: "카테고리를 추가하거나 편집합니다",
         action: model.handleManageCategories
+      )
+
+      addActionRow(
+        icon: "calendar.badge.plus",
+        title: "공유 캘린더",
+        accessibilityHint: "공유 캘린더를 만들거나 멤버를 관리합니다",
+        action: model.handleManageCalendars
       )
     }
     .padding(.horizontal, 10)

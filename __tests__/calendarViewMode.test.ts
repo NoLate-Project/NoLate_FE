@@ -1,8 +1,10 @@
 import {
     CALENDAR_DAY_HEIGHTS,
     CALENDAR_VIEW_OPTIONS,
+    DEFAULT_CALENDAR_VIEW_MODE,
     getPrimaryPillWeekdayGap,
     isContinuousMonthViewMode,
+    isCalendarViewModePreference,
     prefetchesAdjacentMonths,
     showsStickyMonthTitle,
     usesMonthInPrimaryPill,
@@ -15,6 +17,15 @@ describe("calendar view modes", () => {
             { value: "detail", label: "상세형" },
             { value: "list", label: "목록형" },
         ]);
+    });
+
+    test("accepts only user-selectable modes as saved preferences", () => {
+        expect(DEFAULT_CALENDAR_VIEW_MODE).toBe("detail");
+        expect(["stack", "detail", "list"].every(isCalendarViewModePreference))
+            .toBe(true);
+        expect(["week", "", "DETAIL", null, undefined]
+            .some(isCalendarViewModePreference))
+            .toBe(false);
     });
 
     test("keeps enough stack height for event lanes without the unused tail space", () => {

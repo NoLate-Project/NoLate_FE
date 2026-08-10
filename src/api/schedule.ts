@@ -29,9 +29,19 @@ export type CalendarImportResult = {
 
 export type NotificationSendResult = {
     requestedCount: number;
+    attemptedCount?: number;
     sentCount: number;
     failedCount: number;
     removedTokenCount: number;
+    /**
+     * Durable notification endpoints return before the provider worker runs.
+     * A persisted snapshot therefore represents a successfully accepted event
+     * even when attemptedCount/sentCount are still zero.
+     */
+    eventSnapshot?: unknown | null;
+    inboxDeduplicated?: boolean;
+    fenceRejected?: boolean;
+    recipientInactive?: boolean;
 };
 
 export type ScheduleEtaArrivalObservation = {

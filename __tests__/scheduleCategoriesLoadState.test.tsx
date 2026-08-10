@@ -1,5 +1,6 @@
 import React from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
+import { useLocalSearchParams } from "expo-router";
 
 import ScheduleCategoriesScreen from "../app/schedule/categories";
 import {
@@ -15,6 +16,7 @@ jest.mock("../src/modules/auth/authStorage", () => ({
     subscribeAuthInvalidation: () => () => undefined,
 }));
 jest.mock("expo-router", () => ({
+    useLocalSearchParams: jest.fn(() => ({})),
     useRouter: () => ({
         back: jest.fn(),
         canGoBack: () => true,
@@ -42,6 +44,9 @@ const mockGetCategories = getScheduleCategoriesFromApi as jest.MockedFunction<
 const mockCreateCategory = createScheduleCategoryToApi as jest.MockedFunction<
     typeof createScheduleCategoryToApi
 >;
+const mockUseLocalSearchParams = useLocalSearchParams as jest.MockedFunction<
+    typeof useLocalSearchParams
+>;
 
 describe("ScheduleCategoriesScreen load state", () => {
     let renderer: ReactTestRenderer | undefined;
@@ -56,6 +61,7 @@ describe("ScheduleCategoriesScreen load state", () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
         jest.clearAllMocks();
+        mockUseLocalSearchParams.mockReturnValue({});
     });
 
     async function renderScreen() {
@@ -130,5 +136,36 @@ describe("ScheduleCategoriesScreen load state", () => {
         expect(input.props.secureTextEntry).toBe(false);
         expect(input.props.textContentType).toBe("none");
         expect(input.props.autoComplete).toBe("off");
+    });
+
+    test("공유 캘린더 카테고리 생성은 캘린더 id를 전달하고 생성 결과를 목록에 표시한다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "A E2E Shared",
+        });
+        mockGetCategories.mockResolvedValueOnce([]);
+        mockCreateCategory.mockResolvedValueOnce({
+            id: "101",
+            title: "Owner Cat",
+            color: "#ff3b30",
+            calendarId: 16,
+            shared: true,
+            sharePermission: "OWNER",
+        });
+        await renderScreen();
+
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "새 카테고리 이름" })
+                .props.onChangeText("Owner Cat");
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 추가" })
+                .props.onPress();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(mockCreateCategory).toHaveBeenCalledWith("Owner Cat", "#ff3b30", undefined, 16);
+        expect(renderer!.root.findByProps({ children: "Owner Cat" })).toBeDefined();
     });
 });

@@ -1,4 +1,13 @@
 export type CalendarViewMode = "stack" | "detail" | "week" | "list";
+export type CalendarViewModePreference = Exclude<CalendarViewMode, "week">;
+
+export const DEFAULT_CALENDAR_VIEW_MODE: CalendarViewModePreference = "detail";
+
+export function isCalendarViewModePreference(
+    value: unknown
+): value is CalendarViewModePreference {
+    return value === "stack" || value === "detail" || value === "list";
+}
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
     // 휴일이 있는 날의 두 일정 lane과 overflow까지 유지하면서 남는 세로 공간만 줄인다.
@@ -35,7 +44,7 @@ export function showsStickyMonthTitle(mode: CalendarViewMode): boolean {
 }
 
 export const CALENDAR_VIEW_OPTIONS: Array<{
-    value: CalendarViewMode;
+    value: CalendarViewModePreference;
     label: string;
 }> = [
     { value: "stack", label: "스택형" },
