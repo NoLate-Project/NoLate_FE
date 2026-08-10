@@ -922,6 +922,20 @@ export default function ShareInboxScreen() {
               {' · '}
               {resultCount}개
             </Text>
+            {selectedTab === 'calendar' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="공유 캘린더 만들기 및 관리"
+                onPress={() => router.push('/schedule/calendars')}
+                style={({ pressed }) => [
+                  styles.calendarManageAction,
+                  { borderColor: colors.border, opacity: pressed ? 0.62 : 1 },
+                ]}
+              >
+                <Ionicons name="add" size={16} color={accent} />
+                <Text style={[styles.calendarManageActionText, { color: accent }]}>캘린더 관리</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           {error && data ? (
@@ -2504,6 +2518,21 @@ const styles = StyleSheet.create({
   resultLabel: {
     fontSize: 13,
     lineHeight: 18,
+    fontWeight: '800',
+    letterSpacing: 0,
+  },
+  calendarManageAction: {
+    height: 34,
+    borderWidth: 1,
+    borderRadius: 17,
+    paddingHorizontal: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  calendarManageActionText: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '800',
     letterSpacing: 0,
   },

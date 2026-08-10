@@ -38,6 +38,26 @@ function normalizeInvitationToken(value?: string): string | null {
     return normalized && /^[A-Za-z0-9_-]{16,512}$/.test(normalized) ? normalized : null;
 }
 
+function getAcceptedCalendarId(
+    result: ScheduleShareInvitationAcceptResult,
+): string | null {
+    const membershipCalendarId = result.calendarMembership?.calendarId;
+    if (
+        Number.isSafeInteger(membershipCalendarId)
+        && (membershipCalendarId ?? 0) > 0
+    ) {
+        return String(membershipCalendarId);
+    }
+
+    const resourceId = result.invitation.resourceId.trim();
+    if (!/^[1-9]\d*$/.test(resourceId)) return null;
+
+    const numericResourceId = Number(resourceId);
+    return Number.isSafeInteger(numericResourceId)
+        ? String(numericResourceId)
+        : null;
+}
+
 export default function ShareInvitationAcceptScreen() {
     const router = useRouter();
     const insets = useSafeAreaInsets();
@@ -150,7 +170,11 @@ export default function ShareInvitationAcceptScreen() {
         }
 
         if (resource.resourceType === "CALENDAR") {
-            router.replace("/schedule/calendars");
+            const calendarId = getAcceptedCalendarId(accepted);
+            router.replace(calendarId ? {
+                pathname: "/schedule/calendars",
+                params: { id: calendarId },
+            } : "/schedule/calendars");
             return;
         }
 
@@ -278,6 +302,7 @@ export default function ShareInvitationAcceptScreen() {
                 ) : accepted ? (
                     <Pressable
                         accessibilityRole="button"
+                        accessibilityLabel="수락한 공유 항목 열기"
                         onPress={openAcceptedResource}
                         style={({ pressed }) => [
                             styles.primaryButton,

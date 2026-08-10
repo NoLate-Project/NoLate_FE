@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
     Pressable,
@@ -66,18 +66,26 @@ export default function ScheduleCalendarsScreen() {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [membersLoading, setMembersLoading] = useState(false);
+    const [detailCalendarId, setDetailCalendarId] = useState<number | null>(null);
+    const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
-    const [sharing, setSharing] = useState(false);
+    const [sharingCalendarId, setSharingCalendarId] = useState<number | null>(null);
     const [newTitle, setNewTitle] = useState("");
     const [newColor, setNewColor] = useState(BRAND_BLUE);
     const [newContentMode, setNewContentMode] = useState<ScheduleShareContentMode>("SCHEDULE_ONLY");
     const [editingTitle, setEditingTitle] = useState("");
+    const selectedIdRef = useRef<number | null>(null);
+    const detailCalendarIdRef = useRef<number | null>(null);
+    const calendarsRequestIdRef = useRef(0);
+    const membersRequestIdRef = useRef(0);
+    const pendingConfirmationRef = useRef<string | null>(null);
 
     const selected = useMemo(
         () => calendars.find((calendar) => calendar.id === selectedId) ?? null,
         [calendars, selectedId],
     );
     const isOwner = selected?.myRole === "OWNER";
+    const detailReady = !!selected && detailCalendarId === selected.id;
     const accent = mode === "dark" ? "#8BB7FF" : BRAND_BLUE;
     const destructive = mode === "dark" ? "#FF6961" : "#D70015";
     const addButtonStateStyle = {
@@ -87,38 +95,83 @@ export default function ScheduleCalendarsScreen() {
     const destructiveBorderStyle = { borderColor: destructive };
     const destructiveTextStyle = { color: destructive };
 
+    const selectCalendar = useCallback((calendarId: number | null) => {
+        if (selectedIdRef.current === calendarId) return;
+        selectedIdRef.current = calendarId;
+        detailCalendarIdRef.current = null;
+        membersRequestIdRef.current += 1;
+        setSelectedId(calendarId);
+        setDetailCalendarId(null);
+        setDetailLoadError(null);
+        setMembers([]);
+        setMembersLoading(calendarId !== null);
+        setEditingTitle("");
+        setSharingCalendarId(null);
+    }, []);
+
+    const isCurrentDetailTarget = useCallback((calendarId: number) => (
+        selectedIdRef.current === calendarId
+        && detailCalendarIdRef.current === calendarId
+    ), []);
+
     const loadCalendars = useCallback(async (refresh = false) => {
+        const requestId = ++calendarsRequestIdRef.current;
         refresh ? setRefreshing(true) : setLoading(true);
         try {
             const result = await getScheduleCalendars();
+            if (requestId !== calendarsRequestIdRef.current) return;
             setCalendars(result);
-            setSelectedId((current) => {
-                if (current && result.some((calendar) => calendar.id === current)) return current;
-                const requestedId = Number(params.id);
-                if (
-                    Number.isFinite(requestedId)
-                    && result.some((calendar) => calendar.id === requestedId)
-                ) {
-                    return requestedId;
-                }
-                return result[0]?.id ?? null;
-            });
+            const current = selectedIdRef.current;
+            let next = current && result.some((calendar) => calendar.id === current)
+                ? current
+                : null;
+            const requestedId = Number(params.id);
+            if (
+                next === null
+                && Number.isFinite(requestedId)
+                && result.some((calendar) => calendar.id === requestedId)
+            ) {
+                next = requestedId;
+            }
+            if (next === null) next = result[0]?.id ?? null;
+            if (next !== current) selectCalendar(next);
         } catch (error) {
+            if (requestId !== calendarsRequestIdRef.current) return;
             Alert.alert("공유 캘린더", errorMessage(error));
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (requestId === calendarsRequestIdRef.current) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
-    }, [params.id]);
+    }, [params.id, selectCalendar]);
 
     const loadMembers = useCallback(async (calendarId: number) => {
+        const requestId = ++membersRequestIdRef.current;
         setMembersLoading(true);
+        setDetailLoadError(null);
         try {
-            setMembers(await getScheduleCalendarMembers(calendarId));
+            const result = await getScheduleCalendarMembers(calendarId);
+            if (
+                requestId !== membersRequestIdRef.current
+                || selectedIdRef.current !== calendarId
+            ) return;
+            setMembers(result);
+            detailCalendarIdRef.current = calendarId;
+            setDetailCalendarId(calendarId);
         } catch (error) {
+            if (
+                requestId !== membersRequestIdRef.current
+                || selectedIdRef.current !== calendarId
+            ) return;
+            if (detailCalendarIdRef.current !== calendarId) {
+                setDetailLoadError(errorMessage(error));
+            }
             Alert.alert("멤버 조회 실패", errorMessage(error));
         } finally {
-            setMembersLoading(false);
+            if (requestId === membersRequestIdRef.current) {
+                setMembersLoading(false);
+            }
         }
     }, []);
 
@@ -127,14 +180,17 @@ export default function ScheduleCalendarsScreen() {
     }, [loadCalendars]);
 
     useEffect(() => {
-        if (!selected) {
-            setMembers([]);
+        if (selectedId === null) return;
+        loadMembers(selectedId).catch(() => undefined);
+    }, [loadMembers, selectedId]);
+
+    useEffect(() => {
+        if (!selected || selectedIdRef.current !== selected.id) {
             setEditingTitle("");
             return;
         }
         setEditingTitle(selected.title);
-        loadMembers(selected.id).catch(() => undefined);
-    }, [loadMembers, selected]);
+    }, [selected]);
 
     const replaceCalendar = useCallback((next: ScheduleCalendar) => {
         setCalendars((current) => current.map((calendar) => calendar.id === next.id ? next : calendar));
@@ -151,140 +207,261 @@ export default function ScheduleCalendarsScreen() {
                 defaultContentMode: newContentMode,
             });
             setCalendars((current) => [...current, created]);
-            setSelectedId(created.id);
+            selectCalendar(created.id);
             setNewTitle("");
         } catch (error) {
             Alert.alert("캘린더 생성 실패", errorMessage(error));
         } finally {
             setBusy(false);
         }
-    }, [busy, newColor, newContentMode, newTitle]);
+    }, [busy, newColor, newContentMode, newTitle, selectCalendar]);
 
     const updateMode = useCallback(async (nextMode: ScheduleShareContentMode) => {
-        if (!selected || selected.defaultContentMode === nextMode) return;
-        const updated = await updateScheduleCalendar(selected.id, { defaultContentMode: nextMode });
+        if (
+            !selected
+            || selected.myRole !== "OWNER"
+            || !isCurrentDetailTarget(selected.id)
+            || selected.defaultContentMode === nextMode
+        ) return;
+        const targetId = selected.id;
+        const updated = await updateScheduleCalendar(targetId, { defaultContentMode: nextMode });
         if (nextMode === "SCHEDULE_ONLY") {
             await recoverDepartureAlarmsAfterMutation();
         }
+        if (!isCurrentDetailTarget(targetId)) return;
         replaceCalendar(updated);
-    }, [replaceCalendar, selected]);
+    }, [isCurrentDetailTarget, replaceCalendar, selected]);
 
     const saveTitle = useCallback(async () => {
-        if (!selected || !isOwner || busy) return;
+        if (!selected || !isOwner || busy || !isCurrentDetailTarget(selected.id)) return;
         const title = editingTitle.trim();
         if (!title || title === selected.title) return;
+        const targetId = selected.id;
         setBusy(true);
         try {
-            replaceCalendar(await updateScheduleCalendar(selected.id, { title }));
+            const updated = await updateScheduleCalendar(targetId, { title });
+            if (isCurrentDetailTarget(targetId)) replaceCalendar(updated);
         } catch (error) {
             Alert.alert("이름 변경 실패", errorMessage(error));
         } finally {
             setBusy(false);
         }
-    }, [busy, editingTitle, isOwner, replaceCalendar, selected]);
+    }, [busy, editingTitle, isCurrentDetailTarget, isOwner, replaceCalendar, selected]);
 
     const toggleMyReminder = useCallback(async (enabled: boolean) => {
-        if (!selected || busy) return;
+        if (!selected || busy || !isCurrentDetailTarget(selected.id)) return;
+        const targetId = selected.id;
         setBusy(true);
         try {
-            await updateMyScheduleCalendarPreferences(selected.id, enabled);
-            replaceCalendar({ ...selected, routeReminderEnabled: enabled });
+            await updateMyScheduleCalendarPreferences(targetId, enabled);
+            if (isCurrentDetailTarget(targetId)) {
+                replaceCalendar({ ...selected, routeReminderEnabled: enabled });
+            }
         } catch (error) {
             Alert.alert("알림 설정 실패", errorMessage(error));
         } finally {
             setBusy(false);
         }
-    }, [busy, replaceCalendar, selected]);
+    }, [busy, isCurrentDetailTarget, replaceCalendar, selected]);
 
     const changeMemberRole = useCallback(async (
         member: ScheduleCalendarMember,
         role: "VIEWER" | "EDITOR",
     ) => {
-        if (!selected || busy || member.role === role) return;
+        if (
+            !selected
+            || busy
+            || member.role === role
+            || !isCurrentDetailTarget(selected.id)
+        ) return;
+        const targetId = selected.id;
         setBusy(true);
         try {
-            const updated = await updateScheduleCalendarMember(selected.id, member.memberId, { role });
-            setMembers((current) => current.map((item) => item.id === updated.id ? updated : item));
+            const updated = await updateScheduleCalendarMember(targetId, member.memberId, { role });
+            if (isCurrentDetailTarget(targetId)) {
+                setMembers((current) => current.map((item) => item.id === updated.id ? updated : item));
+            }
         } catch (error) {
             Alert.alert("권한 변경 실패", errorMessage(error));
         } finally {
             setBusy(false);
         }
-    }, [busy, selected]);
+    }, [busy, isCurrentDetailTarget, selected]);
 
     const confirmRemoveMember = useCallback((member: ScheduleCalendarMember) => {
-        if (!selected || busy) return;
+        if (
+            !selected
+            || busy
+            || selected.myRole !== "OWNER"
+            || !isCurrentDetailTarget(selected.id)
+            || pendingConfirmationRef.current !== null
+        ) return;
+        const targetCalendar = selected;
+        const targetId = selected.id;
+        const confirmationKey = `remove:${targetId}:${member.id}`;
+        const runningKey = `${confirmationKey}:running`;
+        pendingConfirmationRef.current = confirmationKey;
         Alert.alert("멤버 제거", `${member.name || member.email || `회원 #${member.memberId}`}님을 제거할까요?`, [
-            { text: "취소", style: "cancel" },
+            {
+                text: "취소",
+                style: "cancel",
+                onPress: () => {
+                    if (pendingConfirmationRef.current === confirmationKey) {
+                        pendingConfirmationRef.current = null;
+                    }
+                },
+            },
             {
                 text: "제거",
                 style: "destructive",
                 onPress: async () => {
+                    if (
+                        pendingConfirmationRef.current !== confirmationKey
+                        || !isCurrentDetailTarget(targetId)
+                    ) {
+                        if (pendingConfirmationRef.current === confirmationKey) {
+                            pendingConfirmationRef.current = null;
+                        }
+                        return;
+                    }
+                    pendingConfirmationRef.current = runningKey;
                     setBusy(true);
                     try {
-                        await removeScheduleCalendarMember(selected.id, member.memberId);
-                        setMembers((current) => current.filter((item) => item.id !== member.id));
-                        replaceCalendar({ ...selected, memberCount: Math.max(1, selected.memberCount - 1) });
+                        await removeScheduleCalendarMember(targetId, member.memberId);
+                        if (isCurrentDetailTarget(targetId)) {
+                            setMembers((current) => current.filter((item) => item.id !== member.id));
+                            replaceCalendar({
+                                ...targetCalendar,
+                                memberCount: Math.max(1, targetCalendar.memberCount - 1),
+                            });
+                        }
                     } catch (error) {
                         Alert.alert("멤버 제거 실패", errorMessage(error));
                     } finally {
+                        if (pendingConfirmationRef.current === runningKey) {
+                            pendingConfirmationRef.current = null;
+                        }
                         setBusy(false);
                     }
                 },
             },
         ]);
-    }, [busy, replaceCalendar, selected]);
+    }, [busy, isCurrentDetailTarget, replaceCalendar, selected]);
 
     const confirmTransfer = useCallback((member: ScheduleCalendarMember) => {
-        if (!selected || busy) return;
+        if (
+            !selected
+            || busy
+            || selected.myRole !== "OWNER"
+            || !isCurrentDetailTarget(selected.id)
+            || pendingConfirmationRef.current !== null
+        ) return;
+        const targetId = selected.id;
+        const confirmationKey = `transfer:${targetId}:${member.id}`;
+        const runningKey = `${confirmationKey}:running`;
+        pendingConfirmationRef.current = confirmationKey;
         Alert.alert("소유권 이전", `${member.name || member.email || `회원 #${member.memberId}`}님에게 이전할까요?`, [
-            { text: "취소", style: "cancel" },
+            {
+                text: "취소",
+                style: "cancel",
+                onPress: () => {
+                    if (pendingConfirmationRef.current === confirmationKey) {
+                        pendingConfirmationRef.current = null;
+                    }
+                },
+            },
             {
                 text: "이전",
                 onPress: async () => {
+                    if (
+                        pendingConfirmationRef.current !== confirmationKey
+                        || !isCurrentDetailTarget(targetId)
+                    ) {
+                        if (pendingConfirmationRef.current === confirmationKey) {
+                            pendingConfirmationRef.current = null;
+                        }
+                        return;
+                    }
+                    pendingConfirmationRef.current = runningKey;
                     setBusy(true);
                     try {
-                        replaceCalendar(await transferScheduleCalendarOwnership(selected.id, member.memberId));
-                        await loadMembers(selected.id);
+                        const updated = await transferScheduleCalendarOwnership(targetId, member.memberId);
+                        if (isCurrentDetailTarget(targetId)) {
+                            replaceCalendar(updated);
+                            await loadMembers(targetId);
+                        }
                     } catch (error) {
                         Alert.alert("소유권 이전 실패", errorMessage(error));
                     } finally {
+                        if (pendingConfirmationRef.current === runningKey) {
+                            pendingConfirmationRef.current = null;
+                        }
                         setBusy(false);
                     }
                 },
             },
         ]);
-    }, [busy, loadMembers, replaceCalendar, selected]);
+    }, [busy, isCurrentDetailTarget, loadMembers, replaceCalendar, selected]);
 
     const confirmExit = useCallback(() => {
-        if (!selected || busy) return;
+        if (
+            !selected
+            || busy
+            || !isCurrentDetailTarget(selected.id)
+            || pendingConfirmationRef.current !== null
+        ) return;
+        const targetId = selected.id;
         const ownerAction = selected.myRole === "OWNER";
+        const confirmationKey = `${ownerAction ? "archive" : "leave"}:${targetId}`;
+        const runningKey = `${confirmationKey}:running`;
+        pendingConfirmationRef.current = confirmationKey;
         Alert.alert(
             ownerAction ? "캘린더 보관" : "캘린더 나가기",
             ownerAction ? "멤버의 접근과 대기 중인 초대 링크가 종료됩니다." : "이 캘린더에서 나갈까요?",
             [
-                { text: "취소", style: "cancel" },
+                {
+                    text: "취소",
+                    style: "cancel",
+                    onPress: () => {
+                        if (pendingConfirmationRef.current === confirmationKey) {
+                            pendingConfirmationRef.current = null;
+                        }
+                    },
+                },
                 {
                     text: ownerAction ? "보관" : "나가기",
                     style: "destructive",
                     onPress: async () => {
+                        if (
+                            pendingConfirmationRef.current !== confirmationKey
+                            || !isCurrentDetailTarget(targetId)
+                        ) {
+                            if (pendingConfirmationRef.current === confirmationKey) {
+                                pendingConfirmationRef.current = null;
+                            }
+                            return;
+                        }
+                        pendingConfirmationRef.current = runningKey;
                         setBusy(true);
                         try {
-                            if (ownerAction) await archiveScheduleCalendar(selected.id);
-                            else await leaveScheduleCalendar(selected.id);
+                            if (ownerAction) await archiveScheduleCalendar(targetId);
+                            else await leaveScheduleCalendar(targetId);
                             await recoverDepartureAlarmsAfterMutation();
-                            setCalendars((current) => current.filter((calendar) => calendar.id !== selected.id));
-                            setSelectedId(null);
+                            setCalendars((current) => current.filter((calendar) => calendar.id !== targetId));
+                            if (isCurrentDetailTarget(targetId)) selectCalendar(null);
                         } catch (error) {
                             Alert.alert(ownerAction ? "보관 실패" : "나가기 실패", errorMessage(error));
                         } finally {
+                            if (pendingConfirmationRef.current === runningKey) {
+                                pendingConfirmationRef.current = null;
+                            }
                             setBusy(false);
                         }
                     },
                 },
             ],
         );
-    }, [busy, selected]);
+    }, [busy, isCurrentDetailTarget, selectCalendar, selected]);
 
     const goBack = () => router.canGoBack() ? router.back() : router.replace("/schedule");
 
@@ -360,7 +537,7 @@ export default function ScheduleCalendarsScreen() {
                                 key={calendar.id}
                                 accessibilityRole="button"
                                 accessibilityState={{ selected: selectedRow }}
-                                onPress={() => setSelectedId(calendar.id)}
+                                onPress={() => selectCalendar(calendar.id)}
                                 style={[
                                     styles.calendarRow,
                                     {
@@ -382,7 +559,7 @@ export default function ScheduleCalendarsScreen() {
                     })}
                 </View>
 
-                {selected ? (
+                {selected ? detailReady ? (
                     <View style={[styles.detailBand, { borderTopColor: colors.border }]}>
                         <View style={styles.detailHeader}>
                             <View style={styles.rowText}>
@@ -390,12 +567,53 @@ export default function ScheduleCalendarsScreen() {
                                 <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>{roleLabel(selected.myRole)} 권한</Text>
                             </View>
                             {isOwner ? (
-                                <Pressable accessibilityRole="button" accessibilityLabel="캘린더 공유" onPress={() => setSharing(true)} style={[styles.shareButton, { backgroundColor: accent }]}>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`${selected.title} 공유하기`}
+                                    onPress={() => {
+                                        if (isCurrentDetailTarget(selected.id)) {
+                                            setSharingCalendarId(selected.id);
+                                        }
+                                    }}
+                                    style={[styles.shareButton, { backgroundColor: accent }]}
+                                >
                                     <Ionicons name="share-social-outline" size={17} color="#FFFFFF" />
-                                    <Text style={styles.shareButtonText}>공유</Text>
+                                    <Text style={styles.shareButtonText}>공유하기</Text>
                                 </Pressable>
                             ) : null}
                         </View>
+
+                        {selected.myRole !== "VIEWER" ? (
+                            <Pressable
+                                accessibilityRole="button"
+                                accessibilityLabel={`${selected.title} 카테고리 관리`}
+                                onPress={() => {
+                                    if (!isCurrentDetailTarget(selected.id)) return;
+                                    router.push({
+                                        pathname: "/schedule/categories",
+                                        params: {
+                                            calendarId: String(selected.id),
+                                            calendarTitle: selected.title,
+                                        },
+                                    });
+                                }}
+                                style={({ pressed }) => [
+                                    styles.categoryManageButton,
+                                    {
+                                        borderColor: colors.border,
+                                        backgroundColor: colors.surface,
+                                        opacity: pressed ? 0.65 : 1,
+                                    },
+                                ]}
+                            >
+                                <Ionicons name="pricetags-outline" size={18} color={accent} />
+                                <View style={styles.rowText}>
+                                    <Text style={[styles.preferenceTitle, { color: colors.textPrimary }]}>카테고리 관리</Text>
+                                    <Text style={[styles.rowMeta, { color: colors.textSecondary }]}>이 캘린더에서만 사용하는 카테고리</Text>
+                                </View>
+                                <Ionicons name="chevron-forward" size={17} color={colors.textSecondary} />
+                            </Pressable>
+                        ) : null}
 
                         {isOwner ? (
                             <View style={[styles.inputRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
@@ -449,8 +667,9 @@ export default function ScheduleCalendarsScreen() {
 
                         <Pressable
                             accessibilityRole="button"
+                            disabled={busy}
                             onPress={confirmExit}
-                            style={[styles.dangerButton, destructiveBorderStyle]}
+                            style={[styles.dangerButton, destructiveBorderStyle, busy && styles.disabledAction]}
                         >
                             <Ionicons name={isOwner ? "archive-outline" : "exit-outline"} size={18} color={destructive} />
                             <Text style={[styles.dangerText, destructiveTextStyle]}>
@@ -458,20 +677,48 @@ export default function ScheduleCalendarsScreen() {
                             </Text>
                         </Pressable>
                     </View>
+                ) : (
+                    <View
+                        accessibilityLabel={`${selected.title} 설정 불러오는 중`}
+                        style={[styles.detailLoading, { borderTopColor: colors.border }]}
+                    >
+                        {detailLoadError ? (
+                            <>
+                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>설정을 불러오지 못했어요.</Text>
+                                <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`${selected.title} 설정 다시 불러오기`}
+                                    onPress={() => loadMembers(selected.id)}
+                                    style={[styles.retryButton, { borderColor: colors.border }]}
+                                >
+                                    <Ionicons name="refresh" size={16} color={accent} />
+                                    <Text style={[styles.retryText, { color: accent }]}>다시 시도</Text>
+                                </Pressable>
+                            </>
+                        ) : (
+                            <>
+                                <BrandedLoader accessibilityLabel="캘린더 설정 불러오는 중" variant="share" />
+                                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>선택한 캘린더 설정을 불러오는 중</Text>
+                            </>
+                        )}
+                    </View>
                 ) : null}
             </ScrollView>
 
             <ShareInvitationSheet
-                visible={sharing && !!selected}
+                visible={sharingCalendarId !== null && isCurrentDetailTarget(sharingCalendarId)}
                 resourceType="calendar"
-                resourceId={selected?.id.toString()}
-                title={selected?.title ?? "공유 캘린더"}
-                subtitle={selected ? contentModeLabel(selected.defaultContentMode) : undefined}
-                initialContentMode={selected?.defaultContentMode}
+                resourceId={sharingCalendarId?.toString()}
+                title={sharingCalendarId === selected?.id ? selected.title : "공유 캘린더"}
+                subtitle={sharingCalendarId === selected?.id ? contentModeLabel(selected.defaultContentMode) : undefined}
+                initialContentMode={sharingCalendarId === selected?.id ? selected.defaultContentMode : undefined}
                 onCalendarContentModeChange={updateMode}
                 onClose={() => {
-                    setSharing(false);
-                    if (selected) loadMembers(selected.id).catch(() => undefined);
+                    const closedCalendarId = sharingCalendarId;
+                    setSharingCalendarId(null);
+                    if (closedCalendarId !== null && isCurrentDetailTarget(closedCalendarId)) {
+                        loadMembers(closedCalendarId).catch(() => undefined);
+                    }
                     loadCalendars(true).catch(() => undefined);
                 }}
             />
@@ -616,11 +863,15 @@ const styles = StyleSheet.create({
     rowTitle: { fontSize: 15, fontWeight: "800", letterSpacing: 0 },
     rowMeta: { marginTop: 2, fontSize: 12, lineHeight: 16, fontWeight: "600", letterSpacing: 0 },
     detailBand: { borderTopWidth: 1, paddingTop: 20, gap: 12 },
+    detailLoading: { minHeight: 112, borderTopWidth: 1, paddingTop: 20, alignItems: "center", justifyContent: "center", gap: 10 },
+    retryButton: { height: 36, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 6 },
+    retryText: { fontSize: 12, fontWeight: "800", letterSpacing: 0 },
     detailHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
-    shareButton: { minWidth: 76, height: 38, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+    shareButton: { minWidth: 92, height: 38, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
     shareButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800", letterSpacing: 0 },
     fieldLabel: { marginTop: 2, fontSize: 12, fontWeight: "700", letterSpacing: 0 },
     preferenceRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12 },
+    categoryManageButton: { minHeight: 58, borderWidth: 1, borderRadius: 8, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 11 },
     preferenceTitle: { fontSize: 14, fontWeight: "700", letterSpacing: 0 },
     memberHeader: { marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     memberCount: { fontSize: 12, fontWeight: "700", letterSpacing: 0 },
@@ -634,4 +885,5 @@ const styles = StyleSheet.create({
     roleStatic: { fontSize: 11, fontWeight: "700", letterSpacing: 0 },
     dangerButton: { marginTop: 8, height: 44, borderWidth: 1, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
     dangerText: { fontSize: 13, fontWeight: "800", letterSpacing: 0 },
+    disabledAction: { opacity: 0.45 },
 });

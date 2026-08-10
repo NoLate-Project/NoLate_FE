@@ -63,7 +63,10 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
 jest.mock("../src/ui/BrandedLoader", () => "BrandedLoader");
 
 import ScheduleCalendarsScreen from "../app/schedule/calendars";
-import type { ScheduleCalendar } from "../src/api/scheduleCalendars";
+import type {
+    ScheduleCalendar,
+    ScheduleCalendarMember,
+} from "../src/api/scheduleCalendars";
 
 const ownerCalendar: ScheduleCalendar = {
     id: 7,
@@ -75,6 +78,33 @@ const ownerCalendar: ScheduleCalendar = {
     myRole: "OWNER",
     memberCount: 1,
     routeReminderEnabled: true,
+};
+
+const secondOwnerCalendar: ScheduleCalendar = {
+    ...ownerCalendar,
+    id: 8,
+    title: "업무",
+    color: "#AF52DE",
+};
+
+const familyMember: ScheduleCalendarMember = {
+    id: 71,
+    calendarId: 7,
+    memberId: 1,
+    role: "OWNER",
+    status: "ACTIVE",
+    routeReminderEnabled: true,
+    name: "가족 멤버",
+};
+
+const workMember: ScheduleCalendarMember = {
+    id: 81,
+    calendarId: 8,
+    memberId: 2,
+    role: "OWNER",
+    status: "ACTIVE",
+    routeReminderEnabled: true,
+    name: "업무 멤버",
 };
 
 describe("schedule calendar departure-alarm recovery", () => {
@@ -272,6 +302,128 @@ describe("schedule calendar departure-alarm recovery", () => {
             "archive failed",
         );
     });
+
+    it("keeps settings locked to the selected calendar and ignores stale member responses", async () => {
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
+        const familyMembersLoad = deferred<ScheduleCalendarMember[]>();
+        const workMembersLoad = deferred<ScheduleCalendarMember[]>();
+        mockGetScheduleCalendarMembers.mockImplementation((calendarId: number) => (
+            calendarId === ownerCalendar.id
+                ? familyMembersLoad.promise
+                : workMembersLoad.promise
+        ));
+        mockArchiveScheduleCalendar.mockResolvedValue(undefined);
+        await renderScreen();
+
+        await act(async () => {
+            findPressableByText(renderer!.root, secondOwnerCalendar.title).props.onPress();
+        });
+
+        expect(renderer!.root.findAll((node) => (
+            typeof node.props.onPress === "function"
+            && getRenderedText(node).includes("캘린더 보관")
+        ))).toHaveLength(0);
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: `${secondOwnerCalendar.title} 설정 불러오는 중`,
+        })).toBeDefined();
+
+        await act(async () => {
+            workMembersLoad.resolve([workMember]);
+            await workMembersLoad.promise;
+        });
+        await flushMicrotasks();
+
+        expect(getRenderedText(renderer!.root)).toContain(workMember.name);
+        expect(getRenderedText(renderer!.root)).not.toContain(familyMember.name);
+
+        await act(async () => {
+            familyMembersLoad.resolve([familyMember]);
+            await familyMembersLoad.promise;
+        });
+        await flushMicrotasks();
+
+        expect(getRenderedText(renderer!.root)).toContain(workMember.name);
+        expect(getRenderedText(renderer!.root)).not.toContain(familyMember.name);
+
+        await act(async () => {
+            findPressableByText(renderer!.root, "캘린더 보관").props.onPress();
+        });
+        const confirmation = jest.mocked(Alert.alert).mock.calls.find(
+            ([title]) => title === "캘린더 보관",
+        );
+        await act(async () => {
+            await confirmation?.[2]?.[1]?.onPress?.();
+        });
+
+        expect(mockArchiveScheduleCalendar).toHaveBeenCalledTimes(1);
+        expect(mockArchiveScheduleCalendar).toHaveBeenCalledWith(secondOwnerCalendar.id);
+    });
+
+    it("rejects a stale detail handler and deduplicates archive confirmation and execution", async () => {
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
+        const workMembersLoad = deferred<ScheduleCalendarMember[]>();
+        mockGetScheduleCalendarMembers.mockImplementation((calendarId: number) => (
+            calendarId === ownerCalendar.id
+                ? Promise.resolve([familyMember])
+                : workMembersLoad.promise
+        ));
+        const archiveLoad = deferred<void>();
+        mockArchiveScheduleCalendar.mockReturnValue(archiveLoad.promise);
+        await renderScreen();
+
+        const staleArchiveHandler = findPressableByText(
+            renderer!.root,
+            "캘린더 보관",
+        ).props.onPress;
+        const staleModeHandler = findPressableByText(
+            renderer!.root,
+            "일정만",
+            (node) => node.props.accessibilityState?.selected === false,
+        ).props.onPress;
+        await act(async () => {
+            findPressableByText(renderer!.root, secondOwnerCalendar.title).props.onPress();
+        });
+        jest.mocked(Alert.alert).mockClear();
+
+        await act(async () => {
+            staleArchiveHandler();
+            staleModeHandler();
+            await Promise.resolve();
+        });
+        expect(Alert.alert).not.toHaveBeenCalled();
+        expect(mockArchiveScheduleCalendar).not.toHaveBeenCalled();
+        expect(mockUpdateScheduleCalendar).not.toHaveBeenCalled();
+
+        await act(async () => {
+            workMembersLoad.resolve([workMember]);
+            await workMembersLoad.promise;
+        });
+        await flushMicrotasks();
+
+        const currentArchiveButton = findPressableByText(renderer!.root, "캘린더 보관");
+        await act(async () => {
+            currentArchiveButton.props.onPress();
+            currentArchiveButton.props.onPress();
+        });
+        const confirmations = jest.mocked(Alert.alert).mock.calls.filter(
+            ([title]) => title === "캘린더 보관",
+        );
+        expect(confirmations).toHaveLength(1);
+
+        let firstExecution: Promise<void> | undefined;
+        await act(async () => {
+            firstExecution = confirmations[0]?.[2]?.[1]?.onPress?.() as Promise<void> | undefined;
+            await confirmations[0]?.[2]?.[1]?.onPress?.();
+        });
+        expect(mockArchiveScheduleCalendar).toHaveBeenCalledTimes(1);
+        expect(mockArchiveScheduleCalendar).toHaveBeenCalledWith(secondOwnerCalendar.id);
+
+        await act(async () => {
+            archiveLoad.resolve();
+            await archiveLoad.promise;
+            await firstExecution;
+        });
+    });
 });
 
 function findPressableByText(
@@ -301,4 +453,12 @@ function deferred<T>(): {
         resolve = next;
     });
     return { promise, resolve };
+}
+
+async function flushMicrotasks(): Promise<void> {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+        await act(async () => {
+            await Promise.resolve();
+        });
+    }
 }

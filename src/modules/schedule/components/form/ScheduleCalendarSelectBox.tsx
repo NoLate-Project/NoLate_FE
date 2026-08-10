@@ -9,6 +9,7 @@ type Props = {
     value: number | null;
     loading?: boolean;
     error?: string | null;
+    locked?: boolean;
     onChange: (calendarId: number | null) => void;
     onRetry?: () => void;
     onManageCalendars?: () => void;
@@ -29,6 +30,7 @@ export default function ScheduleCalendarSelectBox({
     value,
     loading = false,
     error,
+    locked = false,
     onChange,
     onRetry,
     onManageCalendars,
@@ -36,11 +38,15 @@ export default function ScheduleCalendarSelectBox({
     const { colors, mode } = useTheme();
     const accent = mode === "dark" ? "#8BB7FF" : "#2F80FF";
     const selectedCalendar = calendars.find((calendar) => calendar.id === value);
+    const lockedTitle = value === null
+        ? "개인 일정"
+        : selectedCalendar?.title ?? "현재 공유 캘린더";
+    const lockedColor = selectedCalendar?.color ?? colors.textSecondary;
 
     return (
         <View style={styles.root}>
             <View style={styles.header}>
-                <Text style={[styles.label, { color: colors.textSecondary }]}>저장 위치</Text>
+                <Text style={[styles.label, { color: colors.textSecondary }]}>캘린더</Text>
                 {onManageCalendars ? (
                     <Pressable
                         accessibilityRole="button"
@@ -60,26 +66,41 @@ export default function ScheduleCalendarSelectBox({
                 contentContainerStyle={styles.optionRow}
                 keyboardShouldPersistTaps="handled"
             >
-                <CalendarOption
-                    title="개인 일정"
-                    color={colors.textSecondary}
-                    selected={value === null}
-                    accent={accent}
-                    onPress={() => onChange(null)}
-                />
-                {calendars.map((calendar) => (
+                {locked ? (
                     <CalendarOption
-                        key={calendar.id}
-                        title={calendar.title}
-                        color={calendar.color}
-                        selected={calendar.id === value}
+                        title={lockedTitle}
+                        color={lockedColor}
+                        selected
                         accent={accent}
-                        onPress={() => onChange(calendar.id)}
+                        disabled
+                        onPress={() => undefined}
                     />
-                ))}
+                ) : (
+                    <>
+                        <CalendarOption
+                            title="개인 일정"
+                            color={colors.textSecondary}
+                            selected={value === null}
+                            accent={accent}
+                            onPress={() => onChange(null)}
+                        />
+                        {calendars.map((calendar) => (
+                            <CalendarOption
+                                key={calendar.id}
+                                title={calendar.title}
+                                color={calendar.color}
+                                selected={calendar.id === value}
+                                accent={accent}
+                                onPress={() => onChange(calendar.id)}
+                            />
+                        ))}
+                    </>
+                )}
             </ScrollView>
 
-            {loading ? (
+            {locked ? (
+                <Text style={[styles.hint, { color: colors.textSecondary }]}>일정 작성자만 캘린더를 변경할 수 있어요.</Text>
+            ) : loading ? (
                 <Text style={[styles.hint, { color: colors.textSecondary }]}>공유 캘린더를 불러오는 중...</Text>
             ) : error ? (
                 <Pressable
@@ -106,21 +127,27 @@ function CalendarOption({
     color,
     selected,
     accent,
+    disabled = false,
     onPress,
 }: {
     title: string;
     color: string;
     selected: boolean;
     accent: string;
+    disabled?: boolean;
     onPress: () => void;
 }) {
     const { colors } = useTheme();
 
     return (
         <Pressable
+            testID={disabled ? "schedule-calendar-assignment-locked" : undefined}
             accessibilityRole="radio"
-            accessibilityLabel={`${title}에 저장`}
-            accessibilityState={{ selected }}
+            accessibilityLabel={disabled
+                ? `${title}, 일정 작성자만 캘린더 변경 가능`
+                : `${title} 캘린더 선택`}
+            accessibilityState={{ selected, disabled }}
+            disabled={disabled}
             onPress={onPress}
             style={({ pressed }) => [
                 styles.option,

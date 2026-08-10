@@ -45,6 +45,7 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
     onQuickAdd?: () => void;
     onManualAdd?: () => void;
     onManageCategories?: () => void;
+    onManageCalendars?: () => void;
 };
 
 type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
@@ -76,6 +77,7 @@ type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
     onQuickAdd?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
     onManualAdd?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
     onManageCategories?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
+    onManageCalendars?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
 };
 
 const KNOWN_VIEW_MODES = new Set<CalendarViewMode>(
@@ -131,6 +133,7 @@ export default function LiquidCalendarMenuPrototype({
     onQuickAdd,
     onManualAdd,
     onManageCategories,
+    onManageCalendars,
     style,
 }: LiquidCalendarMenuPrototypeProps) {
     const handleSelect = useCallback(
@@ -202,6 +205,12 @@ export default function LiquidCalendarMenuPrototype({
         }
     }, [disabled, onManageCategories]);
 
+    const handleManageCalendars = useCallback(() => {
+        if (!disabled) {
+            onManageCalendars?.();
+        }
+    }, [disabled, onManageCalendars]);
+
     if (!NativeLiquidCalendarMenuPrototype) {
         return null;
     }
@@ -233,6 +242,7 @@ export default function LiquidCalendarMenuPrototype({
                 onQuickAdd={handleQuickAdd}
                 onManualAdd={handleManualAdd}
                 onManageCategories={handleManageCategories}
+                onManageCalendars={handleManageCalendars}
                 style={StyleSheet.absoluteFill}
             />
         </View>

@@ -1,4 +1,5 @@
 import { canSendDepartureNudge } from "../src/modules/schedule/detailPresentation";
+import { classifyDepartureNudgeResult } from "../src/modules/schedule/departureNudgeResult";
 import type { ScheduleDepartureParticipant } from "../src/modules/schedule/types";
 
 const waitingSharedParticipant: ScheduleDepartureParticipant = {
@@ -31,5 +32,47 @@ describe("schedule departure nudge presentation", () => {
             1
         )).toBe(false);
         expect(canSendDepartureNudge(waitingSharedParticipant, 1, undefined)).toBe(false);
+    });
+
+    test("treats a durable queued response as accepted before provider dispatch", () => {
+        expect(classifyDepartureNudgeResult({
+            requestedCount: 1,
+            attemptedCount: 0,
+            sentCount: 0,
+            failedCount: 0,
+            removedTokenCount: 0,
+            eventSnapshot: { id: 101, type: "SCHEDULE_DEPARTURE_NUDGE" },
+            fenceRejected: false,
+            recipientInactive: false,
+        })).toBe("accepted");
+    });
+
+    test("accepts an inbox-only durable nudge even without a registered push device", () => {
+        expect(classifyDepartureNudgeResult({
+            requestedCount: 0,
+            attemptedCount: 0,
+            sentCount: 0,
+            failedCount: 0,
+            removedTokenCount: 0,
+            eventSnapshot: { id: 102, type: "SCHEDULE_DEPARTURE_NUDGE" },
+        })).toBe("accepted");
+    });
+
+    test("keeps legacy no-device and rejected responses distinct from accepted events", () => {
+        expect(classifyDepartureNudgeResult({
+            requestedCount: 0,
+            sentCount: 0,
+            failedCount: 0,
+            removedTokenCount: 0,
+        })).toBe("no_registered_device");
+
+        expect(classifyDepartureNudgeResult({
+            requestedCount: 1,
+            sentCount: 0,
+            failedCount: 0,
+            removedTokenCount: 0,
+            eventSnapshot: { id: 103 },
+            fenceRejected: true,
+        })).toBe("failed");
     });
 });

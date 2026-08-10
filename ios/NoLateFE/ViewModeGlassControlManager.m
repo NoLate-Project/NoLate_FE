@@ -72,5 +72,6 @@ RCT_EXPORT_VIEW_PROPERTY(onAdd, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onQuickAdd, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onManualAdd, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onManageCategories, RCTBubblingEventBlock)
+RCT_EXPORT_VIEW_PROPERTY(onManageCalendars, RCTBubblingEventBlock)
 
 @end

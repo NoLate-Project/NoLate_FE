@@ -15,6 +15,7 @@ type ScheduleCategoryDto = {
     iconKey?: string | null;
     sortOrder?: number | null;
     ownerMemberId?: number | null;
+    calendarId?: number | null;
     shared?: boolean | null;
     sharePermission?: ScheduleSharePermission | null;
     updatedAt?: string | null;
@@ -24,6 +25,7 @@ type CreateScheduleCategoryPayload = {
     title: string;
     color?: string;
     iconKey?: string;
+    calendarId?: number;
 };
 
 type UpdateScheduleCategoryPayload = {
@@ -47,6 +49,10 @@ function normalizeScheduleCategory(dto: ScheduleCategoryDto): ScheduleCategoryIt
         category.ownerMemberId = dto.ownerMemberId;
     }
 
+    if (typeof dto.calendarId === "number") {
+        category.calendarId = dto.calendarId;
+    }
+
     if (typeof dto.shared === "boolean") {
         category.shared = dto.shared;
     }
@@ -66,12 +72,14 @@ export async function getScheduleCategoriesFromApi(): Promise<ScheduleCategoryIt
 export async function createScheduleCategoryToApi(
     title: string,
     color?: string,
-    iconKey?: string
+    iconKey?: string,
+    calendarId?: number | null,
 ): Promise<ScheduleCategoryItem> {
     const payload: CreateScheduleCategoryPayload = {
         title: title.trim(),
         color,
         iconKey: iconKey?.trim() || undefined,
+        calendarId: calendarId ?? undefined,
     };
     const response = await apiPost<ApiEnvelope<ScheduleCategoryDto>, CreateScheduleCategoryPayload>(
         "/api/schedule-categories",

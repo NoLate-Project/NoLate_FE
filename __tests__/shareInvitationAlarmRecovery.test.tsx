@@ -115,6 +115,143 @@ describe("share invitation departure-alarm recovery", () => {
         })).toHaveLength(0);
     });
 
+    it("opens the calendar membership returned by a calendar invitation", async () => {
+        mockAcceptShareInvitation.mockResolvedValue({
+            invitation: {
+                id: "1",
+                resourceType: "CALENDAR",
+                resourceId: "73",
+                ownerMemberId: 7,
+                permission: "EDITOR",
+                status: "ACCEPTED",
+                expiresAt: "2099-01-01T00:00:00Z",
+                maxAcceptCount: 1,
+                acceptedCount: 1,
+            },
+            share: {
+                id: "2",
+                resourceId: "73",
+                ownerMemberId: 7,
+                targetMemberId: 8,
+                permission: "EDITOR",
+                status: "ACTIVE",
+            },
+            calendarMembership: {
+                id: 2,
+                calendarId: 73,
+                memberId: 8,
+                role: "EDITOR",
+                status: "ACTIVE",
+                routeReminderEnabled: false,
+            },
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "공유 초대 수락" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "수락한 공유 항목 열기" })
+                .props.onPress();
+        });
+
+        expect(mockRouterReplace).toHaveBeenCalledWith({
+            pathname: "/schedule/calendars",
+            params: { id: "73" },
+        });
+    });
+
+    it("falls back to the invitation resource id for older calendar responses", async () => {
+        mockAcceptShareInvitation.mockResolvedValue({
+            invitation: {
+                id: "1",
+                resourceType: "CALENDAR",
+                resourceId: "74",
+                ownerMemberId: 7,
+                permission: "VIEWER",
+                status: "ACCEPTED",
+                expiresAt: "2099-01-01T00:00:00Z",
+                maxAcceptCount: 1,
+                acceptedCount: 1,
+            },
+            share: {
+                id: "2",
+                resourceId: "74",
+                ownerMemberId: 7,
+                targetMemberId: 8,
+                permission: "VIEWER",
+                status: "ACTIVE",
+            },
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "공유 초대 수락" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "수락한 공유 항목 열기" })
+                .props.onPress();
+        });
+
+        expect(mockRouterReplace).toHaveBeenCalledWith({
+            pathname: "/schedule/calendars",
+            params: { id: "74" },
+        });
+    });
+
+    it("does not pass an unsafe calendar id to the calendar screen", async () => {
+        mockAcceptShareInvitation.mockResolvedValue({
+            invitation: {
+                id: "1",
+                resourceType: "CALENDAR",
+                resourceId: "not-a-calendar",
+                ownerMemberId: 7,
+                permission: "VIEWER",
+                status: "ACCEPTED",
+                expiresAt: "2099-01-01T00:00:00Z",
+                maxAcceptCount: 1,
+                acceptedCount: 1,
+            },
+            share: {
+                id: "2",
+                resourceId: "not-a-calendar",
+                ownerMemberId: 7,
+                targetMemberId: 8,
+                permission: "VIEWER",
+                status: "ACTIVE",
+            },
+        });
+
+        await act(async () => {
+            renderer = TestRenderer.create(<ShareInvitationAcceptScreen />);
+            await Promise.resolve();
+        });
+        await act(async () => {
+            await renderer!.root
+                .findByProps({ accessibilityLabel: "공유 초대 수락" })
+                .props.onPress();
+        });
+        await act(async () => {
+            renderer!.root
+                .findByProps({ accessibilityLabel: "수락한 공유 항목 열기" })
+                .props.onPress();
+        });
+
+        expect(mockRouterReplace).toHaveBeenCalledWith("/schedule/calendars");
+    });
+
     it("does not duplicate recovery while auto-accepting the same invitation", async () => {
         const pendingRecovery = deferred<void>();
         mockSearchParams.autoAccept = "1";
