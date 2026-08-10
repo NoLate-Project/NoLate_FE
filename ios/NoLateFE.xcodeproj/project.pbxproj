@@ -33,6 +33,15 @@
 		E10000000000000000000002 /* NoLateShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E10000000000000000000014 /* NoLateShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E10000000000000000000003 /* ../../assets/icon.png in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000015 /* ../../assets/icon.png */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000011 /* NoLateLiveActivityModels.swift */; };
+		F20000000000000000000002 /* NoLateDepartureActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */; };
+		F20000000000000000000003 /* NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */; };
+		F20000000000000000000004 /* NoLateLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000014 /* NoLateLiveActivityBundle.swift */; };
+		F20000000000000000000005 /* NoLateDepartureLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */; };
+		F20000000000000000000006 /* NoLateRouteBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000016 /* NoLateRouteBarView.swift */; };
+		F20000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000018 /* Assets.xcassets */; };
+		F20000000000000000000008 /* NoLateLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F20000000000000000000019 /* NoLateLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F20000000000000000000009 /* NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,6 +59,13 @@
 			remoteGlobalIDString = E10000000000000000000025;
 			remoteInfo = NoLateShareExtension;
 		};
+		F20000000000000000000034 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F20000000000000000000025;
+			remoteInfo = NoLateLiveActivityExtension;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -60,6 +76,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				E10000000000000000000002 /* NoLateShareExtension.appex in Embed App Extensions */,
+				F20000000000000000000008 /* NoLateLiveActivityExtension.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -102,6 +119,15 @@
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NoLateFE/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* NoLateFE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "NoLateFE-Bridging-Header.h"; path = "NoLateFE/NoLateFE-Bridging-Header.h"; sourceTree = "<group>"; };
+		F20000000000000000000011 /* NoLateLiveActivityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateLiveActivityModels.swift; sourceTree = "<group>"; };
+		F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureActivityAttributes.swift; sourceTree = "<group>"; };
+		F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureLiveActivityIntent.swift; sourceTree = "<group>"; };
+		F20000000000000000000014 /* NoLateLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateLiveActivityBundle.swift; sourceTree = "<group>"; };
+		F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateDepartureLiveActivity.swift; sourceTree = "<group>"; };
+		F20000000000000000000016 /* NoLateRouteBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateRouteBarView.swift; sourceTree = "<group>"; };
+		F20000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Extension/Info.plist; sourceTree = "<group>"; };
+		F20000000000000000000018 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Extension/Assets.xcassets; sourceTree = "<group>"; };
+		F20000000000000000000019 /* NoLateLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +148,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E10000000000000000000022 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000000000000000000022 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -198,6 +231,7 @@
 				13B07FAE1A68108700A75B9A /* NoLateFE */,
 				00E356F41AD99517003FC87E /* NoLateFETests */,
 				E10000000000000000000020 /* NoLateShareExtension */,
+				F20000000000000000000020 /* NoLateLiveActivityExtension */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
@@ -215,6 +249,7 @@
 				13B07F961A680F5B00A75B9A /* NoLateFE.app */,
 				00E356EE1AD99517003FC87E /* NoLateFETests.xctest */,
 				E10000000000000000000014 /* NoLateShareExtension.appex */,
+				F20000000000000000000019 /* NoLateLiveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -256,6 +291,22 @@
 			path = NoLateShareExtension;
 			sourceTree = "<group>";
 		};
+		F20000000000000000000020 /* NoLateLiveActivityExtension */ = {
+			isa = PBXGroup;
+			children = (
+				F20000000000000000000011 /* NoLateLiveActivityModels.swift */,
+				F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */,
+				F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */,
+				F20000000000000000000014 /* NoLateLiveActivityBundle.swift */,
+				F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */,
+				F20000000000000000000016 /* NoLateRouteBarView.swift */,
+				F20000000000000000000017 /* Info.plist */,
+				F20000000000000000000018 /* Assets.xcassets */,
+			);
+			name = NoLateLiveActivityExtension;
+			path = "../modules/nolate-live-activity/ios";
+			sourceTree = SOURCE_ROOT;
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -296,6 +347,7 @@
 			);
 			dependencies = (
 				E10000000000000000000035 /* PBXTargetDependency */,
+				F20000000000000000000035 /* PBXTargetDependency */,
 			);
 			name = NoLateFE;
 			productName = NoLateFE;
@@ -317,6 +369,23 @@
 			name = NoLateShareExtension;
 			productName = NoLateShareExtension;
 			productReference = E10000000000000000000014 /* NoLateShareExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		F20000000000000000000025 /* NoLateLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F20000000000000000000033 /* Build configuration list for PBXNativeTarget "NoLateLiveActivityExtension" */;
+			buildPhases = (
+				F20000000000000000000021 /* Sources */,
+				F20000000000000000000022 /* Frameworks */,
+				F20000000000000000000023 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NoLateLiveActivityExtension;
+			productName = NoLateLiveActivityExtension;
+			productReference = F20000000000000000000019 /* NoLateLiveActivityExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -349,6 +418,9 @@
 					E10000000000000000000025 = {
 						CreatedOnToolsVersion = 26.0;
 					};
+					F20000000000000000000025 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = 83CBB9FA1A601CBA00E9B192 /* Build configuration list for PBXProject "NoLateFE" */;
@@ -367,6 +439,7 @@
 				13B07F861A680F5B00A75B9A /* NoLateFE */,
 				00E356ED1AD99517003FC87E /* NoLateFETests */,
 				E10000000000000000000025 /* NoLateShareExtension */,
+				F20000000000000000000025 /* NoLateLiveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -402,6 +475,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				E10000000000000000000003 /* ../../assets/icon.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F20000000000000000000023 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F20000000000000000000007 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -589,6 +670,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F20000000000000000000009 /* NoLateDepartureLiveActivityIntent.swift in Sources */,
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
 				9967B4292303A117CA1CDFF8 /* ExpoModulesProvider.swift in Sources */,
 				A20200000000000000000003 /* ViewModeGlassControlView.swift in Sources */,
@@ -609,6 +691,19 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F20000000000000000000021 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */,
+				F20000000000000000000002 /* NoLateDepartureActivityAttributes.swift in Sources */,
+				F20000000000000000000003 /* NoLateDepartureLiveActivityIntent.swift in Sources */,
+				F20000000000000000000004 /* NoLateLiveActivityBundle.swift in Sources */,
+				F20000000000000000000005 /* NoLateDepartureLiveActivity.swift in Sources */,
+				F20000000000000000000006 /* NoLateRouteBarView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -622,6 +717,11 @@
 			target = E10000000000000000000025 /* NoLateShareExtension */;
 			targetProxy = E10000000000000000000034 /* PBXContainerItemProxy */;
 		};
+		F20000000000000000000035 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F20000000000000000000025 /* NoLateLiveActivityExtension */;
+			targetProxy = F20000000000000000000034 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -630,7 +730,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
@@ -639,7 +739,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -656,7 +756,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
@@ -665,7 +765,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -686,7 +786,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_BITCODE = NO;
 				ENABLE_DEBUG_DYLIB = NO;
@@ -711,6 +811,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe;
 				PRODUCT_NAME = NoLateFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG NOLATE_LIVE_ACTIVITY_APP";
 				SWIFT_OBJC_BRIDGING_HEADER = "NoLateFE/NoLateFE-Bridging-Header.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -729,7 +830,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -749,6 +850,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe;
 				PRODUCT_NAME = NoLateFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) NOLATE_LIVE_ACTIVITY_APP";
 				SWIFT_OBJC_BRIDGING_HEADER = "NoLateFE/NoLateFE-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -892,7 +994,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -902,7 +1004,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				NOLATE_API_BASE_URL = "http://127.0.0.1:5522";
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.quick-schedule";
@@ -922,7 +1024,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -932,11 +1034,66 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				NOLATE_API_BASE_URL = "https://nolate.jinuk.dev";
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.quick-schedule";
 				PRODUCT_NAME = NoLateShareExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		F20000000000000000000031 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 52;
+				DEVELOPMENT_TEAM = 457QQLB6H6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.live-activity";
+				PRODUCT_NAME = NoLateLiveActivityExtension;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		F20000000000000000000032 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 52;
+				DEVELOPMENT_TEAM = 457QQLB6H6;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.3.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.live-activity";
+				PRODUCT_NAME = NoLateLiveActivityExtension;
 				SKIP_INSTALL = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -979,6 +1136,15 @@
 			buildConfigurations = (
 				E10000000000000000000031 /* Debug */,
 				E10000000000000000000032 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F20000000000000000000033 /* Build configuration list for PBXNativeTarget "NoLateLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F20000000000000000000031 /* Debug */,
+				F20000000000000000000032 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

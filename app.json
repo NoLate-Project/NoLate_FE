@@ -1,11 +1,12 @@
 {
   "name": "NoLate",
   "icon": "./assets/icon.png",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "scheme": "nolate",
   "orientation": "portrait",
   "userInterfaceStyle": "automatic",
   "plugins": [
+    "./plugins/withNoLateLiveActivity",
     "expo-router",
     "expo-secure-store",
     "expo-apple-authentication",
@@ -57,6 +58,7 @@
   ],
   "android": {
     "package": "com.anonymous.nolate_fe",
+    "versionCode": 42,
     "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {
@@ -83,7 +85,7 @@
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "50",
+    "buildNumber": "52",
     "associatedDomains": [
       "applinks:nolate.jinuk.dev"
     ],
@@ -97,6 +99,8 @@
     },
     "infoPlist": {
       "ITSAppUsesNonExemptEncryption": false,
+      "NSSupportsLiveActivities": true,
+      "NSSupportsLiveActivitiesFrequentUpdates": false,
       "KAKAO_APP_SCHEME": "kakao9586a8e3a28f3a6fbe3e23b9b34ec206",
       "NSAlarmKitUsageDescription": "추천 출발 시각을 놓치지 않도록 출발 알람을 울립니다.",
       "NSLocationWhenInUseUsageDescription": "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.",

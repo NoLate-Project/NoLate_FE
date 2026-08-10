@@ -15,6 +15,23 @@ const androidGradle = read("android/app/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
 const iosProject = read("ios/NoLateFE.xcodeproj/project.pbxproj");
 const iosInfo = read("ios/NoLateFE/Info.plist");
+const iosPodLock = read("ios/Podfile.lock");
+const liveActivityPlugin = read("plugins/withNoLateLiveActivity.js");
+const liveActivityExtensionInfo = read(
+  "modules/nolate-live-activity/ios/Extension/Info.plist",
+);
+const liveActivityModels = read(
+  "modules/nolate-live-activity/ios/NoLateLiveActivityModels.swift",
+);
+const liveActivityCoordinator = read(
+  "modules/nolate-live-activity/ios/NoLateLiveActivityCoordinator.swift",
+);
+const liveActivityIntent = read(
+  "modules/nolate-live-activity/ios/Shared/NoLateDepartureLiveActivityIntent.swift",
+);
+const liveActivityWidget = read(
+  "modules/nolate-live-activity/ios/Extension/NoLateDepartureLiveActivity.swift",
+);
 const privacyManifest = read("ios/NoLateFE/PrivacyInfo.xcprivacy");
 const mainEntitlements = read("ios/NoLateFE/NoLateFE.entitlements");
 const extensionEntitlements = read("ios/NoLateShareExtension/NoLateShareExtension.entitlements");
@@ -28,12 +45,22 @@ const dependencyPatches = readdirSync(resolve(root, "patches"))
   .filter((name) => name.endsWith(".patch"))
   .map((name) => ({ name, source: read(`patches/${name}`) }));
 
-assert.equal(app.version, "1.2.0");
+assert.equal(app.version, "1.3.0");
 assert.equal(app.orientation, "portrait", "The phone UI is designed and verified for portrait only");
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "50");
+assert.equal(app.ios.buildNumber, "52");
+assert.ok(
+  app.plugins.includes("./plugins/withNoLateLiveActivity"),
+  "The Live Activity config plugin must survive native regeneration",
+);
+assert.equal(app.ios.infoPlist.NSSupportsLiveActivities, true);
+assert.equal(
+  app.ios.infoPlist.NSSupportsLiveActivitiesFrequentUpdates,
+  false,
+  "Five-minute ETA refreshes must not opt into ActivityKit's frequent-update budget",
+);
 for (const patch of dependencyPatches) {
   assert.doesNotMatch(
     patch.source,
@@ -84,8 +111,9 @@ assert.ok(
 assert.ok(rootAndroidFirebaseConfig === nativeAndroidFirebaseConfig, "Android Firebase config copies must match");
 assert.ok(rootIosFirebaseConfig === nativeIosFirebaseConfig, "iOS Firebase config copies must match");
 
-assert.match(androidGradle, /versionCode 41/);
-assert.match(androidGradle, /versionName "1\.2\.0"/);
+assert.equal(app.android.versionCode, 42);
+assert.match(androidGradle, /versionCode 42/);
+assert.match(androidGradle, /versionName "1\.3\.0"/);
 assert.match(androidGradle, /release \{\s+signingConfig signingConfigs\.release/);
 assert.match(androidGradle, /Release signing is not configured/);
 assert.match(androidManifest, /android:usesCleartextTraffic="false"/);
@@ -127,13 +155,64 @@ for (const permission of ["CAMERA", "RECORD_AUDIO"]) {
 assert.match(androidManifest, /android\.speech\.RecognitionService/);
 assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1/);
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 50;/g) ?? []).length >= 6);
-assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 4);
+assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length >= 6);
+assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 4);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
 assert.ok(/APS_ENVIRONMENT = production;/.test(iosProject), "Release APNs environment must be production");
 assert.ok(/NOLATE_API_BASE_URL = "?https:\/\//.test(iosProject), "Share extension release API must use HTTPS");
 assert.ok(/PrivacyInfo\.xcprivacy in Resources/.test(iosProject), "Privacy manifest must be copied into the app bundle");
+assert.match(iosProject, /NoLateLiveActivityExtension\.appex in Embed App Extensions/);
+assert.match(iosProject, /PBXNativeTarget "NoLateLiveActivityExtension"/);
+assert.match(iosProject, /PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.live-activity"/);
+assert.match(
+  iosProject,
+  /SWIFT_ACTIVE_COMPILATION_CONDITIONS = "\$\(inherited\) DEBUG NOLATE_LIVE_ACTIVITY_APP"/,
+);
+assert.match(iosProject, /target = .*NoLateLiveActivityExtension/);
+assert.match(iosInfo, /<key>NSSupportsLiveActivities<\/key>\s*<true\/>/);
+assert.match(
+  iosInfo,
+  /<key>NSSupportsLiveActivitiesFrequentUpdates<\/key>\s*<false\/>/,
+);
+assert.match(iosPodLock, /- NoLateLiveActivity \(1\.0\.0\):/);
+assert.match(liveActivityExtensionInfo, /com\.apple\.widgetkit-extension/);
+assert.match(liveActivityModels, /struct NoLateDepartureContentState/);
+assert.match(liveActivityModels, /actionExpiresAtEpochSeconds: Int64/);
+assert.match(liveActivityModels, /maximumRouteSegments = 6/);
+assert.match(liveActivityModels, /kind: \.destination,\s*label: "도착",\s*colorHex:/);
+assert.match(liveActivityCoordinator, /"generation": activity\.map/);
+assert.match(liveActivityCoordinator, /reconcileAndObserveActivities/);
+assert.match(liveActivityCoordinator, /suppressedDuplicateActivityIds\.insert/);
+const liveActivityGroupKey = liveActivityCoordinator.match(
+  /private struct ActivityGroupKey[\s\S]*?\n  }/,
+);
+assert.ok(liveActivityGroupKey, "Live Activity duplicate grouping policy is missing");
+assert.doesNotMatch(
+  liveActivityGroupKey[0],
+  /generation/,
+  "Only one Activity may survive for a member/schedule across generations",
+);
+assert.match(liveActivityIntent, /NoLateAlarmDepartureActionBridge\.recordFromLiveActivity/);
+assert.match(liveActivityIntent, /mayRecordDepartureAction/);
+assert.match(liveActivityIntent, /await activity\.end\(/);
+assert.doesNotMatch(liveActivityIntent, /replacingStatus\(\s*\.inTransit/);
+assert.ok(
+  (liveActivityWidget.match(/NoLateRouteBarView\(/g) ?? []).length >= 2,
+  "Lock screen and expanded Dynamic Island must share the route bar component",
+);
+assert.match(liveActivityWidget, /Button\(intent: NoLateDepartureLiveActivityIntent/);
+assert.match(liveActivityWidget, /isDepartureActionAvailable/);
+assert.match(liveActivityWidget, /NoLateCompactStatusView/);
+assert.match(liveActivityPlugin, /ensureTargetDependency/);
+assert.match(liveActivityPlugin, /ensureEmbeddedProduct/);
+assert.match(liveActivityPlugin, /delete group\.path/);
+assert.match(liveActivityPlugin, /config\.ios\?\.bundleIdentifier/);
+assert.doesNotMatch(
+  liveActivityPlugin,
+  /const BUNDLE_ID\s*=\s*["']com\./,
+  "The extension bundle identifier must be derived from the configured app identifier",
+);
 assert.doesNotMatch(iosInfo, /NSAllowsArbitraryLoads/);
 assert.doesNotMatch(iosInfo, /NSLocationAlwaysUsageDescription|NSFaceIDUsageDescription/);
 assert.match(iosInfo, /UISupportedInterfaceOrientations[\s\S]*?UIInterfaceOrientationPortrait/);

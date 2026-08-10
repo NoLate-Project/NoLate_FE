@@ -34,6 +34,8 @@ const PUSH_NATIVE_CONTEXT_KEY = "nolate_push_native_context_v2";
 const APNS_TOKEN_RETRY_COUNT = 30;
 const APNS_TOKEN_RETRY_DELAY_MS = 500;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [0, 1_500, 4_000] as const;
+type PushRegistrationSuccessListener = (memberId: number) => void;
+const pushRegistrationSuccessListeners = new Set<PushRegistrationSuccessListener>();
 
 function logPushDevelopment(message: string, error?: unknown): void {
     if (!__DEV__) return;
@@ -61,6 +63,8 @@ async function registerToken(
         token,
         deliveryAckCapabilityVersion: 1,
     });
+    if (!isCurrent()) return;
+    pushRegistrationSuccessListeners.forEach((listener) => listener(memberId));
     // A successful token registration is a durable point at which missed
     // data-only commands can be recovered from the authoritative snapshot.
     await reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
@@ -68,6 +72,14 @@ async function registerToken(
         // best-effort and must not turn that success into a registration retry.
         logPushDevelopment("[alarm-sync] post-registration snapshot failed", error);
     });
+}
+
+/** Fires only after the server has accepted this installation's FCM token. */
+export function subscribePushRegistrationSuccess(
+    listener: PushRegistrationSuccessListener,
+): () => void {
+    pushRegistrationSuccessListeners.add(listener);
+    return () => pushRegistrationSuccessListeners.delete(listener);
 }
 
 async function waitForApnsToken(): Promise<string> {
@@ -183,8 +195,9 @@ async function performPushRegistration(memberId: number, generation: number): Pr
 export function subscribePushTokenRefresh(memberId?: number): () => void {
     if (!memberId) return () => undefined;
 
+    let active = true;
     const coordinator = createLatestPushTokenRetryCoordinator({
-        register: (token) => registerToken(memberId, token),
+        register: (token) => registerToken(memberId, token, () => active),
         onError: (error) => {
             logPushDevelopment("[push] refreshed token registration failed after retries", error);
         },
@@ -195,6 +208,7 @@ export function subscribePushTokenRefresh(memberId?: number): () => void {
         });
     });
     return () => {
+        active = false;
         coordinator.stop();
         unsubscribeNative();
     };

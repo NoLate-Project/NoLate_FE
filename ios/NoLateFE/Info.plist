@@ -97,6 +97,10 @@
 	<string>NoLate에서 사진 속 일정 정보를 불러오기 위해 사진 보관함 권한이 필요합니다.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>NoLate에서 음성을 텍스트로 변환해 빠른 일정을 만들기 위해 음성 인식 권한이 필요합니다.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<false/>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).expo.index_route</string>

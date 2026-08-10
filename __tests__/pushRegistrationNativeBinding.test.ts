@@ -10,8 +10,12 @@ import {
 } from "../src/modules/notification/departureAlarmSync";
 import {
     registerPushAfterLogin,
+    subscribePushRegistrationSuccess,
 } from "../src/modules/notification/pushRegistration";
 import { requestPushNotificationPermission } from "../src/modules/notification/pushPermission";
+import {
+    isPushRegistrationGenerationCurrent,
+} from "../src/modules/notification/pushRegistrationCoordinator";
 
 jest.mock("expo-constants", () => ({
     __esModule: true,
@@ -83,6 +87,7 @@ describe("push registration native account ordering", () => {
         Object.defineProperty(Platform, "Version", { configurable: true, value: 32 });
         jest.mocked(activateDepartureReminderAccountForAuthenticatedSession)
             .mockResolvedValue(true);
+        jest.mocked(isPushRegistrationGenerationCurrent).mockReturnValue(true);
         jest.mocked(registerPushToken).mockResolvedValue(undefined);
     });
 
@@ -107,6 +112,34 @@ describe("push registration native account ordering", () => {
         ).toBeLessThan(jest.mocked(registerPushToken).mock.invocationCallOrder[0]);
     });
 
+    it("exposes the Live Activity bootstrap boundary only after FCM registration succeeds", async () => {
+        let resolveRegistration: (() => void) | undefined;
+        let markRegistrationStarted: (() => void) | undefined;
+        const registrationStarted = new Promise<void>((resolve) => {
+            markRegistrationStarted = resolve;
+        });
+        const pendingRegistration = new Promise<void>((resolve) => {
+            resolveRegistration = resolve;
+        });
+        jest.mocked(registerPushToken).mockImplementation(() => {
+            markRegistrationStarted?.();
+            return pendingRegistration;
+        });
+        const listener = jest.fn();
+        const unsubscribe = subscribePushRegistrationSuccess(listener);
+
+        const request = registerPushAfterLogin(7);
+        await registrationStarted;
+        expect(registerPushToken).toHaveBeenCalledTimes(1);
+        expect(listener).not.toHaveBeenCalled();
+
+        resolveRegistration?.();
+        await request;
+
+        expect(listener).toHaveBeenCalledWith(7);
+        unsubscribe();
+    });
+
     it("routes a binding failure into registration recovery without registering", async () => {
         jest.mocked(activateDepartureReminderAccountForAuthenticatedSession)
             .mockResolvedValue(false);
@@ -115,6 +148,31 @@ describe("push registration native account ordering", () => {
             "Native departure reminder account binding is unavailable",
         );
         expect(registerPushToken).not.toHaveBeenCalled();
+    });
+
+    it("does not open Live Activity sync after logout invalidates an in-flight registration", async () => {
+        let resolveRegistration: (() => void) | undefined;
+        let markRegistrationStarted: (() => void) | undefined;
+        const registrationStarted = new Promise<void>((resolve) => {
+            markRegistrationStarted = resolve;
+        });
+        jest.mocked(registerPushToken).mockImplementation(() => {
+            markRegistrationStarted?.();
+            return new Promise<void>((resolve) => {
+                resolveRegistration = resolve;
+            });
+        });
+        const listener = jest.fn();
+        const unsubscribe = subscribePushRegistrationSuccess(listener);
+
+        const request = registerPushAfterLogin(7);
+        await registrationStarted;
+        jest.mocked(isPushRegistrationGenerationCurrent).mockReturnValue(false);
+        resolveRegistration?.();
+        await request;
+
+        expect(listener).not.toHaveBeenCalled();
+        unsubscribe();
     });
 
     it("requests iOS display permission even when remote push registration is skipped in Simulator", async () => {
