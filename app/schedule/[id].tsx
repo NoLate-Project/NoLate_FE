@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -112,10 +112,13 @@ import { completeScheduleDeparture } from "../../src/modules/schedule/scheduleDe
 import { saveScheduleRouteAsMyTravelPlan } from "../../src/modules/schedule/scheduleTravelPlanSave";
 import {
     buildEffectiveTransitRoutePresentation,
-    retainFreshDepartureStatus,
+    resolveAcceptedDepartureStatus,
     resolveScheduleDetailDepartureTiming,
 } from "../../src/modules/schedule/effectiveTransitRoutePresentation";
-import { getDepartureStatusRefreshDelay } from "../../src/modules/schedule/departureStatusRefreshPolicy";
+import {
+    getDepartureStatusRefreshDelay,
+    isDepartureStatusLocallyExpired,
+} from "../../src/modules/schedule/departureStatusRefreshPolicy";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -457,6 +460,19 @@ export function ScheduleDetail({
         scheduleId: string;
         promise: Promise<void>;
     } | undefined>(undefined);
+    const departureStatusRequestGenerationRef = useRef(0);
+    const departureStatusNextCheckAtRef = useRef<string | null | undefined>(undefined);
+    const departureStatusEvaluatedAtRef = useRef<string | undefined>(undefined);
+    const departureStatusRefreshEligible = Boolean(
+        id &&
+        !internalPreviewItem &&
+        isFocused &&
+        appStateStatus === "active" &&
+        !routePlannerSessionId &&
+        !routeSavePending
+    );
+    const departureStatusRefreshEligibleRef = useRef(departureStatusRefreshEligible);
+    departureStatusRefreshEligibleRef.current = departureStatusRefreshEligible;
 
     const item = internalPreviewItem ?? (id ? state.itemsById[id] : undefined);
     const canManageSchedule = useMemo(() => {
@@ -552,6 +568,10 @@ export function ScheduleDetail({
         setDepartureStatus(undefined);
         setAcceptedDepartureStatus(undefined);
         setDepartureStatusNextCheckAt(undefined);
+        departureStatusRequestGenerationRef.current += 1;
+        departureStatusRequestRef.current = undefined;
+        departureStatusNextCheckAtRef.current = undefined;
+        departureStatusEvaluatedAtRef.current = undefined;
         setDepartureStatusRefreshRevision(0);
         autoOpenedRouteDetailItemIdRef.current = undefined;
     }, [id, participantDisclosureProgress, previewParticipantsExpanded]);
@@ -560,7 +580,7 @@ export function ScheduleDetail({
         currentLocationRequestGuardRef.current.invalidate();
     }, []);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
         activeDepartureStatusScheduleIdRef.current = id;
         return () => {
             if (activeDepartureStatusScheduleIdRef.current === id) {
@@ -587,7 +607,7 @@ export function ScheduleDetail({
     }, [internalPreviewItem]);
 
     const refreshDepartureStatus = useCallback((): Promise<void> => {
-        if (!id || internalPreviewItem || routePlannerSessionId || routeSavePending) {
+        if (!id || !departureStatusRefreshEligibleRef.current) {
             return Promise.resolve();
         }
 
@@ -595,19 +615,42 @@ export function ScheduleDetail({
         if (inFlight?.scheduleId === id) return inFlight.promise;
 
         const scheduleId = id;
+        const requestGeneration = departureStatusRequestGenerationRef.current;
+        const isCurrentRequest = () => (
+            activeDepartureStatusScheduleIdRef.current === scheduleId &&
+            departureStatusRequestGenerationRef.current === requestGeneration &&
+            departureStatusRefreshEligibleRef.current
+        );
         let request: Promise<void>;
         request = getScheduleDepartureStatus(scheduleId)
             .then((status) => {
-                if (activeDepartureStatusScheduleIdRef.current !== scheduleId) return;
+                if (!isCurrentRequest()) return;
                 setDepartureStatus(status);
-                setAcceptedDepartureStatus((current) => retainFreshDepartureStatus(current, status));
+                setAcceptedDepartureStatus(resolveAcceptedDepartureStatus(status));
                 setDepartureStatusNextCheckAt(status.nextCheckAt);
+                departureStatusNextCheckAtRef.current = status.nextCheckAt;
+                departureStatusEvaluatedAtRef.current = status.evaluatedAt;
             })
             .catch(() => {
-                // 보조 ETA 재조회 실패는 현재 화면 상태와 저장 일정 조회에 영향을 주지 않는다.
+                // 보조 ETA 재조회 실패는 저장 일정 조회를 막지 않는다.
+                if (!isCurrentRequest()) return;
+
+                const locallyExpired = isDepartureStatusLocallyExpired({
+                    nextCheckAt: departureStatusNextCheckAtRef.current,
+                    evaluatedAt: departureStatusEvaluatedAtRef.current,
+                    nowMs: Date.now(),
+                });
+                // A failed overdue request retries on the fallback cadence instead of every minimum interval.
+                setDepartureStatusNextCheckAt(undefined);
+                if (locallyExpired) {
+                    setDepartureStatus(undefined);
+                    setAcceptedDepartureStatus(undefined);
+                    departureStatusNextCheckAtRef.current = undefined;
+                    departureStatusEvaluatedAtRef.current = undefined;
+                }
             })
             .finally(() => {
-                if (activeDepartureStatusScheduleIdRef.current === scheduleId) {
+                if (isCurrentRequest()) {
                     setDepartureStatusRefreshRevision((current) => current + 1);
                 }
                 if (departureStatusRequestRef.current?.promise === request) {
@@ -616,7 +659,7 @@ export function ScheduleDetail({
             });
         departureStatusRequestRef.current = { scheduleId, promise: request };
         return request;
-    }, [id, internalPreviewItem, routePlannerSessionId, routeSavePending]);
+    }, [id]);
 
     useEffect(() => {
         let observedAppState = AppState.currentState;
@@ -629,20 +672,20 @@ export function ScheduleDetail({
         return () => subscription.remove();
     }, []);
 
-    useEffect(() => {
-        if (!isFocused || appStateStatus !== "active") return;
-        refreshDepartureStatus();
-    }, [appStateStatus, isFocused, refreshDepartureStatus]);
+    useLayoutEffect(() => {
+        if (departureStatusRefreshEligible) return;
+        // Losing focus/foreground or entering route edit/save invalidates the old request context.
+        departureStatusRequestGenerationRef.current += 1;
+        departureStatusRequestRef.current = undefined;
+    }, [departureStatusRefreshEligible]);
 
     useEffect(() => {
-        if (
-            !id ||
-            internalPreviewItem ||
-            !isFocused ||
-            appStateStatus !== "active" ||
-            routePlannerSessionId ||
-            routeSavePending
-        ) return undefined;
+        if (!departureStatusRefreshEligible) return;
+        refreshDepartureStatus();
+    }, [departureStatusRefreshEligible, refreshDepartureStatus]);
+
+    useEffect(() => {
+        if (!departureStatusRefreshEligible) return undefined;
 
         const delay = getDepartureStatusRefreshDelay({
             nextCheckAt: departureStatusNextCheckAt,
@@ -653,15 +696,10 @@ export function ScheduleDetail({
         }, delay);
         return () => clearTimeout(timeoutId);
     }, [
-        appStateStatus,
         departureStatusNextCheckAt,
         departureStatusRefreshRevision,
-        id,
-        internalPreviewItem,
-        isFocused,
+        departureStatusRefreshEligible,
         refreshDepartureStatus,
-        routePlannerSessionId,
-        routeSavePending,
     ]);
 
     useEffect(() => {
@@ -669,6 +707,8 @@ export function ScheduleDetail({
         setDepartureStatus(undefined);
         setAcceptedDepartureStatus(undefined);
         setDepartureStatusNextCheckAt(undefined);
+        departureStatusNextCheckAtRef.current = undefined;
+        departureStatusEvaluatedAtRef.current = undefined;
     }, [routeSavePending]);
 
     const sheetQuickSummaryAnimatedStyle = useMemo(() => ({

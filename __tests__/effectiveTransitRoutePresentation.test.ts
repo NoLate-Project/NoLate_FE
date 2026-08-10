@@ -2,7 +2,7 @@ import type { ScheduleDepartureStatus } from "../src/api/schedule";
 import {
     buildEffectiveTransitRoutePresentation,
     getFreshDepartureTiming,
-    retainFreshDepartureStatus,
+    resolveAcceptedDepartureStatus,
     resolveScheduleDetailDepartureTiming,
 } from "../src/modules/schedule/effectiveTransitRoutePresentation";
 
@@ -119,17 +119,15 @@ describe("effective transit route presentation", () => {
         );
     });
 
-    it("retains accepted timing when a refresh is stale or failed", () => {
-        const accepted = departureStatus();
+    it("expires accepted timing when the server explicitly returns stale or failed", () => {
         const replacement = departureStatus({ travelMinutes: 62 });
 
-        expect(retainFreshDepartureStatus(accepted, departureStatus({ stale: true })))
-            .toBe(accepted);
-        expect(retainFreshDepartureStatus(
-            accepted,
+        expect(resolveAcceptedDepartureStatus(departureStatus({ stale: true })))
+            .toBeUndefined();
+        expect(resolveAcceptedDepartureStatus(
             departureStatus({ failureReason: "PROVIDER_TIMEOUT" }),
-        )).toBe(accepted);
-        expect(retainFreshDepartureStatus(accepted, replacement)).toBe(replacement);
+        )).toBeUndefined();
+        expect(resolveAcceptedDepartureStatus(replacement)).toBe(replacement);
     });
 
     it("never mixes the current member status into an inspected participant plan", () => {

@@ -2,6 +2,7 @@ export const DEPARTURE_STATUS_REFRESH_GRACE_MS = 2_000;
 export const DEPARTURE_STATUS_MIN_REFRESH_DELAY_MS = 15_000;
 export const DEPARTURE_STATUS_MAX_REFRESH_DELAY_MS = 5 * 60_000;
 export const DEPARTURE_STATUS_FALLBACK_REFRESH_DELAY_MS = 2 * 60_000;
+export const DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS = 5 * 60_000;
 
 /**
  * Waits just beyond the worker boundary, while bounding invalid, overdue, or
@@ -25,4 +26,23 @@ export function getDepartureStatusRefreshDelay({
         DEPARTURE_STATUS_MAX_REFRESH_DELAY_MS,
         Math.max(DEPARTURE_STATUS_MIN_REFRESH_DELAY_MS, requestedDelay),
     );
+}
+
+/** Fails closed when the server cannot be reached beyond the normal worker grace window. */
+export function isDepartureStatusLocallyExpired({
+    nextCheckAt,
+    evaluatedAt,
+    nowMs,
+}: {
+    nextCheckAt: string | null | undefined;
+    evaluatedAt?: string | null;
+    nowMs: number;
+}): boolean {
+    const parsedNextCheckAt = nextCheckAt ? Date.parse(nextCheckAt) : Number.NaN;
+    const parsedEvaluatedAt = evaluatedAt ? Date.parse(evaluatedAt) : Number.NaN;
+    const freshnessBaseline = Number.isFinite(parsedNextCheckAt)
+        ? parsedNextCheckAt
+        : parsedEvaluatedAt;
+    if (!Number.isFinite(freshnessBaseline) || !Number.isFinite(nowMs)) return true;
+    return nowMs > freshnessBaseline + DEPARTURE_STATUS_LOCAL_EXPIRY_GRACE_MS;
 }

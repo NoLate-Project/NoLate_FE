@@ -82,12 +82,11 @@ export function getFreshDepartureTiming(
     };
 }
 
-/** Stale/failure refreshes may update retry metadata, but never replace accepted UI timing. */
-export function retainFreshDepartureStatus(
-    current: ScheduleDepartureStatus | undefined,
+/** An explicit stale/failure response expires the previously accepted live timing. */
+export function resolveAcceptedDepartureStatus(
     candidate: ScheduleDepartureStatus,
 ): ScheduleDepartureStatus | undefined {
-    return getFreshDepartureTiming(candidate) ? candidate : current;
+    return getFreshDepartureTiming(candidate) ? candidate : undefined;
 }
 
 /**
