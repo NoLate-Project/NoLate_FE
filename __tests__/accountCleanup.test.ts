@@ -27,6 +27,11 @@ import { clearSeenShareAttention } from "../src/modules/share/shareAttention";
 import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../src/modules/performance/navigationPerformanceQueue";
+import { disableRouteDetailAdvertising } from "../src/modules/advertising/routeDetailInterstitial";
+
+jest.mock("../src/modules/advertising/routeDetailInterstitial", () => ({
+    disableRouteDetailAdvertising: jest.fn(),
+}));
 
 jest.mock("../src/modules/notification/departureAlarmSync", () => ({
     clearDepartureAlarmsForAccountCleanup: jest.fn().mockResolvedValue(true),
@@ -98,6 +103,7 @@ const mockedAlarmCleanup = jest.mocked(clearDepartureAlarmsForAccountCleanup);
 const mockedReceiptCleanup = jest.mocked(
     clearDepartureAlarmScheduleReceiptQueueForCurrentAccount
 );
+const mockedDisableRouteDetailAdvertising = jest.mocked(disableRouteDetailAdvertising);
 const allOtherCleanupMocks = [
     clearPushDeliveryAckQueueForCurrentAccount,
     clearPushRegistrationAfterLogout,
@@ -123,6 +129,7 @@ describe("clearAccountScopedLocalData", () => {
         await clearAccountScopedLocalData();
 
         expect(mockedReceiptCleanup).toHaveBeenCalledTimes(1);
+        expect(mockedDisableRouteDetailAdvertising).toHaveBeenCalledTimes(1);
         for (const cleanup of allOtherCleanupMocks) {
             expect(cleanup).toHaveBeenCalledTimes(1);
         }

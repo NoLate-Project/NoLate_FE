@@ -112,6 +112,10 @@ import MapPickerTargetActions from "../../src/modules/schedule/components/route/
 import RouteEndpointReselectCard from "../../src/modules/schedule/components/route/RouteEndpointReselectCard";
 import TransitRouteProgressBar from "../../src/modules/schedule/components/route/TransitRouteProgressBar";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import {
+    primeRouteDetailAdvertising,
+    showRouteDetailInterstitialIfEligible,
+} from "../../src/modules/advertising/routeDetailInterstitial";
 
 function Ionicons(props: React.ComponentProps<typeof ExpoIonicons>) {
     return <ExpoIonicons {...props} accessible={false} importantForAccessibility="no" />;
@@ -1058,6 +1062,7 @@ export default function RouteSelectScreen() {
     const favoritePanelEntrance = useRef(new Animated.Value(1)).current;
     const favoritePanelDirectionRef = useRef<1 | -1>(1);
     const routeSubmitPendingRef = useRef(false);
+    const routeDetailAdPendingRef = useRef(false);
     const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const searchRequestIdRef = useRef(0);
@@ -2258,7 +2263,8 @@ export default function RouteSelectScreen() {
         setSelectedRouteId(visibleRouteAlternatives[0].id);
     }, [selectedRouteId, visibleRouteAlternatives]);
 
-    const openMapForOption = useCallback((routeOption?: RouteAlternativeOption) => {
+    const openMapForOption = useCallback(async (routeOption?: RouteAlternativeOption) => {
+        if (routeDetailAdPendingRef.current) return;
         const targetRoute = routeOption ?? selectedRoute;
         if (!targetRoute) {
             Alert.alert("경로 선택 필요", "상세 지도에서 확인할 경로를 선택해 주세요.");
@@ -2270,15 +2276,25 @@ export default function RouteSelectScreen() {
         const targetSessionId = sessionId || `route-session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         // 목록과 상세 화면이 같은 경로 객체를 사용해야 필터/정렬 순서 차이로 경로가 바뀌지 않는다.
         persistInitial(targetRoute.minutes, targetSessionId, targetRoute);
-        router.replace({
-            pathname: "/schedule/route-planner",
-            params: {
-                sessionId: targetSessionId,
-                routeId: targetRoute.id,
-                routeIndex: targetIndex >= 0 ? String(targetIndex) : "0",
-            },
-        });
+        routeDetailAdPendingRef.current = true;
+        try {
+            await showRouteDetailInterstitialIfEligible();
+            router.replace({
+                pathname: "/schedule/route-planner",
+                params: {
+                    sessionId: targetSessionId,
+                    routeId: targetRoute.id,
+                    routeIndex: targetIndex >= 0 ? String(targetIndex) : "0",
+                },
+            });
+        } finally {
+            routeDetailAdPendingRef.current = false;
+        }
     }, [persistInitial, routeAlternatives, router, selectedRoute, selectedRouteIndex, sessionId]);
+
+    useEffect(() => {
+        primeRouteDetailAdvertising().catch(() => undefined);
+    }, []);
 
     const saveRouteOption = useCallback((routeOption: RouteAlternativeOption, routeIndex: number) => {
         if (routeSubmitPendingRef.current) return;

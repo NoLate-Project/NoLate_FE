@@ -5,6 +5,8 @@ export type SubscriptionPlan = "FREE" | "PREMIUM";
 
 export type SubscriptionPolicy = {
     plan: SubscriptionPlan;
+    /** Backend-controlled effective ad decision. Defaults off when policy loading fails. */
+    adsEnabled: boolean;
     maxSmartSchedulesPerMonth: number;
     usedSmartSchedulesThisMonth: number;
     maxNotificationLeadMinutes: number;
@@ -14,6 +16,7 @@ export type SubscriptionPolicy = {
 
 export const FREE_SUBSCRIPTION_POLICY: SubscriptionPolicy = {
     plan: "FREE",
+    adsEnabled: false,
     maxSmartSchedulesPerMonth: 5,
     usedSmartSchedulesThisMonth: 0,
     maxNotificationLeadMinutes: 60,
