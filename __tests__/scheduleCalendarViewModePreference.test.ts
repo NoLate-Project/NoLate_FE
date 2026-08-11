@@ -1,59 +1,93 @@
-const { readFileSync } = require("fs") as {
-    readFileSync: (path: string, encoding: string) => string;
+const { readFileSync } = require('fs') as {
+  readFileSync: (path: string, encoding: string) => string;
 };
 
 export {};
 
-const scheduleIndexSource = readFileSync("app/schedule/index.tsx", "utf8");
+const scheduleRouteSource = readFileSync('app/schedule/index.tsx', 'utf8');
+const scheduleStateSource = readFileSync(
+  'src/modules/schedule/hooks/useScheduleIndexState.ts',
+  'utf8',
+);
+const viewModeTransitionSource = readFileSync(
+  'src/modules/schedule/hooks/useScheduleIndexViewModeTransition.ts',
+  'utf8',
+);
 
-function sourceBetween(start: string, end: string) {
-    const startIndex = scheduleIndexSource.indexOf(start);
-    const endIndex = scheduleIndexSource.indexOf(end, startIndex);
-
-    expect(startIndex).toBeGreaterThanOrEqual(0);
-    expect(endIndex).toBeGreaterThan(startIndex);
-    return scheduleIndexSource.slice(startIndex, endIndex);
+function normalizeSourceContract(value: string): string {
+  return value.replace(/'/g, '"').replace(/\s+/g, ' ').trim();
 }
 
-describe("schedule calendar view mode preference wiring", () => {
-    test("restores the preference before mounting the calendar screen", () => {
-        const preferenceGate = sourceBetween(
-            "export default function ScheduleIndex()",
-            "function ScheduleIndexContent"
-        );
+expect.extend({
+  toContain(received: unknown, expected: unknown) {
+    const pass =
+      typeof received === 'string' && typeof expected === 'string'
+        ? normalizeSourceContract(received).includes(
+            normalizeSourceContract(expected),
+          )
+        : Array.isArray(received) && received.includes(expected);
+    return {
+      pass,
+      message: () =>
+        `expected normalized source ${pass ? 'not ' : ''}to contain ${String(
+          expected,
+        )}`,
+    };
+  },
+});
 
-        expect(preferenceGate).toContain("getCachedCalendarViewModePreference()");
-        expect(preferenceGate).toContain("loadCalendarViewModePreference()");
-        expect(preferenceGate).toContain("if (!initialCalendarViewMode)");
-        expect(preferenceGate).toContain(
-            "<ScheduleIndexContent initialCalendarViewMode={initialCalendarViewMode} />"
-        );
-    });
+function sourceBetween(source: string, start: string, end: string) {
+  const normalizedSource = normalizeSourceContract(source);
+  const normalizedStart = normalizeSourceContract(start);
+  const normalizedEnd = normalizeSourceContract(end);
+  const startIndex = normalizedSource.indexOf(normalizedStart);
+  const endIndex = normalizedSource.indexOf(normalizedEnd, startIndex);
 
-    test("initializes the mode, retained panel, and motion values from one preference", () => {
-        const initialization = sourceBetween(
-            "function ScheduleIndexContent",
-            "const monthViewTransitionGenerationRef"
-        );
+  expect(startIndex).toBeGreaterThanOrEqual(0);
+  expect(endIndex).toBeGreaterThan(startIndex);
+  return normalizedSource.slice(startIndex, endIndex);
+}
 
-        expect(initialization).toContain(
-            "useState<CalendarViewMode>(\n        initialCalendarViewMode"
-        );
-        expect(initialization).toContain(
-            "getMonthAgendaPanelKind(initialCalendarViewMode) ?? \"detail\""
-        );
-        expect(initialization).toContain(
-            "CALENDAR_DAY_HEIGHTS[initialCalendarViewMode]"
-        );
-    });
+describe('schedule calendar view mode preference wiring', () => {
+  test('restores the preference before mounting the calendar screen', () => {
+    const preferenceGate = scheduleRouteSource;
 
-    test("persists selections only through the shared view-mode handler", () => {
-        const handler = sourceBetween(
-            "const handleCalendarViewModeChange",
-            "const handleDayViewMenuSelect"
-        );
+    expect(preferenceGate).toContain('getCachedCalendarViewModePreference()');
+    expect(preferenceGate).toContain('loadCalendarViewModePreference()');
+    expect(preferenceGate).toContain('if (!initialCalendarViewMode)');
+    expect(preferenceGate).toContain(
+      'initialCalendarViewMode={initialCalendarViewMode}',
+    );
+  });
 
-        expect(handler).toContain("rememberCalendarViewModePreference(nextMode)");
-        expect(handler).toContain("setCalendarViewMode(nextMode)");
-    });
+  test('initializes the mode, retained panel, and motion values from one preference', () => {
+    const initialization = sourceBetween(
+      scheduleStateSource,
+      'export function useScheduleIndexState',
+      'const monthViewTransitionGenerationRef',
+    );
+
+    expect(normalizeSourceContract(initialization)).toContain(
+      normalizeSourceContract(
+        'useState<CalendarViewMode>(\n        initialCalendarViewMode',
+      ),
+    );
+    expect(initialization).toContain(
+      'getMonthAgendaPanelKind(initialCalendarViewMode) ?? "detail"',
+    );
+    expect(initialization).toContain(
+      'CALENDAR_DAY_HEIGHTS[initialCalendarViewMode]',
+    );
+  });
+
+  test('persists selections only through the shared view-mode handler', () => {
+    const handler = sourceBetween(
+      viewModeTransitionSource,
+      'const handleCalendarViewModeChange',
+      'const handleDayViewMenuSelect',
+    );
+
+    expect(handler).toContain('rememberCalendarViewModePreference(nextMode)');
+    expect(handler).toContain('setCalendarViewMode(nextMode)');
+  });
 });

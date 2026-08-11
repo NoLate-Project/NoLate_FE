@@ -1,48 +1,126 @@
-const { readFileSync } = require("fs") as {
-    readFileSync: (path: string, encoding: string) => string;
+const { readFileSync } = require('fs') as {
+  readFileSync: (path: string, encoding: string) => string;
 };
 
 export {};
 
-const detailSource = readFileSync("app/schedule/[id].tsx", "utf8");
+const detailControllerSource = readFileSync(
+  'app/schedule/useScheduleDetailController.tsx',
+  'utf8',
+);
+const departureStatusControllerSource = readFileSync(
+  'app/schedule/useScheduleDepartureStatusController.ts',
+  'utf8',
+);
+const mapControllerSource = readFileSync(
+  'app/schedule/useScheduleDetailMapController.ts',
+  'utf8',
+);
+const presentationSource = readFileSync(
+  'app/schedule/scheduleDetailPresentationModel.ts',
+  'utf8',
+);
+const routePresentationSource = [
+  readFileSync('app/schedule/ScheduleDetailRouteQuickSummary.tsx', 'utf8'),
+  readFileSync('app/schedule/ScheduleDetailRouteSheet.tsx', 'utf8'),
+].join('\n');
+const scheduleDetailSources = [
+  detailControllerSource,
+  departureStatusControllerSource,
+  mapControllerSource,
+  presentationSource,
+  routePresentationSource,
+].join('\n');
 
-describe("schedule detail effective transit route integration", () => {
-    it("loads departure status independently without replacing the saved schedule request", () => {
-        expect(detailSource).toContain("getScheduleDepartureStatus(scheduleId)");
-        expect(detailSource).toContain("getSchedule(id)");
-        expect(detailSource).toContain("보조 ETA 재조회 실패는 저장 일정 조회를 막지 않는다.");
-        expect(detailSource).toContain("resolveAcceptedDepartureStatus(status)");
-    });
+describe('schedule detail effective transit route integration', () => {
+  it('loads departure status independently without replacing the saved schedule request', () => {
+    expect(departureStatusControllerSource).toContain(
+      'getScheduleDepartureStatus(requestedScheduleId)',
+    );
+    expect(detailControllerSource).toContain('getSchedule(id)');
+    expect(departureStatusControllerSource).toContain(
+      '보조 ETA 재조회 실패는 저장 일정 조회를 막지 않는다.',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'resolveAcceptedDepartureStatus(status)',
+    );
+  });
 
-    it("refreshes on focus, foreground activation, and a bounded nextCheckAt timer", () => {
-        expect(detailSource).toContain("const isFocused = useIsFocused();");
-        expect(detailSource).toContain('AppState.addEventListener("change"');
-        expect(detailSource).toContain('appStateStatus === "active"');
-        expect(detailSource).toContain("departureStatusRefreshEligibleRef.current");
-        expect(detailSource).toContain("getDepartureStatusRefreshDelay({");
-        expect(detailSource).toContain("nextCheckAt: departureStatusNextCheckAt");
-        expect(detailSource).toContain("const timeoutId = setTimeout(() => {");
-        expect(detailSource).toContain("departureStatusRequestRef.current");
-        expect(detailSource).toContain("departureStatusRequestGenerationRef.current === requestGeneration");
-        expect(detailSource).toContain("Losing focus/foreground or entering route edit/save invalidates the old request context.");
-        expect(detailSource).toContain("isDepartureStatusLocallyExpired({");
-        expect(detailSource).toContain("etaRefreshDueAt: departureStatusEtaRefreshDueAtRef.current");
-        expect(detailSource).toContain("evaluatedAt: departureStatusEvaluatedAtRef.current");
-        expect(detailSource).toContain("A failed overdue request retries on the fallback cadence");
-        expect(detailSource).toContain("setAcceptedDepartureStatus(undefined)");
-    });
+  it('refreshes on focus, foreground activation, and a bounded nextCheckAt timer', () => {
+    expect(departureStatusControllerSource).toContain(
+      'const isFocused = useIsFocused();',
+    );
+    expect(departureStatusControllerSource).toContain(
+      "AppState.addEventListener('change'",
+    );
+    expect(departureStatusControllerSource).toContain(
+      "appStateStatus === 'active'",
+    );
+    expect(departureStatusControllerSource).toContain(
+      'refreshEligibleRef.current',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'getDepartureStatusRefreshDelay({',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'nextCheckAt: departureStatusNextCheckAt',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'const timeoutId = setTimeout(() => {',
+    );
+    expect(departureStatusControllerSource).toContain('requestRef.current');
+    expect(departureStatusControllerSource).toContain(
+      'requestGenerationRef.current === requestGeneration',
+    );
+    expect(departureStatusControllerSource).toContain(
+      '포커스를 잃거나 경로 편집·저장에 진입하면 기존 요청 문맥을 즉시 무효화한다.',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'isDepartureStatusLocallyExpired({',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'etaRefreshDueAt: etaRefreshDueAtRef.current',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'evaluatedAt: evaluatedAtRef.current',
+    );
+    expect(departureStatusControllerSource).toContain(
+      '만료된 요청 실패도 최소 주기로 반복하지 않고 기본 재시도 간격을 사용한다.',
+    );
+    expect(departureStatusControllerSource).toContain(
+      'setAcceptedDepartureStatus(undefined)',
+    );
+  });
 
-    it("keeps saved map geometry and renders an alternative only as text guidance", () => {
-        expect(detailSource).toContain("const displayRoute = inspectedTravelPlan?.route ?? item?.route;");
-        expect(detailSource).toContain("const savedDisplayTravelMinutes = inspectedTravelPlan?.travelMinutes ?? item?.travelMinutes;");
-        expect(detailSource).toContain("isInspectingTravelPlan: Boolean(inspectedTravelPlan)");
-        expect(detailSource).toContain("typeof savedDisplayTravelMinutes === \"number\"");
-        expect(detailSource).toContain("typeof currentTravelMinutes === \"number\"");
-        expect(detailSource).toContain("buildEffectiveTransitRoutePresentation(departureStatus)");
-        expect(detailSource).toContain("실시간 추천 경로");
-        expect(detailSource).toContain("effectiveTransitRoutePresentation.mapNote");
-        expect(detailSource).not.toContain("displayRoute = departureStatus");
-        expect(detailSource).not.toContain("route: departureStatus.effectiveTransitRoute");
-        expect(detailSource).toContain("`일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`");
-    });
+  it('keeps saved map geometry and renders an alternative only as text guidance', () => {
+    expect(mapControllerSource).toContain(
+      'const displayRoute = inspectedTravelPlan?.route ?? item?.route;',
+    );
+    expect(mapControllerSource).toContain('const savedDisplayTravelMinutes =');
+    expect(detailControllerSource).toContain(
+      'isInspectingTravelPlan: Boolean(inspectedTravelPlan)',
+    );
+    expect(presentationSource).toContain(
+      "typeof savedDisplayTravelMinutes === 'number'",
+    );
+    expect(presentationSource).toContain(
+      "typeof currentTravelMinutes === 'number'",
+    );
+    expect(detailControllerSource).toContain(
+      'buildEffectiveTransitRoutePresentation(departureStatus)',
+    );
+    expect(routePresentationSource).toContain('실시간 추천 경로');
+    expect(routePresentationSource).toContain(
+      'effectiveTransitRoutePresentation.mapNote',
+    );
+    expect(scheduleDetailSources).not.toContain(
+      'displayRoute = departureStatus',
+    );
+    expect(scheduleDetailSources).not.toContain(
+      'route: departureStatus.effectiveTransitRoute',
+    );
+    expect(presentationSource).toContain(
+      '`일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`',
+    );
+  });
 });

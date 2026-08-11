@@ -4,14 +4,19 @@ const { readFileSync } = require("fs") as {
 
 export {};
 
-const addFormSource = readFileSync(
+const readSources = (paths: string[]) =>
+    paths.map((path) => readFileSync(path, "utf8")).join("\n");
+const addFormSource = readSources([
     "src/modules/schedule/components/form/ScheduleAddModal.tsx",
-    "utf8",
-);
-const editFormSource = readFileSync(
+    "src/modules/schedule/components/form/useScheduleAddModalController.tsx",
+    "src/modules/schedule/components/form/scheduleAddModalModel.ts",
+]);
+const editFormSource = readSources([
     "src/modules/schedule/screens/ScheduleEditScreen.tsx",
-    "utf8",
-);
+    "src/modules/schedule/screens/useScheduleEditScreen.ts",
+    "src/modules/schedule/screens/useScheduleEditRemoteData.ts",
+    "src/modules/schedule/screens/scheduleEditMutations.ts",
+]);
 
 describe("schedule form calendar simplicity", () => {
     test("new schedules start as private without a storage selector", () => {

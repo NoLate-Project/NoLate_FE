@@ -1,3 +1,4 @@
+import styles from "./calendars.styles";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -7,7 +8,6 @@ import {
     RefreshControl,
     ScrollView,
     StatusBar,
-    StyleSheet,
     Switch,
     Text,
     TextInput,
@@ -28,33 +28,28 @@ import {
     updateScheduleCalendarMember,
     type ScheduleCalendar,
     type ScheduleCalendarMember,
-    type ScheduleCalendarRole,
     type ScheduleShareContentMode,
 } from "../../src/api/scheduleCalendars";
 import { recoverDepartureAlarmsAfterMutation } from "../../src/modules/notification/departureAlarmMutationRecovery";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import { ColorPicker, ContentModeControl, MemberRow, roleLabel } from "./CalendarsSettingsComponents";
 
 const BRAND_BLUE = "#2F80FF";
-const CALENDAR_COLORS = ["#2F80FF", "#16A085", "#34C759", "#FF3B30", "#AF52DE", "#FF9500"];
-
+/** API 오류를 사용자 안내 문구로 정규화하며 네트워크 오류에는 재시도 힌트를 덧붙입니다. */
 function errorMessage(error: unknown) {
     const message = error instanceof Error ? error.message : "요청을 처리하지 못했습니다.";
     if (/network|timeout/i.test(message)) return "네트워크 상태를 확인한 뒤 다시 시도해 주세요.";
     return message;
 }
 
-function roleLabel(role: ScheduleCalendarRole) {
-    if (role === "OWNER") return "소유자";
-    if (role === "EDITOR") return "편집";
-    return "보기";
-}
-
+/** 공유 콘텐츠 모드를 초대 시트 부제에 사용할 한글 문구로 변환합니다. */
 function contentModeLabel(mode: ScheduleShareContentMode) {
     return mode === "SCHEDULE_AND_TRAVEL" ? "일정 + 각자 경로" : "일정만";
 }
 
+/** 공유 캘린더 생성·선택·멤버 관리 흐름을 조율하는 설정 화면입니다. */
 export default function ScheduleCalendarsScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id?: string }>();
@@ -725,165 +720,3 @@ export default function ScheduleCalendarsScreen() {
         </View>
     );
 }
-
-function ColorPicker({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-    return (
-        <View style={styles.colorRow}>
-            {CALENDAR_COLORS.map((color) => (
-                <Pressable
-                    key={color}
-                    accessibilityRole="radio"
-                    accessibilityLabel={`${color} 색상`}
-                    accessibilityState={{ selected: value === color }}
-                    onPress={() => onChange(color)}
-                    style={[styles.colorButton, value === color && styles.colorButtonSelected]}
-                >
-                    <View style={[styles.colorSwatch, { backgroundColor: color }]} />
-                </Pressable>
-            ))}
-        </View>
-    );
-}
-
-function ContentModeControl({
-    value,
-    onChange,
-    disabled = false,
-}: {
-    value: ScheduleShareContentMode;
-    onChange: (value: ScheduleShareContentMode) => void;
-    disabled?: boolean;
-}) {
-    const { colors, mode } = useTheme();
-    const accent = mode === "dark" ? "#8BB7FF" : BRAND_BLUE;
-    return (
-        <View style={[styles.modeControl, { backgroundColor: colors.surface2 }]}>
-            {([
-                ["SCHEDULE_ONLY", "일정만", "calendar-outline"],
-                ["SCHEDULE_AND_TRAVEL", "일정 + 각자 경로", "navigate-outline"],
-            ] as const).map(([modeValue, label, icon]) => {
-                const active = value === modeValue;
-                return (
-                    <Pressable
-                        key={modeValue}
-                        accessibilityRole="radio"
-                        accessibilityState={{ selected: active, disabled }}
-                        disabled={disabled}
-                        onPress={() => onChange(modeValue)}
-                        style={[styles.modeOption, active && { backgroundColor: colors.surface, borderColor: colors.border }]}
-                    >
-                        <Ionicons name={icon} size={16} color={active ? accent : colors.textSecondary} />
-                        <Text style={[styles.modeText, { color: active ? accent : colors.textSecondary }]} numberOfLines={2}>{label}</Text>
-                    </Pressable>
-                );
-            })}
-        </View>
-    );
-}
-
-function MemberRow({
-    member,
-    canManage,
-    busy,
-    onRoleChange,
-    onRemove,
-    onTransfer,
-}: {
-    member: ScheduleCalendarMember;
-    canManage: boolean;
-    busy: boolean;
-    onRoleChange: (role: "VIEWER" | "EDITOR") => void;
-    onRemove: () => void;
-    onTransfer: () => void;
-}) {
-    const { colors } = useTheme();
-    return (
-        <View style={[styles.memberRow, { borderBottomColor: colors.border }]}>
-            <View style={[styles.avatar, { backgroundColor: colors.surface2 }]}>
-                <Ionicons name={member.role === "OWNER" ? "key-outline" : "person-outline"} size={17} color={colors.textSecondary} />
-            </View>
-            <View style={styles.rowText}>
-                <Text style={[styles.memberName, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {member.name || member.email || `회원 #${member.memberId}`}
-                </Text>
-                <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {member.email || `NoLate ID #${member.memberId}`}
-                </Text>
-            </View>
-            {canManage ? (
-                <View style={styles.memberActions}>
-                    <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`${roleLabel(member.role)} 권한 변경`}
-                        disabled={busy}
-                        onPress={() => onRoleChange(member.role === "EDITOR" ? "VIEWER" : "EDITOR")}
-                        style={[styles.roleButton, { borderColor: colors.border }]}
-                    >
-                        <Text style={[styles.roleButtonText, { color: colors.textPrimary }]}>{roleLabel(member.role)}</Text>
-                    </Pressable>
-                    <Pressable accessibilityRole="button" accessibilityLabel="소유권 이전" onPress={onTransfer} disabled={busy} style={styles.smallIcon}>
-                        <Ionicons name="key-outline" size={17} color={colors.textSecondary} />
-                    </Pressable>
-                    <Pressable accessibilityRole="button" accessibilityLabel="멤버 제거" onPress={onRemove} disabled={busy} style={styles.smallIcon}>
-                        <Ionicons name="close" size={18} color="#D70015" />
-                    </Pressable>
-                </View>
-            ) : (
-                <Text style={[styles.roleStatic, { color: colors.textSecondary }]}>{roleLabel(member.role)}</Text>
-            )}
-        </View>
-    );
-}
-
-const styles = StyleSheet.create({
-    root: { flex: 1 },
-    header: { minHeight: 60, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    headerTitle: { fontSize: 18, fontWeight: "800", letterSpacing: 0 },
-    iconButton: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: "transparent", alignItems: "center", justifyContent: "center" },
-    content: { paddingHorizontal: 18, gap: 24 },
-    section: { gap: 10 },
-    sectionTitle: { fontSize: 16, fontWeight: "800", letterSpacing: 0 },
-    inputRow: { height: 48, borderWidth: 1, borderRadius: 8, flexDirection: "row", alignItems: "center", paddingLeft: 13 },
-    input: { flex: 1, minWidth: 0, height: "100%", paddingVertical: 0, fontSize: 15, fontWeight: "600", letterSpacing: 0 },
-    addButton: { width: 42, height: 42, marginRight: 2, borderRadius: 7, alignItems: "center", justifyContent: "center" },
-    inlineIconButton: { width: 42, height: 42, alignItems: "center", justifyContent: "center" },
-    colorRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-    colorButton: { width: 36, height: 36, borderRadius: 18, borderWidth: 2, alignItems: "center", justifyContent: "center" },
-    colorButtonSelected: { borderColor: "#2F80FF" },
-    colorSwatch: { width: 24, height: 24, borderRadius: 12 },
-    modeControl: { minHeight: 44, borderRadius: 8, padding: 3, flexDirection: "row", gap: 3 },
-    modeOption: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: "transparent", borderRadius: 6, paddingHorizontal: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-    modeText: { flexShrink: 1, fontSize: 12, lineHeight: 15, fontWeight: "800", textAlign: "center", letterSpacing: 0 },
-    loadingRow: { minHeight: 54, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8 },
-    empty: { minHeight: 84, borderTopWidth: 1, borderBottomWidth: 1, alignItems: "center", justifyContent: "center", gap: 6 },
-    emptyText: { fontSize: 13, fontWeight: "600", letterSpacing: 0 },
-    calendarRow: { minHeight: 64, borderWidth: 1, borderRadius: 8, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 11 },
-    calendarMark: { width: 8, height: 32, borderRadius: 4 },
-    rowText: { flex: 1, minWidth: 0 },
-    rowTitle: { fontSize: 15, fontWeight: "800", letterSpacing: 0 },
-    rowMeta: { marginTop: 2, fontSize: 12, lineHeight: 16, fontWeight: "600", letterSpacing: 0 },
-    detailBand: { borderTopWidth: 1, paddingTop: 20, gap: 12 },
-    detailLoading: { minHeight: 112, borderTopWidth: 1, paddingTop: 20, alignItems: "center", justifyContent: "center", gap: 10 },
-    retryButton: { height: 36, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 6 },
-    retryText: { fontSize: 12, fontWeight: "800", letterSpacing: 0 },
-    detailHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
-    shareButton: { minWidth: 92, height: 38, borderRadius: 8, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-    shareButtonText: { color: "#FFFFFF", fontSize: 13, fontWeight: "800", letterSpacing: 0 },
-    fieldLabel: { marginTop: 2, fontSize: 12, fontWeight: "700", letterSpacing: 0 },
-    preferenceRow: { minHeight: 54, flexDirection: "row", alignItems: "center", gap: 12 },
-    categoryManageButton: { minHeight: 58, borderWidth: 1, borderRadius: 8, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 11 },
-    preferenceTitle: { fontSize: 14, fontWeight: "700", letterSpacing: 0 },
-    memberHeader: { marginTop: 4, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    memberCount: { fontSize: 12, fontWeight: "700", letterSpacing: 0 },
-    memberRow: { minHeight: 62, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: "row", alignItems: "center", gap: 10 },
-    avatar: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
-    memberName: { fontSize: 13, fontWeight: "700", letterSpacing: 0 },
-    memberActions: { flexDirection: "row", alignItems: "center", gap: 2 },
-    roleButton: { height: 32, minWidth: 48, borderWidth: 1, borderRadius: 7, alignItems: "center", justifyContent: "center", paddingHorizontal: 8 },
-    roleButtonText: { fontSize: 11, fontWeight: "800", letterSpacing: 0 },
-    smallIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
-    roleStatic: { fontSize: 11, fontWeight: "700", letterSpacing: 0 },
-    dangerButton: { marginTop: 8, height: 44, borderWidth: 1, borderRadius: 8, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 7 },
-    dangerText: { fontSize: 13, fontWeight: "800", letterSpacing: 0 },
-    disabledAction: { opacity: 0.45 },
-});

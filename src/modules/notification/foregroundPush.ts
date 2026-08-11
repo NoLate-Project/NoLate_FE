@@ -10,35 +10,19 @@ import type { Notification, NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
 
-import { markScheduleDeparted, snoozeScheduleDepartureReminder } from "../../api/schedule";
-import { ApiResponseError } from "../../api/response";
+import { snoozeScheduleDepartureReminder } from "../../api/schedule";
 import { getAuthMember } from "../auth/authStorage";
-import { clearCalendarScheduleCache } from "../schedule/calendarScheduleCache";
-import { emitScheduleMutation } from "../schedule/scheduleMutationEvents";
 import {
-    getNotificationActionCategoryFromData,
     getPushNavigationTargetFromNotificationData,
     getScheduleIdFromNotificationData,
-    SCHEDULE_DEPARTURE_ACTION_CATEGORY,
 } from "./pushNavigation";
 import {
     createPushActionFailureGate,
     type PushActionFailure,
 } from "./pushActionFailureGate";
-import { emitAppNotificationReceived } from "./appNotificationEvents";
-import {
-    handleDepartureAlarmSyncData,
-    presentForegroundDepartureReminderForAuthenticatedSession,
-} from "./departureAlarmSync";
-import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
-import { isDepartureAlarmSyncData } from "./departureAlarmContract";
 import { acknowledgePushDelivery } from "./pushDeliveryAck";
 import { isSamePushNotificationIdentity } from "./pushNotificationIdentity";
 import { recordNativeAlarmNotificationResponseFire } from "./departureAlarm";
-import { presentForegroundPushOnce } from "./foregroundPushPresentationClaim";
-import {
-    activateNativeDepartureReminderPresentationJournal,
-} from "./nativeDepartureReminderPresentationJournal";
 import {
     getNoLateCustomAlarmNavigationTarget,
     type NoLateCustomAlarmNavigationTarget,
@@ -48,31 +32,36 @@ import {
     issueNoLateCustomAlarmCapability,
 } from "./customAlarmCapability";
 import { isNotificationEtaEventFresh } from "./notificationEventExpiry";
+import { recoverDepartureAlarmsAfterMutation } from "./departureAlarmMutationRecovery";
+import {
+    ensureNotificationPresentation,
+    handleForegroundPushMessageWithNotifications,
+} from "./foregroundPushMessage";
 
 export type { PushActionFailure } from "./pushActionFailureGate";
+import {
+    customAlarmOccurrenceDedupeKey,
+    defaultNotificationPresentationBehavior,
+    isCanonicalCustomAlarmNotificationIdentifier,
+    settleCustomAlarmOpenOutcomeWithinPresentationDeadline,
+    suppressedNotificationPresentationBehavior,
+    type NoLateCustomAlarmOpenOutcome,
+} from "./customAlarmOpenPresentation";
+import {
+    isRetryableNotificationInteractionError,
+    queueDepartureFromNotificationAction,
+} from "./notificationDepartureActions";
 
-export type NoLateCustomAlarmOpenOutcome = "opened" | "deferred" | "rejected";
+export type { NoLateCustomAlarmOpenOutcome } from "./customAlarmOpenPresentation";
+export {
+    completeDepartureFromNotificationAction,
+    snoozeDepartureFromNotificationAction,
+} from "./notificationDepartureActions";
 type NoLateCustomAlarmOpenOrigin = "foreground" | "interaction";
 
-const ANDROID_CHANNEL_ID = "schedule-push";
 const SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER = "schedule_depart_now_action";
 const SCHEDULE_SNOOZE_ACTION_IDENTIFIER = "schedule_snooze_action";
 const DEFAULT_PUSH_ACTION_IDENTIFIER = "DEFAULT";
-
-class PermanentNotificationInteractionError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "PermanentNotificationInteractionError";
-    }
-}
-
-function isRetryableNotificationInteractionError(error: unknown): boolean {
-    if (error instanceof PermanentNotificationInteractionError) return false;
-    if (!(error instanceof ApiResponseError)) return true;
-    const status = error.status;
-    if (status === 401 || status === 408 || status === 429) return true;
-    return status === undefined || status < 400 || status >= 500;
-}
 
 type ExpoNotificationsModule = typeof import("expo-notifications");
 type CustomAlarmNotificationsEmitter = Pick<
@@ -119,12 +108,6 @@ function logPushDevelopment(
     console[level](message, detail);
 }
 
-type LocalPushNotification = {
-    title: string;
-    body: string;
-    data: Record<string, unknown>;
-};
-
 function acknowledgePushInteraction(
     data: Record<string, unknown> | undefined,
     providerMessageId: string | undefined,
@@ -141,84 +124,6 @@ function acknowledgePushInteraction(
             actionIdentifier,
         }),
     ]).catch(() => undefined);
-}
-
-export async function completeDepartureFromNotificationAction(
-    scheduleId: string,
-): Promise<void> {
-    await markScheduleDeparted(scheduleId);
-    await recoverDepartureAlarmsAfterMutation();
-}
-
-async function queueDepartureFromNotificationAction(
-    scheduleId: string,
-    data?: Record<string, unknown> | FirebaseMessagingTypes.RemoteMessage["data"],
-): Promise<string> {
-    const memberId = (await getAuthMember())?.id;
-    if (!Number.isSafeInteger(memberId) || (memberId ?? 0) <= 0) {
-        throw new Error("Authenticated member is unavailable.");
-    }
-    const recipientMemberIdText = typeof data?.recipientMemberId === "string"
-        ? data.recipientMemberId
-        : undefined;
-    if (!recipientMemberIdText || !/^[1-9]\d*$/.test(recipientMemberIdText)) {
-        throw new PermanentNotificationInteractionError(
-            "Notification recipient identity is unavailable."
-        );
-    }
-    const recipientMemberId = Number(recipientMemberIdText);
-    if (!Number.isSafeInteger(recipientMemberId) || recipientMemberId !== memberId) {
-        throw new PermanentNotificationInteractionError(
-            "Notification belongs to another account."
-        );
-    }
-    const generationText = typeof data?.alarmGeneration === "string"
-        ? data.alarmGeneration
-        : undefined;
-    const generation = generationText && /^(0|[1-9]\d*)$/.test(generationText)
-        ? Number(generationText)
-        : 0;
-    const rawActionEventKey = typeof data?.actionEventKey === "string"
-        ? data.actionEventKey
-        : typeof data?.logicalEventKey === "string"
-            ? data.logicalEventKey
-            : undefined;
-    const actionEventKey = rawActionEventKey && (
-        /^key:[a-f0-9]{64}$/.test(rawActionEventKey) ||
-        /^event:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(rawActionEventKey)
-    ) ? rawActionEventKey : undefined;
-    if (!actionEventKey) {
-        throw new PermanentNotificationInteractionError(
-            "Notification action identity is invalid."
-        );
-    }
-    const { enqueueStandardDepartureAction } = require(
-        "./nativeDepartureActionJournal"
-    ) as typeof import("./nativeDepartureActionJournal");
-    const queued = await enqueueStandardDepartureAction({
-        scheduleId,
-        recipientMemberId,
-        generation: Number.isSafeInteger(generation) ? generation : 0,
-        ...(typeof data?.alarmId === "string" ? { alarmId: data.alarmId } : {}),
-        ...(typeof data?.occurrenceId === "string" ? { occurrenceId: data.occurrenceId } : {}),
-        actionEventKey,
-        requiresRouteNavigation: false,
-    });
-    if (!queued) throw new Error("Native departure action journal is unavailable.");
-    // Durable enqueue is the interaction success boundary. Network/auth recovery continues
-    // independently and native deletion occurs only after the idempotent API succeeds.
-    const { activateNativeDepartureActionJournalForAuthenticatedMember } = require(
-        "./nativeDepartureActionJournal"
-    ) as typeof import("./nativeDepartureActionJournal");
-    activateNativeDepartureActionJournalForAuthenticatedMember().catch(() => undefined);
-    return actionEventKey;
-}
-
-export async function snoozeDepartureFromNotificationAction(
-    scheduleId: string,
-): Promise<void> {
-    await snoozeScheduleDepartureReminder(scheduleId);
-    await recoverDepartureAlarmsAfterMutation();
 }
 
 async function getNotifications(): Promise<ExpoNotificationsModule | null> {
@@ -293,7 +198,7 @@ export async function configureForegroundPush(): Promise<() => void> {
     const Notifications = await getNotifications();
 
     if (Notifications) {
-        await ensureNotificationPresentation(Notifications);
+        await ensureNotificationPresentation(Notifications, logPushDevelopment);
     }
 
     // Silent alarm sync depends only on Firebase Messaging. Register this
@@ -846,222 +751,9 @@ export async function configurePushNavigation(
 }
 
 const CUSTOM_ALARM_OPEN_DEDUPE_MS = 30_000;
-const CUSTOM_ALARM_PRESENTATION_DEADLINE_MS = 2_500;
-const CUSTOM_ALARM_NOTIFICATION_IDENTIFIER_PATTERN =
-    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
-
-async function settleCustomAlarmOpenOutcomeWithinPresentationDeadline(
-    work: Promise<NoLateCustomAlarmOpenOutcome>,
-    onDeadline: () => NoLateCustomAlarmOpenOutcome,
-): Promise<NoLateCustomAlarmOpenOutcome> {
-    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<NoLateCustomAlarmOpenOutcome>((resolve) => {
-        deadlineTimer = setTimeout(() => {
-            resolve(onDeadline());
-        }, CUSTOM_ALARM_PRESENTATION_DEADLINE_MS);
-    });
-    try {
-        return await Promise.race([work, deadline]);
-    } finally {
-        if (deadlineTimer) clearTimeout(deadlineTimer);
-    }
-}
-
-function customAlarmOccurrenceDedupeKey(
-    target: NoLateCustomAlarmNavigationTarget,
-): string {
-    if (target.isPreview) {
-        return `preview:${target.previewId ?? target.alarmId}`;
-    }
-    return [
-        "alarm",
-        target.nativeAlarmId ?? target.alarmId,
-        String(target.alarmGeneration ?? ""),
-        target.occurrenceId ?? "",
-    ].join(":");
-}
-
-function isCanonicalCustomAlarmNotificationIdentifier(
-    identifier: string,
-    isPreview: boolean,
-): boolean {
-    if (!CUSTOM_ALARM_NOTIFICATION_IDENTIFIER_PATTERN.test(identifier)) return false;
-    return isPreview
-        ? identifier.startsWith("nolate.custom-alarm.preview.")
-        : identifier.startsWith("nolate.departure.");
-}
-
-function defaultNotificationPresentationBehavior() {
-    return {
-        shouldShowBanner: true,
-        shouldShowList: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-    };
-}
-
-function suppressedNotificationPresentationBehavior() {
-    return {
-        shouldShowBanner: false,
-        shouldShowList: false,
-        shouldPlaySound: false,
-        shouldSetBadge: false,
-    };
-}
-
+/** 외부 호출자가 알림 모듈 상태를 몰라도 포그라운드 메시지를 동일한 런타임으로 처리하게 합니다. */
 export async function handleForegroundPushMessage(
     message: FirebaseMessagingTypes.RemoteMessage,
 ): Promise<void> {
-    acknowledgePushDelivery(message.data, "RECEIVED", {
-        providerMessageId: message.messageId,
-    }).catch(() => undefined);
-
-    if (isDepartureAlarmSyncData(message.data)) {
-        // Alarm sync is a silent control-plane payload. Even malformed commands
-        // are consumed here and must never become a local banner or inbox event.
-        await handleDepartureAlarmSyncData(message.data);
-        return;
-    }
-
-    // Android's dual-compatible departure reminder may reach foreground JS as data delivery
-    // after the app-owned service strips only background auto-presentation metadata.
-    const title = message.notification?.title ??
-        exactForegroundPresentationText(message.data?.nolateNotificationTitle, 100) ??
-        "NoLate";
-    const body = message.notification?.body ??
-        exactForegroundPresentationText(message.data?.nolateNotificationBody, 500) ??
-        "새로운 일정 알림이 도착했습니다.";
-
-    // 서버는 push 공급자 호출 전에 앱 알림을 저장한다. 수신 직후 배지 구독자에게
-    // 다시 조회하도록 알려 포그라운드 화면에서도 놓친 알림 개수가 즉시 보이게 한다.
-    emitAppNotificationReceived();
-    if (isScheduleVisibilityChange(message.data)) {
-        clearCalendarScheduleCache();
-        emitScheduleMutation();
-    }
-
-    const nativeDeparturePresentation =
-        await presentForegroundDepartureReminderForAuthenticatedSession(
-            message.data,
-            message.messageId,
-        );
-    if (nativeDeparturePresentation === "rejected") return;
-    if (
-        nativeDeparturePresentation === "presented" ||
-        nativeDeparturePresentation === "duplicate"
-    ) {
-        // Native COMMITTED evidence is the PRESENTED request boundary. Drain it through the same
-        // durable ACK queue instead of emitting an optimistic JS-only acknowledgement here.
-        activateNativeDepartureReminderPresentationJournal().catch(() => undefined);
-        return;
-    }
-
-    const presentationResult = await presentForegroundPushOnce(
-        message.data,
-        message.messageId,
-        (notificationIdentifier) => showLocalNotification({
-            title,
-            body,
-            data: message.data ?? {},
-        }, notificationIdentifier),
-    );
-    if (presentationResult === "presented") {
-        acknowledgePushDelivery(message.data, "PRESENTED", {
-            providerMessageId: message.messageId,
-        }).catch(() => undefined);
-    }
-}
-
-function exactForegroundPresentationText(
-    value: unknown,
-    maximumLength: number,
-): string | undefined {
-    if (typeof value !== "string") return undefined;
-    return value === value.trim() && value.length > 0 && value.length <= maximumLength &&
-        !/[\u0000-\u001f\u007f]/.test(value)
-        ? value
-        : undefined;
-}
-
-function isScheduleVisibilityChange(
-    data?: FirebaseMessagingTypes.RemoteMessage["data"],
-): boolean {
-    const type = data?.type;
-    return type === "SCHEDULE_SHARE_RECEIVED" ||
-        type === "CATEGORY_SHARE_RECEIVED" ||
-        type === "CALENDAR_SHARE_RECEIVED" ||
-        type === "SCHEDULE_CACHE_INVALIDATED";
-}
-
-async function showLocalNotification(
-    notification: LocalPushNotification,
-    identifier: string,
-): Promise<boolean> {
-    const Notifications = await getNotifications();
-
-    if (!Notifications) {
-        return false;
-    }
-
-    await ensureNotificationPresentation(Notifications);
-
-    await Notifications.scheduleNotificationAsync({
-        identifier,
-        content: {
-            title: notification.title,
-            body: notification.body,
-            data: notification.data,
-            sound: "default",
-            categoryIdentifier: getNotificationActionCategoryFromData(notification.data),
-        },
-        trigger: Platform.OS === "android" ? { channelId: ANDROID_CHANNEL_ID } : null,
-    });
-    return true;
-}
-
-async function ensureNotificationPresentation(Notifications: ExpoNotificationsModule): Promise<void> {
-    await ensureDepartNowCategory(Notifications);
-
-    if (Platform.OS !== "android") return;
-
-    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-        name: "일정 알림",
-        importance: Notifications.AndroidImportance.HIGH,
-        sound: "default",
-        vibrationPattern: [0, 250, 250, 250],
-    });
-}
-
-async function ensureDepartNowCategory(Notifications: ExpoNotificationsModule): Promise<void> {
-    // iOS categories are registered atomically by NoLateAlarm's native scheduler. A second Expo
-    // writer can race with that registration and erase custom-alarm actions from Notification Center.
-    if (Platform.OS === "ios") return;
-    try {
-        // 출발 리마인더에는 사전 알림과 정각 알림 모두에서 출발 완료 액션을 제공한다.
-        await Notifications.setNotificationCategoryAsync(
-            SCHEDULE_DEPARTURE_ACTION_CATEGORY,
-            [
-                {
-                    identifier: SCHEDULE_DEPART_NOW_ACTION_IDENTIFIER,
-                    buttonTitle: "출발 완료",
-                    options: {
-                        opensAppToForeground: true,
-                    },
-                },
-                {
-                    identifier: SCHEDULE_SNOOZE_ACTION_IDENTIFIER,
-                    buttonTitle: "5분 뒤 다시 알림",
-                    options: {
-                        opensAppToForeground: true,
-                    },
-                },
-            ],
-            {
-                showTitle: true,
-                showSubtitle: true,
-            },
-        );
-    } catch (error) {
-        logPushDevelopment("warn", "[push] notification action category setup failed", error);
-    }
+    await handleForegroundPushMessageWithNotifications(message, getNotifications, logPushDevelopment);
 }

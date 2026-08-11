@@ -1,7 +1,8 @@
+import styles from "./schedule-ui-preview.styles";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import PlainScheduleDetailView, {
@@ -594,54 +595,3 @@ export default function ScheduleUiPreviewScreen() {
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    full: {
-        flex: 1,
-    },
-    backdrop: {
-        flex: 1,
-        paddingHorizontal: 20,
-    },
-    previewLabel: {
-        fontSize: 12,
-        fontWeight: "700",
-        letterSpacing: 0.2,
-    },
-    detailRoot: {
-        flex: 1,
-    },
-    detailHeader: {
-        position: "absolute",
-        top: 0,
-        left: 0,
-        right: 0,
-        paddingHorizontal: 16,
-        paddingBottom: 12,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        flexDirection: "row",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-    },
-    headerButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    headerActions: {
-        marginLeft: "auto",
-        flexDirection: "row",
-        alignItems: "center",
-    },
-    headerTitle: {
-        position: "absolute",
-        left: 88,
-        right: 88,
-        bottom: 22,
-        fontSize: 17,
-        fontWeight: "700",
-        textAlign: "center",
-    },
-});
