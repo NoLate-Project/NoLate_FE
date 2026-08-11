@@ -6,25 +6,25 @@ export {};
 
 const detailSource = [
   'app/schedule/[id].tsx',
-  'app/schedule/ScheduleDetailLayout.tsx',
-  'app/schedule/ScheduleDetailRouteSheet.tsx',
-  'app/schedule/ScheduleDetailRouteQuickSummary.tsx',
-  'app/schedule/ScheduleDetailBackground.tsx',
-  'app/schedule/ScheduleDetailHeader.tsx',
-  'app/schedule/ScheduleDetailChrome.tsx',
-  'app/schedule/useScheduleDetailSheetController.ts',
-  'app/schedule/scheduleDetailPresentationModel.ts',
+  'src/routeSupport/schedule/ScheduleDetailLayout.tsx',
+  'src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx',
+  'src/routeSupport/schedule/ScheduleDetailRouteQuickSummary.tsx',
+  'src/routeSupport/schedule/ScheduleDetailBackground.tsx',
+  'src/routeSupport/schedule/ScheduleDetailHeader.tsx',
+  'src/routeSupport/schedule/ScheduleDetailChrome.tsx',
+  'src/routeSupport/schedule/useScheduleDetailSheetController.ts',
+  'src/routeSupport/schedule/scheduleDetailPresentationModel.ts',
 ]
   .map(path => readFileSync(path, 'utf8'))
   .join('\n');
 const detailStyleSource = [
-  'app/schedule/schedule-detail.styles.ts',
-  'app/schedule/scheduleDetailStyles/fallback.ts',
-  'app/schedule/scheduleDetailStyles/header.ts',
-  'app/schedule/scheduleDetailStyles/improved.ts',
-  'app/schedule/scheduleDetailStyles/route.ts',
-  'app/schedule/scheduleDetailStyles/sheetBase.ts',
-  'app/schedule/scheduleDetailStyles/status.ts',
+  'src/routeSupport/schedule/schedule-detail.styles.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/fallback.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/header.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/improved.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/route.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/sheetBase.ts',
+  'src/routeSupport/schedule/scheduleDetailStyles/status.ts',
 ]
   .map(path => readFileSync(path, 'utf8'))
   .join('\n');
@@ -35,7 +35,7 @@ const previewSource = readFileSync(
   'utf8',
 );
 const previewStyleSource = readFileSync(
-  'app/internal/schedule-ui-preview.styles.ts',
+  'src/routeSupport/internal/schedule-ui-preview.styles.ts',
   'utf8',
 );
 const compactSyntax = (source: string) => source.replace(/\s+/g, '');

@@ -1,4 +1,4 @@
-import { createScheduleIndexStyles } from '../../../../../app/schedule/index.styles';
+import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
 import { useLayoutEffect } from 'react';
 import { Animated, Pressable, Text, View } from 'react-native';
 import {

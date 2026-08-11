@@ -8,7 +8,7 @@ import { haversineDistanceKm } from './presentation';
 import {
   getTransitLegEndCoord,
   getTransitLegStartCoord,
-} from './routeTransitLegCoordinates';
+} from './routeTransitLegEndpoints';
 
 export /** 두 API 경로 좌표 사이의 거리를 미터 단위로 계산합니다. 입력 좌표 배열은 변경하지 않습니다. */
 function routeCoordDistanceMeters(

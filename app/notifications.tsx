@@ -1,4 +1,4 @@
-import styles from "./notifications.styles";
+import styles from "../src/routeSupport/notifications.styles";
 import { Ionicons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import { useRouter } from "expo-router";

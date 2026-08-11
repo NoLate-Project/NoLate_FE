@@ -5,7 +5,7 @@ const { readFileSync } = require('fs') as {
 export {};
 
 const detailSource = readFileSync(
-  'app/schedule/ScheduleDetailRouteSheet.tsx',
+  'src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx',
   'utf8',
 );
 const routeSummaryStart = detailSource.indexOf('styles.sheetRouteSummary');

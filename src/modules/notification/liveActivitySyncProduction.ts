@@ -6,7 +6,7 @@ import {
   getLiveActivityCapabilities,
   subscribeLiveActivityEvents,
 } from './liveActivity';
-import { createLiveActivitySyncCoordinator } from './liveActivitySync';
+import { createLiveActivitySyncCoordinator } from './liveActivitySyncCoordinator';
 
 /** 순환 의존을 피하면서 실제 알림 API 모듈을 필요한 시점에 불러온다. */
 function getLiveActivityNotificationApi(): typeof import('../../api/notification') {

@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { Alert, StatusBar, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import styles from './inbox.styles';
+import styles from '../../src/routeSupport/share/inbox.styles';
 
 import { getSchedules } from '../../src/api/schedule';
 import {
@@ -53,9 +53,9 @@ import {
 import SharingReportModal from '../../src/modules/share/SharingReportModal';
 import { useTheme } from '../../src/modules/theme/ThemeContext';
 
-import { FilterSheet } from './ShareInboxFilters';
-import ShareInboxLibraryView from './ShareInboxLibraryView';
-import { ManageShareSheet } from './ShareInboxManage';
+import { FilterSheet } from '../../src/routeSupport/share/ShareInboxFilters';
+import ShareInboxLibraryView from '../../src/routeSupport/share/ShareInboxLibraryView';
+import { ManageShareSheet } from '../../src/routeSupport/share/ShareInboxManage';
 import {
   BRAND_BLUE,
   contentModeLabel,
@@ -68,7 +68,7 @@ import {
   resourceTypeForComposer,
   ShareInboxViewData,
   sharingSafetyOwnerId,
-} from './shareInboxModel';
+} from '../../src/routeSupport/share/shareInboxModel';
 
 /** 공유 데이터 조회, 필터 상태, 회수·신고 동작을 조율하는 공유함 화면 컨트롤러입니다. */
 export default function ShareInboxScreen() {

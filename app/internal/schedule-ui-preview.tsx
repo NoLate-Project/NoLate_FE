@@ -1,4 +1,4 @@
-import styles from "./schedule-ui-preview.styles";
+import styles from "../../src/routeSupport/internal/schedule-ui-preview.styles";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";

@@ -38,13 +38,13 @@ const toolbarActionsSource =
 const bottomBarSource =
   sources['src/modules/schedule/hooks/useScheduleIndexBottomBar.tsx'];
 const scheduleStyleSource = [
-  'app/schedule/index.styles.ts',
-  'app/schedule/indexStyles/controls.ts',
-  'app/schedule/indexStyles/dayHeader.ts',
-  'app/schedule/indexStyles/month.ts',
-  'app/schedule/indexStyles/shell.ts',
-  'app/schedule/indexStyles/timeline.ts',
-  'app/schedule/indexStyles/toolbar.ts',
+  'src/routeSupport/schedule/index.styles.ts',
+  'src/routeSupport/schedule/indexStyles/controls.ts',
+  'src/routeSupport/schedule/indexStyles/dayHeader.ts',
+  'src/routeSupport/schedule/indexStyles/month.ts',
+  'src/routeSupport/schedule/indexStyles/shell.ts',
+  'src/routeSupport/schedule/indexStyles/timeline.ts',
+  'src/routeSupport/schedule/indexStyles/toolbar.ts',
 ]
   .map(path => readFileSync(path, 'utf8'))
   .join('\n');

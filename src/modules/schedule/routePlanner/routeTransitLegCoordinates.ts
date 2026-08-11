@@ -20,10 +20,19 @@ import {
 import { createTransitStopAnchor } from './routeMapAnchors';
 import { normalizeDisplayPathCoords } from './routeDisplayPath';
 import {
+  getTransitLegEndCoord,
+  getTransitLegStartCoord,
+} from './routeTransitLegEndpoints';
+import {
   compactTransitLineLabel,
   getBusLineColor as getSharedBusLineColor,
   getSubwayLineColor as getSharedSubwayLineColor,
 } from '../routeInfo';
+
+export {
+  getTransitLegEndCoord,
+  getTransitLegStartCoord,
+} from './routeTransitLegEndpoints';
 
 /** 지하철 노선명을 공용 노선 색상 정책으로 변환합니다. 입력 구간은 변경하지 않습니다. */
 export function getSubwayLineColor(lineName?: string): string {
@@ -73,38 +82,6 @@ export function isRideLegKind(
   kind: TransitLegDetail['kind'],
 ): kind is TransitStopMarkerKind {
   return kind === 'SUBWAY' || kind === 'BUS';
-}
-
-/** 구간 시작점·경로 첫 점 순서로 유효한 시작 좌표를 선택합니다. 입력 구간은 변경하지 않습니다. */
-export function getTransitLegStartCoord(
-  leg: TransitLegDetail,
-): RoutePathCoord | undefined {
-  if (
-    typeof leg.startCoord?.lat === 'number' &&
-    typeof leg.startCoord?.lng === 'number'
-  ) {
-    return leg.startCoord;
-  }
-  if (Array.isArray(leg.pathCoords) && leg.pathCoords.length > 0) {
-    return leg.pathCoords[0];
-  }
-  return undefined;
-}
-
-/** 구간 종료점·경로 마지막 점 순서로 유효한 종료 좌표를 선택합니다. 입력 구간은 변경하지 않습니다. */
-export function getTransitLegEndCoord(
-  leg: TransitLegDetail,
-): RoutePathCoord | undefined {
-  if (
-    typeof leg.endCoord?.lat === 'number' &&
-    typeof leg.endCoord?.lng === 'number'
-  ) {
-    return leg.endCoord;
-  }
-  if (Array.isArray(leg.pathCoords) && leg.pathCoords.length > 0) {
-    return leg.pathCoords[leg.pathCoords.length - 1];
-  }
-  return undefined;
 }
 
 /** 승차 지점 정보와 구간 시작점에서 지도에 사용할 승차 좌표를 선택합니다. 입력 구간은 변경하지 않습니다. */

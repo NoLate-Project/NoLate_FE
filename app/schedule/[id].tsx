@@ -2,9 +2,9 @@ import React from "react";
 import { useLocalSearchParams } from "expo-router";
 
 import ScheduleEditScreen from "../../src/modules/schedule/screens/ScheduleEditScreen";
-import { ScheduleDetailScreenContent } from "./ScheduleDetailScreenContent";
-import type { ScheduleDetailPreviewProps } from "./scheduleDetailModel";
-import { useScheduleDetailController } from "./useScheduleDetailController";
+import { ScheduleDetailScreenContent } from "../../src/routeSupport/schedule/ScheduleDetailScreenContent";
+import type { ScheduleDetailPreviewProps } from "../../src/routeSupport/schedule/scheduleDetailModel";
+import { useScheduleDetailController } from "../../src/routeSupport/schedule/useScheduleDetailController";
 
 export default function ScheduleRoute() {
   const { mode } = useLocalSearchParams<{ id?: string; mode?: string }>();

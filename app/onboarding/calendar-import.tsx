@@ -28,27 +28,27 @@ import {
   ImportResultSummary,
   IndividualScheduleDisclosure,
   SectionTitle,
-} from './CalendarImportCandidates';
-import { CurationProgress } from './CalendarImportConsent';
+} from '../../src/routeSupport/onboarding/CalendarImportCandidates';
+import { CurationProgress } from '../../src/routeSupport/onboarding/CalendarImportConsent';
 import {
   CandidateRow,
   DefaultOriginPicker,
   GhostButton,
   OptionChip,
   PrimaryButton,
-} from './CalendarImportControls';
+} from '../../src/routeSupport/onboarding/CalendarImportControls';
 import {
   BRAND_BLUE,
   CANDIDATE_PAGE_SIZE,
   CURATION_APP_LOGO,
   TRAVEL_MINUTES,
   TRAVEL_MODES,
-} from './calendarImportModel';
+} from '../../src/routeSupport/onboarding/calendarImportModel';
 
 WebBrowser.maybeCompleteAuthSession();
 
-import CalendarImportEarlySteps from './CalendarImportEarlySteps';
-import { useCalendarImportController } from './useCalendarImportController';
+import CalendarImportEarlySteps from '../../src/routeSupport/onboarding/CalendarImportEarlySteps';
+import { useCalendarImportController } from '../../src/routeSupport/onboarding/useCalendarImportController';
 
 /** 캘린더 가져오기 흐름의 상태를 화면 단계별 UI에 연결합니다. */
 export default function CalendarImportOnboarding() {

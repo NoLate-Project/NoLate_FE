@@ -1,4 +1,4 @@
-import styles from "./calendars.styles";
+import styles from "../../src/routeSupport/schedule/calendars.styles";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +34,7 @@ import { recoverDepartureAlarmsAfterMutation } from "../../src/modules/notificat
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
-import { ColorPicker, ContentModeControl, MemberRow, roleLabel } from "./CalendarsSettingsComponents";
+import { ColorPicker, ContentModeControl, MemberRow, roleLabel } from "../../src/routeSupport/schedule/CalendarsSettingsComponents";
 
 const BRAND_BLUE = "#2F80FF";
 /** API 오류를 사용자 안내 문구로 정규화하며 네트워크 오류에는 재시도 힌트를 덧붙입니다. */

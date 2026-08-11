@@ -6,18 +6,18 @@ export {};
 
 const routeSelectSource = [
     "app/schedule/route-select.tsx",
-    "app/schedule/RouteSelectSearchScreen.tsx",
-    "app/schedule/RouteSelectResultsScreen.tsx",
-    "app/schedule/RouteSelectFavoriteSaveSheet.tsx",
-    "app/schedule/RouteSelectMapPickerSheet.tsx",
+    "src/routeSupport/schedule/RouteSelectSearchScreen.tsx",
+    "src/routeSupport/schedule/RouteSelectResultsScreen.tsx",
+    "src/routeSupport/schedule/RouteSelectFavoriteSaveSheet.tsx",
+    "src/routeSupport/schedule/RouteSelectMapPickerSheet.tsx",
 ].map((path) => readFileSync(path, "utf8")).join("\n");
 const routeSelectStyleSource = [
-    "app/schedule/route-select.styles.ts",
-    "app/schedule/routeSelectStyles/base.ts",
-    "app/schedule/routeSelectStyles/favorites.ts",
-    "app/schedule/routeSelectStyles/filters.ts",
-    "app/schedule/routeSelectStyles/mapPicker.ts",
-    "app/schedule/routeSelectStyles/routeOptions.ts",
+    "src/routeSupport/schedule/route-select.styles.ts",
+    "src/routeSupport/schedule/routeSelectStyles/base.ts",
+    "src/routeSupport/schedule/routeSelectStyles/favorites.ts",
+    "src/routeSupport/schedule/routeSelectStyles/filters.ts",
+    "src/routeSupport/schedule/routeSelectStyles/mapPicker.ts",
+    "src/routeSupport/schedule/routeSelectStyles/routeOptions.ts",
 ].map((path) => readFileSync(path, "utf8")).join("\n");
 
 function getStyleBlock(styleName: string) {

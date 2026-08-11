@@ -1,4 +1,4 @@
-import styles from "./places.styles";
+import styles from "../../src/routeSupport/settings/places.styles";
 import React from "react";
 import {
     ActivityIndicator,
@@ -25,8 +25,8 @@ import {
     IconAction,
     PlaceEditor,
     SearchSheet,
-} from "./PlacesSettingsComponents";
-import { usePlacesSettings } from "./usePlacesSettings";
+} from "../../src/routeSupport/settings/PlacesSettingsComponents";
+import { usePlacesSettings } from "../../src/routeSupport/settings/usePlacesSettings";
 
 export default function PlacesSettingsScreen() {
     const {

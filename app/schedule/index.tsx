@@ -1,4 +1,4 @@
-import { createScheduleIndexStyles } from './index.styles';
+import { createScheduleIndexStyles } from '../../src/routeSupport/schedule/index.styles';
 import { useEffect, useState } from 'react';
 import { StatusBar } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';

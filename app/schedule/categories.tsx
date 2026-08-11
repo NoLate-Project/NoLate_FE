@@ -1,4 +1,4 @@
-import styles from "./categories.styles";
+import styles from "../../src/routeSupport/schedule/categories.styles";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {

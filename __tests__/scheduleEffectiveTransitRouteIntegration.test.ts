@@ -5,24 +5,24 @@ const { readFileSync } = require('fs') as {
 export {};
 
 const detailControllerSource = readFileSync(
-  'app/schedule/useScheduleDetailController.tsx',
+  'src/routeSupport/schedule/useScheduleDetailController.tsx',
   'utf8',
 );
 const departureStatusControllerSource = readFileSync(
-  'app/schedule/useScheduleDepartureStatusController.ts',
+  'src/routeSupport/schedule/useScheduleDepartureStatusController.ts',
   'utf8',
 );
 const mapControllerSource = readFileSync(
-  'app/schedule/useScheduleDetailMapController.ts',
+  'src/routeSupport/schedule/useScheduleDetailMapController.ts',
   'utf8',
 );
 const presentationSource = readFileSync(
-  'app/schedule/scheduleDetailPresentationModel.ts',
+  'src/routeSupport/schedule/scheduleDetailPresentationModel.ts',
   'utf8',
 );
 const routePresentationSource = [
-  readFileSync('app/schedule/ScheduleDetailRouteQuickSummary.tsx', 'utf8'),
-  readFileSync('app/schedule/ScheduleDetailRouteSheet.tsx', 'utf8'),
+  readFileSync('src/routeSupport/schedule/ScheduleDetailRouteQuickSummary.tsx', 'utf8'),
+  readFileSync('src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx', 'utf8'),
 ].join('\n');
 const scheduleDetailSources = [
   detailControllerSource,

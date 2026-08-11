@@ -7,14 +7,14 @@ export {};
 const inboxSource = readFileSync('app/share/inbox.tsx', 'utf8');
 const detailSource = [
   'app/schedule/[id].tsx',
-  'app/schedule/ScheduleDetailLayout.tsx',
-  'app/schedule/ScheduleDetailRouteSheet.tsx',
-  'app/schedule/ScheduleDetailRouteQuickSummary.tsx',
-  'app/schedule/ScheduleDetailBackground.tsx',
-  'app/schedule/ScheduleDetailHeader.tsx',
-  'app/schedule/ScheduleDetailChrome.tsx',
-  'app/schedule/useScheduleDetailSheetController.ts',
-  'app/schedule/scheduleDetailPresentationModel.ts',
+  'src/routeSupport/schedule/ScheduleDetailLayout.tsx',
+  'src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx',
+  'src/routeSupport/schedule/ScheduleDetailRouteQuickSummary.tsx',
+  'src/routeSupport/schedule/ScheduleDetailBackground.tsx',
+  'src/routeSupport/schedule/ScheduleDetailHeader.tsx',
+  'src/routeSupport/schedule/ScheduleDetailChrome.tsx',
+  'src/routeSupport/schedule/useScheduleDetailSheetController.ts',
+  'src/routeSupport/schedule/scheduleDetailPresentationModel.ts',
 ]
   .map(path => readFileSync(path, 'utf8'))
   .join('\n');

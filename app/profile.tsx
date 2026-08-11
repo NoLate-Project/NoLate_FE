@@ -6,10 +6,10 @@ import CalendarGlassSurface from "../src/modules/schedule/components/calendar/Ca
 import ProfileRouteAccessibilityRoot from "../src/modules/profile/ProfileRouteAccessibilityRoot";
 import ThemeModeSwitch from "../src/modules/theme/ThemeModeSwitch";
 import BrandedLoader from "../src/ui/BrandedLoader";
-import { AccountInfoRow, CalendarConnectionStat, ProfileLoadingView } from "./ProfileComponents";
-import styles from "./profile.styles";
-import { formatConnectionDate } from "./profilePresentation";
-import { useProfileScreen } from "./useProfileScreen";
+import { AccountInfoRow, CalendarConnectionStat, ProfileLoadingView } from "../src/routeSupport/ProfileComponents";
+import styles from "../src/routeSupport/profile.styles";
+import { formatConnectionDate } from "../src/routeSupport/profilePresentation";
+import { useProfileScreen } from "../src/routeSupport/useProfileScreen";
 
 /** 프로필 정보와 계정·캘린더·앱 설정을 섹션별로 표시하는 화면입니다. */
 export default function ProfileScreen() {
