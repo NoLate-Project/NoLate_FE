@@ -4,10 +4,24 @@ const { readFileSync } = require("fs") as {
 
 export {};
 
-const routeSelectSource = readFileSync("app/schedule/route-select.tsx", "utf8");
+const routeSelectSource = [
+    "app/schedule/route-select.tsx",
+    "app/schedule/RouteSelectSearchScreen.tsx",
+    "app/schedule/RouteSelectResultsScreen.tsx",
+    "app/schedule/RouteSelectFavoriteSaveSheet.tsx",
+    "app/schedule/RouteSelectMapPickerSheet.tsx",
+].map((path) => readFileSync(path, "utf8")).join("\n");
+const routeSelectStyleSource = [
+    "app/schedule/route-select.styles.ts",
+    "app/schedule/routeSelectStyles/base.ts",
+    "app/schedule/routeSelectStyles/favorites.ts",
+    "app/schedule/routeSelectStyles/filters.ts",
+    "app/schedule/routeSelectStyles/mapPicker.ts",
+    "app/schedule/routeSelectStyles/routeOptions.ts",
+].map((path) => readFileSync(path, "utf8")).join("\n");
 
 function getStyleBlock(styleName: string) {
-    const match = routeSelectSource.match(new RegExp(`${styleName}:\\s*\\{([^}]*)\\}`));
+    const match = routeSelectStyleSource.match(new RegExp(`${styleName}:\\s*\\{([^}]*)\\}`));
     expect(match).not.toBeNull();
     return match?.[1] ?? "";
 }

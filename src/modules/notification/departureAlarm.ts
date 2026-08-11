@@ -7,6 +7,14 @@ import {
     type DepartureAlarmSyncPlanCommand,
 } from "./departureAlarmContract";
 import type { NoLateAlarmSoundId } from "./customAlarmSounds";
+import {
+    isActionEventKey,
+    isOccurrenceId,
+    parseNativeAlarmFireEvent,
+    parseNativeAlarmNavigationEvent,
+    parseNativeDepartureActionEvent,
+    parseNativeDepartureReminderPresentationEvent,
+} from "./departureAlarmEventParsers";
 
 const NATIVE_MODULE_NAME = "NoLateAlarm";
 
@@ -750,118 +758,6 @@ export async function removePendingNativeAlarmNavigationEvent(
 ): Promise<boolean> {
     if (!eventId || eventId.length > 200) return false;
     return getNativeAlarmModule()?.removeAlarmNavigationEvent?.(eventId) ?? false;
-}
-
-function parseNativeAlarmFireEvent(value: unknown): NativeAlarmFireEvent | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-    const event = value as Partial<NativeAlarmFireEvent>;
-    const timingBasis = event.timingBasis === "EXACT_CALLBACK" ||
-        event.timingBasis === "OBSERVED_ALERTING" ||
-        event.timingBasis === "INFERRED_OS_DELIVERY"
-        ? event.timingBasis
-        // OTA compatibility: Android's legacy journal was written only by its
-        // exact receiver; iOS legacy evidence came from delivered/alerting observation.
-        : event.timingBasis === undefined
-            ? Platform.OS === "android" ? "EXACT_CALLBACK" : "OBSERVED_ALERTING"
-            : undefined;
-    if (
-        typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 200 ||
-        typeof event.alarmId !== "string" || !event.alarmId || event.alarmId.length > 200 ||
-        typeof event.scheduleId !== "string" || !event.scheduleId || event.scheduleId.length > 200 ||
-        !Number.isSafeInteger(event.generation) || (event.generation ?? -1) < 0 ||
-        !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
-        typeof event.scheduledFor !== "string" || !Number.isFinite(Date.parse(event.scheduledFor)) ||
-        (event.sourceTriggerAt !== undefined && (
-            typeof event.sourceTriggerAt !== "string" || !Number.isFinite(Date.parse(event.sourceTriggerAt))
-        )) ||
-        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt)) ||
-        !timingBasis ||
-        (event.logicalEventKey !== undefined && (
-            typeof event.logicalEventKey !== "string" ||
-            !event.logicalEventKey ||
-            event.logicalEventKey.length > 100
-        )) ||
-        (event.occurrenceId !== undefined && (
-            typeof event.occurrenceId !== "string" ||
-            !["M15", "M10", "M5", "M0"].includes(event.occurrenceId)
-        ))
-    ) return undefined;
-    return { ...(event as Omit<NativeAlarmFireEvent, "timingBasis">), timingBasis };
-}
-
-function parseNativeDepartureActionEvent(value: unknown): NativeDepartureActionEvent | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-    const event = value as Partial<NativeDepartureActionEvent>;
-    if (
-        typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 200 ||
-        typeof event.alarmId !== "string" || !event.alarmId || event.alarmId.length > 200 ||
-        typeof event.scheduleId !== "string" || !/^[1-9]\d*$/.test(event.scheduleId) ||
-        !Number.isSafeInteger(event.generation) || (event.generation ?? -1) < 0 ||
-        !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
-        (event.occurrenceId !== undefined && !isOccurrenceId(event.occurrenceId)) ||
-        typeof event.actionEventKey !== "string" || !isActionEventKey(event.actionEventKey) ||
-        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt)) ||
-        typeof event.requiresRouteNavigation !== "boolean" ||
-        typeof event.routeNavigationDelivered !== "boolean" ||
-        (event.notificationLogicalEventKey !== undefined && (
-            typeof event.notificationLogicalEventKey !== "string" ||
-            !isActionEventKey(event.notificationLogicalEventKey)
-        )) ||
-        (event.providerMessageId !== undefined && (
-            typeof event.providerMessageId !== "string" ||
-            !event.providerMessageId || event.providerMessageId.length > 300
-        ))
-    ) return undefined;
-    return event as NativeDepartureActionEvent;
-}
-
-function parseNativeAlarmNavigationEvent(value: unknown): NativeAlarmNavigationEvent | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-    const event = value as Partial<NativeAlarmNavigationEvent>;
-    if (
-        typeof event.eventId !== "string" || !event.eventId || event.eventId.length > 200 ||
-        typeof event.scheduleId !== "string" || !/^[1-9]\d*$/.test(event.scheduleId) ||
-        !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
-        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt)) ||
-        (event.notificationLogicalEventKey !== undefined && (
-            typeof event.notificationLogicalEventKey !== "string" ||
-            !isActionEventKey(event.notificationLogicalEventKey)
-        )) ||
-        (event.providerMessageId !== undefined && (
-            typeof event.providerMessageId !== "string" ||
-            !event.providerMessageId || event.providerMessageId.length > 300
-        ))
-    ) return undefined;
-    return event as NativeAlarmNavigationEvent;
-}
-
-function parseNativeDepartureReminderPresentationEvent(
-    value: unknown,
-): NativeDepartureReminderPresentationEvent | undefined {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-    const event = value as Partial<NativeDepartureReminderPresentationEvent>;
-    if (
-        typeof event.eventId !== "string" ||
-        !/^nolate-visible-[0-9a-f]{64}$/.test(event.eventId) ||
-        event.notificationTag !== event.eventId ||
-        !Number.isSafeInteger(event.recipientMemberId) || (event.recipientMemberId ?? 0) <= 0 ||
-        typeof event.logicalEventKey !== "string" || !isActionEventKey(event.logicalEventKey) ||
-        (event.providerMessageId !== undefined && (
-            typeof event.providerMessageId !== "string" ||
-            !event.providerMessageId || event.providerMessageId.length > 300
-        )) ||
-        typeof event.occurredAt !== "string" || !Number.isFinite(Date.parse(event.occurredAt))
-    ) return undefined;
-    return event as NativeDepartureReminderPresentationEvent;
-}
-
-function isOccurrenceId(value: unknown): value is "M15" | "M10" | "M5" | "M0" {
-    return value === "M15" || value === "M10" || value === "M5" || value === "M0";
-}
-
-function isActionEventKey(value: string): boolean {
-    return /^key:[a-f0-9]{64}$/.test(value) ||
-        /^event:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 /** Test-only reset so Platform/native-module cases don't leak between Jest modules. */

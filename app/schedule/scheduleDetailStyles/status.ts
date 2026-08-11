@@ -1,0 +1,225 @@
+import { StyleSheet } from "react-native";
+
+import type { ScheduleDetailStylesOptions } from "../schedule-detail.styles";
+
+/** status 영역의 정적 스타일을 생성합니다. */
+export function createStatusStyles(options: ScheduleDetailStylesOptions) {
+    void options;
+    return StyleSheet.create({
+        sheetQuickSummary: {
+        minHeight: 92,
+        justifyContent: "center",
+        gap: 5,
+        paddingTop: 3,
+        paddingBottom: 8,
+        paddingHorizontal: 1,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+        sheetQuickSummaryMain: {
+        width: "100%",
+        flexDirection: "row",
+        alignItems: "flex-end",
+        gap: 12,
+    },
+        sheetQuickCountdown: {
+        flex: 1,
+        minWidth: 0,
+    },
+        sheetQuickLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+        sheetQuickLabel: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+        sheetQuickValue: {
+        marginTop: 1,
+        fontSize: 24,
+        lineHeight: 29,
+        fontWeight: "900",
+        letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
+    },
+        sheetQuickTrailing: {
+        minWidth: 108,
+        alignItems: "flex-end",
+        justifyContent: "flex-end",
+    },
+        sheetQuickDate: {
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+        sheetQuickExpand: {
+        width: 44,
+        height: 32,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+        sheetQuickStatusRow: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+        sheetQuickStatus: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+        sheetExpandedContent: {
+        width: "100%",
+    },
+        sheetStatusSection: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        paddingTop: 8,
+        paddingBottom: 8,
+    },
+        sheetStatusHero: {
+        borderLeftWidth: 3,
+        borderRadius: 2,
+        paddingLeft: 12,
+        paddingVertical: 5,
+    },
+        sheetStatusHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+    },
+        sheetStatusHeaderTrailing: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 2,
+    },
+        sheetStatusMainRow: {
+        minHeight: 44,
+        marginTop: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 12,
+    },
+        sheetScheduleOverviewLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+    },
+        sheetScheduleOverviewLabel: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+        sheetScheduleOverviewValue: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 28,
+        lineHeight: 33,
+        fontWeight: "900",
+        letterSpacing: 0,
+        fontVariant: ["tabular-nums"],
+    },
+        sheetScheduleOverviewDate: {
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "700",
+        letterSpacing: 0,
+    },
+        sheetScheduleCollapse: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+        sheetSectionTitle: {
+        fontSize: 13,
+        lineHeight: 18,
+        fontWeight: "800",
+        letterSpacing: -0.1,
+    },
+        sheetSharedPeopleSection: {
+        width: "100%",
+        marginTop: 6,
+        paddingTop: 5,
+        paddingBottom: 4,
+        borderTopWidth: StyleSheet.hairlineWidth,
+    },
+        sheetParticipantDisclosure: {
+        width: "100%",
+        minHeight: 44,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+    },
+        sheetParticipantDisclosureTitle: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 7,
+    },
+        sheetParticipantDisclosureSummary: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "flex-end",
+        gap: 5,
+    },
+        sheetParticipantSummary: {
+        flexShrink: 1,
+        textAlign: "right",
+        fontSize: 10,
+        lineHeight: 14,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+        sheetParticipantExpandedContent: {
+        overflow: "hidden",
+    },
+        sheetStatusMetaRow: {
+        minWidth: 0,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+        sheetStatusMeta: {
+        flex: 1,
+        minWidth: 0,
+        fontSize: 11,
+        lineHeight: 15,
+        fontWeight: "800",
+        letterSpacing: 0,
+    },
+        sheetDepartureActionButton: {
+        minWidth: 96,
+        height: 44,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+        sheetDepartureActionButtonText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: "900",
+        letterSpacing: 0,
+    },
+        sheetDepartureActionLoading: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    });
+}
