@@ -33,6 +33,8 @@ import { isRouteDetailEntryRequested } from "../../src/modules/schedule/routeDet
 import { goBackFromScheduleDetail } from "../../src/modules/schedule/scheduleDetailNavigation";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import { getAuthMember } from "../../src/modules/auth/authStorage";
+import { measurePerformanceInteraction } from "../../src/modules/performance/interactionPerformance";
+import { runAfterScreenTransition } from "../../src/modules/performance/runAfterScreenTransition";
 import {
   canOpenParticipantTravelPlan,
 } from "../../src/modules/schedule/travelPlanPresentation";
@@ -271,23 +273,32 @@ export function useScheduleDetailController({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    getSchedule(id)
-      .then(detail => {
-        if (!cancelled) dispatch({ type: 'UPDATE_ITEM', item: detail });
-      })
-      .catch(error => {
-        const routeFlowActive =
-          pathname === '/schedule/route-select' ||
-          pathname === '/schedule/route-planner';
-        if (!cancelled && !routeFlowActive)
-          setLoadError(getErrorMessage(error));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const task = runAfterScreenTransition(() => {
+      if (cancelled) return;
+      measurePerformanceInteraction(
+        'schedule.detail_load',
+        '/schedule/[id]',
+        () => getSchedule(id),
+        'NETWORK',
+      )
+        .then(detail => {
+          if (!cancelled) dispatch({ type: 'UPDATE_ITEM', item: detail });
+        })
+        .catch(error => {
+          const routeFlowActive =
+            pathname === '/schedule/route-select' ||
+            pathname === '/schedule/route-planner';
+          if (!cancelled && !routeFlowActive)
+            setLoadError(getErrorMessage(error));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
 
     return () => {
       cancelled = true;
+      task.cancel();
     };
   }, [
     dispatch,

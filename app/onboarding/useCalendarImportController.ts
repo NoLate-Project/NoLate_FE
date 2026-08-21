@@ -24,9 +24,11 @@ import { type PlaceSearchItem } from '../../src/modules/map/routingService';
 import {
   getCalendarImportSourceKey,
   getWritableCalendarImportCategories,
+  groupCalendarImportCategories,
   hasCalendarImportCategoryOverride,
   resolveCalendarImportCategory,
 } from '../../src/modules/onboarding/calendarImportCategory';
+import type { ScheduleCalendar } from '../../src/api/scheduleCalendars';
 import {
   isCalendarImportManagementEntry,
   shouldConsumeCalendarImportHardwareBack,
@@ -134,6 +136,7 @@ export function useCalendarImportController() {
   const [categoryLoading, setCategoryLoading] = useState(true);
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [categoryCreating, setCategoryCreating] = useState(false);
+  const [scheduleCalendars, setScheduleCalendars] = useState<ScheduleCalendar[]>([]);
   const categoryLoadSequenceRef = useRef(0);
   const originSearchSequenceRef = useRef(0);
   const [travelMode, setTravelMode] = useState<TravelMode>('TRANSIT');
@@ -172,6 +175,10 @@ export function useCalendarImportController() {
   const selectedCategory = useMemo(
     () => resolveCalendarImportCategory(categories, categoryId),
     [categories, categoryId],
+  );
+  const categoryGroups = useMemo(
+    () => groupCalendarImportCategories(categories, scheduleCalendars),
+    [categories, scheduleCalendars],
   );
   const selectedCandidates = useMemo(
     () => candidates.filter(candidate => selectedIds.has(candidate.id)),
@@ -385,6 +392,7 @@ export function useCalendarImportController() {
     setCategoryError,
     setErrorMessage,
     setCategoryId,
+    setScheduleCalendars,
     expandedCategorySourceKey,
     setCategoryIdBySource,
     setExpandedCategorySourceKey,
@@ -682,6 +690,7 @@ export function useCalendarImportController() {
     candidateSourceGroups,
     candidates,
     categories,
+    categoryGroups,
     categoryAssignmentsExpanded,
     categoryCreating,
     categoryError,

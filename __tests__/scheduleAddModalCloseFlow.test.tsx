@@ -396,7 +396,7 @@ describe("ScheduleAddModal close flow", () => {
         expect(onSubmit).not.toHaveBeenCalled();
     });
 
-    test("작성한 폼은 닫기 전에 버리기 확인을 거친다", async () => {
+    test("작성한 폼은 작성을 취소하기 전에 확인을 거친다", async () => {
         const { onClose } = await renderModal();
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("저녁 약속");
@@ -415,7 +415,7 @@ describe("ScheduleAddModal close flow", () => {
             text: string;
             onPress?: () => void;
         }>;
-        await act(async () => buttons.find(button => button.text === "버리기")?.onPress?.());
+        await act(async () => buttons.find(button => button.text === "작성 취소")?.onPress?.());
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 

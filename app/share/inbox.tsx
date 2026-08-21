@@ -6,7 +6,12 @@ import React, {
   useRef,
   useState,
 } from 'react';
-import { Alert, StatusBar, TextInput, View } from 'react-native';
+import {
+  Alert,
+  StatusBar,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from './inbox.styles';
 
@@ -32,6 +37,10 @@ import {
   type SharingReportReason,
 } from '../../src/api/sharingSafety';
 import { recoverDepartureAlarmsAfterMutation } from '../../src/modules/notification/departureAlarmMutationRecovery';
+import {
+  runAfterScreenTransition,
+  type ScreenTransitionTask,
+} from '../../src/modules/performance/runAfterScreenTransition';
 import ShareInvitationSheet from '../../src/modules/schedule/components/share/ShareInvitationSheet';
 import type { ScheduleShareContentMode } from '../../src/modules/schedule/types';
 import { updateCalendarContentModeWithAlarmRecovery } from '../../src/modules/share/calendarContentModeAlarmRecovery';
@@ -200,9 +209,12 @@ export default function ShareInboxScreen() {
   useEffect(() => {
     const loadRequestGuard = loadRequestGuardRef.current;
     mountedRef.current = true;
-    loadShares();
+    const task = runAfterScreenTransition(() => {
+      loadShares();
+    });
 
     return () => {
+      task.cancel();
       mountedRef.current = false;
       loadRequestGuard.invalidate();
       if (composerTimerRef.current) clearTimeout(composerTimerRef.current);
@@ -211,10 +223,14 @@ export default function ShareInboxScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      let task: ScreenTransitionTask | null = null;
       if (hasBlurredRef.current) {
-        loadShares('refresh').catch(() => undefined);
+        task = runAfterScreenTransition(() => {
+          loadShares('refresh').catch(() => undefined);
+        });
       }
       return () => {
+        task?.cancel();
         hasBlurredRef.current = true;
       };
     }, [loadShares]),

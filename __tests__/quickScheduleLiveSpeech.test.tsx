@@ -619,7 +619,7 @@ describe("QuickScheduleModal live speech", () => {
             await Promise.resolve();
         });
         await act(async () => {
-            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "작성 취소")?.onPress?.();
             await Promise.resolve();
         });
         await act(async () => {
@@ -725,7 +725,7 @@ describe("QuickScheduleModal live speech", () => {
             await Promise.resolve();
         });
         await act(async () => {
-            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "작성 취소")?.onPress?.();
             await Promise.resolve();
         });
         await act(async () => {
@@ -1140,7 +1140,7 @@ describe("QuickScheduleModal live speech", () => {
             await Promise.resolve();
         });
         await act(async () => {
-            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "작성 취소")?.onPress?.();
             await Promise.resolve();
             await Promise.resolve();
         });

@@ -31,6 +31,7 @@ import {
 import type { ScheduleItem } from "../../types";
 import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout";
 import ScheduleAgendaCard from "./ScheduleAgendaCard";
+import type { ScheduleSwipeActionResolver } from "../ScheduleSwipeActions";
 import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
 
 const WEEKDAY_SHORT = ["일", "월", "화", "수", "목", "금", "토"];
@@ -72,6 +73,8 @@ type AgendaStateProps = {
     bottomInset: number;
     onPressRetry: () => void;
     onOpenSchedule: (id: string) => void;
+    getScheduleSwipeActions?: ScheduleSwipeActionResolver;
+    onRequestScheduleActions?: (item: ScheduleItem) => void;
     routeSetupRequiredCount?: number;
     onOpenRouteSetup?: () => void;
 };
@@ -385,6 +388,8 @@ export function SelectedDayAgendaPanel({
     bottomInset,
     onPressRetry,
     onOpenSchedule,
+    getScheduleSwipeActions,
+    onRequestScheduleActions,
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
@@ -461,6 +466,10 @@ export function SelectedDayAgendaPanel({
                                     groupRow
                                     showMultiDaySummary
                                     onPress={() => onOpenSchedule(item.id)}
+                                    swipeActions={getScheduleSwipeActions?.(item)}
+                                    onLongPress={onRequestScheduleActions
+                                        ? () => onRequestScheduleActions(item)
+                                        : undefined}
                                 />
                             </React.Fragment>
                         ))}
@@ -480,6 +489,8 @@ export function MonthAgendaList({
     bottomInset,
     onPressRetry,
     onOpenSchedule,
+    getScheduleSwipeActions,
+    onRequestScheduleActions,
     routeSetupRequiredCount = 0,
     onOpenRouteSetup,
     onRequestViewMode,
@@ -691,6 +702,10 @@ export function MonthAgendaList({
                                             item={item}
                                             compact
                                             onPress={() => onOpenSchedule(item.id)}
+                                            swipeActions={getScheduleSwipeActions?.(item)}
+                                            onLongPress={onRequestScheduleActions
+                                                ? () => onRequestScheduleActions(item)
+                                                : undefined}
                                         />
                                     ))}
                                 </View>

@@ -26,6 +26,7 @@ import {
     type CalendarConnectionSnapshot,
 } from "../src/modules/onboarding/calendarConnectionStorage";
 import { runWithDepartureAlarmWithdrawalGuard } from "../src/modules/notification/departureAlarmSync";
+import { runAfterScreenTransition } from "../src/modules/performance/runAfterScreenTransition";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 import { formatLoginType } from "./profilePresentation";
 
@@ -77,6 +78,18 @@ export function useProfileScreen() {
         ? `NoLate ID #${displayMemberId} · ${displayLoginType}`
         : displayLoginType;
     const avatarInitial = displayAccountName.trim().slice(0, 1) || "N";
+
+    useEffect(() => {
+        let active = true;
+        getAuthMember()
+            .then((stored) => {
+                if (active && stored) setAccount(stored);
+            })
+            .catch(() => undefined);
+        return () => {
+            active = false;
+        };
+    }, []);
 
     /** 저장된 인증 계정을 우선 사용하고, 필수 메타데이터가 없으면 리프레시 토큰으로 안전하게 복구합니다. */
     const loadAccount = useCallback(async () => {
@@ -188,8 +201,11 @@ export function useProfileScreen() {
     }, [draftName, profile]);
 
     useEffect(() => {
-        loadProfile();
+        const task = runAfterScreenTransition(() => {
+            loadProfile();
+        });
         return () => {
+            task.cancel();
             profileLoadSequenceRef.current += 1;
         };
     }, [loadProfile]);

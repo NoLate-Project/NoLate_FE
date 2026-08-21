@@ -26,17 +26,27 @@ import {
 import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../performance/navigationPerformanceQueue";
+import {
+    clearInteractionPerformanceQueueForCurrentAccount,
+} from "../performance/interactionPerformanceQueue";
+import { clearScheduleCalendarMemoryCache } from "../schedule/scheduleCalendarMemoryCache";
+import { clearPersistedCalendarScheduleCacheForAccount } from "../schedule/calendarScheduleCache";
 import { disableRouteDetailAdvertising } from "../advertising/routeDetailInterstitial";
+import { getAuthMember } from "./authStorage";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
 export async function clearAccountScopedLocalData(): Promise<void> {
     // The backend decision is account-specific. Never let a fresh account inherit the previous
     // member's cached FREE/PREMIUM advertising state.
     disableRouteDetailAdvertising();
+    clearScheduleCalendarMemoryCache();
     // Native alarms are the only account-scoped resource that can keep acting
     // after the process exits. Start it first and propagate its failure so auth
     // credentials are not deleted while a previous account alarm may survive.
     const alarmCleanup = clearDepartureAlarmsForAccountCleanup();
+    const memberId = await getAuthMember()
+        .then(member => member?.id)
+        .catch(() => undefined);
     const cleanupResults = await Promise.allSettled([
         alarmCleanup,
         clearStoredGoogleCalendarAccessToken(),
@@ -52,6 +62,8 @@ export async function clearAccountScopedLocalData(): Promise<void> {
         clearStandardDepartureActionFallbackForCurrentAccount(),
         clearForegroundPushPresentationClaimsForCurrentAccount(),
         clearNavigationPerformanceQueueForCurrentAccount(),
+        clearInteractionPerformanceQueueForCurrentAccount(),
+        clearPersistedCalendarScheduleCacheForAccount(memberId),
     ]);
 
     const alarmResult = cleanupResults[0];

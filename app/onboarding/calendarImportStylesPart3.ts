@@ -131,6 +131,29 @@ export function createCalendarImportStylesPart3(
       lineHeight: 17,
       fontWeight: '800',
     },
+    categoryGroupList: {
+      gap: 14,
+    },
+    categoryGroup: {
+      gap: 8,
+    },
+    categoryGroupHeader: {
+      minHeight: 20,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    categoryGroupTitle: {
+      flexShrink: 1,
+      color: colors.textPrimary,
+      fontSize: 12,
+      fontWeight: '900',
+    },
+    categoryGroupScope: {
+      color: colors.textSecondary,
+      fontSize: 10,
+      fontWeight: '800',
+    },
     defaultOriginWrap: {
       gap: 10,
     },
@@ -291,6 +314,7 @@ export function createCalendarImportStylesPart3(
       minHeight: 70,
       borderRadius: 14,
       paddingHorizontal: 15,
+      paddingVertical: 13,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
@@ -302,6 +326,16 @@ export function createCalendarImportStylesPart3(
     switchTextWrap: {
       flex: 1,
       minWidth: 0,
+    },
+    switchControl: {
+      transform: [{ scale: 0.88 }],
+    },
+    switchControlWrap: {
+      width: 52,
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      alignSelf: 'center',
     },
     switchTitle: {
       color: colors.textPrimary,
@@ -337,6 +371,42 @@ export function createCalendarImportStylesPart3(
       fontSize: 11,
       lineHeight: 16,
       fontWeight: '800',
+    },
+    importLoadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 50,
+      elevation: 50,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 28,
+      backgroundColor: isDark ? 'rgba(8,10,14,0.78)' : 'rgba(248,249,251,0.82)',
+    },
+    importLoadingCard: {
+      width: '100%',
+      maxWidth: 320,
+      minHeight: 168,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+      paddingVertical: 24,
+      borderRadius: 22,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface2,
+    },
+    importLoadingTitle: {
+      marginTop: 18,
+      color: colors.textPrimary,
+      fontSize: 17,
+      fontWeight: '900',
+    },
+    importLoadingText: {
+      marginTop: 7,
+      color: colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '800',
+      textAlign: 'center',
     },
     ghostButton: {
       minHeight: 40,

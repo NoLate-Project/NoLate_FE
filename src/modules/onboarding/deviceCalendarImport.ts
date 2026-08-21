@@ -209,6 +209,7 @@ export function buildSchedulePayloadFromCandidate(
     // 좌표와 출발지가 없으므로 이 기본 payload에서는 예상 출발값만 저장하고 알림은 끈다.
     // 상위 가져오기 흐름이 실제 경로까지 만든 경우에만 좌표·경로·정책값을 더해 알림을 켠다.
     return {
+        calendarId: settings.category.calendarId ?? undefined,
         title: candidate.title,
         startAt: startDate.toISOString(),
         endAt: endDate.toISOString(),

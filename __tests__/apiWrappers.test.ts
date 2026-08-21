@@ -56,7 +56,9 @@ import {
 } from "../src/api/scheduleSharing";
 import {
     archiveScheduleCalendar,
+    clearScheduleCalendarMemoryCache,
     createScheduleCalendar,
+    getCachedScheduleCalendars,
     getScheduleCalendarMembers,
     getScheduleCalendars,
     updateMyScheduleCalendarPreferences,
@@ -721,6 +723,7 @@ describe("schedule calendar api wrappers", () => {
     };
 
     afterEach(() => {
+        clearScheduleCalendarMemoryCache();
         jest.clearAllMocks();
     });
 
@@ -730,12 +733,16 @@ describe("schedule calendar api wrappers", () => {
         mockedApiPatch.mockResolvedValue({ success: true, data: { ...calendarDto, title: "우리 가족" } });
 
         await expect(getScheduleCalendars()).resolves.toEqual([calendarDto]);
+        expect(getCachedScheduleCalendars()).toEqual([calendarDto]);
         await createScheduleCalendar({
             title: "가족",
             color: "#2F80FF",
             defaultContentMode: "SCHEDULE_AND_TRAVEL",
         });
         await updateScheduleCalendar(7, { title: "우리 가족" });
+        expect(getCachedScheduleCalendars()).toEqual([
+            expect.objectContaining({ id: 7, title: "우리 가족" }),
+        ]);
 
         expect(mockedApiGet).toHaveBeenCalledWith("/api/schedule-calendars");
         expect(mockedApiPost).toHaveBeenCalledWith("/api/schedule-calendars", {

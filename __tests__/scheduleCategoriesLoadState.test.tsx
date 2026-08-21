@@ -32,6 +32,9 @@ jest.mock("../src/api/scheduleCategories", () => ({
     getScheduleCategoriesFromApi: jest.fn(),
     updateScheduleCategoryToApi: jest.fn(),
 }));
+jest.mock("../src/api/scheduleCalendars", () => ({
+    getScheduleCalendars: jest.fn(() => Promise.resolve([])),
+}));
 jest.mock("../src/modules/schedule/components/share/ShareInvitationSheet", () => "ShareInvitationSheet");
 jest.mock("../src/ui/BrandedLoader", () => ({
     __esModule: true,
@@ -167,5 +170,34 @@ describe("ScheduleCategoriesScreen load state", () => {
 
         expect(mockCreateCategory).toHaveBeenCalledWith("Owner Cat", "#ff3b30", undefined, 16);
         expect(renderer!.root.findByProps({ children: "Owner Cat" })).toBeDefined();
+    });
+
+    test("개인 소유 카테고리에만 다른 캘린더 이동 액션을 표시한다", async () => {
+        mockGetCategories.mockResolvedValueOnce([
+            {
+                id: "owned",
+                title: "업무",
+                color: "#ff3b30",
+                ownerMemberId: 10,
+            },
+            {
+                id: "received",
+                title: "친구 일정",
+                color: "#007aff",
+                shared: true,
+                sharePermission: "EDITOR",
+            },
+        ]);
+        await renderScreen();
+
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "업무 카테고리 작업 메뉴",
+        })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 공유" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 수정" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "업무 삭제" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "친구 일정 카테고리 작업 메뉴",
+        })).toHaveLength(0);
     });
 });

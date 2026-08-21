@@ -629,7 +629,7 @@ describe("QuickScheduleModal flow", () => {
         expect(onClose).toHaveBeenCalledTimes(1);
     });
 
-    test("작성 중 X를 누르면 계속 작성할 수 있고 폐기를 선택해야 닫는다", async () => {
+    test("작성 중 X를 누르면 계속 작성하거나 작성을 취소할 수 있다", async () => {
         const onClose = jest.fn();
 
         await act(async () => {
@@ -655,10 +655,10 @@ describe("QuickScheduleModal flow", () => {
 
         expect(alertSpy).toHaveBeenCalledWith(
             "작성 중인 일정이 있어요",
-            "닫으면 입력한 내용이 사라져요.",
+            "지금 닫으면 입력한 내용은 저장되지 않아요.",
             expect.arrayContaining([
                 expect.objectContaining({ text: "계속 작성", style: "cancel" }),
-                expect.objectContaining({ text: "입력 버리기", style: "destructive" }),
+                expect.objectContaining({ text: "작성 취소", style: "destructive" }),
             ]),
             expect.objectContaining({ cancelable: true }),
         );
@@ -671,7 +671,7 @@ describe("QuickScheduleModal flow", () => {
         await act(async () => {
             renderer!.root.findByProps({ accessibilityLabel: "빠른 일정 등록 닫기" }).props.onPress();
         });
-        const discardButton = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기");
+        const discardButton = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === "작성 취소");
         await act(async () => {
             discardButton?.onPress?.();
             jest.runAllTimers();
@@ -712,7 +712,7 @@ describe("QuickScheduleModal flow", () => {
 
         expect(alertSpy).toHaveBeenCalledWith(
             "작성 중인 일정이 있어요",
-            "닫으면 입력한 내용이 사라져요.",
+            "지금 닫으면 입력한 내용은 저장되지 않아요.",
             expect.any(Array),
             expect.objectContaining({ cancelable: true }),
         );

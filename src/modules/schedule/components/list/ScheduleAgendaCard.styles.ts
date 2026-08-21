@@ -2,6 +2,15 @@ import { StyleSheet } from "react-native";
 
 /** ScheduleAgendaCard 화면의 정적 시각 규칙입니다. 화면 로직과 독립적으로 조정할 수 있도록 분리했습니다. */
 const styles = StyleSheet.create({
+    swipeContainer: {
+        borderRadius: 9,
+    },
+    swipeContainerCompact: {
+        borderRadius: 8,
+    },
+    swipeContainerGroupRow: {
+        borderRadius: 0,
+    },
     card: {
         minHeight: 62,
         flexDirection: "row",

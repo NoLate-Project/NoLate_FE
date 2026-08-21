@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { Animated } from 'react-native';
 
+import { measurePerformanceInteraction } from '../../performance/interactionPerformance';
 import {
   createLatestRequestGuard,
 } from '../../map/routeAsyncGuard';
@@ -592,23 +593,29 @@ export function useRoutePlannerSearchLifecycle({
     let active = true;
     const timer = setTimeout(async () => {
       try {
-        const nextAlternatives = await getRouteAlternativeOptions(
-          {
-            name: originName,
-            address: originAddress,
-            lat: originLat,
-            lng: originLng,
-          },
-          {
-            name: destinationName,
-            address: destinationAddress,
-            lat: destinationLat,
-            lng: destinationLng,
-          },
-          travelMode,
-          travelMode === 'TRANSIT'
-            ? { departureAt: requestedTransitDepartureAt }
-            : undefined,
+        const nextAlternatives = await measurePerformanceInteraction(
+          'route.search',
+          '/schedule/route-planner',
+          () =>
+            getRouteAlternativeOptions(
+              {
+                name: originName,
+                address: originAddress,
+                lat: originLat,
+                lng: originLng,
+              },
+              {
+                name: destinationName,
+                address: destinationAddress,
+                lat: destinationLat,
+                lng: destinationLng,
+              },
+              travelMode,
+              travelMode === 'TRANSIT'
+                ? { departureAt: requestedTransitDepartureAt }
+                : undefined,
+            ),
+          'INTERACTION',
         );
         if (!active) return;
 

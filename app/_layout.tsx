@@ -210,8 +210,8 @@ export default function RootLayout() {
 
     return (
         <GestureHandlerRootView style={styles.gestureRoot}>
-            <RootNavigator />
             {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
+            <RootNavigator />
         </GestureHandlerRootView>
     );
 }
@@ -269,7 +269,10 @@ function RootNavigator() {
             <Stack.Screen name="legal/terms-of-service" />
             <Stack.Screen name="legal/privacy-collection-consent" />
             <Stack.Screen name="legal/privacy-policy" />
-            <Stack.Screen name="share/[token]" />
+            <Stack.Screen
+                name="share/[token]"
+                options={{ animation: "fade", animationDuration: 160 }}
+            />
             {__DEV__ ? <Stack.Screen name="internal/schedule-ui-preview" /> : null}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
@@ -279,29 +282,37 @@ function RootNavigator() {
                         animationDuration: 180,
                     }}
                 />
+                <Stack.Screen
+                    name="onboarding/product-tour"
+                    options={{
+                        animation: "fade",
+                        animationDuration: 180,
+                        gestureEnabled: false,
+                    }}
+                />
             </Stack.Protected>
             <Stack.Protected guard={isAuthenticated && isCurationCompleted}>
                 <Stack.Screen
                     name="profile"
                     options={{
-                        animation: "fade",
-                        animationDuration: 180,
+                        animation: "none",
                     }}
                 />
                 <Stack.Screen
                     name="settings/places"
                     options={{
-                        animation: "slide_from_right",
-                        animationDuration: 200,
+                        animation: "none",
                     }}
                 />
-                <Stack.Screen name="schedule/index" />
+                <Stack.Screen
+                    name="schedule/index"
+                    options={{ animation: "fade", animationDuration: 140 }}
+                />
                 <Stack.Screen name="internal/quick-schedule-benchmark" />
                 <Stack.Screen
                     name="notifications"
                     options={{
-                        animation: "slide_from_right",
-                        animationDuration: 200,
+                        animation: "none",
                     }}
                 />
                 <Stack.Screen
@@ -312,13 +323,38 @@ function RootNavigator() {
                         gestureEnabled: false,
                     }}
                 />
-                <Stack.Screen name="schedule/categories" />
-                <Stack.Screen name="share/inbox" />
-                <Stack.Screen name="share/blocked" />
-                <Stack.Screen name="share/reports" />
-                <Stack.Screen name="schedule/route-select" />
-                <Stack.Screen name="schedule/route-planner" />
-                <Stack.Screen name="schedule/[id]" />
+                <Stack.Screen
+                    name="schedule/categories"
+                    options={{ animation: "none" }}
+                />
+                <Stack.Screen
+                    name="schedule/calendars"
+                    options={{ animation: "none" }}
+                />
+                <Stack.Screen
+                    name="share/inbox"
+                    options={{ animation: "none" }}
+                />
+                <Stack.Screen
+                    name="share/blocked"
+                    options={{ animation: "none" }}
+                />
+                <Stack.Screen
+                    name="share/reports"
+                    options={{ animation: "none" }}
+                />
+                <Stack.Screen
+                    name="schedule/route-select"
+                    options={{ animation: "slide_from_right", animationDuration: 160 }}
+                />
+                <Stack.Screen
+                    name="schedule/route-planner"
+                    options={{ animation: "slide_from_right", animationDuration: 160 }}
+                />
+                <Stack.Screen
+                    name="schedule/[id]"
+                    options={{ animation: "none" }}
+                />
             </Stack.Protected>
         </Stack>
     );

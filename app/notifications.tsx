@@ -28,6 +28,10 @@ import {
 } from "../src/modules/notification/appNotificationPresentation";
 import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
 import {
+    runAfterScreenTransition,
+    type ScreenTransitionTask,
+} from "../src/modules/performance/runAfterScreenTransition";
+import {
     useTheme,
     type AppColors,
     type ColorMode,
@@ -99,11 +103,21 @@ export default function AppNotificationScreen() {
     useEffect(() => {
         if (!isFocused) return undefined;
 
-        loadFirstPage();
+        let interactionTask: ScreenTransitionTask | null = null;
+        const scheduleLoad = (loadMode: LoadMode = "initial") => {
+            interactionTask?.cancel();
+            interactionTask = runAfterScreenTransition(() => {
+                interactionTask = null;
+                loadFirstPage(loadMode);
+            });
+        };
+
+        scheduleLoad();
         const subscription = AppState.addEventListener("change", (state) => {
-            if (state === "active") loadFirstPage("refresh");
+            if (state === "active") scheduleLoad("refresh");
         });
         return () => {
+            interactionTask?.cancel();
             subscription.remove();
             requestSequenceRef.current += 1;
         };

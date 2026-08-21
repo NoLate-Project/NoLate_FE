@@ -467,10 +467,10 @@ export function useScheduleAddSheetLifecycle({
       };
       Alert.alert(
         '작성 중인 일정을 닫을까요?',
-        '입력한 내용은 저장되지 않아요.',
+        '지금 닫으면 입력한 내용은 저장되지 않아요.',
         [
           { text: '계속 작성', style: 'cancel', onPress: keepEditing },
-          { text: '버리기', style: 'destructive', onPress: closeWithoutPrompt },
+          { text: '작성 취소', style: 'destructive', onPress: closeWithoutPrompt },
         ],
         { cancelable: true, onDismiss: keepEditing },
       );

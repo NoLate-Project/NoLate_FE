@@ -28,6 +28,7 @@ import { useScheduleIndexToolbarPresentation } from './useScheduleIndexToolbarPr
 import { useScheduleIndexState } from './useScheduleIndexState';
 import { useScheduleIndexLifecycle } from './useScheduleIndexLifecycle';
 import { useScheduleIndexBottomBar } from './useScheduleIndexBottomBar';
+import { useScheduleItemQuickActions } from './useScheduleItemQuickActions';
 import {
   CALENDAR_FIRST_DAY_STORAGE_KEY,
   addDaysToYmd,
@@ -122,6 +123,10 @@ export function useScheduleIndexController(
     calendarMetadataRetryTargetKeyRef,
   } = stateModel;
   const lifecycle = useScheduleIndexLifecycle({ isFocused, stateModel });
+  const {
+    getScheduleSwipeActions,
+    requestScheduleQuickActions,
+  } = useScheduleItemQuickActions();
   const {
     handleDayPageNavigationActiveChange,
     overviewYear,
@@ -733,6 +738,8 @@ export function useScheduleIndexController(
     handleCalendarViewModeChange,
     handleGoToday,
     handleOpenScheduleFromDayDisplay,
+    getScheduleSwipeActions,
+    onRequestScheduleActions: requestScheduleQuickActions,
     itemsArray,
     loadSchedules,
     monthDisplayFocusedMonth,
@@ -753,6 +760,8 @@ export function useScheduleIndexController(
     insets,
     mode,
     colors,
+    getScheduleSwipeActions,
+    requestScheduleQuickActions,
     ...stateModel,
     registerDayDisplayPrepare,
     handleDayPageNavigationActiveChange,

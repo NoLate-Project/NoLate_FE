@@ -31,6 +31,10 @@ import {
     type ScheduleShareContentMode,
 } from "../../src/api/scheduleCalendars";
 import { recoverDepartureAlarmsAfterMutation } from "../../src/modules/notification/departureAlarmMutationRecovery";
+import { measurePerformanceInteraction } from "../../src/modules/performance/interactionPerformance";
+import { runAfterScreenTransition } from "../../src/modules/performance/runAfterScreenTransition";
+import { useScreenContentReadyPerformance } from "../../src/modules/performance/useScreenContentReadyPerformance";
+import { getCachedScheduleCalendars } from "../../src/modules/schedule/scheduleCalendarMemoryCache";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
@@ -55,10 +59,25 @@ export default function ScheduleCalendarsScreen() {
     const params = useLocalSearchParams<{ id?: string }>();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
-    const [calendars, setCalendars] = useState<ScheduleCalendar[]>([]);
-    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const requestedCalendarId = useMemo(() => {
+        const requestedId = Number(params.id);
+        return Number.isSafeInteger(requestedId) && requestedId > 0 ? requestedId : null;
+    }, [params.id]);
+    const [calendars, setCalendars] = useState<ScheduleCalendar[]>(() =>
+        getCachedScheduleCalendars() ?? []
+    );
+    const [selectedId, setSelectedId] = useState<number | null>(() => {
+        if (
+            requestedCalendarId !== null
+            && calendars.some((calendar) => calendar.id === requestedCalendarId)
+        ) {
+            return requestedCalendarId;
+        }
+        return calendars[0]?.id ?? null;
+    });
     const [members, setMembers] = useState<ScheduleCalendarMember[]>([]);
-    const [loading, setLoading] = useState(true);
+    const hasCalendarSnapshotRef = useRef(calendars.length > 0);
+    const [loading, setLoading] = useState(!hasCalendarSnapshotRef.current);
     const [refreshing, setRefreshing] = useState(false);
     const [membersLoading, setMembersLoading] = useState(false);
     const [detailCalendarId, setDetailCalendarId] = useState<number | null>(null);
@@ -69,7 +88,7 @@ export default function ScheduleCalendarsScreen() {
     const [newColor, setNewColor] = useState(BRAND_BLUE);
     const [newContentMode, setNewContentMode] = useState<ScheduleShareContentMode>("SCHEDULE_ONLY");
     const [editingTitle, setEditingTitle] = useState("");
-    const selectedIdRef = useRef<number | null>(null);
+    const selectedIdRef = useRef<number | null>(selectedId);
     const detailCalendarIdRef = useRef<number | null>(null);
     const calendarsRequestIdRef = useRef(0);
     const membersRequestIdRef = useRef(0);
@@ -89,6 +108,12 @@ export default function ScheduleCalendarsScreen() {
     };
     const destructiveBorderStyle = { borderColor: destructive };
     const destructiveTextStyle = { color: destructive };
+
+    useScreenContentReadyPerformance(
+        "calendar.settings_content_ready",
+        "/schedule/calendars",
+        !loading,
+    );
 
     const selectCalendar = useCallback((calendarId: number | null) => {
         if (selectedIdRef.current === calendarId) return;
@@ -111,22 +136,28 @@ export default function ScheduleCalendarsScreen() {
 
     const loadCalendars = useCallback(async (refresh = false) => {
         const requestId = ++calendarsRequestIdRef.current;
-        refresh ? setRefreshing(true) : setLoading(true);
+        if (refresh) setRefreshing(true);
+        else if (!hasCalendarSnapshotRef.current) setLoading(true);
         try {
-            const result = await getScheduleCalendars();
+            const result = await measurePerformanceInteraction(
+                "calendar.list_load",
+                "/schedule/calendars",
+                getScheduleCalendars,
+                "NETWORK",
+            );
             if (requestId !== calendarsRequestIdRef.current) return;
+            hasCalendarSnapshotRef.current = true;
             setCalendars(result);
             const current = selectedIdRef.current;
             let next = current && result.some((calendar) => calendar.id === current)
                 ? current
                 : null;
-            const requestedId = Number(params.id);
             if (
                 next === null
-                && Number.isFinite(requestedId)
-                && result.some((calendar) => calendar.id === requestedId)
+                && requestedCalendarId !== null
+                && result.some((calendar) => calendar.id === requestedCalendarId)
             ) {
-                next = requestedId;
+                next = requestedCalendarId;
             }
             if (next === null) next = result[0]?.id ?? null;
             if (next !== current) selectCalendar(next);
@@ -139,14 +170,19 @@ export default function ScheduleCalendarsScreen() {
                 setRefreshing(false);
             }
         }
-    }, [params.id, selectCalendar]);
+    }, [requestedCalendarId, selectCalendar]);
 
     const loadMembers = useCallback(async (calendarId: number) => {
         const requestId = ++membersRequestIdRef.current;
         setMembersLoading(true);
         setDetailLoadError(null);
         try {
-            const result = await getScheduleCalendarMembers(calendarId);
+            const result = await measurePerformanceInteraction(
+                "calendar.members_load",
+                "/schedule/calendars",
+                () => getScheduleCalendarMembers(calendarId),
+                "NETWORK",
+            );
             if (
                 requestId !== membersRequestIdRef.current
                 || selectedIdRef.current !== calendarId
@@ -171,12 +207,18 @@ export default function ScheduleCalendarsScreen() {
     }, []);
 
     useEffect(() => {
-        loadCalendars().catch(() => undefined);
+        const task = runAfterScreenTransition(() => {
+            loadCalendars().catch(() => undefined);
+        });
+        return () => task.cancel();
     }, [loadCalendars]);
 
     useEffect(() => {
         if (selectedId === null) return;
-        loadMembers(selectedId).catch(() => undefined);
+        const task = runAfterScreenTransition(() => {
+            loadMembers(selectedId).catch(() => undefined);
+        });
+        return () => task.cancel();
     }, [loadMembers, selectedId]);
 
     useEffect(() => {

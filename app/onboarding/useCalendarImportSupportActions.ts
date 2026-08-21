@@ -5,12 +5,17 @@ import { Alert, Keyboard } from 'react-native';
 
 import { completeMemberCuration } from '../../src/api/member';
 import { getScheduleCategoriesFromApi } from '../../src/api/scheduleCategories';
+import {
+  getScheduleCalendars,
+  type ScheduleCalendar,
+} from '../../src/api/scheduleCalendars';
 import { saveAuthCurationCompleted } from '../../src/modules/auth/authStorage';
 import {
   searchAddressByKeyword,
   type PlaceSearchItem,
 } from '../../src/modules/map/routingService';
 import { getWritableCalendarImportCategories } from '../../src/modules/onboarding/calendarImportCategory';
+import { getCalendarImportCompletionRoute } from '../../src/modules/onboarding/calendarImportNavigation';
 import { withCalendarImportTimeout } from '../../src/modules/onboarding/calendarImportReliability';
 import {
   hasFavoriteDepartureCoords,
@@ -35,6 +40,7 @@ type CalendarImportSupportActionParams = {
   setCategoryError: Dispatch<SetStateAction<string | null>>;
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
   setCategoryId: Dispatch<SetStateAction<string>>;
+  setScheduleCalendars: Dispatch<SetStateAction<ScheduleCalendar[]>>;
   expandedCategorySourceKey: string | null;
   setCategoryIdBySource: Dispatch<SetStateAction<Record<string, string>>>;
   setExpandedCategorySourceKey: Dispatch<SetStateAction<string | null>>;
@@ -81,6 +87,7 @@ export function useCalendarImportSupportActions(
     setCategoryError,
     setErrorMessage,
     setCategoryId,
+    setScheduleCalendars,
     expandedCategorySourceKey,
     setCategoryIdBySource,
     setExpandedCategorySourceKey,
@@ -119,7 +126,10 @@ export function useCalendarImportSupportActions(
     setCategoryError(null);
 
     try {
-      const nextCategories = await getScheduleCategoriesFromApi();
+      const [nextCategories, nextCalendars] = await Promise.all([
+        getScheduleCategoriesFromApi(),
+        getScheduleCalendars().catch(() => []),
+      ]);
       if (sequence !== categoryLoadSequenceRef.current) return;
 
       const writableCategories =
@@ -129,6 +139,7 @@ export function useCalendarImportSupportActions(
       }
 
       dispatch({ type: 'SET_CATEGORIES', categories: nextCategories });
+      setScheduleCalendars(nextCalendars);
       setCategoryId(current =>
         writableCategories.some(category => category.id === current)
           ? current
@@ -147,6 +158,7 @@ export function useCalendarImportSupportActions(
     setCategoryError,
     setCategoryId,
     setCategoryLoading,
+    setScheduleCalendars,
   ]);
 
   const handleCategoryCreated = useCallback(
@@ -203,7 +215,7 @@ export function useCalendarImportSupportActions(
       setCompletingCuration(true);
       await persistCurationCompletion();
       scanAttemptRef.current += 1;
-      router.replace('/schedule');
+      router.replace(getCalendarImportCompletionRoute(isManagementEntry));
     } catch (error) {
       Alert.alert(
         '완료 상태 저장 실패',

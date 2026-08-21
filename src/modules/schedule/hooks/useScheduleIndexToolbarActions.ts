@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 
 import { parseScheduleText } from '../../../api/schedule';
 import type { ScheduleCalendar } from '../../../api/scheduleCalendars';
+import { measurePerformanceInteraction } from '../../performance/interactionPerformance';
 import {
   hasCalendarScheduleMonthCache,
   readCalendarScheduleCache,
@@ -519,29 +520,35 @@ export function useScheduleIndexToolbarActions({
   const handleQuickAnalyze = async (
     text: string,
     media?: QuickScheduleMediaInput,
-  ) => {
-    // 사진/음성은 서버로 파일을 보내지 않는다. iOS 네이티브에서 텍스트를 먼저 추출하고,
-    // 기존 빠른일정 파서가 이해하는 텍스트와 인식 신뢰도·음성 후보만 백엔드에 전달한다.
-    const parseInput = await resolveQuickScheduleParseInput(text, media);
+  ) =>
+    measurePerformanceInteraction(
+      'quick_schedule.analyze',
+      '/schedule',
+      async () => {
+        // 사진/음성은 서버로 파일을 보내지 않는다. iOS 네이티브에서 텍스트를 먼저 추출하고,
+        // 기존 빠른일정 파서가 이해하는 텍스트와 인식 신뢰도·음성 후보만 백엔드에 전달한다.
+        const parseInput = await resolveQuickScheduleParseInput(text, media);
 
-    return parseScheduleText({
-      text: parseInput.text,
-      inputType: parseInput.inputType,
-      recognitionConfidence: parseInput.recognitionConfidence,
-      recognitionAlternatives: parseInput.recognitionAlternatives,
-      // `referenceDate`는 "오늘", "내일" 같은 상대 날짜 표현의 기준이다.
-      // 캘린더에서 보고 있는 날짜는 다른 달일 수 있으므로, 빠른 자연어 입력은
-      // 앱이 주기적으로 갱신하는 실제 오늘 날짜를 기준으로 분석한다.
-      referenceDate: todayKey,
-      defaultDurationMinutes: 60,
-      clientPlatform:
-        Platform.OS === 'android'
-          ? 'ANDROID'
-          : Platform.OS === 'ios'
-          ? 'IOS'
-          : 'UNKNOWN',
-    });
-  };
+        return parseScheduleText({
+          text: parseInput.text,
+          inputType: parseInput.inputType,
+          recognitionConfidence: parseInput.recognitionConfidence,
+          recognitionAlternatives: parseInput.recognitionAlternatives,
+          // `referenceDate`는 "오늘", "내일" 같은 상대 날짜 표현의 기준이다.
+          // 캘린더에서 보고 있는 날짜는 다른 달일 수 있으므로, 빠른 자연어 입력은
+          // 앱이 주기적으로 갱신하는 실제 오늘 날짜를 기준으로 분석한다.
+          referenceDate: todayKey,
+          defaultDurationMinutes: 60,
+          clientPlatform:
+            Platform.OS === 'android'
+              ? 'ANDROID'
+              : Platform.OS === 'ios'
+              ? 'IOS'
+              : 'UNKNOWN',
+        });
+      },
+      'INTERACTION',
+    );
 
 
   return {

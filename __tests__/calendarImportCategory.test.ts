@@ -1,6 +1,7 @@
 import {
     getCalendarImportSourceKey,
     getWritableCalendarImportCategories,
+    groupCalendarImportCategories,
     hasCalendarImportCategoryOverride,
     resolveCalendarImportCategory,
     resolveCalendarImportCategoryAssignment,
@@ -30,6 +31,37 @@ describe("calendar import categories", () => {
         ]);
 
         expect(result.map((item) => item.id)).toEqual(["owned", "editor", "owner"]);
+    });
+
+    test("groups categories by personal and named shared calendars", () => {
+        const result = groupCalendarImportCategories(
+            [
+                category("personal"),
+                category("team-work", { shared: true, calendarId: 21 }),
+                category("team-other", { shared: true, calendarId: 21 }),
+                category("family", { shared: true, calendarId: 34 }),
+            ],
+            [
+                {
+                    id: 21,
+                    title: "프로젝트 팀",
+                    color: "#246BFE",
+                    defaultContentMode: "SCHEDULE_ONLY",
+                    status: "ACTIVE",
+                    ownerMemberId: 1,
+                    myRole: "EDITOR",
+                    memberCount: 3,
+                    routeReminderEnabled: true,
+                },
+            ],
+        );
+
+        expect(result.map((group) => [group.title, group.scopeLabel])).toEqual([
+            ["내 캘린더", "개인 캘린더"],
+            ["프로젝트 팀", "공유 캘린더"],
+            ["공유 캘린더", "공유 캘린더"],
+        ]);
+        expect(result[1].categories.map((item) => item.id)).toEqual(["team-work", "team-other"]);
     });
 
     test("uses the first verified category when a stale selection is unavailable", () => {

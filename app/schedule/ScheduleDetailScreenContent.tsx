@@ -1,5 +1,6 @@
 import React from "react";
 
+import { useScreenContentReadyPerformance } from "../../src/modules/performance/useScreenContentReadyPerformance";
 import { ScheduleDetailLayout } from "./ScheduleDetailLayout";
 import { ScheduleDetailUnavailableState } from "./ScheduleDetailUnavailableState";
 import {
@@ -19,6 +20,11 @@ export function ScheduleDetailScreenContent({
   controller,
 }: ScheduleDetailScreenContentProps) {
   const presentation = buildScheduleDetailPresentation(controller);
+  useScreenContentReadyPerformance(
+    "schedule.detail_content_ready",
+    "/schedule/[id]",
+    Boolean(presentation),
+  );
   if (!presentation) {
     return <ScheduleDetailUnavailableState controller={controller} />;
   }

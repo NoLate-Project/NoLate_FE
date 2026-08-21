@@ -98,6 +98,43 @@ describe("CalendarImportCategoryCreator", () => {
             .toBeDefined();
     });
 
+    test("공유 캘린더가 선택된 경우 그 캘린더 안에 카테고리를 만든다", async () => {
+        const created = {
+            id: "team-category",
+            title: "팀 업무",
+            color: "#ff3b30",
+            calendarId: 21,
+            shared: true,
+            sharePermission: "EDITOR" as const,
+        };
+        mockCreateCategory.mockResolvedValueOnce(created);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <CalendarImportCategoryCreator
+                        categoryCount={0}
+                        calendarId={21}
+                        onCreated={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "새 카테고리 추가" }).props.onPress();
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "새 카테고리 이름" })
+                .props.onChangeText("팀 업무");
+        });
+        await act(async () => {
+            renderer!.root.findByProps({ accessibilityLabel: "카테고리 만들기" }).props.onPress();
+            await Promise.resolve();
+        });
+
+        expect(mockCreateCategory).toHaveBeenCalledWith("팀 업무", "#ff3b30", undefined, 21);
+    });
+
     test("생성 요청 중 빠른 중복 탭을 한 번만 처리하고 busy 상태를 알린다", async () => {
         const created = { id: "family", title: "가족", color: "#ff3b30" };
         let resolveCreate!: (category: typeof created) => void;

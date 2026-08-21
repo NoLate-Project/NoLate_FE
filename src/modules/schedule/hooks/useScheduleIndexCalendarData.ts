@@ -1,20 +1,23 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from 'react';
-import { AppState } from 'react-native';
+import { AppState, InteractionManager } from 'react-native';
 
 import { getCalendarDays } from '../../../api/calendar';
 import { getCalendarSchedules } from '../../../api/schedule';
 import {
+  activateCalendarScheduleCacheForAuthenticatedAccount,
   hasCalendarScheduleMonthCache,
   readCalendarScheduleCache,
   refreshCalendarScheduleCache,
   subscribeCalendarScheduleCacheInvalidated,
 } from '../calendarScheduleCache';
+import { getMonthRange } from '../calendarRange';
 import {
   getCalendarMetadataRange,
   indexCalendarDays,
@@ -28,8 +31,14 @@ import {
   type CalendarMetadataRetryState,
 } from '../calendarMetadataRetry';
 import { synchronizeCalendarScheduleCacheRevision } from '../../../api/schedule';
+import {
+  beginPerformanceInteraction,
+  measurePerformanceInteraction,
+  type PerformanceInteractionTimer,
+} from '../../performance/interactionPerformance';
 import { useScheduleStore } from '../store';
 import type { ScheduleItem } from '../types';
+import { getAuthMember } from '../../auth/authStorage';
 
 type Options = {
   calendarMetadataInFlightMonthKeysRef: MutableRefObject<Set<string>>;
@@ -93,6 +102,27 @@ export function useScheduleIndexCalendarData({
   setCalendarDaysByDate,
   setCalendarMetadataRetrySequence,
 }: Options) {
+  const contentReadyTimerRef = useRef<PerformanceInteractionTimer | null>(null);
+  const adjacentRangePrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialScheduleLoadStartedRef = useRef(false);
+  if (contentReadyTimerRef.current === null) {
+    contentReadyTimerRef.current = beginPerformanceInteraction(
+      'schedule.content_ready',
+      '/schedule',
+      'CONTENT_READY',
+    );
+  }
+
+  useEffect(
+    () => () => {
+      contentReadyTimerRef.current?.finish('CANCELLED');
+      if (adjacentRangePrefetchTimerRef.current !== null) {
+        clearTimeout(adjacentRangePrefetchTimerRef.current);
+      }
+    },
+    [],
+  );
+
   /** 일정 배열의 항목 identity가 실제로 달라졌을 때만 전역 일정 저장소를 갱신한다. */
   const applyScheduleItemsToStore = useCallback(
     (items: ScheduleItem[]) => {
@@ -148,38 +178,88 @@ export function useScheduleIndexCalendarData({
     dispatch({ type: 'SET_LOADING', loading: !hasVisibleMonthCache });
     dispatch({ type: 'SET_ERROR', error: null });
 
+    const publishLatestRangeSnapshot = () => {
+      const latest = readCalendarScheduleCache(
+        scheduleFetchStartAt,
+        scheduleFetchEndAt,
+      );
+      publishScheduleSnapshot(requestSequence, latest.items);
+    };
+    const prefetchAdjacentRange = () => {
+      if (adjacentRangePrefetchTimerRef.current !== null) {
+        clearTimeout(adjacentRangePrefetchTimerRef.current);
+      }
+      adjacentRangePrefetchTimerRef.current = setTimeout(() => {
+        adjacentRangePrefetchTimerRef.current = null;
+        if (requestSequence !== scheduleLoadSequenceRef.current) return;
+        measurePerformanceInteraction(
+          'schedule.range_refresh',
+          '/schedule',
+          () =>
+            refreshCalendarScheduleCache(
+              scheduleFetchStartAt,
+              scheduleFetchEndAt,
+              getCalendarSchedules,
+            ),
+          'NETWORK',
+        )
+          .then(() => publishLatestRangeSnapshot())
+          .catch(() => undefined);
+      }, 350);
+    };
+
     // 현재 월 cache hit는 즉시 표시한다. 다만 이동 방향 앞쪽 월까지 계속
     // 준비되도록 현재 ±2개월 창의 missing/stale edge는 백그라운드 SWR로
     // 채운다. 결과를 여기서 dispatch하지 않아 다음 touch와 Calendar
     // remount가 네트워크 완료 시점에 겹치지 않게 하고, 다음 idle load가
     // 월별 L1 cache에서 합쳐서 표시한다.
     if (hasVisibleMonthCache) {
+      contentReadyTimerRef.current?.finish('SUCCESS');
       dispatch({ type: 'SET_LOADING', loading: false });
-      refreshCalendarScheduleCache(
-        scheduleFetchStartAt,
-        scheduleFetchEndAt,
-        getCalendarSchedules,
+      measurePerformanceInteraction(
+        'schedule.range_refresh',
+        '/schedule',
+        () =>
+          refreshCalendarScheduleCache(
+            scheduleFetchStartAt,
+            scheduleFetchEndAt,
+            getCalendarSchedules,
+          ),
+        'NETWORK',
       )
-        .then(refreshed => {
+        .then(() => {
           // This is the result of the request already made for SWR. Apply
           // it only if this range still owns the screen, and defer the
           // React update while a continuous gesture owns the calendar.
-          publishScheduleSnapshot(requestSequence, refreshed.items);
+          publishLatestRangeSnapshot();
         })
         .catch(() => undefined);
       return;
     }
 
     try {
-      const refreshed = await refreshCalendarScheduleCache(
-        scheduleFetchStartAt,
-        scheduleFetchEndAt,
-        getCalendarSchedules,
+      // Cold cache: fetch only the visible month first. Revision validation
+      // runs in parallel and the wider sliding window is filled after the
+      // first usable agenda is on screen.
+      const visibleMonthRange = getMonthRange(fetchVisibleMonth);
+      await measurePerformanceInteraction(
+        'schedule.range_load',
+        '/schedule',
+        () =>
+          refreshCalendarScheduleCache(
+            visibleMonthRange.startAt,
+            visibleMonthRange.endAt,
+            getCalendarSchedules,
+          ),
+        'NETWORK',
       );
       if (requestSequence !== scheduleLoadSequenceRef.current) return;
-      publishScheduleSnapshot(requestSequence, refreshed.items);
+      publishLatestRangeSnapshot();
+      contentReadyTimerRef.current?.finish('SUCCESS');
+      prefetchAdjacentRange();
     } catch (error) {
       if (requestSequence !== scheduleLoadSequenceRef.current) return;
+      contentReadyTimerRef.current?.finish('ERROR');
       // 화면에 표시할 월이 캐시에 있으면 프리패치 실패가 기존 일정을 가리지 않게 한다.
       if (!hasVisibleMonthCache) {
         const message = getErrorMessage(error);
@@ -192,6 +272,7 @@ export function useScheduleIndexCalendarData({
     }
   }, [
     dispatch,
+    adjacentRangePrefetchTimerRef,
     fetchVisibleMonth,
     getErrorMessage,
     publishScheduleSnapshot,
@@ -202,21 +283,34 @@ export function useScheduleIndexCalendarData({
 
   useEffect(() => {
     if (!isFocused) {
-      calendarRevisionSyncPromiseRef.current = null;
-      dispatch({ type: 'SET_LOADING', loading: false });
-      return undefined;
+      // The destination route can mount before native-stack reports it focused.
+      // Preload its account cache and visible month once so the initial
+      // transition does not leave the calendar blank for several seconds.
+      if (initialScheduleLoadStartedRef.current) {
+        calendarRevisionSyncPromiseRef.current = null;
+        dispatch({ type: 'SET_LOADING', loading: false });
+        return undefined;
+      }
     }
+    initialScheduleLoadStartedRef.current = true;
 
     let cancelled = false;
+    let cacheActivation: Promise<void> | null = null;
     /** 현재 효과가 유효할 때만 계산된 월 범위의 일정 로딩을 시작한다. */
     const loadCurrentRange = () => {
       if (!cancelled) loadSchedules();
     };
-    /** 서버 캐시 revision을 단일 요청으로 동기화한 뒤 변경이 없으면 현재 범위를 불러온다. */
+    /** 화면 데이터와 서버 revision을 병렬로 확인해 느린 revision이 첫 표시를 막지 않게 한다. */
     const synchronizeAndLoad = (forceRevisionCheck = false) => {
+      loadCurrentRange();
       let revisionSync = calendarRevisionSyncPromiseRef.current;
       if (forceRevisionCheck || revisionSync === null) {
-        revisionSync = synchronizeCalendarScheduleCacheRevision();
+        revisionSync = measurePerformanceInteraction(
+          'schedule.revision_sync',
+          '/schedule',
+          synchronizeCalendarScheduleCacheRevision,
+          'NETWORK',
+        );
         calendarRevisionSyncPromiseRef.current = revisionSync;
       }
 
@@ -225,28 +319,42 @@ export function useScheduleIndexCalendarData({
       // this quickly. Range changes join the same promise, while the API
       // layer single-flights and cools down foreground checks.
       revisionSync
-        .then(changed => {
+        .then(() => {
           if (calendarRevisionSyncPromiseRef.current === revisionSync) {
             // Keep only readiness after settlement. Retaining a
             // resolved `true` would make later month effects skip
             // their range load until the next foreground event.
             calendarRevisionSyncPromiseRef.current = Promise.resolve(false);
           }
-          if (cancelled) return;
           // revision 변경 시 clear가 아래 구독자를 통해 한 번만 다시 조회한다.
-          if (!changed) loadCurrentRange();
         })
         .catch(() => {
           if (calendarRevisionSyncPromiseRef.current === revisionSync) {
             calendarRevisionSyncPromiseRef.current = Promise.resolve(false);
           }
-          loadCurrentRange();
         });
     };
-    synchronizeAndLoad();
+    /** 인증 계정의 디스크 캐시를 한 번 복원한 뒤 화면/네트워크 작업을 시작한다. */
+    const activateCacheAndLoad = (forceRevisionCheck = false) => {
+      if (cacheActivation === null) {
+        cacheActivation = getAuthMember()
+          .then(member => {
+            const memberId = member?.id;
+            if (!Number.isSafeInteger(memberId) || (memberId ?? 0) <= 0) return;
+            return activateCalendarScheduleCacheForAuthenticatedAccount(
+              memberId as number,
+            ).then(() => undefined);
+          })
+          .catch(() => undefined);
+      }
+      cacheActivation.then(() => {
+        if (!cancelled) synchronizeAndLoad(forceRevisionCheck);
+      });
+    };
+    activateCacheAndLoad();
     const subscription = AppState.addEventListener('change', nextState => {
       if (nextState !== 'active') return;
-      synchronizeAndLoad(true);
+      activateCacheAndLoad(true);
     });
     const unsubscribeInvalidated =
       subscribeCalendarScheduleCacheInvalidated(loadCurrentRange);
@@ -333,14 +441,16 @@ export function useScheduleIndexCalendarData({
   );
 
   /** 누락된 월만 묶어 메타데이터를 조회하고 제스처 중 결과는 안전한 시점까지 보류한다. */
-  const loadCalendarMetadata = useCallback(async () => {
+  const loadCalendarMetadata = useCallback(async (
+    monthKeys = calendarMetadataPrefetchMonthKeys,
+  ) => {
     if (detailMonthMotionActiveRef.current) {
       // This is gesture deferral, not a server failure. Retry as soon as
       // the gesture ends without consuming either network retry slot.
       calendarMetadataLoadPendingRef.current = true;
       return;
     }
-    const requestedMonths = calendarMetadataPrefetchMonthKeys.map(monthKey => ({
+    const requestedMonths = monthKeys.map(monthKey => ({
       monthKey,
       cacheKey: `${firstDay}:${monthKey}`,
     }));
@@ -366,7 +476,12 @@ export function useScheduleIndexCalendarData({
       calendarMetadataInFlightMonthKeysRef.current.add(cacheKey);
     });
     try {
-      const days = await getCalendarDays(requestStartDate, requestEndDate);
+      const days = await measurePerformanceInteraction(
+        'schedule.calendar_metadata_load',
+        '/schedule',
+        () => getCalendarDays(requestStartDate, requestEndDate),
+        'NETWORK',
+      );
 
       if (
         typeof __DEV__ === 'boolean' &&
@@ -455,18 +570,44 @@ export function useScheduleIndexCalendarData({
   useEffect(() => {
     if (!isFocused) return undefined;
 
-    loadCalendarMetadata();
+    let cancelled = false;
+    let backgroundTimer: ReturnType<typeof setTimeout> | null = null;
+    let interactionTask: ReturnType<
+      typeof InteractionManager.runAfterInteractions
+    > | null = null;
+    const scheduleMetadataLoads = () => {
+      interactionTask?.cancel();
+      if (backgroundTimer !== null) clearTimeout(backgroundTimer);
+      interactionTask = InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        // 일정 조회에 먼저 네트워크 우선권을 주고, 현재 월의 공휴일·음력을
+        // 짧게 지연한 뒤 인접 월은 한 번 더 뒤로 미룬다.
+        backgroundTimer = setTimeout(() => {
+          if (cancelled) return;
+          loadCalendarMetadata([fetchVisibleMonth.slice(0, 7)]);
+          backgroundTimer = setTimeout(() => {
+            backgroundTimer = null;
+            if (!cancelled) loadCalendarMetadata();
+          }, 900);
+        }, 450);
+      });
+    };
+    scheduleMetadataLoads();
     const subscription = AppState.addEventListener('change', nextState => {
       if (nextState !== 'active') return;
       resetCalendarMetadataRetry(calendarMetadataRetryTargetKey);
-      loadCalendarMetadata();
+      scheduleMetadataLoads();
     });
     return () => {
+      cancelled = true;
+      interactionTask?.cancel();
+      if (backgroundTimer !== null) clearTimeout(backgroundTimer);
       subscription.remove();
     };
   }, [
     calendarMetadataRetrySequence,
     calendarMetadataRetryTargetKey,
+    fetchVisibleMonth,
     isFocused,
     loadCalendarMetadata,
     resetCalendarMetadataRetry,

@@ -107,6 +107,8 @@ export function useScheduleDayTimelineContent(
     loading,
     modeTransitionFrom,
     onOpenSchedule,
+    getScheduleSwipeActions,
+    onRequestScheduleActions,
     onPressRetry,
     todayKey,
   } = props;
@@ -245,6 +247,10 @@ export function useScheduleDayTimelineContent(
                     width={`${Math.max(0, laneWidth - laneInset * 2)}%`}
                     laneCount={laneCount}
                     onPress={() => onOpenSchedule(item.id)}
+                    swipeActions={getScheduleSwipeActions?.(item)}
+                    onLongPress={onRequestScheduleActions
+                      ? () => onRequestScheduleActions(item)
+                      : undefined}
                   />
                 );
               },
@@ -293,7 +299,9 @@ export function useScheduleDayTimelineContent(
     needsSingleDayContent,
     inlineError,
     initialTimelineOffset,
+    getScheduleSwipeActions,
     onOpenSchedule,
+    onRequestScheduleActions,
     onPressRetry,
     positionedEvents,
     singleDayTimelineRef,
@@ -448,7 +456,14 @@ export function useScheduleDayTimelineContent(
                         accessibilityLabel={`${
                           item.title
                         }, ${formatDayTimelineTimeRange(item)}`}
+                        accessibilityHint={onRequestScheduleActions
+                          ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다'
+                          : undefined}
                         onPress={() => onOpenSchedule(item.id)}
+                        onLongPress={onRequestScheduleActions
+                          ? () => onRequestScheduleActions(item)
+                          : undefined}
+                        delayLongPress={420}
                         style={({ pressed }) => [
                           styles.multiDayTimelineEvent,
                           {
@@ -507,6 +522,7 @@ export function useScheduleDayTimelineContent(
     multiDayColumns,
     needsMultiDayContent,
     onOpenSchedule,
+    onRequestScheduleActions,
     onPressRetry,
     todayKey,
   ]);
@@ -545,7 +561,12 @@ export function useScheduleDayTimelineContent(
                   key={item.id}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.title}, 종일`}
+                  accessibilityHint={onRequestScheduleActions ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다' : undefined}
                   onPress={() => onOpenSchedule(item.id)}
+                  onLongPress={onRequestScheduleActions
+                    ? () => onRequestScheduleActions(item)
+                    : undefined}
+                  delayLongPress={420}
                   style={({ pressed }) => [
                     styles.dayAllDayEvent,
                     {
@@ -574,7 +595,7 @@ export function useScheduleDayTimelineContent(
         </ScrollView>
       </View>
     ),
-    [allDayItems, colors.border, colors.textSecondary, mode, onOpenSchedule],
+    [allDayItems, colors.border, colors.textSecondary, mode, onOpenSchedule, onRequestScheduleActions],
   );
 
   const multiDayAllDaySection = useMemo(
@@ -600,7 +621,12 @@ export function useScheduleDayTimelineContent(
                   key={item.id}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.title}, 종일`}
+                  accessibilityHint={onRequestScheduleActions ? '길게 누르면 수정 또는 삭제 메뉴가 열립니다' : undefined}
                   onPress={() => onOpenSchedule(item.id)}
+                  onLongPress={onRequestScheduleActions
+                    ? () => onRequestScheduleActions(item)
+                    : undefined}
+                  delayLongPress={420}
                   style={({ pressed }) => [
                     styles.dayAllDayEvent,
                     {
@@ -634,6 +660,7 @@ export function useScheduleDayTimelineContent(
       colors.textSecondary,
       mode,
       onOpenSchedule,
+      onRequestScheduleActions,
       multiDayAllDayItems,
     ],
   );

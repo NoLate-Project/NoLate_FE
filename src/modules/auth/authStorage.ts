@@ -6,6 +6,9 @@ const REFRESH_TOKEN_KEY = "nolte_refresh_token";
 const AUTH_MEMBER_KEY = "nolate_auth_member";
 const AUTH_API_BASE_URL_KEY = "nolate_auth_api_base_url";
 let currentAuthApiBaseUrl: string | null = null;
+const authTokenMemoryCache = new Map<string, string | null>();
+const authTokenReadInFlight = new Map<string, Promise<string | null>>();
+let authTokenCacheGeneration = 0;
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
@@ -64,7 +67,7 @@ async function syncSharedApiBaseUrl() {
     }
 }
 
-async function getAuthToken(key: string): Promise<string | null> {
+async function readAuthTokenFromStorage(key: string): Promise<string | null> {
     const sharedValue = await readSharedItem(key);
     if (sharedValue) {
         await syncSharedApiBaseUrl();
@@ -81,6 +84,32 @@ async function getAuthToken(key: string): Promise<string | null> {
     return storedValue;
 }
 
+/** 인증 부트스트랩 이후 API 요청이 매번 Keychain IPC를 다시 기다리지 않게 한다. */
+async function getAuthToken(key: string): Promise<string | null> {
+    if (authTokenMemoryCache.has(key)) {
+        return authTokenMemoryCache.get(key) ?? null;
+    }
+
+    const existing = authTokenReadInFlight.get(key);
+    if (existing) return existing;
+
+    const generation = authTokenCacheGeneration;
+    const request = readAuthTokenFromStorage(key)
+        .then(value => {
+            if (generation === authTokenCacheGeneration) {
+                authTokenMemoryCache.set(key, value);
+            }
+            return value;
+        })
+        .finally(() => {
+            if (authTokenReadInFlight.get(key) === request) {
+                authTokenReadInFlight.delete(key);
+            }
+        });
+    authTokenReadInFlight.set(key, request);
+    return request;
+}
+
 export type StoredAuthMember = {
     id?: number;
     name?: string;
@@ -89,6 +118,15 @@ export type StoredAuthMember = {
     snsId?: string;
     curationCompleted?: boolean;
 };
+
+let authMemberMemoryCache: StoredAuthMember | null = null;
+let authMemberMemoryCacheInitialized = false;
+let authMemberReadInFlight: Promise<StoredAuthMember | null> | null = null;
+let authMemberCacheGeneration = 0;
+
+function cloneAuthMember(member: StoredAuthMember | null): StoredAuthMember | null {
+    return member ? { ...member } : null;
+}
 
 function normalizeAuthMember(member: StoredAuthMember | null | undefined): StoredAuthMember | null {
     if (!member) return null;
@@ -133,12 +171,20 @@ export async function saveAuthTokens(accessToken?: string | null, refreshToken?:
     }
 
     await Promise.all(writes);
+    authTokenCacheGeneration += 1;
+    authTokenReadInFlight.clear();
+    if (accessToken) authTokenMemoryCache.set(ACCESS_TOKEN_KEY, accessToken);
+    if (refreshToken) authTokenMemoryCache.set(REFRESH_TOKEN_KEY, refreshToken);
 }
 
 export async function saveAuthMember(member?: StoredAuthMember | null) {
     const normalized = normalizeAuthMember(member);
 
     if (!normalized) {
+        authMemberCacheGeneration += 1;
+        authMemberMemoryCacheInitialized = true;
+        authMemberMemoryCache = null;
+        authMemberReadInFlight = null;
         await SecureStore.deleteItemAsync(AUTH_MEMBER_KEY);
         await deleteSharedItem(AUTH_MEMBER_KEY);
         return;
@@ -149,9 +195,13 @@ export async function saveAuthMember(member?: StoredAuthMember | null) {
         SecureStore.setItemAsync(AUTH_MEMBER_KEY, serialized),
         saveSharedItem(AUTH_MEMBER_KEY, serialized),
     ]);
+    authMemberCacheGeneration += 1;
+    authMemberMemoryCacheInitialized = true;
+    authMemberMemoryCache = cloneAuthMember(normalized);
+    authMemberReadInFlight = null;
 }
 
-export async function getAuthMember(): Promise<StoredAuthMember | null> {
+async function readAuthMemberFromStorage(): Promise<StoredAuthMember | null> {
     const [sharedRaw, storedRaw] = await Promise.all([
         readSharedItem(AUTH_MEMBER_KEY),
         SecureStore.getItemAsync(AUTH_MEMBER_KEY),
@@ -183,6 +233,33 @@ export async function getAuthMember(): Promise<StoredAuthMember | null> {
         ]);
         return null;
     }
+}
+
+/** 회원 메타데이터도 토큰과 같은 프로세스 수명 캐시를 사용해 화면 진입을 막지 않는다. */
+export async function getAuthMember(): Promise<StoredAuthMember | null> {
+    if (authMemberMemoryCacheInitialized) {
+        return cloneAuthMember(authMemberMemoryCache);
+    }
+    if (authMemberReadInFlight) {
+        return authMemberReadInFlight.then(cloneAuthMember);
+    }
+
+    const generation = authMemberCacheGeneration;
+    const request = readAuthMemberFromStorage()
+        .then(member => {
+            if (generation === authMemberCacheGeneration) {
+                authMemberMemoryCacheInitialized = true;
+                authMemberMemoryCache = cloneAuthMember(member);
+            }
+            return member;
+        })
+        .finally(() => {
+            if (authMemberReadInFlight === request) {
+                authMemberReadInFlight = null;
+            }
+        });
+    authMemberReadInFlight = request;
+    return request.then(cloneAuthMember);
 }
 
 export async function saveAuthCurationCompleted(curationCompleted: boolean): Promise<void> {
@@ -217,6 +294,17 @@ export async function clearAuthTokens({ notifyListeners = true } = {}) {
         }
     }
 
+    // Once account cleanup succeeds, new requests must not observe an old
+    // in-memory credential while durable Keychain deletion is still running.
+    authTokenCacheGeneration += 1;
+    authTokenReadInFlight.clear();
+    authTokenMemoryCache.set(ACCESS_TOKEN_KEY, null);
+    authTokenMemoryCache.set(REFRESH_TOKEN_KEY, null);
+    authMemberCacheGeneration += 1;
+    authMemberMemoryCacheInitialized = true;
+    authMemberMemoryCache = null;
+    authMemberReadInFlight = null;
+
     const deletionResults = await Promise.allSettled([
         SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
         SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
@@ -233,4 +321,15 @@ export async function clearAuthTokens({ notifyListeners = true } = {}) {
             }
         });
     }
+}
+
+export function resetAuthStorageMemoryCacheForTests(): void {
+    if (process.env.NODE_ENV !== "test") return;
+    authTokenCacheGeneration += 1;
+    authTokenMemoryCache.clear();
+    authTokenReadInFlight.clear();
+    authMemberCacheGeneration += 1;
+    authMemberMemoryCacheInitialized = false;
+    authMemberMemoryCache = null;
+    authMemberReadInFlight = null;
 }

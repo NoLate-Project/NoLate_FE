@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
+    ActionSheetIOS,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -18,10 +19,20 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
     createScheduleCategoryToApi,
     deleteScheduleCategoryFromApi,
+    getScheduleCategoryMovePreviewFromApi,
     getScheduleCategoriesFromApi,
+    moveScheduleCategoryToApi,
     type ScheduleCategoryItem,
+    type ScheduleCategoryMovePreview,
     updateScheduleCategoryToApi,
 } from "../../src/api/scheduleCategories";
+import {
+    getScheduleCalendars,
+    type ScheduleCalendar,
+} from "../../src/api/scheduleCalendars";
+import { measurePerformanceInteraction } from "../../src/modules/performance/interactionPerformance";
+import { runAfterScreenTransition } from "../../src/modules/performance/runAfterScreenTransition";
+import { useScreenContentReadyPerformance } from "../../src/modules/performance/useScreenContentReadyPerformance";
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import CategoryLoadErrorBanner from "../../src/modules/schedule/components/form/CategoryLoadErrorBanner";
 import { useScheduleStore } from "../../src/modules/schedule/store";
@@ -31,7 +42,17 @@ import {
     canWriteScheduleCategory,
     countOwnedScheduleCategories,
 } from "../../src/modules/schedule/categoryPermissions";
+import { getWritableScheduleCalendars } from "../../src/modules/schedule/calendarPermissions";
+import { isOwnedPersonalScheduleCategory } from "../../src/modules/schedule/categoryMove";
+import {
+    getPersonalCategoryActionAtIndex,
+    PERSONAL_CATEGORY_ACTION_CANCEL_INDEX,
+    PERSONAL_CATEGORY_ACTION_DELETE_INDEX,
+    PERSONAL_CATEGORY_ACTION_SHEET_OPTIONS,
+    type PersonalCategoryManagementAction,
+} from "../../src/modules/schedule/categoryManagementActions";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import CategoryMoveSheet from "./CategoryMoveSheet";
 
 const CATEGORY_COLORS = [
     "#ff3b30",
@@ -61,7 +82,8 @@ export default function ScheduleCategoriesScreen() {
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { state, dispatch } = useScheduleStore();
-    const [loading, setLoading] = useState(false);
+    const hasCategorySnapshotRef = useRef(state.categories.length > 0);
+    const [loading, setLoading] = useState(!hasCategorySnapshotRef.current);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
     const [newTitle, setNewTitle] = useState("");
@@ -70,10 +92,28 @@ export default function ScheduleCategoriesScreen() {
     const [editingTitle, setEditingTitle] = useState("");
     const [editingColor, setEditingColor] = useState(CATEGORY_COLORS[0]);
     const [sharingCategory, setSharingCategory] = useState<ScheduleCategoryItem | null>(null);
+    const [movingCategory, setMovingCategory] = useState<ScheduleCategoryItem | null>(null);
+    const [moveCalendars, setMoveCalendars] = useState<ScheduleCalendar[]>([]);
+    const [moveCalendarsLoading, setMoveCalendarsLoading] = useState(false);
+    const [moveCalendarError, setMoveCalendarError] = useState<string | null>(null);
+    const [moveCalendarId, setMoveCalendarId] = useState<number | null>(null);
+    const [movePreview, setMovePreview] = useState<ScheduleCategoryMovePreview | null>(null);
+    const [movePreviewLoading, setMovePreviewLoading] = useState(false);
+    const [movePreviewError, setMovePreviewError] = useState<string | null>(null);
+    const [mergeIntoExisting, setMergeIntoExisting] = useState(false);
+    const [moving, setMoving] = useState(false);
     const loadSequenceRef = useRef(0);
     const loadPendingRef = useRef(false);
     const mutationPendingRef = useRef(false);
-    const controlsBusy = loading || saving;
+    const moveCalendarLoadPendingRef = useRef(false);
+    const movePreviewSequenceRef = useRef(0);
+    const controlsBusy = loading || saving || moving || movePreviewLoading;
+
+    useScreenContentReadyPerformance(
+        "category.settings_content_ready",
+        "/schedule/categories",
+        !loading,
+    );
 
     const categoryList = useMemo(
         () => [...state.categories].filter((category) => (
@@ -91,11 +131,17 @@ export default function ScheduleCategoriesScreen() {
         const sequence = loadSequenceRef.current + 1;
         loadSequenceRef.current = sequence;
         loadPendingRef.current = true;
-        setLoading(true);
+        setLoading(!hasCategorySnapshotRef.current);
         setLoadError(null);
         try {
-            const categories = await getScheduleCategoriesFromApi();
+            const categories = await measurePerformanceInteraction(
+                "category.list_load",
+                "/schedule/categories",
+                getScheduleCategoriesFromApi,
+                "NETWORK",
+            );
             if (loadSequenceRef.current !== sequence) return;
+            hasCategorySnapshotRef.current = true;
             dispatch({ type: "SET_CATEGORIES", categories });
         } catch (error) {
             if (loadSequenceRef.current !== sequence) return;
@@ -109,18 +155,182 @@ export default function ScheduleCategoriesScreen() {
     }, [dispatch]);
 
     useEffect(() => {
-        loadCategories();
+        const task = runAfterScreenTransition(() => {
+            loadCategories();
+        });
         return () => {
+            task.cancel();
             loadSequenceRef.current += 1;
             loadPendingRef.current = false;
         };
     }, [loadCategories]);
 
+    const beginCategoryMutation = useCallback(() => {
+        if (mutationPendingRef.current) return false;
+        // A background refresh may have started from the cached category snapshot.
+        // Invalidate that response before mutating so it cannot restore pre-mutation data.
+        loadSequenceRef.current += 1;
+        loadPendingRef.current = false;
+        setLoading(false);
+        mutationPendingRef.current = true;
+        return true;
+    }, []);
+
+    const loadMoveCalendars = useCallback(async () => {
+        if (moveCalendarLoadPendingRef.current) return;
+        moveCalendarLoadPendingRef.current = true;
+        setMoveCalendarsLoading(true);
+        setMoveCalendarError(null);
+        try {
+            const calendars = await getScheduleCalendars();
+            setMoveCalendars(getWritableScheduleCalendars(calendars));
+        } catch (error) {
+            setMoveCalendarError(getErrorMessage(error));
+        } finally {
+            moveCalendarLoadPendingRef.current = false;
+            setMoveCalendarsLoading(false);
+        }
+    }, []);
+
+    const closeMoveSheet = useCallback(() => {
+        if (moving) return;
+        movePreviewSequenceRef.current += 1;
+        setMovePreviewLoading(false);
+        setMovingCategory(null);
+        setMoveCalendarId(null);
+        setMovePreview(null);
+        setMovePreviewError(null);
+        setMergeIntoExisting(false);
+    }, [moving]);
+
+    const openMoveSheet = useCallback((category: ScheduleCategoryItem) => {
+        if (
+            controlsBusy
+            || mutationPendingRef.current
+            || !isOwnedPersonalScheduleCategory(category)
+        ) return;
+        setMovingCategory(category);
+        setMoveCalendarId(null);
+        setMovePreview(null);
+        setMovePreviewError(null);
+        setMergeIntoExisting(false);
+        // Permissions and calendar lifecycle can change on the management screen,
+        // so refresh destinations every time this sheet opens.
+        loadMoveCalendars().catch(() => undefined);
+    }, [controlsBusy, loadMoveCalendars]);
+
+    const loadMovePreview = useCallback(async (
+        category: ScheduleCategoryItem,
+        destinationCalendarId: number,
+    ) => {
+        const sequence = movePreviewSequenceRef.current + 1;
+        movePreviewSequenceRef.current = sequence;
+        setMoveCalendarId(destinationCalendarId);
+        setMovePreview(null);
+        setMovePreviewError(null);
+        setMergeIntoExisting(false);
+        setMovePreviewLoading(true);
+        try {
+            const preview = await getScheduleCategoryMovePreviewFromApi(
+                category.id,
+                destinationCalendarId,
+            );
+            if (movePreviewSequenceRef.current !== sequence) return;
+            setMovePreview(preview);
+            // 같은 이름의 카테고리를 합치는 작업은 되돌리기 어려우므로 사용자가
+            // 확인 화면에서 병합 대상을 직접 한 번 선택해야 한다.
+            setMergeIntoExisting(false);
+        } catch (error) {
+            if (movePreviewSequenceRef.current !== sequence) return;
+            setMovePreviewError(getErrorMessage(error));
+        } finally {
+            if (movePreviewSequenceRef.current === sequence) {
+                setMovePreviewLoading(false);
+            }
+        }
+    }, []);
+
+    const selectMoveCalendar = useCallback((destinationCalendarId: number) => {
+        if (!movingCategory || moving || movePreviewLoading) return;
+        loadMovePreview(movingCategory, destinationCalendarId).catch(() => undefined);
+    }, [loadMovePreview, movePreviewLoading, moving, movingCategory]);
+
+    const retryMovePreview = useCallback(() => {
+        if (!movingCategory || moveCalendarId === null || moving || movePreviewLoading) return;
+        loadMovePreview(movingCategory, moveCalendarId).catch(() => undefined);
+    }, [loadMovePreview, moveCalendarId, movePreviewLoading, moving, movingCategory]);
+
+    const moveCategory = useCallback(async () => {
+        if (
+            !movingCategory
+            || moveCalendarId === null
+            || !movePreview
+            || moving
+            || mutationPendingRef.current
+        ) return;
+        const mergeTarget = movePreview.mergeTargetCategory;
+        if (mergeTarget && !mergeIntoExisting) return;
+
+        const destination = moveCalendars.find((calendar) => calendar.id === moveCalendarId);
+        if (!destination) return;
+
+        if (!beginCategoryMutation()) return;
+        setMoving(true);
+        try {
+            const result = await moveScheduleCategoryToApi(movingCategory.id, {
+                calendarId: moveCalendarId,
+                mergeIntoCategoryId: mergeTarget && mergeIntoExisting
+                    ? mergeTarget.id
+                    : undefined,
+            });
+            dispatch({ type: "REMOVE_CATEGORY", id: result.sourceCategoryId });
+            dispatch({ type: "UPSERT_CATEGORY", category: result.category });
+            dispatch({
+                type: "MOVE_CATEGORY_ITEMS",
+                sourceCategoryId: result.sourceCategoryId,
+                calendarId: moveCalendarId,
+                category: result.category,
+            });
+            // Moving the final personal category may make the backend create a
+            // replacement default category. Reconcile with the server so that
+            // fallback is immediately selectable without reopening the app.
+            const refreshedCategories = await getScheduleCategoriesFromApi().catch(() => null);
+            if (refreshedCategories) {
+                hasCategorySnapshotRef.current = true;
+                dispatch({ type: "SET_CATEGORIES", categories: refreshedCategories });
+            }
+            movePreviewSequenceRef.current += 1;
+            setMovingCategory(null);
+            setMoveCalendarId(null);
+            setMovePreview(null);
+            setMovePreviewError(null);
+            setMergeIntoExisting(false);
+            Alert.alert(
+                "카테고리 이동 완료",
+                `“${movingCategory.title}”의 일정 ${result.movedScheduleCount}개를 “${destination.title}” 공유 캘린더로 이동했습니다.`,
+            );
+        } catch (error) {
+            Alert.alert("카테고리 이동 실패", getErrorMessage(error));
+        } finally {
+            mutationPendingRef.current = false;
+            setMoving(false);
+        }
+    }, [
+        dispatch,
+        mergeIntoExisting,
+        moveCalendarId,
+        moveCalendars,
+        movePreview,
+        moving,
+        movingCategory,
+        beginCategoryMutation,
+    ]);
+
     const createCategory = async () => {
         const title = newTitle.trim();
         if (!title || controlsBusy || mutationPendingRef.current) return;
 
-        mutationPendingRef.current = true;
+        if (!beginCategoryMutation()) return;
         setSaving(true);
         try {
             const category = await createScheduleCategoryToApi(title, newColor, undefined, calendarId);
@@ -150,7 +360,7 @@ export default function ScheduleCategoriesScreen() {
     const saveEditing = async () => {
         if (!editingId || !editingTitle.trim() || controlsBusy || mutationPendingRef.current) return;
 
-        mutationPendingRef.current = true;
+        if (!beginCategoryMutation()) return;
         setSaving(true);
         try {
             const category = await updateScheduleCategoryToApi(editingId, {
@@ -188,7 +398,7 @@ export default function ScheduleCategoriesScreen() {
 
     const deleteCategory = async (categoryId: string) => {
         if (controlsBusy || mutationPendingRef.current) return;
-        mutationPendingRef.current = true;
+        if (!beginCategoryMutation()) return;
         setSaving(true);
         try {
             await deleteScheduleCategoryFromApi(categoryId);
@@ -200,6 +410,102 @@ export default function ScheduleCategoriesScreen() {
             mutationPendingRef.current = false;
             setSaving(false);
         }
+    };
+
+    const runPersonalCategoryAction = (
+        action: PersonalCategoryManagementAction,
+        category: ScheduleCategoryItem,
+        writable: boolean,
+    ) => {
+        if (controlsBusy || mutationPendingRef.current) return;
+        if ((action === "EDIT" || action === "DELETE") && !writable) return;
+
+        switch (action) {
+            case "SHARE":
+                setSharingCategory(category);
+                return;
+            case "MOVE":
+                openMoveSheet(category);
+                return;
+            case "EDIT":
+                startEditing(category);
+                return;
+            case "DELETE":
+                confirmDelete(category.id);
+                return;
+        }
+    };
+
+    const showAndroidEditDeleteActions = (
+        category: ScheduleCategoryItem,
+        writable: boolean,
+    ) => {
+        Alert.alert(
+            `${category.title} 카테고리 수정·삭제`,
+            writable ? "원하는 작업을 선택해 주세요." : "이 카테고리를 수정하거나 삭제할 권한이 없습니다.",
+            writable
+                ? [
+                    { text: "취소", style: "cancel" },
+                    {
+                        text: "카테고리 삭제",
+                        style: "destructive",
+                        onPress: () => runPersonalCategoryAction("DELETE", category, writable),
+                    },
+                    {
+                        text: "카테고리 수정",
+                        onPress: () => runPersonalCategoryAction("EDIT", category, writable),
+                    },
+                ]
+                : [{ text: "확인", style: "cancel" }],
+        );
+    };
+
+    const showPersonalCategoryActions = (
+        category: ScheduleCategoryItem,
+        writable: boolean,
+    ) => {
+        if (controlsBusy || mutationPendingRef.current) return;
+
+        if (Platform.OS === "ios") {
+            ActionSheetIOS.showActionSheetWithOptions(
+                {
+                    title: `${category.title} 카테고리`,
+                    message: "원하는 작업을 선택해 주세요.",
+                    options: [...PERSONAL_CATEGORY_ACTION_SHEET_OPTIONS],
+                    cancelButtonIndex: PERSONAL_CATEGORY_ACTION_CANCEL_INDEX,
+                    destructiveButtonIndex: PERSONAL_CATEGORY_ACTION_DELETE_INDEX,
+                    disabledButtonIndices: writable ? undefined : [2, 3],
+                },
+                (buttonIndex) => {
+                    const action = getPersonalCategoryActionAtIndex(buttonIndex);
+                    if (action) runPersonalCategoryAction(action, category, writable);
+                },
+            );
+            return;
+        }
+
+        // Android's native Alert supports at most three buttons. Keep the two
+        // primary category-transfer actions at the first level and group the
+        // destructive/editing choices behind a clearly labelled third button.
+        Alert.alert(
+            `${category.title} 카테고리 작업`,
+            "원하는 작업을 선택해 주세요.",
+            [
+                {
+                    text: "카테고리 공유",
+                    onPress: () => runPersonalCategoryAction("SHARE", category, writable),
+                },
+                {
+                    text: "공유 캘린더로 이동",
+                    onPress: () => runPersonalCategoryAction("MOVE", category, writable),
+                },
+                {
+                    text: "카테고리 수정 또는 삭제",
+                    onPress: () => showAndroidEditDeleteActions(category, writable),
+                },
+            ],
+            { cancelable: true },
+        );
     };
 
     const goBack = () => {
@@ -328,6 +634,8 @@ export default function ScheduleCategoriesScreen() {
                     const isCalendarCategory = category.calendarId != null;
                     const isReceivedLegacyShare = !isCalendarCategory && category.shared === true;
                     const writable = canWriteScheduleCategory(category);
+                    const movable = calendarId === null
+                        && isOwnedPersonalScheduleCategory(category);
                     return (
                         <View
                             key={category.id}
@@ -430,11 +738,12 @@ export default function ScheduleCategoriesScreen() {
                                         </View>
                                     </View>
                                     <View style={styles.rowActions}>
-                                        {!isCalendarCategory && !isReceivedLegacyShare && (
+                                        {movable ? (
                                             <Pressable
                                                 accessibilityRole="button"
-                                                onPress={() => setSharingCategory(category)}
-                                                accessibilityLabel={`${category.title} 공유`}
+                                                onPress={() => showPersonalCategoryActions(category, writable)}
+                                                accessibilityLabel={`${category.title} 카테고리 작업 메뉴`}
+                                                accessibilityHint="공유, 다른 캘린더로 이동, 수정 또는 삭제 작업을 엽니다"
                                                 accessibilityState={{ disabled: controlsBusy }}
                                                 disabled={controlsBusy}
                                                 style={({ pressed }) => [
@@ -442,40 +751,43 @@ export default function ScheduleCategoriesScreen() {
                                                     { opacity: controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
                                                 ]}
                                             >
-                                                <Ionicons accessible={false} name="share-social-outline" size={20} color={colors.textPrimary} />
+                                                <Ionicons accessible={false} name="ellipsis-horizontal" size={22} color={colors.textPrimary} />
                                             </Pressable>
+                                        ) : (
+                                            <>
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={`${category.title} 수정`}
+                                                    accessibilityState={{ disabled: !writable || controlsBusy }}
+                                                    onPress={() => startEditing(category)}
+                                                    disabled={!writable || controlsBusy}
+                                                    style={({ pressed }) => [
+                                                        styles.iconAction,
+                                                        { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
+                                                    ]}
+                                                >
+                                                    <Ionicons accessible={false} name="create-outline" size={20} color={colors.textPrimary} />
+                                                </Pressable>
+                                                <Pressable
+                                                    accessibilityRole="button"
+                                                    accessibilityLabel={`${category.title} 삭제`}
+                                                    accessibilityState={{ disabled: !writable || controlsBusy }}
+                                                    onPress={() => confirmDelete(category.id)}
+                                                    disabled={!writable || controlsBusy}
+                                                    style={({ pressed }) => [
+                                                        styles.iconAction,
+                                                        { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
+                                                    ]}
+                                                >
+                                                    <Ionicons
+                                                        accessible={false}
+                                                        name="trash-outline"
+                                                        size={20}
+                                                        color={mode === "dark" ? "#ff6961" : "#d70015"}
+                                                    />
+                                                </Pressable>
+                                            </>
                                         )}
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel={`${category.title} 수정`}
-                                            accessibilityState={{ disabled: !writable || controlsBusy }}
-                                            onPress={() => startEditing(category)}
-                                            disabled={!writable || controlsBusy}
-                                            style={({ pressed }) => [
-                                                styles.iconAction,
-                                                { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
-                                            ]}
-                                        >
-                                            <Ionicons accessible={false} name="create-outline" size={20} color={colors.textPrimary} />
-                                        </Pressable>
-                                        <Pressable
-                                            accessibilityRole="button"
-                                            accessibilityLabel={`${category.title} 삭제`}
-                                            accessibilityState={{ disabled: !writable || controlsBusy }}
-                                            onPress={() => confirmDelete(category.id)}
-                                            disabled={!writable || controlsBusy}
-                                            style={({ pressed }) => [
-                                                styles.iconAction,
-                                                { opacity: !writable || controlsBusy ? 0.32 : pressed ? 0.55 : 1 },
-                                            ]}
-                                        >
-                                            <Ionicons
-                                                accessible={false}
-                                                name="trash-outline"
-                                                size={20}
-                                                color={mode === "dark" ? "#ff6961" : "#d70015"}
-                                            />
-                                        </Pressable>
                                     </View>
                                 </View>
                             )}
@@ -500,6 +812,35 @@ export default function ScheduleCategoriesScreen() {
                 subtitle="이 카테고리에 포함된 일정을 함께 볼 수 있어요"
                 onClose={() => setSharingCategory(null)}
             />
+            <CategoryMoveSheet
+                visible={!!movingCategory}
+                category={movingCategory}
+                calendars={moveCalendars}
+                selectedCalendarId={moveCalendarId}
+                preview={movePreview}
+                loadingCalendars={moveCalendarsLoading}
+                calendarError={moveCalendarError}
+                loadingPreview={movePreviewLoading}
+                previewError={movePreviewError}
+                moving={moving}
+                mergeIntoExisting={mergeIntoExisting}
+                onClose={closeMoveSheet}
+                onSelectCalendar={selectMoveCalendar}
+                onRetryCalendars={() => {
+                    loadMoveCalendars().catch(() => undefined);
+                }}
+                onRetryPreview={retryMovePreview}
+                onChangeMerge={setMergeIntoExisting}
+                onConfirm={() => {
+                    moveCategory().catch(() => undefined);
+                }}
+                onManageCalendars={() => {
+                    setMoveCalendars([]);
+                    setMoveCalendarError(null);
+                    closeMoveSheet();
+                    router.push("/schedule/calendars");
+                }}
+            />
         </KeyboardAvoidingView>
     );
 }
@@ -519,6 +860,9 @@ function ColorPicker({
         <View style={styles.colorRow}>
             {CATEGORY_COLORS.map((color, index) => {
                 const selected = color === value;
+                const selectionBorder = {
+                    borderColor: selected ? colors.textPrimary : "transparent",
+                };
                 return (
                     <Pressable
                         key={color}
@@ -530,9 +874,7 @@ function ColorPicker({
                         style={[
                             styles.colorButton,
                             disabled && styles.disabledControl,
-                            {
-                                borderColor: selected ? colors.textPrimary : "transparent",
-                            },
+                            selectionBorder,
                         ]}
                     >
                         <View style={[styles.colorSwatch, { backgroundColor: color }]} />
