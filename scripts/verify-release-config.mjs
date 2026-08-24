@@ -9,6 +9,7 @@ const app = JSON.parse(read("app.json"));
 const pkg = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
 const publicEnvSource = read("src/api/env.ts");
+const adMobAdUnits = read("src/modules/advertising/adMobAdUnits.ts");
 const rootLayout = read("app/_layout.tsx");
 const scheduleDetail = read("app/schedule/[id].tsx");
 const androidGradle = read("android/app/build.gradle");
@@ -57,6 +58,7 @@ const adsPlugin = app.plugins.find(
 );
 assert.ok(adsPlugin, "Expo Google Mobile Ads config plugin is missing");
 const expectedIosAdMobAppId = "ca-app-pub-6334753209593250~8546571360";
+const expectedIosInterstitialAdUnitId = "ca-app-pub-6334753209593250/7417557605";
 const expectedTrackingUsageDescription =
   "광고 식별자를 사용해 맞춤형 광고를 제공하고 광고 성과를 측정하기 위해 추적 권한을 요청합니다.";
 assert.equal(
@@ -83,6 +85,15 @@ assert.doesNotMatch(
   adsPlugin[1]?.iosAppId ?? "",
   /^ca-app-pub-3940256099942544~/,
   "Google sample iOS AdMob App IDs must never ship in a release build",
+);
+assert.ok(
+  adMobAdUnits.includes(expectedIosInterstitialAdUnitId),
+  "The release bundle must include the published NoLate iOS interstitial ad unit",
+);
+assert.doesNotMatch(
+  adMobAdUnits,
+  /IOS_ROUTE_DETAIL_INTERSTITIAL_AD_UNIT_ID\s*=\s*["'][^"']+~[^"']+["']/,
+  "An AdMob App ID (~) must never be used as an iOS interstitial ad unit ID (/)",
 );
 assert.equal(
   app["react-native-google-mobile-ads"]?.user_tracking_usage_description,

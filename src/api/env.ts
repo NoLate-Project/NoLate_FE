@@ -32,8 +32,6 @@ const expoPublicEnv: Record<string, string | undefined> = {
     EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED: process.env.EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED,
     EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID:
         process.env.EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID,
-    EXPO_PUBLIC_ADMOB_IOS_ROUTE_DETAIL_INTERSTITIAL_ID:
-        process.env.EXPO_PUBLIC_ADMOB_IOS_ROUTE_DETAIL_INTERSTITIAL_ID,
 };
 
 export function getEnv(key: string): string | undefined {

@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 
 import { getMySubscriptionPolicy } from "../../api/subscription";
 import { getEnv } from "../../api/env";
+import { resolveProductionRouteDetailAdUnitId } from "./adMobAdUnits";
 import {
     parseRouteDetailAdFrequencyState,
     recordRouteDetailAdShown,
@@ -42,13 +43,10 @@ let showCompletion: ((opened: boolean) => void) | undefined;
 let storageQueue: Promise<unknown> = Promise.resolve();
 
 function productionAdUnitId(): string | undefined {
-    if (Platform.OS === "android") {
-        return getEnv("EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID")?.trim() || undefined;
-    }
-    if (Platform.OS === "ios") {
-        return getEnv("EXPO_PUBLIC_ADMOB_IOS_ROUTE_DETAIL_INTERSTITIAL_ID")?.trim() || undefined;
-    }
-    return undefined;
+    return resolveProductionRouteDetailAdUnitId(
+        Platform.OS,
+        getEnv("EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID"),
+    );
 }
 
 function clearReloadTimer() {
