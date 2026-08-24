@@ -32,6 +32,7 @@ import {
 import { clearScheduleCalendarMemoryCache } from "../schedule/scheduleCalendarMemoryCache";
 import { clearPersistedCalendarScheduleCacheForAccount } from "../schedule/calendarScheduleCache";
 import { disableRouteDetailAdvertising } from "../advertising/routeDetailInterstitial";
+import { clearNoLateWidgetSnapshot } from "../widget/nativeWidgetBridge";
 import { getAuthMember } from "./authStorage";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
@@ -40,15 +41,19 @@ export async function clearAccountScopedLocalData(): Promise<void> {
     // member's cached FREE/PREMIUM advertising state.
     disableRouteDetailAdvertising();
     clearScheduleCalendarMemoryCache();
-    // Native alarms are the only account-scoped resource that can keep acting
-    // after the process exits. Start it first and propagate its failure so auth
-    // credentials are not deleted while a previous account alarm may survive.
+    // Invalidate widget writes before the first await so an older account fetch cannot
+    // republish private schedule data after cleanup has started. Native mutations are
+    // serialized, making this clear run after any write that already crossed the bridge.
+    const widgetCleanup = clearNoLateWidgetSnapshot();
+    // Native alarms can keep acting after the process exits. Start cleanup immediately
+    // and propagate failure so auth credentials are not deleted while an old resource survives.
     const alarmCleanup = clearDepartureAlarmsForAccountCleanup();
     const memberId = await getAuthMember()
         .then(member => member?.id)
         .catch(() => undefined);
     const cleanupResults = await Promise.allSettled([
         alarmCleanup,
+        widgetCleanup,
         clearStoredGoogleCalendarAccessToken(),
         clearCalendarConnectionSnapshot(),
         clearLocalRoutePlaceCaches(),
@@ -69,5 +74,9 @@ export async function clearAccountScopedLocalData(): Promise<void> {
     const alarmResult = cleanupResults[0];
     if (alarmResult.status === "rejected") {
         throw alarmResult.reason;
+    }
+    const widgetResult = cleanupResults[1];
+    if (widgetResult.status === "rejected") {
+        throw widgetResult.reason;
     }
 }

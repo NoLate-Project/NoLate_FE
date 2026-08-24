@@ -43,6 +43,10 @@ jest.mock("../src/modules/schedule/store", () => ({
     ScheduleProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
+jest.mock("../src/modules/widget/NoLateWidgetSync", () => ({
+    NoLateWidgetSync: () => null,
+}));
+
 jest.mock("../src/modules/notification/pushRegistration", () => ({
     registerPushAfterLogin: jest.fn().mockResolvedValue(undefined),
     subscribePushTokenRefresh: jest.fn(),
