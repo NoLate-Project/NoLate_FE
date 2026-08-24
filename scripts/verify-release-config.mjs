@@ -50,7 +50,7 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "52");
+assert.equal(app.ios.buildNumber, "53");
 assert.equal(pkg.dependencies["react-native-google-mobile-ads"], "^16.4.0");
 const adsPlugin = app.plugins.find(
   (entry) => Array.isArray(entry) && entry[0] === "react-native-google-mobile-ads",
@@ -202,8 +202,17 @@ assert.match(androidGradle, /com\.google\.mlkit:text-recognition-korean:16\.0\.1
 assert.ok(androidManifest.includes(adsPlugin[1].androidAppId));
 assert.match(androidManifest, /com\.google\.android\.gms\.ads\.DELAY_APP_MEASUREMENT_INIT[\s\S]*?android:value="true"/);
 
-assert.ok((iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length >= 6);
-assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 4);
+assert.equal(
+  (iosProject.match(/CURRENT_PROJECT_VERSION = 53;/g) ?? []).length,
+  8,
+  "The app and all three embedded extensions must use iOS build 53 in Debug and Release",
+);
+assert.equal(
+  (iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length,
+  2,
+  "Only the two non-embedded test-target configurations may retain build 52",
+);
+assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 10);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
 assert.ok(/APS_ENVIRONMENT = production;/.test(iosProject), "Release APNs environment must be production");

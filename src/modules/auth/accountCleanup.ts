@@ -33,6 +33,7 @@ import {
 import { clearScheduleCalendarMemoryCache } from "../schedule/scheduleCalendarMemoryCache";
 import { clearPersistedCalendarScheduleCacheForAccount } from "../schedule/calendarScheduleCache";
 import { disableRouteDetailAdvertising } from "../advertising/routeDetailInterstitial";
+import { clearNoLateWidgetSnapshot } from "../widget/nativeWidgetBridge";
 import { getAuthMember } from "./authStorage";
 
 /** Clears data that belongs to the signed-in member before another account can load. */
@@ -41,9 +42,17 @@ export async function clearAccountScopedLocalData(): Promise<void> {
     // member's cached FREE/PREMIUM advertising state.
     disableRouteDetailAdvertising();
     clearScheduleCalendarMemoryCache();
+    // Invalidate widget writes before the first await so an older account fetch cannot
+    // republish private schedule data after cleanup has started. Native mutations are
+    // serialized, making this clear run after any write that already crossed the bridge.
+    const widgetCleanup = clearNoLateWidgetSnapshot();
     const memberId = await getAuthMember()
         .then(member => member?.id)
         .catch(() => undefined);
+
+    // The widget is also a lock-screen privacy surface. Do not remove credentials or
+    // journals until its account-owned snapshot has been removed successfully.
+    await widgetCleanup;
 
     // Commit the lock-screen privacy boundary before the alarm coordinator clears
     // its durable departure-action journal. If Live Activity end or remote token

@@ -103,7 +103,7 @@
   },
   "ios": {
     "bundleIdentifier": "com.anonymous.nolatefe",
-    "buildNumber": "52",
+    "buildNumber": "53",
     "associatedDomains": [
       "applinks:nolate.jinuk.dev"
     ],
@@ -111,6 +111,9 @@
     "entitlements": {
       "aps-environment": "$(APS_ENVIRONMENT)",
       "com.apple.developer.usernotifications.time-sensitive": true,
+      "com.apple.security.application-groups": [
+        "group.com.anonymous.nolatefe"
+      ],
       "keychain-access-groups": [
         "$(AppIdentifierPrefix)com.anonymous.nolatefe"
       ]

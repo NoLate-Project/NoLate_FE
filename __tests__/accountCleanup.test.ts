@@ -35,6 +35,7 @@ import { clearScheduleCalendarMemoryCache } from "../src/modules/schedule/schedu
 import { clearPersistedCalendarScheduleCacheForAccount } from "../src/modules/schedule/calendarScheduleCache";
 import { disableRouteDetailAdvertising } from "../src/modules/advertising/routeDetailInterstitial";
 import { getAuthMember } from "../src/modules/auth/authStorage";
+import { clearNoLateWidgetSnapshot } from "../src/modules/widget/nativeWidgetBridge";
 
 jest.mock("../src/modules/advertising/routeDetailInterstitial", () => ({
     disableRouteDetailAdvertising: jest.fn(),
@@ -126,6 +127,10 @@ jest.mock("../src/modules/auth/authStorage", () => ({
     getAuthMember: jest.fn().mockResolvedValue({ id: 7 }),
 }));
 
+jest.mock("../src/modules/widget/nativeWidgetBridge", () => ({
+    clearNoLateWidgetSnapshot: jest.fn().mockResolvedValue(true),
+}));
+
 const mockedAlarmCleanup = jest.mocked(clearDepartureAlarmsForAccountCleanup);
 const mockedLiveActivityCleanup = jest.mocked(clearLiveActivitiesForAccountCleanup);
 const mockedReceiptCleanup = jest.mocked(
@@ -137,6 +142,7 @@ const mockedDepartureActionJournalCleanup = jest.mocked(
 );
 const mockedPushRegistrationCleanup = jest.mocked(clearPushRegistrationAfterLogout);
 const mockedClearScheduleCalendarMemoryCache = jest.mocked(clearScheduleCalendarMemoryCache);
+const mockedWidgetCleanup = jest.mocked(clearNoLateWidgetSnapshot);
 const allOtherCleanupMocks = [
     clearPushDeliveryAckQueueForCurrentAccount,
     clearPushRegistrationAfterLogout,
@@ -152,6 +158,7 @@ const allOtherCleanupMocks = [
     clearNavigationPerformanceQueueForCurrentAccount,
     clearInteractionPerformanceQueueForCurrentAccount,
     clearPersistedCalendarScheduleCacheForAccount,
+    clearNoLateWidgetSnapshot,
 ].map((cleanup) => jest.mocked(cleanup));
 
 describe("clearAccountScopedLocalData", () => {
@@ -161,6 +168,7 @@ describe("clearAccountScopedLocalData", () => {
         mockedLiveActivityCleanup.mockResolvedValue(undefined);
         mockedDepartureActionJournalCleanup.mockResolvedValue(undefined);
         mockedPushRegistrationCleanup.mockResolvedValue(undefined);
+        mockedWidgetCleanup.mockResolvedValue(true);
     });
 
     it("removes the account-bound alarm schedule receipt queue", async () => {
@@ -179,6 +187,10 @@ describe("clearAccountScopedLocalData", () => {
 
     it("ends and retires Live Activities before clearing the departure journal", async () => {
         const order: string[] = [];
+        mockedWidgetCleanup.mockImplementationOnce(async () => {
+            order.push("widget");
+            return true;
+        });
         mockedLiveActivityCleanup.mockImplementationOnce(async () => {
             order.push("live-activity");
         });
@@ -196,6 +208,7 @@ describe("clearAccountScopedLocalData", () => {
         await clearAccountScopedLocalData();
 
         expect(order).toEqual([
+            "widget",
             "live-activity",
             "native-alarm-and-journal",
             "fallback-journal",
@@ -208,6 +221,7 @@ describe("clearAccountScopedLocalData", () => {
         mockedAlarmCleanup.mockRejectedValueOnce(failure);
 
         await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
+        expect(mockedWidgetCleanup).toHaveBeenCalledTimes(1);
         expect(mockedLiveActivityCleanup).toHaveBeenCalledTimes(1);
         expect(mockedReceiptCleanup).not.toHaveBeenCalled();
         expect(mockedDepartureActionJournalCleanup).not.toHaveBeenCalled();
@@ -219,6 +233,7 @@ describe("clearAccountScopedLocalData", () => {
         mockedLiveActivityCleanup.mockRejectedValueOnce(failure);
 
         await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
+        expect(mockedWidgetCleanup).toHaveBeenCalledTimes(1);
         expect(mockedAlarmCleanup).not.toHaveBeenCalled();
         expect(mockedReceiptCleanup).not.toHaveBeenCalled();
         expect(mockedDepartureActionJournalCleanup).not.toHaveBeenCalled();
@@ -235,5 +250,16 @@ describe("clearAccountScopedLocalData", () => {
         expect(mockedAlarmCleanup).toHaveBeenCalledTimes(1);
         expect(mockedDepartureActionJournalCleanup).toHaveBeenCalledTimes(1);
         expect(mockedPushRegistrationCleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("propagates a widget privacy cleanup failure before credentials can be removed", async () => {
+        const failure = new Error("widget snapshot cleanup failed");
+        mockedWidgetCleanup.mockRejectedValueOnce(failure);
+
+        await expect(clearAccountScopedLocalData()).rejects.toBe(failure);
+        expect(mockedLiveActivityCleanup).not.toHaveBeenCalled();
+        expect(mockedAlarmCleanup).not.toHaveBeenCalled();
+        expect(mockedReceiptCleanup).not.toHaveBeenCalled();
+        expect(mockedPushRegistrationCleanup).not.toHaveBeenCalled();
     });
 });

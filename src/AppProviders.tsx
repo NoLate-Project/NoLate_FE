@@ -46,6 +46,7 @@ import {
 } from "./modules/schedule/scheduleEtaObservationEngagementQueue";
 import { ScheduleProvider } from "./modules/schedule/store";
 import { ThemeProvider, useTheme } from "./modules/theme/ThemeContext";
+import { NoLateWidgetSync } from "./modules/widget/NoLateWidgetSync";
 
 const PUSH_BOOTSTRAP_RETRY_DELAYS_MS = [
     1_500,
@@ -68,6 +69,7 @@ export function AppProviders({ children }: PropsWithChildren) {
             <AuthProvider>
                 <PushRegistrationBootstrap />
                 <ScheduleProvider initialState={initialState}>
+                    <NoLateWidgetSync />
                     {children}
                 </ScheduleProvider>
             </AuthProvider>
