@@ -1,3 +1,5 @@
+import * as AuthSession from "expo-auth-session";
+
 import * as SecureStore from "../storage/secureStorage";
 
 import { getEnv } from "../../api/env";
@@ -11,8 +13,23 @@ import { withCalendarImportTimeout } from "./calendarImportReliability";
 export const GOOGLE_CALENDAR_CLIENT_ID = getEnv("EXPO_PUBLIC_GOOGLE_CALENDAR_CLIENT_ID")?.trim() ?? "";
 
 export const GOOGLE_CALENDAR_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/calendar.events.readonly",
 ];
+
+export function createGoogleCalendarAuthRequestConfig(
+    clientId: string,
+    redirectUri: string
+): AuthSession.AuthRequestConfig {
+    return {
+        clientId,
+        redirectUri,
+        scopes: [...GOOGLE_CALENDAR_SCOPES],
+        prompt: AuthSession.Prompt.SelectAccount,
+        responseType: AuthSession.ResponseType.Code,
+        usePKCE: true,
+    };
+}
 
 const GOOGLE_CALENDAR_TOKEN_KEY = "nolate_google_calendar_token";
 const GOOGLE_CALENDAR_API_BASE = "https://www.googleapis.com/calendar/v3";

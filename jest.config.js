@@ -9,7 +9,7 @@ module.exports = {
   // node_modules. Allow React Native's ESM-flavoured Jest setup through both
   // path layers so focused and full suites behave the same under npm or pnpm.
   transformIgnorePatterns: [
-    'node_modules/.pnpm/(?!(react-native|@react-native\\+.*)@)',
-    'node_modules/(?!\\.pnpm/|((jest-)?react-native|@react-native(-community)?)/)',
+    'node_modules/.pnpm/(?!(react-native|@react-native\\+.*|expo-auth-session)@)',
+    'node_modules/(?!\\.pnpm/|((jest-)?react-native|@react-native(-community)?|expo-auth-session)/)',
   ],
 };

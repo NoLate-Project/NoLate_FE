@@ -1,4 +1,6 @@
 import { usePreventRemove } from '@react-navigation/native';
+import * as Application from 'expo-application';
+import * as AuthSession from 'expo-auth-session';
 import * as GoogleAuth from 'expo-auth-session/providers/google';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -39,8 +41,8 @@ import {
   type DeviceCalendarCandidate,
 } from '../../modules/onboarding/deviceCalendarImport';
 import {
+  createGoogleCalendarAuthRequestConfig,
   GOOGLE_CALENDAR_CLIENT_ID,
-  GOOGLE_CALENDAR_SCOPES,
 } from '../../modules/onboarding/googleCalendarImport';
 import {
   getFavoriteDeparturePlaces,
@@ -88,17 +90,17 @@ export function useCalendarImportController() {
   const footerMotion = useRef(new Animated.Value(1)).current;
   const goBackStepRef = useRef<() => void>(() => undefined);
 
+  const googleCalendarRedirectUri = AuthSession.makeRedirectUri({
+    native: `${Application.applicationId}:/oauthredirect`,
+    scheme: 'nolate',
+  });
   const [googleAuthRequest, , promptGoogleCalendarAuth] =
-    GoogleAuth.useAuthRequest(
-      {
-        iosClientId: GOOGLE_CALENDAR_CLIENT_ID,
-        androidClientId: GOOGLE_CALENDAR_CLIENT_ID,
-        webClientId: GOOGLE_CALENDAR_CLIENT_ID,
-        scopes: GOOGLE_CALENDAR_SCOPES,
-        selectAccount: true,
-        shouldAutoExchangeCode: false,
-      },
-      { scheme: 'nolate' },
+    AuthSession.useAuthRequest(
+      createGoogleCalendarAuthRequestConfig(
+        GOOGLE_CALENDAR_CLIENT_ID,
+        googleCalendarRedirectUri,
+      ),
+      GoogleAuth.discovery,
     );
 
   const [step, setStep] = useState<OnboardingStep>('intro');

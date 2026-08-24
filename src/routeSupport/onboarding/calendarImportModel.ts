@@ -314,9 +314,10 @@ export function buildCalendarConsentItems(
       summary: 'Google에 연결한 뒤 일정을 읽기만 해요.',
       required: true,
       detail: [
-        'Google Calendar에서 캘린더 목록과 다가오는 일정을 읽기만 합니다.',
+        'Google Calendar에서 기본 또는 선택된 캘린더 목록과 최근 7일부터 향후 90일까지의 일정 후보를 읽기만 합니다.',
         '선택한 일정의 장소와 메모는 이동 경로를 찾는 데 사용합니다.',
-        'Google 연결 정보는 이 기기에 안전하게 저장되며 NoLate 서버에는 저장하지 않습니다.',
+        'Google 접근 토큰은 이 기기 운영체제의 암호화된 보안 저장소에만 저장되며 NoLate 서버로 전송하거나 저장하지 않습니다.',
+        'Google 계정 로그인, 프로필 또는 이메일 정보는 요청하거나 사용하지 않습니다.',
         'Google 계정 보안 설정에서 연동 권한을 철회할 수 있습니다.',
       ],
     });
