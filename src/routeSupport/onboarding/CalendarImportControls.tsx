@@ -274,10 +274,12 @@ export function OptionChip({
 export function PrimaryButton({
   label,
   disabled,
+  loading,
   onPress,
 }: {
   label: string;
   disabled?: boolean;
+  loading?: boolean;
   onPress: () => void;
 }) {
   const { colors, mode } = useTheme();
@@ -304,11 +306,15 @@ export function PrimaryButton({
       >
         {label}
       </Text>
-      <Ionicons
-        name="arrow-forward"
-        size={18}
-        color={disabled ? colors.textDisabled : '#FFFFFF'}
-      />
+      {loading ? (
+        <ActivityIndicator size="small" color="#FFFFFF" />
+      ) : (
+        <Ionicons
+          name="arrow-forward"
+          size={18}
+          color={disabled ? colors.textDisabled : '#FFFFFF'}
+        />
+      )}
     </Pressable>
   );
 }

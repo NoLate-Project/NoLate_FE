@@ -16,6 +16,12 @@ type Action =
     | { type: "UPSERT_CATEGORY"; category: ScheduleCategory }
     | { type: "REMOVE_CATEGORY"; id: string }
     | { type: "SET_ITEMS"; items: ScheduleItem[] }
+    | {
+        type: "MOVE_CATEGORY_ITEMS";
+        sourceCategoryId: string;
+        calendarId: number;
+        category: ScheduleCategory;
+    }
     | { type: "SET_LOADING"; loading: boolean }
     | { type: "SET_ERROR"; error: string | null }
     | { type: "RESET"; state: ScheduleState }
@@ -72,6 +78,25 @@ function reducer(state: ScheduleState, action: Action): ScheduleState {
                 return state;
             }
             return {...state, itemsById};
+        }
+
+        case "MOVE_CATEGORY_ITEMS": {
+            let changed = false;
+            const itemsById = Object.fromEntries(
+                Object.entries(state.itemsById).map(([id, item]) => {
+                    if (item.category.id !== action.sourceCategoryId) return [id, item];
+                    changed = true;
+                    return [
+                        id,
+                        {
+                            ...item,
+                            calendarId: action.calendarId,
+                            category: action.category,
+                        },
+                    ];
+                })
+            );
+            return changed ? {...state, itemsById} : state;
         }
 
         case "SET_LOADING":

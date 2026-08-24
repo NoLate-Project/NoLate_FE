@@ -6,6 +6,7 @@ import {
   SelectedDayAgendaPanel,
 } from '../components/list/ScheduleAgendaViews';
 import type { ScheduleItem } from '../types';
+import type { ScheduleSwipeActionResolver } from '../components/ScheduleSwipeActions';
 import type { ScheduleCalendar } from '../../../api/scheduleCalendars';
 import { hasCalendarScheduleMonthCache } from '../calendarScheduleCache';
 import {
@@ -26,6 +27,8 @@ type UseScheduleIndexBottomBarParams = {
   handleCalendarViewModeChange: (mode: CalendarViewMode) => void;
   handleGoToday: () => void;
   handleOpenScheduleFromDayDisplay: (scheduleId: string) => void;
+  getScheduleSwipeActions: ScheduleSwipeActionResolver;
+  onRequestScheduleActions: (item: ScheduleItem) => void;
   itemsArray: ScheduleItem[];
   loadSchedules: () => void | Promise<void>;
   monthDisplayFocusedMonth: string;
@@ -54,6 +57,8 @@ export function useScheduleIndexBottomBar({
   handleCalendarViewModeChange,
   handleGoToday,
   handleOpenScheduleFromDayDisplay,
+  getScheduleSwipeActions,
+  onRequestScheduleActions,
   itemsArray,
   loadSchedules,
   monthDisplayFocusedMonth,
@@ -170,6 +175,8 @@ export function useScheduleIndexBottomBar({
           bottomInset={bottomInset}
           onPressRetry={loadSchedules}
           onOpenSchedule={handleOpenScheduleFromDayDisplay}
+          getScheduleSwipeActions={getScheduleSwipeActions}
+          onRequestScheduleActions={onRequestScheduleActions}
           routeSetupRequiredCount={routeSetupRequiredCount}
           onOpenRouteSetup={openRouteSetupTarget}
           onRequestViewMode={handleCalendarViewModeChange}
@@ -183,6 +190,8 @@ export function useScheduleIndexBottomBar({
           bottomInset={bottomInset}
           onPressRetry={loadSchedules}
           onOpenSchedule={handleOpenScheduleFromDayDisplay}
+          getScheduleSwipeActions={getScheduleSwipeActions}
+          onRequestScheduleActions={onRequestScheduleActions}
           routeSetupRequiredCount={routeSetupRequiredCount}
           onOpenRouteSetup={openRouteSetupTarget}
           onRequestViewMode={handleCalendarViewModeChange}
@@ -192,6 +201,8 @@ export function useScheduleIndexBottomBar({
       bottomInset,
       handleCalendarViewModeChange,
       handleOpenScheduleFromDayDisplay,
+      getScheduleSwipeActions,
+      onRequestScheduleActions,
       itemsArray,
       loadSchedules,
       monthAgendaLoading,

@@ -8,11 +8,19 @@ function loadScheduleApi() {
         apiPost: jest.fn(),
         apiPut: jest.fn(),
     }));
-    jest.doMock("../src/modules/schedule/calendarScheduleCache", () => ({
-        clearCalendarScheduleCache: jest.fn(),
-        removeCalendarScheduleCacheItem: jest.fn(),
-        upsertCalendarScheduleCacheItem: jest.fn(),
-    }));
+    jest.doMock("../src/modules/schedule/calendarScheduleCache", () => {
+        let revision: number | null = null;
+        return {
+            clearCalendarScheduleCache: jest.fn(),
+            getActiveCalendarScheduleCacheMemberId: jest.fn(() => 7),
+            getCalendarScheduleCacheServerRevision: jest.fn(() => revision),
+            removeCalendarScheduleCacheItem: jest.fn(),
+            setCalendarScheduleCacheServerRevision: jest.fn((nextRevision: number) => {
+                revision = nextRevision;
+            }),
+            upsertCalendarScheduleCacheItem: jest.fn(),
+        };
+    });
 
     const { apiGet } = require("../src/api/api") as { apiGet: jest.Mock };
     const { clearCalendarScheduleCache } = require(

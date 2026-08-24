@@ -49,12 +49,13 @@ function sourceBetween(source: string, start: string, end: string) {
 }
 
 describe('schedule calendar view mode preference wiring', () => {
-  test('restores the preference before mounting the calendar screen', () => {
+  test('mounts immediately from memory or the default while restoring storage', () => {
     const preferenceGate = scheduleRouteSource;
 
     expect(preferenceGate).toContain('getCachedCalendarViewModePreference()');
+    expect(preferenceGate).toContain('?? DEFAULT_CALENDAR_VIEW_MODE');
     expect(preferenceGate).toContain('loadCalendarViewModePreference()');
-    expect(preferenceGate).toContain('if (!initialCalendarViewMode)');
+    expect(preferenceGate).not.toContain('if (!initialCalendarViewMode)');
     expect(preferenceGate).toContain(
       'initialCalendarViewMode={initialCalendarViewMode}',
     );

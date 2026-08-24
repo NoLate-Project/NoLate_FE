@@ -27,10 +27,14 @@ import { clearSeenShareAttention } from "../src/modules/share/shareAttention";
 import {
     clearNavigationPerformanceQueueForCurrentAccount,
 } from "../src/modules/performance/navigationPerformanceQueue";
+import { clearLiveActivitiesForAccountCleanup } from "../src/modules/notification/liveActivitySync";
 import {
-    clearLiveActivitiesForAccountCleanup,
-} from "../src/modules/notification/liveActivitySync";
+    clearInteractionPerformanceQueueForCurrentAccount,
+} from "../src/modules/performance/interactionPerformanceQueue";
+import { clearScheduleCalendarMemoryCache } from "../src/modules/schedule/scheduleCalendarMemoryCache";
+import { clearPersistedCalendarScheduleCacheForAccount } from "../src/modules/schedule/calendarScheduleCache";
 import { disableRouteDetailAdvertising } from "../src/modules/advertising/routeDetailInterstitial";
+import { getAuthMember } from "../src/modules/auth/authStorage";
 
 jest.mock("../src/modules/advertising/routeDetailInterstitial", () => ({
     disableRouteDetailAdvertising: jest.fn(),
@@ -106,6 +110,22 @@ jest.mock("../src/modules/performance/navigationPerformanceQueue", () => ({
     clearNavigationPerformanceQueueForCurrentAccount: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock("../src/modules/performance/interactionPerformanceQueue", () => ({
+    clearInteractionPerformanceQueueForCurrentAccount: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../src/modules/schedule/scheduleCalendarMemoryCache", () => ({
+    clearScheduleCalendarMemoryCache: jest.fn(),
+}));
+
+jest.mock("../src/modules/schedule/calendarScheduleCache", () => ({
+    clearPersistedCalendarScheduleCacheForAccount: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("../src/modules/auth/authStorage", () => ({
+    getAuthMember: jest.fn().mockResolvedValue({ id: 7 }),
+}));
+
 const mockedAlarmCleanup = jest.mocked(clearDepartureAlarmsForAccountCleanup);
 const mockedLiveActivityCleanup = jest.mocked(clearLiveActivitiesForAccountCleanup);
 const mockedReceiptCleanup = jest.mocked(
@@ -116,6 +136,7 @@ const mockedDepartureActionJournalCleanup = jest.mocked(
     clearStandardDepartureActionFallbackForCurrentAccount,
 );
 const mockedPushRegistrationCleanup = jest.mocked(clearPushRegistrationAfterLogout);
+const mockedClearScheduleCalendarMemoryCache = jest.mocked(clearScheduleCalendarMemoryCache);
 const allOtherCleanupMocks = [
     clearPushDeliveryAckQueueForCurrentAccount,
     clearPushRegistrationAfterLogout,
@@ -129,6 +150,8 @@ const allOtherCleanupMocks = [
     clearQuickScheduleReliabilityFeedbackQueueForCurrentAccount,
     clearSeenShareAttention,
     clearNavigationPerformanceQueueForCurrentAccount,
+    clearInteractionPerformanceQueueForCurrentAccount,
+    clearPersistedCalendarScheduleCacheForAccount,
 ].map((cleanup) => jest.mocked(cleanup));
 
 describe("clearAccountScopedLocalData", () => {
@@ -146,6 +169,9 @@ describe("clearAccountScopedLocalData", () => {
         expect(mockedReceiptCleanup).toHaveBeenCalledTimes(1);
         expect(mockedLiveActivityCleanup).toHaveBeenCalledTimes(1);
         expect(mockedDisableRouteDetailAdvertising).toHaveBeenCalledTimes(1);
+        expect(mockedClearScheduleCalendarMemoryCache).toHaveBeenCalledTimes(1);
+        expect(getAuthMember).toHaveBeenCalledTimes(1);
+        expect(clearPersistedCalendarScheduleCacheForAccount).toHaveBeenCalledWith(7);
         for (const cleanup of allOtherCleanupMocks) {
             expect(cleanup).toHaveBeenCalledTimes(1);
         }

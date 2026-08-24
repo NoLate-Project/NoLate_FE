@@ -21,6 +21,9 @@ import {
     getDayTimelineEventMetadata,
 } from "../../dayTimelineLayout";
 import type { ScheduleItem, TravelMode } from "../../types";
+import ScheduleSwipeActions, {
+    type ScheduleSwipeActionCallbacks,
+} from "../ScheduleSwipeActions";
 
 type Props = {
     item: ScheduleItem;
@@ -30,6 +33,8 @@ type Props = {
     width: DimensionValue;
     laneCount: number;
     onPress: () => void;
+    onLongPress?: () => void;
+    swipeActions?: ScheduleSwipeActionCallbacks;
 };
 
 function travelIconName(mode?: TravelMode): keyof typeof Ionicons.glyphMap {
@@ -48,6 +53,8 @@ export default function DayTimelineEventCard({
     width,
     laneCount,
     onPress,
+    onLongPress,
+    swipeActions,
 }: Props) {
     const { colors, mode } = useTheme();
     const categoryColor = item.category?.color ?? "#8e8e93";
@@ -63,19 +70,49 @@ export default function DayTimelineEventCard({
         && height >= DAY_TIMELINE_MIN_TRAVEL_EVENT_HEIGHT
         && laneCount < 3;
     const showsLocation = Boolean(metadata.location) && laneCount < 3;
+    const availableSwipeActionText = [
+        swipeActions?.onEdit ? "수정" : "",
+        swipeActions?.onDelete ? "삭제" : "",
+    ].filter(Boolean).join(" 또는 ");
+    const accessibilityHint = availableSwipeActionText
+        ? `왼쪽으로 밀면 ${availableSwipeActionText} 작업이 나타납니다.${
+            onLongPress ? " 길게 눌러 작업 메뉴를 열 수도 있습니다." : ""
+        }`
+        : onLongPress
+            ? "길게 누르면 수정 또는 삭제 메뉴가 열립니다"
+            : undefined;
 
     return (
-        <Pressable
+        <ScheduleSwipeActions
+            itemTitle={item.title}
+            onEdit={swipeActions?.onEdit}
+            onDelete={swipeActions?.onDelete}
+            compact={laneCount > 1 || height < 58}
+            containerStyle={[
+                styles.frame,
+                { top, height, left, width },
+            ]}
+            childrenContainerStyle={styles.swipeChildren}
+        >
+          <Pressable
+            testID="day-timeline-event-card"
             accessibilityRole="button"
             accessibilityLabel={`${item.title}, ${fullTimeText}`}
+            accessibilityHint={accessibilityHint}
+            accessibilityActions={[
+                ...(swipeActions?.onEdit ? [{ name: "edit", label: "수정" }] : []),
+                ...(swipeActions?.onDelete ? [{ name: "delete", label: "삭제" }] : []),
+            ]}
+            onAccessibilityAction={({ nativeEvent }) => {
+                if (nativeEvent.actionName === "edit") swipeActions?.onEdit?.();
+                if (nativeEvent.actionName === "delete") swipeActions?.onDelete?.();
+            }}
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={420}
             style={({ pressed }) => [
                 styles.card,
                 {
-                    top,
-                    height,
-                    left,
-                    width,
                     backgroundColor: mode === "dark"
                         ? colorWithOpacity(categoryColor, 0.18)
                         : colorWithOpacity(categoryColor, 0.10),
@@ -151,7 +188,8 @@ export default function DayTimelineEventCard({
                     style={styles.chevron}
                 />
             ) : null}
-        </Pressable>
+          </Pressable>
+        </ScheduleSwipeActions>
     );
 }
 
@@ -167,8 +205,15 @@ function colorWithOpacity(color: string, opacity: number) {
 }
 
 const styles = StyleSheet.create({
-    card: {
+    frame: {
         position: "absolute",
+        borderRadius: 9,
+    },
+    swipeChildren: {
+        flex: 1,
+    },
+    card: {
+        flex: 1,
         borderRadius: 9,
         borderWidth: StyleSheet.hairlineWidth,
         overflow: "hidden",

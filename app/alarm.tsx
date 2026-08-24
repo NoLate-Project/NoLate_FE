@@ -16,6 +16,8 @@ import {
     releaseNoLateCustomAlarmCapability,
 } from "../src/modules/notification/customAlarmCapability";
 import { getAuthMember } from "../src/modules/auth/authStorage";
+import { measurePerformanceInteraction } from "../src/modules/performance/interactionPerformance";
+import { useScreenContentReadyPerformance } from "../src/modules/performance/useScreenContentReadyPerformance";
 import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
 import { getSchedule } from "../src/api/schedule";
 
@@ -28,6 +30,8 @@ export default function NoLateCustomAlarmRoute() {
     );
     const [previewScheduleTitle, setPreviewScheduleTitle] = useState<string | null>(null);
 
+    useScreenContentReadyPerformance("alarm.content_ready", "/alarm", true);
+
     useEffect(() => {
         if (!presentation.isPreview || !presentation.scheduleId) {
             setPreviewScheduleTitle(null);
@@ -36,7 +40,12 @@ export default function NoLateCustomAlarmRoute() {
 
         let cancelled = false;
         setPreviewScheduleTitle(null);
-        getSchedule(presentation.scheduleId)
+        measurePerformanceInteraction(
+            "alarm.preview_schedule_load",
+            "/alarm",
+            () => getSchedule(presentation.scheduleId!),
+            "NETWORK",
+        )
             .then(schedule => {
                 const title = schedule.title.trim();
                 if (!cancelled && title) setPreviewScheduleTitle(title);
@@ -78,14 +87,21 @@ export default function NoLateCustomAlarmRoute() {
             return { status: "rejected", reason: "capability-unavailable" };
         }
         try {
-            const member = await getAuthMember();
-            if (member?.id !== trustedTarget.recipientMemberId) {
-                consumeNoLateCustomAlarmCapability(presentation.capabilityId);
-                throw new Error("CUSTOM_ALARM_ACCOUNT_MISMATCH");
-            }
-            await completeDepartureFromNotificationAction(scheduleId);
-            consumeNoLateCustomAlarmCapability(presentation.capabilityId);
-            return { status: "completed" };
+            return await measurePerformanceInteraction(
+                "alarm.complete_departure",
+                "/alarm",
+                async () => {
+                    const member = await getAuthMember();
+                    if (member?.id !== trustedTarget.recipientMemberId) {
+                        consumeNoLateCustomAlarmCapability(presentation.capabilityId);
+                        throw new Error("CUSTOM_ALARM_ACCOUNT_MISMATCH");
+                    }
+                    await completeDepartureFromNotificationAction(scheduleId);
+                    consumeNoLateCustomAlarmCapability(presentation.capabilityId);
+                    return { status: "completed" } as const;
+                },
+                "INTERACTION",
+            );
         } catch (error) {
             releaseNoLateCustomAlarmCapability(presentation.capabilityId);
             throw error;

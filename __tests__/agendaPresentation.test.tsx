@@ -756,6 +756,7 @@ describe("schedule agenda presentation", () => {
 
     test("목록형은 필터와 날짜별 섹션 안에 시안형 compact 카드를 표시한다", async () => {
         const onOpenSchedule = jest.fn();
+        const onRequestScheduleActions = jest.fn();
         const onRequestViewMode = jest.fn();
 
         await act(async () => {
@@ -778,6 +779,7 @@ describe("schedule agenda presentation", () => {
                         bottomInset={0}
                         onPressRetry={jest.fn()}
                         onOpenSchedule={onOpenSchedule}
+                        onRequestScheduleActions={onRequestScheduleActions}
                         onRequestViewMode={onRequestViewMode}
                     />
                 </ThemeProvider>
@@ -804,6 +806,13 @@ describe("schedule agenda presentation", () => {
         ))[0];
         await act(async () => targetCard?.props.onPress());
         expect(onOpenSchedule).toHaveBeenCalledWith("same-day");
+
+        await act(async () => targetCard?.props.onLongPress());
+        expect(onRequestScheduleActions).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "same-day", title: "14일 오전" })
+        );
+        expect(targetCard?.props.delayLongPress).toBe(420);
+        expect(targetCard?.props.accessibilityHint).toContain("길게 누르면");
     });
 
     test("빈 달에서도 전체 일정 필터 pill을 열 수 있다", async () => {

@@ -24,7 +24,9 @@ import {
     clearAuthTokens,
     configureSharedAuthApiBaseUrl,
     getAccessToken,
+    getAuthMember,
     getRefreshToken,
+    resetAuthStorageMemoryCacheForTests,
     saveAuthTokens,
     subscribeAuthInvalidation,
 } from "../src/modules/auth/authStorage";
@@ -44,6 +46,7 @@ const mockLocalStorage = {
 describe("authStorage shared Keychain session", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        resetAuthStorageMemoryCacheForTests();
         configureSharedAuthApiBaseUrl("http://127.0.0.1:5522");
         mockSharedAuth.getItem.mockResolvedValue(null);
         mockSharedAuth.setItem.mockResolvedValue(true);
@@ -87,6 +90,42 @@ describe("authStorage shared Keychain session", () => {
             "nolate_auth_api_base_url",
             "http://127.0.0.1:5522"
         );
+    });
+
+    test("인증 부트스트랩 뒤 토큰 조회는 Keychain 결과를 재사용한다", async () => {
+        mockSharedAuth.getItem.mockImplementation(async (key) =>
+            key === "nolte_access_token" ? "shared-access" : null
+        );
+
+        await expect(getAccessToken()).resolves.toBe("shared-access");
+        await expect(getAccessToken()).resolves.toBe("shared-access");
+
+        expect(mockSharedAuth.getItem).toHaveBeenCalledTimes(1);
+        expect(mockLocalStorage.getItemAsync).not.toHaveBeenCalledWith("nolte_access_token");
+    });
+
+    test("동시에 요청한 회원 정보는 한 번의 Keychain 조회를 공유한다", async () => {
+        const member = JSON.stringify({
+            id: 7,
+            name: "테스터",
+            curationCompleted: true,
+        });
+        mockSharedAuth.getItem.mockImplementation(async (key) =>
+            key === "nolate_auth_member" ? member : null
+        );
+
+        await expect(Promise.all([getAuthMember(), getAuthMember()])).resolves.toEqual([
+            { id: 7, name: "테스터", curationCompleted: true },
+            { id: 7, name: "테스터", curationCompleted: true },
+        ]);
+        await expect(getAuthMember()).resolves.toEqual({
+            id: 7,
+            name: "테스터",
+            curationCompleted: true,
+        });
+
+        expect(mockSharedAuth.getItem).toHaveBeenCalledTimes(1);
+        expect(mockLocalStorage.getItemAsync).toHaveBeenCalledTimes(1);
     });
 
     test("로그아웃 시 공유 토큰과 API 서버 정보를 모두 지운다", async () => {

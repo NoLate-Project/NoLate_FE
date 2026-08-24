@@ -33,6 +33,7 @@ const BRAND_BLUE = "#246BFE";
 
 type CalendarImportCategoryCreatorProps = {
     categoryCount: number;
+    calendarId?: number | null;
     disabled?: boolean;
     assignmentTargetLabel?: string;
     onBusyChange?: (busy: boolean) => void;
@@ -46,6 +47,7 @@ function getCreateErrorMessage(error: unknown): string {
 
 export default function CalendarImportCategoryCreator({
     categoryCount,
+    calendarId,
     disabled = false,
     assignmentTargetLabel,
     onBusyChange,
@@ -84,7 +86,9 @@ export default function CalendarImportCategoryCreator({
         onBusyChange?.(true);
 
         try {
-            const category = await createScheduleCategoryToApi(nextTitle, color);
+            const category = typeof calendarId === "number"
+                ? await createScheduleCategoryToApi(nextTitle, color, undefined, calendarId)
+                : await createScheduleCategoryToApi(nextTitle, color);
             if (!canWriteScheduleCategory(category)) {
                 throw new Error("추가된 카테고리를 확인하지 못했어요. 다시 시도해 주세요.");
             }

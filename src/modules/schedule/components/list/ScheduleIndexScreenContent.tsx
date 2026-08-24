@@ -221,6 +221,8 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
     handleShiftDay,
     handleNavigateTodayFromDayDisplay,
     handleOpenScheduleFromDayDisplay,
+    getScheduleSwipeActions,
+    requestScheduleQuickActions,
     handleOpenDay,
     handleTodayFocusReady,
     registerDetailMonthMotionCancel,
@@ -493,6 +495,8 @@ export function ScheduleIndexScreenContent({ initialCalendarViewMode }: Props) {
                 onShiftDay={handleShiftDay}
                 onPressRetry={loadSchedules}
                 onOpenSchedule={handleOpenScheduleFromDayDisplay}
+                getScheduleSwipeActions={getScheduleSwipeActions}
+                onRequestScheduleActions={requestScheduleQuickActions}
               />
             </Animated.View>
           )}

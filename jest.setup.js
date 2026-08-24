@@ -111,6 +111,34 @@ jest.mock('react-native-gesture-handler', () => {
   };
 });
 
+jest.mock('react-native-gesture-handler/ReanimatedSwipeable', () => {
+  const React = require('react');
+  const { View } = require('react-native');
+  const ReanimatedSwipeable = React.forwardRef(({
+    children,
+    ...props
+  }, ref) => {
+    const methods = React.useMemo(() => ({
+      close: jest.fn(),
+      openLeft: jest.fn(),
+      openRight: jest.fn(),
+      reset: jest.fn(),
+    }), []);
+    React.useImperativeHandle(ref, () => methods, [methods]);
+    return React.createElement(
+      View,
+      { ...props, mockSwipeableMethods: methods },
+      children,
+    );
+  });
+  ReanimatedSwipeable.displayName = 'MockReanimatedSwipeable';
+
+  return {
+    __esModule: true,
+    default: ReanimatedSwipeable,
+  };
+});
+
 jest.mock('react-native-reanimated', () => {
   const React = require('react');
   const { View } = require('react-native');

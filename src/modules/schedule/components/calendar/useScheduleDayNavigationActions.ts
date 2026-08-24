@@ -586,10 +586,8 @@ export function useScheduleDayNavigationActions({
           !daySwipeSettlingRef.current &&
           Math.abs(gestureState.dx) > 16 &&
           Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.15,
-        onMoveShouldSetPanResponderCapture: (_, gestureState) =>
-          !daySwipeSettlingRef.current &&
-          Math.abs(gestureState.dx) > 16 &&
-          Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.15,
+        // 카드에서 시작한 수평 제스처는 자식 Swipeable이 먼저 처리한다.
+        // 빈 타임라인 영역은 위의 bubbling 판정으로 기존 날짜 이동을 유지한다.
         onPanResponderMove: (_, gestureState) => {
           const dx = gestureState.dx;
           const dy = gestureState.dy;

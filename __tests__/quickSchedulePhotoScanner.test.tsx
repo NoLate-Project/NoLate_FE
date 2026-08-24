@@ -963,12 +963,12 @@ describe("QuickScheduleModal photo OCR", () => {
         });
         expect(alertSpy).toHaveBeenCalledWith(
             "작성 중인 일정이 있어요",
-            "닫으면 입력한 내용이 사라져요.",
+            "지금 닫으면 입력한 내용은 저장되지 않아요.",
             expect.any(Array),
             expect.objectContaining({ cancelable: true }),
         );
         await act(async () => {
-            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "입력 버리기")?.onPress?.();
+            alertSpy.mock.calls.at(-1)?.[2]?.find(button => button.text === "작성 취소")?.onPress?.();
             await Promise.resolve();
         });
         alertSpy.mockClear();

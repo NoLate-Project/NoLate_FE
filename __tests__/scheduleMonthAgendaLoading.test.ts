@@ -170,13 +170,31 @@ describe('month agenda loading presentation', () => {
       'publishScheduleSnapshot(requestSequence, cached.items);',
     );
     expect(scheduleLoader).toContain(
-      'publishScheduleSnapshot(requestSequence, refreshed.items);',
+      'publishLatestRangeSnapshot();',
+    );
+    expect(scheduleLoader).toContain(
+      'const visibleMonthRange = getMonthRange(fetchVisibleMonth);',
     );
     expect(scheduleLoader).toMatch(
       /catch \(error\) \{\s*if \(requestSequence !== scheduleLoadSequenceRef\.current\) return;/,
     );
     expect(scheduleLoader).toMatch(
       /finally \{\s*if \(requestSequence === scheduleLoadSequenceRef\.current\) \{\s*dispatch\(\{ type: "SET_LOADING", loading: false \}\);/,
+    );
+  });
+
+  test('초기 일정 화면은 native focus 완료 전에도 캐시와 현재 월을 준비한다', () => {
+    expect(calendarDataSource).toContain(
+      'const initialScheduleLoadStartedRef = useRef(false);',
+    );
+    expect(calendarDataSource).toContain(
+      'if (!isFocused) {\n      // The destination route can mount before native-stack reports it focused.',
+    );
+    expect(calendarDataSource).toContain(
+      'if (initialScheduleLoadStartedRef.current) {',
+    );
+    expect(calendarDataSource).toContain(
+      'initialScheduleLoadStartedRef.current = true;',
     );
   });
 
@@ -200,7 +218,7 @@ describe('month agenda loading presentation', () => {
     );
     expect(cacheHitBranch).toContain('refreshCalendarScheduleCache(');
     expect(cacheHitBranch).toContain(
-      'publishScheduleSnapshot(requestSequence, refreshed.items);',
+      'publishLatestRangeSnapshot();',
     );
     expect(cacheHitBranch).not.toContain('dispatch({ type: "SET_ITEMS"');
   });
@@ -317,8 +335,16 @@ describe('month agenda loading presentation', () => {
     );
 
     expect(revisionEffect).toContain('let cancelled = false;');
-    expect(revisionEffect).toContain('if (cancelled) return;');
+    expect(revisionEffect).toContain(
+      'if (!cancelled) synchronizeAndLoad(forceRevisionCheck);',
+    );
     expect(revisionEffect).toContain('cancelled = true;');
+    expect(revisionEffect).toContain(
+      'activateCalendarScheduleCacheForAuthenticatedAccount(',
+    );
+    expect(revisionEffect).toContain(
+      'const synchronizeAndLoad = (forceRevisionCheck = false) => { loadCurrentRange();',
+    );
     expect(revisionEffect).toContain(
       'let revisionSync = calendarRevisionSyncPromiseRef.current;',
     );

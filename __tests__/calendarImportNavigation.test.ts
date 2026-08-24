@@ -1,4 +1,5 @@
 import {
+    getCalendarImportCompletionRoute,
     isCalendarImportManagementEntry,
     shouldConsumeCalendarImportHardwareBack,
 } from "../src/modules/onboarding/calendarImportNavigation";
@@ -27,5 +28,10 @@ describe("calendar import navigation", () => {
         expect(shouldConsumeCalendarImportHardwareBack({ busy: true, canGoBack: false })).toBe(true);
         expect(shouldConsumeCalendarImportHardwareBack({ busy: false, canGoBack: true })).toBe(true);
         expect(shouldConsumeCalendarImportHardwareBack({ busy: false, canGoBack: false })).toBe(false);
+    });
+
+    test("첫 큐레이션 완료 뒤에는 제품 온보딩으로, 프로필 재설정 뒤에는 일정으로 이동한다", () => {
+        expect(getCalendarImportCompletionRoute(false)).toBe("/onboarding/product-tour");
+        expect(getCalendarImportCompletionRoute(true)).toBe("/schedule");
     });
 });

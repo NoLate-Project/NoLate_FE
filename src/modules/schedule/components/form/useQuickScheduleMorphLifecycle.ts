@@ -171,9 +171,9 @@ export function useQuickScheduleMorphLifecycle({
     if (flowStep === "saved" || !hasDirtyDraft) { closeQuickSchedule(); return; }
     if (discardConfirmationVisibleRef.current) return;
     discardConfirmationVisibleRef.current = true;
-    Alert.alert("작성 중인 일정이 있어요", "닫으면 입력한 내용이 사라져요.", [
+    Alert.alert("작성 중인 일정이 있어요", "지금 닫으면 입력한 내용은 저장되지 않아요.", [
       { text: "계속 작성", style: "cancel", onPress: () => { discardConfirmationVisibleRef.current = false; } },
-      { text: "입력 버리기", style: "destructive", onPress: () => { discardConfirmationVisibleRef.current = false; closeQuickSchedule(); } },
+      { text: "작성 취소", style: "destructive", onPress: () => { discardConfirmationVisibleRef.current = false; closeQuickSchedule(); } },
     ], { cancelable: true, onDismiss: () => { discardConfirmationVisibleRef.current = false; } });
   }, [closeQuickSchedule, closingRef, flowStep, isVoiceFinalizing, isVoiceRecording, photoTranscript, previewDraft, selectedPhotoUri, submitting, text, voiceDurationMillis, voiceTranscript, voiceUri]);
 

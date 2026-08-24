@@ -28,6 +28,7 @@ type PendingNavigation = {
 type NavigationPerformanceSink = (entry: NavigationPerformanceEntry) => void;
 
 const DUPLICATE_ACTION_WINDOW_MS = 50;
+export const NAVIGATION_MEASUREMENT_TIMEOUT_MS = 10_000;
 
 let nextId = 1;
 let pendingNavigation: PendingNavigation | undefined;
@@ -57,14 +58,28 @@ function completePendingNavigation(
     if (!pending || pending.routeReadyAt === undefined || !pending.toRoute) return false;
 
     const safeCompletedAt = Math.max(completedAt, pending.routeReadyAt);
+    const routeReadyMs = Math.max(0, Math.round(pending.routeReadyAt - pending.startedAt));
+    const totalMs = Math.max(0, Math.round(safeCompletedAt - pending.startedAt));
+    const isNoopGesture = pending.action === "GESTURE"
+        && pending.fromRoute === pending.toRoute;
+
+    if (
+        isNoopGesture
+        || routeReadyMs > NAVIGATION_MEASUREMENT_TIMEOUT_MS
+        || totalMs > NAVIGATION_MEASUREMENT_TIMEOUT_MS
+    ) {
+        pendingNavigation = undefined;
+        return false;
+    }
+
     const entry: NavigationPerformanceEntry = {
         id: pending.id,
         action: pending.action,
         fromRoute: pending.fromRoute,
         toRoute: pending.toRoute,
         requestedRoute: pending.requestedRoute,
-        routeReadyMs: Math.max(0, Math.round(pending.routeReadyAt - pending.startedAt)),
-        totalMs: Math.max(0, Math.round(safeCompletedAt - pending.startedAt)),
+        routeReadyMs,
+        totalMs,
         completedBy,
         startedAtEpochMs: pending.startedAtEpochMs,
     };
@@ -91,7 +106,11 @@ export function beginNavigationMeasurement(
 ) {
     if (pendingNavigation) {
         if (pendingNavigation.routeReadyAt !== undefined) {
-            completePendingNavigation("next-navigation", at);
+            if (pendingNavigation.transitionStarted) {
+                pendingNavigation = undefined;
+            } else {
+                completePendingNavigation("next-navigation", at);
+            }
         } else if (at - pendingNavigation.startedAt <= DUPLICATE_ACTION_WINDOW_MS) {
             return pendingNavigation.id;
         } else {
@@ -161,12 +180,17 @@ export function finishNavigationAfterFrames(
 ) {
     if (
         !pendingNavigation ||
-        pendingNavigation.id !== pendingId ||
-        pendingNavigation.transitionStarted
+        pendingNavigation.id !== pendingId
     ) {
         return false;
     }
     return completePendingNavigation("frame", at);
+}
+
+export function discardNavigationMeasurement(pendingId: number) {
+    if (!pendingNavigation || pendingNavigation.id !== pendingId) return false;
+    pendingNavigation = undefined;
+    return true;
 }
 
 export function setNavigationPerformanceSink(sink: NavigationPerformanceSink) {

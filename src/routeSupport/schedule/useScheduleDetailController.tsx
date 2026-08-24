@@ -34,6 +34,8 @@ import { canOpenParticipantTravelPlan } from '../../modules/schedule/travelPlanP
 import { completeScheduleDeparture } from '../../modules/schedule/scheduleDepartureCompletion';
 import { saveScheduleRouteAsMyTravelPlan } from '../../modules/schedule/scheduleTravelPlanSave';
 import { classifyDepartureNudgeResult } from '../../modules/schedule/departureNudgeResult';
+import { measurePerformanceInteraction } from '../../modules/performance/interactionPerformance';
+import { runAfterScreenTransition } from '../../modules/performance/runAfterScreenTransition';
 import {
   buildEffectiveTransitRoutePresentation,
   resolveScheduleDetailDepartureTiming,
@@ -316,23 +318,32 @@ export function useScheduleDetailController({
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    getSchedule(id)
-      .then(detail => {
-        if (!cancelled) dispatch({ type: 'UPDATE_ITEM', item: detail });
-      })
-      .catch(error => {
-        const routeFlowActive =
-          pathname === '/schedule/route-select' ||
-          pathname === '/schedule/route-planner';
-        if (!cancelled && !routeFlowActive)
-          setLoadError(getErrorMessage(error));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    const task = runAfterScreenTransition(() => {
+      if (cancelled) return;
+      measurePerformanceInteraction(
+        'schedule.detail_load',
+        '/schedule/[id]',
+        () => getSchedule(id),
+        'NETWORK',
+      )
+        .then(detail => {
+          if (!cancelled) dispatch({ type: 'UPDATE_ITEM', item: detail });
+        })
+        .catch(error => {
+          const routeFlowActive =
+            pathname === '/schedule/route-select' ||
+            pathname === '/schedule/route-planner';
+          if (!cancelled && !routeFlowActive)
+            setLoadError(getErrorMessage(error));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    });
 
     return () => {
       cancelled = true;
+      task.cancel();
     };
   }, [
     dispatch,

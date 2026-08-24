@@ -9,7 +9,10 @@ import {
     tokenLoginMember,
 } from "../src/api/member";
 import { AuthProvider, useAuth } from "../src/modules/auth/AuthContext";
-import { clearAuthTokens } from "../src/modules/auth/authStorage";
+import {
+    clearAuthTokens,
+    resetAuthStorageMemoryCacheForTests,
+} from "../src/modules/auth/authStorage";
 import { clearAccountScopedLocalData } from "../src/modules/auth/accountCleanup";
 import {
     isDepartureAlarmAccountCleanupPending,
@@ -90,6 +93,7 @@ describe("AuthProvider", () => {
     });
 
     beforeEach(() => {
+        resetAuthStorageMemoryCacheForTests();
         mockedGetMemberCurationStatus.mockResolvedValue({ curationCompleted: false });
         mockedAlarmCleanupPending.mockResolvedValue(false);
     });
@@ -99,6 +103,7 @@ describe("AuthProvider", () => {
             renderer?.unmount();
         });
         renderer = undefined;
+        resetAuthStorageMemoryCacheForTests();
         jest.clearAllMocks();
     });
 
@@ -213,11 +218,7 @@ describe("AuthProvider", () => {
     });
 
     it("로그아웃하면 서버 토큰 폐기를 시도하고 로컬 토큰을 지운다", async () => {
-        mockedGetItemAsync.mockImplementation(async (key) => {
-            if (key === "nolte_access_token") return "access-token";
-            if (key === "nolte_refresh_token") return "refresh-token";
-            return null;
-        });
+        mockStoredSession(false);
         mockedLogoutMember.mockResolvedValue(undefined);
 
         await act(async () => {

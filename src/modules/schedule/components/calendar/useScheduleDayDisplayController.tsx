@@ -10,6 +10,7 @@ import { getCalendarTodayAccent } from './calendarTodayAccent';
 import { useTheme } from '../../../theme/ThemeContext';
 import { isOverlappingDay } from '../../../../../lib/util/data';
 import type { ScheduleItem } from '../../types';
+import type { ScheduleSwipeActionResolver } from '../ScheduleSwipeActions';
 import { getCalendarWeekStart } from '../../calendarNavigation';
 import {
   DAY_TIMELINE_HOUR_HEIGHT,
@@ -152,6 +153,8 @@ export type ScheduleDayDisplayProps = {
   onShiftDay: (offset: number) => void;
   onPressRetry: () => void;
   onOpenSchedule: (id: string) => void;
+  getScheduleSwipeActions?: ScheduleSwipeActionResolver;
+  onRequestScheduleActions?: (item: ScheduleItem) => void;
 };
 
 /** 하루·여러 날 보기의 선택 상태, 시간선 위치와 좌우 페이지 전환 제스처를 관리합니다. */

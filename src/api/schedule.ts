@@ -8,7 +8,10 @@ import type {
 import { dedupeCalendarSchedules } from "../modules/schedule/calendarScheduleDedupe";
 import {
     clearCalendarScheduleCache,
+    getActiveCalendarScheduleCacheMemberId,
+    getCalendarScheduleCacheServerRevision,
     removeCalendarScheduleCacheItem,
+    setCalendarScheduleCacheServerRevision,
     upsertCalendarScheduleCacheItem,
 } from "../modules/schedule/calendarScheduleCache";
 import { emitScheduleMutation } from "../modules/schedule/scheduleMutationEvents";
@@ -213,10 +216,11 @@ type CalendarCacheRevisionDto = {
     revision: number;
 };
 
-let observedCalendarCacheRevision: number | null = null;
 const CALENDAR_CACHE_REVISION_COOLDOWN_MS = 60_000;
 let lastCalendarCacheRevisionSyncAt: number | null = null;
+let lastCalendarCacheRevisionSyncMemberId: number | null = null;
 let calendarCacheRevisionSyncInFlight: Promise<boolean> | null = null;
+let calendarCacheRevisionSyncInFlightMemberId: number | null = null;
 
 function normalizeSchedule(dto: ScheduleDto): ScheduleItem {
     if (dto.id === undefined || dto.id === null) {
@@ -242,12 +246,17 @@ export async function getCalendarSchedules(startAt: string, endAt: string): Prom
 }
 
 export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
-    if (calendarCacheRevisionSyncInFlight) {
+    const memberId = getActiveCalendarScheduleCacheMemberId();
+    if (
+        calendarCacheRevisionSyncInFlight &&
+        calendarCacheRevisionSyncInFlightMemberId === memberId
+    ) {
         return calendarCacheRevisionSyncInFlight;
     }
 
     const now = Date.now();
     if (
+        lastCalendarCacheRevisionSyncMemberId === memberId &&
         lastCalendarCacheRevisionSyncAt !== null &&
         now - lastCalendarCacheRevisionSyncAt < CALENDAR_CACHE_REVISION_COOLDOWN_MS
     ) {
@@ -257,11 +266,13 @@ export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
     const request = apiGet<ApiEnvelope<CalendarCacheRevisionDto>>(
         "/api/schedules/calendar-cache/revision",
     ).then((response) => {
+        if (getActiveCalendarScheduleCacheMemberId() !== memberId) return false;
         const revision = unwrapApiResponse(response).revision;
-        const changed = observedCalendarCacheRevision !== null &&
-            observedCalendarCacheRevision !== revision;
-        observedCalendarCacheRevision = revision;
+        const previousRevision = getCalendarScheduleCacheServerRevision();
+        const changed = previousRevision !== null && previousRevision !== revision;
+        setCalendarScheduleCacheServerRevision(revision);
         lastCalendarCacheRevisionSyncAt = Date.now();
+        lastCalendarCacheRevisionSyncMemberId = memberId;
         if (changed) {
             clearCalendarScheduleCache();
         }
@@ -269,15 +280,18 @@ export function synchronizeCalendarScheduleCacheRevision(): Promise<boolean> {
     });
 
     calendarCacheRevisionSyncInFlight = request;
+    calendarCacheRevisionSyncInFlightMemberId = memberId;
     request.then(
         () => {
             if (calendarCacheRevisionSyncInFlight === request) {
                 calendarCacheRevisionSyncInFlight = null;
+                calendarCacheRevisionSyncInFlightMemberId = null;
             }
         },
         () => {
             if (calendarCacheRevisionSyncInFlight === request) {
                 calendarCacheRevisionSyncInFlight = null;
+                calendarCacheRevisionSyncInFlightMemberId = null;
             }
         },
     );

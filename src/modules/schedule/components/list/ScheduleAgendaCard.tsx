@@ -18,10 +18,15 @@ import {
 } from "../../agendaLayout";
 import { getTravelModeLabel } from "../../travelMode";
 import type { ScheduleItem, TravelMode } from "../../types";
+import ScheduleSwipeActions, {
+    type ScheduleSwipeActionCallbacks,
+} from "../ScheduleSwipeActions";
 
 export type ScheduleAgendaCardProps = {
     item: ScheduleItem;
     onPress: () => void;
+    onLongPress?: () => void;
+    swipeActions?: ScheduleSwipeActionCallbacks;
     compact?: boolean;
     groupRow?: boolean;
     showMultiDaySummary?: boolean;
@@ -57,6 +62,8 @@ function colorWithOpacity(color: string, opacity: number) {
 export default function ScheduleAgendaCard({
     item,
     onPress,
+    onLongPress,
+    swipeActions,
     compact = false,
     groupRow = false,
     showMultiDaySummary = false,
@@ -114,9 +121,31 @@ export default function ScheduleAgendaCard({
     const shareBadgeBackground = mode === "dark"
         ? "rgba(255,255,255,0.035)"
         : "rgba(0,0,0,0.025)";
+    const availableSwipeActionText = [
+        swipeActions?.onEdit ? "수정" : "",
+        swipeActions?.onDelete ? "삭제" : "",
+    ].filter(Boolean).join(" 또는 ");
+    const accessibilityHint = availableSwipeActionText
+        ? `왼쪽으로 밀면 ${availableSwipeActionText} 작업이 나타납니다.${
+            onLongPress ? " 길게 눌러 작업 메뉴를 열 수도 있습니다." : ""
+        }`
+        : onLongPress
+            ? "길게 누르면 수정 또는 삭제 메뉴가 열립니다"
+            : undefined;
 
     return (
-        <Pressable
+        <ScheduleSwipeActions
+            itemTitle={item.title}
+            onEdit={swipeActions?.onEdit}
+            onDelete={swipeActions?.onDelete}
+            compact={compact || groupRow}
+            containerStyle={[
+                styles.swipeContainer,
+                compact && styles.swipeContainerCompact,
+                groupRow && styles.swipeContainerGroupRow,
+            ]}
+        >
+          <Pressable
             testID={isDetailCard ? "selected-day-agenda-card" : undefined}
             accessibilityRole="button"
             accessibilityLabel={[
@@ -130,7 +159,18 @@ export default function ScheduleAgendaCard({
                 item.routeSetupRequired ? "경로 미설정" : undefined,
                 shareAccessibilityLabel,
             ].filter(Boolean).join(", ")}
+            accessibilityHint={accessibilityHint}
+            accessibilityActions={[
+                ...(swipeActions?.onEdit ? [{ name: "edit", label: "수정" }] : []),
+                ...(swipeActions?.onDelete ? [{ name: "delete", label: "삭제" }] : []),
+            ]}
+            onAccessibilityAction={({ nativeEvent }) => {
+                if (nativeEvent.actionName === "edit") swipeActions?.onEdit?.();
+                if (nativeEvent.actionName === "delete") swipeActions?.onDelete?.();
+            }}
             onPress={onPress}
+            onLongPress={onLongPress}
+            delayLongPress={420}
             style={({ pressed }) => [
                 styles.card,
                 compact && styles.cardCompact,
@@ -443,6 +483,7 @@ export default function ScheduleAgendaCard({
                     />
                 </View>
             )}
-        </Pressable>
+          </Pressable>
+        </ScheduleSwipeActions>
     );
 }

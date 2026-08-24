@@ -1,6 +1,16 @@
 import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
+import {
+    clearScheduleCalendarMemoryCache,
+    getCachedScheduleCalendars,
+    removeCachedScheduleCalendar,
+    replaceCachedScheduleCalendar,
+    setScheduleCalendarMemoryCache,
+    updateCachedScheduleCalendarReminder,
+} from "../modules/schedule/scheduleCalendarMemoryCache";
+
+export { clearScheduleCalendarMemoryCache, getCachedScheduleCalendars };
 
 export type ScheduleShareContentMode = "SCHEDULE_ONLY" | "SCHEDULE_AND_TRAVEL";
 export type ScheduleCalendarRole = "VIEWER" | "EDITOR" | "OWNER";
@@ -44,7 +54,9 @@ export type UpdateScheduleCalendarPayload = Partial<CreateScheduleCalendarPayloa
 
 export async function getScheduleCalendars(): Promise<ScheduleCalendar[]> {
     const response = await apiGet<ApiEnvelope<ScheduleCalendar[]>>("/api/schedule-calendars");
-    return unwrapApiResponse(response);
+    const calendars = unwrapApiResponse(response);
+    setScheduleCalendarMemoryCache(calendars);
+    return calendars;
 }
 
 export async function createScheduleCalendar(
@@ -54,7 +66,9 @@ export async function createScheduleCalendar(
         "/api/schedule-calendars",
         payload,
     );
-    return unwrapApiResponse(response);
+    const calendar = unwrapApiResponse(response);
+    replaceCachedScheduleCalendar(calendar);
+    return calendar;
 }
 
 export async function updateScheduleCalendar(
@@ -66,6 +80,7 @@ export async function updateScheduleCalendar(
         payload,
     );
     const calendar = unwrapApiResponse(response);
+    replaceCachedScheduleCalendar(calendar);
     clearCalendarScheduleCache();
     return calendar;
 }
@@ -73,6 +88,7 @@ export async function updateScheduleCalendar(
 export async function archiveScheduleCalendar(calendarId: number | string): Promise<void> {
     const response = await apiDelete<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}`);
     assertApiSuccess(response);
+    removeCachedScheduleCalendar(Number(calendarId));
     clearCalendarScheduleCache();
 }
 
@@ -125,7 +141,12 @@ export async function updateMyScheduleCalendarPreferences(
         `/api/schedule-calendars/${calendarId}/preferences`,
         { routeReminderEnabled },
     );
-    return unwrapApiResponse(response);
+    const member = unwrapApiResponse(response);
+    updateCachedScheduleCalendarReminder(
+        Number(calendarId),
+        member.routeReminderEnabled,
+    );
+    return member;
 }
 
 export async function removeScheduleCalendarMember(
@@ -141,6 +162,7 @@ export async function removeScheduleCalendarMember(
 export async function leaveScheduleCalendar(calendarId: number | string): Promise<void> {
     const response = await apiPost<ApiEnvelope<unknown>>(`/api/schedule-calendars/${calendarId}/leave`);
     assertApiSuccess(response);
+    removeCachedScheduleCalendar(Number(calendarId));
     clearCalendarScheduleCache();
 }
 
@@ -152,5 +174,7 @@ export async function transferScheduleCalendarOwnership(
         `/api/schedule-calendars/${calendarId}/ownership`,
         { targetMemberId },
     );
-    return unwrapApiResponse(response);
+    const calendar = unwrapApiResponse(response);
+    replaceCachedScheduleCalendar(calendar);
+    return calendar;
 }

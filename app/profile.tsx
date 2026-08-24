@@ -16,7 +16,9 @@ export default function ProfileScreen() {
     const {
         insets, colors, mode, profile, account, calendarConnection, calendarConnectionError, signingOut, withdrawing, loadingProfile, editingProfile, setEditingProfile, savingProfile, draftName, setDraftName, memberIdCopied, profileError, withdrawalModalOpen, setWithdrawalModalOpen, withdrawalPassword, setWithdrawalPassword, passwordModalOpen, setPasswordModalOpen, currentPassword, setCurrentPassword, newPassword, setNewPassword, confirmPassword, setConfirmPassword, savingPassword, hasOpenModal, displayAccountName, isNaverAccount, displayEmail, displayLoginType, displayMemberId, profileSummary, avatarInitial, loadProfile, openProfileEditor, copyMemberId, saveProfile, handleSignOut, handleWithdraw, confirmCommonWithdrawal, openPasswordChange, savePasswordChange, goBackToSchedule, openCalendarOnboarding, openPlacesSettings, openPrivacyPolicy, openTermsOfService,
     } = useProfileScreen();
-    if (loadingProfile) return <ProfileLoadingView colors={colors} dark={mode === "dark"} />;
+    if (loadingProfile && !account && !profile) {
+        return <ProfileLoadingView colors={colors} dark={mode === "dark"} />;
+    }
 
     return (
         <ProfileRouteAccessibilityRoot style={[styles.root, { backgroundColor: colors.background }]}>
