@@ -4,9 +4,9 @@
   "version": "1.3.0",
   "react-native-google-mobile-ads": {
     "android_app_id": "ca-app-pub-3940256099942544~3347511713",
-    "ios_app_id": "ca-app-pub-3940256099942544~1458002511",
+    "ios_app_id": "ca-app-pub-6334753209593250~8546571360",
     "delay_app_measurement_init": true,
-    "user_tracking_usage_description": "맞춤형 광고 제공 여부를 선택하기 위해 기기 식별자 사용 권한이 필요합니다."
+    "user_tracking_usage_description": "광고 식별자를 사용해 맞춤형 광고를 제공하고 광고 성과를 측정하기 위해 추적 권한을 요청합니다."
   },
   "scheme": "nolate",
   "orientation": "portrait",
@@ -57,11 +57,11 @@
       "react-native-google-mobile-ads",
       {
         "androidAppId": "ca-app-pub-3940256099942544~3347511713",
-        "iosAppId": "ca-app-pub-3940256099942544~1458002511",
+        "iosAppId": "ca-app-pub-6334753209593250~8546571360",
         "delayAppMeasurementInit": true,
         "optimizeInitialization": true,
         "optimizeAdLoading": true,
-        "userTrackingUsageDescription": "맞춤형 광고 제공 여부를 선택하기 위해 기기 식별자 사용 권한이 필요합니다."
+        "userTrackingUsageDescription": "광고 식별자를 사용해 맞춤형 광고를 제공하고 광고 성과를 측정하기 위해 추적 권한을 요청합니다."
       }
     ],
     [

@@ -56,6 +56,9 @@ const adsPlugin = app.plugins.find(
   (entry) => Array.isArray(entry) && entry[0] === "react-native-google-mobile-ads",
 );
 assert.ok(adsPlugin, "Expo Google Mobile Ads config plugin is missing");
+const expectedIosAdMobAppId = "ca-app-pub-6334753209593250~8546571360";
+const expectedTrackingUsageDescription =
+  "광고 식별자를 사용해 맞춤형 광고를 제공하고 광고 성과를 측정하기 위해 추적 권한을 요청합니다.";
 assert.equal(
   app["react-native-google-mobile-ads"]?.android_app_id,
   adsPlugin[1]?.androidAppId,
@@ -65,6 +68,31 @@ assert.equal(
   app["react-native-google-mobile-ads"]?.ios_app_id,
   adsPlugin[1]?.iosAppId,
   "Bare iOS and Expo AdMob App IDs must match",
+);
+assert.equal(
+  adsPlugin[1]?.iosAppId,
+  expectedIosAdMobAppId,
+  "The release build must use the registered NoLate iOS AdMob App ID",
+);
+assert.match(
+  adsPlugin[1]?.iosAppId ?? "",
+  /^ca-app-pub-\d{16}~\d{10}$/,
+  "The iOS AdMob App ID must use the ca-app-pub-<publisher>~<app> format",
+);
+assert.doesNotMatch(
+  adsPlugin[1]?.iosAppId ?? "",
+  /^ca-app-pub-3940256099942544~/,
+  "Google sample iOS AdMob App IDs must never ship in a release build",
+);
+assert.equal(
+  app["react-native-google-mobile-ads"]?.user_tracking_usage_description,
+  adsPlugin[1]?.userTrackingUsageDescription,
+  "Bare iOS and Expo ATT usage descriptions must match",
+);
+assert.equal(
+  adsPlugin[1]?.userTrackingUsageDescription,
+  expectedTrackingUsageDescription,
+  "The ATT usage description must explain personalized ads and ad measurement",
 );
 assert.equal(app["react-native-google-mobile-ads"]?.delay_app_measurement_init, true);
 assert.equal(adsPlugin[1]?.delayAppMeasurementInit, true);
@@ -238,9 +266,23 @@ assert.match(iosInfo, /UISupportedInterfaceOrientations[\s\S]*?UIInterfaceOrient
 assert.doesNotMatch(iosInfo, /UIInterfaceOrientationLandscape|UIInterfaceOrientationPortraitUpsideDown/);
 assert.match(iosInfo, /NSRemindersUsageDescription/);
 assert.match(iosInfo, /NSRemindersFullAccessUsageDescription/);
-assert.ok(iosInfo.includes(adsPlugin[1].iosAppId));
+const nativeIosAdMobAppId = iosInfo.match(
+  /<key>GADApplicationIdentifier<\/key>\s*<string>([^<]+)<\/string>/,
+)?.[1];
+assert.equal(
+  nativeIosAdMobAppId,
+  adsPlugin[1].iosAppId,
+  "app.json and the native iOS Info.plist AdMob App IDs must match exactly",
+);
 assert.match(iosInfo, /GADDelayAppMeasurementInit[\s\S]*?<true\/>/);
-assert.match(iosInfo, /NSUserTrackingUsageDescription/);
+const nativeTrackingUsageDescription = iosInfo.match(
+  /<key>NSUserTrackingUsageDescription<\/key>\s*<string>([^<]+)<\/string>/,
+)?.[1];
+assert.equal(
+  nativeTrackingUsageDescription,
+  expectedTrackingUsageDescription,
+  "app.json and the native iOS Info.plist ATT usage descriptions must match exactly",
+);
 assert.ok(app.ios.infoPlist.NSRemindersUsageDescription);
 assert.ok(app.ios.infoPlist.NSRemindersFullAccessUsageDescription);
 assert.match(privacyManifest, /NSPrivacyCollectedDataTypeEmailAddress/);
