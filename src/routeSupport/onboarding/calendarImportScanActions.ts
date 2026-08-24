@@ -34,8 +34,8 @@ type CalendarImportScanActionParams = {
   scanAttemptRef: MutableRefObject<number>;
   selectedProviderIds: Set<CalendarProviderId>;
   deviceProviderLabel: string;
-  googleAuthRequest: ReturnType<typeof GoogleAuth.useAuthRequest>[0];
-  promptGoogleCalendarAuth: ReturnType<typeof GoogleAuth.useAuthRequest>[2];
+  googleAuthRequest: ReturnType<typeof AuthSession.useAuthRequest>[0];
+  promptGoogleCalendarAuth: ReturnType<typeof AuthSession.useAuthRequest>[2];
   setErrorMessage: Dispatch<SetStateAction<string | null>>;
   goToStep: (step: OnboardingStep) => void;
   setScanStage: Dispatch<SetStateAction<number>>;
