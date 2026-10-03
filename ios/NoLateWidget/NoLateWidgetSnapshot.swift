@@ -335,6 +335,61 @@ enum NoLateWidgetSnapshotStore {
   }
 }
 
+/// Shared presentation rules for Home Screen and Lock Screen widgets.
+enum NoLateWidgetPresentation {
+  static func featured(in schedules: [NoLateWidgetSchedule], at now: Date) -> NoLateWidgetSchedule? {
+    // An all-day item must not hide the next timed appointment and its departure.
+    schedules.first { !$0.allDay && ($0.startDate ?? .distantPast) > now && !$0.departureCompleted }
+      ?? schedules.first { !$0.allDay }
+      ?? schedules.first
+  }
+
+  enum Timing: Equatable {
+    case departure(Date), start(Date), leaveNow, ongoing, allDay, departed, routeRequired
+
+    var label: String {
+      switch self {
+      case .departure: return "출발 시각"
+      case .start: return "일정 시작"
+      case .leaveNow: return "출발할 시간"
+      case .ongoing: return "진행 중"
+      case .allDay: return "종일 일정"
+      case .departed: return "출발 완료"
+      case .routeRequired: return "경로 설정 필요"
+      }
+    }
+
+    var date: Date? {
+      switch self {
+      case .departure(let date), .start(let date): return date
+      default: return nil
+      }
+    }
+
+    var symbol: String {
+      switch self {
+      case .departure, .leaveNow: return "arrow.up.right"
+      case .start: return "clock"
+      case .ongoing: return "clock.badge.checkmark"
+      case .allDay: return "calendar"
+      case .departed: return "checkmark"
+      case .routeRequired: return "map"
+      }
+    }
+  }
+
+  static func timing(for schedule: NoLateWidgetSchedule, at now: Date) -> Timing {
+    if schedule.allDay { return .allDay }
+    if schedule.departureCompleted { return .departed }
+    if let start = schedule.startDate, start <= now { return .ongoing }
+    if schedule.routeSetupRequired { return .routeRequired }
+    if let departure = schedule.departureDate {
+      return departure > now ? .departure(departure) : .leaveNow
+    }
+    return .start(schedule.startDate ?? now)
+  }
+}
+
 enum NoLateISO8601 {
   static func date(from rawValue: String) -> Date? {
     let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)

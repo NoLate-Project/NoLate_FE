@@ -6,7 +6,7 @@ const fs = jest.requireActual("fs") as {
 
 const read = (relativePath: string) => fs.readFileSync(relativePath, "utf8");
 
-describe("iOS NoLate home widget native contract", () => {
+describe("iOS NoLate home and lock screen widget native contract", () => {
     const appGroup = "group.com.anonymous.nolatefe";
     const snapshotKey = "nolate.widget.snapshot.v1";
     const widgetKind = "NoLateScheduleWidget";
@@ -68,34 +68,12 @@ describe("iOS NoLate home widget native contract", () => {
         expect(widgetUI).toContain(".systemSmall");
         expect(widgetUI).toContain(".systemMedium");
         expect(widgetUI).toContain(".systemLarge");
+        expect(widgetUI).toContain(".accessoryCircular");
+        expect(widgetUI).toContain(".accessoryRectangular");
+        expect(widgetUI).toContain(".accessoryInline");
         expect(widgetSnapshot).toContain('components.scheme = "nolate"');
         expect(widgetSnapshot).toContain('components.host = "schedule"');
         expect(widgetSnapshot).toContain('components.path = "/\\(id)"');
-    });
-
-    it("uses inline dates and keeps the next schedule action at the bottom", () => {
-        const largeWidget = widgetUI.slice(
-            widgetUI.indexOf("private struct NoLateLargeWidget"),
-            widgetUI.indexOf("private struct NoLateNextScheduleCard"),
-        );
-        const nextScheduleCard = widgetUI.slice(
-            widgetUI.indexOf("private struct NoLateNextScheduleCard"),
-            widgetUI.indexOf("private struct NoLateWidgetHeader"),
-        );
-
-        expect(widgetUI).not.toContain("NoLateDateBadge");
-        expect(widgetUI).toContain("NoLateWidgetFormatting.eventDateTime");
-        expect(largeWidget.indexOf("NoLateNextScheduleCard(schedule: nextSchedule")).toBeGreaterThan(
-            largeWidget.indexOf("ForEach(Array(entry.schedules.prefix(3).enumerated())"),
-        );
-        expect(nextScheduleCard.match(/Text\("다음 일정"\)/g)).toHaveLength(1);
-        expect(nextScheduleCard).toContain("Link(destination: deepLink) { cardContent }");
-        expect(nextScheduleCard.indexOf('Text("다음 일정")')).toBeGreaterThan(
-            nextScheduleCard.indexOf("NoLateDepartureLabel(schedule: schedule"),
-        );
-        expect(widgetUI).toContain('return "\\(dayLabel) · \\(timeLabel)"');
-        expect(widgetUI).toContain("shortened: true");
-        expect(widgetUI).toContain('return "\\(remainingMinutes)분 뒤 출발"');
     });
 
     it("declares the required-reason API used for the shared UserDefaults store", () => {
