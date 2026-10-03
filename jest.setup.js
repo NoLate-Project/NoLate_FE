@@ -27,6 +27,26 @@ jest.mock('expo-image-picker', () => ({
   launchImageLibraryAsync: jest.fn().mockResolvedValue({ canceled: true, assets: null }),
 }));
 
+jest.mock('expo-tracking-transparency', () => ({
+  PermissionStatus: {
+    DENIED: 'denied',
+    GRANTED: 'granted',
+    UNDETERMINED: 'undetermined',
+  },
+  getTrackingPermissionsAsync: jest.fn().mockResolvedValue({
+    canAskAgain: false,
+    expires: 'never',
+    granted: true,
+    status: 'granted',
+  }),
+  requestTrackingPermissionsAsync: jest.fn().mockResolvedValue({
+    canAskAgain: false,
+    expires: 'never',
+    granted: true,
+    status: 'granted',
+  }),
+}));
+
 jest.mock('react-native-gesture-handler', () => {
   const React = require('react');
   const { View } = require('react-native');

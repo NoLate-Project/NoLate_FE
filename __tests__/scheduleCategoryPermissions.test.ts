@@ -1,4 +1,5 @@
 import {
+    canManageScheduleCategoryMetadata,
     canWriteScheduleCategory,
     countOwnedScheduleCategories,
     getWritableScheduleCategories,
@@ -16,7 +17,7 @@ const viewer: ScheduleCategory = {
 };
 const commenter: ScheduleCategory = {
     id: "commenter",
-    title: "댓글 공유",
+    title: "레거시 공유",
     color: "#FF9500",
     shared: true,
     sharePermission: "COMMENTER",
@@ -36,6 +37,31 @@ describe("schedule category write permission", () => {
         expect(canWriteScheduleCategory(viewer)).toBe(false);
         expect(canWriteScheduleCategory(commenter)).toBe(false);
         expect(canWriteScheduleCategory({ ...own, id: "" })).toBe(false);
+    });
+
+    test("direct category recipients edit schedules but cannot manage category metadata", () => {
+        expect(canManageScheduleCategoryMetadata(own)).toBe(true);
+        expect(canManageScheduleCategoryMetadata(editor)).toBe(false);
+        expect(canManageScheduleCategoryMetadata(viewer)).toBe(false);
+        expect(canManageScheduleCategoryMetadata({
+            ...editor,
+            calendarId: 7,
+        }, "EDITOR")).toBe(true);
+        expect(canManageScheduleCategoryMetadata({
+            ...editor,
+            calendarId: 7,
+            canManageMetadata: false,
+        }, "EDITOR")).toBe(false);
+        expect(canManageScheduleCategoryMetadata({
+            ...viewer,
+            calendarId: 7,
+            canManageMetadata: true,
+        }, "VIEWER")).toBe(false);
+        expect(canManageScheduleCategoryMetadata({
+            ...editor,
+            calendarId: 8,
+            canManageMetadata: true,
+        })).toBe(false);
     });
 
     test("일정 생성 선택지에서 읽기 전용 공유 카테고리를 제외한다", () => {

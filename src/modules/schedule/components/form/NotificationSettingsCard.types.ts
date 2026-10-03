@@ -1,4 +1,3 @@
-import type { SubscriptionPolicy } from "../../../../api/subscription";
 import type { RouteInfo } from "../../routeInfo";
 import type { ScheduleAlertMode } from "../../types";
 
@@ -13,7 +12,8 @@ export type NotificationSettingsCardProps = {
     intervalMinutes: number;
     routeInfo?: RouteInfo;
     startAt?: Date;
-    policy: SubscriptionPolicy;
+    /** @deprecated Ignored. Schedule settings are independent of subscriptions. */
+    policy?: unknown;
     onEnabledChange: (enabled: boolean) => void;
     onAlertModeChange: (mode: ScheduleAlertMode) => void;
     onLeadMinutesChange: (minutes: number) => void;

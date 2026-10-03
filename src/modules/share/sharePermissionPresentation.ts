@@ -9,7 +9,7 @@ export function getScheduleShareBadgeLabel(
         case "EDITOR":
             return "편집 공유";
         case "COMMENTER":
-            return "댓글 공유";
+            return "보기 공유";
         case "VIEWER":
             return "보기 공유";
         default:
@@ -26,7 +26,7 @@ export function getCategorySharePermissionLabel(
         case "EDITOR":
             return "편집 가능";
         case "COMMENTER":
-            return "댓글 가능";
+            return "보기 권한";
         case "VIEWER":
             return "보기 권한";
         default:

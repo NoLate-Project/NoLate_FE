@@ -16,11 +16,6 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  FREE_SUBSCRIPTION_POLICY,
-  getMySubscriptionPolicy,
-  type SubscriptionPolicy,
-} from '../../api/subscription';
 import { useAuth } from '../../modules/auth/AuthContext';
 import { type PlaceSearchItem } from '../../modules/map/routingService';
 import {
@@ -144,8 +139,6 @@ export function useCalendarImportController() {
   const [travelMode, setTravelMode] = useState<TravelMode>('TRANSIT');
   const [travelMinutes, setTravelMinutes] = useState(30);
   const [prepareDepartureAlert, setPrepareDepartureAlert] = useState(false);
-  const [subscriptionPolicy, setSubscriptionPolicy] =
-    useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
   const [favoriteDeparturePlaces, setFavoriteDeparturePlaces] = useState<
     Place[]
   >([]);
@@ -200,17 +193,11 @@ export function useCalendarImportController() {
     () => selectedCandidates.filter(isCalendarRouteCandidate).length,
     [selectedCandidates],
   );
-  const remainingNotificationQuota = Math.max(
-    0,
-    subscriptionPolicy.maxSmartSchedulesPerMonth -
-      subscriptionPolicy.usedSmartSchedulesThisMonth,
-  );
   // 목적지 후보가 하나도 없으면 공통 출발지를 받아도 경로를 만들 수 없다.
   // 이 경우 사용자가 불필요한 위치 선택 단계에 갇히지 않도록 일정 저장만 진행한다.
   const routePreparationEnabled =
     prepareDepartureAlert &&
-    routeCandidateCount > 0 &&
-    remainingNotificationQuota > 0;
+    routeCandidateCount > 0;
   const defaultOriginReady = hasFavoriteDepartureCoords(defaultOrigin);
   const routesReadyForImport = shouldPrepareCalendarImportRoutes(
     routePreparationEnabled,
@@ -473,25 +460,10 @@ export function useCalendarImportController() {
         // 신규 가입자는 저장된 출발지가 없을 수 있다. 검색 입력을 그대로 제공한다.
       });
 
-    getMySubscriptionPolicy()
-      .then(policy => {
-        if (!cancelled) setSubscriptionPolicy(policy);
-      })
-      .catch(() => {
-        // 정책 조회 실패 시 서버의 FREE 정책보다 느슨해지지 않는 로컬 기본값을 사용한다.
-        if (!cancelled) setSubscriptionPolicy(FREE_SUBSCRIPTION_POLICY);
-      });
-
     return () => {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (remainingNotificationQuota === 0) {
-      setPrepareDepartureAlert(false);
-    }
-  }, [remainingNotificationQuota]);
 
   useEffect(() => {
     const availableIds = new Set(calendarConsentItemIds);
@@ -674,8 +646,6 @@ export function useCalendarImportController() {
     categoryId,
     categoryIdBySource,
     defaultOrigin,
-    remainingNotificationQuota,
-    subscriptionPolicy,
     dispatch,
     persistCurationCompletion,
     goToStep,
@@ -735,7 +705,6 @@ export function useCalendarImportController() {
     preparedRouteCount,
     providerCtaLabel,
     providerOptions,
-    remainingNotificationQuota,
     routeCandidateCount,
     routePreparationEnabled,
     routesReadyForImport,

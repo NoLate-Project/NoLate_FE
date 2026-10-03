@@ -224,9 +224,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
             await logoutMember({ refreshToken }).catch(() => undefined);
         }
 
-        // clearAuthTokens awaits the async invalidation listener below, so cache
-        // cleanup is complete before another account can enter the app.
-        await clearAuthTokens();
+        // Cleanup already committed before server revocation. Running the
+        // listener again here would repeat authenticated retirement afterward.
+        await clearAuthTokens({ notifyListeners: false });
         setIsAuthenticated(false);
         setIsCurationCompleted(false);
         setIsLoading(false);
@@ -243,6 +243,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
         await clearAccountScopedLocalData();
         setIsAuthenticated(false);
         setIsCurationCompleted(false);
+        // Invalidation supersedes a bootstrap sequence, so its finally block
+        // no longer owns the loading flag.
         setIsLoading(false);
     }), []);
 

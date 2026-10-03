@@ -642,11 +642,22 @@ const styles = StyleSheet.create({
     letterSpacing: 0,
   },
   memberPermission: {
-    marginTop: 1,
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '600',
     letterSpacing: 0,
+  },
+  memberPermissionButton: {
+    minHeight: 28,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    paddingHorizontal: 9,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
   },
   memberActionButton: {
     width: 40,

@@ -6,7 +6,7 @@ import {
 describe("share permission presentation", () => {
     test.each([
         ["VIEWER", "보기 공유", "보기 권한"],
-        ["COMMENTER", "댓글 공유", "댓글 가능"],
+        ["COMMENTER", "보기 공유", "보기 권한"],
         ["EDITOR", "편집 공유", "편집 가능"],
         ["OWNER", "소유 공유", "소유 권한"],
     ] as const)("reflects %s instead of collapsing permissions", (permission, schedule, category) => {

@@ -53,6 +53,8 @@ import {
     revokeCalendarShareInvitation,
     revokeScheduleShare,
     revokeScheduleShareInvitation,
+    updateCategoryShare,
+    updateScheduleShare,
 } from "../src/api/scheduleSharing";
 import {
     archiveScheduleCalendar,
@@ -661,6 +663,32 @@ describe("schedule sharing api wrappers", () => {
             targetAppId: undefined,
             role: "EDITOR",
         });
+    });
+
+    test("direct schedule and category share permission updates use PATCH", async () => {
+        mockedApiPatch.mockResolvedValue({
+            success: true,
+            data: {
+                id: "80",
+                resourceId: "10",
+                ownerMemberId: 1,
+                targetMemberId: 2,
+                permission: "EDITOR",
+                status: "ACTIVE",
+            },
+        });
+
+        await updateScheduleShare("10", "80", "EDITOR");
+        await updateCategoryShare("3", "81", "VIEWER");
+
+        expect(mockedApiPatch).toHaveBeenCalledWith(
+            "/api/schedules/10/shares/80",
+            { permission: "EDITOR" },
+        );
+        expect(mockedApiPatch).toHaveBeenCalledWith(
+            "/api/schedule-categories/3/shares/81",
+            { permission: "VIEWER" },
+        );
     });
 
     test("accept invitation posts encoded token", async () => {

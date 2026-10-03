@@ -1,10 +1,6 @@
+import { SCHEDULE_NOTIFICATION_POLICY } from "../../scheduleNotificationPolicy";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, TextInput } from 'react-native';
-import {
-  FREE_SUBSCRIPTION_POLICY,
-  getMySubscriptionPolicy,
-  type SubscriptionPolicy,
-} from '../../../../api/subscription';
 import { searchAddressByKeyword } from '../../../map/tmapApi';
 import { getWritableScheduleCategories } from '../../categoryPermissions';
 import { getRouteInfoFromRoute } from '../../routeInfo';
@@ -77,9 +73,7 @@ export function useScheduleAddFormState({
   const [alertMode, setAlertMode] = useState<ScheduleAlertMode>('STANDARD');
   const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(60);
   const [notificationIntervalMinutes, setNotificationIntervalMinutes] =
-    useState(20);
-  const [subscriptionPolicy, setSubscriptionPolicy] =
-    useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
+    useState<number>(SCHEDULE_NOTIFICATION_POLICY.defaultIntervalMinutes);
   const [routePlannerSessionId, setRoutePlannerSessionId] = useState<
     string | undefined
   >();
@@ -191,7 +185,7 @@ export function useScheduleAddFormState({
     setNotificationEnabled(false);
     setAlertMode('STANDARD');
     setNotificationLeadMinutes(60);
-    setNotificationIntervalMinutes(30);
+    setNotificationIntervalMinutes(SCHEDULE_NOTIFICATION_POLICY.defaultIntervalMinutes);
     setRoutePlannerSessionId(undefined);
     setSubmitting(false);
     setTitleFocused(false);
@@ -408,27 +402,6 @@ export function useScheduleAddFormState({
     visible,
   ]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getMySubscriptionPolicy()
-      .then(policy => {
-        if (cancelled) return;
-        setSubscriptionPolicy(policy);
-        setNotificationLeadMinutes(current =>
-          Math.min(current, policy.maxNotificationLeadMinutes),
-        );
-        setNotificationIntervalMinutes(current =>
-          Math.max(current, policy.minEtaRefreshIntervalMinutes),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setSubscriptionPolicy(FREE_SUBSCRIPTION_POLICY);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const category = useMemo(
     () =>
       writableCategories.find(c => c.id === selectedCategoryId) ??
@@ -521,7 +494,6 @@ export function useScheduleAddFormState({
     setNotificationLeadMinutes,
     notificationIntervalMinutes,
     setNotificationIntervalMinutes,
-    subscriptionPolicy,
     routePlannerSessionId,
     setRoutePlannerSessionId,
     routePlannerAwayRef,

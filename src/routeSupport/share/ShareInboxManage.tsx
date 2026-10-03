@@ -35,11 +35,13 @@ export function ManageShareSheet({
   accent,
   bottomInset,
   revokingShareId,
+  updatingShareId,
   revokingInvitationId,
   onClose,
   onOpenResource,
   onOpenComposer,
   onRevokeShare,
+  onChangeSharePermission,
   onRevokeInvitation,
 }: {
   item: ShareLibraryItem | null;
@@ -47,11 +49,13 @@ export function ManageShareSheet({
   accent: string;
   bottomInset: number;
   revokingShareId: string | null;
+  updatingShareId: string | null;
   revokingInvitationId: string | null;
   onClose: () => void;
   onOpenResource: () => void;
   onOpenComposer: () => void;
   onRevokeShare: (share: ScheduleShare) => void;
+  onChangeSharePermission: (share: ScheduleShare, permission: 'VIEWER' | 'EDITOR') => void;
   onRevokeInvitation: (invitation: ShareInvitationSummary) => void;
 }) {
   const editorCount =
@@ -203,6 +207,10 @@ export function ManageShareSheet({
                       share.targetEmail?.trim() ||
                       `NoLate ID #${share.targetMemberId}`;
                     const revoking = revokingShareId === share.id;
+                    const updating = updatingShareId === share.id;
+                    const currentPermission = share.permission === 'EDITOR' ? 'EDITOR' : 'VIEWER';
+                    const nextPermission = currentPermission === 'EDITOR' ? 'VIEWER' : 'EDITOR';
+                    const shareMutationPending = Boolean(revokingShareId || updatingShareId);
                     return (
                       <View
                         key={share.id}
@@ -234,27 +242,45 @@ export function ManageShareSheet({
                           >
                             {target}
                           </Text>
-                          <Text
-                            style={[
-                              styles.memberPermission,
-                              { color: colors.textSecondary },
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`${target} 권한을 ${permissionLabel(nextPermission)}로 변경`}
+                            accessibilityState={{ disabled: shareMutationPending, busy: updating }}
+                            disabled={shareMutationPending}
+                            onPress={() => onChangeSharePermission(share, nextPermission)}
+                            style={({ pressed }) => [
+                              styles.memberPermissionButton,
+                              {
+                                borderColor: colors.border,
+                                backgroundColor: colors.surface2,
+                                opacity: shareMutationPending ? 0.5 : pressed ? 0.65 : 1,
+                              },
                             ]}
                           >
-                            {permissionLabel(share.permission)} 권한
-                          </Text>
+                            {updating ? (
+                              <ActivityIndicator size="small" color={accent} />
+                            ) : (
+                              <>
+                                <Text style={[styles.memberPermission, { color: colors.textSecondary }]}>
+                                  {permissionLabel(currentPermission)} 권한
+                                </Text>
+                                <Ionicons name="swap-vertical-outline" size={14} color={colors.textSecondary} />
+                              </>
+                            )}
+                          </Pressable>
                         </View>
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel={`${target} 공유 해제`}
                           accessibilityState={{
-                            disabled: Boolean(revokingShareId),
+                            disabled: shareMutationPending,
                             busy: revoking,
                           }}
-                          disabled={Boolean(revokingShareId)}
+                          disabled={shareMutationPending}
                           onPress={() => onRevokeShare(share)}
                           style={({ pressed }) => [
                             styles.memberActionButton,
-                            { opacity: pressed || revokingShareId ? 0.5 : 1 },
+                            { opacity: pressed || shareMutationPending ? 0.5 : 1 },
                           ]}
                         >
                           {revoking ? (

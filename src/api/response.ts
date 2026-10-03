@@ -27,6 +27,17 @@ export class ApiResponseError extends Error {
     }
 }
 
+/** Refresh conclusively rejected the session (not a timeout or server outage). */
+export class AuthSessionInvalidatedError extends ApiResponseError {
+    constructor(cause?: unknown) {
+        super("로그인 세션이 만료되었어요.", {
+            errorCode: "AUTH_SESSION_INVALIDATED",
+            status: 401,
+            cause,
+        });
+    }
+}
+
 export function unwrapApiResponse<T>(response: ApiEnvelope<T>): T {
     if (response.success && response.data !== undefined && response.data !== null) {
         return response.data;

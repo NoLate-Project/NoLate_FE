@@ -9,8 +9,9 @@ const mockArchiveScheduleCalendar = jest.fn();
 const mockLeaveScheduleCalendar = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
 const mockRouterReplace = jest.fn();
-const mockParams = {};
+const mockParams: { id?: string } = {};
 let calendarResponse: ScheduleCalendar[];
+let mockCachedCalendarResponse: ScheduleCalendar[] | null;
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
@@ -42,6 +43,9 @@ jest.mock("../src/api/scheduleCalendars", () => ({
 jest.mock("../src/modules/notification/departureAlarmMutationRecovery", () => ({
     recoverDepartureAlarmsAfterMutation: () =>
         mockRecoverDepartureAlarmsAfterMutation(),
+}));
+jest.mock("../src/modules/schedule/scheduleCalendarMemoryCache", () => ({
+    getCachedScheduleCalendars: () => mockCachedCalendarResponse,
 }));
 jest.mock("../src/modules/schedule/components/share/ShareInvitationSheet", () => "ShareInvitationSheet");
 jest.mock("../src/modules/theme/ThemeContext", () => ({
@@ -118,7 +122,9 @@ describe("schedule calendar departure-alarm recovery", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        delete mockParams.id;
         calendarResponse = [ownerCalendar];
+        mockCachedCalendarResponse = null;
         mockGetScheduleCalendarMembers.mockResolvedValue([]);
         mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
         jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
@@ -301,6 +307,28 @@ describe("schedule calendar departure-alarm recovery", () => {
             "보관 실패",
             "archive failed",
         );
+    });
+
+    it("opens the requested invitation calendar instead of a stale cached calendar", async () => {
+        mockParams.id = String(secondOwnerCalendar.id);
+        mockCachedCalendarResponse = [ownerCalendar];
+        calendarResponse = [ownerCalendar, secondOwnerCalendar];
+        mockGetScheduleCalendarMembers.mockImplementation((calendarId: number) => (
+            Promise.resolve(calendarId === secondOwnerCalendar.id ? [workMember] : [familyMember])
+        ));
+
+        await renderScreen();
+
+        const selectedRows = renderer!.root.findAll((node) => (
+            typeof node.props.onPress === "function"
+            && node.props.accessibilityState?.selected === true
+            && getRenderedText(node).includes(secondOwnerCalendar.title)
+        ));
+        expect(selectedRows).toHaveLength(1);
+        expect(getRenderedText(renderer!.root)).toContain(workMember.name);
+        expect(getRenderedText(renderer!.root)).not.toContain(familyMember.name);
+        expect(mockGetScheduleCalendarMembers).not.toHaveBeenCalledWith(ownerCalendar.id);
+        expect(mockGetScheduleCalendarMembers).toHaveBeenCalledWith(secondOwnerCalendar.id);
     });
 
     it("keeps settings locked to the selected calendar and ignores stale member responses", async () => {

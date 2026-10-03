@@ -12,7 +12,10 @@ import {
   getScheduleTravelPlan,
   upsertMyScheduleTravelPlan,
 } from '../../api/scheduleTravelPlans';
-import { canEditPresentedSchedule } from '../../modules/schedule/schedulePermissions';
+import {
+  canEditPresentedSchedule,
+  canManagePresentedSchedule,
+} from '../../modules/schedule/schedulePermissions';
 import { hasRenderableSavedRouteGeometry } from '../../modules/map/savedRouteMapPresentation';
 import { getSavedRouteEntryPath } from '../../modules/schedule/savedRouteDetailPresentation';
 import { useScheduleStore } from '../../modules/schedule/store';
@@ -149,11 +152,10 @@ export function useScheduleDetailController({
     });
 
   const item = internalPreviewItem ?? (id ? state.itemsById[id] : undefined);
-  const canManageSchedule = useMemo(() => {
-    if (!item) return false;
-    if (typeof item.ownerMemberId !== 'number') return true;
-    return currentMemberId === item.ownerMemberId;
-  }, [currentMemberId, item]);
+  const canManageSchedule = useMemo(
+    () => canManagePresentedSchedule(item, currentMemberId),
+    [currentMemberId, item],
+  );
   const canEditSchedule = canEditPresentedSchedule(item, canManageSchedule);
   const openScheduleEditor = useCallback(() => {
     setMemoSheetVisible(false);

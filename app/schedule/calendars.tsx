@@ -66,15 +66,12 @@ export default function ScheduleCalendarsScreen() {
     const [calendars, setCalendars] = useState<ScheduleCalendar[]>(() =>
         getCachedScheduleCalendars() ?? []
     );
-    const [selectedId, setSelectedId] = useState<number | null>(() => {
-        if (
-            requestedCalendarId !== null
-            && calendars.some((calendar) => calendar.id === requestedCalendarId)
-        ) {
-            return requestedCalendarId;
-        }
-        return calendars[0]?.id ?? null;
-    });
+    // A route target is authoritative even when the memory cache predates a
+    // newly accepted invitation. Selecting a cached fallback here would keep
+    // that older calendar selected after the refreshed list arrives.
+    const [selectedId, setSelectedId] = useState<number | null>(() =>
+        requestedCalendarId ?? calendars[0]?.id ?? null
+    );
     const [members, setMembers] = useState<ScheduleCalendarMember[]>([]);
     const hasCalendarSnapshotRef = useRef(calendars.length > 0);
     const [loading, setLoading] = useState(!hasCalendarSnapshotRef.current);
@@ -205,6 +202,12 @@ export default function ScheduleCalendarsScreen() {
             }
         }
     }, []);
+
+    useEffect(() => {
+        if (requestedCalendarId !== null) {
+            selectCalendar(requestedCalendarId);
+        }
+    }, [requestedCalendarId, selectCalendar]);
 
     useEffect(() => {
         const task = runAfterScreenTransition(() => {

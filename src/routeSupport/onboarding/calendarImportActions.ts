@@ -1,7 +1,7 @@
+import { SCHEDULE_NOTIFICATION_POLICY } from "../../modules/schedule/scheduleNotificationPolicy";
 import type { Dispatch, SetStateAction } from 'react';
 import { Alert } from 'react-native';
 
-import type { SubscriptionPolicy } from '../../api/subscription';
 import {
   getRouteAlternativeOptions,
   searchAddressByKeyword,
@@ -58,8 +58,6 @@ type CalendarImportActionParams = {
   categoryId: string;
   categoryIdBySource: Record<string, string>;
   defaultOrigin?: Place;
-  remainingNotificationQuota: number;
-  subscriptionPolicy: SubscriptionPolicy;
   dispatch: ReturnType<typeof useScheduleStore>['dispatch'];
   persistCurationCompletion: () => Promise<void>;
   goToStep: (step: OnboardingStep) => void;
@@ -86,8 +84,6 @@ export function createCalendarImportActions({
   categoryId,
   categoryIdBySource,
   defaultOrigin,
-  remainingNotificationQuota,
-  subscriptionPolicy,
   dispatch,
   persistCurationCompletion,
   goToStep,
@@ -181,9 +177,7 @@ export function createCalendarImportActions({
           offset,
           offset + IMPORT_BATCH_SIZE,
         );
-        const canAttemptMoreNotifications =
-          shouldPrepareRoutes &&
-          enabledNotificationCount < remainingNotificationQuota;
+        const canAttemptMoreNotifications = shouldPrepareRoutes;
         const enrichedBatch = await Promise.all(
           batch.map(async candidate => {
             const candidateCategory = resolveCalendarImportCategoryAssignment(
@@ -219,15 +213,14 @@ export function createCalendarImportActions({
           }),
         );
 
-        // 일정 생성은 순차 처리해 구독 quota가 동시에 중복 소비되지 않게 한다.
+        // 저장 결과와 진행률을 각 일정에 순서대로 반영한다.
         for (const enriched of enrichedBatch) {
           const shouldEnableNotification =
-            enriched.routePrepared &&
-            enabledNotificationCount < remainingNotificationQuota;
+            enriched.routePrepared;
           const payload = shouldEnableNotification
             ? enableCalendarImportNotification(
                 enriched.payload,
-                subscriptionPolicy.minEtaRefreshIntervalMinutes,
+                SCHEDULE_NOTIFICATION_POLICY.defaultIntervalMinutes,
               )
             : enriched.payload;
 

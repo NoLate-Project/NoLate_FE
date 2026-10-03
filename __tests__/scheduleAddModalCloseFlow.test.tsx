@@ -33,12 +33,12 @@ jest.mock("../src/modules/map/tmapApi", () => ({
 }));
 jest.mock("../src/api/subscription", () => ({
     FREE_SUBSCRIPTION_POLICY: {
-        maxNotificationLeadMinutes: 60,
-        minEtaRefreshIntervalMinutes: 20,
+
+
     },
     getMySubscriptionPolicy: jest.fn().mockResolvedValue({
-        maxNotificationLeadMinutes: 60,
-        minEtaRefreshIntervalMinutes: 20,
+
+
     }),
 }));
 jest.mock("../src/api/scheduleCalendars", () => ({

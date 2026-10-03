@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost } from "./api";
+import { apiDelete, apiGet, apiPatch, apiPost } from "./api";
 import { assertApiSuccess, type ApiEnvelope, unwrapApiResponse } from "./response";
 import type { ScheduleSharePermission } from "../modules/schedule/types";
 import {
@@ -9,6 +9,7 @@ import {
 import { clearCalendarScheduleCache } from "../modules/schedule/calendarScheduleCache";
 
 export type ShareResourceType = "SCHEDULE" | "CATEGORY" | "CALENDAR";
+export type GrantableScheduleSharePermission = Extract<ScheduleSharePermission, "VIEWER" | "EDITOR">;
 export type ShareInvitationStatus = "PENDING" | "ACCEPTED" | "EXPIRED" | "REVOKED";
 export type ShareStatus = "ACTIVE" | "REVOKED";
 
@@ -43,7 +44,7 @@ export type ScheduleShare = {
 };
 
 export type CreateShareInvitationPayload = {
-    permission?: Exclude<ScheduleSharePermission, "OWNER">;
+    permission?: GrantableScheduleSharePermission;
     contentMode?: ScheduleShareContentMode;
     ttlHours?: number;
     maxAcceptCount?: number;
@@ -52,7 +53,7 @@ export type CreateShareInvitationPayload = {
 export type CreateDirectSharePayload = {
     targetEmail?: string;
     targetAppId?: number;
-    permission?: Exclude<ScheduleSharePermission, "OWNER">;
+    permission?: GrantableScheduleSharePermission;
     contentMode?: ScheduleShareContentMode;
 };
 
@@ -149,6 +150,36 @@ export async function createCategoryShare(
     const response = await apiPost<ApiEnvelope<ScheduleShare>, CreateDirectSharePayload>(
         `/api/schedule-categories/${categoryId}/shares`,
         payload,
+    );
+    return unwrapApiResponse(response);
+}
+
+export async function updateScheduleShare(
+    scheduleId: string,
+    shareId: string,
+    permission: GrantableScheduleSharePermission,
+): Promise<ScheduleShare> {
+    const response = await apiPatch<
+        ApiEnvelope<ScheduleShare>,
+        { permission: GrantableScheduleSharePermission }
+    >(
+        `/api/schedules/${scheduleId}/shares/${shareId}`,
+        { permission },
+    );
+    return unwrapApiResponse(response);
+}
+
+export async function updateCategoryShare(
+    categoryId: string,
+    shareId: string,
+    permission: GrantableScheduleSharePermission,
+): Promise<ScheduleShare> {
+    const response = await apiPatch<
+        ApiEnvelope<ScheduleShare>,
+        { permission: GrantableScheduleSharePermission }
+    >(
+        `/api/schedule-categories/${categoryId}/shares/${shareId}`,
+        { permission },
     );
     return unwrapApiResponse(response);
 }

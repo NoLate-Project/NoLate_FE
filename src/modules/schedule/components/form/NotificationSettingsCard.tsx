@@ -39,7 +39,6 @@ export default function NotificationSettingsCard({
     intervalMinutes,
     routeInfo,
     startAt,
-    policy,
     onEnabledChange,
     onAlertModeChange,
     onLeadMinutesChange,
@@ -72,8 +71,7 @@ export default function NotificationSettingsCard({
     const soundPreviewSessionRef = useRef<NoLateCustomAlarmAudioSession | null>(null);
     const soundPreviewingIdRef = useRef<NoLateAlarmSoundId | null>(null);
     const soundPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const quotaReached = policy.usedSmartSchedulesThisMonth >= policy.maxSmartSchedulesPerMonth;
-    const canEnable = routeReady && !quotaReached;
+    const canEnable = routeReady;
     const {
         accentBlue,
         selectedBackground,
@@ -397,7 +395,7 @@ export default function NotificationSettingsCard({
                 </View>
                 <Switch
                     accessibilityLabel={flat ? "출발 알림 사용" : "출발 알림"}
-                    accessibilityHint={canEnable || enabled ? undefined : "경로 선택 또는 이용 한도 확인이 필요합니다"}
+                    accessibilityHint={canEnable || enabled ? undefined : "경로 선택이 필요합니다"}
                     value={enabled}
                     disabled={!canEnable && !enabled}
                     onValueChange={onEnabledChange}
@@ -409,10 +407,6 @@ export default function NotificationSettingsCard({
 
             {!routeReady ? (
                 <Text style={[styles.notice, { color: colors.textSecondary }]}>경로를 선택하면 설정할 수 있어요.</Text>
-            ) : quotaReached && !enabled ? (
-                <Text style={[styles.notice, { color: colors.textSecondary }]}>
-                    이번 달 알림 일정 한도를 사용했어요.
-                </Text>
             ) : null}
 
             {enabled ? (
@@ -507,8 +501,8 @@ export default function NotificationSettingsCard({
                                 accessibilityRole="button"
                                 accessibilityLabel="추천 알림 설정 적용"
                                 onPress={() => {
-                                    onLeadMinutesChange(Math.min(60, policy.maxNotificationLeadMinutes));
-                                    onIntervalMinutesChange(Math.max(intervalMinutes, policy.minEtaRefreshIntervalMinutes));
+                                    onLeadMinutesChange(60);
+                                    onIntervalMinutesChange(Math.max(intervalMinutes, 10));
                                 }}
                                 style={[styles.useButton, { borderColor: accentBlue }]}
                             >

@@ -1,6 +1,8 @@
 import {
     getCalendarScopePresentation,
+    getScheduleCreationCalendarId,
     getScheduleTargetCalendarId,
+    isCategoryAvailableForScheduleCreation,
     isCategoryInCalendarScope,
     isScheduleInCalendarScope,
     normalizeCalendarScope,
@@ -28,6 +30,23 @@ describe("calendarScope", () => {
         expect(getScheduleTargetCalendarId("all")).toBeNull();
         expect(getScheduleTargetCalendarId("personal")).toBeNull();
         expect(getScheduleTargetCalendarId(21)).toBe(21);
+    });
+
+    it("keeps a moved direct-share category writable outside calendar membership", () => {
+        const directCategory = { calendarId: 21, shared: true };
+        expect(isCategoryAvailableForScheduleCreation(
+            directCategory,
+            "personal",
+            new Set(),
+        )).toBe(true);
+        expect(isCategoryAvailableForScheduleCreation(
+            directCategory,
+            "personal",
+            new Set([21]),
+        )).toBe(false);
+        expect(getScheduleCreationCalendarId("personal", directCategory)).toBe(21);
+        expect(getScheduleCreationCalendarId(30, { calendarId: 30 })).toBe(30);
+        expect(getScheduleCreationCalendarId("personal", { calendarId: null })).toBeNull();
     });
 
     it("falls back to all when a selected calendar is no longer visible", () => {

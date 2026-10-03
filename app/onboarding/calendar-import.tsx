@@ -105,7 +105,6 @@ export default function CalendarImportOnboarding() {
     preparedRouteCount,
     providerCtaLabel,
     providerOptions,
-    remainingNotificationQuota,
     routeCandidateCount,
     routePreparationEnabled,
     routesReadyForImport,
@@ -527,12 +526,9 @@ export default function CalendarImportOnboarding() {
                         출발 알림 함께 준비
                       </Text>
                       <Text style={styles.switchHint}>
-                        {remainingNotificationQuota === 0
-                          ? '이번 달 실시간 알림 한도를 모두 사용했어요'
-                          : routePreparationEnabled && !defaultOriginReady
+                        {routePreparationEnabled && !defaultOriginReady
                           ? '기본 출발지를 선택해 주세요'
-                          : routePreparationEnabled
-                          ? `장소가 있는 일정 중 최대 ${remainingNotificationQuota}개 설정`
+
                           : '장소가 있는 일정의 경로와 알림을 만들어요'}
                       </Text>
                     </View>
@@ -541,7 +537,6 @@ export default function CalendarImportOnboarding() {
                         accessibilityLabel="출발 알림 함께 준비"
                         value={routePreparationEnabled}
                         onValueChange={setPrepareDepartureAlert}
-                        disabled={remainingNotificationQuota === 0}
                         trackColor={{
                           false: mode === 'dark' ? '#34363D' : '#D7D9DF',
                           true: BRAND_BLUE,

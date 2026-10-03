@@ -1,5 +1,5 @@
 import React from "react";
-import { AppState, Linking, Modal, StyleSheet } from "react-native";
+import { AppState, Linking, Modal, StyleSheet, Switch } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import NotificationSettingsCard from "../src/modules/schedule/components/form/NotificationSettingsCard";
@@ -169,6 +169,43 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             await Promise.resolve();
         });
     }
+
+    test.each(["FREE", "PREMIUM"] as const)(
+        "%s도 기존 월 한도를 넘긴 후 출발 알림을 켤 수 있다",
+        async plan => {
+            const onEnabledChange = jest.fn();
+            await act(async () => {
+                renderer = TestRenderer.create(
+                    <NotificationSettingsCard
+                        routeReady
+                        enabled={false}
+                        alertMode="STANDARD"
+                        leadMinutes={120}
+                        intervalMinutes={10}
+                        policy={{
+                            ...policy,
+                            plan,
+                            maxSmartSchedulesPerMonth: plan === "FREE" ? 5 : 100,
+                            usedSmartSchedulesThisMonth: 101,
+                        }}
+                        onEnabledChange={onEnabledChange}
+                        onAlertModeChange={onAlertModeChange}
+                        onLeadMinutesChange={jest.fn()}
+                        onIntervalMinutesChange={jest.fn()}
+                    />,
+                );
+                await Promise.resolve();
+            });
+
+            const toggle = renderer!.root.findByType(Switch);
+            expect(toggle.props.disabled).toBe(false);
+            await act(async () => toggle.props.onValueChange(true));
+            expect(onEnabledChange).toHaveBeenCalledWith(true);
+            expect(renderer!.root.findAllByProps({
+                children: "이번 달 알림 일정 한도를 사용했어요.",
+            })).toHaveLength(0);
+        },
+    );
 
     test("푸시 알림과 출발 알람을 한 목록에서 바로 비교하고 선택한다", async () => {
         await renderCard("STANDARD", "flat");

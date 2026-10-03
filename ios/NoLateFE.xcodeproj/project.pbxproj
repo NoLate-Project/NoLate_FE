@@ -32,6 +32,16 @@
 		E10000000000000000000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000011 /* ShareViewController.swift */; };
 		E10000000000000000000002 /* NoLateShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E10000000000000000000014 /* NoLateShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E10000000000000000000003 /* ../../assets/icon.png in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000015 /* ../../assets/icon.png */; };
+		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
+		F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000011 /* NoLateLiveActivityModels.swift */; };
+		F20000000000000000000002 /* Shared/NoLateDepartureActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* Shared/NoLateDepartureActivityAttributes.swift */; };
+		F20000000000000000000003 /* Shared/NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* Shared/NoLateDepartureLiveActivityIntent.swift */; };
+		F20000000000000000000004 /* Extension/NoLateLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000014 /* Extension/NoLateLiveActivityBundle.swift */; };
+		F20000000000000000000005 /* Extension/NoLateDepartureLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000015 /* Extension/NoLateDepartureLiveActivity.swift */; };
+		F20000000000000000000006 /* Extension/NoLateRouteBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000016 /* Extension/NoLateRouteBarView.swift */; };
+		F20000000000000000000007 /* Extension/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000018 /* Extension/Assets.xcassets */; };
+		F20000000000000000000008 /* NoLateLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F20000000000000000000019 /* NoLateLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F20000000000000000000009 /* Shared/NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* Shared/NoLateDepartureLiveActivityIntent.swift */; };
 		F30000000000000000000001 /* NoLateWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000011 /* NoLateWidgetBundle.swift */; };
 		F30000000000000000000002 /* NoLateWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000012 /* NoLateWidget.swift */; };
 		F30000000000000000000003 /* NoLateWidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000013 /* NoLateWidgetSnapshot.swift */; };
@@ -41,16 +51,6 @@
 		F30000000000000000000007 /* NoLateWidgetModule.m in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000019 /* NoLateWidgetModule.m */; };
 		F30000000000000000000008 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001A /* WidgetKit.framework */; };
 		F30000000000000000000009 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F3000000000000000000001B /* SwiftUI.framework */; };
-		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000011 /* NoLateLiveActivityModels.swift */; };
-		F20000000000000000000002 /* NoLateDepartureActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */; };
-		F20000000000000000000003 /* NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */; };
-		F20000000000000000000004 /* NoLateLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000014 /* NoLateLiveActivityBundle.swift */; };
-		F20000000000000000000005 /* NoLateDepartureLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */; };
-		F20000000000000000000006 /* NoLateRouteBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000016 /* NoLateRouteBarView.swift */; };
-		F20000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000018 /* Assets.xcassets */; };
-		F20000000000000000000008 /* NoLateLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F20000000000000000000019 /* NoLateLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		F20000000000000000000009 /* NoLateDepartureLiveActivityIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -133,6 +133,18 @@
 		E10000000000000000000013 /* NoLateShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NoLateShareExtension.entitlements; sourceTree = "<group>"; };
 		E10000000000000000000014 /* NoLateShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E10000000000000000000015 /* ../../assets/icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ../../assets/icon.png; sourceTree = "<group>"; };
+		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NoLateFE/AppDelegate.swift; sourceTree = "<group>"; };
+		F11748442D0722820044C1D9 /* NoLateFE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "NoLateFE-Bridging-Header.h"; path = "NoLateFE/NoLateFE-Bridging-Header.h"; sourceTree = "<group>"; };
+		F20000000000000000000011 /* NoLateLiveActivityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateLiveActivityModels.swift; sourceTree = "<group>"; };
+		F20000000000000000000012 /* Shared/NoLateDepartureActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureActivityAttributes.swift; sourceTree = "<group>"; };
+		F20000000000000000000013 /* Shared/NoLateDepartureLiveActivityIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureLiveActivityIntent.swift; sourceTree = "<group>"; };
+		F20000000000000000000014 /* Extension/NoLateLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateLiveActivityBundle.swift; sourceTree = "<group>"; };
+		F20000000000000000000015 /* Extension/NoLateDepartureLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateDepartureLiveActivity.swift; sourceTree = "<group>"; };
+		F20000000000000000000016 /* Extension/NoLateRouteBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateRouteBarView.swift; sourceTree = "<group>"; };
+		F20000000000000000000017 /* Extension/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Extension/Info.plist; sourceTree = "<group>"; };
+		F20000000000000000000018 /* Extension/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Extension/Assets.xcassets; sourceTree = "<group>"; };
+		F20000000000000000000019 /* NoLateLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F30000000000000000000011 /* NoLateWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidgetBundle.swift; sourceTree = "<group>"; };
 		F30000000000000000000012 /* NoLateWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidget.swift; sourceTree = "<group>"; };
 		F30000000000000000000013 /* NoLateWidgetSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateWidgetSnapshot.swift; sourceTree = "<group>"; };
@@ -144,18 +156,6 @@
 		F30000000000000000000019 /* NoLateWidgetModule.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = NoLateWidgetModule.m; path = NoLateFE/NoLateWidgetModule.m; sourceTree = "<group>"; };
 		F3000000000000000000001A /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		F3000000000000000000001B /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
-		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
-		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NoLateFE/AppDelegate.swift; sourceTree = "<group>"; };
-		F11748442D0722820044C1D9 /* NoLateFE-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "NoLateFE-Bridging-Header.h"; path = "NoLateFE/NoLateFE-Bridging-Header.h"; sourceTree = "<group>"; };
-		F20000000000000000000011 /* NoLateLiveActivityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoLateLiveActivityModels.swift; sourceTree = "<group>"; };
-		F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureActivityAttributes.swift; sourceTree = "<group>"; };
-		F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Shared/NoLateDepartureLiveActivityIntent.swift; sourceTree = "<group>"; };
-		F20000000000000000000014 /* NoLateLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateLiveActivityBundle.swift; sourceTree = "<group>"; };
-		F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateDepartureLiveActivity.swift; sourceTree = "<group>"; };
-		F20000000000000000000016 /* NoLateRouteBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Extension/NoLateRouteBarView.swift; sourceTree = "<group>"; };
-		F20000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Extension/Info.plist; sourceTree = "<group>"; };
-		F20000000000000000000018 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Extension/Assets.xcassets; sourceTree = "<group>"; };
-		F20000000000000000000019 /* NoLateLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -338,13 +338,13 @@
 			isa = PBXGroup;
 			children = (
 				F20000000000000000000011 /* NoLateLiveActivityModels.swift */,
-				F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */,
-				F20000000000000000000013 /* NoLateDepartureLiveActivityIntent.swift */,
-				F20000000000000000000014 /* NoLateLiveActivityBundle.swift */,
-				F20000000000000000000015 /* NoLateDepartureLiveActivity.swift */,
-				F20000000000000000000016 /* NoLateRouteBarView.swift */,
-				F20000000000000000000017 /* Info.plist */,
-				F20000000000000000000018 /* Assets.xcassets */,
+				F20000000000000000000012 /* Shared/NoLateDepartureActivityAttributes.swift */,
+				F20000000000000000000013 /* Shared/NoLateDepartureLiveActivityIntent.swift */,
+				F20000000000000000000014 /* Extension/NoLateLiveActivityBundle.swift */,
+				F20000000000000000000015 /* Extension/NoLateDepartureLiveActivity.swift */,
+				F20000000000000000000016 /* Extension/NoLateRouteBarView.swift */,
+				F20000000000000000000017 /* Extension/Info.plist */,
+				F20000000000000000000018 /* Extension/Assets.xcassets */,
 			);
 			name = NoLateLiveActivityExtension;
 			path = "../modules/nolate-live-activity/ios";
@@ -569,7 +569,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F20000000000000000000007 /* Assets.xcassets in Resources */,
+				F20000000000000000000007 /* Extension/Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -784,7 +784,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F20000000000000000000009 /* NoLateDepartureLiveActivityIntent.swift in Sources */,
+				F20000000000000000000009 /* Shared/NoLateDepartureLiveActivityIntent.swift in Sources */,
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
 				9967B4292303A117CA1CDFF8 /* ExpoModulesProvider.swift in Sources */,
 				A20200000000000000000003 /* ViewModeGlassControlView.swift in Sources */,
@@ -812,11 +812,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */,
-				F20000000000000000000002 /* NoLateDepartureActivityAttributes.swift in Sources */,
-				F20000000000000000000003 /* NoLateDepartureLiveActivityIntent.swift in Sources */,
-				F20000000000000000000004 /* NoLateLiveActivityBundle.swift in Sources */,
-				F20000000000000000000005 /* NoLateDepartureLiveActivity.swift in Sources */,
-				F20000000000000000000006 /* NoLateRouteBarView.swift in Sources */,
+				F20000000000000000000002 /* Shared/NoLateDepartureActivityAttributes.swift in Sources */,
+				F20000000000000000000003 /* Shared/NoLateDepartureLiveActivityIntent.swift in Sources */,
+				F20000000000000000000004 /* Extension/NoLateLiveActivityBundle.swift in Sources */,
+				F20000000000000000000005 /* Extension/NoLateDepartureLiveActivity.swift in Sources */,
+				F20000000000000000000006 /* Extension/NoLateRouteBarView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -913,11 +913,12 @@
 			buildSettings = {
 				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_BITCODE = NO;
 				ENABLE_DEBUG_DYLIB = NO;
@@ -957,11 +958,12 @@
 			buildSettings = {
 				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES = YES;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1125,7 +1127,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -1155,7 +1157,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -1183,7 +1185,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
@@ -1211,7 +1213,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
@@ -1239,7 +1241,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateWidget/NoLateWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateWidget/Info.plist;
@@ -1250,6 +1252,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.3.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.widget;
 				PRODUCT_NAME = NoLateWidget;
 				SKIP_INSTALL = YES;
@@ -1267,7 +1270,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateWidget/NoLateWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 53;
+				CURRENT_PROJECT_VERSION = 54;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateWidget/Info.plist;
@@ -1278,6 +1281,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.3.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.widget;
 				PRODUCT_NAME = NoLateWidget;
 				SKIP_INSTALL = YES;

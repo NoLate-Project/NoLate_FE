@@ -24,26 +24,27 @@ describe("schedule permissions", () => {
         expect(canEditPresentedSchedule(schedule("COMMENTER"), false)).toBe(false);
     });
 
-    test("삭제는 캘린더 역할과 무관하게 일정 원작성자에게만 허용한다", () => {
+    test("삭제는 현재 리소스 소유자와 공유 편집자에게 허용한다", () => {
         expect(canDeletePresentedSchedule(schedule(), 10)).toBe(true);
         expect(canDeletePresentedSchedule(schedule("OWNER"), 10)).toBe(true);
         expect(canDeletePresentedSchedule(schedule("EDITOR"), 10)).toBe(true);
-        expect(canDeletePresentedSchedule(schedule("OWNER"), 20)).toBe(false);
-        expect(canDeletePresentedSchedule(schedule("EDITOR"), 20)).toBe(false);
+        expect(canDeletePresentedSchedule(schedule("OWNER"), 20)).toBe(true);
+        expect(canDeletePresentedSchedule(schedule("EDITOR"), 20)).toBe(true);
+        expect(canDeletePresentedSchedule(schedule("VIEWER"), 10)).toBe(false);
         expect(canDeletePresentedSchedule(schedule("VIEWER"), 20)).toBe(false);
     });
 
-    test("작성자 정보가 없는 구버전 개인 일정만 삭제 동작을 유지한다", () => {
+    test("작성자 정보가 없는 구버전 개인 및 편집 가능 일정의 삭제 동작을 유지한다", () => {
         const legacyPersonal = { ...schedule(), ownerMemberId: undefined };
         const legacyShared = { ...schedule("OWNER"), ownerMemberId: undefined };
 
         expect(canDeletePresentedSchedule(legacyPersonal, 20)).toBe(true);
-        expect(canDeletePresentedSchedule(legacyShared, 20)).toBe(false);
+        expect(canDeletePresentedSchedule(legacyShared, 20)).toBe(true);
     });
 
-    test("캘린더 이동은 역할과 무관하게 일정 원작성자에게만 허용한다", () => {
+    test("공유 일정의 캘린더 이동은 서버가 제공한 현재 리소스 OWNER에게만 허용한다", () => {
         expect(canChangePresentedScheduleCalendar(schedule("OWNER"), 10)).toBe(true);
-        expect(canChangePresentedScheduleCalendar(schedule("EDITOR"), 10)).toBe(true);
+        expect(canChangePresentedScheduleCalendar(schedule("EDITOR"), 10)).toBe(false);
         expect(canChangePresentedScheduleCalendar(schedule("OWNER"), 20)).toBe(false);
         expect(canChangePresentedScheduleCalendar(schedule("EDITOR"), 20)).toBe(false);
     });
@@ -54,5 +55,9 @@ describe("schedule permissions", () => {
 
         expect(canChangePresentedScheduleCalendar(legacyPersonal, 20)).toBe(true);
         expect(canChangePresentedScheduleCalendar(legacyShared, 20)).toBe(false);
+        expect(canChangePresentedScheduleCalendar({
+            ...schedule("OWNER"),
+            ownerMemberId: undefined,
+        }, 20)).toBe(false);
     });
 });

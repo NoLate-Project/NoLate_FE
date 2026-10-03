@@ -1,5 +1,6 @@
 import {
     canWriteScheduleCalendar,
+    getCategoryMoveDestinationCalendars,
     getWritableScheduleCalendars,
 } from "../src/modules/schedule/calendarPermissions";
 import type { ScheduleCalendar } from "../src/api/scheduleCalendars";
@@ -39,5 +40,16 @@ describe("schedule calendar write permission", () => {
         ]);
 
         expect(result.map(({ id }) => id)).toEqual([2, 3]);
+    });
+
+    test("카테고리 이동 대상은 OWNER와 EDITOR를 허용하되 현재 캘린더는 제외한다", () => {
+        const result = getCategoryMoveDestinationCalendars([
+            calendar(1, "OWNER"),
+            calendar(2, "EDITOR"),
+            calendar(3, "VIEWER"),
+            calendar(4, "EDITOR", "ARCHIVED"),
+        ], 1);
+
+        expect(result.map(({ id }) => id)).toEqual([2]);
     });
 });

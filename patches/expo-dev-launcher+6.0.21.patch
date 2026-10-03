@@ -1,0 +1,46 @@
+diff --git a/node_modules/expo-dev-launcher/ios/ReactDelegateHandler/ExpoDevLauncherAppDelegateSubscriber.swift b/node_modules/expo-dev-launcher/ios/ReactDelegateHandler/ExpoDevLauncherAppDelegateSubscriber.swift
+--- a/node_modules/expo-dev-launcher/ios/ReactDelegateHandler/ExpoDevLauncherAppDelegateSubscriber.swift
++++ b/node_modules/expo-dev-launcher/ios/ReactDelegateHandler/ExpoDevLauncherAppDelegateSubscriber.swift
+@@ -3,8 +3,27 @@
+ import ExpoModulesCore
+ 
+ public class ExpoDevLauncherAppDelegateSubscriber: ExpoAppDelegateSubscriber {
++  private var sceneActivationObserver: NSObjectProtocol?
++
+   public func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+     guard let window = UIApplication.shared.delegate?.window ?? UIApplication.shared.windows.filter { $0.isKeyWindow }.first else {
++      if Bundle.main.object(forInfoDictionaryKey: "UIApplicationSceneManifest") != nil {
++        // Scene-based apps create their first window after didFinishLaunching.
++        sceneActivationObserver = NotificationCenter.default.addObserver(
++          forName: UIScene.didActivateNotification, object: nil, queue: .main
++        ) { [weak self] notification in
++          guard let self,
++            let scene = notification.object as? UIWindowScene,
++            let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
++          else { return }
++          if let observer = self.sceneActivationObserver {
++            NotificationCenter.default.removeObserver(observer)
++            self.sceneActivationObserver = nil
++          }
++          EXDevLauncherController.sharedInstance().autoSetupStart(window)
++        }
++        return false
++      }
+       fatalError("Cannot find the keyWindow. Make sure to call `window.makeKeyAndVisible()`.")
+     }
+     EXDevLauncherController.sharedInstance().autoSetupStart(window)
+diff --git a/node_modules/expo-dev-launcher/ios/EXDevLauncherController.m b/node_modules/expo-dev-launcher/ios/EXDevLauncherController.m
+--- a/node_modules/expo-dev-launcher/ios/EXDevLauncherController.m
++++ b/node_modules/expo-dev-launcher/ios/EXDevLauncherController.m
+@@ -263,6 +263,11 @@
+   if (launchOptions[UIApplicationLaunchOptionsURLKey]) {
+     // For deeplink launch, we need the keyWindow for expo-splash-screen to setup correctly.
+     [_window makeKeyWindow];
++    if ([[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIApplicationSceneManifest"] != nil) {
++      // UIScene delivers cold URLs in connectionOptions, without a subsequent
++      // application:openURL: callback. Consume the URL prepared by the scene.
++      [self onDeepLink:launchOptions[UIApplicationLaunchOptionsURLKey] options:@{}];
++    }
+     return;
+   }
+ 

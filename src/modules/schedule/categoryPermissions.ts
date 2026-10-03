@@ -1,4 +1,5 @@
 import type { ScheduleCategory } from "./types";
+import type { ScheduleCalendarRole } from "../../api/scheduleCalendars";
 
 /** A shared category can receive new or edited schedules only with write permission. */
 export function canWriteScheduleCategory(category?: ScheduleCategory | null): boolean {
@@ -10,6 +11,23 @@ export function canWriteScheduleCategory(category?: ScheduleCategory | null): bo
         return category.sharePermission === "EDITOR" || category.sharePermission === "OWNER";
     }
     return true;
+}
+
+/**
+ * 카테고리 이름·색상·삭제는 개인 소유자 또는 공유 캘린더의 편집자 이상만 관리합니다.
+ * 직접 공유로 받은 카테고리의 EDITOR는 그 안의 일정만 편집할 수 있습니다.
+ */
+export function canManageScheduleCategoryMetadata(
+    category?: ScheduleCategory | null,
+    calendarRole?: ScheduleCalendarRole | null,
+): boolean {
+    if (!category?.id.trim()) return false;
+    if (category.calendarId != null) {
+        const hasWritableCalendarRole = calendarRole === "OWNER" || calendarRole === "EDITOR";
+        return hasWritableCalendarRole && category.canManageMetadata !== false;
+    }
+    if (category.shared === true) return false;
+    return category.canManageMetadata !== false;
 }
 
 export function getWritableScheduleCategories(

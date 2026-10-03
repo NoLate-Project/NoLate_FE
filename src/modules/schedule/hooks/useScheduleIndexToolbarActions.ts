@@ -22,7 +22,7 @@ import {
   hasCalendarScheduleMonthCache,
   readCalendarScheduleCache,
 } from '../calendarScheduleCache';
-import { getScheduleTargetCalendarId, type CalendarScope } from '../calendarScope';
+import { getScheduleCreationCalendarId, type CalendarScope } from '../calendarScope';
 import type { QuickScheduleMorphPresenter } from '../components/form/QuickScheduleModal';
 import type { ScheduleAddMorphPresenter } from '../components/form/ScheduleAddModal';
 import { createScheduleForAddItem } from '../scheduleCreateMutation';
@@ -139,7 +139,10 @@ export function useScheduleIndexToolbarActions({
     try {
       const item = await createScheduleForAddItem({
         ...payload,
-        calendarId: getScheduleTargetCalendarId(activeCalendarScope),
+        calendarId: getScheduleCreationCalendarId(
+          activeCalendarScope,
+          payload.category,
+        ),
       });
       dispatch({ type: 'ADD_ITEM', item });
       dispatch({ type: 'SET_LOADING', loading: false });

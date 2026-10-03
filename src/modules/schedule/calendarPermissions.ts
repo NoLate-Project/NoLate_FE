@@ -10,3 +10,14 @@ export function getWritableScheduleCalendars(
 ): ScheduleCalendar[] {
     return calendars.filter(canWriteScheduleCalendar);
 }
+
+/** 카테고리를 추가할 수 있는 활성 캘린더 중 현재 소속 캘린더를 제외합니다. */
+export function getCategoryMoveDestinationCalendars(
+    calendars: ScheduleCalendar[],
+    sourceCalendarId?: number | null,
+): ScheduleCalendar[] {
+    return calendars.filter((calendar) => (
+        canWriteScheduleCalendar(calendar)
+        && calendar.id !== sourceCalendarId
+    ));
+}

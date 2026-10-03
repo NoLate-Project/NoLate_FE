@@ -1,15 +1,35 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
+const releasePlatform = process.argv.includes("--platform")
+  ? process.argv[process.argv.indexOf("--platform") + 1]
+  : process.env.EAS_BUILD_PLATFORM;
+assert.ok(
+  releasePlatform === undefined || releasePlatform === "ios" || releasePlatform === "android",
+  "--platform must be ios or android",
+);
+const localEnvPath = resolve(root, ".env");
+const localEnv = existsSync(localEnvPath) ? readFileSync(localEnvPath, "utf8") : "";
+const localAndroidInterstitialAdUnitId = localEnv
+  .match(/^EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID=(.*)$/m)?.[1]
+  ?.trim()
+  .replace(/^(["'])(.*)\1$/, "$2");
+const configuredAndroidInterstitialAdUnitId =
+  process.env.EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID ??
+  localAndroidInterstitialAdUnitId;
 const app = JSON.parse(read("app.json"));
 const pkg = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
 const publicEnvSource = read("src/api/env.ts");
 const adMobAdUnits = read("src/modules/advertising/adMobAdUnits.ts");
+const routeDetailInterstitial = read("src/modules/advertising/routeDetailInterstitial.ts");
+const trackingTransparency = read("src/modules/privacy/trackingTransparency.ts");
+const appProviders = read("src/AppProviders.tsx");
+const pushRegistration = read("src/modules/notification/pushRegistration.ts");
 const rootLayout = read("app/_layout.tsx");
 const scheduleDetail = read("app/schedule/[id].tsx");
 const androidGradle = read("android/app/build.gradle");
@@ -51,12 +71,22 @@ assert.equal(app.orientation, "portrait", "The phone UI is designed and verified
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "53");
-assert.equal(pkg.dependencies["react-native-google-mobile-ads"], "^16.4.0");
+assert.equal(app.ios.buildNumber, "54");
+assert.equal(
+  pkg.dependencies["react-native-google-mobile-ads"],
+  "16.3.4",
+  "Pin the Android-compatible ads wrapper until the 25.4.0 Kotlin metadata issue is resolved",
+);
+assert.equal(pkg.dependencies["expo-tracking-transparency"], "~6.0.8");
 const adsPlugin = app.plugins.find(
   (entry) => Array.isArray(entry) && entry[0] === "react-native-google-mobile-ads",
 );
 assert.ok(adsPlugin, "Expo Google Mobile Ads config plugin is missing");
+const trackingTransparencyPlugin = app.plugins.find(
+  (entry) => Array.isArray(entry) && entry[0] === "expo-tracking-transparency",
+);
+assert.ok(trackingTransparencyPlugin, "Expo ATT config plugin is missing");
+const expectedAndroidAdMobAppId = "ca-app-pub-6334753209593250~2827340822";
 const expectedIosAdMobAppId = "ca-app-pub-6334753209593250~8546571360";
 const expectedIosInterstitialAdUnitId = "ca-app-pub-6334753209593250/7417557605";
 const expectedTrackingUsageDescription =
@@ -71,6 +101,28 @@ assert.equal(
   adsPlugin[1]?.iosAppId,
   "Bare iOS and Expo AdMob App IDs must match",
 );
+assert.equal(
+  adsPlugin[1]?.androidAppId,
+  expectedAndroidAdMobAppId,
+  "The release build must use the registered NoLate Android AdMob App ID",
+);
+assert.match(
+  adsPlugin[1]?.androidAppId ?? "",
+  /^ca-app-pub-\d{16}~\d{10}$/,
+  "The Android AdMob App ID must use the ca-app-pub-<publisher>~<app> format",
+);
+assert.doesNotMatch(
+  adsPlugin[1]?.androidAppId ?? "",
+  /^ca-app-pub-3940256099942544~/,
+  "Google sample Android AdMob App IDs must never ship in a release build",
+);
+if (releasePlatform === "android") {
+  assert.match(
+    configuredAndroidInterstitialAdUnitId ?? "",
+    /^ca-app-pub-\d{16}\/\d{10}$/,
+    "Android release ads require EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID in slash-formatted ad-unit form, not a tilde-formatted App ID",
+  );
+}
 assert.equal(
   adsPlugin[1]?.iosAppId,
   expectedIosAdMobAppId,
@@ -104,6 +156,50 @@ assert.equal(
   adsPlugin[1]?.userTrackingUsageDescription,
   expectedTrackingUsageDescription,
   "The ATT usage description must explain personalized ads and ad measurement",
+);
+assert.equal(
+  trackingTransparencyPlugin[1]?.userTrackingPermission,
+  expectedTrackingUsageDescription,
+  "The explicit ATT plugin must preserve the reviewed tracking purpose",
+);
+assert.match(iosPodLock, /ExpoTrackingTransparency \(6\.0\.8\)/);
+assert.match(trackingTransparency, /PermissionStatus\.UNDETERMINED/);
+assert.match(trackingTransparency, /requestTrackingPermissionsAsync\(\)/);
+assert.doesNotMatch(
+  appProviders,
+  /ensureAppTrackingTransparencyResolved\(\)/,
+  "Core app recovery must not wait for the advertising-only ATT decision",
+);
+assert.match(
+  routeDetailInterstitial,
+  /policy\.plan === "FREE" && policy\.adsEnabled === true/,
+  "Only a verified FREE policy may enable advertising",
+);
+assert.match(
+  routeDetailInterstitial,
+  /requestGeneration !== policyGeneration/,
+  "Stale account or entitlement responses must not re-enable advertising",
+);
+assert.match(
+  appProviders,
+  /refreshRouteDetailAdvertisingPolicy\(\)/,
+  "Advertising entitlement must refresh when the authenticated app returns to foreground",
+);
+const attGuard = "await ensureAppTrackingTransparencyResolved();";
+const initializeAdSdkSource = routeDetailInterstitial.slice(
+  routeDetailInterstitial.indexOf("async function initializeAdSdk"),
+  routeDetailInterstitial.indexOf("/**\n * Refreshes the backend kill switch"),
+);
+assert.ok(
+  initializeAdSdkSource.indexOf(attGuard) >= 0 &&
+    initializeAdSdkSource.indexOf(attGuard) <
+      initializeAdSdkSource.indexOf("await loadGoogleMobileAds()"),
+  "ATT must settle before the Google Mobile Ads SDK is loaded and initialized",
+);
+assert.doesNotMatch(
+  pushRegistration,
+  /ensureAppTrackingTransparencyResolved\(\)/,
+  "Push registration must remain independent from the advertising-only ATT decision",
 );
 assert.equal(app["react-native-google-mobile-ads"]?.delay_app_measurement_init, true);
 assert.equal(adsPlugin[1]?.delayAppMeasurementInit, true);
@@ -214,9 +310,9 @@ assert.ok(androidManifest.includes(adsPlugin[1].androidAppId));
 assert.match(androidManifest, /com\.google\.android\.gms\.ads\.DELAY_APP_MEASUREMENT_INIT[\s\S]*?android:value="true"/);
 
 assert.equal(
-  (iosProject.match(/CURRENT_PROJECT_VERSION = 53;/g) ?? []).length,
+  (iosProject.match(/CURRENT_PROJECT_VERSION = 54;/g) ?? []).length,
   8,
-  "The app and all three embedded extensions must use iOS build 53 in Debug and Release",
+  "The app and all three embedded extensions must use iOS build 54 in Debug and Release",
 );
 assert.equal(
   (iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length,

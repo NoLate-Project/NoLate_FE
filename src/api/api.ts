@@ -11,7 +11,7 @@ import {
     saveAuthTokens,
 } from "../modules/auth/authStorage";
 import { isDefinitiveRefreshStatus } from "../modules/auth/refreshPolicy";
-import { ApiResponseError } from "./response";
+import { ApiResponseError, AuthSessionInvalidatedError } from "./response";
 
 // 운영 URL이 .env에 들어 있어도 개발 빌드는 로컬 BE를 기본 사용한다. 이전 구현은
 // EXPO_PUBLIC_LOCAL_API_BASE_URL이 없으면 개발용 시뮬레이터까지 운영 서버를 호출해,
@@ -34,7 +34,13 @@ export const apiClient: AxiosInstance = axios.create({
     },
 });
 
-type RetryableRequestConfig = AxiosRequestConfig & {
+export type AuthRecoveryRequestConfig<D = unknown> = AxiosRequestConfig<D> & {
+    // Lifecycle work may be awaited by auth invalidation itself. Refresh is
+    // allowed, but these requests must report rejection without re-entering it.
+    authFailureMode?: "report-only";
+};
+
+type RetryableRequestConfig = AuthRecoveryRequestConfig & {
     _retryAuth?: boolean;
 };
 
@@ -43,14 +49,18 @@ type RefreshedAuthTokens = {
     refreshToken: string;
 };
 
-const runAuthRefresh = createSingleFlightRunner<RefreshedAuthTokens | null>();
+type AuthRefreshResult =
+    | { kind: "refreshed"; tokens: RefreshedAuthTokens }
+    | { kind: "invalid"; cause?: unknown }
+    | { kind: "unavailable"; cause: unknown };
 
-async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null> {
+const runAuthRefresh = createSingleFlightRunner<AuthRefreshResult>();
+
+async function requestRefreshedAuthTokens(): Promise<AuthRefreshResult> {
     const refreshToken = await getRefreshToken();
 
     if (!refreshToken) {
-        await clearAuthTokens();
-        return null;
+        return { kind: "invalid" };
     }
 
     try {
@@ -66,8 +76,7 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
         const tokens = refreshResponse.data.data;
 
         if (!refreshResponse.data.success || !tokens?.accessToken || !tokens.refreshToken) {
-            await clearAuthTokens();
-            return null;
+            return { kind: "invalid" };
         }
 
         const refreshedTokens = {
@@ -75,15 +84,15 @@ async function requestRefreshedAuthTokens(): Promise<RefreshedAuthTokens | null>
             refreshToken: tokens.refreshToken,
         };
         await saveAuthTokens(refreshedTokens.accessToken, refreshedTokens.refreshToken);
-        return refreshedTokens;
+        return { kind: "refreshed", tokens: refreshedTokens };
     } catch (error) {
         // A connection loss, timeout, rate limit, or server outage does not mean the
         // refresh token is invalid. Keep the local session so the user can retry when
         // connectivity recovers; clear it only when the auth server definitively rejects it.
         if (isDefinitiveRefreshRejection(error)) {
-            await clearAuthTokens();
+            return { kind: "invalid", cause: error };
         }
-        return null;
+        return { kind: "unavailable", cause: error };
     }
 }
 
@@ -156,10 +165,22 @@ apiClient.interceptors.response.use(
                 return apiClient(originalRequest);
             }
 
-            const tokens = await runAuthRefresh(requestRefreshedAuthTokens);
-            if (tokens) {
-                applyAccessToken(originalRequest, tokens.accessToken);
+            // Never await account cleanup inside the shared refresh flight:
+            // cleanup's own HTTP requests may need to join that same flight.
+            const result = await runAuthRefresh(requestRefreshedAuthTokens);
+            if (result.kind === "refreshed") {
+                applyAccessToken(originalRequest, result.tokens.accessToken);
                 return apiClient(originalRequest);
+            }
+            if (result.kind === "invalid") {
+                if (originalRequest.authFailureMode === "report-only") {
+                    throw new AuthSessionInvalidatedError(result.cause);
+                }
+                await clearAuthTokens();
+            } else if (originalRequest.authFailureMode === "report-only") {
+                // Do not disguise an offline/5xx refresh as a revoked session.
+                // Lifecycle cleanup must retain its retry/failure boundary.
+                throw result.cause;
             }
         }
 
@@ -190,7 +211,7 @@ export async function apiPost<T = unknown, B = unknown>(url: string, body?: B, c
     return response.data;
 }
 
-export async function apiPut<T = unknown, B = unknown>(url: string, body?: B, config?: AxiosRequestConfig<B>) {
+export async function apiPut<T = unknown, B = unknown>(url: string, body?: B, config?: AuthRecoveryRequestConfig<B>) {
     const response = await apiClient.put<T>(url, body, config);
     return response.data;
 }
@@ -200,7 +221,7 @@ export async function apiPatch<T = unknown, B = unknown>(url: string, body?: B, 
     return response.data;
 }
 
-export async function apiDelete<T = unknown>(url: string, config?: AxiosRequestConfig) {
+export async function apiDelete<T = unknown>(url: string, config?: AuthRecoveryRequestConfig) {
     const response = await apiClient.delete<T>(url, config);
     return response.data;
 }

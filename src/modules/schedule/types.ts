@@ -12,6 +12,10 @@ export type ScheduleCategory = {
     calendarId?: number | null;
     shared?: boolean;
     sharePermission?: ScheduleSharePermission;
+    /** 서버가 direct grant와 calendar membership을 분리해 계산한 메타데이터 관리 권한입니다. */
+    canManageMetadata?: boolean;
+    /** 공유 대상·권한·캘린더 이동을 관리할 수 있는 리소스 OWNER 여부입니다. */
+    canManageAudience?: boolean;
 }
 
 export type Place = {

@@ -145,7 +145,7 @@ export default function ScheduleNewModal({
     startTime,
     submit,
     submitting,
-    subscriptionPolicy,
+
     title,
     titleBorderColor,
     titleError,
@@ -476,7 +476,7 @@ export default function ScheduleNewModal({
                             ? startOfLocalScheduleDay(startDay)
                             : mergeDateTime(startDay, startTime)
                         }
-                        policy={subscriptionPolicy}
+
                         onEnabledChange={value => {
                           markFormDirty();
                           setNotificationEnabled(value);

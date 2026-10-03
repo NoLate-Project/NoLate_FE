@@ -159,6 +159,8 @@ async function performPushRegistration(memberId: number, generation: number): Pr
     let apnsToken: string | undefined;
     let apnsTokenType: "prod" | "sandbox" | undefined;
 
+    if (!isPushRegistrationGenerationCurrent(generation)) return;
+
     const allowed = await requestPushNotificationPermission(messaging);
 
     if (!allowed) return;

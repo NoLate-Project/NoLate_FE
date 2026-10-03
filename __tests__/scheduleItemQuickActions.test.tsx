@@ -122,7 +122,7 @@ describe('schedule item quick actions', () => {
     expect(recoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
   });
 
-  test('편집자는 수정만, 조회자는 권한 안내만 제공한다', async () => {
+  test('편집자는 수정·삭제를, 조회자는 권한 안내만 제공한다', async () => {
     const showActionSheet = jest
       .spyOn(ActionSheetIOS, 'showActionSheetWithOptions')
       .mockImplementation(() => undefined);
@@ -137,7 +137,7 @@ describe('schedule item quick actions', () => {
       }),
     );
     expect(showActionSheet).toHaveBeenLastCalledWith(
-      expect.objectContaining({ options: ['수정', '취소'] }),
+      expect.objectContaining({ options: ['수정', '삭제', '취소'] }),
       expect.any(Function),
     );
 

@@ -14,9 +14,8 @@ import {
 import { createDirectShareTarget } from "../../../share/directShareTarget";
 import { useTheme } from "../../../theme/ThemeContext";
 import { isCurrentScheduleShareRequest } from "../../shareRequestGuard";
-import type { ScheduleSharePermission } from "../../types";
 import { MODE_CONTENT_TRAVEL, MODE_TRANSITION_DURATION_MS, createShareInviteUrl, getErrorMessage,
-    type ShareInvitationSheetProps, type ShareMode } from "./shareInvitationModel";
+    type GrantableSharePermission, type ShareInvitationSheetProps, type ShareMode } from "./shareInvitationModel";
 
 /** 공유 대상별 직접 공유·링크 초대 상태와 비동기 요청 세대를 관리합니다. */
 export function useShareInvitationSheet({ visible, resourceType, resourceId, title,
@@ -26,7 +25,7 @@ export function useShareInvitationSheet({ visible, resourceType, resourceId, tit
     const reduceMotionEnabled = useReducedMotion();
     const [shareMode, setShareMode] = useState<ShareMode>("direct");
     const [modeSegmentWidth, setModeSegmentWidth] = useState(0);
-    const [permission, setPermission] = useState<Exclude<ScheduleSharePermission, "OWNER">>("VIEWER");
+    const [permission, setPermission] = useState<GrantableSharePermission>("VIEWER");
     const [contentMode, setContentMode] = useState<ScheduleShareContentMode>(initialContentMode);
     const [targetQuery, setTargetQuery] = useState("");
     const [sharingDirect, setSharingDirect] = useState(false);

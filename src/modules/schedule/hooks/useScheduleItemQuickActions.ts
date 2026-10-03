@@ -8,6 +8,7 @@ import { recoverDepartureAlarmsAfterMutation } from '../../notification/departur
 import {
   canDeletePresentedSchedule,
   canEditPresentedSchedule,
+  canManagePresentedSchedule,
 } from '../schedulePermissions';
 import { useScheduleStore } from '../store';
 import type { ScheduleItem } from '../types';
@@ -49,10 +50,7 @@ export function useScheduleItemQuickActions() {
 
   const getActionAvailability = useCallback(
     (item: ScheduleItem, memberId: number | null | undefined) => {
-      const isOwner =
-        typeof item.ownerMemberId === 'number'
-          ? memberId === item.ownerMemberId
-          : item.sharePermission == null;
+      const isOwner = canManagePresentedSchedule(item, memberId);
       return {
         canEdit: canEditPresentedSchedule(item, isOwner),
         canDelete: canDeletePresentedSchedule(item, memberId),

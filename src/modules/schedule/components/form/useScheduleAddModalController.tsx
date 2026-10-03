@@ -119,7 +119,7 @@ export function useScheduleAddModalController({
     setNotificationLeadMinutes,
     notificationIntervalMinutes,
     setNotificationIntervalMinutes,
-    subscriptionPolicy,
+
     routePlannerSessionId,
     setRoutePlannerSessionId,
     routePlannerAwayRef,
@@ -781,7 +781,7 @@ export function useScheduleAddModalController({
     startTime,
     submit,
     submitting,
-    subscriptionPolicy,
+
     title,
     titleBorderColor,
     titleError,

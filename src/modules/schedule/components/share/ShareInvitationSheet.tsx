@@ -6,8 +6,8 @@ import Reanimated from "react-native-reanimated";
 import BrandedLoader from "../../../../ui/BrandedLoader";
 import { OptionChip } from "./ShareInvitationOptionChip";
 import styles from "./ShareInvitationSheet.styles";
-import { ACCEPT_COUNT_OPTIONS, PERMISSION_OPTIONS, SHEET_LAYOUT_TRANSITION, TTL_OPTIONS,
-    formatExpiresAt, permissionLabel, statusLabel, type ShareInvitationSheetProps } from "./shareInvitationModel";
+import { ACCEPT_COUNT_OPTIONS, SHEET_LAYOUT_TRANSITION, TTL_OPTIONS,
+    formatExpiresAt, getPermissionOptions, permissionLabel, statusLabel, type ShareInvitationSheetProps } from "./shareInvitationModel";
 import { useShareInvitationSheet } from "./useShareInvitationSheet";
 
 export { createShareInviteUrl } from "./shareInvitationModel";
@@ -16,6 +16,7 @@ export { createShareInviteUrl } from "./shareInvitationModel";
 export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
     const { visible, title, subtitle, onClose, resourceType } = props;
     const { insets, colors, highlight, isDark, resourceLabel, shareMode, permission, setPermission, contentMode, setContentMode, targetQuery, setTargetQuery, lastDirectShareLabel, setLastDirectShareLabel, ttlHours, setTtlHours, maxAcceptCount, setMaxAcceptCount, loading, generatedLink, directError, setDirectError, linkError, revokingInvitationId, latestInvitation, loadInvitations, shareGeneratedLink, createInvitation, createDirectShare, revokeInvitation, submitting, submitDisabled, modeIndicatorWidth, modeIndicatorTranslateX, modeContentAnimatedStyle, handleModeSegmentLayout, switchShareMode } = useShareInvitationSheet(props);
+    const permissionOptions = getPermissionOptions(resourceType);
 
     return (
         <Modal
@@ -138,7 +139,7 @@ export default function ShareInvitationSheet(props: ShareInvitationSheetProps) {
                     >
                         <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>권한</Text>
                         <View style={styles.segmentRow}>
-                            {PERMISSION_OPTIONS.map((option) => {
+                            {permissionOptions.map((option) => {
                                 const selected = option.value === permission;
                                 return (
                                     <Pressable

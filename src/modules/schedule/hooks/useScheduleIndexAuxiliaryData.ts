@@ -23,7 +23,7 @@ import {
 } from '../components/calendar/calendarYearScheduleDensity';
 import { getWritableScheduleCategories } from '../categoryPermissions';
 import {
-  isCategoryInCalendarScope,
+  isCategoryAvailableForScheduleCreation,
   isScheduleInCalendarScope,
   normalizeCalendarScope,
   type CalendarScope,
@@ -411,13 +411,18 @@ export function useScheduleIndexAuxiliaryData({
     () => itemsArray.filter(item => item.routeSetupRequired === true),
     [itemsArray],
   );
-  const writableCategories = useMemo(
-    () =>
-      getWritableScheduleCategories(state.categories).filter(category =>
-        isCategoryInCalendarScope(category, activeCalendarScope),
+  const writableCategories = useMemo(() => {
+    const joinedCalendarIds = new Set(
+      scheduleCalendars.map(calendar => calendar.id),
+    );
+    return getWritableScheduleCategories(state.categories).filter(category =>
+      isCategoryAvailableForScheduleCreation(
+        category,
+        activeCalendarScope,
+        joinedCalendarIds,
       ),
-    [activeCalendarScope, state.categories],
-  );
+    );
+  }, [activeCalendarScope, scheduleCalendars, state.categories]);
   const activeScopeCalendar = useMemo(
     () =>
       typeof activeCalendarScope === 'number'

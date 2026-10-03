@@ -22,12 +22,10 @@
     </intent>
   </queries>
   <application android:name=".MainApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:allowBackup="false" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" android:usesCleartextTraffic="false">
-    <!-- Google sample App ID keeps local/test builds safe. Replace through the Expo plugin with
-         the production AdMob App ID before store release. Runtime release ads additionally require
-         an EXPO_PUBLIC_ADMOB_*_ROUTE_DETAIL_INTERSTITIAL_ID. -->
+    <!-- Runtime release ads additionally require the slash-formatted Android interstitial unit. -->
     <meta-data
       android:name="com.google.android.gms.ads.APPLICATION_ID"
-      android:value="ca-app-pub-3940256099942544~3347511713"
+      android:value="ca-app-pub-6334753209593250~2827340822"
       tools:replace="android:value"/>
     <meta-data
       android:name="com.google.android.gms.ads.DELAY_APP_MEASUREMENT_INIT"

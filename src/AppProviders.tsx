@@ -47,6 +47,11 @@ import {
 import { ScheduleProvider } from "./modules/schedule/store";
 import { ThemeProvider, useTheme } from "./modules/theme/ThemeContext";
 import { NoLateWidgetSync } from "./modules/widget/NoLateWidgetSync";
+import {
+    disableRouteDetailAdvertising,
+    primeRouteDetailAdvertising,
+    refreshRouteDetailAdvertisingPolicy,
+} from "./modules/advertising/routeDetailInterstitial";
 
 const PUSH_BOOTSTRAP_RETRY_DELAYS_MS = [
     1_500,
@@ -67,6 +72,7 @@ export function AppProviders({ children }: PropsWithChildren) {
         <ThemeProvider>
             <LiveActivityAppearanceBridge />
             <AuthProvider>
+                <AdvertisingPolicyBootstrap />
                 <PushRegistrationBootstrap />
                 <ScheduleProvider initialState={initialState}>
                     <NoLateWidgetSync />
@@ -89,6 +95,44 @@ function LiveActivityAppearanceBridge() {
     return null;
 }
 
+function AdvertisingPolicyBootstrap() {
+    const { isAuthenticated, isLoading } = useAuth();
+
+    useEffect(() => {
+        if (isLoading) return undefined;
+        if (!isAuthenticated) {
+            disableRouteDetailAdvertising();
+            return undefined;
+        }
+
+        let cancelled = false;
+        const refreshPolicy = (force: boolean) => {
+            const task = force
+                ? refreshRouteDetailAdvertisingPolicy()
+                : primeRouteDetailAdvertising();
+            task.catch((error) => {
+                if (!cancelled) {
+                    console.warn("[advertising] subscription policy refresh failed", error);
+                }
+            });
+        };
+
+        // Preload for verified FREE members so an eligible route entry does not wait for ads.
+        // Foreground refresh also removes a cached ad immediately after purchase or restoration.
+        refreshPolicy(false);
+        const subscription = AppState.addEventListener("change", (state) => {
+            if (state === "active") refreshPolicy(true);
+        });
+
+        return () => {
+            cancelled = true;
+            subscription.remove();
+        };
+    }, [isAuthenticated, isLoading]);
+
+    return null;
+}
+
 function PushRegistrationBootstrap() {
     const { isAuthenticated, isLoading } = useAuth();
 
@@ -103,6 +147,7 @@ function PushRegistrationBootstrap() {
         let removeAppStateListener: () => void = () => undefined;
         let memberBoundMemberId: number | undefined;
         let memberBootstrapInFlight: Promise<void> | undefined;
+        let memberBoundRecoveryInFlight: Promise<void> | undefined;
         let memberBootstrapRetryTimer: ReturnType<typeof setTimeout> | undefined;
         let memberBootstrapRetryAttempt = 0;
         let tokenRegistrationInFlight: Promise<void> | undefined;
@@ -232,22 +277,43 @@ function PushRegistrationBootstrap() {
         };
 
         const runMemberBoundRecovery = (memberId: number) => {
-            activateNativeDepartureReminderPresentationJournal().catch((error) => {
-                console.warn("[push] native presentation evidence drain failed", error);
-            });
-            reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
-                console.warn("[alarm-sync] snapshot bootstrap failed", error);
-            });
-            registerMemberPush(memberId);
-            drainPushDeliveryAckQueue(memberId).catch((error) => {
-                console.warn("[push-ack] durable queue drain failed", error);
-            });
-            activateScheduleArrivalObservationQueueForAuthenticatedMember().catch((error) => {
-                console.warn("[eta-observation] durable arrival queue drain failed", error);
-            });
-            activateScheduleEtaObservationEngagementQueueForAuthenticatedMember().catch((error) => {
-                console.warn("[eta-observation] durable engagement queue drain failed", error);
-            });
+            if (
+                cancelled ||
+                memberBoundMemberId !== memberId ||
+                memberBoundRecoveryInFlight
+            ) return;
+
+            // Core notification recovery must not wait for advertising consent.
+            const request = Promise.resolve()
+                .then(() => {
+                    if (cancelled || memberBoundMemberId !== memberId) return;
+                    activateNativeDepartureReminderPresentationJournal().catch((error) => {
+                        console.warn("[push] native presentation evidence drain failed", error);
+                    });
+                    reconcileDepartureAlarmSnapshot(memberId).catch((error) => {
+                        console.warn("[alarm-sync] snapshot bootstrap failed", error);
+                    });
+                    registerMemberPush(memberId);
+                    drainPushDeliveryAckQueue(memberId).catch((error) => {
+                        console.warn("[push-ack] durable queue drain failed", error);
+                    });
+                    activateScheduleArrivalObservationQueueForAuthenticatedMember().catch((error) => {
+                        console.warn("[eta-observation] durable arrival queue drain failed", error);
+                    });
+                    activateScheduleEtaObservationEngagementQueueForAuthenticatedMember().catch((error) => {
+                        console.warn("[eta-observation] durable engagement queue drain failed", error);
+                    });
+                })
+                .catch((error) => {
+                    if (cancelled || memberBoundMemberId !== memberId) return;
+                    console.warn("[push] account recovery failed", error);
+                })
+                .finally(() => {
+                    if (memberBoundRecoveryInFlight === request) {
+                        memberBoundRecoveryInFlight = undefined;
+                    }
+                });
+            memberBoundRecoveryInFlight = request;
         };
 
         const scheduleMemberBootstrapRetry = (bootstrap: () => void) => {

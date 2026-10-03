@@ -19,6 +19,7 @@ import { getSchedules } from '../../src/api/schedule';
 import {
   getScheduleCalendars,
   removeScheduleCalendarMember,
+  updateScheduleCalendarMember,
 } from '../../src/api/scheduleCalendars';
 import {
   getShareInbox,
@@ -28,6 +29,8 @@ import {
   revokeCategoryShareInvitation,
   revokeScheduleShare,
   revokeScheduleShareInvitation,
+  updateCategoryShare,
+  updateScheduleShare,
   type ScheduleShare,
   type ShareInvitationSummary,
 } from '../../src/api/scheduleSharing';
@@ -94,6 +97,7 @@ export default function ShareInboxScreen() {
   const hasBlurredRef = useRef(false);
   const revokingInvitationRef = useRef<string | null>(null);
   const revokingShareRef = useRef<string | null>(null);
+  const updatingShareRef = useRef<string | null>(null);
   const composerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [selectedTab, setSelectedTab] = useState<ShareLibraryTab>(
@@ -118,6 +122,7 @@ export default function ShareInboxScreen() {
     string | null
   >(null);
   const [revokingShareId, setRevokingShareId] = useState<string | null>(null);
+  const [updatingShareId, setUpdatingShareId] = useState<string | null>(null);
   const [safetyPendingKey, setSafetyPendingKey] = useState<string | null>(null);
   const [reportItem, setReportItem] = useState<ShareLibraryItem | null>(null);
 
@@ -362,7 +367,7 @@ export default function ShareInboxScreen() {
 
   const revokeDirectShare = useCallback(
     (item: ShareLibraryItem, share: ScheduleShare) => {
-      if (revokingShareRef.current) return;
+      if (revokingShareRef.current || updatingShareRef.current) return;
       const target =
         share.targetEmail?.trim() || `NoLate ID #${share.targetMemberId}`;
 
@@ -375,7 +380,7 @@ export default function ShareInboxScreen() {
             text: '공유 해제',
             style: 'destructive',
             onPress: async () => {
-              if (revokingShareRef.current) return;
+              if (revokingShareRef.current || updatingShareRef.current) return;
               revokingShareRef.current = share.id;
               setRevokingShareId(share.id);
               setError(null);
@@ -434,6 +439,68 @@ export default function ShareInboxScreen() {
           },
         ],
       );
+    },
+    [loadShares],
+  );
+
+  const changeDirectSharePermission = useCallback(
+    async (
+      item: ShareLibraryItem,
+      share: ScheduleShare,
+      permission: 'VIEWER' | 'EDITOR',
+    ) => {
+      if (revokingShareRef.current || updatingShareRef.current) return;
+      updatingShareRef.current = share.id;
+      setUpdatingShareId(share.id);
+      setError(null);
+      try {
+        if (item.resourceType === 'SCHEDULE') {
+          await updateScheduleShare(item.resourceId, share.id, permission);
+        } else if (item.resourceType === 'CALENDAR') {
+          await updateScheduleCalendarMember(
+            item.resourceId,
+            share.targetMemberId,
+            { role: permission },
+          );
+        } else {
+          await updateCategoryShare(item.resourceId, share.id, permission);
+        }
+
+        if (mountedRef.current) {
+          setData(current =>
+            current
+              ? {
+                  ...current,
+                  outbox: {
+                    ...current.outbox,
+                    sharedResources: current.outbox.sharedResources.map(
+                      resource =>
+                        resource.resourceType === item.resourceType &&
+                        resource.resourceId === item.resourceId
+                          ? {
+                              ...resource,
+                              shares: resource.shares.map(resourceShare =>
+                                resourceShare.id === share.id
+                                  ? { ...resourceShare, permission }
+                                  : resourceShare,
+                              ),
+                            }
+                          : resource,
+                    ),
+                  },
+                }
+              : current,
+          );
+        }
+        await loadShares('refresh');
+      } catch (updateError) {
+        if (mountedRef.current) {
+          Alert.alert('권한 변경 실패', getErrorMessage(updateError));
+        }
+      } finally {
+        updatingShareRef.current = null;
+        if (mountedRef.current) setUpdatingShareId(null);
+      }
     },
     [loadShares],
   );
@@ -639,6 +706,7 @@ export default function ShareInboxScreen() {
         accent={accent}
         bottomInset={insets.bottom}
         revokingShareId={revokingShareId}
+        updatingShareId={updatingShareId}
         revokingInvitationId={revokingInvitationId}
         onClose={() => setManagedItemKey(null)}
         onOpenResource={() => {
@@ -651,6 +719,13 @@ export default function ShareInboxScreen() {
         }}
         onRevokeShare={share => {
           if (managedItem) revokeDirectShare(managedItem, share);
+        }}
+        onChangeSharePermission={(share, permission) => {
+          if (managedItem) {
+            changeDirectSharePermission(managedItem, share, permission).catch(
+              () => undefined,
+            );
+          }
         }}
         onRevokeInvitation={revokeInvitation}
       />

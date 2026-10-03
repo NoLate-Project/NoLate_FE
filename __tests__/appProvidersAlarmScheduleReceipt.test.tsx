@@ -8,6 +8,7 @@ import { getAuthMember } from "../src/modules/auth/authStorage";
 import {
     activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember,
 } from "../src/modules/notification/departureAlarmScheduleReceiptQueue";
+import { reconcileDepartureAlarmSnapshot } from "../src/modules/notification/departureAlarmSync";
 import {
     activateForegroundPushPresentationClaimsForAuthenticatedMember,
 } from "../src/modules/notification/foregroundPushPresentationClaim";
@@ -28,6 +29,12 @@ import {
     resumeLiveActivitySyncForAuthenticatedMember,
     setLiveActivityAppearance,
 } from "../src/modules/notification/liveActivitySync";
+import { ensureAppTrackingTransparencyResolved } from "../src/modules/privacy/trackingTransparency";
+import {
+    disableRouteDetailAdvertising,
+    primeRouteDetailAdvertising,
+    refreshRouteDetailAdvertisingPolicy,
+} from "../src/modules/advertising/routeDetailInterstitial";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 
 jest.mock("../src/modules/auth/authStorage", () => ({
@@ -54,6 +61,16 @@ jest.mock("../src/modules/schedule/store", () => ({
 
 jest.mock("../src/modules/widget/NoLateWidgetSync", () => ({
     NoLateWidgetSync: () => null,
+}));
+
+jest.mock("../src/modules/privacy/trackingTransparency", () => ({
+    ensureAppTrackingTransparencyResolved: jest.fn().mockResolvedValue("granted"),
+}));
+
+jest.mock("../src/modules/advertising/routeDetailInterstitial", () => ({
+    disableRouteDetailAdvertising: jest.fn(),
+    primeRouteDetailAdvertising: jest.fn().mockResolvedValue(undefined),
+    refreshRouteDetailAdvertisingPolicy: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../src/modules/notification/pushRegistration", () => ({
@@ -135,6 +152,7 @@ const mockedUseAuth = jest.mocked(useAuth);
 const mockedActivateReceiptQueue = jest.mocked(
     activateDepartureAlarmScheduleReceiptQueueForAuthenticatedMember
 );
+const mockedReconcileDepartureAlarmSnapshot = jest.mocked(reconcileDepartureAlarmSnapshot);
 const mockedActivatePresentationClaims = jest.mocked(
     activateForegroundPushPresentationClaimsForAuthenticatedMember
 );
@@ -155,6 +173,14 @@ const mockedResumeLiveActivitySync = jest.mocked(
     resumeLiveActivitySyncForAuthenticatedMember,
 );
 const mockedSetLiveActivityAppearance = jest.mocked(setLiveActivityAppearance);
+const mockedEnsureAppTrackingTransparencyResolved = jest.mocked(
+    ensureAppTrackingTransparencyResolved,
+);
+const mockedDisableRouteDetailAdvertising = jest.mocked(disableRouteDetailAdvertising);
+const mockedPrimeRouteDetailAdvertising = jest.mocked(primeRouteDetailAdvertising);
+const mockedRefreshRouteDetailAdvertisingPolicy = jest.mocked(
+    refreshRouteDetailAdvertisingPolicy,
+);
 const mockedUseTheme = jest.mocked(useTheme);
 const originalAppStateCurrentStateDescriptor = Object.getOwnPropertyDescriptor(
     AppState,
@@ -230,7 +256,8 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         }
     });
 
-    it("drains on authenticated cold start and whenever the app becomes active", async () => {
+    it("drains on authenticated cold start and foreground even when ATT never resolves", async () => {
+        mockedEnsureAppTrackingTransparencyResolved.mockReturnValue(new Promise(() => {}));
         await act(async () => {
             renderer = TestRenderer.create(
                 <AppProviders>
@@ -245,7 +272,11 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         expect(mockedRegisterPushAfterLogin).toHaveBeenCalledWith(77);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(1);
         expect(mockedActivateQuickScheduleFeedback).toHaveBeenCalledTimes(1);
-        expect(appStateListeners).toHaveLength(4);
+        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedReconcileDepartureAlarmSnapshot).toHaveBeenCalledTimes(1);
+        expect(mockedPrimeRouteDetailAdvertising).toHaveBeenCalledTimes(1);
+        expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
+        expect(appStateListeners).toHaveLength(5);
 
         await act(async () => {
             appStateListeners.forEach((listener) => listener("background"));
@@ -253,6 +284,8 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         });
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(1);
         expect(mockedActivatePresentationClaims).toHaveBeenCalledTimes(1);
+        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
 
         await act(async () => {
             appStateListeners.forEach((listener) => listener("active"));
@@ -261,13 +294,37 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(2);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(2);
         expect(mockedActivateQuickScheduleFeedback).toHaveBeenCalledTimes(2);
+        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedReconcileDepartureAlarmSnapshot).toHaveBeenCalledTimes(2);
+        expect(mockedRefreshRouteDetailAdvertisingPolicy).toHaveBeenCalledTimes(1);
+        expect(mockedDisableRouteDetailAdvertising).not.toHaveBeenCalled();
 
         await act(async () => {
             renderer?.unmount();
         });
         renderer = undefined;
-        expect(removeAppStateListener).toHaveBeenCalledTimes(4);
+        expect(removeAppStateListener).toHaveBeenCalledTimes(5);
         expect(unsubscribePushRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it("disables account-bound advertising while signed out", async () => {
+        mockedUseAuth.mockReturnValue({
+            isAuthenticated: false,
+            isLoading: false,
+        } as ReturnType<typeof useAuth>);
+
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <AppProviders>
+                    <Text>child</Text>
+                </AppProviders>,
+            );
+            await Promise.resolve();
+        });
+
+        expect(mockedDisableRouteDetailAdvertising).toHaveBeenCalledTimes(1);
+        expect(mockedPrimeRouteDetailAdvertising).not.toHaveBeenCalled();
+        expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
     });
 
     it("does not bootstrap Live Activity token sync before FCM registration succeeds", async () => {
@@ -367,7 +424,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
             await Promise.resolve();
         });
 
-        expect(appStateListeners).toHaveLength(4);
+        expect(appStateListeners).toHaveLength(5);
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(1);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(1);
         expect(mockedSubscribePushTokenRefresh).not.toHaveBeenCalled();

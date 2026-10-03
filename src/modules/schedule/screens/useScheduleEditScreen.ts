@@ -1,3 +1,4 @@
+import { SCHEDULE_NOTIFICATION_POLICY } from "../scheduleNotificationPolicy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -53,10 +54,6 @@ import {
 import {
     isCategoryInCalendarScope,
 } from "../calendarScope";
-import {
-    FREE_SUBSCRIPTION_POLICY,
-    type SubscriptionPolicy,
-} from "../../../api/subscription";
 
 import {
     getScheduleAllDayFormEndDay,
@@ -161,8 +158,7 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         normalizeScheduleAlertMode(item?.alertMode),
     );
     const [notificationLeadMinutes, setNotificationLeadMinutes] = useState(item?.notificationLeadMinutes ?? 60);
-    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? 20);
-    const [subscriptionPolicy, setSubscriptionPolicy] = useState<SubscriptionPolicy>(FREE_SUBSCRIPTION_POLICY);
+    const [notificationIntervalMinutes, setNotificationIntervalMinutes] = useState(item?.notificationIntervalMinutes ?? SCHEDULE_NOTIFICATION_POLICY.defaultIntervalMinutes);
     const [routePlannerSessionId, setRoutePlannerSessionId] = useState<string | undefined>();
     const routePlannerAwayRef = useRef(false);
     const routeTimingTargetArrivalRef = useRef<string | undefined>(item?.startAt);
@@ -360,10 +356,6 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         setCalendarLoading,
         setCalendarError,
         setCalendars,
-        itemNotificationEnabled: item?.notificationEnabled,
-        setSubscriptionPolicy,
-        setNotificationLeadMinutes,
-        setNotificationIntervalMinutes,
     });
 
     useEffect(() => {
@@ -397,7 +389,7 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         setNotificationEnabled(item.notificationEnabled ?? false);
         setAlertMode(normalizeScheduleAlertMode(item.alertMode));
         setNotificationLeadMinutes(item.notificationLeadMinutes ?? 60);
-        setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? 20);
+        setNotificationIntervalMinutes(item.notificationIntervalMinutes ?? SCHEDULE_NOTIFICATION_POLICY.defaultIntervalMinutes);
         setStartDay(startOfLocalScheduleDay(fromISO(item.startAt)));
         setEndDay(item.allDay
             ? getScheduleAllDayFormEndDay(fromISO(item.startAt), fromISO(item.endAt))
@@ -626,7 +618,6 @@ export function useScheduleEditScreen({ initialScrollToEnd = false, initialCateg
         setNotificationLeadMinutes,
         notificationIntervalMinutes,
         setNotificationIntervalMinutes,
-        subscriptionPolicy,
         detailLoading,
         mutationPending,
         categoryLoading,

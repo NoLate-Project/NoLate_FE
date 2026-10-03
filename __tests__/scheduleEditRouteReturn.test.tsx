@@ -143,12 +143,12 @@ jest.mock("../src/api/scheduleCategories", () => ({
 }));
 jest.mock("../src/api/subscription", () => ({
     FREE_SUBSCRIPTION_POLICY: {
-        maxNotificationLeadMinutes: 60,
-        minEtaRefreshIntervalMinutes: 20,
+
+
     },
     getMySubscriptionPolicy: jest.fn().mockResolvedValue({
-        maxNotificationLeadMinutes: 60,
-        minEtaRefreshIntervalMinutes: 20,
+
+
     }),
 }));
 jest.mock("../src/modules/schedule/components/form/CategorySelectBox", () => {
@@ -622,7 +622,7 @@ describe("ScheduleEditScreen route return", () => {
             route: mockOriginalRoute,
             notificationEnabled: true,
             notificationLeadMinutes: 60,
-            notificationIntervalMinutes: 20,
+            notificationIntervalMinutes: 10,
             alertMode: "ALARM",
         }));
     });
@@ -706,7 +706,7 @@ describe("ScheduleEditScreen route return", () => {
             route: nextRoute,
             notificationEnabled: true,
             notificationLeadMinutes: 60,
-            notificationIntervalMinutes: 20,
+            notificationIntervalMinutes: 10,
             alertMode: "ALARM",
         }));
         expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();
@@ -764,7 +764,7 @@ describe("ScheduleEditScreen route return", () => {
             route: mockOriginalRoute,
             notificationEnabled: true,
             notificationLeadMinutes: 60,
-            notificationIntervalMinutes: 20,
+            notificationIntervalMinutes: 10,
             alertMode: "ALARM",
         };
         mockState.itemsById["1"] = sharedItem;
@@ -798,7 +798,7 @@ describe("ScheduleEditScreen route return", () => {
             route: mockOriginalRoute,
             notificationEnabled: true,
             notificationLeadMinutes: 60,
-            notificationIntervalMinutes: 20,
+            notificationIntervalMinutes: 10,
             alertMode: "ALARM",
         });
         expect(mockUpdateSchedule.mock.invocationCallOrder[0])
@@ -997,7 +997,7 @@ describe("ScheduleEditScreen route return", () => {
         );
     });
 
-    test("캘린더 OWNER라도 다른 멤버가 만든 일정에는 삭제 버튼을 노출하지 않는다", async () => {
+    test("캘린더 OWNER는 다른 멤버가 만든 일정에도 삭제 버튼을 노출한다", async () => {
         const editorCreatedItem: ScheduleItem = {
             ...mockItem,
             ownerMemberId: 2,
@@ -1012,7 +1012,7 @@ describe("ScheduleEditScreen route return", () => {
             await Promise.resolve();
         });
 
-        expect(renderer!.root.findAllByProps({ accessibilityLabel: "일정 삭제" })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "일정 삭제" })).toBeTruthy();
     });
 
     test("캘린더 EDITOR도 자신이 만든 일정에는 삭제 버튼을 노출한다", async () => {
@@ -1077,7 +1077,7 @@ describe("ScheduleEditScreen route return", () => {
             testID: "schedule-calendar-assignment-locked",
         })).toBeTruthy();
         expect(renderer!.root.findByProps({
-            accessibilityLabel: "A E2E V2, 일정 작성자만 캘린더 변경 가능",
+            accessibilityLabel: "A E2E V2, 일정 소유자만 캘린더 변경 가능",
         })).toBeTruthy();
         expect(renderer!.root.findAllByProps({
             accessibilityLabel: "개인 일정 캘린더 선택",

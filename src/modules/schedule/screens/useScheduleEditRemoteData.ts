@@ -3,7 +3,6 @@ import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetS
 import { getSchedule } from "../../../api/schedule";
 import { getScheduleCalendars, type ScheduleCalendar } from "../../../api/scheduleCalendars";
 import { getScheduleCategoriesFromApi } from "../../../api/scheduleCategories";
-import { FREE_SUBSCRIPTION_POLICY, getMySubscriptionPolicy, type SubscriptionPolicy } from "../../../api/subscription";
 import { useScheduleStore } from "../store";
 import { getErrorMessage } from "./scheduleEditPresentation";
 
@@ -25,19 +24,14 @@ type ScheduleEditRemoteDataInput = {
     setCalendarLoading: Setter<boolean>;
     setCalendarError: Setter<string | null>;
     setCalendars: Setter<ScheduleCalendar[]>;
-    itemNotificationEnabled?: boolean;
-    setSubscriptionPolicy: Setter<SubscriptionPolicy>;
-    setNotificationLeadMinutes: Setter<number>;
-    setNotificationIntervalMinutes: Setter<number>;
 };
 
-/** 일정 상세·카테고리·캘린더·구독 정책을 독립적으로 불러오고 취소된 응답을 무시합니다. */
+/** 일정 상세·카테고리·캘린더를 독립적으로 불러오고 취소된 응답을 무시합니다. */
 export function useScheduleEditRemoteData({
     developmentPreview, id, retryKey, routePlannerSessionId, formDirtyRef, dispatch,
     setDetailLoading, setDetailError, categoryRetryKey, setCategoryRetryKey,
     setCategoryLoading, setCategoryError, calendarRetryKey, setCalendarLoading,
-    setCalendarError, setCalendars, itemNotificationEnabled, setSubscriptionPolicy,
-    setNotificationLeadMinutes, setNotificationIntervalMinutes,
+    setCalendarError, setCalendars,
 }: ScheduleEditRemoteDataInput) {
     useEffect(() => {
         if (developmentPreview) {
@@ -132,35 +126,6 @@ export function useScheduleEditRemoteData({
         setCategoryRetryKey((value) => value + 1);
     }, [setCategoryRetryKey]);
 
-    useEffect(() => {
-        if (developmentPreview) return;
-        let cancelled = false;
-        getMySubscriptionPolicy()
-            .then((policy) => {
-                if (cancelled) return;
-                setSubscriptionPolicy(policy);
-                if (!itemNotificationEnabled) {
-                    setNotificationLeadMinutes((current) =>
-                        Math.min(current, policy.maxNotificationLeadMinutes)
-                    );
-                    setNotificationIntervalMinutes((current) =>
-                        Math.max(current, policy.minEtaRefreshIntervalMinutes)
-                    );
-                }
-            })
-            .catch(() => {
-                if (!cancelled) setSubscriptionPolicy(FREE_SUBSCRIPTION_POLICY);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [
-        developmentPreview,
-        itemNotificationEnabled,
-        setNotificationIntervalMinutes,
-        setNotificationLeadMinutes,
-        setSubscriptionPolicy,
-    ]);
 
     return { retryCategoryLoad };
 }

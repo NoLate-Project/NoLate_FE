@@ -7,6 +7,7 @@ import {
     createScheduleCategoryToApi,
     getScheduleCategoriesFromApi,
 } from "../src/api/scheduleCategories";
+import { getScheduleCalendars } from "../src/api/scheduleCalendars";
 import { createScheduleInitialState } from "../src/modules/schedule/initialState";
 import { ScheduleProvider } from "../src/modules/schedule/store";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
@@ -47,6 +48,7 @@ const mockGetCategories = getScheduleCategoriesFromApi as jest.MockedFunction<
 const mockCreateCategory = createScheduleCategoryToApi as jest.MockedFunction<
     typeof createScheduleCategoryToApi
 >;
+const mockGetCalendars = getScheduleCalendars as jest.MockedFunction<typeof getScheduleCalendars>;
 const mockUseLocalSearchParams = useLocalSearchParams as jest.MockedFunction<
     typeof useLocalSearchParams
 >;
@@ -64,20 +66,28 @@ describe("ScheduleCategoriesScreen load state", () => {
         await act(async () => renderer?.unmount());
         renderer = undefined;
         jest.clearAllMocks();
+        mockGetCalendars.mockResolvedValue([]);
         mockUseLocalSearchParams.mockReturnValue({});
     });
 
-    async function renderScreen() {
+    async function renderScreen(initialCategories: ReturnType<typeof createScheduleInitialState>["categories"] = []) {
+        const initialState = createScheduleInitialState(new Date(2026, 6, 17));
+        initialState.categories = initialCategories;
         await act(async () => {
             renderer = TestRenderer.create(
                 <ThemeProvider>
-                    <ScheduleProvider initialState={createScheduleInitialState(new Date(2026, 6, 17))}>
+                    <ScheduleProvider initialState={initialState}>
                         <ScheduleCategoriesScreen />
                     </ScheduleProvider>
                 </ThemeProvider>
             );
             await Promise.resolve();
             await Promise.resolve();
+        });
+        // InteractionManager callback and the two independent category/calendar
+        // requests can settle on separate turns when the full suite is running.
+        await act(async () => {
+            await new Promise<void>((resolve) => setTimeout(() => resolve(), 0));
         });
     }
 
@@ -147,6 +157,17 @@ describe("ScheduleCategoriesScreen load state", () => {
             calendarTitle: "A E2E Shared",
         });
         mockGetCategories.mockResolvedValueOnce([]);
+        mockGetCalendars.mockResolvedValueOnce([{
+            id: 16,
+            title: "A E2E Shared",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_ONLY",
+            status: "ACTIVE",
+            ownerMemberId: 1,
+            myRole: "OWNER",
+            memberCount: 2,
+            routeReminderEnabled: true,
+        }]);
         mockCreateCategory.mockResolvedValueOnce({
             id: "101",
             title: "Owner Cat",
@@ -170,6 +191,166 @@ describe("ScheduleCategoriesScreen load state", () => {
 
         expect(mockCreateCategory).toHaveBeenCalledWith("Owner Cat", "#ff3b30", undefined, 16);
         expect(renderer!.root.findByProps({ children: "Owner Cat" })).toBeDefined();
+    });
+
+    test("공유 캘린더 권한 조회 중에는 권한 없음 빈 상태를 표시하지 않는다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "가족",
+        });
+        const cachedPersonalCategory = {
+            id: "personal",
+            title: "개인",
+            color: "#ff3b30",
+        };
+        mockGetCategories.mockResolvedValueOnce([cachedPersonalCategory]);
+        let resolveCalendars!: (calendars: Awaited<ReturnType<typeof getScheduleCalendars>>) => void;
+        mockGetCalendars.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveCalendars = resolve;
+        }));
+
+        await renderScreen([cachedPersonalCategory]);
+
+        expect(renderer!.root.findAllByProps({
+            children: "이 캘린더의 카테고리를 관리할 권한이 없어요.",
+        })).toHaveLength(0);
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "카테고리를 불러오고 있어요",
+        })).toBeDefined();
+
+        await act(async () => {
+            resolveCalendars([{
+                id: 16,
+                title: "가족",
+                color: "#2F80FF",
+                defaultContentMode: "SCHEDULE_ONLY",
+                status: "ACTIVE",
+                ownerMemberId: 1,
+                myRole: "OWNER",
+                memberCount: 1,
+                routeReminderEnabled: true,
+            }]);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findByProps({ accessibilityLabel: "새 카테고리 이름" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({
+            children: "이 캘린더의 카테고리를 관리할 권한이 없어요.",
+        })).toHaveLength(0);
+    });
+
+    test("공유 캘린더 VIEWER에게는 카테고리 생성·메타데이터 관리를 노출하지 않는다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "가족",
+        });
+        mockGetCategories.mockResolvedValueOnce([{
+            id: "viewer-category",
+            title: "가족 행사",
+            color: "#ff3b30",
+            calendarId: 16,
+            shared: true,
+            sharePermission: "VIEWER",
+            canManageMetadata: false,
+            canManageAudience: false,
+        }]);
+        mockGetCalendars.mockResolvedValueOnce([{
+            id: 16,
+            title: "가족",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_ONLY",
+            status: "ACTIVE",
+            ownerMemberId: 1,
+            myRole: "VIEWER",
+            memberCount: 2,
+            routeReminderEnabled: true,
+        }]);
+        await renderScreen();
+
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "새 카테고리 이름" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "가족 행사 수정" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "가족 행사 삭제" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "가족 행사 카테고리 작업 메뉴" })).toHaveLength(0);
+    });
+
+    test("이동된 직접 공유 카테고리에 이전 캘린더 EDITOR 역할을 적용하지 않는다", async () => {
+        mockGetCategories.mockResolvedValueOnce([{
+            id: "moved-direct-category",
+            title: "이동된 프로젝트",
+            color: "#007aff",
+            calendarId: 22,
+            shared: true,
+            sharePermission: "EDITOR",
+            // A stale category response may still carry its old calendar capability. The
+            // membership for this category's current calendar remains the final UI fence.
+            canManageMetadata: true,
+            canManageAudience: true,
+        }]);
+        mockGetCalendars.mockResolvedValueOnce([{
+            id: 16,
+            title: "이전 캘린더",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_ONLY",
+            status: "ACTIVE",
+            ownerMemberId: 1,
+            myRole: "EDITOR",
+            memberCount: 2,
+            routeReminderEnabled: true,
+        }]);
+        await renderScreen();
+
+        expect(renderer!.root.findByProps({ children: "이동된 프로젝트" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "이동된 프로젝트 수정" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "이동된 프로젝트 삭제" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "이동된 프로젝트 카테고리 작업 메뉴",
+        })).toHaveLength(0);
+    });
+
+    test("캐시된 이전 캘린더 카테고리는 최신 범위를 확인하기 전 수정할 수 없다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "이전 캘린더",
+        });
+        const cachedCategory = {
+            id: "moving-category",
+            title: "이동 중인 프로젝트",
+            color: "#007aff",
+            calendarId: 16,
+            shared: true,
+            sharePermission: "EDITOR" as const,
+            canManageMetadata: true,
+            canManageAudience: false,
+        };
+        let resolveCategories!: (categories: typeof cachedCategory[]) => void;
+        mockGetCategories.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveCategories = resolve;
+        }));
+        mockGetCalendars.mockResolvedValueOnce([{
+            id: 16,
+            title: "이전 캘린더",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_ONLY",
+            status: "ACTIVE",
+            ownerMemberId: 1,
+            myRole: "EDITOR",
+            memberCount: 2,
+            routeReminderEnabled: true,
+        }]);
+        await renderScreen([cachedCategory]);
+
+        expect(renderer!.root.findByProps({ children: "이동 중인 프로젝트" })).toBeDefined();
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "이동 중인 프로젝트 수정" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "이동 중인 프로젝트 삭제" })).toHaveLength(0);
+
+        await act(async () => {
+            resolveCategories([{ ...cachedCategory, calendarId: 22, canManageMetadata: false }]);
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(renderer!.root.findAllByProps({ children: "이동 중인 프로젝트" })).toHaveLength(0);
     });
 
     test("개인 소유 카테고리에만 다른 캘린더 이동 액션을 표시한다", async () => {
@@ -199,5 +380,75 @@ describe("ScheduleCategoriesScreen load state", () => {
         expect(renderer!.root.findAllByProps({
             accessibilityLabel: "친구 일정 카테고리 작업 메뉴",
         })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "친구 일정 수정" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ accessibilityLabel: "친구 일정 삭제" })).toHaveLength(0);
+    });
+
+    test("공유 캘린더 OWNER는 카테고리 공유·이동 메뉴를 본다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "가족",
+        });
+        mockGetCategories.mockResolvedValueOnce([
+            {
+                id: "owner-category",
+                title: "가족 행사",
+                color: "#ff3b30",
+                calendarId: 16,
+                shared: true,
+                sharePermission: "OWNER",
+            },
+        ]);
+        mockGetCalendars.mockResolvedValueOnce([
+            {
+                id: 16,
+                title: "가족",
+                color: "#2F80FF",
+                defaultContentMode: "SCHEDULE_ONLY",
+                status: "ACTIVE",
+                ownerMemberId: 1,
+                myRole: "OWNER",
+                memberCount: 2,
+                routeReminderEnabled: true,
+            },
+        ]);
+        await renderScreen();
+
+        expect(renderer!.root.findByProps({
+            accessibilityLabel: "가족 행사 카테고리 작업 메뉴",
+        })).toBeDefined();
+    });
+
+    test("공유 캘린더 EDITOR는 카테고리 메타데이터를 편집하지만 공유·이동은 관리하지 않는다", async () => {
+        mockUseLocalSearchParams.mockReturnValue({
+            calendarId: "16",
+            calendarTitle: "가족",
+        });
+        mockGetCategories.mockResolvedValueOnce([{
+            id: "editor-category",
+            title: "장보기",
+            color: "#007aff",
+            calendarId: 16,
+            shared: true,
+            sharePermission: "EDITOR",
+        }]);
+        mockGetCalendars.mockResolvedValueOnce([{
+            id: 16,
+            title: "가족",
+            color: "#2F80FF",
+            defaultContentMode: "SCHEDULE_ONLY",
+            status: "ACTIVE",
+            ownerMemberId: 2,
+            myRole: "EDITOR",
+            memberCount: 2,
+            routeReminderEnabled: true,
+        }]);
+        await renderScreen();
+
+        expect(renderer!.root.findAllByProps({
+            accessibilityLabel: "장보기 카테고리 작업 메뉴",
+        })).toHaveLength(0);
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장보기 수정" })).toBeDefined();
+        expect(renderer!.root.findByProps({ accessibilityLabel: "장보기 삭제" })).toBeDefined();
     });
 });

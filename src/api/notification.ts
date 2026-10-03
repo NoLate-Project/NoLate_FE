@@ -1,5 +1,5 @@
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from "./api";
-import { assertApiSuccess, unwrapApiResponse, type ApiEnvelope } from "./response";
+import { assertApiSuccess, AuthSessionInvalidatedError, unwrapApiResponse, type ApiEnvelope } from "./response";
 
 export type PushPlatform = "IOS" | "ANDROID" | "WEB";
 
@@ -147,21 +147,22 @@ export async function registerLiveActivityStartToken(
     const response = await apiPut<ApiEnvelope<null>, RegisterLiveActivityStartTokenPayload>(
         "/api/notifications/live-activities/start-token",
         payload,
+        { authFailureMode: "report-only" },
     );
     assertApiSuccess(response);
 }
 
 export async function retireLiveActivityStartToken(deviceId: string): Promise<void> {
-    const response = await apiDelete<ApiEnvelope<null>>(
+    await finishLiveActivityRetirement(() => apiDelete<ApiEnvelope<null>>(
         "/api/notifications/live-activities/start-token",
         {
+            authFailureMode: "report-only",
             params: {
                 deviceId,
                 activityType: LIVE_ACTIVITY_TYPE,
             },
         },
-    );
-    assertApiSuccess(response);
+    ));
 }
 
 export async function registerLiveActivityUpdateToken(
@@ -171,6 +172,7 @@ export async function registerLiveActivityUpdateToken(
     const response = await apiPut<ApiEnvelope<null>, RegisterLiveActivityUpdateTokenPayload>(
         `/api/notifications/live-activities/${encodeURIComponent(activityId)}/update-token`,
         payload,
+        { authFailureMode: "report-only" },
     );
     assertApiSuccess(response);
 }
@@ -180,11 +182,23 @@ export async function retireLiveActivity(
     activityId: string,
     payload: RetireLiveActivityPayload,
 ): Promise<void> {
-    const response = await apiDelete<ApiEnvelope<null>>(
+    await finishLiveActivityRetirement(() => apiDelete<ApiEnvelope<null>>(
         `/api/notifications/live-activities/${encodeURIComponent(activityId)}`,
-        { params: payload },
-    );
-    assertApiSuccess(response);
+        { params: payload, authFailureMode: "report-only" },
+    ));
+}
+
+async function finishLiveActivityRetirement(
+    request: () => Promise<ApiEnvelope<null>>,
+): Promise<void> {
+    try {
+        assertApiSuccess(await request());
+    } catch (error) {
+        // Once refresh conclusively rejects the session, there is no authorized
+        // remote retirement left to perform. Let the caller end native surfaces
+        // and clear local credentials. Network/5xx/ordinary 403 errors still fail.
+        if (!(error instanceof AuthSessionInvalidatedError)) throw error;
+    }
 }
 
 export async function postNotificationDeliveryAck(

@@ -7,21 +7,11 @@ export type SubscriptionPolicy = {
     plan: SubscriptionPlan;
     /** Backend-controlled effective ad decision. Defaults off when policy loading fails. */
     adsEnabled: boolean;
-    maxSmartSchedulesPerMonth: number;
-    usedSmartSchedulesThisMonth: number;
-    maxNotificationLeadMinutes: number;
-    minNotificationIntervalMinutes: number;
-    minEtaRefreshIntervalMinutes: number;
 };
 
 export const FREE_SUBSCRIPTION_POLICY: SubscriptionPolicy = {
     plan: "FREE",
     adsEnabled: false,
-    maxSmartSchedulesPerMonth: 5,
-    usedSmartSchedulesThisMonth: 0,
-    maxNotificationLeadMinutes: 60,
-    minNotificationIntervalMinutes: 30,
-    minEtaRefreshIntervalMinutes: 20,
 };
 
 export async function getMySubscriptionPolicy(): Promise<SubscriptionPolicy> {

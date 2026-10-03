@@ -1,4 +1,5 @@
 import { apiDelete, apiPut } from "../src/api/api";
+import { ApiResponseError, AuthSessionInvalidatedError } from "../src/api/response";
 import {
     LIVE_ACTIVITY_SCHEMA_VERSION,
     LIVE_ACTIVITY_TYPE,
@@ -41,10 +42,12 @@ describe("Live Activity API", () => {
         expect(mockedApiPut).toHaveBeenCalledWith(
             "/api/notifications/live-activities/start-token",
             payload,
+            { authFailureMode: "report-only" },
         );
         expect(mockedApiDelete).toHaveBeenCalledWith(
             "/api/notifications/live-activities/start-token",
             {
+                authFailureMode: "report-only",
                 params: {
                     deviceId: payload.deviceId,
                     activityType: LIVE_ACTIVITY_TYPE,
@@ -72,15 +75,29 @@ describe("Live Activity API", () => {
         expect(mockedApiPut).toHaveBeenCalledWith(
             "/api/notifications/live-activities/activity%2Fid%2041/update-token",
             payload,
+            { authFailureMode: "report-only" },
         );
         expect(mockedApiDelete).toHaveBeenCalledWith(
             "/api/notifications/live-activities/activity%2Fid%2041",
             {
+                authFailureMode: "report-only",
                 params: {
                     deviceId: payload.deviceId,
                     scheduleId: payload.scheduleId,
                 },
             },
         );
+    });
+
+    test("ends retirement on conclusive session invalidation only", async () => {
+        mockedApiDelete.mockRejectedValue(new AuthSessionInvalidatedError());
+        await expect(retireLiveActivityStartToken("device")).resolves.toBeUndefined();
+        await expect(retireLiveActivity("activity", { deviceId: "device", scheduleId: 1 }))
+            .resolves.toBeUndefined();
+    });
+
+    test.each([401, 403, 404, 503])("does not swallow an ordinary %s retirement failure", async status => {
+        mockedApiDelete.mockRejectedValue(new ApiResponseError("failed", { status }));
+        await expect(retireLiveActivityStartToken("device")).rejects.toMatchObject({ status });
     });
 });

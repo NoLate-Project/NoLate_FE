@@ -99,7 +99,7 @@ export default function ScheduleCalendarSelectBox({
             </ScrollView>
 
             {locked ? (
-                <Text style={[styles.hint, { color: colors.textSecondary }]}>일정 작성자만 캘린더를 변경할 수 있어요.</Text>
+                <Text style={[styles.hint, { color: colors.textSecondary }]}>이 일정의 소유자만 캘린더를 변경할 수 있어요.</Text>
             ) : loading ? (
                 <Text style={[styles.hint, { color: colors.textSecondary }]}>공유 캘린더를 불러오는 중...</Text>
             ) : error ? (
@@ -144,7 +144,7 @@ function CalendarOption({
             testID={disabled ? "schedule-calendar-assignment-locked" : undefined}
             accessibilityRole="radio"
             accessibilityLabel={disabled
-                ? `${title}, 일정 작성자만 캘린더 변경 가능`
+                ? `${title}, 일정 소유자만 캘린더 변경 가능`
                 : `${title} 캘린더 선택`}
             accessibilityState={{ selected, disabled }}
             disabled={disabled}

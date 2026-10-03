@@ -2,7 +2,7 @@ export type PersonalCategoryManagementAction = "SHARE" | "MOVE" | "EDIT" | "DELE
 
 export const PERSONAL_CATEGORY_ACTION_SHEET_OPTIONS = [
     "카테고리 공유",
-    "공유 캘린더로 이동",
+    "다른 캘린더로 이동",
     "카테고리 수정",
     "카테고리 삭제",
     "취소",

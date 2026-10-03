@@ -16,10 +16,43 @@ export type ShareInvitationSheetProps = {
     onClose: () => void;
 };
 export type ShareMode = "direct" | "link";
-export const PERMISSION_OPTIONS: Array<{ value: Exclude<ScheduleSharePermission, "OWNER">; label: string; description: string }> = [
-    { value: "VIEWER", label: "보기", description: "일정과 카테고리 내용을 확인" },
-    { value: "EDITOR", label: "편집", description: "공유 대상 수정까지 허용" },
-];
+export type GrantableSharePermission = Extract<ScheduleSharePermission, "VIEWER" | "EDITOR">;
+export type SharePermissionOption = {
+    value: GrantableSharePermission;
+    label: string;
+    description: string;
+};
+
+const PERMISSION_DESCRIPTIONS: Record<
+    ShareInvitationSheetProps["resourceType"],
+    Record<GrantableSharePermission, string>
+> = {
+    schedule: {
+        VIEWER: "이 일정 조회",
+        EDITOR: "이 일정 수정·삭제",
+    },
+    category: {
+        VIEWER: "현재·앞으로 추가되는 일정 조회",
+        EDITOR: "이 카테고리의 일정 생성·수정·삭제",
+    },
+    calendar: {
+        VIEWER: "모든 카테고리와 일정 조회",
+        EDITOR: "카테고리와 일정 생성·수정·삭제",
+    },
+};
+
+/** 세 공유 단위에 동일한 보기·편집 권한을 제공하되 적용 범위를 명확히 설명합니다. */
+export function getPermissionOptions(
+    resourceType: ShareInvitationSheetProps["resourceType"],
+): SharePermissionOption[] {
+    return (["VIEWER", "EDITOR"] as const).map((value) => ({
+        value,
+        label: value === "VIEWER" ? "보기" : "편집",
+        description: PERMISSION_DESCRIPTIONS[resourceType][value],
+    }));
+}
+
+export const PERMISSION_OPTIONS = getPermissionOptions("schedule");
 export const TTL_OPTIONS = [{ value: 24, label: "24시간" }, { value: 72, label: "3일" }, { value: 168, label: "7일" }];
 export const ACCEPT_COUNT_OPTIONS = [{ value: 1, label: "1명" }, { value: 5, label: "5명" }, { value: 10, label: "10명" }];
 export const MODE_TRANSITION_DURATION_MS = 240;
@@ -60,6 +93,7 @@ export function statusLabel(status: ScheduleShareInvitation["status"]) {
 
 /** 공유 권한 코드를 선택 칩과 초대 목록에서 사용하는 한글 레이블로 변환합니다. */
 export function permissionLabel(permission: ScheduleSharePermission) {
+    if (permission === "COMMENTER") return "보기";
     return PERMISSION_OPTIONS.find((option) => option.value === permission)?.label ?? permission;
 }
 

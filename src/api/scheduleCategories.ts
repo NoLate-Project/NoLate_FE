@@ -19,6 +19,8 @@ type ScheduleCategoryDto = {
     calendarId?: number | null;
     shared?: boolean | null;
     sharePermission?: ScheduleSharePermission | null;
+    canManageMetadata?: boolean | null;
+    canManageAudience?: boolean | null;
     updatedAt?: string | null;
 };
 
@@ -38,15 +40,20 @@ type UpdateScheduleCategoryPayload = {
 
 export type ScheduleCategoryMovePreview = {
     scheduleCount: number;
-    mergeTargetCategory?: ScheduleCategoryItem;
+    sameNameCategory?: ScheduleCategoryItem;
     sourceCategory?: ScheduleCategoryItem;
-    destinationCalendarId?: number;
+    destinationCalendarId?: number | null;
     destinationCalendarTitle?: string;
+    retainedDirectShareCount?: number;
+    retainedDirectScheduleShareCount?: number;
+    sourceCalendarMemberCount?: number;
+    destinationCalendarMemberCount?: number;
+    gainedAccessMemberCount?: number;
+    lostAccessMemberCount?: number;
 };
 
 export type MoveScheduleCategoryPayload = {
     calendarId: number;
-    mergeIntoCategoryId?: string;
 };
 
 export type ScheduleCategoryMoveResult = {
@@ -63,12 +70,13 @@ type ScheduleCategoryMovePreviewDto = {
     activeScheduleCount?: number | null;
     scheduleCount?: number | null;
     movedScheduleCount?: number | null;
-    existingCategory?: ScheduleCategoryDto | null;
-    mergeTargetCategory?: ScheduleCategoryDto | null;
     sameNameCategory?: ScheduleCategoryDto | null;
-    existingCategoryId?: number | string | null;
-    existingCategoryTitle?: string | null;
-    existingCategoryColor?: string | null;
+    retainedDirectShareCount?: number | null;
+    retainedDirectScheduleShareCount?: number | null;
+    sourceCalendarMemberCount?: number | null;
+    destinationCalendarMemberCount?: number | null;
+    gainedAccessMemberCount?: number | null;
+    lostAccessMemberCount?: number | null;
 };
 
 type ScheduleCategoryMoveResultDto = {
@@ -105,6 +113,12 @@ function normalizeScheduleCategory(dto: ScheduleCategoryDto): ScheduleCategoryIt
     if (dto.sharePermission) {
         category.sharePermission = dto.sharePermission;
     }
+    if (typeof dto.canManageMetadata === "boolean") {
+        category.canManageMetadata = dto.canManageMetadata;
+    }
+    if (typeof dto.canManageAudience === "boolean") {
+        category.canManageAudience = dto.canManageAudience;
+    }
 
     return category;
 }
@@ -116,26 +130,27 @@ function normalizeCount(...values: Array<number | null | undefined>): number {
     return value ?? 0;
 }
 
-/**
- * Keeps the UI tolerant of temporary preview DTO aliases used while the
- * category-move endpoint is being rolled out. The finalized contract uses
- * `activeScheduleCount` and `sameNameCategory`.
- */
+function normalizeOptionalCount(value: number | null | undefined): number | undefined {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ? value
+        : undefined;
+}
+
+/** Finalized category-move preview contract normalized for the UI. */
 export function normalizeScheduleCategoryMovePreview(
     dto: ScheduleCategoryMovePreviewDto,
 ): ScheduleCategoryMovePreview {
-    const explicitTarget = dto.mergeTargetCategory
-        ?? dto.existingCategory
-        ?? dto.sameNameCategory;
-    const fallbackTarget = dto.existingCategoryId === undefined || dto.existingCategoryId === null
-        ? undefined
-        : {
-            id: dto.existingCategoryId,
-            title: dto.existingCategoryTitle,
-            color: dto.existingCategoryColor,
-        };
-    const target = explicitTarget ?? fallbackTarget;
-    const mergeTargetCategory = target ? normalizeScheduleCategory(target) : undefined;
+    const sameNameCategory = dto.sameNameCategory
+        ? normalizeScheduleCategory(dto.sameNameCategory)
+        : undefined;
+    const retainedDirectShareCount = normalizeOptionalCount(dto.retainedDirectShareCount);
+    const retainedDirectScheduleShareCount = normalizeOptionalCount(
+        dto.retainedDirectScheduleShareCount,
+    );
+    const sourceCalendarMemberCount = normalizeOptionalCount(dto.sourceCalendarMemberCount);
+    const destinationCalendarMemberCount = normalizeOptionalCount(dto.destinationCalendarMemberCount);
+    const gainedAccessMemberCount = normalizeOptionalCount(dto.gainedAccessMemberCount);
+    const lostAccessMemberCount = normalizeOptionalCount(dto.lostAccessMemberCount);
 
     return {
         scheduleCount: normalizeCount(
@@ -143,9 +158,17 @@ export function normalizeScheduleCategoryMovePreview(
             dto.scheduleCount,
             dto.movedScheduleCount,
         ),
-        ...(mergeTargetCategory?.id ? { mergeTargetCategory } : {}),
+        ...(retainedDirectShareCount !== undefined ? { retainedDirectShareCount } : {}),
+        ...(retainedDirectScheduleShareCount !== undefined
+            ? { retainedDirectScheduleShareCount }
+            : {}),
+        ...(sourceCalendarMemberCount !== undefined ? { sourceCalendarMemberCount } : {}),
+        ...(destinationCalendarMemberCount !== undefined ? { destinationCalendarMemberCount } : {}),
+        ...(gainedAccessMemberCount !== undefined ? { gainedAccessMemberCount } : {}),
+        ...(lostAccessMemberCount !== undefined ? { lostAccessMemberCount } : {}),
+        ...(sameNameCategory?.id ? { sameNameCategory } : {}),
         ...(dto.sourceCategory ? { sourceCategory: normalizeScheduleCategory(dto.sourceCategory) } : {}),
-        ...(typeof dto.destinationCalendarId === "number"
+        ...(typeof dto.destinationCalendarId === "number" || dto.destinationCalendarId === null
             ? { destinationCalendarId: dto.destinationCalendarId }
             : {}),
         ...(dto.destinationCalendarTitle?.trim()
@@ -227,16 +250,11 @@ export async function moveScheduleCategoryToApi(
 ): Promise<ScheduleCategoryMoveResult> {
     const response = await apiPost<
         ApiEnvelope<ScheduleCategoryMoveResultDto>,
-        { calendarId: number; mergeIntoCategoryId?: number | string }
+        { calendarId: number }
     >(
         `/api/schedule-categories/${encodeURIComponent(categoryId)}/move`,
         {
             calendarId: payload.calendarId,
-            mergeIntoCategoryId: payload.mergeIntoCategoryId
-                ? Number.isSafeInteger(Number(payload.mergeIntoCategoryId))
-                    ? Number(payload.mergeIntoCategoryId)
-                    : payload.mergeIntoCategoryId
-                : undefined,
         },
     );
     const result = normalizeScheduleCategoryMoveResult(unwrapApiResponse(response));
