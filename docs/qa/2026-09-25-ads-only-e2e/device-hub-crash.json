@@ -1,0 +1,80 @@
+{
+  "report": "DeviceHub-2026-09-25-230527.ips",
+  "exception": {
+    "codes": "0x0000000000000000, 0x0000000000000000",
+    "rawCodes": [
+      0,
+      0
+    ],
+    "type": "EXC_CRASH",
+    "signal": "SIGABRT"
+  },
+  "termination": {
+    "flags": 0,
+    "code": 6,
+    "namespace": "SIGNAL",
+    "indicator": "Abort trap: 6",
+    "byProc": "DeviceHub",
+    "byPid": 91443
+  },
+  "triggeredFrames": [
+    {
+      "symbol": "__pthread_kill",
+      "symbolLocation": 8
+    },
+    {
+      "symbol": "pthread_kill",
+      "symbolLocation": 296
+    },
+    {
+      "symbol": "abort",
+      "symbolLocation": 148
+    },
+    {
+      "symbol": "__abort_message",
+      "symbolLocation": 132
+    },
+    {
+      "symbol": "demangling_terminate_handler()",
+      "symbolLocation": 296
+    },
+    {
+      "symbol": "_objc_terminate()",
+      "symbolLocation": 156
+    },
+    {
+      "symbol": "std::__terminate(void (*)())",
+      "symbolLocation": 16
+    },
+    {
+      "symbol": "__cxa_rethrow",
+      "symbolLocation": 188
+    },
+    {
+      "symbol": "objc_exception_rethrow",
+      "symbolLocation": 44
+    },
+    {
+      "symbol": "__NSWindowGetDisplayCycleObserverForUpdateConstraints_block_invoke",
+      "symbolLocation": 404
+    },
+    {
+      "symbol": "NSDisplayCycleObserverInvoke",
+      "symbolLocation": 152
+    },
+    {
+      "symbol": "NSDisplayCycleFlush",
+      "symbolLocation": 656
+    }
+  ],
+  "lastExceptionSymbols": [
+    "__exceptionPreprocess",
+    "objc_exception_throw",
+    "+[NSException exceptionWithName:reason:userInfo:]",
+    "-[NSWindow(NSDisplayCycle) _postWindowNeedsUpdateConstraints]",
+    "-[NSView _informContainerThatSubviewsNeedUpdateConstraints]",
+    "-[NSView _informContainerThatSubviewsNeedUpdateConstraints]",
+    "-[_NSConstraintBasedLayoutHostingView _informContainerThatSubviewsNeedUpdateConstraints]",
+    "-[NSView _informContainerThatSubviewsNeedUpdateConstraints]"
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "report": "NoLateFE-2026-09-25-230735.ips",
+  "exception": {
+    "codes": "0x0000000000000001, 0x00000001c48c336c",
+    "rawCodes": [
+      1,
+      7592489836
+    ],
+    "type": "EXC_BREAKPOINT",
+    "signal": "SIGTRAP"
+  },
+  "termination": {
+    "flags": 0,
+    "code": 5,
+    "namespace": "SIGNAL",
+    "indicator": "Trace/BPT trap: 5",
+    "byProc": "exc handler",
+    "byPid": 93339
+  },
+  "triggeredFrames": [
+    {
+      "symbol": "___UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption_block_invoke",
+      "symbolLocation": 712
+    },
+    {
+      "symbol": "_dispatch_client_callout",
+      "symbolLocation": 12
+    },
+    {
+      "symbol": "_dispatch_once_callout",
+      "symbolLocation": 28
+    },
+    {
+      "symbol": "-[UIApplication workspace:didCreateScene:withTransitionContext:completion:]",
+      "symbolLocation": 320
+    },
+    {
+      "symbol": "-[UIApplicationSceneClientAgent scene:didInitializeWithEvent:completion:]",
+      "symbolLocation": 260
+    },
+    {
+      "symbol": "__95-[FBSScene _callOutQueue_didCreateWithTransitionContext:alternativeCreationCallout:completion:]_block_invoke",
+      "symbolLocation": 304
+    },
+    {
+      "symbol": "-[FBSScene _callOutQueue_maybeCoalesceClientSettingsUpdates:]",
+      "symbolLocation": 116
+    },
+    {
+      "symbol": "-[FBSScene _callOutQueue_didCreateWithTransitionContext:alternativeCreationCallout:completion:]",
+      "symbolLocation": 392
+    },
+    {
+      "symbol": "__93-[FBSWorkspaceScenesClient _callOutQueue_sendDidCreateForScene:transitionContext:completion:]_block_invoke.282",
+      "symbolLocation": 216
+    },
+    {
+      "symbol": "-[FBSWorkspace _calloutQueue_executeCalloutFromSource:withBlock:]",
+      "symbolLocation": 160
+    },
+    {
+      "symbol": "-[FBSWorkspaceScenesClient _callOutQueue_sendDidCreateForScene:transitionContext:completion:]",
+      "symbolLocation": 392
+    },
+    {
+      "symbol": "__92-[FBSWorkspaceScenesClient createSceneWithIdentity:parameters:transitionContext:completion:]_block_invoke_2",
+      "symbolLocation": 204
+    }
+  ],
+  "lastExceptionSymbols": []
+}

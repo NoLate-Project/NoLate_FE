@@ -1,0 +1,92 @@
+[
+  {
+    "scenario": "FREE 알림 일정 1 생성",
+    "status": "PASS",
+    "details": {
+      "id": 340
+    }
+  },
+  {
+    "scenario": "FREE 알림 일정 2 생성",
+    "status": "PASS",
+    "details": {
+      "id": 341
+    }
+  },
+  {
+    "scenario": "FREE 알림 일정 3 생성",
+    "status": "PASS",
+    "details": {
+      "id": 342
+    }
+  },
+  {
+    "scenario": "FREE 알림 일정 4 생성",
+    "status": "PASS",
+    "details": {
+      "id": 343
+    }
+  },
+  {
+    "scenario": "FREE 알림 일정 5 생성",
+    "status": "PASS",
+    "details": {
+      "id": 344
+    }
+  },
+  {
+    "scenario": "FREE 알림 일정 6 생성",
+    "status": "PASS",
+    "details": {
+      "id": 345
+    }
+  },
+  {
+    "scenario": "ALARM 변경 및 수정",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "수정 후 재조회",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "121분 입력 거부",
+    "status": "PASS",
+    "details": {
+      "httpStatus": 400,
+      "errorCode": "C001"
+    }
+  },
+  {
+    "scenario": "테스트 일정 정리 340",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "테스트 일정 정리 341",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "테스트 일정 정리 342",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "테스트 일정 정리 343",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "테스트 일정 정리 344",
+    "status": "PASS",
+    "details": null
+  },
+  {
+    "scenario": "테스트 일정 정리 345",
+    "status": "PASS",
+    "details": null
+  }
+]

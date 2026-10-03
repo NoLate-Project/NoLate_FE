@@ -1,0 +1,14 @@
+[
+  {
+    "plan": "free",
+    "importAfter102": "PASS",
+    "duplicateImport": "PASS",
+    "scheduleId": 205
+  },
+  {
+    "plan": "premium",
+    "importAfter102": "PASS",
+    "duplicateImport": "PASS",
+    "scheduleId": 206
+  }
+]

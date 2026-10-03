@@ -1,0 +1,11 @@
+{
+  "email": "ads-e2e-20260926-000056@example.test",
+  "memberId": 295,
+  "signup": "PASS",
+  "login": "PASS",
+  "subscription": {
+    "plan": "FREE",
+    "adsEnabled": false
+  },
+  "curationCompleted": false
+}

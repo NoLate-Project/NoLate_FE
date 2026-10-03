@@ -1,0 +1,10 @@
+[
+  {
+    "plan": "FREE",
+    "adsEnabled": true
+  },
+  {
+    "plan": "PREMIUM",
+    "adsEnabled": false
+  }
+]

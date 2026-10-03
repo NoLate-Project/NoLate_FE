@@ -1,0 +1,26 @@
+[
+  {
+    "plan": "FREE",
+    "policy": {
+      "plan": "FREE",
+      "adsEnabled": false
+    },
+    "created": 102,
+    "firstId": 1,
+    "lastId": 102,
+    "editAndRead": "PASS",
+    "invalidLeadRejected": "PASS"
+  },
+  {
+    "plan": "PREMIUM",
+    "policy": {
+      "plan": "PREMIUM",
+      "adsEnabled": false
+    },
+    "created": 102,
+    "firstId": 103,
+    "lastId": 204,
+    "editAndRead": "PASS",
+    "invalidLeadRejected": "PASS"
+  }
+]
