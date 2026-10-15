@@ -34,6 +34,7 @@ let nextId = 1;
 let pendingNavigation: PendingNavigation | undefined;
 let observedRoute = "/";
 let performanceSink: NavigationPerformanceSink | undefined;
+let suppressAutomaticNavigationUntil = 0;
 
 function monotonicNow() {
     const runtimePerformance = (
@@ -104,6 +105,9 @@ export function beginNavigationMeasurement(
     at = monotonicNow(),
     startedAtEpochMs = Date.now(),
 ) {
+    if (action !== "SHELL" && at <= suppressAutomaticNavigationUntil) {
+        return pendingNavigation?.id ?? 0;
+    }
     if (pendingNavigation) {
         if (pendingNavigation.routeReadyAt !== undefined) {
             if (pendingNavigation.transitionStarted) {
@@ -131,6 +135,17 @@ export function beginNavigationMeasurement(
     return id;
 }
 
+/** Avoids recording the native handoff a second time after its visible shell. */
+export function suppressAutomaticNavigationMeasurements(
+    at = monotonicNow(),
+    durationMs = 1_000,
+) {
+    suppressAutomaticNavigationUntil = Math.max(
+        suppressAutomaticNavigationUntil,
+        at + durationMs,
+    );
+}
+
 export function markNavigationRouteReady(
     toRoute: string,
     at = monotonicNow(),
@@ -155,6 +170,9 @@ export function markNavigationTransitionStarted(
     at = monotonicNow(),
     startedAtEpochMs = Date.now(),
 ) {
+    if (at <= suppressAutomaticNavigationUntil) {
+        return pendingNavigation?.id;
+    }
     if (!pendingNavigation) {
         beginNavigationMeasurement(
             "GESTURE",
@@ -205,4 +223,5 @@ export function resetNavigationPerformanceForTests() {
     pendingNavigation = undefined;
     observedRoute = "/";
     performanceSink = undefined;
+    suppressAutomaticNavigationUntil = 0;
 }

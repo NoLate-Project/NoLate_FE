@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Redirect, Stack, useRouter, useSegments } from "expo-router";
 import { Alert, AppState, InteractionManager, StatusBar, StyleSheet, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -18,6 +18,25 @@ import {
 } from "../src/modules/notification/pushNavigation";
 import { useTheme } from "../src/modules/theme/ThemeContext";
 import NavigationPerformanceTracker from "../src/modules/performance/NavigationPerformanceTracker";
+import { ImmediateNavigationTransitionProvider } from "../src/modules/performance/ImmediateNavigationTransition";
+import { ProfileScreen } from "./profile";
+import { AppNotificationScreen } from "./notifications";
+import { ShareInboxScreen } from "./share/inbox";
+import { ScheduleDetail } from "./schedule/[id]";
+import { useScheduleStore } from "../src/modules/schedule/store";
+import { getSelectedDayAgendaItems } from "../src/modules/schedule/agendaLayout";
+import PlacesSettingsScreen from "./settings/places";
+import ScheduleCategoriesScreen from "./schedule/categories";
+import ScheduleCalendarsScreen from "./schedule/calendars";
+import RouteSelectScreen from "./schedule/route-select";
+import {
+    getLatestRoutePlannerSessionId,
+    subscribeLatestRoutePlannerSession,
+} from "../src/modules/schedule/routePlannerSession";
+import BlockedSharingMembersScreen from "./share/blocked";
+import SharingReportHistoryScreen from "./share/reports";
+import PrivacyPolicyScreen from "./legal/privacy-policy";
+import TermsOfServiceScreen from "./legal/terms-of-service";
 import {
     markNavigationTransitionEnded,
     markNavigationTransitionStarted,
@@ -40,6 +59,17 @@ import {
 export default function RootLayout() {
     const router = useRouter();
     const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    const { state: scheduleState } = useScheduleStore();
+    const preMountedDetailItem = useMemo(() => {
+        const items = Object.values(scheduleState.itemsById);
+        return getSelectedDayAgendaItems(items, scheduleState.selectedDay)[0]
+            ?? items.sort((left, right) => left.startAt.localeCompare(right.startAt))[0];
+    }, [scheduleState.itemsById, scheduleState.selectedDay]);
+    const routePlannerSceneSessionId = useSyncExternalStore(
+        subscribeLatestRoutePlannerSession,
+        getLatestRoutePlannerSessionId,
+        getLatestRoutePlannerSessionId,
+    );
     const pendingPushNavigation = useRef(createPendingPushNavigationQueue()).current;
     const pushNavigationReadyRef = useRef(isPushNavigationReady({
         isAuthenticated,
@@ -210,8 +240,33 @@ export default function RootLayout() {
 
     return (
         <GestureHandlerRootView style={styles.gestureRoot}>
-            {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
-            <RootNavigator />
+            <ImmediateNavigationTransitionProvider
+                preMountedScenes={!isLoading && isAuthenticated ? [
+                    { route: "/profile", content: <ProfileScreen /> },
+                    { route: "/notifications", content: <AppNotificationScreen /> },
+                    { route: "/share/inbox", content: <ShareInboxScreen /> },
+                    { route: "/settings/places", content: <PlacesSettingsScreen /> },
+                    { route: "/schedule/categories", content: <ScheduleCategoriesScreen /> },
+                    { route: "/schedule/calendars", content: <ScheduleCalendarsScreen /> },
+                    { route: "/share/blocked", content: <BlockedSharingMembersScreen /> },
+                    { route: "/share/reports", content: <SharingReportHistoryScreen /> },
+                    { route: "/legal/privacy-policy", content: <PrivacyPolicyScreen /> },
+                    { route: "/legal/terms-of-service", content: <TermsOfServiceScreen /> },
+                    ...(preMountedDetailItem ? [{
+                        route: "/schedule/[id]",
+                        sceneKey: preMountedDetailItem.id,
+                        content: <ScheduleDetail initialItem={preMountedDetailItem} />,
+                    }] : []),
+                    ...(routePlannerSceneSessionId ? [{
+                        route: "/schedule/route-select",
+                        sceneKey: routePlannerSceneSessionId,
+                        content: <RouteSelectScreen sessionIdOverride={routePlannerSceneSessionId} />,
+                    }] : []),
+                ] : []}
+            >
+                {!isLoading && isAuthenticated ? <NavigationPerformanceTracker /> : null}
+                <RootNavigator />
+            </ImmediateNavigationTransitionProvider>
         </GestureHandlerRootView>
     );
 }
@@ -245,6 +300,8 @@ function RootNavigator() {
             routeSegments[0] === "internal" &&
             (
                 routeSegments[1] === "schedule-ui-preview" ||
+                routeSegments[1] === "main-design-preview" ||
+                routeSegments[1] === "input-design-preview" ||
                 routeSegments[1] === "live-activity-preview"
             )) ||
         (routeSegments[0] === "share" &&
@@ -264,7 +321,7 @@ function RootNavigator() {
                     transitionEnd: () => markNavigationTransitionEnded(),
                 }
                 : undefined}
-            screenOptions={{ headerShown: false }}
+            screenOptions={{ headerShown: false, animation: "none" }}
         >
             <Stack.Screen name="index" />
             <Stack.Screen name="auth/login" />
@@ -274,23 +331,19 @@ function RootNavigator() {
             <Stack.Screen name="legal/privacy-policy" />
             <Stack.Screen
                 name="share/[token]"
-                options={{ animation: "fade", animationDuration: 160 }}
             />
             {__DEV__ ? <Stack.Screen name="internal/schedule-ui-preview" /> : null}
+            {__DEV__ ? <Stack.Screen name="internal/main-design-preview" /> : null}
+            {__DEV__ ? <Stack.Screen name="internal/input-design-preview" /> : null}
             {__DEV__ ? <Stack.Screen name="internal/live-activity-preview" /> : null}
+            {__DEV__ ? <Stack.Screen name="internal/eta-alarm-verification" /> : null}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
                     name="onboarding/calendar-import"
-                    options={{
-                        animation: "fade",
-                        animationDuration: 180,
-                    }}
                 />
                 <Stack.Screen
                     name="onboarding/product-tour"
                     options={{
-                        animation: "fade",
-                        animationDuration: 180,
                         gestureEnabled: false,
                     }}
                 />
@@ -310,7 +363,6 @@ function RootNavigator() {
                 />
                 <Stack.Screen
                     name="schedule/index"
-                    options={{ animation: "fade", animationDuration: 140 }}
                 />
                 <Stack.Screen name="internal/quick-schedule-benchmark" />
                 <Stack.Screen
@@ -322,8 +374,6 @@ function RootNavigator() {
                 <Stack.Screen
                     name="alarm"
                     options={{
-                        animation: "fade",
-                        animationDuration: 140,
                         gestureEnabled: false,
                     }}
                 />
@@ -349,11 +399,9 @@ function RootNavigator() {
                 />
                 <Stack.Screen
                     name="schedule/route-select"
-                    options={{ animation: "slide_from_right", animationDuration: 160 }}
                 />
                 <Stack.Screen
                     name="schedule/route-planner"
-                    options={{ animation: "slide_from_right", animationDuration: 160 }}
                 />
                 <Stack.Screen
                     name="schedule/[id]"

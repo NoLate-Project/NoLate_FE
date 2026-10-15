@@ -6,7 +6,10 @@ import {
     type DepartureAlarmSyncCommand,
     type DepartureAlarmSyncPlanCommand,
 } from "./departureAlarmContract";
-import type { NoLateAlarmSoundId } from "./customAlarmSounds";
+import {
+    isNoLateAlarmSoundId,
+    type NoLateAlarmSoundId,
+} from "./customAlarmSounds";
 import {
     isActionEventKey,
     isOccurrenceId,
@@ -445,7 +448,7 @@ export async function openFullScreenAlarmSettings(): Promise<boolean> {
 
 export async function getNativeNoLateAlarmSoundPreference(): Promise<NoLateAlarmSoundId | undefined> {
     const value = await getNativeAlarmModule()?.getAlarmSoundPreference?.();
-    return value === "CHIME" || value === "BELL" || value === "BEEP" ? value : undefined;
+    return isNoLateAlarmSoundId(value) ? value : undefined;
 }
 
 export async function setNativeNoLateAlarmSoundPreference(soundId: NoLateAlarmSoundId): Promise<boolean> {

@@ -6,6 +6,7 @@ import { deleteSchedule, getSchedule, updateSchedule } from "../../../api/schedu
 import { upsertMyScheduleTravelPlan } from "../../../api/scheduleTravelPlans";
 import { recoverDepartureAlarmsAfterMutation } from "../../notification/departureAlarmMutationRecovery";
 import { preserveLegacyCalendarImportMetadata } from "../calendarImportNotes";
+import { getImportedTicket } from "../importedTicket";
 import { resolveScheduleAlertModePayload } from "../scheduleAlertMode";
 import { normalizeScheduleFormRange } from "../scheduleFormDate";
 import { buildScheduleFormLocationName, buildScheduleFormPlace } from "../scheduleFormPlace";
@@ -100,6 +101,7 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
             nextOrigin,
             nextDestination
         );
+        const importedTicket = getImportedTicket(reconciledRouteTiming.route);
         const resolvedNotificationEnabled = hasRoutePlan && notificationEnabled;
         const resolvedNotificationLeadMinutes = resolvedNotificationEnabled
             ? notificationLeadMinutes
@@ -145,15 +147,18 @@ export function createScheduleEditMutations(context: ScheduleEditMutationContext
                 startAt: nextStartAt,
                 endAt: normalizedRange.endAt.toISOString(),
                 hasEndTime: normalizedRange.hasEndTime,
-                travelMode: hasRoutePlan ? travelMode : undefined,
+                travelMode: hasRoutePlan ? travelMode : importedTicket ? "TRANSIT" : undefined,
                 travelMinutes: hasRoutePlan ? travelMinutes : undefined,
                 departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
                 locationName,
                 destination: nextDestination,
-                origin: hasRoutePlan ? nextOrigin : undefined,
+                origin: hasRoutePlan || importedTicket ? nextOrigin : undefined,
                 notes: preserveLegacyCalendarImportMetadata(item.notes, notes),
                 allDay: normalizedRange.allDay,
-                route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
+                route: hasRoutePlan ? reconciledRouteTiming.route : importedTicket
+                    ? { schemaVersion: 3, importedTicket }
+                    : undefined,
+                routeSetupRequired: importedTicket ? !hasRoutePlan : undefined,
                 notificationEnabled: resolvedNotificationEnabled,
                 notificationLeadMinutes: resolvedNotificationLeadMinutes,
                 notificationIntervalMinutes: resolvedNotificationIntervalMinutes,

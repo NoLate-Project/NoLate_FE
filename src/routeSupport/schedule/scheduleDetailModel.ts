@@ -34,6 +34,8 @@ export type SheetSnapMode = 'compact' | 'expanded';
 export type ScheduleDetailPreviewProps = {
   /** Internal QA only. Production routes always resolve the item from the schedule store. */
   previewItem?: ScheduleItem;
+  /** Cached production item used by the pre-mounted detail scene before route dispatch. */
+  initialItem?: ScheduleItem;
   initialSheetMode?: SheetSnapMode;
   initialParticipantsExpanded?: boolean;
   previewNowMs?: number;

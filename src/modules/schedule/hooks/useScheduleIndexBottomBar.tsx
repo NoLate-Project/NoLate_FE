@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
+import { SCHEDULE_ICONS } from '../components/shared/ScheduleIcon';
 import type { FloatingBarAction } from '../components/shared/GlobalFloatingActionBar';
 import {
   MonthAgendaList,
@@ -16,6 +17,7 @@ import {
 import type { CalendarViewMode } from '../components/calendar/viewMode';
 import type { MonthAgendaPanelKind } from '../calendarMotion';
 import { sanitizeCalendarTransitionError } from './scheduleIndexControllerModel';
+import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 const MemoizedSelectedDayAgendaPanel = React.memo(SelectedDayAgendaPanel);
 const MemoizedMonthAgendaList = React.memo(MonthAgendaList);
@@ -75,6 +77,7 @@ export function useScheduleIndexBottomBar({
   textSecondaryColor,
 }: UseScheduleIndexBottomBarParams) {
   const router = useRouter();
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
   const activeCalendarPresentation = useMemo(
     () => getCalendarScopePresentation(activeCalendarScope, scheduleCalendars),
     [activeCalendarScope, scheduleCalendars],
@@ -90,13 +93,19 @@ export function useScheduleIndexBottomBar({
 
   /** 공유 초대와 수신 일정이 모인 공유함의 전체 탭으로 이동한다. */
   const openInvitesShortcut = useCallback(() => {
-    router.push({ pathname: '/share/inbox', params: { tab: 'all' } });
-  }, [router]);
+    runWithTransitionShell(
+      { route: '/share/inbox', title: '공유함' },
+      () => router.push({ pathname: '/share/inbox', params: { tab: 'all' } }),
+    );
+  }, [router, runWithTransitionShell]);
 
   /** 읽지 않은 앱 알림을 확인할 수 있는 알림함으로 이동한다. */
   const openNotificationInbox = useCallback(() => {
-    router.push('/notifications');
-  }, [router]);
+    runWithTransitionShell(
+      { route: '/notifications', title: '알림' },
+      () => router.push('/notifications'),
+    );
+  }, [router, runWithTransitionShell]);
 
   const bottomLeftActions = useMemo<FloatingBarAction[]>(
     () => [
@@ -114,14 +123,14 @@ export function useScheduleIndexBottomBar({
     () => [
       {
         key: 'calendar-scope-selector',
-        icon: 'calendar-outline',
+        icon: SCHEDULE_ICONS.calendar,
         accessibilityLabel: `현재 ${activeCalendarPresentation.title}, 캘린더 선택`,
         accessibilityState: { expanded: calendarScopeSelectorVisible },
         onPress: openCalendarScopeSelector,
       },
       {
         key: 'notification-inbox-shortcut',
-        icon: 'notifications-outline',
+        icon: SCHEDULE_ICONS.notifications,
         badgeCount: notificationUnreadCount,
         emphasized: notificationUnreadCount > 0,
         accessibilityLabel:
@@ -132,7 +141,7 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'share-inbox-shortcut',
-        icon: 'mail-unread-outline',
+        icon: SCHEDULE_ICONS.inbox,
         badgeCount: shareBadgeCount,
         emphasized: shareBadgeCount > 0,
         accessibilityLabel:
@@ -143,7 +152,7 @@ export function useScheduleIndexBottomBar({
       },
       {
         key: 'account-settings-shortcut',
-        icon: 'person-circle-outline',
+        icon: SCHEDULE_ICONS.account,
         accessibilityLabel: '내 정보 및 설정',
         onPress: openAccountSettings,
       },

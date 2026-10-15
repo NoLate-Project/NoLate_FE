@@ -50,6 +50,24 @@ function scheduleFrameCompletion(pendingId: number) {
     };
 }
 
+function scheduleFallbackRouteReady(pathname: string) {
+    let completionCleanup: (() => void) | undefined;
+    let secondFrame: number | undefined;
+    const firstFrame = requestAnimationFrame(() => {
+        secondFrame = requestAnimationFrame(() => {
+            const pendingId = markNavigationRouteReady(pathname);
+            if (pendingId !== undefined) {
+                completionCleanup = scheduleFrameCompletion(pendingId);
+            }
+        });
+    });
+    return () => {
+        cancelAnimationFrame(firstFrame);
+        if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+        completionCleanup?.();
+    };
+}
+
 export default function NavigationPerformanceTracker() {
     const pathname = usePathname();
     const navigationRef = useNavigationContainerRef();
@@ -62,6 +80,13 @@ export default function NavigationPerformanceTracker() {
         const clearInteractionSink = setInteractionPerformanceSink((entry) => {
             recordInteractionPerformance(entry).catch(() => undefined);
         });
+        return () => {
+            clearSink();
+            clearInteractionSink();
+        };
+    }, [pathname]);
+
+    useEffect(() => {
         activateNavigationPerformanceQueue().catch(() => undefined);
         activateInteractionPerformanceQueue().catch(() => undefined);
         const appStateSubscription = AppState.addEventListener("change", (state) => {
@@ -74,8 +99,6 @@ export default function NavigationPerformanceTracker() {
             }
         });
         return () => {
-            clearSink();
-            clearInteractionSink();
             appStateSubscription.remove();
             deactivateNavigationPerformanceQueue();
             deactivateInteractionPerformanceQueue();
@@ -84,9 +107,9 @@ export default function NavigationPerformanceTracker() {
 
     useEffect(() => {
         pathnameRef.current = pathname;
-        const pendingId = markNavigationRouteReady(pathname);
-        if (pendingId === undefined) return;
-        return scheduleFrameCompletion(pendingId);
+        // Screen-owned first-paint hooks normally win on the first frame.
+        // Keep this two-frame fallback for a route that has not adopted the hook yet.
+        return scheduleFallbackRouteReady(pathname);
     }, [pathname]);
 
     useEffect(() => {

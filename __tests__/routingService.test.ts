@@ -7,6 +7,7 @@ import {
 } from "../src/modules/map/routingService";
 import type { Place } from "../src/modules/schedule/types";
 
+jest.mock("../src/api/env", () => ({ getEnv: jest.fn() }));
 jest.mock("../src/modules/map/tmapApi", () => ({
     getRouteAlternativeOptions: jest.fn(),
     reverseGeocodeToAddress: jest.fn(),
@@ -129,6 +130,7 @@ describe("routingService", () => {
             distanceMeters: 50_000,
             source: "api",
             provider: "tmap",
+            transitLegs: [{ kind: "SUBWAY", label: "2호선", serviceAvailable: true }],
             pathCoords: [
                 { lat: origin.lat!, lng: origin.lng! },
                 { lat: destination.lat!, lng: destination.lng! },
@@ -176,6 +178,46 @@ describe("routingService", () => {
             routeQualityNotice: expect.stringContaining("현재 운행하지"),
             transitServiceState: "not_operating",
         });
+    });
+
+    test.each([
+        { label: "missing", transitLegs: undefined },
+        { label: "empty", transitLegs: [] },
+        { label: "partial", transitLegs: [
+            { kind: "SUBWAY" as const, label: "4호선", serviceAvailable: true },
+            { kind: "SUBWAY" as const, label: "2호선" },
+        ] },
+    ])("keeps missing or partially verified service evidence unknown: $label", async ({ transitLegs }) => {
+        mockedLegacyRouteSearch.mockResolvedValue([{
+            id: "odsay-estimated-route",
+            mode: "TRANSIT",
+            minutes: 65,
+            source: "api",
+            provider: "odsay",
+            providerTimeBasis: "route_estimate",
+            providerDepartureAt: "2026-10-03T15:51:00.000Z",
+            providerArrivalAt: "2026-10-03T16:56:00.000Z",
+            pathCoords: [
+                { lat: origin.lat!, lng: origin.lng! },
+                { lat: destination.lat!, lng: destination.lng! },
+            ],
+            transitLegs,
+        }]);
+
+        const result = await getRouteAlternativeOptions(origin, destination, "TRANSIT", {
+            departureAt: new Date("2026-10-03T15:51:00.000Z"),
+        });
+
+        expect(result[0]).toMatchObject({
+            provider: "odsay",
+            providerTimeBasis: "route_estimate",
+            transitServiceState: "unknown",
+            routeReliability: "provider_estimate",
+            routeQualityLabel: "운행 시간 확인 필요",
+            routeQualityNotice: expect.stringContaining("운행 여부는 확인되지"),
+        });
+        // 미확인 경로는 30분씩 반복 검색해 '운행 중'으로 바꾸지 않는다.
+        expect(mockedLegacyRouteSearch).toHaveBeenCalledTimes(1);
     });
 
     test("replaces ended routes with the nearest future operating service", async () => {

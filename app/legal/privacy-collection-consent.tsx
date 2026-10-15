@@ -9,6 +9,7 @@ export default function PrivacyCollectionConsentScreen() {
         <LegalAgreementDocumentScreen
             fallback={PRIVACY_COLLECTION_CONSENT_FALLBACK}
             loadDocument={getPrivacyCollectionConsent}
+            route="/legal/privacy-collection-consent"
         />
     );
 }

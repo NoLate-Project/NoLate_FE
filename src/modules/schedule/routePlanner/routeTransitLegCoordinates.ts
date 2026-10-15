@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "../../map/transitModes";
 /** 대중교통 구간의 승하차·도보 접점 좌표와 노선 색상 계산 모듈입니다. */
 import {
   type RoutePathCoord,
@@ -81,7 +82,7 @@ export function getTransitKindLineColor(
 export function isRideLegKind(
   kind: TransitLegDetail['kind'],
 ): kind is TransitStopMarkerKind {
-  return kind === 'SUBWAY' || kind === 'BUS';
+  return isTransitRideKind(kind);
 }
 
 /** 승차 지점 정보와 구간 시작점에서 지도에 사용할 승차 좌표를 선택합니다. 입력 구간은 변경하지 않습니다. */

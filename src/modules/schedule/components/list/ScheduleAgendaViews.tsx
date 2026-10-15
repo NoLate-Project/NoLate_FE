@@ -1,6 +1,5 @@
 import styles from "./ScheduleAgendaViews.styles";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import {
     ActionSheetIOS,
     Alert,
@@ -33,6 +32,7 @@ import { getFloatingActionBarClearance } from "../shared/floatingActionBarLayout
 import ScheduleAgendaCard from "./ScheduleAgendaCard";
 import type { ScheduleSwipeActionResolver } from "../ScheduleSwipeActions";
 import { BrandedLoadingState } from "../../../../ui/BrandedLoader";
+import ScheduleIcon from "../shared/ScheduleIcon";
 
 const WEEKDAY_SHORT = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -116,7 +116,7 @@ function AgendaInlineState({
     if (!error) {
         return (
             <View style={styles.emptyState}>
-                <Ionicons accessible={false} name="calendar-outline" size={22} color={colors.textSecondary} />
+                <ScheduleIcon name="calendar" role="toolbar" color={colors.textSecondary} />
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                     {emptyText}
                 </Text>
@@ -135,12 +135,7 @@ function AgendaInlineState({
                 { opacity: pressed ? 0.58 : 1 },
             ]}
         >
-            <Ionicons
-                accessible={false}
-                name={error ? "refresh-outline" : "calendar-outline"}
-                size={22}
-                color={colors.textSecondary}
-            />
+            <ScheduleIcon name="refresh" role="toolbar" color={colors.textSecondary} />
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 {error}
             </Text>
@@ -156,6 +151,7 @@ function RouteSetupInlineNotice({
     onPress?: () => void;
 }) {
     const { colors, mode } = useTheme();
+    const actionColor = mode === "dark" ? "#FF9F0A" : "#B85F00";
 
     if (count <= 0 || !onPress) return null;
 
@@ -179,12 +175,7 @@ function RouteSetupInlineNotice({
             ]}
         >
             <View style={styles.routeSetupNoticeIcon}>
-                <Ionicons
-                    accessible={false}
-                    name="navigate-outline"
-                    size={14}
-                    color="#FF9F0A"
-                />
+                <ScheduleIcon name="departure" color={actionColor} />
             </View>
             <Text
                 numberOfLines={1}
@@ -192,13 +183,8 @@ function RouteSetupInlineNotice({
             >
                 {`경로 미설정 ${count}개`}
             </Text>
-            <Text style={styles.routeSetupNoticeAction}>설정</Text>
-            <Ionicons
-                accessible={false}
-                name="chevron-forward"
-                size={13}
-                color="#FF9F0A"
-            />
+            <Text style={[styles.routeSetupNoticeAction, { color: actionColor }]}>설정</Text>
+            <ScheduleIcon name="forward" color={actionColor} />
         </Pressable>
     );
 }
@@ -399,6 +385,7 @@ export function SelectedDayAgendaPanel({
         () => getSelectedDayAgendaItems(items, selectedDay),
         [items, selectedDay]
     );
+    const selectedLabels = getCompactSectionLabels(selectedDay);
 
     return (
         <View
@@ -414,6 +401,21 @@ export function SelectedDayAgendaPanel({
                 panelKind="detail"
                 onRequestViewMode={onRequestViewMode}
             />
+            <View testID="selected-day-agenda-heading" style={styles.selectedDayHeading}>
+                <View style={styles.sectionHeading}>
+                    <Text accessibilityRole="header" style={[styles.sectionTitle, { color: colors.textPrimary }]}>
+                        {selectedLabels.dateLabel}
+                    </Text>
+                    <Text style={[styles.sectionWeekday, { color: colors.textSecondary }]}>
+                        {selectedLabels.weekdayLabel}
+                    </Text>
+                </View>
+                {!loading && !error ? (
+                    <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>
+                        {selectedItems.length}개의 일정
+                    </Text>
+                ) : null}
+            </View>
 
             <ScrollView
                 style={[
@@ -598,6 +600,7 @@ export function MonthAgendaList({
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`일정 필터, ${selectedCategoryTitle}`}
+                    hitSlop={6}
                     accessibilityHint="표시할 일정 카테고리를 선택합니다"
                     accessibilityState={{ disabled: false }}
                     onPress={openCategoryFilter}
@@ -621,12 +624,7 @@ export function MonthAgendaList({
                     >
                         {selectedCategoryTitle}
                     </Text>
-                    <Ionicons
-                        accessible={false}
-                        name="chevron-down"
-                        size={11}
-                        color={colors.textSecondary}
-                    />
+                    <ScheduleIcon name="down" color={colors.textSecondary} />
                 </Pressable>
             </View>
 
@@ -695,18 +693,33 @@ export function MonthAgendaList({
                                     </Text>
                                 </View>
 
-                                <View style={styles.sectionCards}>
-                                    {section.items.map((item) => (
+                                <View
+                                    testID="month-agenda-group"
+                                    style={[
+                                        styles.selectedDayGroup,
+                                        { backgroundColor: mode === "dark" ? colors.surface : colors.surface2, borderColor: colors.border },
+                                    ]}
+                                >
+                                    {section.items.map((item, index) => (
+                                      <React.Fragment key={item.id}>
+                                        {index > 0 ? (
+                                            <View
+                                                testID="month-agenda-divider"
+                                                style={[styles.selectedDayGroupDivider, { backgroundColor: colors.border }]}
+                                            />
+                                        ) : null}
                                         <ScheduleAgendaCard
-                                            key={item.id}
                                             item={item}
                                             compact
+                                            groupRow
+                                            showMultiDaySummary
                                             onPress={() => onOpenSchedule(item.id)}
                                             swipeActions={getScheduleSwipeActions?.(item)}
                                             onLongPress={onRequestScheduleActions
                                                 ? () => onRequestScheduleActions(item)
                                                 : undefined}
                                         />
+                                      </React.Fragment>
                                     ))}
                                 </View>
                             </View>

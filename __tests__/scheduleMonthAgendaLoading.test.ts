@@ -17,6 +17,7 @@ const scheduleSourcePaths = [
   'src/modules/schedule/components/list/ScheduleIndexScreenContent.tsx',
   'src/modules/schedule/components/list/ScheduleIndexCalendarPrimaryLayer.tsx',
   'src/modules/schedule/components/list/ScheduleIndexCalendarOverlayMenus.tsx',
+  'src/modules/schedule/components/list/CalendarSearchResults.tsx',
   SCHEDULE_SCREEN_PATH,
 ];
 const sources = Object.fromEntries(

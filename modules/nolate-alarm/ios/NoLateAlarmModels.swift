@@ -972,6 +972,13 @@ enum NoLateAlarmSoundPreference: String, CaseIterable {
   case chime = "CHIME"
   case bell = "BELL"
   case beep = "BEEP"
+  case digital = "DIGITAL"
+  case crystal = "CRYSTAL"
+  case knock = "KNOCK"
+  case triple = "TRIPLE"
+  case sweep = "SWEEP"
+  case siren = "SIREN"
+  case klaxon = "KLAXON"
 
   static let defaultValue: Self = .chime
 
@@ -983,6 +990,20 @@ enum NoLateAlarmSoundPreference: String, CaseIterable {
       return "nolate_alarm_bell_alert"
     case .beep:
       return "nolate_alarm_beep_alert"
+    case .digital:
+      return "nolate_alarm_digital_alert"
+    case .crystal:
+      return "nolate_alarm_crystal_alert"
+    case .knock:
+      return "nolate_alarm_knock_alert"
+    case .triple:
+      return "nolate_alarm_triple_alert"
+    case .sweep:
+      return "nolate_alarm_sweep_alert"
+    case .siren:
+      return "nolate_alarm_siren_alert"
+    case .klaxon:
+      return "nolate_alarm_klaxon_alert"
     }
   }
 }

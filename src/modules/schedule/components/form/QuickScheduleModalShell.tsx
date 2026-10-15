@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
+import { inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -86,6 +87,7 @@ export function QuickScheduleModalShell({
   presentationStyle,
   submitting,
 }: QuickScheduleModalShellProps) {
+  const isTossPreview = useScheduleInputDesignPreview();
   return (
     <Reanimated.View
       pointerEvents={isPrewarmOnly ? "none" : "box-none"}
@@ -161,7 +163,7 @@ export function QuickScheduleModalShell({
                         </Pressable>
                       )}
                       <Text style={[styles.title, (flowStep === "preview" || flowStep === "edit") && styles.flowHeaderTitle, { color: colors.textPrimary }]}>{flowTitle}</Text>
-                      {flowStep === "input" && <Text style={[styles.headerDescription, { color: colors.textSecondary }]}>{inputModeDescription}</Text>}
+                      {flowStep === "input" && <Text style={[styles.headerDescription, isTossPreview && inputDesignPreviewStyles.headerDescription, { color: colors.textSecondary }]}>{isTossPreview && inputModeDescription.startsWith("날짜") ? "한 문장으로 간편하게 등록해요" : inputModeDescription}</Text>}
                     </View>
                     {categoryError && onRetryCategories ? (
                       <CategoryLoadErrorBanner compact retrying={categoryLoading} onRetry={onRetryCategories} />

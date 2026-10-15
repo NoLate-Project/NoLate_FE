@@ -13,6 +13,9 @@ const mockParams: { id?: string } = {};
 let calendarResponse: ScheduleCalendar[];
 let mockCachedCalendarResponse: ScheduleCalendar[] | null;
 
+// Preserve alarm-recovery assertions without importing the native ESM navigator.
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("expo-router", () => ({
     useLocalSearchParams: () => mockParams,

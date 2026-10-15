@@ -20,6 +20,7 @@ import {
   travelModeLabel,
 } from './scheduleDetailModel';
 import type { ScheduleDetailController } from './useScheduleDetailController';
+import { getTransitEtaTrustPresentation } from '../../modules/schedule/transitEtaTrustPresentation';
 
 /**
  * 컨트롤러의 원시 상태를 일정 상세 각 영역이 바로 표시할 수 있는 읽기 전용 화면 모델로 변환한다.
@@ -65,11 +66,13 @@ export function buildScheduleDetailPresentation(
     displayOrigin?.name && displayDestination?.name
       ? `${displayOrigin.name} → ${displayDestination.name}`
       : routeTitle;
-  const travelText = savedDisplayTravelMinutes
+  const savedTravelText = savedDisplayTravelMinutes
     ? `${travelModeLabel(
         displayTravelMode ?? undefined,
       )} ${savedDisplayTravelMinutes}분`
     : travelModeLabel(displayTravelMode ?? undefined);
+  // Header/map describe the saved plan, while the lower card describes the current evaluation.
+  const travelText = effectiveTransitRoutePresentation ? `저장 경로 · ${savedTravelText}` : savedTravelText;
   const hasDepartureInfo = Boolean(
     recommendedDepartureAt ||
       currentMemberDepartedAt ||
@@ -147,11 +150,19 @@ export function buildScheduleDetailPresentation(
     insets.top + PLAIN_SCHEDULE_DETAIL_HEADER_BODY_HEIGHT;
   const showTopRouteBar = !isPlainSchedule;
   const notesText = getUserVisibleScheduleNotes(item.notes);
+  const etaTrust = getTransitEtaTrustPresentation({
+    travelMode: displayTravelMode,
+    status: controller.departureStatus,
+    isInspectingTravelPlan: Boolean(inspectedTravelPlan),
+    preservingEarlierDeparture: controller.preservingEarlierDeparture,
+    intercityJourneySelected: Boolean(routeDetailInfo?.intercityJourney),
+    intercityTicketSelected: routeDetailInfo?.intercityJourney?.service.timingBasis === "TICKET",
+  });
   const routeDetailMeta = [
     hasDetailedRoute
-      ? effectiveTransitRoutePresentation
+      ? etaTrust.warning ?? (effectiveTransitRoutePresentation
         ? '지도에 표시된 저장 경로'
-        : `${arrivalTimeLabel} 도착`
+        : `${arrivalTimeLabel} 도착`)
       : routeSummaryKind === 'duration_only'
       ? '예상 이동 시간만 저장됨'
       : '이동 경로 미설정',
@@ -162,7 +173,7 @@ export function buildScheduleDetailPresentation(
     .filter(Boolean)
     .join(' · ');
   const routeSummaryTitle = hasDetailedRoute
-    ? effectiveTransitRoutePresentation
+    ? etaTrust.warning || effectiveTransitRoutePresentation
       ? '저장한 경로'
       : '최적 경로'
     : routeSummaryKind === 'duration_only'
@@ -192,12 +203,15 @@ export function buildScheduleDetailPresentation(
     : departureDisplayState.kind === 'status'
     ? departureDisplayState.text
     : scheduleCountdown.compactValue;
-  const routeArrivalSummary = hasRouteSummary
+  const departureTimeLabel = etaTrust.departureLabel;
+  const routeArrivalSummary = hasRouteSummary && etaTrust.warning
+    ? etaTrust.warning
+    : hasRouteSummary
     ? `일정 ${arrivalTimeLabel} · 현재 이동 ${currentRouteDurationLabel}`
     : scheduleRangeLabel;
   const effectiveRouteAccessibilityLabel = effectiveTransitRoutePresentation
     ? [
-        '실시간 추천 경로',
+        effectiveTransitRoutePresentation.guidanceTitle,
         effectiveTransitRoutePresentation.summary,
         effectiveTransitRoutePresentation.itinerary,
         effectiveTransitRoutePresentation.waitMeta,
@@ -236,6 +250,7 @@ export function buildScheduleDetailPresentation(
     routeTitle,
     routeIdentityTitle,
     travelText,
+    departureTimeLabel,
     hasDepartureInfo,
     departureCompleted,
     sheetBorder,

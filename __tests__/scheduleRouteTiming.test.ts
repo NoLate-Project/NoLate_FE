@@ -53,6 +53,71 @@ describe("selected route save timing", () => {
     const now = new Date("2026-07-17T01:20:00.000Z");
     const targetArrivalAt = "2026-07-20T11:00:00.000Z";
 
+    test("원본 초가 있으면 올림된 분 대신 초로 역산해 저장한다", () => {
+        const result = resolveSelectedRouteTiming({
+            targetArrivalAt,
+            routeInfo: { totalDurationMinutes: 65, totalDurationSeconds: 3863, timeBasis: "estimated" },
+            now,
+        });
+        expect(result.departureAt.toISOString()).toBe("2026-07-20T09:55:37.000Z");
+        expect(result.arrivalAt.toISOString()).toBe(targetArrivalAt);
+        expect(result.arrivalAt.getTime() - result.departureAt.getTime()).toBe(3863_000);
+        expect(result.source).toBe("schedule_arrival");
+    });
+
+    test.each([undefined, NaN, Infinity, -1, 0])("잘못되거나 없는 초 %p는 기존 분 단위 경로로 계산한다", (seconds) => {
+        const result = resolveSelectedRouteTiming({
+            targetArrivalAt,
+            routeInfo: { totalDurationMinutes: 65, totalDurationSeconds: seconds },
+            now,
+        });
+        expect(result.departureAt.toISOString()).toBe("2026-07-20T09:55:00.000Z");
+        expect(result.arrivalAt.toISOString()).toBe(targetArrivalAt);
+    });
+
+    test.each([true, false])("목표가 없을 때도 출발 기준의 원본 초를 보존한다 (경로 기준 %p)", (withRouteTime) => {
+        const result = resolveSelectedRouteTiming({
+            routeInfo: {
+                totalDurationMinutes: 2,
+                totalDurationSeconds: 65,
+                departureTime: withRouteTime ? "2026-07-20T23:59:30.000Z" : undefined,
+            },
+            fallbackDepartureAt: "2026-07-20T23:59:30.000Z",
+            now,
+        });
+        expect(result.arrivalAt.toISOString()).toBe("2026-07-21T00:00:35.000Z");
+    });
+
+    test("출발을 현재로 제한해도 원본 초를 더하며 목표 도착으로 강제하지 않는다", () => {
+        const result = resolveSelectedRouteTiming({
+            targetArrivalAt: "2026-07-17T01:21:00.000Z",
+            routeInfo: { totalDurationMinutes: 2, totalDurationSeconds: 95 },
+            now,
+        });
+        expect(result.departureAt.toISOString()).toBe(now.toISOString());
+        expect(result.arrivalAt.toISOString()).toBe("2026-07-17T01:21:35.000Z");
+    });
+
+    test("초 정밀 경로는 현재 분 안의 과거 출발도 실제 현재 시각으로 제한한다", () => {
+        const result = resolveSelectedRouteTiming({
+            targetArrivalAt: "2026-07-17T01:21:00.000Z",
+            routeInfo: { totalDurationMinutes: 1, totalDurationSeconds: 30 },
+            now: new Date("2026-07-17T01:20:50.000Z"),
+        });
+        expect(result.departureAt.toISOString()).toBe("2026-07-17T01:20:50.000Z");
+        expect(result.arrivalAt.toISOString()).toBe("2026-07-17T01:21:20.000Z");
+    });
+
+    test.each([undefined, 0, NaN, 1e308, 1e14])("무효 원본 초 %p는 분 단위 정렬을 포함한 기존 정책을 보존한다", (seconds) => {
+        const result = resolveSelectedRouteTiming({
+            targetArrivalAt: "2026-07-20T11:00:45.123Z",
+            routeInfo: { totalDurationMinutes: 65, totalDurationSeconds: seconds },
+            now,
+        });
+        expect(result.departureAt.toISOString()).toBe("2026-07-20T09:55:00.000Z");
+        expect(result.arrivalAt.toISOString()).toBe("2026-07-20T11:00:00.000Z");
+    });
+
     test.each([
         ["대중교통 추정", 33, "2026-07-20T10:27:00.000Z"],
         ["자동차", 47, "2026-07-20T10:13:00.000Z"],
@@ -187,6 +252,31 @@ describe("schedule edit route timing reconciliation", () => {
         expect(hasPersistableScheduleRoute({ routeInfo }, undefined)).toBe(true);
     });
 
+    test("환승 경로의 공간 정보는 목표 시각 수정 후에도 저장 가능하다", () => {
+        const origin = { name: "노원역", lat: 37.6551, lng: 127.061 };
+        const transfer = { name: "사당", lat: 37.4765, lng: 126.9816 };
+        const destination = { name: "신림역", lat: 37.4842, lng: 126.9297 };
+        const selected = {
+            id: "fixture-route", mode: "TRANSIT", minutes: 65, provider: "tmap", source: "tmap",
+            pathCoords: [origin, transfer, destination],
+            transitLegs: [
+                { mode: "SUBWAY", lineName: "수도권 4호선", durationMinutes: 48,
+                    startName: "노원역", endName: "사당", startCoord: origin, endCoord: transfer },
+                { mode: "SUBWAY", lineName: "수도권 2호선", durationMinutes: 8,
+                    startName: "사당", endName: "신림", startCoord: transfer, endCoord: destination },
+            ],
+        };
+        expect(hasPersistableScheduleRoute(selected, 65, origin, destination)).toBe(true);
+        const result = reconcileScheduleRouteTiming({
+            route: selected, travelMinutes: 65,
+            plannedArrivalAt: "2026-10-05T12:15:00Z", nextArrivalAt: "2026-10-05T12:20:00Z",
+        });
+        expect(hasPersistableScheduleRoute(result.route, 65, origin, destination)).toBe(true);
+        expect(result.route).toEqual(expect.objectContaining({
+            pathCoords: selected.pathCoords, transitLegs: selected.transitLegs,
+        }));
+    });
+
     test("일정 시작 시각이 그대로면 선택한 공급자 시간표를 보존한다", () => {
         const result = reconcileScheduleRouteTiming({
             departAt: routeInfo.departureTime,
@@ -219,5 +309,30 @@ describe("schedule edit route timing reconciliation", () => {
             arrivalTime: "2026-07-20T12:30:00.000Z",
             timeBasis: "estimated",
         });
+    });
+
+    test("일정 변경 후에도 원본 초를 유지해 분 올림이 누적되지 않는다", () => {
+        const result = reconcileScheduleRouteTiming({
+            route: { ...route, routeInfo: { ...routeInfo, totalDurationSeconds: 1817 } },
+            travelMinutes: 31,
+            plannedArrivalAt: "2026-07-20T11:00:00.000Z",
+            nextArrivalAt: "2026-07-20T12:30:00.000Z",
+        });
+        expect(result.departAt).toBe("2026-07-20T11:59:43.000Z");
+        expect((result.route as typeof route).routeInfo).toMatchObject({
+            totalDurationSeconds: 1817,
+            arrivalTime: "2026-07-20T12:30:00.000Z",
+            timeBasis: "estimated",
+        });
+    });
+
+    test("손상된 초 값으로 일정 변경 저장이 중단되지 않는다", () => {
+        const result = reconcileScheduleRouteTiming({
+            route: { ...route, routeInfo: { ...routeInfo, totalDurationSeconds: 1e308 } },
+            travelMinutes: 31,
+            plannedArrivalAt: "2026-07-20T11:00:00.000Z",
+            nextArrivalAt: "2026-07-20T12:30:00.000Z",
+        });
+        expect(result.departAt).toBe("2026-07-20T11:59:00.000Z");
     });
 });

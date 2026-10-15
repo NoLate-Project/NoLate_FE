@@ -16,7 +16,9 @@ import {
     type CalendarDayMetadata,
 } from "../../calendarMetadata";
 import type { TravelMode } from "../../types";
+import ScheduleIcon, { SCHEDULE_TRAVEL_ICONS } from "../shared/ScheduleIcon";
 import { getCalendarTodayAccent } from "./calendarTodayAccent";
+import { getStackEventBackground, STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 import { CALENDAR_DAY_HEIGHTS, type CalendarViewMode } from "./viewMode";
 import type {
     StackDayPresentation,
@@ -85,23 +87,6 @@ function travelIconName(mode: TravelMode): keyof typeof Ionicons.glyphMap {
     if (mode === "WALK") return "walk-outline";
     if (mode === "BIKE") return "bicycle-outline";
     return "navigate-outline";
-}
-
-function colorWithOpacity(color: string, opacity: number) {
-    const normalized = color.replace("#", "");
-    if (/^[0-9a-fA-F]{3}$/.test(normalized)) {
-        const [red, green, blue] = normalized
-            .split("")
-            .map((value) => Number.parseInt(value + value, 16));
-        return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-    }
-    if (/^[0-9a-fA-F]{6}$/.test(normalized)) {
-        const red = Number.parseInt(normalized.slice(0, 2), 16);
-        const green = Number.parseInt(normalized.slice(2, 4), 16);
-        const blue = Number.parseInt(normalized.slice(4, 6), 16);
-        return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
-    }
-    return color;
 }
 
 // 캘린더의 하루 셀을 선택 상태와 일정 마커에 맞춰 렌더링한다.
@@ -455,7 +440,7 @@ function CustomDay({
                     styles.cell,
                     {
                         height: cellHeight,
-                        paddingTop: usesResponsiveDetailGeometry ? 0 : 8,
+                        paddingTop: usesResponsiveDetailGeometry ? 0 : viewMode === "stack" ? 6 : 8,
                     },
                     { opacity: pressed ? 0.55 : 1 },
                 ]}
@@ -464,6 +449,7 @@ function CustomDay({
                 testID="calendar-day-circle"
                 style={[
                     styles.dayCircle,
+                    viewMode === "stack" && styles.stackDayCircle,
                     {
                         backgroundColor: showsFilledCircle ? selectedCircleColor : "transparent",
                         borderColor: selectedBorderColor,
@@ -474,8 +460,9 @@ function CustomDay({
                 <Reanimated.Text
                     style={[
                         styles.dayText,
+                        viewMode === "stack" && styles.stackDayText,
                         {
-                            fontWeight: isToday || isSelected ? "700" : "600",
+                            fontWeight: isToday || isSelected ? "700" : viewMode === "stack" ? "500" : "600",
                             color: showsFilledCircle
                                 ? selectedTextColor
                                 : defaultTextColor,
@@ -515,6 +502,7 @@ function CustomDay({
                     ellipsizeMode="tail"
                     style={[
                         styles.holidayText,
+                        viewMode === "stack" && styles.stackHolidayText,
                         {
                             color: holidayAccent,
                             opacity: isDisabled ? 0.28 : 1,
@@ -533,7 +521,9 @@ function CustomDay({
                         styles.stackEventChips,
                         {
                             top: stackEventTop
-                                ?? (hasHoliday ? 62 : 52),
+                                ?? (hasHoliday
+                                    ? STACK_CALENDAR_GEOMETRY.holidayEventTop
+                                    : STACK_CALENDAR_GEOMETRY.eventTop),
                         },
                     ]}
                 >
@@ -544,26 +534,32 @@ function CustomDay({
                             style={[
                                 styles.stackEventChip,
                                 {
-                                    top: lane * 18,
+                                    top: lane * STACK_CALENDAR_GEOMETRY.laneStride,
                                     left: event.connectsBefore ? 0 : 2,
                                     right: event.connectsAfter ? 0 : 2,
                                     borderTopLeftRadius: event.connectsBefore ? 0 : 5,
                                     borderBottomLeftRadius: event.connectsBefore ? 0 : 5,
                                     borderTopRightRadius: event.connectsAfter ? 0 : 5,
                                     borderBottomRightRadius: event.connectsAfter ? 0 : 5,
-                                    backgroundColor: colorWithOpacity(
+                                    backgroundColor: getStackEventBackground(
                                         event.color,
-                                        mode === "dark" ? 0.30 : 0.14
+                                        event.connectsBefore || event.connectsAfter,
+                                        mode
                                     ),
                                 },
                             ]}
                         >
+                            {!event.connectsBefore && (
+                                <View
+                                    testID={`stack-event-rail-${event.id}`}
+                                    style={[styles.stackEventRail, { backgroundColor: event.color }]}
+                                />
+                            )}
                             {!hideStackEventLabels && event.showsLabel && event.travelMode ? (
-                                <Ionicons
-                                    accessible={false}
-                                    name={travelIconName(event.travelMode)}
-                                    size={9}
-                                    color={event.color}
+                                <ScheduleIcon
+                                    name={SCHEDULE_TRAVEL_ICONS[event.travelMode]}
+                                    role="calendarMarker"
+                                    color={colors.textSecondary}
                                     style={styles.stackEventIcon}
                                 />
                             ) : null}
@@ -572,7 +568,7 @@ function CustomDay({
                                     testID="stack-event-title"
                                     numberOfLines={1}
                                     ellipsizeMode="tail"
-                                    style={[styles.stackEventTitle, { color: event.color }]}
+                                    style={[styles.stackEventTitle, { color: colors.textPrimary }]}
                                 >
                                     {event.title}
                                 </Text>

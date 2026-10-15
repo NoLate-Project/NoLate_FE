@@ -119,8 +119,9 @@ export type ArrivalRequest =
 function getStepIcon(type: RouteStepType): IoniconName {
   if (type === 'DESTINATION') return 'location';
   if (type === 'WALK') return 'walk-outline';
-  if (type === 'SUBWAY') return 'train-outline';
-  if (type === 'BUS') return 'bus-outline';
+  if (type === 'SUBWAY' || type === 'TRAIN') return 'train-outline';
+  if (type === 'BUS' || type === 'INTERCITY_BUS' || type === 'EXPRESS_BUS' || type === 'COACH') return 'bus-outline';
+  if (type === 'UNKNOWN') return 'help-circle-outline';
   if (type === 'DRIVE') return 'car-outline';
   if (type === 'BIKE') return 'bicycle-outline';
   return 'swap-horizontal';
@@ -249,7 +250,7 @@ export function buildBoardingGuideItems(
 export function buildRideDescription(step: RouteStep): string | undefined {
   if (step.description)
     return step.description
-      .replace(/\s*승차\s*/gu, ' ')
+      .replace(/\s*승차(?!권)\s*/gu, ' ')
       .replace(/\s*하차\s*/gu, ' ')
       .replace(/\s*→\s*/gu, ' · ')
       .replace(/\s+/g, ' ')

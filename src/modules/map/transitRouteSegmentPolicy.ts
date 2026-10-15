@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "./transitModes";
 import type { TransitLegDetail } from "./routingService";
 import type { TmapPathOverlay } from "./TmapMapView";
 import {
@@ -8,6 +9,10 @@ import {
 
 export type NormalizedTransitSegmentMode =
     | "WALK"
+    | "TRAIN"
+    | "EXPRESS_BUS"
+    | "INTERCITY_BUS"
+    | "COACH"
     | "BUS"
     | "SUBWAY"
     | "TRANSFER"
@@ -20,16 +25,15 @@ export function getNormalizedTransitLegMode(
     index: number,
     legs: TransitLegDetail[] | undefined
 ): NormalizedTransitSegmentMode {
-    if (leg.kind === "BUS") return "BUS";
-    if (leg.kind === "SUBWAY") return "SUBWAY";
+    if (isTransitRideKind(leg.kind)) return leg.kind;
     if (leg.kind === "ETC") return "ETC";
     if (leg.kind === "WALK") {
         const hasRideBefore = Array.isArray(legs) && legs
             .slice(0, index)
-            .some((item) => item.kind === "BUS" || item.kind === "SUBWAY");
+            .some((item) => isTransitRideKind(item.kind));
         const hasRideAfter = Array.isArray(legs) && legs
             .slice(index + 1)
-            .some((item) => item.kind === "BUS" || item.kind === "SUBWAY");
+            .some((item) => isTransitRideKind(item.kind));
         return hasRideBefore && hasRideAfter ? "TRANSFER" : "WALK";
     }
     return "UNKNOWN";
@@ -101,7 +105,7 @@ export function applyFocusedTransitRideOverlayOwnership(
         focusedZIndex = 180,
     }: FocusedTransitRideOverlayOptions
 ): TmapPathOverlay[] {
-    const ride = mode === "BUS" || mode === "SUBWAY";
+    const ride = isTransitRideKind(mode);
     if (!focused || !ride || overlays.length === 0) return overlays;
 
     const base = overlays.map((overlay) => ({ ...overlay, nativeDirection: false }));

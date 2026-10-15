@@ -17,10 +17,12 @@ import {
 } from "react-native";
 
 import type { ViewModeGlassControlColorScheme } from "./ViewModeGlassControl/types";
+import useNativeCalendarIcons from "./useNativeCalendarIcons";
 
 type LiquidGlassIconButtonPressEvent = Record<string, never>;
 
 type NativeLiquidGlassIconButtonProps = ViewProps & {
+    outlineIcons?: Record<string, string>;
     symbolName?: string;
     label?: string;
     leadingSymbolName?: string;
@@ -84,7 +86,9 @@ const LiquidGlassIconButton = forwardRef<
     onPress,
     style,
     pointerEvents,
+    accessibilityState,
 }, ref) {
+    const outlineIcons = useNativeCalendarIcons();
     const nativeButtonRef = useRef<
         (React.Component<NativeLiquidGlassIconButtonProps> & NativeMethods) | null
     >(null);
@@ -114,6 +118,7 @@ const LiquidGlassIconButton = forwardRef<
         <View pointerEvents={pointerEvents ?? "box-none"} style={style}>
             <NativeButton
                 ref={nativeButtonRef}
+                outlineIcons={outlineIcons}
                 symbolName={symbolName}
                 label={label}
                 leadingSymbolName={leadingSymbolName}
@@ -136,6 +141,7 @@ const LiquidGlassIconButton = forwardRef<
                         (symbolName === "plus" ? "일정 추가" : "일정 검색")
                     }
                     accessibilityRole="button"
+                    accessibilityState={{ ...accessibilityState, disabled }}
                     onPress={handlePress}
                     style={styles.hitTarget}
                 />

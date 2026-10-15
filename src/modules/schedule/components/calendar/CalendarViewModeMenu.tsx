@@ -1,11 +1,11 @@
 import React, { useEffect, useRef } from "react";
-import { Ionicons } from "@expo/vector-icons";
 import { Animated, Easing, Modal, Pressable, StyleSheet, Text, View } from "react-native";
 
 import { useTheme } from "../../../theme/ThemeContext";
 import CalendarGlassSurface from "./CalendarGlassSurface";
 import CalendarViewModeGlyph from "./CalendarViewModeGlyph";
 import { CALENDAR_VIEW_OPTIONS, type CalendarViewMode } from "./viewMode";
+import ScheduleIcon from "../shared/ScheduleIcon";
 
 type Props = {
     visible: boolean;
@@ -94,14 +94,13 @@ export default function CalendarViewModeMenu({ visible, value, onClose, onChange
                                     >
                                         <View style={styles.check}>
                                             {selected && (
-                                                <Ionicons name="checkmark" size={22} color={colors.textPrimary} />
+                                                <ScheduleIcon name="check" role="menu" color={colors.textPrimary} />
                                             )}
                                         </View>
                                         <View style={styles.glyphSlot}>
                                             <CalendarViewModeGlyph
                                                 mode={option.value}
                                                 color={colors.textPrimary}
-                                                size={27}
                                             />
                                         </View>
                                         <Text style={[styles.optionText, { color: colors.textPrimary }]}>

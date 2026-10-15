@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import {
     NOLATE_ALARM_SOUNDS,
@@ -72,9 +72,12 @@ export default function AlarmSoundPickerSheet({
                         </Pressable>
                     </View>
 
-                    <View
+                    <ScrollView
                         accessibilityRole="radiogroup"
                         accessibilityLabel="알람음 목록"
+                        contentContainerStyle={styles.soundListContent}
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator
                         style={[styles.soundList, { borderColor, backgroundColor: surfaceColor }]}
                     >
                         {NOLATE_ALARM_SOUNDS.map((sound, index) => {
@@ -133,8 +136,10 @@ export default function AlarmSoundPickerSheet({
                                 </Pressable>
                             );
                         })}
-                    </View>
-                    <Text style={[styles.hint, { color: textSecondary }]}>모든 출발 알람에 적용</Text>
+                    </ScrollView>
+                    <Text style={[styles.hint, { color: textSecondary }]}>
+                        소리 모드에서는 진동과 함께 울리고, 무음일 때는 진동만 울려요.
+                    </Text>
                 </View>
             </View>
         </Modal>
@@ -178,9 +183,13 @@ const styles = StyleSheet.create({
     },
     soundList: {
         marginTop: 8,
+        maxHeight: 528,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: 16,
+    },
+    soundListContent: {
         overflow: "hidden",
+        borderRadius: 16,
     },
     soundRow: {
         minHeight: 66,

@@ -14,6 +14,7 @@ import {
     drainPushDeliveryAckQueue,
 } from "./modules/notification/pushDeliveryAckQueue";
 import { reconcileDepartureAlarmSnapshot } from "./modules/notification/departureAlarmSync";
+import { createForegroundAlarmSnapshotPoller } from "./modules/notification/foregroundAlarmSnapshotPoller";
 import {
     activateNativeAlarmFireJournalForAuthenticatedMember,
     deactivateNativeAlarmFireJournalRetry,
@@ -52,6 +53,7 @@ import {
     primeRouteDetailAdvertising,
     refreshRouteDetailAdvertisingPolicy,
 } from "./modules/advertising/routeDetailInterstitial";
+import { ensureAppTrackingTransparencyResolved } from "./modules/privacy/trackingTransparency";
 
 const PUSH_BOOTSTRAP_RETRY_DELAYS_MS = [
     1_500,
@@ -70,6 +72,7 @@ export function AppProviders({ children }: PropsWithChildren) {
 
     return (
         <ThemeProvider>
+            <TrackingPermissionBootstrap />
             <LiveActivityAppearanceBridge />
             <AuthProvider>
                 <AdvertisingPolicyBootstrap />
@@ -81,6 +84,15 @@ export function AppProviders({ children }: PropsWithChildren) {
             </AuthProvider>
         </ThemeProvider>
     );
+}
+
+/** Make the ATT decision visible on first launch without blocking core startup. */
+function TrackingPermissionBootstrap() {
+    useEffect(() => {
+        ensureAppTrackingTransparencyResolved().catch(() => undefined);
+    }, []);
+
+    return null;
 }
 
 function LiveActivityAppearanceBridge() {
@@ -155,6 +167,8 @@ function PushRegistrationBootstrap() {
         let tokenRegistrationRetryAttempt = 0;
         let liveActivityAccountReady = false;
         let appIsActive = AppState.currentState === "active";
+        const alarmSnapshotPoller = createForegroundAlarmSnapshotPoller(reconcileDepartureAlarmSnapshot);
+        alarmSnapshotPoller.setActive(appIsActive);
 
         unsubscribePushRegistrationSuccess = subscribePushRegistrationSuccess((memberId) => {
             if (cancelled || memberBoundMemberId !== memberId) return;
@@ -354,6 +368,7 @@ function PushRegistrationBootstrap() {
                     // the registration window is queued rather than lost.
                     unsubscribe = subscribePushTokenRefresh(memberId);
                     memberBoundMemberId = memberId;
+                    alarmSnapshotPoller.setMember(memberId);
                     memberBootstrapRetryAttempt = 0;
                     clearMemberBootstrapRetry();
                     runMemberBoundRecovery(memberId);
@@ -372,6 +387,7 @@ function PushRegistrationBootstrap() {
         bootstrapMemberBoundPush();
         const appStateSubscription = AppState.addEventListener("change", (state) => {
             appIsActive = state === "active";
+            alarmSnapshotPoller.setActive(appIsActive);
             if (state !== "active") {
                 clearMemberBootstrapRetry();
                 clearTokenRegistrationRetry();
@@ -391,6 +407,7 @@ function PushRegistrationBootstrap() {
 
         return () => {
             cancelled = true;
+            alarmSnapshotPoller.dispose();
             liveActivityAccountReady = false;
             clearMemberBootstrapRetry();
             clearTokenRegistrationRetry();

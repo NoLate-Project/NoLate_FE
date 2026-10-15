@@ -48,8 +48,10 @@ describe('schedule detail effective transit route integration', () => {
 
   it('refreshes on focus, foreground activation, and a bounded nextCheckAt timer', () => {
     expect(departureStatusControllerSource).toContain(
-      'const isFocused = useIsFocused();',
+      'const navigationFocused = useIsFocused();',
     );
+    expect(departureStatusControllerSource).toContain('const sceneActive = usePreMountedSceneActivity();');
+    expect(departureStatusControllerSource).toContain('const isFocused = sceneActive ?? navigationFocused;');
     expect(departureStatusControllerSource).toContain(
       "AppState.addEventListener('change'",
     );
@@ -109,7 +111,9 @@ describe('schedule detail effective transit route integration', () => {
     expect(detailControllerSource).toContain(
       'buildEffectiveTransitRoutePresentation(departureStatus)',
     );
-    expect(routePresentationSource).toContain('실시간 추천 경로');
+    expect(routePresentationSource).toContain('effectiveTransitRoutePresentation.guidanceTitle');
+    expect(routePresentationSource).toContain('!effectiveTransitRoutePresentation && routeProgressSegments.length > 0');
+    expect(presentationSource).toContain('저장 경로 · ${savedTravelText}');
     expect(routePresentationSource).toContain(
       'effectiveTransitRoutePresentation.mapNote',
     );

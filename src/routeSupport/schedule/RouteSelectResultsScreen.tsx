@@ -11,6 +11,11 @@ import {
 
 import RouteEndpointReselectCard from "../../modules/schedule/components/route/RouteEndpointReselectCard";
 import TransitRouteProgressBar from "../../modules/schedule/components/route/TransitRouteProgressBar";
+import IntercityTimetableSheet from "../../modules/schedule/components/route/IntercityTimetableSheet";
+import BusBookingAction from "../../modules/schedule/components/route/BusBookingAction";
+import TrainBookingAction from "../../modules/schedule/components/route/TrainBookingAction";
+import { isIntercityRideKind, transitModeLabel } from "../../modules/map/transitModes";
+import type { TransitLegDetail, RouteAlternativeOption } from "../../modules/map/tmapApiCore";
 import { TRAVEL_MODE_META } from "../../modules/schedule/travelMode";
 import { shouldShowRequiredMapAttribution } from "../../modules/map/routingService";
 import {
@@ -51,6 +56,7 @@ type RouteSelectResultsScreenProps = {
 export function RouteSelectResultsScreen({
     controller,
 }: RouteSelectResultsScreenProps) {
+    const [timetableLeg, setTimetableLeg] = React.useState<{ leg: TransitLegDetail; option: RouteAlternativeOption; legIndex: number }>();
     const {
         statusBarStyle,
         insets,
@@ -90,6 +96,8 @@ export function RouteSelectResultsScreen({
         openRouteAttribution,
         openMapForOption,
         saveRouteOption,
+        applyIntercityService,
+        importedTicket,
         routeUi,
     } = controller;
     return (
@@ -103,6 +111,10 @@ export function RouteSelectResultsScreen({
             ]}
         >
             <StatusBar barStyle={statusBarStyle} />
+            {timetableLeg && <IntercityTimetableSheet importedTicket={importedTicket}
+                kind={timetableLeg.leg.kind === "COACH" ? undefined : timetableLeg.leg.kind as "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS"}
+                departureName={timetableLeg.leg.startName} arrivalName={timetableLeg.leg.endName}
+                date={routeDepartureAt ?? new Date()} dark={isDark} onSelect={(selection, isCurrent) => applyIntercityService(timetableLeg.option, timetableLeg.legIndex, selection, isCurrent)} onClose={() => setTimetableLeg(undefined)} />}
             {!shouldShowRouteResults && (
                 <View style={styles.headerRow}>
                     <Pressable
@@ -345,7 +357,10 @@ export function RouteSelectResultsScreen({
                         const routeMetricChips = buildRouteMetricChips(option);
                         const accent = selected ? routeUi.selectedBorder : routeUi.border;
                         const cardBackground = selected ? routeUi.selectedSurface : routeUi.surface;
-                        const routeTimeFare = formatRouteTimeFare(option, routeDepartureAt);
+                        const routeTimeFare = formatRouteTimeFare(option, routeDepartureAt, {
+                            targetArrivalAt: routeTargetArrivalAt?.toISOString(),
+                            routeInfo,
+                        });
                         const routeBoardingSummary = buildRouteBoardingSummary(option, originText);
                         const dropdownSummaryItems = buildRouteDropdownSummaryItems(
                             option,
@@ -389,7 +404,7 @@ export function RouteSelectResultsScreen({
                                                     >
                                                         {selected && <Ionicons name="checkmark" size={12} color="#FFFFFF" />}
                                                         <Text style={[styles.routeOptionLabel, { color: selected ? "#FFFFFF" : routeUi.textSecondary }]}>
-                                                            {getNaverLikeRouteRecommendationLabel(
+                                                            {option.intercityJourney ? "선택 운행편" : getNaverLikeRouteRecommendationLabel(
                                                                 option,
                                                                 visibleRouteAlternatives,
                                                                 displayIndex
@@ -471,9 +486,9 @@ export function RouteSelectResultsScreen({
                                                             ? routeUi.textSecondary
                                                             : routeUi.borderStrong);
                                                     const iconName: React.ComponentProps<typeof Ionicons>["name"] =
-                                                        summary.kind === "SUBWAY"
+                                                        (summary.kind === "SUBWAY" || summary.kind === "TRAIN")
                                                             ? "train"
-                                                            : summary.kind === "BUS"
+                                                            : (["BUS", "EXPRESS_BUS", "INTERCITY_BUS", "COACH"].includes(summary.kind))
                                                                 ? "bus"
                                                                 : summary.kind === "TRANSFER"
                                                                     ? "swap-horizontal"
@@ -535,6 +550,18 @@ export function RouteSelectResultsScreen({
                                             </View>
                                         </AnimatedRouteExpansion>
                                     )}
+                                    {selected && option.transitLegs?.filter(leg => isIntercityRideKind(leg.kind)).map((leg, index) => (
+                                        <Pressable key={`timetable-${index}`} accessibilityRole="button"
+                                            accessibilityLabel={`${transitModeLabel(leg.kind)} 운행 시간표 조회`}
+                                            onPress={() => setTimetableLeg({ leg, option, legIndex: option.transitLegs!.indexOf(leg) })}
+                                            style={[styles.routeCardSecondaryButton, { backgroundColor: routeUi.surface, borderColor: routeUi.border }]}>
+                                            <Text style={[styles.routeCardSecondaryButtonText, { color: routeUi.textPrimary }]}>
+                                                {transitModeLabel(leg.kind)} 운행 시간표 · {leg.startName} → {leg.endName}
+                                            </Text>
+                                        </Pressable>
+                                    ))}
+                                    {selected && option.transitLegs?.some(leg => leg.kind === 'TRAIN') && <TrainBookingAction dark={isDark} />}
+                                    {selected && option.transitLegs?.filter(leg => ['EXPRESS_BUS', 'INTERCITY_BUS', 'COACH'].includes(leg.kind)).slice(0, 1).map(leg => <BusBookingAction key={leg.kind} kind={leg.kind} dark={isDark} />)}
                                     {shouldShowRequiredMapAttribution(option) && !!option.attributionText && !!option.attributionUrl && (
                                         <Pressable
                                             accessibilityRole="link"

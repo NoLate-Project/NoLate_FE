@@ -20,8 +20,10 @@ import { measurePerformanceInteraction } from "../src/modules/performance/intera
 import { useScreenContentReadyPerformance } from "../src/modules/performance/useScreenContentReadyPerformance";
 import { createScheduleDetailRoute } from "../src/modules/notification/pushNavigation";
 import { getSchedule } from "../src/api/schedule";
+import { useScreenFirstPaintPerformance } from "../src/modules/performance/useScreenFirstPaintPerformance";
 
 export default function NoLateCustomAlarmRoute() {
+    useScreenFirstPaintPerformance('/alarm');
     const params = useLocalSearchParams<NoLateCustomAlarmSearchParams>();
     const router = useRouter();
     const presentation = useMemo(

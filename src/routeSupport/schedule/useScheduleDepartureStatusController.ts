@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
+import { usePreMountedSceneActivity } from '../../modules/performance/preMountedSceneActivity';
 
 import {
   getScheduleDepartureStatus,
@@ -37,7 +38,9 @@ export function useScheduleDepartureStatusController({
   routePlannerSessionId,
   routeSavePending,
 }: ScheduleDepartureStatusControllerOptions) {
-  const isFocused = useIsFocused();
+  const navigationFocused = useIsFocused();
+  const sceneActive = usePreMountedSceneActivity();
+  const isFocused = sceneActive ?? navigationFocused;
   const [departureStatus, setDepartureStatus] =
     useState<ScheduleDepartureStatus>();
   const [acceptedDepartureStatus, setAcceptedDepartureStatus] =

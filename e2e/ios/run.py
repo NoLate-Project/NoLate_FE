@@ -10,6 +10,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--device', required=True, help='Dedicated booted simulator UDID')
 parser.add_argument('--credentials', type=Path)
 parser.add_argument('--output', type=Path, required=True, help='New output directory, outside the repository')
+parser.add_argument('--runner-bundle-id')
+parser.add_argument('--derived-data', default='/private/tmp/nolate-xcuitest')
 parser.add_argument('--only', default='testLoginInputAndValidation')
 args = parser.parse_args()
 args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -20,9 +22,11 @@ if args.credentials:
     env['TEST_RUNNER_E2E_PASSWORD'] = fixture['password']
 command = ['xcodebuild', '-project', str(Path(__file__).resolve().parent / 'NoLateE2E.xcodeproj'),
            '-scheme', 'NoLateE2E', '-destination', 'platform=iOS Simulator,id=' + args.device,
-           '-parallel-testing-enabled', 'NO', '-derivedDataPath', '/private/tmp/nolate-xcuitest',
+           '-parallel-testing-enabled', 'NO', '-derivedDataPath', args.derived_data,
            '-resultBundlePath', str(args.output / 'result.xcresult'),
            '-only-testing:NoLateE2ETests/NoLateE2ETests/' + args.only, 'test']
+if args.runner_bundle_id:
+    command.insert(-1, 'PRODUCT_BUNDLE_IDENTIFIER=' + args.runner_bundle_id)
 with (args.output / 'run.log').open('w') as log:
     result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
 print('xcodebuild exit:', result.returncode, '; results:', args.output)

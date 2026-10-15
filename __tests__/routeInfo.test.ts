@@ -4,6 +4,7 @@ import {
     buildRouteSummaryMetrics,
     compactTransitLineLabel,
     getRouteStepDirectionHint,
+    getRouteInfoFromRoute,
     isRouteInfo,
 } from "../src/modules/schedule/routeInfo";
 
@@ -110,13 +111,14 @@ describe("routeInfo", () => {
         })).toBe(true);
     });
 
-    it("ODsay가 제공한 운행 시각과 공급자 정보를 상세 경로에 보존한다", () => {
+    it("ODsay 경로 예상시각은 보존하되 실제 시간표로 승격하지 않는다", () => {
         const option: RouteAlternativeOption = {
             id: "odsay-transit",
             mode: "TRANSIT",
             minutes: 31,
             source: "api",
             provider: "odsay",
+            providerTimeBasis: "route_estimate",
             providerDepartureAt: "2026-07-15T13:06:00.000Z",
             providerArrivalAt: "2026-07-15T13:37:00.000Z",
             transitLegs: [],
@@ -128,8 +130,41 @@ describe("routeInfo", () => {
             provider: "odsay",
             departureTime: "2026-07-15T13:06:00.000Z",
             arrivalTime: "2026-07-15T13:37:00.000Z",
-            timeBasis: "provider_schedule",
+            timeBasis: "estimated",
         });
+    });
+
+    it("시간표 근거가 누락된 기존 공급자 시각도 추정값으로 유지한다", () => {
+        const result = buildRouteInfoFromAlternative({
+            id: "legacy-times", mode: "TRANSIT", minutes: 31, source: "api", provider: "odsay",
+            providerDepartureAt: "2026-07-15T13:06:00.000Z",
+            providerArrivalAt: "2026-07-15T13:37:00.000Z",
+        }, origin, destination);
+        expect(result.timeBasis).toBe("estimated");
+    });
+
+    it("명시적 시간표 근거와 유효한 시각이 함께 있을 때만 시간표로 보존한다", () => {
+        const result = buildRouteInfoFromAlternative({
+            id: "verified-times", mode: "TRANSIT", minutes: 31, source: "api", provider: "odsay",
+            providerTimeBasis: "timetable",
+            providerDepartureAt: "2026-07-15T13:06:00.000Z",
+            providerArrivalAt: "2026-07-15T13:37:00.000Z",
+        }, origin, destination);
+        expect(result.timeBasis).toBe("provider_schedule");
+        expect(result.arrivalTime).toBe("2026-07-15T13:37:00.000Z");
+    });
+
+    it("구버전 ODsay 저장 경로는 원본을 변경하지 않고 시간표 오표시만 낮춘다", () => {
+        const stored = {
+            id: "legacy-odsay", provider: "odsay" as const, timeBasis: "provider_schedule" as const,
+            originName: "노원역", destinationName: "신림역", totalDurationMinutes: 65,
+            departureTime: "2026-10-03T16:40:00Z", arrivalTime: "2026-10-03T17:45:00Z", steps: [],
+        };
+        expect(getRouteInfoFromRoute(stored)?.timeBasis).toBe("estimated");
+        expect(getRouteInfoFromRoute({ routeInfo: stored })?.timeBasis).toBe("estimated");
+        expect(stored.timeBasis).toBe("provider_schedule");
+        const verified = { ...stored, providerTimeBasis: "timetable" as const };
+        expect(getRouteInfoFromRoute(verified)).toBe(verified);
     });
 
     it("구간 도착역을 행선지로 오인하지 않고 다음 통과역을 방향으로 표시한다", () => {

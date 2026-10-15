@@ -14,7 +14,6 @@ import type {
 import {
     infoMapDebug,
     hasTmapAppKey,
-    hasTransitRouteProvider,
     tmapApiErrorMessage,
     SEARCH_RESULT_LIMIT,
 } from "./tmapApiCore.ts";
@@ -124,17 +123,9 @@ export async function getTransitRouteOptions(
         return [];
     }
 
-    if (hasTransitRouteProvider()) {
-        try {
-            const providerOptions = await getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
-            if (providerOptions.length > 0) return providerOptions;
-        } catch (error) {
-            infoMapDebug("[대중교통옵션] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
-        }
-    }
-
-    // 자동차 도로 또는 직선거리 값은 대중교통 경로가 아니므로 대체 결과로 노출하지 않는다.
-    return [];
+    // 설정 누락/공급자 실패를 '검색 결과 없음'으로 바꾸지 않는다.
+    // 호출자가 재시도 가능한 외부 오류와 실제 빈 경로 결과를 구분해야 한다.
+    return getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
 }
 
 // 화면에서 쓰는 "대안 경로"의 메인 진입점.
@@ -158,24 +149,13 @@ export async function getRouteAlternativeOptions(
     }
 
     if (mode === "TRANSIT") {
-        if (hasTransitRouteProvider()) {
-            try {
-                const providerOptions = await getTransitRouteViaPreferredProvider(origin, destination, options.departureAt);
-                const transitAlternatives = providerOptions.map((item, index) => ({
-                    ...item,
-                    id: item.id || buildAlternativeId("transit", index),
-                    mode: "TRANSIT" as const,
-                }));
-                if (transitAlternatives.length > 0) {
-                    return limitAlternativesByMode("TRANSIT", dedupeRouteAlternatives(transitAlternatives));
-                }
-            } catch (error) {
-                infoMapDebug("[대안경로] 대중교통 공급자 실패 →", tmapApiErrorMessage(error));
-                throw error;
-            }
-        }
-
-        return [];
+        const providerOptions = await getTransitRouteOptions(origin, destination, options);
+        const transitAlternatives = providerOptions.map((item, index) => ({
+            ...item,
+            id: item.id || buildAlternativeId("transit", index),
+            mode: "TRANSIT" as const,
+        }));
+        return limitAlternativesByMode("TRANSIT", dedupeRouteAlternatives(transitAlternatives));
     }
 
     if (mode === "CAR" || mode === "ETC") {

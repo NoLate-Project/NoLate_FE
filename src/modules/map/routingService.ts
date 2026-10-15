@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "./transitModes";
 import type { Place, TravelMode } from "../schedule/types";
 import {
     getRouteAlternativeOptions as getLegacyRouteAlternativeOptions,
@@ -12,6 +13,8 @@ import {
     type TransitPassStop,
 } from "./tmapApi";
 import { assessRoutePlausibility } from "./routePlausibility";
+import { OdsayApiError } from "./odsayApiError";
+import { getTransitRouteProvider } from "./transitProviderConfig";
 
 export type {
     PlaceSearchItem,
@@ -31,6 +34,7 @@ export type RouteSearchErrorCode =
     | "INVALID_ENDPOINTS"
     | "SAME_ENDPOINT"
     | "PROVIDER_UNAVAILABLE"
+    | "PROVIDER_QUOTA_EXCEEDED"
     | "NO_PROVIDER_ROUTE";
 
 export class RouteSearchError extends Error {
@@ -120,7 +124,11 @@ function cloneRouteOptions(options: RouteAlternativeOption[]): RouteAlternativeO
 function isRenderableProviderRoute(option: RouteAlternativeOption): boolean {
     if (option.source !== "api") return false;
     if (typeof option.minutes !== "number" || !Number.isFinite(option.minutes) || option.minutes <= 0) return false;
-    if (!Array.isArray(option.pathCoords) || option.pathCoords.length < 2) return false;
+    if (!Array.isArray(option.pathCoords) || option.pathCoords.length < 2) {
+        return option.mode === "TRANSIT" && Boolean(option.transitLegs?.some(leg =>
+            isTransitRideKind(leg.kind) && leg.startName?.trim() && leg.endName?.trim() &&
+            typeof leg.durationMinutes === "number" && leg.durationMinutes > 0));
+    }
     return option.pathCoords.every((coord) =>
         Number.isFinite(coord.lat) &&
         coord.lat >= -90 &&
@@ -152,6 +160,13 @@ function validateRouteRequest(
 }
 
 export function getRouteQuality(option: RouteAlternativeOption): RouteQuality {
+    if (option.transitServiceState === "unknown") {
+        return {
+            reliability: "provider_estimate",
+            label: "운행 시간 확인 필요",
+            notice: "경로의 예상 소요시간입니다. 선택한 출발 시각의 운행 여부는 확인되지 않았습니다.",
+        };
+    }
     if (option.routePlausibility === "geometry_suspected") {
         return {
             reliability: "provider_estimate",
@@ -168,7 +183,9 @@ export function getRouteQuality(option: RouteAlternativeOption): RouteQuality {
     }
     if (option.source === "api") {
         const reliability = option.routeReliability ?? (
-            option.provider === "openstreetmap" ? "provider_estimate" : "live_provider"
+            option.provider === "openstreetmap" || option.mode === "TRANSIT"
+                ? "provider_estimate"
+                : "live_provider"
         );
         return {
             reliability,
@@ -214,8 +231,8 @@ function attachRouteQuality(
     origin: Place,
     destination: Place
 ): RouteAlternativeOption {
-    // 현재 legacy API에서 source=api인 응답은 TMAP 호출 결과다.
-    const normalizedOption = option.source === "api" && !option.provider
+    // 자동차/도보의 legacy 결과만 TMAP으로 보완한다. 대중교통 공급자는 추정하지 않는다.
+    const normalizedOption = option.source === "api" && !option.provider && option.mode !== "TRANSIT"
         ? { ...option, provider: "tmap" as const }
         : option;
     const quality = getRouteQuality(normalizedOption);
@@ -242,8 +259,14 @@ function attachRouteQuality(
 
 export function isOperatingTransitRoute(option: RouteAlternativeOption): boolean {
     if (option.mode !== "TRANSIT") return true;
-    return !(option.transitLegs ?? []).some((leg) =>
-        (leg.kind === "BUS" || leg.kind === "SUBWAY") && leg.serviceAvailable === false
+    const rides = (option.transitLegs ?? []).filter((leg) => isTransitRideKind(leg.kind));
+    // 운행 종료 정보가 없다는 것은 운행 중이라는 증거가 아니다.
+    return rides.length > 0 && rides.every((leg) => leg.serviceAvailable === true);
+}
+
+function isKnownNotOperatingTransitRoute(option: RouteAlternativeOption): boolean {
+    return (option.transitLegs ?? []).some((leg) =>
+        (isTransitRideKind(leg.kind)) && leg.serviceAvailable === false
     );
 }
 
@@ -251,13 +274,20 @@ function withTransitDepartureState(
     option: RouteAlternativeOption,
     departureAt: Date,
     source: "requested" | "next_service_search",
-    state: "operating" | "not_operating"
+    state: "operating" | "not_operating" | "unknown"
 ): RouteAlternativeOption {
-    return {
+    const result: RouteAlternativeOption = {
         ...option,
         transitServiceState: state,
         transitDepartureAt: departureAt.toISOString(),
         transitDepartureTimeSource: source,
+    };
+    const quality = getRouteQuality(result);
+    return {
+        ...result,
+        routeReliability: quality.reliability,
+        routeQualityLabel: quality.label,
+        routeQualityNotice: quality.notice,
     };
 }
 
@@ -283,8 +313,8 @@ function buildFutureTransitSearchTimes(departureAt: Date): Date[] {
 
 /**
  * 화면이 직접 provider API를 호출하지 않게 하는 라우팅 경계.
- * 현재 내부 구현은 기존 Tmap 중심 래퍼를 사용하지만, 이후 백엔드 프록시나
- * Kakao/Naver provider를 추가할 때 화면 코드는 이 함수만 유지하면 된다.
+ * 대중교통은 ODsay를 기본으로 하며 개발/테스트에서만 명시적 공급자 선택을 허용한다.
+ * 자동차/도보 등 다른 수단의 공급자 정책은 기존 래퍼에 위임한다.
  */
 export async function getRouteAlternativeOptions(
     origin: Place | undefined,
@@ -300,7 +330,8 @@ export async function getRouteAlternativeOptions(
     const requestedDepartureAt = options.departureAt && Number.isFinite(options.departureAt.getTime())
         ? new Date(options.departureAt)
         : new Date();
-    const cacheKey = buildRouteCacheKey(origin, destination, mode, options.departureAt);
+    const requestKey = buildRouteCacheKey(origin, destination, mode, options.departureAt);
+    const cacheKey = mode === "TRANSIT" ? `${requestKey}:${getTransitRouteProvider()}` : requestKey;
     const now = Date.now();
     const cached = routeCache.get(cacheKey);
     if (!options.forceRefresh && cached && cached.expiresAt > now) {
@@ -323,7 +354,7 @@ export async function getRouteAlternativeOptions(
     const resolveTransitServiceState = async (
         providerOptions: RouteAlternativeOption[]
     ): Promise<RouteAlternativeOption[]> => {
-        if (mode !== "TRANSIT") return providerOptions;
+        if (mode !== "TRANSIT" || providerOptions.length === 0) return providerOptions;
         const operating = providerOptions.filter(isOperatingTransitRoute);
         if (operating.length > 0) {
             return operating.map((option) => withTransitDepartureState(
@@ -331,6 +362,18 @@ export async function getRouteAlternativeOptions(
                 requestedDepartureAt,
                 "requested",
                 "operating"
+            ));
+        }
+
+        const unknown = providerOptions.filter((option) => !isKnownNotOperatingTransitRoute(option));
+        if (unknown.length > 0) {
+            // maasRP의 경로 추정값은 시간대를 반복 조회해도 운행 증거로 바뀌지 않는다.
+            // 미확인은 운행 종료와도 구분하고, 화면에 절대 도착시각을 확정해 주지 않는다.
+            return unknown.map((option) => withTransitDepartureState(
+                option,
+                requestedDepartureAt,
+                "requested",
+                "unknown"
             ));
         }
 
@@ -378,9 +421,21 @@ export async function getRouteAlternativeOptions(
         })
         .catch((error: unknown) => {
             if (error instanceof RouteSearchError) throw error;
+            if (mode === "TRANSIT" && error instanceof OdsayApiError && error.providerCode === "429") {
+                throw new RouteSearchError(
+                    "PROVIDER_QUOTA_EXCEEDED",
+                    "대중교통 경로 제공사의 조회 한도를 초과했습니다. 한도 복구 후 다시 이용해 주세요."
+                );
+            }
+            if (mode === "TRANSIT" && error instanceof OdsayApiError && error.providerCode === "500") {
+                throw new RouteSearchError("PROVIDER_UNAVAILABLE",
+                    "경로 제공사에서 오류가 발생했습니다. 잠시 후 다시 이용해 주세요." + (__DEV__ ? " [ODSAY:500]" : ""));
+            }
             throw new RouteSearchError(
                 "PROVIDER_UNAVAILABLE",
-                "경로 서비스에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 검색해 주세요."
+                "경로 서비스에 연결하지 못했습니다. 네트워크를 확인한 뒤 다시 검색해 주세요." +
+                (__DEV__ && error instanceof OdsayApiError && /^[A-Z_0-9-]{1,32}$/.test(error.providerCode ?? "")
+                    ? ` [ODSAY:${error.providerCode}]` : "")
             );
         })
         .finally(() => {

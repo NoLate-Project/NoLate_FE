@@ -27,10 +27,19 @@ const NOLATE_ALARM_LOOPS: Record<NoLateAlarmSoundId, number> = {
     CHIME: require("../../../assets/sounds/nolate_departure_chime.wav"),
     BELL: require("../../../assets/sounds/nolate_alarm_bell.wav"),
     BEEP: require("../../../assets/sounds/nolate_alarm_beep.wav"),
+    DIGITAL: require("../../../assets/sounds/nolate_alarm_digital.wav"),
+    CRYSTAL: require("../../../assets/sounds/nolate_alarm_crystal.wav"),
+    KNOCK: require("../../../assets/sounds/nolate_alarm_knock.wav"),
+    TRIPLE: require("../../../assets/sounds/nolate_alarm_triple.wav"),
+    SWEEP: require("../../../assets/sounds/nolate_alarm_sweep.wav"),
+    SIREN: require("../../../assets/sounds/nolate_alarm_siren.wav"),
+    KLAXON: require("../../../assets/sounds/nolate_alarm_klaxon.wav"),
 };
 const ALARM_AUDIO_MODE = {
     allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
+    // Respect the device Ring/Silent switch. The alarm screen owns vibration
+    // separately, so silent mode becomes vibration-only instead of fully quiet.
+    playsInSilentModeIOS: false,
     staysActiveInBackground: false,
     shouldDuckAndroid: true,
     playThroughEarpieceAndroid: false,

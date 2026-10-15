@@ -16,6 +16,7 @@ import {
   buildTransitRouteTimeMeta,
   getAlternativeMetricTags,
   getTransitModeLabels,
+  getTransitServiceNotice,
   getTransitRouteCategory,
   getTransitRouteTransferCount,
 } from './presentation';
@@ -325,12 +326,11 @@ export function useRoutePlannerPresentation({
     [selectedTransitMeta],
   );
   const selectedTransitStatusLabel =
-    selectedAlternative?.transitServiceState === 'not_operating'
-      ? '운행 종료'
-      : selectedAlternative?.transitDepartureTimeSource ===
+    getTransitServiceNotice(selectedAlternative) ??
+    (selectedAlternative?.transitDepartureTimeSource ===
         'next_service_search'
       ? '다음 운행'
-      : '최적';
+      : '최적');
   const selectedTransitProgressSegments = useMemo(() => {
     const segmentBasedProgress = buildTransitProgressSegmentsFromRoute(
       selectedNormalizedRoute,
@@ -416,10 +416,12 @@ export function useRoutePlannerPresentation({
       )
       .map(({ label }) => label);
     return {
-      arrivalText: arrivalText ? `${arrivalText} 도착` : undefined,
+      arrivalText: getTransitServiceNotice(selectedAlternative) ?? (arrivalText
+        ? `${arrivalText} ${selectedRouteInfo.timeBasis === 'provider_schedule' ? '도착' : '예상 도착'}`
+        : undefined),
       metricsText: metrics.join(' · '),
     };
-  }, [selectedRouteInfo]);
+  }, [selectedAlternative, selectedRouteInfo]);
   const selectedTransitPrimaryRideLeg = useMemo(
     () =>
       selectedAlternative?.transitLegs?.find(leg => isRideLegKind(leg.kind)),

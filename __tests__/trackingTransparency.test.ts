@@ -131,6 +131,27 @@ describe("App Tracking Transparency coordination", () => {
         expect(mockGetTrackingPermissions).toHaveBeenCalledTimes(1);
     });
 
+    it("does not miss activation between the state check and listener registration", async () => {
+        let stateChecks = 0;
+        const remove = jest.fn();
+        Object.defineProperty(AppState, "currentState", {
+            configurable: true,
+            get: () => (++stateChecks === 1 ? "background" : "active"),
+        });
+        jest.spyOn(AppState, "addEventListener").mockReturnValue({ remove } as ReturnType<typeof AppState.addEventListener>);
+        mockGetTrackingPermissions.mockResolvedValue({
+            canAskAgain: false,
+            expires: "never",
+            granted: false,
+            status: PermissionStatus.DENIED,
+        });
+
+        await ensureAppTrackingTransparencyResolved();
+
+        expect(remove).toHaveBeenCalledTimes(1);
+        expect(mockGetTrackingPermissions).toHaveBeenCalledTimes(1);
+    });
+
     it("fails closed and allows a later retry when iOS does not present the sheet", async () => {
         mockGetTrackingPermissions.mockResolvedValue({
             canAskAgain: true,

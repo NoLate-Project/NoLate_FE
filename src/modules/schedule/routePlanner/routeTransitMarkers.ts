@@ -1,3 +1,4 @@
+import { TRANSIT_RIDE_KINDS } from "../../map/transitModes";
 /** 대중교통 승하차 이벤트·통과 정류장·노선 식별 지도 마커 생성 모듈입니다. */
 import {
   type RoutePathCoord,
@@ -568,7 +569,7 @@ export function buildTransitPassStopMarkers(
   });
 
   const result: TmapMarker[] = [];
-  (['BUS', 'SUBWAY'] as const).forEach(kind => {
+  TRANSIT_RIDE_KINDS.forEach(kind => {
     const kindGroups = groups.filter(group => group.kind === kind);
     if (kindGroups.length === 0) return;
 

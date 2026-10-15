@@ -375,17 +375,32 @@ describe("departure alarm native facade", () => {
         expect(scheduleTestAlarm).toHaveBeenNthCalledWith(2, 60);
     });
 
-    it("reads and writes only whitelisted NoLate alarm sound ids", async () => {
-        const getAlarmSoundPreference = jest.fn().mockResolvedValue("BELL");
+    it("reads and writes every whitelisted NoLate alarm sound id", async () => {
+        const soundIds = [
+            "CHIME",
+            "BELL",
+            "BEEP",
+            "DIGITAL",
+            "CRYSTAL",
+            "KNOCK",
+            "TRIPLE",
+            "SWEEP",
+            "SIREN",
+            "KLAXON",
+        ] as const;
+        const getAlarmSoundPreference = jest.fn();
         const setAlarmSoundPreference = jest.fn().mockResolvedValue(true);
         mockOptionalNativeModule.mockReturnValue({
             getAlarmSoundPreference,
             setAlarmSoundPreference,
         });
 
-        await expect(getNativeNoLateAlarmSoundPreference()).resolves.toBe("BELL");
-        await expect(setNativeNoLateAlarmSoundPreference("BEEP")).resolves.toBe(true);
-        expect(setAlarmSoundPreference).toHaveBeenCalledWith("BEEP");
+        for (const soundId of soundIds) {
+            getAlarmSoundPreference.mockResolvedValueOnce(soundId);
+            await expect(getNativeNoLateAlarmSoundPreference()).resolves.toBe(soundId);
+            await expect(setNativeNoLateAlarmSoundPreference(soundId)).resolves.toBe(true);
+        }
+        expect(setAlarmSoundPreference.mock.calls.map(([soundId]) => soundId)).toEqual(soundIds);
 
         getAlarmSoundPreference.mockResolvedValue("../../bad.wav");
         resetDepartureAlarmNativeModuleForTests();

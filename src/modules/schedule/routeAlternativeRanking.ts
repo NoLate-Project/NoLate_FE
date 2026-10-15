@@ -1,3 +1,4 @@
+import { isIntercityRideKind, isTransitRideKind } from "../map/transitModes";
 import type { RouteAlternativeOption, TransitLegDetail } from "../map/tmapApi";
 import type { TravelMode } from "./types";
 
@@ -60,7 +61,7 @@ function finiteMinutes(option: RouteAlternativeOption): number {
 }
 
 function isRideLegKind(kind?: TransitLegDetail["kind"]): boolean {
-    return kind === "SUBWAY" || kind === "BUS";
+    return isTransitRideKind(kind);
 }
 
 function normalizeRouteToken(value?: string): string {
@@ -82,7 +83,7 @@ function normalizeLineToken(value?: string): string {
 export function getNaverLikeTransitRouteCategory(option: RouteAlternativeOption): RouteAlternativeTransitFilter {
     const legs = option.transitLegs ?? [];
     const hasSubway = legs.some((leg) => leg.kind === "SUBWAY");
-    const hasBus = legs.some((leg) => leg.kind === "BUS");
+    const hasBus = legs.some((leg) => (["BUS", "EXPRESS_BUS", "INTERCITY_BUS", "COACH"].includes(leg.kind)));
     if (hasSubway && hasBus) return "MIXED";
     if (hasSubway) return "SUBWAY";
     if (hasBus) return "BUS";
@@ -265,6 +266,16 @@ export function selectNaverLikeRouteAlternatives(
     const uniqueSorted = Array.from(signatureBest.values()).sort(compareNaverLikeRoutes(mode));
     const picked: RouteAlternativeOption[] = [];
     pushUniqueById(picked, uniqueSorted[0] ?? best, limit);
+
+    // 시내 접근 수단이 같아도 열차와 장거리 버스는 서로 다른 선택지다.
+    // 기존 이상치 검사를 통과한 후보 안에서 각 수단의 최상위 경로를 남긴다.
+    if (filter === "ALL") {
+        const train = uniqueSorted.find(option => option.transitLegs?.some(leg => leg.kind === "TRAIN"));
+        const coach = uniqueSorted.find(option => option.transitLegs?.some(leg =>
+            isIntercityRideKind(leg.kind) && leg.kind !== "TRAIN"));
+        if (train) pushUniqueById(picked, train, limit);
+        if (coach) pushUniqueById(picked, coach, limit);
+    }
 
     const leastTransfer = selectLeastTransferRoute(uniqueSorted);
     if (leastTransfer) pushUniqueById(picked, leastTransfer, limit);

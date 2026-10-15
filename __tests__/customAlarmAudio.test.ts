@@ -22,6 +22,13 @@ jest.mock("expo-av", () => ({
 jest.mock("../assets/sounds/nolate_departure_chime.wav", () => 1);
 jest.mock("../assets/sounds/nolate_alarm_bell.wav", () => 2);
 jest.mock("../assets/sounds/nolate_alarm_beep.wav", () => 3);
+jest.mock("../assets/sounds/nolate_alarm_digital.wav", () => 4);
+jest.mock("../assets/sounds/nolate_alarm_crystal.wav", () => 5);
+jest.mock("../assets/sounds/nolate_alarm_knock.wav", () => 6);
+jest.mock("../assets/sounds/nolate_alarm_triple.wav", () => 7);
+jest.mock("../assets/sounds/nolate_alarm_sweep.wav", () => 8);
+jest.mock("../assets/sounds/nolate_alarm_siren.wav", () => 9);
+jest.mock("../assets/sounds/nolate_alarm_klaxon.wav", () => 10);
 
 import {
     startNoLateCustomAlarmAudio,
@@ -30,7 +37,7 @@ import {
 
 const ALARM_MODE = {
     allowsRecordingIOS: false,
-    playsInSilentModeIOS: true,
+    playsInSilentModeIOS: false,
     staysActiveInBackground: false,
     shouldDuckAndroid: true,
     playThroughEarpieceAndroid: false,
@@ -96,6 +103,13 @@ describe("NoLate custom alarm audio", () => {
         ["CHIME", 1],
         ["BELL", 2],
         ["BEEP", 3],
+        ["DIGITAL", 4],
+        ["CRYSTAL", 5],
+        ["KNOCK", 6],
+        ["TRIPLE", 7],
+        ["SWEEP", 8],
+        ["SIREN", 9],
+        ["KLAXON", 10],
     ] as const)("plays the selected %s sound asset", async (soundId, expectedAsset) => {
         const session = await startNoLateCustomAlarmAudio(soundId);
         sessions.push(session);
@@ -148,7 +162,7 @@ describe("NoLate custom alarm audio", () => {
         sessions.push(second);
 
         const neutralCallsBeforeFinalStop = mockSetAudioModeAsync.mock.calls.filter(
-            ([mode]) => mode.playsInSilentModeIOS === false,
+            ([mode]) => mode.interruptionModeIOS === 0,
         );
         expect(neutralCallsBeforeFinalStop).toHaveLength(0);
         expect(mockSetAudioModeAsync).toHaveBeenLastCalledWith(ALARM_MODE);

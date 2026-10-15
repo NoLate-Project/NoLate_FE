@@ -1,6 +1,8 @@
+import { assertTicketService, getImportedTicket } from '../../modules/schedule/importedTicket';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, Keyboard, Linking } from "react-native";
 import { useRouter } from "expo-router";
+import { useImmediateNavigationTransition } from "../../modules/performance/ImmediateNavigationTransition";
 
 import {
     getRouteAlternativeOptions,
@@ -12,11 +14,9 @@ import {
     setRoutePlannerInitial,
     setRoutePlannerResult,
 } from "../../modules/schedule/routePlannerSession";
-import {
-    resolveScheduleRouteDepartureContext,
-    resolveSelectedRouteTiming,
-} from "../../modules/schedule/scheduleRouteTiming";
+import { resolveScheduleRouteDepartureContext } from "../../modules/schedule/scheduleRouteTiming";
 import type { Place, TravelMode } from "../../modules/schedule/types";
+import { buildIntercityJourney, validateIntercityJourneyTiming, type IntercitySelection } from "../../modules/schedule/intercityJourney";
 import { buildRouteInfoFromAlternative } from "../../modules/schedule/routeInfo";
 import {
     primeRouteDetailAdvertising,
@@ -28,6 +28,7 @@ import {
 } from "./RouteSelectAnimatedControls";
 import {
     getTransitFilterCount,
+    resolveRouteOptionTiming,
     sortRouteAlternativesForDisplay,
 } from "./routeSelectRouteModel";
 import { buildPlace } from "./routeSelectPlaceModel";
@@ -73,7 +74,9 @@ export function useRouteSelectRouteController({
     destinationLat,
     destinationLng,
 }: RouteSelectRouteControllerOptions) {
+    const importedTicket = getImportedTicket(initial?.route);
     const router = useRouter();
+    const { closeActiveScene, runWithTransitionShell } = useImmediateNavigationTransition();
     const [travelMode, setTravelMode] = useState<TravelMode>(initialTravelMode);
     const [routeAlternatives, setRouteAlternatives] = useState<RouteAlternativeOption[]>([]);
     const [selectedRouteId, setSelectedRouteId] = useState<string>();
@@ -85,13 +88,35 @@ export function useRouteSelectRouteController({
     const routeSubmitPendingRef = useRef(false);
     const routeDetailAdPendingRef = useRef(false);
     const routeSubmitResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [routeDepartureContext, setRouteDepartureContext] = useState(() =>
-        resolveScheduleRouteDepartureContext(initial?.targetArrivalAt, initial?.travelMinutes)
-    );
+    const matchesInitialRoute = travelMode === initial?.travelMode &&
+        origin?.lat === initial?.origin?.lat && origin?.lng === initial?.origin?.lng &&
+        destination?.lat === initial?.destination?.lat && destination?.lng === initial?.destination?.lng;
+    const initialEstimateMinutes = matchesInitialRoute ? initial?.travelMinutes : undefined;
+    const routeTimingKey = JSON.stringify([
+        origin?.lat, origin?.lng, destination?.lat, destination?.lng,
+        sessionId, travelMode, initial?.targetArrivalAt, initialEstimateMinutes, routeRequestVersion,
+    ]);
+    const selectionContextRef = useRef(routeTimingKey);
+    selectionContextRef.current = routeTimingKey;
+    const selectionMountedRef = useRef(true);
+    useEffect(() => { selectionMountedRef.current = true; return () => { selectionMountedRef.current = false; }; }, []);
+    const initialDepartureContext = useMemo(() => ({
+        key: routeTimingKey,
+        context: resolveScheduleRouteDepartureContext(initial?.targetArrivalAt, initialEstimateMinutes),
+    }), [initial?.targetArrivalAt, initialEstimateMinutes, routeTimingKey]);
+    const [refinedDepartureContext, setRefinedDepartureContext] = useState<typeof initialDepartureContext>();
+    // 새 장소/수단의 첫 렌더부터 이전 경로의 출발 기준을 사용하지 않는다.
+    const routeDepartureContext = refinedDepartureContext?.key === routeTimingKey
+        ? refinedDepartureContext.context
+        : initialDepartureContext.context;
     const routeDepartureAt = routeDepartureContext.departureAt;
     const routeScheduleBased = routeDepartureContext.scheduleBased;
     const routeTargetArrivalAt = routeDepartureContext.targetArrivalAt;
-    const scheduleTimingRefinedRef = useRef(false);
+    const scheduleTimingRefinedRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+        scheduleTimingRefinedRef.current = undefined;
+        setRefinedDepartureContext(undefined);
+    }, [routeTimingKey]);
     const routeContentAnim = useRef(new Animated.Value(1)).current;
 
     const selectedRouteIndex = useMemo(
@@ -107,7 +132,9 @@ export function useRouteSelectRouteController({
         [routeAlternatives]
     );
     const visibleRouteAlternatives = useMemo(() => {
-        return sortRouteAlternativesForDisplay(routeAlternatives, travelMode, transitRouteFilter);
+        const sorted = sortRouteAlternativesForDisplay(routeAlternatives.filter(option => !option.intercityJourney), travelMode, transitRouteFilter);
+        const anchored = routeAlternatives.filter(option => option.intercityJourney && (transitRouteFilter === "ALL" || getTransitFilterCount([option], transitRouteFilter) > 0));
+        return [...anchored, ...sorted].slice(0, 5);
     }, [routeAlternatives, transitRouteFilter, travelMode]);
     const visibleRouteSignature = useMemo(
         () => visibleRouteAlternatives.map((option) => option.id).join("|"),
@@ -163,8 +190,8 @@ export function useRouteSelectRouteController({
                 ? `${nextOrigin.name} → ${nextDestination.name}`
                 : nextDestination?.name || nextOrigin?.name,
             targetArrivalAt: initial?.targetArrivalAt,
-            departureAt: routeDepartureAt.toISOString(),
-            route: routeToStore,
+            departureAt: routeToStore?.intercityJourney?.departureAt ?? routeDepartureAt.toISOString(),
+            route: routeToStore ? { ...routeToStore, importedTicket } : initial?.route,
         });
     }, [
         destinationAddress,
@@ -172,6 +199,8 @@ export function useRouteSelectRouteController({
         destinationLng,
         destinationText,
         initial?.targetArrivalAt,
+        initial?.route,
+        importedTicket,
         originAddress,
         originLat,
         originLng,
@@ -182,17 +211,21 @@ export function useRouteSelectRouteController({
     ]);
 
     const close = useCallback(() => {
+        if (closeActiveScene()) return;
         if (router.canGoBack()) {
             router.back();
             return;
         }
         router.replace("/schedule");
-    }, [router]);
+    }, [closeActiveScene, router]);
 
     const goToScheduleList = useCallback(() => {
         Keyboard.dismiss();
-        router.replace("/schedule");
-    }, [router]);
+        runWithTransitionShell(
+            { route: "/schedule", title: "일정", showBack: false },
+            () => router.replace("/schedule"),
+        );
+    }, [router, runWithTransitionShell]);
 
     const openPlaceSettings = useCallback(() => {
         Keyboard.dismiss();
@@ -212,13 +245,8 @@ export function useRouteSelectRouteController({
 
     const retryRouteSearch = useCallback(() => {
         invalidateRouteSearch(origin, destination, travelMode);
-        scheduleTimingRefinedRef.current = false;
-        setRouteDepartureContext(resolveScheduleRouteDepartureContext(
-            initial?.targetArrivalAt,
-            initial?.travelMinutes
-        ));
         setRouteRequestVersion((current) => current + 1);
-    }, [destination, initial?.targetArrivalAt, initial?.travelMinutes, origin, travelMode]);
+    }, [destination, origin, travelMode]);
 
     const openRouteAttribution = useCallback((option: RouteAlternativeOption) => {
         if (!option.attributionUrl) return;
@@ -238,6 +266,11 @@ export function useRouteSelectRouteController({
             return;
         }
 
+        const saved = initial?.route as RouteAlternativeOption | undefined;
+        if (matchesInitialRoute && routeRequestVersion === 0 && saved?.intercityJourney) {
+            setRouteAlternatives([saved]); setSelectedRouteId(saved.id); setRouteLoading(false);
+            return;
+        }
         setRouteLoading(true);
         getRouteAlternativeOptions(
             origin,
@@ -258,9 +291,9 @@ export function useRouteSelectRouteController({
                     travelMode === "TRANSIT" &&
                     initial?.targetArrivalAt &&
                     firstRoute &&
-                    !scheduleTimingRefinedRef.current
+                    scheduleTimingRefinedRef.current !== routeTimingKey
                 ) {
-                    scheduleTimingRefinedRef.current = true;
+                    scheduleTimingRefinedRef.current = routeTimingKey;
                     const refined = resolveScheduleRouteDepartureContext(
                         initial.targetArrivalAt,
                         firstRoute.minutes
@@ -269,7 +302,7 @@ export function useRouteSelectRouteController({
                         refined.departureAt.getTime() - routeDepartureAt.getTime()
                     ) / 60_000;
                     if (refined.scheduleBased && adjustmentMinutes >= 5) {
-                        setRouteDepartureContext(refined);
+                        setRefinedDepartureContext({ key: routeTimingKey, context: refined });
                     }
                 }
             })
@@ -289,9 +322,12 @@ export function useRouteSelectRouteController({
         destination,
         hasRouteCoords,
         initial?.targetArrivalAt,
+        initial?.route,
+        matchesInitialRoute,
         origin,
         routeDepartureAt,
         routeRequestVersion,
+        routeTimingKey,
         travelMode,
     ]);
 
@@ -307,6 +343,10 @@ export function useRouteSelectRouteController({
         if (!targetRoute) {
             Alert.alert("경로 선택 필요", "상세 지도에서 확인할 경로를 선택해 주세요.");
             return;
+        }
+        if (importedTicket) {
+            try { assertTicketService(importedTicket, targetRoute.intercityJourney?.service); }
+            catch (cause) { Alert.alert("승차권 연결 필요", cause instanceof Error ? cause.message : "승차권 운행편을 연결해 주세요."); return; }
         }
         const targetIndex = targetRoute
             ? routeAlternatives.findIndex((option) => option.id === targetRoute.id)
@@ -328,11 +368,21 @@ export function useRouteSelectRouteController({
         } finally {
             routeDetailAdPendingRef.current = false;
         }
-    }, [persistInitial, routeAlternatives, router, selectedRoute, selectedRouteIndex, sessionId]);
+    }, [importedTicket, persistInitial, routeAlternatives, router, selectedRoute, selectedRouteIndex, sessionId]);
 
     useEffect(() => {
         primeRouteDetailAdvertising().catch(() => undefined);
     }, []);
+
+    const applyIntercityService = useCallback(async (option: RouteAlternativeOption, legIndex: number, selection: IntercitySelection, isCurrent: () => boolean) => {
+        if (!origin || !destination) throw new Error("출발지와 도착지를 다시 선택해 주세요.");
+        const context = selectionContextRef.current;
+        if (importedTicket) assertTicketService(importedTicket, selection.service);
+        const connected = await buildIntercityJourney({ option: { ...option, importedTicket }, legIndex, origin, destination, selection, targetArrivalAt: initial?.targetArrivalAt, search: getRouteAlternativeOptions });
+        if (!selectionMountedRef.current || context !== selectionContextRef.current || !isCurrent()) throw new Error("경로가 변경되어 적용하지 않았습니다. 다시 선택해 주세요.");
+        setRouteAlternatives(current => [connected, ...current.filter(item => !item.intercityJourney)]);
+        setTransitRouteFilter("ALL"); setSelectedRouteId(connected.id);
+    }, [destination, importedTicket, initial?.targetArrivalAt, origin]);
 
     const saveRouteOption = useCallback((routeOption: RouteAlternativeOption, routeIndex: number) => {
         if (routeSubmitPendingRef.current) return;
@@ -341,6 +391,14 @@ export function useRouteSelectRouteController({
             return;
         }
 
+        if (importedTicket) {
+            try { assertTicketService(importedTicket, routeOption.intercityJourney?.service); }
+            catch (cause) { Alert.alert("승차권 연결 필요", cause instanceof Error ? cause.message : "승차권 운행편을 연결해 주세요."); return; }
+        }
+        if (routeOption.intercityJourney) {
+            try { validateIntercityJourneyTiming(routeOption.intercityJourney, initial?.targetArrivalAt); }
+            catch (cause) { Alert.alert("운행편 확인 필요", cause instanceof Error ? cause.message : "다시 선택해 주세요."); return; }
+        }
         const nextOrigin = buildPlace(originText, originAddress, originLat, originLng);
         const nextDestination = buildPlace(destinationText, destinationAddress, destinationLat, destinationLng);
         const candidateRouteInfo = buildRouteInfoFromAlternative(
@@ -350,10 +408,9 @@ export function useRouteSelectRouteController({
             routeDepartureAt,
             routeIndex
         );
-        const selectedTiming = resolveSelectedRouteTiming({
+        const selectedTiming = resolveRouteOptionTiming(routeOption, routeDepartureAt, {
             targetArrivalAt: initial?.targetArrivalAt,
             routeInfo: candidateRouteInfo,
-            fallbackDepartureAt: routeDepartureAt,
         });
         const routeInfo = {
             ...candidateRouteInfo,
@@ -376,6 +433,7 @@ export function useRouteSelectRouteController({
                 departureAt: routeInfo.departureTime,
                 route: {
                     ...routeOption,
+                    schemaVersion: routeOption.intercityJourney ? 3 : 2,
                     routeInfo,
                 },
             });
@@ -394,6 +452,7 @@ export function useRouteSelectRouteController({
             routeSubmitResetTimerRef.current = null;
         }, 800);
     }, [
+        importedTicket,
         close,
         destinationAddress,
         destinationLat,
@@ -416,6 +475,8 @@ export function useRouteSelectRouteController({
     }, []);
 
     return {
+        applyIntercityService,
+        importedTicket,
         close,
         goToScheduleList,
         hasTransitFilters,

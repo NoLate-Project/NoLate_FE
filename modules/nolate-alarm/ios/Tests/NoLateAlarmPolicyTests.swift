@@ -897,22 +897,30 @@ final class NoLateAlarmPolicyTests: XCTestCase {
   }
 
   func testAlarmSoundPreferenceMapsOnlySupportedIdsToLongNotificationFiles() {
+    let expectedResourceNames = [
+      "CHIME": "nolate_departure_alert",
+      "BELL": "nolate_alarm_bell_alert",
+      "BEEP": "nolate_alarm_beep_alert",
+      "DIGITAL": "nolate_alarm_digital_alert",
+      "CRYSTAL": "nolate_alarm_crystal_alert",
+      "KNOCK": "nolate_alarm_knock_alert",
+      "TRIPLE": "nolate_alarm_triple_alert",
+      "SWEEP": "nolate_alarm_sweep_alert",
+      "SIREN": "nolate_alarm_siren_alert",
+      "KLAXON": "nolate_alarm_klaxon_alert"
+    ]
+    let actualResourceNames = Dictionary(
+      uniqueKeysWithValues: NoLateAlarmSoundPreference.allCases.map {
+        ($0.rawValue, $0.notificationResourceName)
+      }
+    )
+
     XCTAssertEqual(NoLateAlarmSoundPreference.defaultValue, .chime)
+    XCTAssertEqual(actualResourceNames, expectedResourceNames)
+    XCTAssertEqual(NoLateAlarmSoundPreference.allCases.count, 10)
     XCTAssertEqual(
-      NoLateAlarmSoundPreference.chime.notificationResourceName,
-      "nolate_departure_alert"
-    )
-    XCTAssertEqual(
-      NoLateAlarmSoundPreference.bell.notificationResourceName,
-      "nolate_alarm_bell_alert"
-    )
-    XCTAssertEqual(
-      NoLateAlarmSoundPreference.beep.notificationResourceName,
-      "nolate_alarm_beep_alert"
-    )
-    XCTAssertEqual(
-      Set(NoLateAlarmSoundPreference.allCases.map(\.rawValue)),
-      ["CHIME", "BELL", "BEEP"]
+      Set(NoLateAlarmSoundPreference.allCases.map(\.notificationResourceName)).count,
+      NoLateAlarmSoundPreference.allCases.count
     )
     XCTAssertNil(NoLateAlarmSoundPreference(rawValue: "DEFAULT"))
   }

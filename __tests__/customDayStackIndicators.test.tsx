@@ -50,7 +50,7 @@ jest.mock("../src/modules/theme/ThemeContext", () => ({
         colors: {
             selectedDayBg: "#111111",
             selectedDayText: "#ffffff",
-            textPrimary: "#111111",
+            textPrimary: mockThemeMode === "dark" ? "#ffffff" : "#111111",
             textSecondary: "#777777",
         },
     }),
@@ -194,7 +194,8 @@ describe("CustomDay stack indicators", () => {
             .toBe(expectedColor);
     });
 
-    test("스택형은 이동수단 아이콘이 포함된 날짜별 pill 두 줄을 표시한다", async () => {
+    test.each(["light", "dark"] as const)("%s 스택형은 제목 대비와 카테고리 색상선을 분리한다", async (mode) => {
+        mockThemeMode = mode;
         const root = await renderDay({ eventCount: 2 });
         const chips = findStackChips(root);
         const titles = findTextsByTestId(root, "stack-event-title");
@@ -206,21 +207,35 @@ describe("CustomDay stack indicators", () => {
         expect(titles[0].props.numberOfLines).toBe(1);
         expect(titles[0].props.ellipsizeMode).toBe("tail");
         expect(StyleSheet.flatten(chips[0].props.style).backgroundColor)
-            .toBe("rgba(255, 59, 48, 0.14)");
+            .toBe(mode === "dark" ? "#202126" : "#F4F5F7");
+        expect(StyleSheet.flatten(titles[0].props.style).color)
+            .toBe(mode === "dark" ? "#ffffff" : "#111111");
+        const [rail] = findViewsByTestId(root, "stack-event-rail-event-0");
+        expect(StyleSheet.flatten(rail.props.style).backgroundColor).toBe("#ff3b30");
         expect(icons[0].props.name).toBe("bus-outline");
+        expect(icons[0].props.size).toBe(10);
     });
 
-    test("스택형은 pill 두 줄을 보존하는 116pt 행과 기존 기준선을 사용한다", async () => {
-        const root = await renderDay({ eventCount: 1, holiday: true });
+    test("작아진 스택형 행에도 음력·공휴일·두 일정·초과 개수가 겹치지 않는다", async () => {
+        const root = await renderDay({ eventCount: 5, holiday: true });
         const [chips] = findViewsByTestId(root, "stack-event-chips");
+        const [holiday] = findTextsByTestId(root, "calendar-holiday-name");
+        const [overflow] = findTextsByTestId(root, "stack-event-overflow");
         const pressable = root.findByProps({ accessibilityRole: "button" });
 
         const chipsStyle = StyleSheet.flatten(chips.props.style);
         const pressableStyle = StyleSheet.flatten(pressable.props.style({ pressed: false }));
 
-        expect(pressableStyle.height).toBe(116);
-        expect(pressableStyle.paddingTop).toBe(8);
-        expect(chipsStyle.top).toBe(62);
+        const holidayStyle = StyleSheet.flatten(holiday.props.style);
+        const overflowStyle = StyleSheet.flatten(overflow.props.style);
+        expect(pressableStyle.height).toBe(104);
+        expect(pressableStyle.paddingTop).toBe(6);
+        expect(chipsStyle.top).toBe(54);
+        expect(holidayStyle.top + holidayStyle.lineHeight).toBeLessThan(chipsStyle.top);
+        expect(chipsStyle.top + overflowStyle.top + overflowStyle.height)
+            .toBeLessThanOrEqual(pressableStyle.height);
+        expect(findStackChips(root)).toHaveLength(2);
+        expect(overflow.props.children).toEqual(["+", 3, "개"]);
     });
 
     test("세 번째 일정부터 남은 개수를 +N개로 합친다", async () => {
@@ -250,6 +265,8 @@ describe("CustomDay stack indicators", () => {
         const [chip] = findStackChips(root);
 
         expect(StyleSheet.flatten(chip.props.style)).toMatchObject(expectedStyle);
+        expect(findViewsByTestId(root, "stack-event-rail-range"))
+            .toHaveLength(connectsBefore ? 0 : 1);
     });
 
     test("두 번째 lane만 남아도 위로 당기지 않고 +N은 두 lane 아래에 둔다", async () => {

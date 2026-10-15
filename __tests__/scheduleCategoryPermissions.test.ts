@@ -31,6 +31,17 @@ const editor: ScheduleCategory = {
 };
 
 describe("schedule category write permission", () => {
+    test.each([null, undefined, 123, "", "   "])(
+        "API category ID %p fails closed without throwing",
+        (id) => {
+            // JSON received at runtime can violate the stricter local model.
+            const category = { ...own, id } as unknown as ScheduleCategory;
+            expect(canWriteScheduleCategory(category)).toBe(false);
+            expect(canManageScheduleCategoryMetadata(category, "OWNER")).toBe(false);
+            expect(getWritableScheduleCategories([category, own])).toEqual([own]);
+        },
+    );
+
     test("내 카테고리와 편집 권한 공유 카테고리만 쓰기를 허용한다", () => {
         expect(canWriteScheduleCategory(own)).toBe(true);
         expect(canWriteScheduleCategory(editor)).toBe(true);

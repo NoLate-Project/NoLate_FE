@@ -15,6 +15,7 @@ const expoPublicEnv: Record<string, string | undefined> = {
     // Expo는 EXPO_PUBLIC_* 접근을 번들 시 정적으로 치환하므로 신규 키도 점 표기법으로 선언한다.
     EXPO_PUBLIC_LOCAL_API_BASE_URL: process.env.EXPO_PUBLIC_LOCAL_API_BASE_URL,
     EXPO_PUBLIC_MAP_PROVIDER: process.env.EXPO_PUBLIC_MAP_PROVIDER,
+    EXPO_PUBLIC_TRANSIT_PROVIDER: process.env.EXPO_PUBLIC_TRANSIT_PROVIDER,
     EXPO_PUBLIC_NAVER_MAP_CLIENT_ID: process.env.EXPO_PUBLIC_NAVER_MAP_CLIENT_ID,
     EXPO_PUBLIC_KAKAO_MAP_APP_KEY: process.env.EXPO_PUBLIC_KAKAO_MAP_APP_KEY,
     EXPO_PUBLIC_GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY,
@@ -35,5 +36,12 @@ const expoPublicEnv: Record<string, string | undefined> = {
 };
 
 export function getEnv(key: string): string | undefined {
+    // Expo's development prelude contains the current CLI overrides. The
+    // virtual .env module may retain file values, so it must not shadow an
+    // explicit per-run provider/API endpoint. Release builds keep static env.
+    if (typeof __DEV__ === "boolean" && __DEV__) {
+        const developmentValue = runtime.process?.env?.[key];
+        if (developmentValue !== undefined) return developmentValue;
+    }
     return expoPublicEnv[key] ?? runtime.process?.env?.[key];
 }

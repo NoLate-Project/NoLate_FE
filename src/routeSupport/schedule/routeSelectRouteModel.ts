@@ -1,3 +1,4 @@
+import { isTransitRideKind, isIntercityRideKind, transitModeLabel, intercityRideColor } from "../../modules/map/transitModes";
 import type { RouteAlternativeOption } from "../../modules/map/routingService";
 import {
     compactTransitLineLabel as compactSharedTransitLineLabel,
@@ -11,6 +12,10 @@ import {
     selectNaverLikeRouteAlternatives,
 } from "../../modules/schedule/routeAlternativeRanking";
 import type { TravelMode } from "../../modules/schedule/types";
+import {
+    resolveSelectedRouteTiming,
+    type SelectedRouteTimingInfo,
+} from "../../modules/schedule/scheduleRouteTiming";
 import {
     ROUTE_SEGMENT_FALLBACK_COLORS,
     type RouteDropdownSummaryItem,
@@ -56,12 +61,57 @@ export function formatScheduleRouteNoticeTime(date: Date): string {
     return `${date.getMonth() + 1}월 ${date.getDate()}일 ${formatRouteClock(date)}`;
 }
 
+type RouteOptionTimingContext = { targetArrivalAt?: string; routeInfo?: SelectedRouteTimingInfo };
+
+/** 후보별 표시와 저장은 같은 시각 정책을 사용하고 다음 운행 검색의 출발 기준을 보존한다. */
+export function resolveRouteOptionTiming(
+    option: RouteAlternativeOption,
+    departureAt: Date,
+    timing: RouteOptionTimingContext = {},
+) {
+    const nextServiceDeparture = option.mode === "TRANSIT" &&
+        option.transitDepartureTimeSource === "next_service_search" && option.transitDepartureAt
+        ? new Date(option.transitDepartureAt)
+        : undefined;
+    const hasNextServiceDeparture = nextServiceDeparture && Number.isFinite(nextServiceDeparture.getTime());
+    const routeInfo = timing.routeInfo ?? (option.intercityJourney ? {
+        totalDurationSeconds: option.totalDurationSeconds,
+        departureTime: option.intercityJourney.departureAt,
+        arrivalTime: option.intercityJourney.arrivalAt,
+        timeBasis: "anchored_journey" as const,
+    } : {
+        totalDurationMinutes: option.minutes,
+        totalDurationSeconds: option.totalDurationSeconds,
+        departureTime: departureAt.toISOString(),
+        timeBasis: "estimated" as const,
+    });
+    return resolveSelectedRouteTiming({
+        targetArrivalAt: hasNextServiceDeparture ? undefined : timing.targetArrivalAt,
+        routeInfo: hasNextServiceDeparture && routeInfo.timeBasis !== "provider_schedule"
+            ? { ...routeInfo, departureTime: nextServiceDeparture.toISOString() }
+            : routeInfo,
+        fallbackDepartureAt: departureAt,
+    });
+}
+
 // 경로 카드의 출발-도착 시간과 요금을 한 줄로 만든다.
 /** 경로의 도착 예상 시각과 요금 중 제공 가능한 정보를 한 줄 보조 문구로 조합한다. */
-export function formatRouteTimeFare(option: RouteAlternativeOption, departureAt: Date): string | undefined {
+export function formatRouteTimeFare(
+    option: RouteAlternativeOption,
+    departureAt: Date,
+    timing: RouteOptionTimingContext = {},
+): string | undefined {
     const chunks: string[] = [];
-    if (typeof option.minutes === "number") {
-        const arrivalAt = new Date(departureAt.getTime() + Math.max(0, option.minutes) * 60 * 1000);
+    if (option.intercityJourney) {
+        chunks.push(`선택 편 ${option.intercityJourney.service.departureAt.slice(11, 16)} 출발 · ${formatRouteClock(new Date(option.intercityJourney.arrivalAt))} 예상 도착`);
+    } else if (option.mode === "TRANSIT" && option.transitServiceState === "unknown") {
+        chunks.push("운행 시간 확인 필요");
+    } else if (option.mode === "TRANSIT" && option.transitServiceState === "not_operating") {
+        chunks.push("운행 종료");
+    } else if (typeof option.minutes === "number") {
+        // 카드와 저장이 같은 후보의 시각을 사용한다. 공통 검색 기준에 다른 후보의
+        // 소요시간을 더하면 일정 마감 뒤 도착하는 것처럼 잘못 표시할 수 있다.
+        const { arrivalAt } = resolveRouteOptionTiming(option, departureAt, timing);
         chunks.push(`${formatRouteClock(arrivalAt)} 예상 도착`);
     }
     if (typeof option.fareWon === "number") chunks.push(`${option.fareWon.toLocaleString()}원`);
@@ -139,6 +189,8 @@ export function getTransitLegColor(leg: RouteSelectTransitLeg): string {
     const lineLabel = compactLineLabel(leg) ?? leg.lineName ?? leg.label;
     if (leg.kind === "BUS") return getSharedBusLineColor(lineLabel, leg.lineColor);
     if (leg.kind === "SUBWAY") return getSubwayLineColor(lineLabel);
+    const intercityColor = intercityRideColor(leg.kind);
+    if (intercityColor) return intercityColor;
     if (leg.kind === "WALK") return ROUTE_SEGMENT_FALLBACK_COLORS.walk;
     return ROUTE_SEGMENT_FALLBACK_COLORS.etc;
 }
@@ -172,8 +224,8 @@ export function buildRouteProgressSegments(option: RouteAlternativeOption): Rout
                 index < legs.length - 1 &&
                 isRideLegKind(prevLeg?.kind) &&
                 isRideLegKind(nextLeg?.kind);
-            const lineLabel = leg.kind === "WALK" ? undefined : compactLineLabel(leg);
-            const segmentKind: RouteProgressSegment["kind"] = isTransferWalk ? "TRANSFER" : leg.kind;
+            const lineLabel = leg.kind === "WALK" || leg.journeyPhase === "BUFFER" ? undefined : compactLineLabel(leg);
+            const segmentKind: RouteProgressSegment["kind"] = isTransferWalk || leg.journeyPhase === "BUFFER" ? "TRANSFER" : leg.kind;
             const color = isTransferWalk ? ROUTE_SEGMENT_FALLBACK_COLORS.etc : getTransitLegColor(leg);
             return {
                 key: `${segmentKind}:${lineLabel ?? leg.label}:${index}`,
@@ -194,12 +246,12 @@ export function getTransitKindLabel(kind: RouteSelectTransitLeg["kind"]): string
     if (kind === "SUBWAY") return "지하철";
     if (kind === "BUS") return "버스";
     if (kind === "WALK") return "도보";
-    return "이동";
+    return transitModeLabel(kind);
 }
 
 /** 구간이 실제 차량 탑승 구간인지 판별해 도보·환승 표현과 구분한다. */
 export function isRideLegKind(kind?: RouteSelectTransitLeg["kind"] | "TRANSFER"): boolean {
-    return kind === "SUBWAY" || kind === "BUS";
+    return isTransitRideKind(kind);
 }
 
 /** 경로 응답의 환승 수를 공통 추천 정책과 동일한 방식으로 계산한다. */
@@ -260,7 +312,7 @@ export function formatRouteFlowStopDisplayName(
 ): string | undefined {
     const normalized = formatRouteFlowPointName(name);
     if (!normalized) return undefined;
-    if ((kind === "SUBWAY" || kind === "TRANSFER") && !normalized.endsWith("역")) {
+    if ((kind === "SUBWAY" || kind === "TRAIN") && !normalized.endsWith("역")) {
         return `${normalized}역`;
     }
     return normalized;
@@ -293,7 +345,7 @@ export function formatDropdownPlaceName(
     const normalized = formatRouteStopName(name);
     if (!normalized) return undefined;
     if (
-        (kind === "SUBWAY" || kind === "TRANSFER") &&
+        (kind === "SUBWAY" || kind === "TRAIN") &&
         !normalized.endsWith("역") &&
         normalized !== "출발지" &&
         normalized !== "도착지"
@@ -361,6 +413,9 @@ export function buildRouteDropdownSummaryItems(
         const endName = formatDropdownPlaceName(leg.endName, leg.kind);
         const key = `${option.id}:${leg.kind}:${leg.label}:${index}`;
 
+        if (leg.journeyPhase === "BUFFER") {
+            return { key, kind: "TRANSFER" as const, title: `${leg.label} · ${minutes}분`, subtitle: "역·터미널 여유시간" };
+        }
         if (leg.kind === "WALK") {
             const isTransferWalk = index > 0 &&
                 index < legs.length - 1 &&
@@ -401,8 +456,8 @@ export function buildRouteDropdownSummaryItems(
                 key,
                 kind: leg.kind,
                 color: getTransitLegColor(leg),
-                title: `${lineLabel} ${minutes}분`,
-                subtitle: [placeName, stopCountText].filter(Boolean).join(" · "),
+                title: `${isIntercityRideKind(leg.kind) ? transitModeLabel(leg.kind) + " · " : ""}${lineLabel} ${minutes}분`,
+                subtitle: [placeName, stopCountText, leg.intercityService && `${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · "),
             };
         }
 

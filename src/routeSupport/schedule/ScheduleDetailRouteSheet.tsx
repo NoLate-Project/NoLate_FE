@@ -1,3 +1,4 @@
+import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -48,6 +49,7 @@ export function ScheduleDetailRouteSheet({
     departureCountLabel,
     departureParticipants,
     departureRemainingLabel,
+    departureTimeLabel,
     displayTravelMode,
     effectiveRouteAccessibilityLabel,
     effectiveTransitRoutePresentation,
@@ -136,6 +138,7 @@ export function ScheduleDetailRouteSheet({
           bounces={false}
           scrollEnabled={sheetMode === 'expanded'}
         >
+          <ImportedTicketSummary route={item.route} showBooking={sheetMode === 'expanded'} />
           <ScheduleDetailRouteQuickSummary presentation={presentation} />
           <View
             onLayout={handleExpandedContentLayout}
@@ -213,7 +216,7 @@ export function ScheduleDetailRouteSheet({
                         { color: topCardAccentText },
                       ]}
                     >
-                      권장 출발
+                      {departureTimeLabel}
                     </Text>
                     <View style={styles.improvedDepartureTimeRow}>
                       <Text
@@ -449,7 +452,7 @@ export function ScheduleDetailRouteSheet({
                         { color: primaryText },
                       ]}
                     >
-                      실시간 추천 경로
+                      {effectiveTransitRoutePresentation.guidanceTitle}
                     </Text>
                   </View>
                   {effectiveTransitRoutePresentation.summary ? (
@@ -463,8 +466,8 @@ export function ScheduleDetailRouteSheet({
                     </Text>
                   ) : null}
                 </View>
+                {/* Expanded sheet is scrollable: keep per-train comparison clocks visible, not ellipsized. */}
                 <Text
-                  numberOfLines={3}
                   style={[
                     styles.effectiveRouteCardItinerary,
                     { color: primaryText },

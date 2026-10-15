@@ -33,8 +33,8 @@ export function shouldShowTransitRouteIdentityLabel(mapZoom: number): boolean {
 
 /** 환승 여부와 무관하게 사용자가 다음에 탈 실제 교통수단 아이콘을 반환한다. */
 export function getTransitModeMarkerStyle(kind: string): TransitModeMarkerStyle {
-    if (kind === "BUS") return "bus";
-    if (kind === "SUBWAY") return "subway";
+    if (["BUS", "EXPRESS_BUS", "INTERCITY_BUS", "COACH"].includes(kind)) return "bus";
+    if (kind === "SUBWAY" || kind === "TRAIN") return "subway";
     return "walk";
 }
 

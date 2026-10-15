@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import CustomDay from "./CustomDay";
 import StackWeekEventLabels from "./StackWeekEventLabels";
+import { STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 import type { CalendarDayMetadata } from "../../calendarMetadata";
 import {
     CALENDAR_DAY_HEIGHTS,
@@ -323,7 +324,8 @@ export function useScheduleCalendarStack({
                             weekDate
                             && (calendarDaysByDate[weekDate.dateString]
                                 ?.holidays?.length ?? 0) > 0
-                        )) ? 62 : 52;
+                        )) ? STACK_CALENDAR_GEOMETRY.holidayEventTop
+                            : STACK_CALENDAR_GEOMETRY.eventTop;
 
                         return (
                             <View

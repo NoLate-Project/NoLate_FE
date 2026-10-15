@@ -20,6 +20,7 @@ import { DAY_NAVIGATION_MOTION } from '../dayNavigationMotion';
 import { getScheduleFocusDay } from '../calendarNavigation';
 import type { ScheduleItem } from '../types';
 import { useScheduleStore } from '../store';
+import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 const DAY_NAVIGATION_EASING = Easing.bezier(...DAY_NAVIGATION_MOTION.bezier);
 const CALENDAR_DEPTH_EASING = Easing.bezier(...CALENDAR_DEPTH_MOTION.bezier);
@@ -118,6 +119,7 @@ export function useScheduleIndexDayNavigation({
   viewTransitioningRef,
   yearOverviewProgress,
 }: Options) {
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
   /** 달력이 보고한 표시 월을 반영하고 오늘이 아닌 월로 이동하면 오늘 버튼의 준비 상태를 해제한다. */
   const handleVisibleMonthChange = useCallback(
     (month: string) => {
@@ -365,12 +367,20 @@ export function useScheduleIndexDayNavigation({
   /** 일간 화면에서 선택한 일정의 상세 라우트로 이동한다. */
   const handleOpenScheduleFromDayDisplay = useCallback(
     (id: string) => {
-      router.push({
-        pathname: '/schedule/[id]',
-        params: { id },
-      });
+      runWithTransitionShell(
+        {
+          route: '/schedule/[id]',
+          title: '일정 상세',
+          backAccessibilityLabel: '이전 화면으로 돌아가기',
+          sceneKey: id,
+        },
+        () => router.push({
+          pathname: '/schedule/[id]',
+          params: { id },
+        }),
+      );
     },
-    [router],
+    [router, runWithTransitionShell],
   );
 
   /** 월간 화면에서 누른 날짜를 준비한 뒤 잠금 상태를 공유하며 일간 깊이로 전환한다. */

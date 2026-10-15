@@ -29,7 +29,7 @@ describe("calendar view modes", () => {
     });
 
     test("keeps enough stack height for event lanes without the unused tail space", () => {
-        expect(CALENDAR_DAY_HEIGHTS.stack).toBe(116);
+        expect(CALENDAR_DAY_HEIGHTS.stack).toBe(104);
         expect(isContinuousMonthViewMode("stack")).toBe(true);
         expect(isContinuousMonthViewMode("detail")).toBe(false);
         expect(isContinuousMonthViewMode("week")).toBe(false);

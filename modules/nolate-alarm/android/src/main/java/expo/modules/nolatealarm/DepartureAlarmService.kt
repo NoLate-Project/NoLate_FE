@@ -1,8 +1,10 @@
 package expo.modules.nolatealarm
 
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -16,8 +18,10 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.VibrationEffect
+import android.os.VibrationAttributes
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.core.content.ContextCompat
 
 class DepartureAlarmService : Service() {
   private val activeAlarms = LinkedHashMap<String, StoredAlarm>()
@@ -29,12 +33,26 @@ class DepartureAlarmService : Service() {
   private var audioFocusRequest: AudioFocusRequest? = null
   private var audioManager: AudioManager? = null
   private var vibrating = false
+  private var ringingResourcesStarted = false
+  private var ringerModeReceiverRegistered = false
+  private val ringerModeReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (
+        intent?.action == AudioManager.RINGER_MODE_CHANGED_ACTION &&
+        ringingResourcesStarted &&
+        activeAlarms.isNotEmpty()
+      ) {
+        syncAlarmAudioWithRingerMode()
+      }
+    }
+  }
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onCreate() {
     super.onCreate()
     AlarmNotificationFactory.ensureChannel(this)
+    registerRingerModeReceiver()
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,6 +84,7 @@ class DepartureAlarmService : Service() {
 
   override fun onDestroy() {
     handler.removeCallbacks(timeoutRunnable)
+    unregisterRingerModeReceiver()
     stopRingingResources()
     super.onDestroy()
   }
@@ -111,7 +130,7 @@ class DepartureAlarmService : Service() {
     )?.let { exactCallbackAtMillis ->
       coordinator.recordFireIfCurrent(current, exactCallbackAtMillis)
     }
-    if (mediaPlayer == null) startRingingResources()
+    if (!ringingResourcesStarted) startRingingResources()
     handler.removeCallbacks(timeoutRunnable)
     handler.postDelayed(timeoutRunnable, AlarmContract.MAX_RING_DURATION_MILLIS)
   }
@@ -130,10 +149,27 @@ class DepartureAlarmService : Service() {
   }
 
   private fun startRingingResources() {
+    if (ringingResourcesStarted) {
+      syncAlarmAudioWithRingerMode()
+      return
+    }
+    ringingResourcesStarted = true
     acquireWakeLock()
-    requestAudioFocus()
     startVibration()
+    syncAlarmAudioWithRingerMode()
+  }
+
+  private fun syncAlarmAudioWithRingerMode() {
+    val manager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    if (!AlarmOutputModePolicy.shouldPlaySound(manager.ringerMode)) {
+      stopAlarmAudio()
+      abandonAudioFocus()
+      return
+    }
+    if (mediaPlayer != null) return
+    requestAudioFocus()
     startAlarmAudio()
+    if (mediaPlayer == null) abandonAudioFocus()
   }
 
   private fun startAlarmAudio() {
@@ -223,46 +259,77 @@ class DepartureAlarmService : Service() {
 
   private fun startVibration() {
     val pattern = longArrayOf(0, 700, 350, 700, 350)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      val vibrator = getSystemService(VibratorManager::class.java).defaultVibrator
-      vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0))
-    } else {
-      @Suppress("DEPRECATION")
-      val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0))
+    runCatching {
+      val vibrator = alarmVibrator()
+      if (!vibrator.hasVibrator()) return@runCatching
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        vibrator.vibrate(
+          VibrationEffect.createWaveform(pattern, 0),
+          VibrationAttributes.createForUsage(VibrationAttributes.USAGE_ALARM)
+        )
+      } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        @Suppress("DEPRECATION")
+        vibrator.vibrate(VibrationEffect.createWaveform(pattern, 0), ALARM_AUDIO_ATTRIBUTES)
       } else {
         @Suppress("DEPRECATION")
-        vibrator.vibrate(pattern, 0)
+        vibrator.vibrate(pattern, 0, ALARM_AUDIO_ATTRIBUTES)
       }
+      vibrating = true
     }
-    vibrating = true
   }
 
   private fun cancelVibration() {
     if (!vibrating) return
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      getSystemService(VibratorManager::class.java).defaultVibrator.cancel()
-    } else {
-      @Suppress("DEPRECATION")
-      (getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).cancel()
-    }
     vibrating = false
+    runCatching { alarmVibrator().cancel() }
   }
 
-  private fun stopRingingResources() {
-    handler.removeCallbacks(timeoutRunnable)
+  @Suppress("DEPRECATION")
+  private fun alarmVibrator(): Vibrator =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      getSystemService(VibratorManager::class.java).defaultVibrator
+    } else {
+      getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+    }
+
+  private fun stopAlarmAudio() {
     mediaPlayer?.runCatching {
       if (isPlaying) stop()
     }
     mediaPlayer?.release()
     mediaPlayer = null
+  }
+
+  private fun stopRingingResources() {
+    handler.removeCallbacks(timeoutRunnable)
+    ringingResourcesStarted = false
+    stopAlarmAudio()
     cancelVibration()
     abandonAudioFocus()
     wakeLock?.let {
       if (it.isHeld) it.release()
     }
     wakeLock = null
+  }
+
+  private fun registerRingerModeReceiver() {
+    if (ringerModeReceiverRegistered) return
+    runCatching {
+      ContextCompat.registerReceiver(
+        this,
+        ringerModeReceiver,
+        IntentFilter(AudioManager.RINGER_MODE_CHANGED_ACTION),
+        ContextCompat.RECEIVER_EXPORTED
+      )
+    }.onSuccess {
+      ringerModeReceiverRegistered = true
+    }
+  }
+
+  private fun unregisterRingerModeReceiver() {
+    if (!ringerModeReceiverRegistered) return
+    ringerModeReceiverRegistered = false
+    runCatching { unregisterReceiver(ringerModeReceiver) }
   }
 
   private fun stopAndExpireAll() {

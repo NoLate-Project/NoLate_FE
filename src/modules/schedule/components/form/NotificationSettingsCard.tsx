@@ -732,8 +732,8 @@ export default function NotificationSettingsCard({
                                     testID="notification-alarm-sound-row"
                                     accessibilityRole="button"
                                     accessibilityLabel={flat
-                                        ? `알림음, 현재 ${selectedSound.label}`
-                                        : `알람음, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
+                                        ? `소리 및 진동, 현재 ${selectedSound.label}`
+                                        : `소리 및 진동, 현재 ${selectedSound.label}, 모든 출발 알람에 적용`}
                                     accessibilityState={{
                                         disabled: soundPreviewDisabled,
                                     }}
@@ -759,10 +759,12 @@ export default function NotificationSettingsCard({
                                     </View>
                                     <View style={styles.flatTestCopy}>
                                         <Text style={[styles.flatTestTitle, { color: colors.textPrimary }]}>
-                                            {flat ? "알림음" : "알람음"}
+                                            소리 및 진동
                                         </Text>
                                         <Text style={[styles.flatTestDescription, { color: colors.textSecondary }]}>
-                                            {flat ? selectedSound.label : `${selectedSound.label} · 모든 출발 알람에 적용`}
+                                            {flat
+                                                ? `${selectedSound.label} · 무음일 때는 진동만`
+                                                : `${selectedSound.label} · 무음일 때는 진동만 · 모든 출발 알람에 적용`}
                                         </Text>
                                     </View>
                                     <Ionicons accessible={false} name="chevron-forward" size={16} color={colors.textSecondary} />

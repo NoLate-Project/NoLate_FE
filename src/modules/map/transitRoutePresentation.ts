@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "./transitModes";
 import { getZoomStyleValue, type ZoomStyleStops } from "./routeZoomStyle";
 
 // 네이버의 현재 길찾기 화면과 각 SDK의 screen-space 패턴 정책처럼, 줌이 바뀌어도
@@ -180,6 +181,6 @@ export function shouldRenderTransitNativeDirection(
     segmentDirectionEnabled = true
 ): boolean {
     return segmentDirectionEnabled &&
-        (mode === "BUS" || mode === "SUBWAY") &&
+        (isTransitRideKind(mode)) &&
         zoom >= TRANSIT_ROUTE_ZOOM_STYLE.directionMinZoom;
 }

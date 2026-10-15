@@ -222,15 +222,22 @@ describe("NoLateCustomAlarmScreen", () => {
     test("mutes, unmutes, and stops the active sound", async () => {
         await renderScreen();
 
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "무음 모드로 전환" }).props.accessibilityValue,
+        ).toEqual({ text: "벨소리와 진동" });
+
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람 소리 끄기" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "무음 모드로 전환" }).props.onPress();
             await Promise.resolve();
         });
         expect(mockSetMuted).toHaveBeenLastCalledWith(true);
         expect(Vibration.cancel).not.toHaveBeenCalled();
+        expect(
+            renderer!.root.findByProps({ accessibilityLabel: "소리 모드로 전환" }).props.accessibilityValue,
+        ).toEqual({ text: "진동만" });
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알람 소리 켜기" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 모드로 전환" }).props.onPress();
             await Promise.resolve();
         });
         expect(mockSetMuted).toHaveBeenLastCalledWith(false);

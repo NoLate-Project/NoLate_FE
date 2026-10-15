@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import CalendarGlassSurface, { liquidGlassTokens } from "../calendar/CalendarGlassSurface";
 import LiquidGlassIconButton, { isLiquidGlassIconButtonAvailable } from "../calendar/LiquidGlassIconButton";
 import { useTheme } from "../../../theme/ThemeContext";
+import { SCHEDULE_ICON_SIZES } from "./ScheduleIcon";
 import {
     FLOATING_ACTION_BAR_HEIGHT,
     getFloatingActionBarBottomOffset,
@@ -115,6 +116,7 @@ export default function GlobalFloatingActionBar({
                         disabled={action.disabled}
                         colorScheme={mode}
                         accessibilityLabel={action.accessibilityLabel}
+                        accessibilityState={action.accessibilityState}
                         onPress={action.onPress}
                         style={[
                             styles.nativeActionButton,
@@ -195,8 +197,12 @@ function getNativeSymbolName(icon?: React.ComponentProps<typeof Ionicons>["name"
             return "envelope";
         case "notifications-outline":
             return "bell";
+        case "calendar-outline":
+            return "calendar";
+        case "search-outline":
         case "search":
             return "magnifyingglass";
+        case "add-outline":
         case "add":
             return "plus";
         default:
@@ -233,6 +239,7 @@ function ActionBadge({
         >
             <Text
                 numberOfLines={1}
+                allowFontScaling={false}
                 adjustsFontSizeToFit
                 minimumFontScale={0.78}
                 style={styles.badgeText}
@@ -265,16 +272,7 @@ function ActionButton({
                 styles.action,
                 wide && styles.wideIconAction,
                 !action.icon && !!action.label && styles.labelAction,
-                action.emphasized && styles.emphasizedAction,
-                action.emphasized && {
-                    backgroundColor: mode === "dark"
-                        ? "rgba(255,255,255,0.16)"
-                        : "rgba(255,255,255,0.62)",
-                    borderColor: mode === "dark"
-                        ? "rgba(255,255,255,0.28)"
-                        : "rgba(255,255,255,0.78)",
-                },
-                !action.emphasized && pressed && {
+                pressed && {
                     backgroundColor: mode === "dark"
                         ? "rgba(255,255,255,0.10)"
                         : "rgba(0,0,0,0.07)",
@@ -290,8 +288,8 @@ function ActionButton({
                     <Ionicons
                         accessible={false}
                         name={action.icon}
-                        size={24}
-                        color={colors.textPrimary}
+                        size={SCHEDULE_ICON_SIZES.toolbar}
+                        color={action.emphasized ? mode === "dark" ? "#4B9DFF" : "#2979FF" : colors.textPrimary}
                     />
                     <ActionBadge count={action.badgeCount} mode={mode} />
                 </View>
@@ -373,13 +371,6 @@ const styles = StyleSheet.create({
     labelAction: {
         minWidth: FLOATING_LABEL_WIDTH,
         paddingHorizontal: 16,
-    },
-    emphasizedAction: {
-        borderWidth: StyleSheet.hairlineWidth,
-        shadowColor: "#FFFFFF",
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.20,
-        shadowRadius: 14,
     },
     actionText: {
         fontSize: 15,

@@ -62,7 +62,11 @@ import { useRouteSelectRouteController } from "./useRouteSelectRouteController";
  * 경로 선택 화면의 장소 검색, 즐겨찾기, 지도 지점 지정과 경로 대안 저장 흐름을 관리한다.
  * 화면 컴포넌트는 반환된 상태와 명령만 사용하며 비동기 요청의 최신성·저장 정책은 이 훅에서 보장한다.
  */
-export function useRouteSelectController() {
+export function useRouteSelectController({
+    sessionIdOverride,
+}: {
+    sessionIdOverride?: string;
+} = {}) {
     const insets = useSafeAreaInsets();
     const { mode, colors } = useTheme();
     const isDark = mode === "dark";
@@ -79,7 +83,7 @@ export function useRouteSelectController() {
         travelMode?: string;
         editTarget?: string;
     }>();
-    const sessionId = readParam(params.sessionId) ?? "";
+    const sessionId = sessionIdOverride ?? readParam(params.sessionId) ?? "";
     const editTargetParam = readParam(params.editTarget);
     const forcedEditTarget: RoutePointTarget | undefined = editTargetParam === "origin" || editTargetParam === "destination"
         ? editTargetParam
@@ -212,6 +216,8 @@ export function useRouteSelectController() {
         routeSubmitPending,
         routeTargetArrivalAt,
         saveRouteOption,
+        applyIntercityService,
+        importedTicket,
         selectTransitFilter,
         selectTravelMode,
         selectedRouteId,
@@ -789,6 +795,8 @@ export function useRouteSelectController() {
         openRouteAttribution,
         openMapForOption,
         saveRouteOption,
+        applyIntercityService,
+        importedTicket,
         exitSearchMode,
         editDefaultOrigin,
         visibleRecentPlaces,

@@ -25,7 +25,7 @@ function pathLengthMeters(coords: ParsedCoord[] | undefined): number {
 }
 
 describe("ODsay multimodal transit parser", () => {
-    test("keeps provider schedule, exact geometry, stop IDs, and fast-transfer position", () => {
+    test("keeps provider estimated times, exact geometry, stop IDs, and fast-transfer position", () => {
         const result = parseTransitOptionsFromOdsay({
             result: {
                 paths: [{
@@ -112,6 +112,7 @@ describe("ODsay multimodal transit parser", () => {
             transferCount: 1,
             walkMeters: 470,
             provider: "odsay",
+            providerTimeBasis: "route_estimate",
             providerDepartureAt: "2026-07-14T03:00:00.000Z",
             providerArrivalAt: "2026-07-14T03:35:00.000Z",
         });
@@ -144,6 +145,9 @@ describe("ODsay multimodal transit parser", () => {
             recommendedBoardingPosition: undefined,
             recommendedTransferPosition: undefined,
         });
+        // maasRP 시각/경로가 존재해도 차량 운행 여부나 확정 시간표로 승격하지 않는다.
+        expect(result[0].transitLegs?.[1].serviceAvailable).toBeUndefined();
+        expect(result[0].transitLegs?.[3].serviceAvailable).toBeUndefined();
     });
 
     test("persists ODsay express markers and classifies non-express named subway legs as local", () => {

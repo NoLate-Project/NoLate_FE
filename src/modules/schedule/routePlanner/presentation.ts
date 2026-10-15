@@ -1,3 +1,4 @@
+import { isTransitRideKind, transitModeLabel } from "../../map/transitModes";
 import type {
   RouteAlternativeOption,
   TransitLegDetail,
@@ -17,6 +18,7 @@ export const TRANSIT_LEG_COLOR: Record<TransitLegDetail['kind'], string> = {
   BUS: '#2979FF',
   WALK: '#9CA3AF',
   ETC: '#94A3B8',
+  TRAIN: '#2563EB', EXPRESS_BUS: '#7C3AED', INTERCITY_BUS: '#0F766E', COACH: '#7C3AED',
 };
 
 export type TransitLegKindMeta = {
@@ -166,10 +168,11 @@ export function getTransitModeLabels(legs?: TransitLegDetail[]): string[] {
     BUS: '버스',
     WALK: '도보',
     ETC: '기타',
+    TRAIN: '기차', EXPRESS_BUS: '고속버스', INTERCITY_BUS: '시외버스', COACH: '고속·시외버스',
   };
   const orderedKinds: TransitLegDetail['kind'][] = [
     'SUBWAY',
-    'BUS',
+    'BUS', 'TRAIN', 'EXPRESS_BUS', 'INTERCITY_BUS', 'COACH',
     'WALK',
     'ETC',
   ];
@@ -205,6 +208,8 @@ export function getTransitLegKindMeta(
     return { label: '지하철', short: '지', color: TRANSIT_LEG_COLOR.SUBWAY };
   if (kind === 'BUS')
     return { label: '버스', short: '버', color: TRANSIT_LEG_COLOR.BUS };
+  if (isTransitRideKind(kind))
+    return { label: transitModeLabel(kind), short: kind === 'TRAIN' ? '기' : '버', color: TRANSIT_LEG_COLOR[kind] };
   if (kind === 'WALK')
     return { label: '도보', short: '도', color: TRANSIT_LEG_COLOR.WALK };
   return { label: '기타', short: '기', color: TRANSIT_LEG_COLOR.ETC };
@@ -346,12 +351,15 @@ export function formatTransitClockWithDayContext(
   return `${date.getMonth() + 1}/${date.getDate()} ${formatTransitClock(date)}`;
 }
 
-/**
- * 경로 후보의 출발·예상 도착·요금을 카드와 상세 화면에서 함께 쓸 형태로 조립합니다.
- *
- * 운행 종료 경로에는 잘못된 예상 도착 시각을 계산하지 않습니다. 정상 경로는 출발 시각에
- * 소요 분을 더해 도착 시각을 만들고, 자정이 넘어가면 날짜 문맥을 포함합니다.
- */
+/** 목록에서 상세로 이동해도 미확인/운행 종료 상태를 같은 문구로 설명한다. */
+export function getTransitServiceNotice(option?: RouteAlternativeOption): string | undefined {
+  if (option?.mode !== 'TRANSIT') return undefined;
+  if (option.transitServiceState === 'unknown') return '운행 시간 확인 필요';
+  if (option.transitServiceState === 'not_operating') return '운행 종료';
+  return undefined;
+}
+
+/** 운행 미확인 시각은 숨기고, 검증된 시간표 또는 출발 기준의 예상시각과 요금을 조립한다. */
 export function buildTransitRouteTimeMeta(
   option: RouteAlternativeOption,
   departureAt: Date,
@@ -360,6 +368,14 @@ export function buildTransitRouteTimeMeta(
     typeof option.fareWon === 'number'
       ? `${option.fareWon.toLocaleString()}원`
       : undefined;
+  if (option.transitServiceState === 'unknown') {
+    const notice = '운행 시간 확인 필요';
+    return {
+      departureText: notice,
+      fareText,
+      combinedText: [notice, fareText].filter(Boolean).join(' | '),
+    };
+  }
   if (option.transitServiceState === 'not_operating') {
     return {
       departureText: '운행 종료',
@@ -368,13 +384,20 @@ export function buildTransitRouteTimeMeta(
     };
   }
 
-  const departureText = formatTransitClock(departureAt);
+  const providerDeparture = option.providerDepartureAt ? new Date(option.providerDepartureAt) : undefined;
+  const providerArrival = option.providerArrivalAt ? new Date(option.providerArrivalAt) : undefined;
+  const hasTimetable = option.providerTimeBasis === 'timetable' &&
+    providerDeparture && providerArrival &&
+    Number.isFinite(providerDeparture.getTime()) && Number.isFinite(providerArrival.getTime()) &&
+    providerArrival.getTime() >= providerDeparture.getTime();
+  const displayedDeparture = hasTimetable ? providerDeparture : departureAt;
+  const departureText = formatTransitClock(displayedDeparture);
   let arrivalText: string | undefined;
   if (typeof option.minutes === 'number') {
-    const arrivalAt = new Date(
-      departureAt.getTime() + Math.max(0, option.minutes) * 60 * 1000,
+    const arrivalAt = hasTimetable ? providerArrival : new Date(
+      displayedDeparture.getTime() + Math.max(0, option.minutes) * 60 * 1000,
     );
-    arrivalText = formatTransitClockWithDayContext(arrivalAt, departureAt);
+    arrivalText = formatTransitClockWithDayContext(arrivalAt, displayedDeparture);
   }
   const timeRangeText = arrivalText
     ? `${departureText} 출발 - ${arrivalText} 예상 도착`

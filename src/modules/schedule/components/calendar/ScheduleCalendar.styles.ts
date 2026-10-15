@@ -25,12 +25,12 @@ export function createScheduleCalendarStyles({
         borderBottomWidth: 0,
     },
     stackMonthHeader: {
-        paddingHorizontal: 28,
+        paddingHorizontal: 20,
         justifyContent: "center",
     },
     stackMonthTitle: {
         fontSize: 25,
-        fontWeight: "900",
+        fontWeight: "700",
         letterSpacing: 0,
     },
     stackMonthGrid: {

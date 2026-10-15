@@ -715,6 +715,26 @@ describe("ScheduleEditScreen route return", () => {
             .toBeLessThan(mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0]);
     });
 
+    test("경로 연결 전 승차권의 일정 수정은 표 정보와 출도착 이름을 보존한다", async () => {
+        const importedTicket = { version: 1, id: "ticket:12345678-1234-1234-1234-123456789012", kind: "TRAIN", source: "IOS_SHARE_IMAGE", verification: "USER_CONFIRMED", bookingStatus: "UNVERIFIED", departureName: "수서", arrivalName: "공주", departureAt: "2026-10-13T12:20:00+09:00", arrivalAt: "2026-10-13T13:12:00+09:00", trainNumber: "615", grade: "SRT", confirmedAt: "2026-10-12T00:00:00Z" };
+        const route = { schemaVersion: 3, importedTicket };
+        const item = { ...mockItem, title: "기차 수서 → 공주", origin: { name: "수서" }, destination: { name: "공주" },
+            travelMinutes: undefined, departAt: undefined, route, routeSetupRequired: true };
+        mockState.itemsById["1"] = item;
+        mockGetSchedule.mockResolvedValue(item);
+        mockUpdateSchedule.mockImplementation(async (_id, payload) => ({ ...item, ...payload }));
+        await act(async () => {
+            renderer = TestRenderer.create(<ScheduleEditScreen />);
+            await Promise.resolve(); await Promise.resolve();
+        });
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("기차 도착 후 약속"));
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 수정 저장" }).props.onPress());
+        expect(mockUpdateSchedule).toHaveBeenCalledWith("1", expect.objectContaining({ title: "기차 도착 후 약속", route,
+            travelMode: "TRANSIT", origin: { name: "수서" }, destination: { name: "공주" }, routeSetupRequired: true,
+            notificationEnabled: false, travelMinutes: undefined, departAt: undefined }));
+        expect(mockUpsertMyScheduleTravelPlan).not.toHaveBeenCalled();
+    });
+
     test("저장된 ALARM 값도 출발 알림이 꺼져 있으면 STANDARD로 전송한다", async () => {
         mockGetSchedule.mockResolvedValue(mockItem);
         mockUpdateSchedule.mockImplementation(async (_id, payload) => ({

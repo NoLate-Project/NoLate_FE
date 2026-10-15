@@ -32,6 +32,7 @@ import {
   resolveQuickScheduleParseInput,
   type QuickScheduleMediaInput,
 } from '../quickInputExtraction';
+import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 const SEARCH_TOOLBAR_OPEN_DURATION_MS = 120;
 
@@ -124,6 +125,7 @@ export function useScheduleIndexToolbarActions({
   toolbarDropdownProgress,
   usesLiquidViewModeControl,
 }: Options) {
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
   // 새 일정 payload를 백엔드에 저장한 뒤 응답 값을 일정 저장소에 추가한다.
   const addItem = async (
     payload: Omit<ScheduleItem, 'id'>,
@@ -487,16 +489,19 @@ export function useScheduleIndexToolbarActions({
         typeof activeCalendarScope === 'number'
           ? scheduleCalendars.find(item => item.id === activeCalendarScope)
           : null;
-      router.push(
-        calendar
-          ? {
-              pathname: '/schedule/categories',
-              params: {
-                calendarId: String(calendar.id),
-                calendarTitle: calendar.title,
-              },
-            }
-          : '/schedule/categories',
+      runWithTransitionShell(
+        { route: '/schedule/categories', title: '개인 카테고리' },
+        () => router.push(
+          calendar
+            ? {
+                pathname: '/schedule/categories',
+                params: {
+                  calendarId: String(calendar.id),
+                  calendarTitle: calendar.title,
+                },
+              }
+            : '/schedule/categories',
+        ),
       );
     });
   };
@@ -504,7 +509,10 @@ export function useScheduleIndexToolbarActions({
   /** 현재 툴바를 닫은 뒤 공유 캘린더 관리 화면으로 이동한다. */
   const openSharedCalendarManager = () => {
     runToolbarAction(() => {
-      router.push('/schedule/calendars');
+      runWithTransitionShell(
+        { route: '/schedule/calendars', title: '공유 캘린더' },
+        () => router.push('/schedule/calendars'),
+      );
     });
   };
 

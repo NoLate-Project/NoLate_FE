@@ -1,7 +1,7 @@
 import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo } from 'react';
-import { Animated, Platform, useWindowDimensions, View } from 'react-native';
+import { Animated, Keyboard, Platform, useWindowDimensions, View } from 'react-native';
 import Reanimated, { cancelAnimation } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import styles from './ScheduleAddModal.styles';
@@ -15,6 +15,7 @@ import {
   setRoutePlannerInitial,
 } from '../../routePlannerSession';
 import { resolveScheduleAlertModePayload } from '../../scheduleAlertMode';
+import { getImportedTicket } from '../../importedTicket';
 import {
   getScheduleCalendarDateKey,
   normalizeScheduleFormRange,
@@ -182,9 +183,11 @@ export function useScheduleAddModalController({
   // 날짜/시간 필드를 열거나 같은 필드를 다시 눌러 닫는다.
   const togglePicker = useCallback(
     (type: PickerType) => {
+      Keyboard.dismiss();
+      setTitleFocused(false);
       setPicker(prev => (prev === type ? null : type));
     },
-    [setPicker],
+    [setPicker, setTitleFocused],
   );
 
   const openMemo = useCallback(() => {
@@ -497,6 +500,8 @@ export function useScheduleAddModalController({
       nextDestination,
     );
 
+    const importedTicket = getImportedTicket(reconciledRouteTiming.route);
+
     try {
       submitInFlightRef.current = true;
       setSubmitting(true);
@@ -512,10 +517,13 @@ export function useScheduleAddModalController({
         // 공유는 저장 후 일정 상세의 공유 기능에서 명시적으로 선택한다.
         calendarId: null,
         calendarContentModeOverride: null,
-        travelMode: hasRoutePlan ? travelMode : undefined,
+        travelMode: hasRoutePlan ? travelMode : importedTicket ? 'TRANSIT' : undefined,
         travelMinutes: hasRoutePlan ? travelMinutes : undefined,
         departAt: hasRoutePlan ? reconciledRouteTiming.departAt : undefined,
-        route: hasRoutePlan ? reconciledRouteTiming.route : undefined,
+        route: hasRoutePlan ? reconciledRouteTiming.route : importedTicket
+          ? { schemaVersion: 3, importedTicket }
+          : undefined,
+        routeSetupRequired: importedTicket ? !hasRoutePlan : undefined,
         notificationEnabled: hasRoutePlan && notificationEnabled,
         notificationLeadMinutes:
           hasRoutePlan && notificationEnabled
@@ -531,7 +539,7 @@ export function useScheduleAddModalController({
           selectedMode: alertMode,
         }),
         locationName,
-        origin: hasRoutePlan ? nextOrigin : undefined,
+        origin: hasRoutePlan || importedTicket ? nextOrigin : undefined,
         destination: nextDestination,
         notes: notes.trim() || undefined,
       });

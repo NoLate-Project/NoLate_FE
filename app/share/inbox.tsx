@@ -64,6 +64,10 @@ import {
 } from '../../src/modules/share/shareInboxPresentation';
 import SharingReportModal from '../../src/modules/share/SharingReportModal';
 import { useTheme } from '../../src/modules/theme/ThemeContext';
+import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
+import ScreenFirstPaintShell from '../../src/modules/performance/ScreenFirstPaintShell';
+import { useDeferredScreenContent } from '../../src/modules/performance/useDeferredScreenContent';
+import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
 
 import { FilterSheet } from '../../src/routeSupport/share/ShareInboxFilters';
 import ShareInboxLibraryView from '../../src/routeSupport/share/ShareInboxLibraryView';
@@ -83,8 +87,24 @@ import {
 } from '../../src/routeSupport/share/shareInboxModel';
 
 /** 공유 데이터 조회, 필터 상태, 회수·신고 동작을 조율하는 공유함 화면 컨트롤러입니다. */
-export default function ShareInboxScreen() {
+export default function ShareInboxRoute() {
+  useScreenFirstPaintPerformance('/share/inbox');
+  const contentReady = useDeferredScreenContent();
+  if (!contentReady) {
+    return (
+      <ScreenFirstPaintShell
+        title="공유함"
+        backAccessibilityLabel="뒤로 가기"
+        testID="share-inbox-first-paint-shell"
+      />
+    );
+  }
+  return <ShareInboxScreen />;
+}
+
+export function ShareInboxScreen() {
   const router = useRouter();
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ tab?: string }>();
   const { colors, mode } = useTheme();
@@ -127,9 +147,14 @@ export default function ShareInboxScreen() {
   const [reportItem, setReportItem] = useState<ShareLibraryItem | null>(null);
 
   const goBack = useCallback(() => {
-    if (router.canGoBack()) router.back();
-    else router.replace('/schedule');
-  }, [router]);
+    runWithTransitionShell(
+      { route: '/schedule', title: '일정', showBack: false },
+      () => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/schedule');
+      },
+    );
+  }, [router, runWithTransitionShell]);
 
   const openSharedResource = useCallback(
     (item: ShareLibraryItem) => {
@@ -668,8 +693,14 @@ export default function ShareInboxScreen() {
         safetyPendingKey={safetyPendingKey}
         searchInputRef={searchInputRef}
         onGoBack={goBack}
-        onOpenReports={() => router.push('/share/reports')}
-        onOpenBlocked={() => router.push('/share/blocked')}
+        onOpenReports={() => runWithTransitionShell(
+          { route: '/share/reports', title: '내 신고 내역' },
+          () => router.push('/share/reports'),
+        )}
+        onOpenBlocked={() => runWithTransitionShell(
+          { route: '/share/blocked', title: '차단한 사용자' },
+          () => router.push('/share/blocked'),
+        )}
         onOpenCalendarManager={() => router.push('/schedule/calendars')}
         onRefresh={() => loadShares('refresh')}
         onSelectTab={setSelectedTab}

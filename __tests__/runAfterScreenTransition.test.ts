@@ -24,20 +24,16 @@ describe("runAfterScreenTransition", () => {
         jest.restoreAllMocks();
     });
 
-    it("native interaction 이후 전환 안정화 시간까지 네트워크 작업을 미룬다", () => {
+    it("애니메이션 없는 화면에서는 interaction 직후 작업을 시작한다", () => {
         const task = jest.fn();
 
         runAfterScreenTransition(task, SCREEN_TRANSITION_SETTLE_MS);
-        jest.advanceTimersByTime(SCREEN_TRANSITION_SETTLE_MS - 1);
-        expect(task).not.toHaveBeenCalled();
-
-        jest.advanceTimersByTime(1);
         expect(task).toHaveBeenCalledTimes(1);
     });
 
     it("화면을 벗어나면 예약된 작업을 취소한다", () => {
         const task = jest.fn();
-        const scheduled = runAfterScreenTransition(task, SCREEN_TRANSITION_SETTLE_MS);
+        const scheduled = runAfterScreenTransition(task, 10);
 
         scheduled.cancel();
         jest.runAllTimers();

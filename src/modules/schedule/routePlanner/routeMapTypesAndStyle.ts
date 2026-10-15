@@ -1,3 +1,5 @@
+import { intercityRideColor } from "../../map/transitModes";
+import { isTransitRideKind } from "../../map/transitModes";
 /**
  * 경로 계획 지도의 공통 타입과 줌 기반 선 표현 정책입니다.
  * 이 모듈의 계산 함수는 입력 객체를 변경하지 않으며 화면 상태와 독립적으로 재사용할 수 있습니다.
@@ -253,6 +255,7 @@ export type RouteSegment = {
   coordinateParts?: Coordinate[][];
   distance?: number;
   duration?: number;
+  durationSeconds?: number;
   lineName?: string;
   lineColor?: string;
   routeColor?: string;
@@ -278,6 +281,7 @@ export type RouteSegment = {
 export type NormalizedRoute = {
   id: string;
   totalDuration?: number;
+  totalDurationSeconds?: number;
   totalDistance?: number;
   fare?: number;
   segments: RouteSegment[];
@@ -424,6 +428,7 @@ export function getSegmentColor(segment: RouteSegment): string {
   if (displayColor) return displayColor;
   if (routeColor) return routeColor;
   if (segment.mode === 'SUBWAY') return getSubwayLineColor(segment.lineName);
+  if (intercityRideColor(segment.mode)) return intercityRideColor(segment.mode)!;
   if (segment.mode === 'WALK') return ROUTE_WALK_GUIDE_COLOR;
   if (segment.mode === 'TRANSFER') return ROUTE_TRANSFER_GUIDE_COLOR;
   if (segment.mode === 'ETC') return TRANSIT_LEG_COLOR.ETC;
@@ -476,6 +481,10 @@ export function getSegmentStyle(
           ROUTE_LINE_STYLE.transit.busZIndex +
           Math.min(segment.sequence, 9) * 0.1,
       };
+    case 'TRAIN':
+    case 'EXPRESS_BUS':
+    case 'INTERCITY_BUS':
+    case 'COACH':
     case 'SUBWAY':
       return {
         strokeColor: getSegmentColor(segment),
@@ -530,7 +539,7 @@ export function getSegmentStyle(
 
 /** 세그먼트 이동 수단이 버스 또는 지하철 승차 구간인지 타입 가드로 판별합니다. */
 export function isTransitRideSegmentMode(mode: RouteMode): boolean {
-  return mode === 'BUS' || mode === 'SUBWAY';
+  return isTransitRideKind(mode);
 }
 
 /** 세그먼트가 TMAP 네이티브 방향 화살표를 사용할 수 있는 승차 구간인지 판별합니다. */

@@ -3,7 +3,8 @@ import type { ScheduleCalendarRole } from "../../api/scheduleCalendars";
 
 /** A shared category can receive new or edited schedules only with write permission. */
 export function canWriteScheduleCategory(category?: ScheduleCategory | null): boolean {
-    if (!category?.id.trim()) return false;
+    // Legacy schedule DTOs may have a null category ID; reject it without crashing the edit screen.
+    if (typeof category?.id !== "string" || !category.id.trim()) return false;
     if (category.sharePermission === "VIEWER" || category.sharePermission === "COMMENTER") {
         return false;
     }
@@ -21,7 +22,8 @@ export function canManageScheduleCategoryMetadata(
     category?: ScheduleCategory | null,
     calendarRole?: ScheduleCalendarRole | null,
 ): boolean {
-    if (!category?.id.trim()) return false;
+    // A missing runtime ID never grants metadata permission, even if the static type says string.
+    if (typeof category?.id !== "string" || !category.id.trim()) return false;
     if (category.calendarId != null) {
         const hasWritableCalendarRole = calendarRole === "OWNER" || calendarRole === "EDITOR";
         return hasWritableCalendarRole && category.canManageMetadata !== false;

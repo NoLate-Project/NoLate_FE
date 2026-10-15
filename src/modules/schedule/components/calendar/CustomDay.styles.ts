@@ -1,4 +1,5 @@
 import { StyleSheet } from "react-native";
+import { STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 
 /** CustomDay 화면의 정적 시각 규칙입니다. 화면 로직과 독립적으로 조정할 수 있도록 분리했습니다. */
 const styles = StyleSheet.create({
@@ -26,6 +27,15 @@ const styles = StyleSheet.create({
         letterSpacing: 0,
         fontWeight: "600",
     },
+    stackDayCircle: {
+        width: 34,
+        height: 34,
+        borderRadius: 17,
+    },
+    stackDayText: {
+        fontSize: 17,
+        lineHeight: 20,
+    },
     lunarText: {
         maxWidth: 38,
         fontSize: 8,
@@ -44,6 +54,10 @@ const styles = StyleSheet.create({
         fontWeight: "800",
         letterSpacing: -0.25,
         textAlign: "center",
+    },
+    stackHolidayText: {
+        top: STACK_CALENDAR_GEOMETRY.holidayTop,
+        fontWeight: "600",
     },
     periods: {
         alignSelf: "stretch",
@@ -68,8 +82,8 @@ const styles = StyleSheet.create({
     stackEventChip: {
         position: "absolute",
         minWidth: 0,
-        height: 16,
-        paddingHorizontal: 3,
+        height: STACK_CALENDAR_GEOMETRY.eventHeight,
+        paddingHorizontal: 5,
         flexDirection: "row",
         alignItems: "center",
         overflow: "hidden",
@@ -78,24 +92,32 @@ const styles = StyleSheet.create({
         width: 10,
         marginRight: 1,
     },
+    stackEventRail: {
+        position: "absolute",
+        left: 0,
+        top: 3,
+        bottom: 3,
+        width: 2,
+        borderRadius: 1,
+    },
     stackEventTitle: {
         flexShrink: 1,
         minWidth: 0,
-        fontSize: 9.5,
-        lineHeight: 13,
-        fontWeight: "700",
+        fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "600",
         letterSpacing: -0.1,
     },
     stackEventMore: {
         position: "absolute",
-        top: 36,
+        top: STACK_CALENDAR_GEOMETRY.laneStride * 2,
         left: 2,
         right: 2,
         height: 13,
         paddingHorizontal: 3,
         fontSize: 9,
         lineHeight: 12,
-        fontWeight: "700",
+        fontWeight: "500",
     },
     detailMarkers: {
         position: "absolute",

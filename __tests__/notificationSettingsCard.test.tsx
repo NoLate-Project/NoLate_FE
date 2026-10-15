@@ -34,6 +34,13 @@ jest.mock("../src/modules/notification/customAlarmSounds", () => {
         { id: "CHIME", label: "차임" },
         { id: "BELL", label: "벨" },
         { id: "BEEP", label: "비프" },
+        { id: "DIGITAL", label: "디지털" },
+        { id: "CRYSTAL", label: "크리스털" },
+        { id: "KNOCK", label: "노크" },
+        { id: "TRIPLE", label: "3연속" },
+        { id: "SWEEP", label: "상승 신호" },
+        { id: "SIREN", label: "사이렌" },
+        { id: "KLAXON", label: "경적" },
     ];
     return {
         NOLATE_ALARM_SOUNDS: sounds,
@@ -371,7 +378,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(soundRow.findByProps({ name: "musical-notes-outline" }).props.size).toBe(18);
         expect(soundRow.findByProps({ name: "chevron-forward" }).props.size).toBe(16);
         expect(StyleSheet.flatten(
-            soundRow.findByProps({ children: "알림음" }).props.style,
+            soundRow.findByProps({ children: "소리 및 진동" }).props.style,
         )).toMatchObject({
             fontSize: 14,
             lineHeight: 19,
@@ -382,7 +389,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(rendered).toContain("추천 출발 시간");
         expect(rendered).toContain("36분 소요");
         expect(rendered).toContain("오후 12:00 도착 예정");
-        expect(rendered).toContain("알림음");
+        expect(rendered).toContain("소리 및 진동");
         expect(rendered).not.toContain("권장값 적용");
         expect(rendered).toContain("차임");
         expect(rendered).not.toContain("NoLate가 직접 만든 알람 화면");
@@ -396,7 +403,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         const soundRow = renderer!.root.findByProps({
-            accessibilityLabel: "알림음, 현재 차임",
+            accessibilityLabel: "소리 및 진동, 현재 차임",
         });
         expect(soundRow.props.disabled).toBe(false);
 
@@ -405,35 +412,57 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
             await Promise.resolve();
         });
 
-        expect(renderer!.root.findByProps({ accessibilityLabel: "알람음 목록" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "차임 알람음" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ accessibilityLabel: "비프 알람음" })).toBeTruthy();
-        expect(renderer!.root.findByProps({ children: "모든 출발 알람에 적용" })).toBeTruthy();
+        const soundList = renderer!.root.findByProps({ accessibilityLabel: "알람음 목록" });
+        expect(soundList).toBeTruthy();
+        const soundLabels = [
+            "차임",
+            "벨",
+            "비프",
+            "디지털",
+            "크리스털",
+            "노크",
+            "3연속",
+            "상승 신호",
+            "사이렌",
+            "경적",
+        ];
+        expect(new Set(
+            soundList
+                .findAllByProps({ accessibilityRole: "radio" })
+                .map(option => option.props.accessibilityLabel),
+        )).toEqual(new Set(soundLabels.map(label => `${label} 알람음`)));
+        for (const label of soundLabels) {
+            expect(renderer!.root.findByProps({ accessibilityLabel: `${label} 알람음` })).toBeTruthy();
+        }
+        expect(
+            renderer!.root.findByProps({
+                children: "소리 모드에서는 진동과 함께 울리고, 무음일 때는 진동만 울려요.",
+            }),
+        ).toBeTruthy();
         expect(
             StyleSheet.flatten(renderer!.root.findByProps({ testID: "alarm-sound-picker-sheet" }).props.style),
         ).toMatchObject({ backgroundColor: "#FFFFFF" });
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.onPress();
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
         });
 
-        expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("BELL");
-        expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BELL");
-        expect(mockStartAlarmAudio).toHaveBeenCalledWith("BELL");
+        expect(mockSetNativeAlarmSound).toHaveBeenCalledWith("KLAXON");
+        expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("KLAXON");
+        expect(mockStartAlarmAudio).toHaveBeenCalledWith("KLAXON");
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.accessibilityState,
+            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityState,
         ).toEqual({ checked: true, disabled: false });
-        expect(renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.accessibilityHint).toBe(
+        expect(renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.accessibilityHint).toBe(
             "미리 듣기를 중지합니다",
         );
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "벨 알람음" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "경적 알람음" }).props.onPress();
             await Promise.resolve();
             await Promise.resolve();
             await Promise.resolve();
@@ -450,7 +479,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -476,7 +505,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(mockSetLocalAlarmSound).toHaveBeenCalledWith("BELL");
         expect(mockStartAlarmAudio).not.toHaveBeenCalled();
         expect(
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 벨" }).props.disabled,
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 벨" }).props.disabled,
         ).toBe(false);
     });
 
@@ -486,7 +515,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -512,7 +541,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -536,7 +565,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -568,7 +597,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         expect(renderer!.root.findByProps({ children: "알림 권한이 필요해요" })).toBeTruthy();
         expect(
             renderer!.root.findByProps({
-                accessibilityLabel: "알림음, 현재 차임",
+                accessibilityLabel: "소리 및 진동, 현재 차임",
             }).props.disabled,
         ).toBe(false);
 
@@ -629,7 +658,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         ).toBeTruthy();
         expect(
             renderer!.root.findByProps({
-                accessibilityLabel: "알림음, 현재 차임",
+                accessibilityLabel: "소리 및 진동, 현재 차임",
             }).props.disabled,
         ).toBe(false);
     });
@@ -667,7 +696,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {
@@ -769,7 +798,7 @@ describe("NotificationSettingsCard NoLate custom alarm", () => {
         await renderCard("ALARM", "flat");
 
         await act(async () => {
-            renderer!.root.findByProps({ accessibilityLabel: "알림음, 현재 차임" }).props.onPress();
+            renderer!.root.findByProps({ accessibilityLabel: "소리 및 진동, 현재 차임" }).props.onPress();
             await Promise.resolve();
         });
         await act(async () => {

@@ -10,17 +10,23 @@ import { getPostAuthRoute } from "../onboarding/curationRouting";
 import CalendarGlassSurface from "../schedule/components/calendar/CalendarGlassSurface";
 import { useTheme } from "../theme/ThemeContext";
 import BrandedLoader from "../../ui/BrandedLoader";
+import { useScreenFirstPaintPerformance } from "../performance/useScreenFirstPaintPerformance";
+import { useImmediateNavigationTransition } from "../performance/ImmediateNavigationTransition";
 
 type LegalAgreementDocumentScreenProps = {
     fallback: LegalDocument;
     loadDocument: () => Promise<LegalDocument>;
+    route: string;
 };
 
 export default function LegalAgreementDocumentScreen({
     fallback,
     loadDocument,
+    route,
 }: LegalAgreementDocumentScreenProps) {
+    useScreenFirstPaintPerformance(route);
     const router = useRouter();
+    const { closeActiveScene } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { isAuthenticated, isCurationCompleted } = useAuth();
@@ -57,6 +63,7 @@ export default function LegalAgreementDocumentScreen({
     }, [fallback, loadDocument, reloadKey]);
 
     const goBack = () => {
+        if (closeActiveScene()) return;
         if (router.canGoBack()) router.back();
         else router.replace(isAuthenticated ? getPostAuthRoute(isCurationCompleted) : "/auth/login");
     };

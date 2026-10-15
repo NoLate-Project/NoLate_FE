@@ -175,9 +175,9 @@ describe("ScheduleCalendar stack month navigation", () => {
         expect(julyIndex).toBeGreaterThan(0);
         expect(data[julyIndex - 1].key).toBe("2026-06");
         expect(data[julyIndex + 1].key).toBe("2026-08");
-        expect(data[julyIndex].dayHeight).toBe(116);
-        expect(data[julyIndex].height).toBeGreaterThan(580);
-        expect(data[julyIndex].height).toBeLessThan(600);
+        expect(data[julyIndex].dayHeight).toBe(104);
+        expect(data[julyIndex].height).toBeGreaterThan(520);
+        expect(data[julyIndex].height).toBeLessThan(540);
     });
 
     test("상세형과 목록형은 연속 월 목록을 사용하지 않는다", async () => {

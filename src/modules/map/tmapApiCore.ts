@@ -1,3 +1,6 @@
+import type { IntercityRideService, ImportedTrainTicket } from '../schedule/importedTicket';
+import type { IntercityJourney } from '../schedule/intercityJourney';
+import type { TransitRideKind } from "./transitModes";
 import axios from "axios";
 
 import {
@@ -13,6 +16,8 @@ import type {
 import {
     hasOdsayApiKey,
 } from "./odsayApi";
+import { getTransitRouteProvider } from "./transitProviderConfig";
+import { validTotalDurationSeconds } from "./routeDuration";
 
 /** TMAP 경로 처리의 `warnMapDebug` 계산 단계를 독립적으로 수행합니다. */
 export function warnMapDebug(...args: unknown[]) {
@@ -67,14 +72,14 @@ export type RouteTrafficSection = {
 
 export type RouteApiProvider = "tmap" | "odsay" | "kakao" | "naver" | "openstreetmap";
 export type RouteReliability = "live_provider" | "provider_estimate" | "fallback_estimate";
-export type TransitServiceState = "operating" | "not_operating";
+export type TransitServiceState = "operating" | "not_operating" | "unknown";
 export type TransitDepartureTimeSource = "requested" | "next_service_search";
 
 export type RouteProviderSearchOptions = {
     departureAt?: Date;
 };
 
-export type TransitLegKind = "SUBWAY" | "BUS" | "WALK" | "ETC";
+export type TransitLegKind = TransitRideKind | "WALK" | "ETC";
 export type TransitServiceClass = "LOCAL" | "EXPRESS" | "UNKNOWN";
 
 export type TransitPassStop = {
@@ -93,9 +98,13 @@ export type TransitGeometrySource =
     | "UNKNOWN";
 
 export type TransitLegDetail = {
+    journeyPhase?: "BUFFER";
+    intercityService?: IntercityRideService;
     kind: TransitLegKind;
     label: string;
     durationMinutes?: number;
+    /** 공급자 원본 구간 초. 분 표시의 올림값을 시각 계산에 누적하지 않는다. */
+    durationSeconds?: number;
     /** 공급자 경로의 구간 소요시간에 이미 포함된 승차 대기시간. 실시간 ETA 보정 시 교체한다. */
     waitingMinutes?: number;
     /** 공급자가 식별하는 노선 ID. ODsay 버스는 busID, 지하철은 도시-노선 코드다. */
@@ -105,7 +114,7 @@ export type TransitLegDetail = {
     /** 노선이 속한 도시 코드와 BIS 공급자 코드. */
     routeCityCode?: string;
     routeProviderCode?: string;
-    /** 공급자 시간표가 명시한 이 구간의 출발·도착 시각(ISO-8601). */
+    /** 공급자가 제공한 구간 출발·도착 시각(ISO-8601). 시각만으로 시간표임을 보장하지 않는다. */
     startDateTime?: string;
     endDateTime?: string;
     /** ODsay가 구간에 직접 제공한 승차 정류장/역 식별자. */
@@ -153,13 +162,15 @@ export type TransitLegDetail = {
     pathCoordsIsExact?: boolean;
     pathGeometrySource?: TransitGeometrySource;
     rawPathPointCount?: number;
-    /** TMAP service=0인 레그는 현재 검색 시각에 운행하지 않는 구간이다. */
+    /** 명시적인 운행 증거만 보존한다. TMAP service=0은 미운행, undefined는 미확인이다. */
     serviceAvailable?: boolean;
 };
 
 export type TransitRouteOption = {
     id: string;
     minutes: number;
+    /** 공급자 원본 전체 초. 구간 초의 합과 달라도 독립적으로 보존한다. */
+    totalDurationSeconds?: number;
     distanceMeters?: number;
     transferCount?: number;
     walkMeters?: number;
@@ -173,14 +184,19 @@ export type TransitRouteOption = {
     fallbackKind?: "road" | "straight";
     providerDepartureAt?: string;
     providerArrivalAt?: string;
+    /** 공급자 시각의 근거. 시각 쌍만 있다는 이유로 확정 시간표로 승격하지 않는다. */
+    providerTimeBasis?: "route_estimate" | "timetable";
     attributionText?: string;
     attributionUrl?: string;
 };
 
 export type RouteAlternativeOption = {
+    intercityJourney?: IntercityJourney;
+    importedTicket?: ImportedTrainTicket;
     id: string;
     mode: TravelMode;
     minutes?: number;
+    totalDurationSeconds?: number;
     distanceMeters?: number;
     source: "api" | "fallback";
     fallbackKind?: "road" | "straight";
@@ -207,13 +223,15 @@ export type RouteAlternativeOption = {
     routeQualityNotice?: string;
     routePlausibility?: "normal" | "geometry_suspected";
     routeDetourRatio?: number;
-    /** 공급자 조회 시각 기준의 실제 운행 여부와 출발 기준 시각. */
+    /** 요청 시각의 운행 확인 상태와 출발 기준 시각. unknown은 운행 중/종료 어느 쪽도 확정하지 않는다. */
     transitServiceState?: TransitServiceState;
     transitDepartureAt?: string;
     transitDepartureTimeSource?: TransitDepartureTimeSource;
-    /** 공급자 시간표가 명시한 실제 후보 출발·도착 시각. */
+    /** 공급자가 제공한 후보 출발·도착 시각. 실제 시간표 여부는 providerTimeBasis로 구분한다. */
     providerDepartureAt?: string;
     providerArrivalAt?: string;
+    /** 공급자 시각의 근거. maasRP 추정 시각과 검증된 시간표를 구분한다. */
+    providerTimeBasis?: "route_estimate" | "timetable";
     attributionText?: string;
     attributionUrl?: string;
 };
@@ -359,7 +377,7 @@ export function hasTmapTransitRouteProvider(): boolean {
 
 /** 현재 설정이나 좌표가 `hasTransitRouteProvider` 조건을 만족하는지 확인합니다. */
 export function hasTransitRouteProvider(): boolean {
-    return hasOdsayApiKey() || hasTmapTransitRouteProvider();
+    return getTransitRouteProvider() === "tmap" ? hasTmapTransitRouteProvider() : hasOdsayApiKey();
 }
 
 /** 지도 공급자 호출과 대체 경로를 조율해 `requestTransitRouteProxy` 결과를 반환합니다. */
@@ -443,9 +461,20 @@ export function normalizeRoadTimeToMinutes(secondsRaw: unknown): number | undefi
     return Math.max(1, Math.ceil(seconds / 60));
 }
 
-/** 공급자 원본 값을 `normalizeTransitTimeToMinutes` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
-export function normalizeTransitTimeToMinutes(rawValue: unknown): number | undefined {
+/** 유효한 공급자 원본 초를 보존한다. 누락값을 0초로 만들지 않는다. */
+export function normalizeTransitDurationSeconds(rawValue: unknown): number | undefined {
+    if (typeof rawValue === "string" && !rawValue.trim()) return undefined;
     const seconds = safeNumber(rawValue);
+    return typeof seconds === "number" && seconds >= 0 ? seconds : undefined;
+}
+
+export function normalizeTransitTotalDurationSeconds(rawValue: unknown): number | undefined {
+    return validTotalDurationSeconds(normalizeTransitDurationSeconds(rawValue));
+}
+
+/** 공급자 전체 초를 기존 분 단위 표시값으로 변환한다. */
+export function normalizeTransitTimeToMinutes(rawValue: unknown): number | undefined {
+    const seconds = normalizeTransitTotalDurationSeconds(rawValue);
     if (typeof seconds !== "number") return undefined;
 
     // TMAP 대중교통 totalTime은 짧은 경로도 예외 없이 초 단위다.

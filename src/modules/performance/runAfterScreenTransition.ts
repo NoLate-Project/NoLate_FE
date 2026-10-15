@@ -1,9 +1,9 @@
 import { InteractionManager } from "react-native";
 
-// Native-stack transitions are not always registered as React Native interaction
-// handles. Keep network response/state work outside the configured 140–160ms
-// animation even when runAfterInteractions resolves as soon as the route mounts.
-export const SCREEN_TRANSITION_SETTLE_MS = 220;
+// Screen navigation is intentionally animation-free for the 50ms first-paint
+// budget. InteractionManager still keeps synchronous work out of an active
+// gesture, but an additional timer would only delay background revalidation.
+export const SCREEN_TRANSITION_SETTLE_MS = 0;
 
 export type ScreenTransitionTask = {
     cancel(): void;

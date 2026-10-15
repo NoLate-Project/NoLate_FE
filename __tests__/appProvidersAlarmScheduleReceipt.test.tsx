@@ -272,7 +272,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         expect(mockedRegisterPushAfterLogin).toHaveBeenCalledWith(77);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(1);
         expect(mockedActivateQuickScheduleFeedback).toHaveBeenCalledTimes(1);
-        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedEnsureAppTrackingTransparencyResolved).toHaveBeenCalledTimes(1);
         expect(mockedReconcileDepartureAlarmSnapshot).toHaveBeenCalledTimes(1);
         expect(mockedPrimeRouteDetailAdvertising).toHaveBeenCalledTimes(1);
         expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
@@ -284,7 +284,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         });
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(1);
         expect(mockedActivatePresentationClaims).toHaveBeenCalledTimes(1);
-        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedEnsureAppTrackingTransparencyResolved).toHaveBeenCalledTimes(1);
         expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
 
         await act(async () => {
@@ -294,7 +294,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         expect(mockedActivateReceiptQueue).toHaveBeenCalledTimes(2);
         expect(mockedActivateFireJournal).toHaveBeenCalledTimes(2);
         expect(mockedActivateQuickScheduleFeedback).toHaveBeenCalledTimes(2);
-        expect(mockedEnsureAppTrackingTransparencyResolved).not.toHaveBeenCalled();
+        expect(mockedEnsureAppTrackingTransparencyResolved).toHaveBeenCalledTimes(1);
         expect(mockedReconcileDepartureAlarmSnapshot).toHaveBeenCalledTimes(2);
         expect(mockedRefreshRouteDetailAdvertisingPolicy).toHaveBeenCalledTimes(1);
         expect(mockedDisableRouteDetailAdvertising).not.toHaveBeenCalled();
@@ -323,6 +323,7 @@ describe("AppProviders alarm schedule receipt bootstrap", () => {
         });
 
         expect(mockedDisableRouteDetailAdvertising).toHaveBeenCalledTimes(1);
+        expect(mockedEnsureAppTrackingTransparencyResolved).toHaveBeenCalledTimes(1);
         expect(mockedPrimeRouteDetailAdvertising).not.toHaveBeenCalled();
         expect(mockedRefreshRouteDetailAdvertisingPolicy).not.toHaveBeenCalled();
     });

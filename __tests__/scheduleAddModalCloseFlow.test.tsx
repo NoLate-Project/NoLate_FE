@@ -1,5 +1,5 @@
 import React from "react";
-import { Alert, Animated, BackHandler, Dimensions, PanResponder, Platform, StyleSheet } from "react-native";
+import { Alert, Animated, BackHandler, Dimensions, Keyboard, PanResponder, Platform, StyleSheet } from "react-native";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 import ScheduleAddModal from "../src/modules/schedule/components/form/ScheduleAddModal";
@@ -264,6 +264,20 @@ describe("ScheduleAddModal close flow", () => {
         expect(renderer!.root.findByProps({
             accessibilityLabel: "카테고리 선택, 현재 개인",
         }).props.accessibilityState.expanded).toBe(false);
+    });
+
+    test("날짜 선택으로 넘어가면 제목 포커스와 키보드를 닫는다", async () => {
+        await renderModal({ presentation: "morph" });
+        const dismiss = jest.spyOn(Keyboard, "dismiss");
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onFocus());
+        const date = renderer!.root.findAll(node => (
+            typeof node.props.accessibilityLabel === "string"
+            && node.props.accessibilityLabel.startsWith("시작 날짜 ")
+        ))[0];
+        await act(async () => date.props.onPress());
+        expect(dismiss).toHaveBeenCalledTimes(1);
+        expect(date.props.accessibilityState.expanded).toBe(true);
+        expect(StyleSheet.flatten(renderer!.root.findByProps({ testID: "schedule-add-title-field" }).props.style).borderColor).toBe("#e6e6ea");
     });
 
     test("제목 포커스·오류와 날짜 선택 상태를 시각적으로 구분한다", async () => {
@@ -604,6 +618,25 @@ describe("ScheduleAddModal close flow", () => {
         expect(hardwareBackHandler?.()).toBe(true);
         expect(alertSpy).toHaveBeenCalledTimes(1);
         expect(onClose).not.toHaveBeenCalled();
+    });
+
+    test("경로 연결 전 승차권 일정의 수정은 확인된 표와 이름을 보존한다", async () => {
+        const importedTicket = { version: 1, id: "ticket:12345678-1234-1234-1234-123456789012", kind: "TRAIN", source: "IOS_SHARE_IMAGE", verification: "USER_CONFIRMED", bookingStatus: "UNVERIFIED", departureName: "수서", arrivalName: "공주", departureAt: "2026-10-13T12:20:00+09:00", arrivalAt: "2026-10-13T13:12:00+09:00", trainNumber: "615", grade: "SRT", confirmedAt: "2026-10-12T00:00:00Z" };
+        const route = { schemaVersion: 3, importedTicket };
+        const onSubmit = jest.fn().mockResolvedValue(undefined);
+        await act(async () => {
+            renderer = TestRenderer.create(<ThemeProvider><ScheduleAddModal visible
+                onClose={jest.fn()} onSubmit={onSubmit} categories={[category]} defaultDay="2026-10-13"
+                initialValues={{ originSource: "TEXT", originRequired: false, parseSource: "RULE", aiAttempted: false, needsReview: false, warnings: [], missingFields: [], title: "기차 수서 → 공주", startAt: importedTicket.arrivalAt, endAt: importedTicket.arrivalAt,
+                    hasExplicitEndTime: false, origin: { name: "수서" }, destination: { name: "공주" }, travelMode: "TRANSIT", route }}
+            /></ThemeProvider>);
+            await Promise.resolve();
+        });
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 제목" }).props.onChangeText("기차 도착 후 약속"));
+        await act(async () => renderer!.root.findByProps({ accessibilityLabel: "일정 저장" }).props.onPress());
+        expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ title: "기차 도착 후 약속", route,
+            travelMode: "TRANSIT", origin: { name: "수서" }, destination: { name: "공주" }, routeSetupRequired: true,
+            notificationEnabled: false, departAt: undefined, travelMinutes: undefined }));
     });
 
     test("오래 켜 둔 앱에서도 폼을 여는 현재 시각을 기본 시작 시각으로 사용한다", async () => {

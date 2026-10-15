@@ -1,15 +1,15 @@
 import { createScheduleIndexStyles } from '../../../../routeSupport/schedule/index.styles';
 import React from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Pressable,
-  ScrollView,
   Text,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import ScheduleIcon, { SCHEDULE_ICONS, SCHEDULE_ICON_SIZES, type ScheduleIconName } from '../shared/ScheduleIcon';
 import CalendarGlassSurface from '../calendar/CalendarGlassSurface';
+import CalendarSearchResults from './CalendarSearchResults';
 import CalendarViewModeGlyph from '../calendar/CalendarViewModeGlyph';
 import { CALENDAR_VIEW_OPTIONS } from '../calendar/viewMode';
 import { useTheme } from '../../../theme/ThemeContext';
@@ -40,8 +40,6 @@ const LIQUID_TOOLBAR_ACTIONS_WIDTH = LIQUID_TOOLBAR_SLOT_WIDTH * 3;
 
 const LIQUID_TOOLBAR_CONTROL_CANVAS_HEIGHT = 260;
 
-const SEARCH_MIN_QUERY_LENGTH = 2;
-
 const LIQUID_YEAR_PILL_WIDTH = CALENDAR_PRIMARY_PILL_LAYOUT.monthMinWidth;
 
 const LIQUID_TOOLBAR_TOP_OFFSET = 4;
@@ -52,34 +50,13 @@ const DAY_WEEK_STRIP_HORIZONTAL_PADDING = 0;
 
 const DAY_TIMELINE_GUTTER = 54;
 
-function formatScheduleDateTitle(startAt: string) {
-  const date = new Date(startAt);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const weekdays = ['일', '월', '화', '수', '목', '금', '토'];
-  return `${date.getMonth() + 1}월 ${date.getDate()}일 (${
-    weekdays[date.getDay()]
-  })`;
-}
-
-function formatScheduleTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const hour = date.getHours();
-  const minute = String(date.getMinutes()).padStart(2, '0');
-  const meridiem = hour < 12 ? '오전' : '오후';
-  const hour12 = hour % 12 || 12;
-  return `${meridiem} ${hour12}:${minute}`;
-}
-
 function ToolbarDropdownAction({
   icon,
   title,
   onPress,
   colors,
 }: {
-  icon: React.ComponentProps<typeof Ionicons>['name'];
+  icon: ScheduleIconName;
   title: string;
   onPress: () => void;
   colors: ReturnType<typeof useTheme>['colors'];
@@ -97,10 +74,9 @@ function ToolbarDropdownAction({
       ]}
     >
       <View style={styles.dropdownActionIconSlot}>
-        <Ionicons
-          accessible={false}
+        <ScheduleIcon
           name={icon}
-          size={26}
+          role="menu"
           color={colors.textPrimary}
         />
       </View>
@@ -235,140 +211,14 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
             },
           ]}
         >
-          <CalendarGlassSurface
-            interactive
-            prominent
-            style={[styles.searchResultsGlass, { borderColor: colors.border }]}
-          >
-            {searchLoading ? (
-              <View style={styles.dropdownEmpty}>
-                <ActivityIndicator color={colors.textSecondary} />
-                <Text
-                  style={[
-                    styles.dropdownEmptyText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  전체 일정 검색 중
-                </Text>
-              </View>
-            ) : searchError ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="일정 검색 다시 시도"
-                onPress={() => setSearchRetryKey(value => value + 1)}
-                style={({ pressed }) => [
-                  styles.dropdownEmpty,
-                  { opacity: pressed ? 0.62 : 1 },
-                ]}
-              >
-                <Ionicons
-                  accessible={false}
-                  name="refresh-outline"
-                  size={20}
-                  color={colors.textSecondary}
-                />
-                <Text
-                  style={[
-                    styles.dropdownEmptyText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  검색에 실패했어요. 눌러서 다시 시도해 주세요.
-                </Text>
-              </Pressable>
-            ) : searchKeywordLength < SEARCH_MIN_QUERY_LENGTH ? (
-              <View style={styles.dropdownEmpty}>
-                <Text
-                  style={[
-                    styles.dropdownEmptyText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  두 글자 이상 입력해 주세요
-                </Text>
-              </View>
-            ) : searchResults.length === 0 ? (
-              <View style={styles.dropdownEmpty}>
-                <Text
-                  style={[
-                    styles.dropdownEmptyText,
-                    { color: colors.textSecondary },
-                  ]}
-                >
-                  검색 결과가 없어요
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                style={styles.searchResultScroll}
-                contentContainerStyle={styles.searchResultList}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator={false}
-              >
-                {searchResults.map(item => (
-                  <Pressable
-                    key={item.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${
-                      item.title
-                    }, ${formatScheduleDateTitle(item.startAt)}, ${
-                      item.allDay ? '종일' : formatScheduleTime(item.startAt)
-                    }`}
-                    onPress={() => openScheduleFromSearch(item.id)}
-                    style={({ pressed }) => [
-                      styles.searchResultRow,
-                      {
-                        borderBottomColor: colors.border,
-                        backgroundColor: pressed
-                          ? mode === 'dark'
-                            ? 'rgba(255,255,255,0.08)'
-                            : 'rgba(0,0,0,0.05)'
-                          : 'transparent',
-                      },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.searchResultBar,
-                        {
-                          backgroundColor: item.category?.color ?? '#8e8e93',
-                        },
-                      ]}
-                    />
-                    <View style={styles.searchResultBody}>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.searchResultTitle,
-                          { color: colors.textPrimary },
-                        ]}
-                      >
-                        {item.title}
-                      </Text>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.searchResultMeta,
-                          { color: colors.textSecondary },
-                        ]}
-                      >
-                        {formatScheduleDateTitle(item.startAt)}
-                      </Text>
-                    </View>
-                    <Text
-                      style={[
-                        styles.searchResultTime,
-                        { color: colors.textSecondary },
-                      ]}
-                    >
-                      {item.allDay ? '종일' : formatScheduleTime(item.startAt)}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-            )}
-          </CalendarGlassSurface>
+          <CalendarSearchResults
+            searchResults={searchResults}
+            searchLoading={searchLoading}
+            searchError={searchError}
+            searchKeywordLength={searchKeywordLength}
+            onRetry={() => setSearchRetryKey(value => value + 1)}
+            onOpenSchedule={openScheduleFromSearch}
+          />
         </Animated.View>
       )}
       {showsStickyCalendarHeader && (
@@ -501,13 +351,13 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                     {[
                       {
                         key: 'day' as const,
-                        icon: 'calendar-outline' as const,
+                        icon: SCHEDULE_ICONS.calendar,
                         label: '일간',
                         selected: dayViewMode === 'singleDay',
                       },
                       {
                         key: 'multi' as const,
-                        icon: 'calendar-number-outline' as const,
+                        icon: SCHEDULE_ICONS.multiDay,
                         label: '여러 날',
                         selected: dayViewMode === 'multiDay',
                       },
@@ -534,7 +384,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                             <Ionicons
                               accessible={false}
                               name={option.icon}
-                              size={22}
+                              size={SCHEDULE_ICON_SIZES.menu}
                               color={
                                 option.selected
                                   ? colors.textPrimary
@@ -600,7 +450,6 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                                 ? colors.textPrimary
                                 : colors.textSecondary
                             }
-                            size={25}
                           />
                         </Pressable>
                       );
@@ -647,7 +496,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
               style={[styles.dropdownContent, styles.actionDropdownContent]}
             >
               <ToolbarDropdownAction
-                icon="flash-outline"
+                icon="quickAdd"
                 title="빠른 생성"
                 onPress={openQuickSchedule}
                 colors={colors}
@@ -659,7 +508,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                 ]}
               />
               <ToolbarDropdownAction
-                icon="create-outline"
+                icon="edit"
                 title="직접 입력"
                 onPress={openBlankSchedule}
                 colors={colors}
@@ -671,7 +520,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                 ]}
               />
               <ToolbarDropdownAction
-                icon="folder-open-outline"
+                icon="category"
                 title="카테고리 관리"
                 onPress={openCategoryManager}
                 colors={colors}
@@ -683,7 +532,7 @@ export function ScheduleIndexCalendarOverlayMenus({ controller }: Props) {
                 ]}
               />
               <ToolbarDropdownAction
-                icon="people-outline"
+                icon="calendar"
                 title="공유 캘린더"
                 onPress={openSharedCalendarManager}
                 colors={colors}

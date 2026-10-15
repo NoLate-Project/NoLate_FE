@@ -1,3 +1,5 @@
+import { TRANSIT_RIDE_KINDS } from "./transitModes";
+import { isTransitRideKind } from "./transitModes";
 import type {
     Place,
 } from "../schedule/types";
@@ -82,7 +84,7 @@ export function placeCoord(place: Place | undefined): RoutePathCoord | undefined
 
 /** 저장 경로 데이터가 `isTransitRideLeg` 조건을 만족하는지 검증하며 잘못된 값은 안전하게 제외합니다. */
 export function isTransitRideLeg(leg: TransitLegDetail | undefined): boolean {
-    return leg?.kind === "BUS" || leg?.kind === "SUBWAY";
+    return isTransitRideKind(leg?.kind);
 }
 
 /** 저장 경로에서 `getRideBoundaryCoord`에 필요한 값을 계산하며 사용 가능한 최선의 대체값을 선택합니다. */
@@ -210,7 +212,7 @@ export function getLegBoardCoord(legs: TransitLegDetail[], legIndex: number): Ro
     if (!leg) return undefined;
 
     const previousWalk = legs[legIndex - 1];
-    const isRideLeg = leg.kind === "BUS" || leg.kind === "SUBWAY";
+    const isRideLeg = isTransitRideKind(leg.kind);
     if (isRideLeg && previousWalk?.kind === "WALK") {
         const walkPath = routeCoords(previousWalk.pathCoords);
         const walkEndCoord = walkPath[walkPath.length - 1] ?? toRouteCoord(previousWalk.endCoord);
@@ -270,7 +272,7 @@ export function buildTransitEventMarkers(
     destination: RoutePathCoord | undefined
 ): TmapMarker[] {
     const rideLegIndexes = legs
-        .map((leg, index) => (leg.kind === "BUS" || leg.kind === "SUBWAY" ? index : -1))
+        .map((leg, index) => (isTransitRideKind(leg.kind) ? index : -1))
         .filter((index) => index >= 0);
     if (!rideLegIndexes.length) return [];
 
@@ -413,7 +415,7 @@ export function buildTransitPassStopMarkers(
     const seen = new Set<string>();
 
     legs.forEach((leg, legIndex) => {
-        if ((leg.kind !== "BUS" && leg.kind !== "SUBWAY") || !Array.isArray(leg.passStops)) return;
+        if ((!isTransitRideKind(leg.kind)) || !Array.isArray(leg.passStops)) return;
         const policy = getTransitStopMarkerPolicy(leg.kind, mapZoom);
         if (!policy.visible) return;
         const path = routeCoords(leg.pathCoords);
@@ -447,7 +449,7 @@ export function buildTransitPassStopMarkers(
     });
 
     const result: TmapMarker[] = [];
-    (["BUS", "SUBWAY"] as const).forEach((kind) => {
+    TRANSIT_RIDE_KINDS.forEach((kind) => {
         const kindGroups = groups.filter((group) => group.kind === kind);
         if (!kindGroups.length) return;
         const policy = getTransitStopMarkerPolicy(kind, mapZoom);
@@ -506,7 +508,7 @@ export function buildTransitRouteIdentityMarkers(
     if (!shouldShowTransitRouteIdentityLabel(mapZoom)) return [];
 
     return legs.flatMap((leg, legIndex): TmapMarker[] => {
-        if (leg.kind !== "BUS" && leg.kind !== "SUBWAY") return [];
+        if (!isTransitRideKind(leg.kind)) return [];
         const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
         if (!lineLabel) return [];
         const coord = selectTransitRouteLabelCoordinate(routeCoords(leg.pathCoords));

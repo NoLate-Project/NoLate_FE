@@ -8,8 +8,10 @@ import {
   loadCalendarViewModePreference,
 } from '../../src/modules/schedule/components/calendar/calendarViewModePreference';
 import { ScheduleIndexScreenContent } from '../../src/modules/schedule/components/list/ScheduleIndexScreenContent';
+import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
 
 export default function ScheduleIndex() {
+  useScreenFirstPaintPerformance('/schedule');
   const [initialCalendarViewMode, setInitialCalendarViewMode] =
     useState<CalendarViewModePreference>(() =>
       getCachedCalendarViewModePreference() ?? DEFAULT_CALENDAR_VIEW_MODE,

@@ -7,7 +7,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import ScheduleIcon from '../shared/ScheduleIcon';
 import Reanimated from 'react-native-reanimated';
 import CalendarGlassSurface from '../calendar/CalendarGlassSurface';
 import CalendarScopeContextLabel from '../calendar/CalendarScopeContextLabel';
@@ -268,10 +268,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                       ]}
                     />
                     <View pointerEvents="none" style={styles.yearButton}>
-                      <Ionicons
-                        accessible={false}
-                        name="chevron-back"
-                        size={23}
+                      <ScheduleIcon
+                        name="back"
+                        role="toolbar"
                         color={colors.textPrimary}
                       />
                       <Text
@@ -437,17 +436,15 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                       }}
                     >
                       {pillTargetDepth === 'day' ? (
-                        <Ionicons
-                          accessible={false}
-                          name="calendar-outline"
-                          size={25}
+                        <ScheduleIcon
+                        name="calendar"
+                        role="toolbar"
                           color={colors.textPrimary}
                         />
                       ) : (
                         <CalendarViewModeGlyph
                           mode={calendarViewMode}
                           color={colors.textPrimary}
-                          size={27}
                           toolbar
                         />
                       )}
@@ -467,10 +464,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                     },
                   ]}
                 >
-                  <Ionicons
-                    accessible={false}
-                    name="search"
-                    size={24}
+                  <ScheduleIcon
+                        name="search"
+                        role="toolbar"
                     color={colors.textPrimary}
                   />
                 </Pressable>
@@ -487,10 +483,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                     },
                   ]}
                 >
-                  <Ionicons
-                    accessible={false}
-                    name="add"
-                    size={27}
+                  <ScheduleIcon
+                        name="add"
+                        role="toolbar"
                     color={colors.textPrimary}
                   />
                 </Pressable>
@@ -510,10 +505,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                   },
                 ]}
               >
-                <Ionicons
-                  accessible={false}
-                  name="search"
-                  size={22}
+                <ScheduleIcon
+                        name="search"
+                        role="toolbar"
                   color={colors.textPrimary}
                 />
                 <TextInput
@@ -521,7 +515,7 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                   accessibilityLabel="일정 검색어"
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  placeholder="검색"
+                  placeholder="일정·장소 검색"
                   placeholderTextColor={colors.inputPlaceholder}
                   returnKeyType="search"
                   selectionColor={colors.textPrimary}
@@ -541,10 +535,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                       { opacity: pressed ? 0.58 : 1 },
                     ]}
                   >
-                    <Ionicons
-                      accessible={false}
-                      name="close-circle"
-                      size={27}
+                    <ScheduleIcon
+                        name="clear"
+                        role="toolbar"
                       color={colors.textSecondary}
                     />
                   </Pressable>
@@ -559,10 +552,9 @@ export function ScheduleIndexCalendarPrimaryLayer({ controller }: Props) {
                     { opacity: pressed ? 0.58 : 1 },
                   ]}
                 >
-                  <Ionicons
-                    accessible={false}
-                    name="close"
-                    size={25}
+                  <ScheduleIcon
+                        name="close"
+                        role="toolbar"
                     color={colors.textPrimary}
                   />
                 </Pressable>

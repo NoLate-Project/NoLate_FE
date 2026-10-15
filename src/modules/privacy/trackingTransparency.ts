@@ -16,6 +16,11 @@ function waitUntilAppIsActive(): Promise<void> {
             subscription.remove();
             resolve();
         });
+        // Startup can become active between the first state check and listener registration.
+        if (AppState.currentState === "active") {
+            subscription.remove();
+            resolve();
+        }
     });
 }
 

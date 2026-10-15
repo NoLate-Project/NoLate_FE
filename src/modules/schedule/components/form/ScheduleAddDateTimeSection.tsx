@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import ScheduleIcon from '../shared/ScheduleIcon';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import React from 'react';
 import {
@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Calendar } from 'react-native-calendars';
+import '../calendar/calendarKoreanLocale';
 
 import { formatScheduleFormDate } from '../../scheduleFormDate';
 import styles from './ScheduleAddModal.styles';
@@ -166,10 +167,8 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
             >
               {allDay ? formatScheduleFormDate(endDay) : hhmmText(startTime)}
             </Text>
-            <Ionicons
-              accessible={false}
-              name="chevron-forward"
-              size={16}
+            <ScheduleIcon
+              name="forward"
               color={
                 picker === (allDay ? 'endDate' : 'startTime')
                   ? FORM_ACCENT
@@ -282,10 +281,8 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
                 >
                   {hhmmText(endTime)}
                 </Text>
-                <Ionicons
-                  accessible={false}
-                  name="chevron-forward"
-                  size={16}
+                <ScheduleIcon
+                  name="forward"
                   color={
                     picker === 'endTime' ? FORM_ACCENT : formPlaceholderColor
                   }
@@ -314,6 +311,7 @@ export default function ScheduleAddDateTimeSection({ controller }: Props) {
         <Animated.View style={{ opacity: contentFade }}>
           {isDisplayDate && (
             <Calendar
+              monthFormat="yyyy년 M월"
               key={mode}
               current={calendarSelected}
               onDayPress={onDayPress}

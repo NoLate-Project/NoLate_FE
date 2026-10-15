@@ -52,6 +52,8 @@ import {
     type PersonalCategoryManagementAction,
 } from "../../src/modules/schedule/categoryManagementActions";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
+import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
 import CategoryMoveSheet, { type CategoryMoveDestinationId } from "./CategoryMoveSheet";
 
 const CATEGORY_COLORS = [
@@ -69,6 +71,8 @@ const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "요청 처리에 실패했습니다.";
 
 export default function ScheduleCategoriesScreen() {
+    useScreenFirstPaintPerformance('/schedule/categories');
+    const { runWithTransitionShell } = useImmediateNavigationTransition();
     const router = useRouter();
     const params = useLocalSearchParams<{ calendarId?: string; calendarTitle?: string }>();
     const calendarId = useMemo(() => {
@@ -542,8 +546,13 @@ export default function ScheduleCategoriesScreen() {
             Alert.alert("처리 중이에요", "카테고리 작업이 끝난 뒤 돌아가 주세요.");
             return;
         }
-        if (router.canGoBack()) router.back();
-        else router.replace("/schedule");
+        runWithTransitionShell(
+            { route: "/schedule", title: "일정", showBack: false },
+            () => {
+                if (router.canGoBack()) router.back();
+                else router.replace("/schedule");
+            },
+        );
     };
 
     return (
@@ -571,7 +580,10 @@ export default function ScheduleCategoriesScreen() {
                 <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="공유 캘린더 관리"
-                    onPress={() => router.push("/schedule/calendars")}
+                    onPress={() => runWithTransitionShell(
+                        { route: "/schedule/calendars", title: "공유 캘린더" },
+                        () => router.push("/schedule/calendars"),
+                    )}
                     style={[styles.headerButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
                 >
                     <Ionicons accessible={false} name="people-outline" size={21} color={colors.textPrimary} />

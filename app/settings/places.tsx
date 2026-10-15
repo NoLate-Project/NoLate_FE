@@ -1,5 +1,5 @@
 import styles from "../../src/routeSupport/settings/places.styles";
-import React from "react";
+import React, { useCallback } from "react";
 import {
     ActivityIndicator,
     Animated,
@@ -27,8 +27,12 @@ import {
     SearchSheet,
 } from "../../src/routeSupport/settings/PlacesSettingsComponents";
 import { usePlacesSettings } from "../../src/routeSupport/settings/usePlacesSettings";
+import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
+import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
 
 export default function PlacesSettingsScreen() {
+    useScreenFirstPaintPerformance('/settings/places');
+    const { closeActiveScene, runWithTransitionShell } = useImmediateNavigationTransition();
     const {
         router,
         insets,
@@ -71,6 +75,17 @@ export default function PlacesSettingsScreen() {
         deleteCategory,
         moveCategory,
     } = usePlacesSettings();
+    const goBack = useCallback(() => {
+        if (closeActiveScene()) return;
+        runWithTransitionShell(
+            {
+                route: "/profile",
+                title: "프로필",
+                backAccessibilityLabel: "일정 목록으로 돌아가기",
+            },
+            () => router.back(),
+        );
+    }, [closeActiveScene, router, runWithTransitionShell]);
 
     if (loading) {
         return (
@@ -115,7 +130,7 @@ export default function PlacesSettingsScreen() {
                     <Pressable
                         accessibilityRole="button"
                         accessibilityLabel="프로필로 돌아가기"
-                        onPress={() => router.back()}
+                        onPress={goBack}
                         style={({ pressed }) => [styles.headerButton, { opacity: pressed ? 0.55 : 1 }]}
                     >
                         <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />

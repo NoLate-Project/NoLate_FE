@@ -91,17 +91,12 @@ export function createToolbarStyles(options: ScheduleIndexStylesOptions) {
         alignItems: "center",
         justifyContent: "center",
     },
-        searchResultsGlass: {
-        marginTop: 8,
-        borderRadius: 22,
-        borderWidth: 1,
-        overflow: "hidden",
-        maxHeight: 260,
-    },
+
         searchResultsLayer: {
         position: "absolute",
-        zIndex: 55,
-        elevation: 55,
+        // Keep result taps above the native toolbar's expanded gesture canvas.
+        zIndex: 57,
+        elevation: 57,
     },
         toolbarActions: {
         flexDirection: "row",
@@ -348,62 +343,7 @@ export function createToolbarStyles(options: ScheduleIndexStylesOptions) {
         alignItems: "center",
         justifyContent: "center",
     },
-        dropdownEmpty: {
-        minHeight: 74,
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-        paddingHorizontal: 18,
-    },
-        dropdownEmptyText: {
-        fontSize: 14,
-        fontWeight: "700",
-        textAlign: "center",
-    },
-        searchResultList: {
-        paddingTop: 8,
-        paddingBottom: 8,
-    },
-        searchResultScroll: {
-        maxHeight: 252,
-    },
-        searchResultRow: {
-        minHeight: 58,
-        marginHorizontal: 10,
-        borderRadius: 16,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        paddingRight: 8,
-        flexDirection: "row",
-        alignItems: "center",
-    },
-        searchResultBar: {
-        width: 4,
-        height: 34,
-        borderRadius: 2,
-        marginLeft: 8,
-    },
-        searchResultBody: {
-        flex: 1,
-        paddingLeft: 10,
-        paddingRight: 10,
-    },
-        searchResultTitle: {
-        fontSize: 16,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
-        searchResultMeta: {
-        marginTop: 3,
-        fontSize: 12,
-        fontWeight: "700",
-        letterSpacing: 0,
-    },
-        searchResultTime: {
-        minWidth: 68,
-        textAlign: "right",
-        fontSize: 12,
-        fontWeight: "800",
-        letterSpacing: 0,
-    },
+
+
     });
 }

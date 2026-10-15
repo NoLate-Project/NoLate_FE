@@ -36,6 +36,7 @@ const androidGradle = read("android/app/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
 const iosProject = read("ios/NoLateFE.xcodeproj/project.pbxproj");
 const iosInfo = read("ios/NoLateFE/Info.plist");
+const iosAppDelegate = read("ios/NoLateFE/AppDelegate.swift");
 const iosPodLock = read("ios/Podfile.lock");
 const liveActivityPlugin = read("plugins/withNoLateLiveActivity.js");
 const liveActivityExtensionInfo = read(
@@ -66,12 +67,12 @@ const dependencyPatches = readdirSync(resolve(root, "patches"))
   .filter((name) => name.endsWith(".patch"))
   .map((name) => ({ name, source: read(`patches/${name}`) }));
 
-assert.equal(app.version, "1.3.0");
+assert.equal(app.version, "1.2.0");
 assert.equal(app.orientation, "portrait", "The phone UI is designed and verified for portrait only");
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "54");
+assert.equal(app.ios.buildNumber, "55");
 assert.equal(
   pkg.dependencies["react-native-google-mobile-ads"],
   "16.3.4",
@@ -165,10 +166,10 @@ assert.equal(
 assert.match(iosPodLock, /ExpoTrackingTransparency \(6\.0\.8\)/);
 assert.match(trackingTransparency, /PermissionStatus\.UNDETERMINED/);
 assert.match(trackingTransparency, /requestTrackingPermissionsAsync\(\)/);
-assert.doesNotMatch(
+assert.match(
   appProviders,
-  /ensureAppTrackingTransparencyResolved\(\)/,
-  "Core app recovery must not wait for the advertising-only ATT decision",
+  /ensureAppTrackingTransparencyResolved\(\)\.catch\(\(\) => undefined\)/,
+  "Fresh installs must request ATT without blocking core app recovery",
 );
 assert.match(
   routeDetailInterstitial,
@@ -310,16 +311,24 @@ assert.ok(androidManifest.includes(adsPlugin[1].androidAppId));
 assert.match(androidManifest, /com\.google\.android\.gms\.ads\.DELAY_APP_MEASUREMENT_INIT[\s\S]*?android:value="true"/);
 
 assert.equal(
-  (iosProject.match(/CURRENT_PROJECT_VERSION = 54;/g) ?? []).length,
+  (iosProject.match(/CURRENT_PROJECT_VERSION = 55;/g) ?? []).length,
   8,
-  "The app and all three embedded extensions must use iOS build 54 in Debug and Release",
+  "The app and all three embedded extensions must use iOS build 55 in Debug and Release",
 );
+// Xcode 27 builds without scene adoption compile, but UIKit terminates at launch.
+assert.match(iosInfo, /<key>UIApplicationSceneManifest<\/key>/);
+assert.match(iosInfo, /<key>UIWindowSceneSessionRoleApplication<\/key>/);
+assert.match(iosInfo, /<key>UISceneClassName<\/key>\s*<string>UIWindowScene<\/string>/);
+assert.match(iosInfo, /<key>UISceneDelegateClassName<\/key>\s*<string>\$\(PRODUCT_MODULE_NAME\)\.SceneDelegate<\/string>/);
+assert.match(iosAppDelegate, /class SceneDelegate: UIResponder, UIWindowSceneDelegate/);
+assert.match(iosAppDelegate, /UIWindow\(windowScene: scene\)/);
+assert.match(iosAppDelegate, /window = appDelegate\?\.connectWindow\(to: windowScene, options: connectionOptions\)/);
 assert.equal(
   (iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length,
   2,
   "Only the two non-embedded test-target configurations may retain build 52",
 );
-assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 10);
+assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 10);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
 assert.ok(/APS_ENVIRONMENT = production;/.test(iosProject), "Release APNs environment must be production");

@@ -4,6 +4,7 @@ import { Animated, TextInput } from 'react-native';
 import { searchAddressByKeyword } from '../../../map/tmapApi';
 import { getWritableScheduleCategories } from '../../categoryPermissions';
 import { getRouteInfoFromRoute } from '../../routeInfo';
+import { getImportedTicket } from '../../importedTicket';
 import { normalizeScheduleAlertMode } from '../../scheduleAlertMode';
 import {
   getDefaultScheduleFormStart,
@@ -341,6 +342,7 @@ export function useScheduleAddFormState({
     if (
       !visible ||
       !initialValues?.destination ||
+      getImportedTicket(initialValues.route) != null ||
       hasPlaceCoords(initialValues.destination)
     )
       return;
@@ -399,6 +401,7 @@ export function useScheduleAddFormState({
     initialValues?.destination?.lat,
     initialValues?.destination?.lng,
     initialValues?.destination?.name,
+    initialValues?.route,
     visible,
   ]);
 

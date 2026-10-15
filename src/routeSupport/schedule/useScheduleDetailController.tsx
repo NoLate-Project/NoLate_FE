@@ -1,3 +1,5 @@
+import { hasPersistableScheduleRoute } from "../../modules/schedule/scheduleRouteTiming";
+import { getImportedTicket } from "../../modules/schedule/importedTicket";
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
@@ -16,7 +18,6 @@ import {
   canEditPresentedSchedule,
   canManagePresentedSchedule,
 } from '../../modules/schedule/schedulePermissions';
-import { hasRenderableSavedRouteGeometry } from '../../modules/map/savedRouteMapPresentation';
 import { getSavedRouteEntryPath } from '../../modules/schedule/savedRouteDetailPresentation';
 import { useScheduleStore } from '../../modules/schedule/store';
 import type {
@@ -39,8 +40,10 @@ import { saveScheduleRouteAsMyTravelPlan } from '../../modules/schedule/schedule
 import { classifyDepartureNudgeResult } from '../../modules/schedule/departureNudgeResult';
 import { measurePerformanceInteraction } from '../../modules/performance/interactionPerformance';
 import { runAfterScreenTransition } from '../../modules/performance/runAfterScreenTransition';
+import { useImmediateNavigationTransition } from '../../modules/performance/ImmediateNavigationTransition';
 import {
   buildEffectiveTransitRoutePresentation,
+  buildFutureTimetablePredictionPresentation,
   resolveScheduleDetailDepartureTiming,
 } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import {
@@ -68,20 +71,28 @@ import { useScheduleDepartureStatusController } from './useScheduleDepartureStat
  */
 export function useScheduleDetailController({
   previewItem,
+  initialItem,
   initialSheetMode = 'compact',
   initialParticipantsExpanded = false,
   previewNowMs,
   previewCurrentMemberId,
   onPreviewOpenEditor,
 }: ScheduleDetailPreviewProps = {}) {
-  const { id, openRouteSetup, openRouteDetail } = useLocalSearchParams<{
+  const { id: routeId, openRouteSetup, openRouteDetail } = useLocalSearchParams<{
     id: string;
     openRouteSetup?: string | string[];
     openRouteDetail?: string | string[];
   }>();
+  const id = routeId ?? initialItem?.id;
   const pathname = usePathname();
   const router = useRouter();
-  const goBack = useCallback(() => goBackFromScheduleDetail(router), [router]);
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
+  const goBack = useCallback(() => {
+    runWithTransitionShell(
+      { route: '/schedule', title: '일정', showBack: false },
+      () => goBackFromScheduleDetail(router),
+    );
+  }, [router, runWithTransitionShell]);
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const { colors, mode } = useTheme();
@@ -143,7 +154,7 @@ export function useScheduleDetailController({
   const routePlannerWasActiveRef = useRef(false);
   const autoOpenedRouteSetupItemIdRef = useRef<string | undefined>(undefined);
 
-  const { departureStatus, acceptedDepartureStatus } =
+  const { departureStatus } =
     useScheduleDepartureStatusController({
       scheduleId: id,
       previewEnabled: Boolean(internalPreviewItem),
@@ -151,7 +162,10 @@ export function useScheduleDetailController({
       routeSavePending,
     });
 
-  const item = internalPreviewItem ?? (id ? state.itemsById[id] : undefined);
+  const item =
+    internalPreviewItem
+    ?? (id ? state.itemsById[id] : undefined)
+    ?? initialItem;
   const canManageSchedule = useMemo(
     () => canManagePresentedSchedule(item, currentMemberId),
     [currentMemberId, item],
@@ -164,9 +178,16 @@ export function useScheduleDetailController({
         onPreviewOpenEditor?.();
         return;
       }
+      if (!routeId && initialItem) {
+        router.push({
+          pathname: '/schedule/[id]',
+          params: { id: initialItem.id, mode: 'edit' },
+        });
+        return;
+      }
       router.setParams({ mode: 'edit' });
     });
-  }, [internalPreviewItem, onPreviewOpenEditor, router]);
+  }, [initialItem, internalPreviewItem, onPreviewOpenEditor, routeId, router]);
   const currentMemberDepartedAt =
     previewDepartedAt ??
     item?.myDepartedAt ??
@@ -202,7 +223,7 @@ export function useScheduleDetailController({
   const displayedDepartureTiming = useMemo(
     () =>
       resolveScheduleDetailDepartureTiming({
-        status: acceptedDepartureStatus,
+        status: departureStatus,
         savedRecommendedDepartureAt,
         savedTravelMinutes: item?.travelMinutes,
         isInspectingTravelPlan: Boolean(inspectedTravelPlan),
@@ -210,7 +231,7 @@ export function useScheduleDetailController({
         inspectedTravelMinutes: inspectedTravelPlan?.travelMinutes,
       }),
     [
-      acceptedDepartureStatus,
+      departureStatus,
       inspectedRecommendedDepartureAt,
       inspectedTravelPlan,
       item?.travelMinutes,
@@ -255,7 +276,7 @@ export function useScheduleDetailController({
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
-    : buildEffectiveTransitRoutePresentation(departureStatus);
+    : buildEffectiveTransitRoutePresentation(departureStatus) ?? buildFutureTimetablePredictionPresentation(departureStatus);
   const departureDisplayState: DepartureDisplayState = item
     ? getDepartureDisplayState(
         recommendedDepartureAt,
@@ -504,11 +525,18 @@ export function useScheduleDetailController({
       return;
     const targetSessionId = `schedule-detail-${item.id}-${Date.now()}`;
     const travelMode = item.travelMode ?? routeOption?.mode ?? 'CAR';
-    const hasDetailedRoute = hasRenderableSavedRouteGeometry(
+    const hasDetailedRoute = hasPersistableScheduleRoute(
       item.route,
+      item.travelMinutes,
       item.origin,
       item.destination,
     );
+    // A pending ticket needs its final destination/deadline saved with the common schedule.
+    // The personal-plan endpoint only enriches the same existing destination.
+    if (getImportedTicket(item.route) && !hasDetailedRoute && canEditSchedule) {
+      openScheduleEditor();
+      return;
+    }
     const entryPath = getSavedRouteEntryPath(
       hasDetailedRoute,
       item.origin,
@@ -534,27 +562,52 @@ export function useScheduleDetailController({
       await showRouteDetailInterstitialIfEligible({
         suppress: isRouteDetailEntryRequested(openRouteDetail),
       });
-      router.push({
-        pathname: entryPath,
-        params: {
-          sessionId: targetSessionId,
-          routeId: hasDetailedRoute ? routeOption?.id : undefined,
-          routeIndex: '0',
-          sheetState: 'middle',
-          entrySource: 'schedule-detail',
-          departureAt: item.departAt,
-        },
-      });
+      if (entryPath === '/schedule/route-select') {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        runWithTransitionShell(
+          {
+            route: '/schedule/route-select',
+            title: '경로 선택',
+            sceneKey: targetSessionId,
+          },
+          () => router.push({
+            pathname: entryPath,
+            params: {
+              sessionId: targetSessionId,
+              routeId: hasDetailedRoute ? routeOption?.id : undefined,
+              routeIndex: '0',
+              sheetState: 'middle',
+              entrySource: 'schedule-detail',
+              departureAt: item.departAt,
+            },
+          }),
+        );
+      } else {
+        router.push({
+          pathname: entryPath,
+          params: {
+            sessionId: targetSessionId,
+            routeId: hasDetailedRoute ? routeOption?.id : undefined,
+            routeIndex: '0',
+            sheetState: 'middle',
+            entrySource: 'schedule-detail',
+            departureAt: item.departAt,
+          },
+        });
+      }
     } finally {
       routeDetailAdPendingRef.current = false;
     }
   }, [
+    canEditSchedule,
+    openScheduleEditor,
     internalPreviewItem,
     item,
     openRouteDetail,
     routeOption,
     routeSavePending,
     router,
+    runWithTransitionShell,
   ]);
 
   useEffect(() => {
@@ -663,6 +716,7 @@ export function useScheduleDetailController({
     currentMemberDepartedAt,
     departureParticipants,
     recommendedDepartureAt,
+    preservingEarlierDeparture: displayedDepartureTiming.preservingEarlierDeparture,
     departureDisplayState,
     sheetQuickSummaryAnimatedStyle,
     snapSheet,
@@ -674,6 +728,7 @@ export function useScheduleDetailController({
     displayDestination,
     savedDisplayTravelMinutes,
     currentTravelMinutes,
+    departureStatus,
     effectiveTransitRoutePresentation,
     displayTravelMode,
     routeOption,

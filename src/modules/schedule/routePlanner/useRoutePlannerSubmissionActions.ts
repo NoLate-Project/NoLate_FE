@@ -186,6 +186,7 @@ export function useRoutePlannerSubmissionActions({
 
     return {
       ...selectedAlternative,
+      schemaVersion: selectedAlternative.intercityJourney ? 3 : 2,
       routeInfo: selectedRouteInfo,
       pathCoords: selectedPathCoords,
       storedPathOverlays,

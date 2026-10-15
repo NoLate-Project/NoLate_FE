@@ -16,22 +16,21 @@ import {
 } from "./transitLoopRecovery";
 import {
     getOdsayTransitRouteOptions,
-    hasOdsayApiKey,
-    odsayApiErrorMessage,
 } from "./odsayApi";
+import { getTransitRouteProvider } from "./transitProviderConfig";
 
 import {
     infoMapDebug,
     scheduleOpenStreetMapRequest,
     safeNumber,
     hasTmapAppKey,
-    hasTmapTransitRouteProvider,
     requestTransitRouteProxy,
     tmapClient,
     tmapApiErrorMessage,
     clampPathCoords,
     dedupePathCoords,
     normalizeTransitTimeToMinutes,
+    normalizeTransitTotalDurationSeconds,
     OPENSTREETMAP_BIKE_ROUTING_BASE_URL,
     OPENSTREETMAP_REQUEST_TIMEOUT_MS,
     TMAP_TRANSIT_REQUEST_COUNT,
@@ -207,6 +206,7 @@ export function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
             return {
                 id: `transit-${index}-${minutes}-${transferCount ?? 0}`,
                 minutes,
+                totalDurationSeconds: normalizeTransitTotalDurationSeconds(itinerary?.totalTime),
                 distanceMeters,
                 transferCount,
                 walkMeters,
@@ -217,6 +217,7 @@ export function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
                 pathCoords,
                 source: "api",
                 provider: "tmap",
+                providerTimeBasis: "route_estimate",
             } as TransitRouteOption;
         })
         .filter((value: TransitRouteOption | null): value is TransitRouteOption => value !== null);
@@ -335,30 +336,19 @@ export async function getTransitRouteViaTmap(
 }
 
 /**
- * 대중교통은 정밀 보행 링크와 빠른 환승 위치를 함께 주는 ODsay를 우선한다.
- * 모바일 키가 없거나 ODsay가 일시 실패하면 기존 TMAP 경로를 그대로 예비 공급자로 사용한다.
+ * 기본값은 저장 후 ETA 재조회와 같은 공급자인 ODsay다.
+ * 개발/테스트 빌드는 EXPO_PUBLIC_TRANSIT_PROVIDER=tmap으로 명시적으로 전환할 수 있다.
+ * 선택한 공급자의 키 누락·외부 오류·빈 결과는 다른 공급자로 대체하지 않는다.
  */
 export async function getTransitRouteViaPreferredProvider(
     origin: Place,
     destination: Place,
     departureAt = new Date()
 ): Promise<TransitRouteOption[]> {
-    let odsayFailure: unknown;
-    if (hasOdsayApiKey()) {
-        try {
-            const odsayOptions = await getOdsayTransitRouteOptions(origin, destination, departureAt);
-            if (odsayOptions.length > 0) return odsayOptions;
-        } catch (error) {
-            odsayFailure = error;
-            infoMapDebug("[대중교통옵션] ODsay 실패, TMAP 예비 경로 확인 →", odsayApiErrorMessage(error));
-        }
-    }
-
-    if (hasTmapTransitRouteProvider()) {
-        return getTransitRouteViaTmap(origin, destination, departureAt);
-    }
-    if (odsayFailure) throw odsayFailure;
-    return [];
+    const provider = getTransitRouteProvider();
+    infoMapDebug("[대중교통옵션] 선택한 공급자", provider);
+    if (provider === "tmap") return getTransitRouteViaTmap(origin, destination, departureAt);
+    return getOdsayTransitRouteOptions(origin, destination, departureAt);
 }
 
 /** 지도 공급자 호출과 대체 경로를 조율해 `getDrivingAlternatives` 결과를 반환합니다. */

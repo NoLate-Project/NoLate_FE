@@ -3,6 +3,43 @@ import UIKit
 
 private let calendarPillContentTravel: CGFloat = 9
 
+
+private struct CalendarOutlineIconsKey: EnvironmentKey {
+  static let defaultValue: [String: String] = [:]
+}
+
+private extension EnvironmentValues {
+  var calendarOutlineIcons: [String: String] {
+    get { self[CalendarOutlineIconsKey.self] }
+    set { self[CalendarOutlineIconsKey.self] = newValue }
+  }
+}
+
+/// Uses the registered Expo icon font without replacing the native glass surface.
+/// SF symbols stay available while the font loads or on a failed font load.
+private struct CalendarOutlineIcon: View {
+  @Environment(\.calendarOutlineIcons) private var icons
+  let symbol: String
+  var fallback: String? = nil
+  var size: CGFloat = 22
+
+  var body: some View {
+    Group {
+      if let glyph = icons[symbol],
+         let family = icons["fontFamily"],
+         let fontName = UIFont.fontNames(forFamilyName: family).first,
+         let font = UIFont(name: fontName, size: size) {
+        Text(glyph).font(Font(font))
+      } else {
+        Image(systemName: fallback ?? symbol)
+          .font(.system(size: size, weight: .regular))
+      }
+    }
+    .frame(width: size, height: size)
+    .accessibilityHidden(true)
+  }
+}
+
 private struct CalendarPillVerticalTransitionModifier: ViewModifier {
   let offsetY: CGFloat
   let opacity: Double
@@ -15,6 +52,7 @@ private struct CalendarPillVerticalTransitionModifier: ViewModifier {
 }
 
 private final class ViewModeGlassControlModel: ObservableObject {
+  @Published var outlineIcons: [String: String] = [:]
   @Published var selectedMode: String
   @Published var disabled: Bool
   @Published var colorScheme: String
@@ -83,6 +121,7 @@ private final class ViewModeGlassControlModel: ObservableObject {
 }
 
 private final class LiquidGlassIconButtonModel: ObservableObject {
+  @Published var outlineIcons: [String: String] = [:]
   @Published var symbolName: String
   @Published var label: String
   @Published var leadingSymbolName: String
@@ -122,6 +161,10 @@ private final class LiquidGlassIconButtonModel: ObservableObject {
 
 @objc(LiquidCalendarMenuPrototypeView)
 final class LiquidCalendarMenuPrototypeView: UIView {
+  @objc var outlineIcons: NSDictionary = [:] {
+    didSet { model.outlineIcons = outlineIcons as? [String: String] ?? [:] }
+  }
+
   @objc var selectedMode: NSString = "detail" {
     didSet {
       model.selectedMode = selectedMode as String
@@ -408,6 +451,10 @@ final class LiquidCalendarMenuPrototypeView: UIView {
 
 @objc(LiquidGlassIconButtonView)
 final class LiquidGlassIconButtonView: UIView {
+  @objc var outlineIcons: NSDictionary = [:] {
+    didSet { model.outlineIcons = outlineIcons as? [String: String] ?? [:] }
+  }
+
   @objc var symbolName: NSString = "magnifyingglass" {
     didSet {
       model.symbolName = symbolName as String
@@ -553,6 +600,7 @@ private struct LiquidGlassIconButtonRootView: View {
     .accessibilityLabel(accessibilityLabel)
     .animation(depthPillAnimation, value: model.buttonWidth)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    .environment(\.calendarOutlineIcons, model.outlineIcons)
   }
 
   private var contentIdentity: String {
@@ -588,8 +636,7 @@ private struct LiquidGlassIconButtonRootView: View {
   private var pillContent: some View {
     HStack(spacing: contentSpacing) {
       if let leadingSymbol {
-        Image(systemName: leadingSymbol)
-          .font(.system(size: iconSize(for: leadingSymbol), weight: .regular))
+        CalendarOutlineIcon(symbol: leadingSymbol, size: iconSize(for: leadingSymbol))
       }
 
       if !model.label.isEmpty {
@@ -600,8 +647,7 @@ private struct LiquidGlassIconButtonRootView: View {
       }
 
       if !model.trailingSymbolName.isEmpty {
-        Image(systemName: model.trailingSymbolName)
-          .font(.system(size: iconSize(for: model.trailingSymbolName), weight: .regular))
+        CalendarOutlineIcon(symbol: model.trailingSymbolName, size: iconSize(for: model.trailingSymbolName))
       }
     }
     .foregroundStyle(glyphColor)
@@ -975,6 +1021,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     .frame(width: rootWidth, height: rootHeight, alignment: .topTrailing)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     .accessibilityElement(children: .contain)
+    .environment(\.calendarOutlineIcons, model.outlineIcons)
     .onChange(of: model.prototypeTapRequest) { _ in
       guard phase == .collapsed else { return }
       openMenu(.view)
@@ -1327,17 +1374,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         Button {
           openMenu(.view)
         } label: {
-          ZStack {
-            prototypeModeGlyph(
-              for: model.selectedMode,
-              color: collapsedGlyphColor
-            )
-              .id(model.selectedMode)
-              .transition(pillButtonTransition)
-          }
-          .frame(width: 32, height: 25)
-          .clipped()
-          .animation(depthPillAnimation, value: model.selectedMode)
+          CalendarOutlineIcon(symbol: "toolbar.view", fallback: "rectangle.stack")
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
         }
         .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1351,8 +1388,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         guard !model.disabled else { return }
         openMenu(.search)
       } label: {
-        Image(systemName: "magnifyingglass")
-          .font(.system(size: 23, weight: .regular))
+        CalendarOutlineIcon(symbol: "magnifyingglass", size: 22)
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1364,8 +1400,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         guard !compactAddInteractionLocked else { return }
         openMenu(.add)
       } label: {
-        Image(systemName: "plus")
-          .font(.system(size: 25, weight: .regular))
+        CalendarOutlineIcon(symbol: "plus", size: 22)
           .frame(width: collapsedSlotWidth, height: collapsedHeight)
       }
       .buttonStyle(LiquidToolbarIconButtonStyle(disabled: model.disabled))
@@ -1561,12 +1596,11 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
 
   private var searchExpandedContent: some View {
     HStack(spacing: 11) {
-      Image(systemName: "magnifyingglass")
-        .font(.system(size: 20, weight: .bold))
+      CalendarOutlineIcon(symbol: "magnifyingglass", size: 22)
         .foregroundStyle(collapsedGlyphColor.opacity(0.92))
 
       TextField(
-        "검색",
+        "일정·장소 검색",
         text: Binding(
           get: { model.searchQuery },
           set: { newValue in
@@ -1574,7 +1608,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
             model.handleSearchTextChange(newValue)
           }
         ),
-        prompt: Text("검색")
+        prompt: Text("일정·장소 검색")
           .foregroundColor(collapsedGlyphColor.opacity(0.46))
       )
       .focused($searchFocused)
@@ -1591,8 +1625,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
           model.searchQuery = ""
           model.handleSearchTextChange("")
         } label: {
-          Image(systemName: "xmark.circle.fill")
-            .font(.system(size: 21, weight: .semibold))
+          CalendarOutlineIcon(symbol: "xmark.circle.fill", size: 22)
             .foregroundStyle(collapsedGlyphColor.opacity(0.54))
             .frame(width: 36, height: 44)
         }
@@ -1604,8 +1637,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
         closeSearchActionIfNeeded()
         closeMenu()
       } label: {
-        Image(systemName: "xmark")
-          .font(.system(size: 18, weight: .bold))
+        CalendarOutlineIcon(symbol: "xmark", size: 22)
           .foregroundStyle(collapsedGlyphColor.opacity(0.92))
           .frame(width: 40, height: 44)
       }
@@ -1668,8 +1700,7 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
       }
     } label: {
       HStack(spacing: 12) {
-        Image(systemName: icon)
-          .font(.system(size: 17, weight: .semibold))
+        CalendarOutlineIcon(symbol: icon, size: 20)
           .frame(width: 26, height: 26)
           .frame(width: 32)
 
@@ -2189,13 +2220,6 @@ private struct LiquidCalendarMenuPrototypeRootView: View {
     start + (end - start) * amount
   }
 
-  @ViewBuilder
-	  private func prototypeModeGlyph(
-	    for mode: String,
-	    color: Color = Color.white.opacity(0.94)
-	  ) -> some View {
-    ViewModeGlyphMark(mode: mode, color: color)
-  }
 }
 
 private struct LiquidCalendarMorphShape: Shape {
@@ -2226,62 +2250,25 @@ private struct ViewModeGlyphMark: View {
   let color: Color
 
   var body: some View {
-    glyph
+    CalendarOutlineIcon(symbol: "view.\(normalizedMode)", fallback: fallbackSymbol, size: 20)
       .foregroundStyle(color)
   }
 
-	  @ViewBuilder
-	  private var glyph: some View {
-	    switch mode {
-	    case "day":
-	      Image(systemName: "calendar")
-	        .font(.system(size: 22, weight: .regular))
-	    case "multi":
-	      Image(systemName: "rectangle.stack")
-	        .font(.system(size: 22, weight: .regular))
-	    case "compact":
-      // Compatibility only: compact is no longer exposed as a selectable
-      // calendar mode, but a stale JS/native state must still render safely
-      // while Fast Refresh or a persisted session settles on a valid mode.
-      VStack(spacing: 4.4) {
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-          .stroke(color, lineWidth: 2.15)
-          .frame(width: 24, height: 8)
-        RoundedRectangle(cornerRadius: 5, style: .continuous)
-          .stroke(color, lineWidth: 2.15)
-          .frame(width: 24, height: 8)
-      }
-	    case "stack":
-	      Image(systemName: "rectangle.grid.1x2")
-	        .font(.system(size: 22, weight: .regular))
-    case "detail":
-      VStack(spacing: 4.4) {
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .stroke(color, lineWidth: 2.3)
-          .frame(width: 23, height: 7)
-        RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .stroke(color, lineWidth: 2.3)
-          .frame(width: 23, height: 7)
-          .overlay {
-            Capsule().fill(color).frame(width: 10, height: 1.6)
-          }
-      }
-    case "list":
-      VStack(alignment: .leading, spacing: 4.5) {
-        listRow(width: 22)
-        listRow(width: 22)
-        listRow(width: 16)
-      }
-    default:
-      Image(systemName: "rectangle.grid.1x2")
-        .font(.system(size: 22, weight: .regular))
+  private var normalizedMode: String {
+    switch mode {
+    case "day", "multi", "stack", "detail", "list": return mode
+    case "compact": return "detail"
+    default: return "stack"
     }
   }
 
-  private func listRow(width: CGFloat) -> some View {
-    HStack(spacing: 4) {
-      Circle().fill(color).frame(width: 3.4, height: 3.4)
-      Capsule().fill(color).frame(width: width, height: 2.3)
+  private var fallbackSymbol: String {
+    switch normalizedMode {
+    case "day": return "calendar"
+    case "multi": return "rectangle.on.rectangle"
+    case "detail": return "text.alignleft"
+    case "list": return "list.bullet"
+    default: return "square.3.layers.3d"
     }
   }
 }
@@ -2335,8 +2322,7 @@ private struct ViewModeGlassRow: View {
       .padding(.horizontal, showsSelectionIndicator ? 9 : 12)
 
       if showsSelectionIndicator && selected {
-        Image(systemName: "checkmark")
-          .font(.system(size: 17, weight: .bold))
+        CalendarOutlineIcon(symbol: "checkmark", size: 20)
           .foregroundStyle(foregroundColor)
           .frame(width: 22, height: 40)
         .offset(x: -9)

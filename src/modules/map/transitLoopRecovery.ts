@@ -4,6 +4,7 @@ import type {
     TransitPassStop,
     TransitRouteOption,
 } from "./tmapApi";
+import { validTotalDurationSeconds } from "./routeDuration";
 
 type TransitEndpoint = RoutePathCoord & { name?: string };
 
@@ -203,6 +204,13 @@ function sumLegNumber(legs: TransitLegDetail[], key: "durationMinutes" | "distan
     return values.length ? values.reduce((total, value) => total + value, 0) : undefined;
 }
 
+function sumKnownLegSeconds(legs: TransitLegDetail[]): number | undefined {
+    if (!legs.length || legs.some((leg) =>
+        typeof leg.durationSeconds !== "number" || !Number.isFinite(leg.durationSeconds) || leg.durationSeconds < 0
+    )) return undefined;
+    return legs.reduce((total, leg) => total + leg.durationSeconds!, 0);
+}
+
 function omitSyntheticStationAccess(
     legs: TransitLegDetail[],
     endpoint: TransitEndpoint,
@@ -223,7 +231,10 @@ function buildMergedRide(
         ...(rightRide.passStops ?? []),
     ]);
     const pathCoords = mergePaths([leftRide, rightRide]);
-    const durationMinutes = sumLegNumber([leftRide, rightRide], "durationMinutes");
+    const durationSeconds = sumKnownLegSeconds([leftRide, rightRide]);
+    const durationMinutes = durationSeconds === undefined
+        ? sumLegNumber([leftRide, rightRide], "durationMinutes")
+        : Math.max(1, Math.ceil(durationSeconds / 60));
     const distance = sumLegNumber([leftRide, rightRide], "distanceMeters");
     const stationCount = passStops.length >= 2
         ? passStops.length - 1
@@ -239,6 +250,7 @@ function buildMergedRide(
             typeof durationMinutes === "number" ? `${Math.round(durationMinutes)}분` : undefined,
         ].filter(Boolean).join(" "),
         durationMinutes,
+        durationSeconds,
         distanceMeters: distance,
         stationCount: stationCount || undefined,
         lineName,
@@ -254,7 +266,9 @@ function buildMergedRide(
             ? "TRANSIT_PASS_SHAPE_LINESTRING"
             : "ITINERARY_PATH_SNAP",
         rawPathPointCount: pathCoords?.length,
-        serviceAvailable: leftRide.serviceAvailable !== false && rightRide.serviceAvailable !== false,
+        serviceAvailable: leftRide.serviceAvailable === false || rightRide.serviceAvailable === false
+            ? false
+            : leftRide.serviceAvailable === true && rightRide.serviceAvailable === true ? true : undefined,
     };
 }
 
@@ -284,7 +298,10 @@ export function buildRecoveredLoopTransitOption(
     if (!mergedRide.pathCoordsIsExact || !mergedRide.pathCoords?.length) return undefined;
 
     const transitLegs = [...prefix, mergedRide, ...suffix];
-    const minutes = Math.max(1, Math.round(sumLegNumber(transitLegs, "durationMinutes") ?? 0));
+    const totalDurationSeconds = validTotalDurationSeconds(sumKnownLegSeconds(transitLegs));
+    const minutes = totalDurationSeconds === undefined
+        ? Math.max(1, Math.round(sumLegNumber(transitLegs, "durationMinutes") ?? 0))
+        : Math.max(1, Math.ceil(totalDurationSeconds / 60));
     const distance = sumLegNumber(transitLegs, "distanceMeters");
     const pathCoords = mergePaths(transitLegs);
     if (!pathCoords || minutes > plan.directOption.minutes - MIN_RECOVERY_TIME_SAVING_MINUTES) return undefined;
@@ -295,6 +312,8 @@ export function buildRecoveredLoopTransitOption(
         ...plan.directOption,
         id: `loop-recovered-${plan.directOption.id}`,
         minutes,
+        // 복구 경로는 별도 조합이다. 원래 긴 경로의 totalTime을 상속하지 않는다.
+        totalDurationSeconds,
         distanceMeters: distance,
         transferCount: 0,
         walkMeters,

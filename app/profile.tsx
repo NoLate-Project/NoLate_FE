@@ -10,9 +10,27 @@ import { AccountInfoRow, CalendarConnectionStat, ProfileLoadingView } from "../s
 import styles from "../src/routeSupport/profile.styles";
 import { formatConnectionDate } from "../src/routeSupport/profilePresentation";
 import { useProfileScreen } from "../src/routeSupport/useProfileScreen";
+import { useScreenFirstPaintPerformance } from "../src/modules/performance/useScreenFirstPaintPerformance";
+import ScreenFirstPaintShell from "../src/modules/performance/ScreenFirstPaintShell";
+import { useDeferredScreenContent } from "../src/modules/performance/useDeferredScreenContent";
 
 /** 프로필 정보와 계정·캘린더·앱 설정을 섹션별로 표시하는 화면입니다. */
-export default function ProfileScreen() {
+export default function ProfileRoute() {
+    useScreenFirstPaintPerformance('/profile');
+    const contentReady = useDeferredScreenContent();
+    if (!contentReady) {
+        return (
+            <ScreenFirstPaintShell
+                title="프로필"
+                backAccessibilityLabel="일정 목록으로 돌아가기"
+                testID="profile-first-paint-shell"
+            />
+        );
+    }
+    return <ProfileScreen />;
+}
+
+export function ProfileScreen() {
     const {
         insets, colors, mode, profile, account, calendarConnection, calendarConnectionError, signingOut, withdrawing, loadingProfile, editingProfile, setEditingProfile, savingProfile, draftName, setDraftName, memberIdCopied, profileError, withdrawalModalOpen, setWithdrawalModalOpen, withdrawalPassword, setWithdrawalPassword, passwordModalOpen, setPasswordModalOpen, currentPassword, setCurrentPassword, newPassword, setNewPassword, confirmPassword, setConfirmPassword, savingPassword, hasOpenModal, displayAccountName, isNaverAccount, displayEmail, displayLoginType, displayMemberId, profileSummary, avatarInitial, loadProfile, openProfileEditor, copyMemberId, saveProfile, handleSignOut, handleWithdraw, confirmCommonWithdrawal, openPasswordChange, savePasswordChange, goBackToSchedule, openCalendarOnboarding, openPlacesSettings, openPrivacyPolicy, openTermsOfService,
     } = useProfileScreen();

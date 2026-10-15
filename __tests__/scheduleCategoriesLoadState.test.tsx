@@ -12,6 +12,9 @@ import { createScheduleInitialState } from "../src/modules/schedule/initialState
 import { ScheduleProvider } from "../src/modules/schedule/store";
 import { ThemeProvider } from "../src/modules/theme/ThemeContext";
 
+// The unit renderer has no native navigation container.
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 jest.mock("../src/modules/auth/authStorage", () => ({
     subscribeAuthInvalidation: () => () => undefined,

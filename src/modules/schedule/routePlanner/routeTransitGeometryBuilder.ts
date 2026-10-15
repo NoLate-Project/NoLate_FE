@@ -1,3 +1,4 @@
+import { isTransitRideKind, intercityRideColor } from "../../map/transitModes";
 /** 대중교통 API 응답을 지도에 표시 가능한 정규화 세그먼트와 형상 품질 정보로 변환합니다. */
 import {
   type RouteAlternativeOption,
@@ -7,6 +8,7 @@ import {
 } from '../../map/routingService';
 import { type TmapLatLng } from '../../map/TmapMapView';
 import { resolveDetailedWalkGeometrySource } from '../../map/savedRouteMapPresentation';
+import { validTotalDurationSeconds } from '../../map/routeDuration';
 import { splitWalkPathAtDiscontinuities } from '../../map/transitRouteGeometry';
 import {
   getNormalizedFallbackRouteMode,
@@ -135,7 +137,7 @@ export function getLegGeometrySource(
   // 환승 구간은 화면 모드만 TRANSFER로 바뀌며 원본 보행 geometry의 출처는 유지한다.
   if (leg.pathCoordsIsExact && leg.kind === 'WALK')
     return 'WALK_STEPS_LINESTRING';
-  if (leg.pathCoordsIsExact && (mode === 'BUS' || mode === 'SUBWAY'))
+  if (leg.pathCoordsIsExact && (isTransitRideKind(mode)))
     return 'TRANSIT_PASS_SHAPE_LINESTRING';
   return undefined;
 }
@@ -550,7 +552,7 @@ export function normalizeRouteAlternativeToSegments(
             getSharedBusLineColor(lineLabel, leg.lineColor)
           : leg.kind === 'SUBWAY'
           ? getSubwayLineColor(leg.lineName ?? leg.label)
-          : undefined;
+          : intercityRideColor(leg.kind);
       const displayColor =
         leg.kind === 'BUS'
           ? getMapBusRouteColor(lineLabel, busType)
@@ -563,6 +565,7 @@ export function normalizeRouteAlternativeToSegments(
         coordinateParts: geometry.coordinateParts,
         distance: leg.distanceMeters,
         duration: leg.durationMinutes,
+        durationSeconds: leg.durationSeconds,
         lineName: lineLabel,
         lineColor: routeColor,
         routeColor,
@@ -612,6 +615,7 @@ export function normalizeRouteAlternativeToSegments(
         coordinates,
         distance: option.distanceMeters,
         duration: option.minutes,
+        durationSeconds: validTotalDurationSeconds(option.totalDurationSeconds),
         geometrySource:
           Array.isArray(option.pathCoords) && option.pathCoords.length >= 2
             ? 'UNKNOWN'
@@ -638,6 +642,7 @@ export function normalizeRouteAlternativeToSegments(
   return {
     id: option.id,
     totalDuration: option.minutes,
+    totalDurationSeconds: validTotalDurationSeconds(option.totalDurationSeconds),
     totalDistance: option.distanceMeters,
     fare: option.fareWon,
     segments,

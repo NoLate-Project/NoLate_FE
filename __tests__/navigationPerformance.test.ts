@@ -7,6 +7,7 @@ import {
     markNavigationTransitionStarted,
     resetNavigationPerformanceForTests,
     setNavigationPerformanceSink,
+    suppressAutomaticNavigationMeasurements,
 } from "../src/modules/performance/navigationPerformance";
 import { canonicalizeNavigationRoute } from "../src/modules/performance/navigationPerformanceQueue";
 
@@ -84,6 +85,40 @@ describe("navigationPerformance", () => {
         const pendingId = beginNavigationMeasurement("PUSH", "/profile", "/notifications", 11_000, 12_000);
         expect(discardNavigationMeasurement(pendingId)).toBe(true);
         expect(discardNavigationMeasurement(pendingId)).toBe(false);
+    });
+
+    it("records a visible shell once and suppresses the duplicate native handoff", () => {
+        const sink = jest.fn();
+        setNavigationPerformanceSink(sink);
+
+        const shellId = beginNavigationMeasurement(
+            "SHELL",
+            "/schedule",
+            "/profile",
+            100,
+            1_000,
+        );
+        suppressAutomaticNavigationMeasurements(100, 1_000);
+
+        expect(beginNavigationMeasurement(
+            "PUSH",
+            "/schedule",
+            "/profile",
+            115,
+            1_015,
+        )).toBe(shellId);
+        expect(markNavigationTransitionStarted("/schedule", 120, 1_020)).toBe(shellId);
+
+        markNavigationRouteReady("/profile", 116);
+        expect(finishNavigationAfterFrames(shellId, 132)).toBe(true);
+        expect(sink).toHaveBeenCalledTimes(1);
+        expect(sink).toHaveBeenCalledWith(expect.objectContaining({
+            action: "SHELL",
+            fromRoute: "/schedule",
+            toRoute: "/profile",
+            routeReadyMs: 16,
+            totalMs: 32,
+        }));
     });
 
     it("removes identifiers and tokens from persisted route names", () => {

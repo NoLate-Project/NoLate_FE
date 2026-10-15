@@ -1,4 +1,7 @@
+import { isTransitRideKind, transitModeLabel } from "../../../map/transitModes";
 import styles from "./RouteStepTimeline.styles";
+import BusBookingAction from './BusBookingAction';
+import TrainBookingAction from './TrainBookingAction';
 import React, { useEffect, useMemo, useState } from "react";
 import {
     Platform,
@@ -72,15 +75,21 @@ export default function RouteStepTimeline({
     const [arrivalStateByStepId, setArrivalStateByStepId] = useState<Record<string, TransitArrivalLoadState>>({});
     const [arrivalUpdatedAtByStepId, setArrivalUpdatedAtByStepId] = useState<Record<string, string>>({});
     const arrivalLookupKey = useMemo(() => buildArrivalLookupKey(routeInfo.steps), [routeInfo.steps]);
-    let runningOffsetMinutes = 0;
-    const stepStartOffsets = routeInfo.steps.map((step) => {
-        const currentOffset = runningOffsetMinutes;
-        if (typeof step.durationMinutes === "number" && Number.isFinite(step.durationMinutes)) {
-            runningOffsetMinutes += Math.max(0, step.durationMinutes);
+    let runningOffsetSeconds = 0;
+    const stepStartOffsetsSeconds = routeInfo.steps.map((step) => {
+        const currentOffset = runningOffsetSeconds;
+        if (
+            typeof step.durationSeconds === "number"
+            && Number.isFinite(step.durationSeconds)
+            && step.durationSeconds >= 0
+        ) {
+            runningOffsetSeconds += step.durationSeconds;
+        } else if (typeof step.durationMinutes === "number" && Number.isFinite(step.durationMinutes)) {
+            runningOffsetSeconds += Math.max(0, step.durationMinutes) * 60;
         }
         return currentOffset;
     });
-    const scheduleSourceLabel = routeInfo.timeBasis === "provider_schedule"
+    const scheduleSourceLabel = routeInfo.intercityJourney ? (routeInfo.intercityJourney.service.timingBasis === "TICKET" ? "승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증" : "선택 운행편 · 앞뒤 이동 예상 · 예매 미확인") : routeInfo.timeBasis === "provider_schedule"
         ? "운행 시간표"
         : "경로 예상 시간";
 
@@ -211,13 +220,15 @@ export default function RouteStepTimeline({
 
     return (
         <View style={styles.root}>
+            {routeInfo.intercityJourney?.service.timingBasis !== 'TICKET' && routeInfo.steps.some(step => step.type === 'TRAIN') && <TrainBookingAction dark={isDark} />}
+            {routeInfo.intercityJourney?.service.timingBasis !== 'TICKET' && routeInfo.steps.filter(step => ['EXPRESS_BUS', 'INTERCITY_BUS', 'COACH'].includes(step.type)).slice(0, 1).map(step => <BusBookingAction key={step.id} kind={step.type} dark={isDark} />)}
             {routeInfo.steps.map((step, index) => {
                 const isLast = index === routeInfo.steps.length - 1;
                 const stepColor = getRouteStepColor(step);
                 const selected = selectedStepId === step.id;
                 const isEndpointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
                 const stepPressEnabled = !!onStepPress && (allowEndpointPress || !isEndpointStep);
-                const hasBadge = step.type === "SUBWAY" || step.type === "BUS";
+                const hasBadge = isTransitRideKind(step.type);
                 const pointLabel = getPointLabel(step.type);
                 const expandable = hasBadge && Array.isArray(step.passStops) && step.passStops.length > 0;
                 const expanded = expandedStepIds.has(step.id);
@@ -236,8 +247,8 @@ export default function RouteStepTimeline({
                     arrivalCount: realtimeArrivals.length,
                     updatedAt: arrivalUpdatedAt,
                 });
-                const stepStartOffset = stepStartOffsets[index] ?? 0;
-                const timelineClockText = compact ? formatArrivalClock(routeInfo.departureTime, stepStartOffset) : undefined;
+                const stepStartOffsetSeconds = stepStartOffsetsSeconds[index] ?? 0;
+                const timelineClockText = compact ? formatArrivalClock(routeInfo.departureTime, stepStartOffsetSeconds / 60) : undefined;
                 const arrivalInlineMessage = getTransitArrivalInlineMessage(
                     arrivalPresentation,
                     timelineClockText,
@@ -253,7 +264,7 @@ export default function RouteStepTimeline({
                 );
                 const isWalkStep = step.type === "WALK";
                 const isPointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
-                const isTransitStep = step.type === "SUBWAY" || step.type === "BUS";
+                const isTransitStep = isTransitRideKind(step.type);
                 const isColoredMovementStep = isTransitStep || step.type === "DRIVE" || step.type === "BIKE";
                 const iconBackgroundColor = compact
                     ? (isColoredMovementStep ? stepColor : isDark ? "#1C2028" : "#F8FAFC")
@@ -322,7 +333,7 @@ export default function RouteStepTimeline({
                                 {hasBadge && (
                                     <View style={[styles.badge, compact && styles.badgeCompact, { backgroundColor: stepColor }]}>
                                         <Text numberOfLines={1} style={[styles.badgeText, compact && styles.badgeTextCompact]}>
-                                            {step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")}
+                                            {step.badgeText ?? step.lineName ?? transitModeLabel(step.type)}
                                         </Text>
                                     </View>
                                 )}
@@ -556,6 +567,7 @@ export default function RouteStepTimeline({
                 const stepAccessibilityLabel = isEndpointStep
                     ? `${pointLabel}, ${buildStepTitle(step)}`
                     : [
+                        isTransitRideKind(step.type) ? transitModeLabel(step.type) : undefined,
                         step.badgeText ?? step.lineName,
                         buildStepTitle(step),
                         hasBadge ? rideDescription : step.description,
@@ -590,7 +602,7 @@ export default function RouteStepTimeline({
                             <Pressable
                                 testID={`route-step-disclosure-${step.id}`}
                                 accessibilityRole="button"
-                                accessibilityLabel={`${step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")} 경유지 ${expanded ? "접기" : "보기"}`}
+                                accessibilityLabel={`${step.badgeText ?? step.lineName ?? transitModeLabel(step.type)} 경유지 ${expanded ? "접기" : "보기"}`}
                                 accessibilityState={{ expanded }}
                                 accessibilityHint="현재 시트를 유지한 채 경유지 목록만 열거나 닫습니다"
                                 hitSlop={10}

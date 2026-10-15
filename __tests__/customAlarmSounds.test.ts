@@ -25,25 +25,32 @@ describe("NoLate alarm sound preference", () => {
         resetNoLateAlarmSoundPreferenceForTests();
     });
 
-    test("exposes three distinct, user-facing choices", () => {
+    test("exposes ten distinct, user-facing choices in canonical order", () => {
         expect(NOLATE_ALARM_SOUNDS).toEqual([
             { id: "CHIME", label: "차임" },
             { id: "BELL", label: "벨" },
             { id: "BEEP", label: "비프" },
+            { id: "DIGITAL", label: "디지털" },
+            { id: "CRYSTAL", label: "크리스털" },
+            { id: "KNOCK", label: "노크" },
+            { id: "TRIPLE", label: "3연속" },
+            { id: "SWEEP", label: "상승 신호" },
+            { id: "SIREN", label: "사이렌" },
+            { id: "KLAXON", label: "경적" },
         ]);
-        expect(new Set(NOLATE_ALARM_SOUNDS.map(sound => sound.id)).size).toBe(3);
+        expect(new Set(NOLATE_ALARM_SOUNDS.map(sound => sound.id)).size).toBe(10);
     });
 
-    test("persists and restores the selected sound", async () => {
-        await setNoLateAlarmSoundPreference("BELL");
-        expect(await getNoLateAlarmSoundPreference()).toBe("BELL");
+    test("persists and restores the final catalog sound", async () => {
+        await setNoLateAlarmSoundPreference("KLAXON");
+        expect(await getNoLateAlarmSoundPreference()).toBe("KLAXON");
         expect(
             await AsyncStorage.getItem(NOLATE_ALARM_SOUND_TEST_CONSTANTS!.storageKey),
-        ).toBe("BELL");
+        ).toBe("KLAXON");
 
         resetNoLateAlarmSoundPreferenceForTests();
-        expect(await getNoLateAlarmSoundPreference()).toBe("BELL");
-        expect(getNoLateAlarmSound("BELL").label).toBe("벨");
+        expect(await getNoLateAlarmSoundPreference()).toBe("KLAXON");
+        expect(getNoLateAlarmSound("KLAXON").label).toBe("경적");
     });
 
     test("falls back to CHIME for missing or forged values", async () => {

@@ -21,9 +21,13 @@ import { useAuth } from "../../src/modules/auth/AuthContext";
 import { getPostAuthRoute } from "../../src/modules/onboarding/curationRouting";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
+import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
 
 export default function PrivacyPolicyScreen() {
+    useScreenFirstPaintPerformance("/legal/privacy-policy");
     const router = useRouter();
+    const { closeActiveScene } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { isAuthenticated, isCurationCompleted } = useAuth();
@@ -59,6 +63,7 @@ export default function PrivacyPolicyScreen() {
     }, [reloadKey]);
 
     const goBack = () => {
+        if (closeActiveScene()) return;
         if (router.canGoBack()) {
             router.back();
             return;

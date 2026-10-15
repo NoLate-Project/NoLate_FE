@@ -20,6 +20,8 @@ import {
   type SharingReportStatus,
 } from '../../src/api/sharingSafety';
 import { useTheme } from '../../src/modules/theme/ThemeContext';
+import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
+import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
 
 const REASON_LABEL: Record<SharingReportReason, string> = {
   UNWANTED_SHARING: '원치 않는 공유',
@@ -55,7 +57,9 @@ function resourceLabel(report: SharingReport) {
 }
 
 export default function SharingReportHistoryScreen() {
+  useScreenFirstPaintPerformance('/share/reports');
   const router = useRouter();
+  const { closeActiveScene } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
   const { colors, mode } = useTheme();
   const mountedRef = useRef(true);
@@ -98,7 +102,11 @@ export default function SharingReportHistoryScreen() {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="공유함으로 돌아가기"
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/share/inbox'))}
+          onPress={() => {
+            if (closeActiveScene()) return;
+            if (router.canGoBack()) router.back();
+            else router.replace('/share/inbox');
+          }}
           style={styles.headerButton}
         >
           <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />

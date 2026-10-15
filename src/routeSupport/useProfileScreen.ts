@@ -27,6 +27,7 @@ import {
 } from "../modules/onboarding/calendarConnectionStorage";
 import { runWithDepartureAlarmWithdrawalGuard } from "../modules/notification/departureAlarmSync";
 import { runAfterScreenTransition } from "../modules/performance/runAfterScreenTransition";
+import { useImmediateNavigationTransition } from "../modules/performance/ImmediateNavigationTransition";
 import { useTheme } from "../modules/theme/ThemeContext";
 import { formatLoginType } from "./profilePresentation";
 
@@ -37,6 +38,7 @@ const PASSWORD_PATTERN = /^(?=.*[a-zA-Z])(?=.*\\d)(?=.*[!@#$%^&*])[a-zA-Z\\d!@#$
 /** 프로필 화면의 조회·편집·로그아웃·탈퇴 상태와 사용자 작업을 한곳에서 관리합니다. */
 export function useProfileScreen() {
     const router = useRouter();
+    const { runWithTransitionShell } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
     const { colors, mode } = useTheme();
     const { signOut } = useAuth();
@@ -369,13 +371,17 @@ export function useProfileScreen() {
 
     /** 이전 탐색 기록이 있으면 뒤로 이동하고, 없으면 일정 루트로 안전하게 대체 이동합니다. */
     const goBackToSchedule = useCallback(() => {
-        if (router.canGoBack()) {
-            router.back();
-            return;
-        }
-
-        router.replace("/schedule");
-    }, [router]);
+        runWithTransitionShell(
+            { route: '/schedule', title: '일정', showBack: false },
+            () => {
+                if (router.canGoBack()) {
+                    router.back();
+                    return;
+                }
+                router.replace("/schedule");
+            },
+        );
+    }, [router, runWithTransitionShell]);
 
     /** 프로필에서 진입했음을 표시해 캘린더 연결·가져오기 화면을 엽니다. */
     const openCalendarOnboarding = useCallback(() => {
@@ -387,18 +393,31 @@ export function useProfileScreen() {
 
     /** 기본 주소와 즐겨찾기 장소를 관리하는 설정 화면으로 이동합니다. */
     const openPlacesSettings = useCallback(() => {
-        router.push("/settings/places");
-    }, [router]);
+        runWithTransitionShell(
+            {
+                route: "/settings/places",
+                title: "내 장소",
+                backAccessibilityLabel: "프로필로 돌아가기",
+            },
+            () => router.push("/settings/places"),
+        );
+    }, [router, runWithTransitionShell]);
 
     /** 앱 내부 개인정보처리방침 화면으로 이동합니다. */
     const openPrivacyPolicy = useCallback(() => {
-        router.push("/legal/privacy-policy");
-    }, [router]);
+        runWithTransitionShell(
+            { route: "/legal/privacy-policy", title: "개인정보처리방침" },
+            () => router.push("/legal/privacy-policy"),
+        );
+    }, [router, runWithTransitionShell]);
 
     /** 앱 내부 서비스 이용약관 화면으로 이동합니다. */
     const openTermsOfService = useCallback(() => {
-        router.push("/legal/terms-of-service");
-    }, [router]);
+        runWithTransitionShell(
+            { route: "/legal/terms-of-service", title: "서비스 이용약관" },
+            () => router.push("/legal/terms-of-service"),
+        );
+    }, [router, runWithTransitionShell]);
 
     return {
         router,

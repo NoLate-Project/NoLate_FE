@@ -10,6 +10,8 @@
 
 RCT_EXPORT_MODULE(LiquidGlassIconButton)
 
+RCT_EXPORT_VIEW_PROPERTY(outlineIcons, NSDictionary)
+
 + (BOOL)requiresMainQueueSetup
 {
   return YES;
@@ -39,6 +41,8 @@ RCT_EXPORT_VIEW_PROPERTY(onPress, RCTBubblingEventBlock)
 @implementation LiquidCalendarMenuPrototypeManager
 
 RCT_EXPORT_MODULE(LiquidCalendarMenuPrototype)
+
+RCT_EXPORT_VIEW_PROPERTY(outlineIcons, NSDictionary)
 
 + (BOOL)requiresMainQueueSetup
 {

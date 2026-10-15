@@ -1,4 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
+import ScheduleIcon from '../shared/ScheduleIcon';
+import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from './ScheduleInputDesignPreviewContext';
 import React from 'react';
 import {
   Animated,
@@ -59,6 +61,7 @@ export default function ScheduleNewModal({
   onMorphReady,
   morphPresenterRef,
 }: Props) {
+  const isTossPreview = useScheduleInputDesignPreview();
   const controller = useScheduleAddModalController({
     visible,
     prewarm,
@@ -263,15 +266,20 @@ export default function ScheduleNewModal({
                 >
                   <View style={styles.headerRow}>
                     <View style={styles.headerTitleGroup}>
-                      <Ionicons
+                      {isTossPreview ? (
+                        <View style={[inputDesignPreviewStyles.iconTile, { backgroundColor: mode === 'dark' ? 'rgba(36,107,254,0.18)' : '#E8F3FF' }]}>
+                          <ScheduleIcon name="edit" role="formControl" color={mode === 'dark' ? '#72ADFF' : INPUT_DESIGN_ACCENT} />
+                        </View>
+                      ) : <Ionicons
                         accessible={false}
                         name="create-outline"
                         size={20}
                         color={colors.textPrimary}
-                      />
+                      />}
                       <Text
                         style={[
                           styles.headerTitle,
+                          isTossPreview && inputDesignPreviewStyles.headerTitle,
                           { color: colors.textPrimary },
                         ]}
                       >
@@ -585,9 +593,9 @@ export default function ScheduleNewModal({
                       ]}
                     >
                       <Text
-                        style={[styles.saveBtnText, { color: saveTextColor }]}
+                        style={[styles.saveBtnText, isTossPreview && inputDesignPreviewStyles.actionText, { color: saveTextColor }]}
                       >
-                        {submitting ? '저장 중…' : '일정 저장'}
+                        {submitting ? '저장 중…' : isTossPreview ? '일정 만들기' : '일정 저장'}
                       </Text>
                     </Pressable>
                   </View>

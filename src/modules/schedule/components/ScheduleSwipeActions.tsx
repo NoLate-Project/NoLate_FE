@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import ScheduleIcon from "./shared/ScheduleIcon";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
     Pressable,
@@ -106,10 +106,9 @@ export default function ScheduleSwipeActions({
                                 pressed && styles.actionPressed,
                             ]}
                         >
-                            <Ionicons
-                                accessible={false}
-                                name="pencil-outline"
-                                size={compact ? 16 : 18}
+                            <ScheduleIcon
+                                name="edit"
+                                role="menu"
                                 color="#FFFFFF"
                             />
                             <Text style={styles.actionLabel}>수정</Text>
@@ -128,10 +127,9 @@ export default function ScheduleSwipeActions({
                                 pressed && styles.actionPressed,
                             ]}
                         >
-                            <Ionicons
-                                accessible={false}
-                                name="trash-outline"
-                                size={compact ? 16 : 18}
+                            <ScheduleIcon
+                                name="delete"
+                                role="menu"
                                 color="#FFFFFF"
                             />
                             <Text style={styles.actionLabel}>삭제</Text>

@@ -1,4 +1,6 @@
 import React from "react";
+import ScheduleIcon from "../shared/ScheduleIcon";
+import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../../theme/ThemeContext";
@@ -26,7 +28,8 @@ export default function LocationInputRow({
     onPress,
     onClear,
 }: Props) {
-    const { colors } = useTheme();
+    const { colors, mode } = useTheme();
+    const isTossPreview = useScheduleInputDesignPreview();
 
     const hasRoute = !!routeInfo || !!originValue || !!destinationValue;
     const routeText =
@@ -67,17 +70,20 @@ export default function LocationInputRow({
                             pressed && { backgroundColor: colors.surface },
                         ]}
                     >
+                        {isTossPreview && <View style={[inputDesignPreviewStyles.iconTile, { backgroundColor: mode === "dark" ? "rgba(36,107,254,0.18)" : "#E8F3FF" }]}>
+                            <ScheduleIcon name="location" role="formControl" color={mode === "dark" ? "#72ADFF" : INPUT_DESIGN_ACCENT} />
+                        </View>}
                         <View style={styles.textGroup}>
                             <Text numberOfLines={1} style={[styles.routeTitle, { color: colors.textPrimary }]}>
-                                {routeText}
+                                {isTossPreview && !hasRoute ? "장소와 경로 추가" : routeText}
                             </Text>
                             {hasRoute ? (
                                 <Text style={[styles.routeMeta, { color: colors.textSecondary }]}>
                                     {routeMeta}
                                 </Text>
                             ) : (
-                                <Text style={[styles.routeMeta, { color: colors.textSecondary }]}>
-                                    경로와 출발 알림 설정
+                                <Text style={[styles.routeMeta, isTossPreview && inputDesignPreviewStyles.routeMeta, { color: colors.textSecondary }]}>
+                                    {isTossPreview ? "이동 시간에 맞춰 출발 알림을 받아요" : "경로와 출발 알림 설정"}
                                 </Text>
                             )}
                         </View>

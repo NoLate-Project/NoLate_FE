@@ -1,8 +1,9 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import ScheduleIcon, { SCHEDULE_TRAVEL_ICONS } from "../shared/ScheduleIcon";
+import { useTheme } from "../../../theme/ThemeContext";
+import { STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
 
-import type { TravelMode } from "../../types";
 import {
     STACK_EVENT_LANE_COUNT,
     type StackCalendarLayout,
@@ -23,14 +24,6 @@ type Props = {
     layout: StackCalendarLayout;
     eventTop: number;
 };
-
-function travelIconName(mode: TravelMode): keyof typeof Ionicons.glyphMap {
-    if (mode === "TRANSIT") return "bus-outline";
-    if (mode === "CAR") return "car-outline";
-    if (mode === "WALK") return "walk-outline";
-    if (mode === "BIKE") return "bicycle-outline";
-    return "navigate-outline";
-}
 
 /** 한 주 안에서 같은 lane으로 이어지는 날짜 조각을 하나의 제목 영역으로 묶는다. */
 export function createStackWeekLabelSegments(
@@ -81,6 +74,7 @@ export function createStackWeekLabelSegments(
 }
 
 export default function StackWeekEventLabels({ days, layout, eventTop }: Props) {
+    const { colors } = useTheme();
     const segments = createStackWeekLabelSegments(days, layout);
 
     return (
@@ -101,7 +95,7 @@ export default function StackWeekEventLabels({ days, layout, eventTop }: Props) 
                         style={[
                             styles.label,
                             {
-                                top: eventTop + segment.lane * 18,
+                                top: eventTop + segment.lane * STACK_CALENDAR_GEOMETRY.laneStride,
                                 left,
                                 right,
                                 marginLeft: segment.connectsBefore ? 0 : 2,
@@ -110,11 +104,10 @@ export default function StackWeekEventLabels({ days, layout, eventTop }: Props) 
                         ]}
                     >
                         {segment.event.travelMode ? (
-                            <Ionicons
-                                accessible={false}
-                                name={travelIconName(segment.event.travelMode)}
-                                size={9}
-                                color={segment.event.color}
+                            <ScheduleIcon
+                                name={SCHEDULE_TRAVEL_ICONS[segment.event.travelMode]}
+                                role="calendarMarker"
+                                color={colors.textSecondary}
                                 style={styles.icon}
                             />
                         ) : null}
@@ -122,7 +115,7 @@ export default function StackWeekEventLabels({ days, layout, eventTop }: Props) 
                             testID="stack-week-event-title"
                             numberOfLines={1}
                             ellipsizeMode="tail"
-                            style={[styles.title, { color: segment.event.color }]}
+                            style={[styles.title, { color: colors.textPrimary }]}
                         >
                             {segment.event.title}
                         </Text>
@@ -144,9 +137,9 @@ const styles = StyleSheet.create({
     },
     label: {
         position: "absolute",
-        height: 16,
+        height: STACK_CALENDAR_GEOMETRY.eventHeight,
         minWidth: 0,
-        paddingHorizontal: 3,
+        paddingHorizontal: 5,
         flexDirection: "row",
         alignItems: "center",
         overflow: "hidden",
@@ -158,9 +151,9 @@ const styles = StyleSheet.create({
     title: {
         flex: 1,
         minWidth: 0,
-        fontSize: 9.5,
-        lineHeight: 13,
-        fontWeight: "700",
+        fontSize: 10.5,
+        lineHeight: 14,
+        fontWeight: "600",
         letterSpacing: -0.1,
     },
 });

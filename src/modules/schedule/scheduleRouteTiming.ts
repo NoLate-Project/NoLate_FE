@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "../map/transitModes";
 import { getRouteInfoFromRoute, isRouteInfo, type RouteInfo } from "./routeInfo";
 import { hasRenderableSavedRouteGeometry } from "../map/savedRouteMapPresentation";
 import type { Place } from "./types";
@@ -13,9 +14,11 @@ export type ScheduleRouteDepartureContext = {
 
 export type SelectedRouteTimingInfo = {
     totalDurationMinutes?: number;
+    /** 공급자 원본 초. 분 단위 표시는 계산에 다시 사용하지 않는다. */
+    totalDurationSeconds?: number;
     departureTime?: string;
     arrivalTime?: string;
-    timeBasis?: "provider_schedule" | "estimated";
+    timeBasis?: "provider_schedule" | "estimated" | "anchored_journey";
 };
 
 export type SelectedRouteTiming = {
@@ -44,7 +47,10 @@ export function hasPersistableScheduleRoute(
     const durationMinutes = normalizeSelectedTravelMinutes(travelMinutes)
         ?? normalizeSelectedTravelMinutes(routeInfo?.totalDurationMinutes);
     return durationMinutes !== undefined
-        && hasRenderableSavedRouteGeometry(route, origin, destination);
+        && (hasRenderableSavedRouteGeometry(route, origin, destination)
+            || Boolean(routeInfo?.originName?.trim() && routeInfo.destinationName?.trim() &&
+                routeInfo.steps.some(step => isTransitRideKind(step.type) &&
+                    typeof step.durationMinutes === "number" && step.durationMinutes > 0)));
 }
 
 function normalizeTravelMinutes(value?: number): number {
@@ -63,6 +69,30 @@ function parseValidDate(value?: string | Date): Date | undefined {
 function normalizeSelectedTravelMinutes(value?: number): number | undefined {
     if (!Number.isFinite(value) || !value || value <= 0) return undefined;
     return Math.round(value);
+}
+
+function selectedDuration(
+    info: SelectedRouteTimingInfo | undefined,
+    fallbackMinutes: number | undefined,
+    referenceDates: (Date | undefined)[],
+): { milliseconds: number; usesSeconds: boolean } | undefined {
+    // 저장 JSON의 비정상적으로 큰 값이 Invalid Date/저장 예외를 만들지 않게 한다.
+    const isUsable = (milliseconds: number) => Number.isFinite(milliseconds) && referenceDates.every(date =>
+        !date || (
+            Number.isFinite(new Date(date.getTime() + milliseconds).getTime()) &&
+            Number.isFinite(new Date(date.getTime() - milliseconds).getTime())
+        )
+    );
+    const seconds = info?.totalDurationSeconds;
+    if (typeof seconds === "number" && seconds > 0 && isUsable(seconds * 1000)) {
+        return { milliseconds: seconds * 1000, usesSeconds: true };
+    }
+    // 이전에 저장한 경로에는 초가 없으므로 기존 분 단위 계산을 보존한다.
+    const minutes = normalizeSelectedTravelMinutes(info?.totalDurationMinutes)
+        ?? normalizeSelectedTravelMinutes(fallbackMinutes);
+    return minutes === undefined || !isUsable(minutes * 60_000)
+        ? undefined
+        : { milliseconds: minutes * 60_000, usesSeconds: false };
 }
 
 /**
@@ -107,7 +137,8 @@ export function resolveScheduleRouteDepartureContext(
  * 최종 선택 경로를 저장할 때 사용할 출·도착 시각을 한 번에 확정한다.
  *
  * 공급자 시간표가 있으면 실제 운행 시각을 보존한다. 시간표가 없는 경로는 이동수단과
- * 관계없이 선택된 경로의 실제 소요시간을 일정 도착 시각에서 빼서 출발 시각을 계산한다.
+ * 관계없이 선택된 경로의 추정 소요시간을 일정 도착 시각에서 빼서 출발 시각을 계산한다.
+ * 원본 초가 있으면 그대로 사용하며, 이 역산을 실제 열차 시간표 검증으로 해석하지 않는다.
  * 이 결과를 top-level departAt과 저장 routeInfo에 함께 사용하면 두 값이 어긋나지 않는다.
  */
 export function resolveSelectedRouteTiming({
@@ -124,7 +155,7 @@ export function resolveSelectedRouteTiming({
     const routeDepartureAt = parseValidDate(routeInfo?.departureTime);
     const routeArrivalAt = parseValidDate(routeInfo?.arrivalTime);
     if (
-        routeInfo?.timeBasis === "provider_schedule" &&
+        (routeInfo?.timeBasis === "provider_schedule" || routeInfo?.timeBasis === "anchored_journey") &&
         routeDepartureAt &&
         routeArrivalAt &&
         routeArrivalAt.getTime() >= routeDepartureAt.getTime()
@@ -137,27 +168,30 @@ export function resolveSelectedRouteTiming({
     }
 
     const safeNow = Number.isFinite(now.getTime()) ? new Date(now) : new Date();
-    safeNow.setSeconds(0, 0);
     const arrivalTarget = parseValidDate(targetArrivalAt);
-    const travelMinutes = normalizeSelectedTravelMinutes(routeInfo?.totalDurationMinutes);
-    if (arrivalTarget && arrivalTarget.getTime() > safeNow.getTime() && travelMinutes) {
+    const fallbackDate = parseValidDate(fallbackDepartureAt);
+    const duration = selectedDuration(routeInfo, undefined, [safeNow, arrivalTarget, routeDepartureAt, fallbackDate]);
+    const durationMilliseconds = duration?.milliseconds;
+    // 초가 없는 과거 경로의 분 단위 정책은 유지하되, 초 정밀 경로는 실제 now와 비교한다.
+    if (!duration?.usesSeconds) safeNow.setSeconds(0, 0);
+    if (arrivalTarget && arrivalTarget.getTime() > safeNow.getTime() && durationMilliseconds !== undefined) {
         const calculatedDepartureAt = new Date(
-            arrivalTarget.getTime() - travelMinutes * 60 * 1000
+            arrivalTarget.getTime() - durationMilliseconds
         );
-        calculatedDepartureAt.setSeconds(0, 0);
+        if (!duration?.usesSeconds) calculatedDepartureAt.setSeconds(0, 0);
         const departureAt = calculatedDepartureAt.getTime() > safeNow.getTime()
             ? calculatedDepartureAt
             : safeNow;
         return {
             departureAt,
-            arrivalAt: new Date(departureAt.getTime() + travelMinutes * 60 * 1000),
+            arrivalAt: new Date(departureAt.getTime() + durationMilliseconds),
             source: "schedule_arrival",
         };
     }
 
     if (routeDepartureAt) {
-        const arrivalAt = travelMinutes
-            ? new Date(routeDepartureAt.getTime() + travelMinutes * 60 * 1000)
+        const arrivalAt = durationMilliseconds !== undefined
+            ? new Date(routeDepartureAt.getTime() + durationMilliseconds)
             : routeArrivalAt ?? routeDepartureAt;
         return {
             departureAt: routeDepartureAt,
@@ -166,9 +200,9 @@ export function resolveSelectedRouteTiming({
         };
     }
 
-    const fallback = parseValidDate(fallbackDepartureAt) ?? safeNow;
-    const arrivalAt = travelMinutes
-        ? new Date(fallback.getTime() + travelMinutes * 60 * 1000)
+    const fallback = fallbackDate ?? safeNow;
+    const arrivalAt = durationMilliseconds !== undefined
+        ? new Date(fallback.getTime() + durationMilliseconds)
         : fallback;
     return {
         departureAt: fallback,
@@ -206,14 +240,15 @@ export function reconcileScheduleRouteTiming({
     }
 
     const routeInfo = getRouteInfoFromRoute(route);
-    const durationMinutes = normalizeSelectedTravelMinutes(routeInfo?.totalDurationMinutes)
-        ?? normalizeSelectedTravelMinutes(travelMinutes);
-    if (!durationMinutes) {
+    // A changed appointment never moves a chosen public service. Re-selection is explicit.
+    if (routeInfo?.intercityJourney) return { departAt: routeInfo.departureTime, route };
+    const durationMilliseconds = selectedDuration(routeInfo, travelMinutes, [nextArrival])?.milliseconds;
+    if (durationMilliseconds === undefined) {
         // 계산 근거가 없으면 과거 시각을 새 일정에 잘못 붙이는 것보다 비우는 편이 안전하다.
         return { departAt: undefined, route };
     }
 
-    const nextDeparture = new Date(nextArrival.getTime() - durationMinutes * 60 * 1000);
+    const nextDeparture = new Date(nextArrival.getTime() - durationMilliseconds);
     const nextDepartureAt = nextDeparture.toISOString();
     if (!routeInfo) return { departAt: nextDepartureAt, route };
 

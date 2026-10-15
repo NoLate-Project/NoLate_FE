@@ -6,6 +6,7 @@ export default function TermsOfServiceScreen() {
         <LegalAgreementDocumentScreen
             fallback={TERMS_OF_SERVICE_FALLBACK}
             loadDocument={getTermsOfService}
+            route="/legal/terms-of-service"
         />
     );
 }

@@ -15,6 +15,7 @@ import {
 } from '../../../api/scheduleCalendars';
 import { buildRouteSetupEntryRoute } from '../routeSetupNavigation';
 import type { ScheduleItem } from '../types';
+import { useImmediateNavigationTransition } from '../../performance/ImmediateNavigationTransition';
 
 type UseScheduleIndexCalendarActionsParams = {
   calendarShareFallbackTimeoutRef: MutableRefObject<ReturnType<
@@ -51,11 +52,19 @@ export function useScheduleIndexCalendarActions({
   setScheduleCalendars,
 }: UseScheduleIndexCalendarActionsParams) {
   const router = useRouter();
+  const { runWithTransitionShell } = useImmediateNavigationTransition();
 
   /** 프로필과 사용자 설정 화면으로 이동한다. */
   const openAccountSettings = useCallback(() => {
-    router.push('/profile');
-  }, [router]);
+    runWithTransitionShell(
+      {
+        route: '/profile',
+        title: '프로필',
+        backAccessibilityLabel: '일정 목록으로 돌아가기',
+      },
+      () => router.push('/profile'),
+    );
+  }, [router, runWithTransitionShell]);
 
   /** 현재 툴바 메뉴가 닫힌 뒤 캘린더 범위 선택기를 표시한다. */
   const openCalendarScopeSelector = useCallback(() => {
@@ -134,8 +143,11 @@ export function useScheduleIndexCalendarActions({
 
   /** 선택기가 닫힌 다음 공유 캘린더 관리 화면으로 이동한다. */
   const openSharedCalendarManagerFromSelector = useCallback(() => {
-    requestAnimationFrame(() => router.push('/schedule/calendars'));
-  }, [router]);
+    requestAnimationFrame(() => runWithTransitionShell(
+      { route: '/schedule/calendars', title: '공유 캘린더' },
+      () => router.push('/schedule/calendars'),
+    ));
+  }, [router, runWithTransitionShell]);
 
   const routeSetupTarget = useMemo(() => {
     const now = Date.now();

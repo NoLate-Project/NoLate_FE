@@ -290,7 +290,15 @@ export default function NoLateCustomAlarmScreen({ presentation, onClose, onOpenR
                 <View style={styles.topBar}>
                     <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={stopped ? "알람이 꺼짐" : muted ? "알람 소리 켜기" : "알람 소리 끄기"}
+                        accessibilityLabel={stopped ? "알람이 꺼짐" : muted ? "소리 모드로 전환" : "무음 모드로 전환"}
+                        accessibilityHint={stopped
+                            ? undefined
+                            : muted
+                            ? "현재 진동만 울립니다. 소리 모드에서는 벨소리와 진동이 함께 울립니다."
+                            : "현재 벨소리와 진동이 함께 울립니다. 무음 모드에서는 진동만 울립니다."}
+                        accessibilityValue={stopped
+                            ? { text: "꺼짐" }
+                            : { text: muted ? "진동만" : "벨소리와 진동" }}
                         accessibilityState={{ disabled: stopped || pendingAction !== null }}
                         disabled={stopped || pendingAction !== null}
                         onPress={() => {

@@ -1,7 +1,9 @@
+import { isTransitRideKind } from "../../map/transitModes";
 /** 정규화 경로를 진행 막대·타임라인·저장 경로·지도 오버레이 표현으로 변환합니다. */
 import { type TransitLegDetail } from '../../map/routingService';
 import { type TmapPathOverlay } from '../../map/TmapMapView';
 import { joinWalkPathEndpoint } from '../../map/transitRouteGeometry';
+import { validTotalDurationSeconds } from '../../map/routeDuration';
 import { type RouteEndpointAccessPath } from '../../map/routeEndpointAccess';
 import { getTransitWalkGuidePresentation } from '../../map/transitRoutePresentation';
 import { formatDistance, formatDuration } from './presentation';
@@ -44,8 +46,7 @@ import {
 export function routeSegmentModeToProgressKind(
   mode: RouteMode,
 ): TransitLegDetail['kind'] {
-  if (mode === 'BUS') return 'BUS';
-  if (mode === 'SUBWAY') return 'SUBWAY';
+  if (isTransitRideKind(mode)) return mode;
   if (mode === 'WALK') return 'WALK';
   return 'ETC';
 }
@@ -87,10 +88,9 @@ export function buildTransitProgressSegmentsFromRoute(
 export function routeStepTypeFromSegmentMode(
   mode: RouteMode,
 ): RouteStep['type'] {
-  if (mode === 'BUS') return 'BUS';
-  if (mode === 'SUBWAY') return 'SUBWAY';
+  if (isTransitRideKind(mode)) return mode;
   if (mode === 'TRANSFER') return 'TRANSFER';
-  return 'WALK';
+  return mode === 'WALK' ? 'WALK' : 'UNKNOWN';
 }
 
 /** 세그먼트의 표시 좌표를 우선 사용해 타임라인 포커스용 좌표 목록을 만듭니다. 입력 경로 정보는 변경하지 않습니다. */
@@ -142,7 +142,7 @@ export function buildSegmentStepTitle(
 ): string {
   if (segment.mode === 'TRANSFER') return '환승';
   if (fallback?.trim()) return fallback;
-  if (segment.mode === 'BUS' || segment.mode === 'SUBWAY') {
+  if (isTransitRideKind(segment.mode)) {
     return (
       segment.fromName?.trim() ||
       segment.lineName?.trim() ||
@@ -157,7 +157,9 @@ export function buildRouteInfoFromNormalizedRoute(
   baseRouteInfo: RouteInfo,
   route: NormalizedRoute | undefined,
 ): RouteInfo {
-  if (!route?.segments?.length) return baseRouteInfo;
+  // Selected-service steps carry explicit buffers and timetable evidence; normalization
+  // for map geometry must not replace their temporal order or labels.
+  if (baseRouteInfo.intercityJourney || !route?.segments?.length) return baseRouteInfo;
   const originStep =
     baseRouteInfo.steps.find(step => step.type === 'ORIGIN') ??
     baseRouteInfo.steps[0];
@@ -173,7 +175,7 @@ export function buildRouteInfoFromNormalizedRoute(
     const baseStep = baseTravelSteps[index];
     const type = routeStepTypeFromSegmentMode(segment.mode);
     const lineColor =
-      segment.mode === 'BUS' || segment.mode === 'SUBWAY'
+      isTransitRideKind(segment.mode)
         ? getSegmentColor(segment)
         : undefined;
     return {
@@ -186,10 +188,11 @@ export function buildRouteInfoFromNormalizedRoute(
         typeof segment.duration === 'number'
           ? Math.max(1, Math.round(segment.duration))
           : baseStep?.durationMinutes,
+      durationSeconds: segment.durationSeconds ?? baseStep?.durationSeconds,
       distanceMeters: segment.distance ?? baseStep?.distanceMeters,
       lineName: segment.lineName ?? baseStep?.lineName,
       lineColor: lineColor ?? baseStep?.lineColor,
-      badgeText: segment.lineName ?? baseStep?.badgeText,
+      badgeText: baseStep?.badgeText ?? segment.lineName,
       coordinates: routeSegmentCoordinatesForStep(segment),
     };
   });
@@ -201,6 +204,9 @@ export function buildRouteInfoFromNormalizedRoute(
       typeof route.totalDuration === 'number'
         ? Math.max(0, Math.round(route.totalDuration))
         : baseRouteInfo.totalDurationMinutes,
+    totalDurationSeconds:
+      validTotalDurationSeconds(route.totalDurationSeconds, new Date(baseRouteInfo.departureTime).getTime())
+      ?? validTotalDurationSeconds(baseRouteInfo.totalDurationSeconds, new Date(baseRouteInfo.departureTime).getTime()),
     fare: route.fare ?? baseRouteInfo.fare,
     totalDistanceMeters:
       route.totalDistance ?? baseRouteInfo.totalDistanceMeters,
@@ -320,7 +326,7 @@ export function buildRouteInfoPathOverlays(
     if (!Array.isArray(step.coordinates) || step.coordinates.length < 2)
       return [];
     const isWalk = step.type === 'WALK' || step.type === 'TRANSFER';
-    const isTransitRide = step.type === 'BUS' || step.type === 'SUBWAY';
+    const isTransitRide = isTransitRideKind(step.type);
     const isDrive = step.type === 'DRIVE';
     const isBike = step.type === 'BIKE';
     // Transit fallback에는 viewport-aware carrier 계획이 없으므로 SDK 기본 과밀 화살표를 켜지 않는다.

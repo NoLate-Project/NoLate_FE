@@ -1,3 +1,5 @@
+import { STACK_CALENDAR_GEOMETRY } from "./stackCalendarAppearance";
+
 export type CalendarViewMode = "stack" | "detail" | "week" | "list";
 export type CalendarViewModePreference = Exclude<CalendarViewMode, "week">;
 
@@ -11,7 +13,7 @@ export function isCalendarViewModePreference(
 
 export const CALENDAR_DAY_HEIGHTS: Record<CalendarViewMode, number> = {
     // 휴일이 있는 날의 두 일정 lane과 overflow까지 유지하면서 남는 세로 공간만 줄인다.
-    stack: 116,
+    stack: STACK_CALENDAR_GEOMETRY.rowHeight,
     detail: 72,
     week: 86,
     list: 68,

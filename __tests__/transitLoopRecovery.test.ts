@@ -113,7 +113,18 @@ describe("transit loop recovery", () => {
         expect(selectTransitLoopSubroute([wrong, valid], "2호선", seongsu, "TO_ANCHOR")?.id).toBe("valid");
     });
 
-    test("중간역 도보를 제거하고 하나의 정확한 무환승 노선으로 합친다", () => {
+    test.each([
+        [true, true, true, undefined, undefined, 38],
+        [undefined, true, undefined, undefined, undefined, 38],
+        [true, undefined, undefined, undefined, undefined, 38],
+        [undefined, undefined, undefined, undefined, undefined, 38],
+        [false, true, false, undefined, undefined, 38],
+        [true, true, true, 601, 1681, 39],
+        [true, true, true, undefined, 1681, 38],
+        [true, true, true, 0, 0, 1],
+    ] as const)("중간역 도보 제거 후 운행 %s + %s = %s, 원본 초 %s + %s로 %s분을 계산한다", (
+        leftService, rightService, expectedService, leftSeconds, rightSeconds, expectedMinutes
+    ) => {
         const startWalk = walkLeg(jamsil, { lat: 37.513336, lng: 127.100189 }, 3);
         const endWalk = walkLeg({ lat: 37.55719, lng: 126.92450 }, hongdae, 2);
         const longRide = subwayLeg("잠실", "홍대입구", [
@@ -122,6 +133,7 @@ describe("transit loop recovery", () => {
             ["홍대입구", 37.55719, 126.92450],
         ], 51, 28_797);
         const direct = option("direct", [startWalk, longRide, endWalk], 57, 28_916);
+        direct.totalDurationSeconds = 3420;
         const plan = createTransitLoopRecoveryPlan([direct], jamsil, hongdae)!;
 
         const leftRide = subwayLeg("잠실", "성수", [
@@ -135,6 +147,10 @@ describe("transit loop recovery", () => {
             ["홍대입구", 37.55719, 126.92450],
         ], 28, 13_588);
         const anchorWalk = walkLeg(seongsu, seongsu, 3);
+        leftRide.serviceAvailable = leftService;
+        rightRide.serviceAvailable = rightService;
+        leftRide.durationSeconds = leftSeconds;
+        rightRide.durationSeconds = rightSeconds;
         const left = option("left", [startWalk, leftRide, anchorWalk], 16, 6_622);
         const right = option("right", [anchorWalk, rightRide, endWalk], 34, 13_702);
 
@@ -143,7 +159,7 @@ describe("transit loop recovery", () => {
 
         expect(recovered).toMatchObject({
             id: "loop-recovered-direct",
-            minutes: 38,
+            minutes: expectedMinutes,
             transferCount: 0,
             fareWon: 1_750,
         });
@@ -157,6 +173,11 @@ describe("transit loop recovery", () => {
         expect(rides?.[0].passStops?.map((stop) => stop.name)).toEqual([
             "잠실", "건대입구", "성수", "왕십리", "홍대입구",
         ]);
+        expect(rides?.[0].serviceAvailable).toBe(expectedService);
+        const expectedSeconds = leftSeconds === undefined || rightSeconds === undefined
+            ? undefined : leftSeconds + rightSeconds;
+        expect(rides?.[0].durationSeconds).toBe(expectedSeconds);
+        expect(recovered?.totalDurationSeconds).toBe(expectedSeconds === 0 ? undefined : expectedSeconds);
     });
 
     test("역이 아닌 주변 장소에서 출발하면 실제 접근 도보를 보존한다", () => {

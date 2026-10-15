@@ -150,6 +150,18 @@ type RoutePlannerSession = {
 
 const ROUTE_PLANNER_SESSION_TTL_MS = 1000 * 60 * 60;
 const sessions = new Map<string, RoutePlannerSession>();
+const sessionListeners = new Set<() => void>();
+let latestSessionId: string | undefined;
+
+/** Lets the root pre-mount the most recently prepared route-selection scene. */
+export function subscribeLatestRoutePlannerSession(listener: () => void) {
+    sessionListeners.add(listener);
+    return () => sessionListeners.delete(listener);
+}
+
+export function getLatestRoutePlannerSessionId(): string | undefined {
+    return latestSessionId;
+}
 
 // 경로 목록과 지도 상세 화면 사이의 한 번의 네비게이션 왕복만 위한 임시 인메모리 브리지다.
 // 콜드 스타트 시 루트 네비게이션과 작성 폼/sessionId가 복원되지 않으므로 payload만 영속화하면
@@ -178,6 +190,10 @@ function getOrCreateSession(sessionId: string): RoutePlannerSession {
 export function setRoutePlannerInitial(sessionId: string, initial: RoutePlannerPayload): void {
     const session = getOrCreateSession(sessionId);
     session.initial = initial;
+    if (latestSessionId !== sessionId) {
+        latestSessionId = sessionId;
+        sessionListeners.forEach((listener) => listener());
+    }
 }
 
 export function getRoutePlannerInitial(sessionId: string): RoutePlannerPayload | undefined {

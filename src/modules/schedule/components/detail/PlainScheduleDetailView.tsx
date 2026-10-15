@@ -1,3 +1,4 @@
+import ImportedTicketSummary from './ImportedTicketSummary';
 import React, { useMemo } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Ionicons as ExpoIonicons } from "@expo/vector-icons";
@@ -193,6 +194,8 @@ export default function PlainScheduleDetailView({
                         last
                     />
                 </View>
+
+                <ImportedTicketSummary route={item.route} />
 
                 {travelPlan ? (
                     <View style={styles.travelPlanSection}>

@@ -1,7 +1,9 @@
+import { isTransitRideKind, transitModeLabel } from "./transitModes";
 import axios from "axios";
 import { Platform } from "react-native";
 
 import { getEnv } from "../../api/env";
+import { OdsayApiError } from "./odsayApiError";
 import type { Place } from "../schedule/types";
 import type {
     RoutePathCoord,
@@ -293,6 +295,9 @@ function normalizeLegKind(trafficType: unknown): TransitLegKind {
     if (value === 1) return "SUBWAY";
     if (value === 2) return "BUS";
     if (value === 3) return "WALK";
+    if (value === 4) return "TRAIN";
+    if (value === 5) return "EXPRESS_BUS";
+    if (value === 6) return "INTERCITY_BUS";
     return "ETC";
 }
 
@@ -403,7 +408,7 @@ function buildLegLabel(leg: Pick<TransitLegDetail, "kind" | "lineName" | "durati
         const time = typeof leg.durationMinutes === "number" ? `${leg.durationMinutes}분` : undefined;
         return ["도보", distance, time].filter(Boolean).join(" · ");
     }
-    const mode = leg.kind === "BUS" ? "버스" : leg.kind === "SUBWAY" ? "지하철" : "이동";
+    const mode = transitModeLabel(leg.kind);
     return [mode, leg.lineName, leg.durationMinutes ? `${leg.durationMinutes}분` : undefined]
         .filter(Boolean)
         .join(" · ");
@@ -430,7 +435,7 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
         const recommendation = textValue(leg?.door);
         const hasFollowingRide = legs
             .slice(index + 1)
-            .some((nextLeg) => [1, 2].includes(safeNumber(nextLeg?.trafficType) ?? -1));
+            .some((nextLeg) => [1, 2, 4, 5, 6].includes(safeNumber(nextLeg?.trafficType) ?? -1));
         const directionCode = safeNumber(leg?.wayCode) === 1
             ? "UP" as const
             : safeNumber(leg?.wayCode) === 2
@@ -486,7 +491,9 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
                 ? kind === "WALK" ? "WALK_STEPS_LINESTRING" : "TRANSIT_PASS_SHAPE_LINESTRING"
                 : fallbackPath.length >= 2 ? "PASS_STOP_LIST" : "UNKNOWN",
             rawPathPointCount: pathCoords.length || undefined,
-            serviceAvailable: kind === "BUS" || kind === "SUBWAY" ? true : undefined,
+            // 경로 존재/추정 시각만으로 해당 시각에 차량이 운행한다고 확정할 수 없다.
+            // maasRP 응답에서 확인하지 않은 운행 여부는 unknown으로 보존한다.
+            serviceAvailable: undefined,
         };
         return { ...detail, label: buildLegLabel(detail) };
     });
@@ -500,8 +507,8 @@ function buildOptionPath(legs: TransitLegDetail[]): RoutePathCoord[] | undefined
 
 function buildModeSummary(legs: TransitLegDetail[]): string | undefined {
     const values = legs
-        .filter((leg) => leg.kind === "BUS" || leg.kind === "SUBWAY")
-        .map((leg) => leg.lineName ?? (leg.kind === "BUS" ? "버스" : "지하철"));
+        .filter((leg) => isTransitRideKind(leg.kind))
+        .map((leg) => leg.lineName ?? transitModeLabel(leg.kind));
     return values.length ? values.join(" → ") : undefined;
 }
 
@@ -518,7 +525,7 @@ export function parseTransitOptionsFromOdsay(data: any): TransitRouteOption[] {
             if (typeof minutes !== "number" || minutes <= 0) return undefined;
 
             const transitLegs = parseLegs(path?.rps);
-            const rideCount = transitLegs.filter((leg) => leg.kind === "BUS" || leg.kind === "SUBWAY").length;
+            const rideCount = transitLegs.filter((leg) => isTransitRideKind(leg.kind)).length;
             const walkMeters = transitLegs
                 .filter((leg) => leg.kind === "WALK")
                 .reduce((sum, leg) => sum + (leg.distanceMeters ?? 0), 0);
@@ -538,6 +545,7 @@ export function parseTransitOptionsFromOdsay(data: any): TransitRouteOption[] {
                 provider: "odsay",
                 providerDepartureAt: parseOdsayDateTime(path?.startDateTime),
                 providerArrivalAt: parseOdsayDateTime(path?.endDateTime),
+                providerTimeBasis: "route_estimate",
                 attributionText: "ODsay",
                 attributionUrl: ODSAY_ATTRIBUTION_URL,
             };
@@ -547,12 +555,13 @@ export function parseTransitOptionsFromOdsay(data: any): TransitRouteOption[] {
         .sort((left, right) => left.minutes - right.minutes);
 }
 
-function responseError(data: any): Error | undefined {
-    const error = data?.result?.error ?? data?.error;
+function responseError(data: any): OdsayApiError | undefined {
+    // ODsay는 HTTP 200에서도 error 배열로 한도 초과 등을 반환한다.
+    const error = ensureArray(data?.result?.error ?? data?.error)[0];
     if (!error) return undefined;
     const code = textValue(error?.code);
     const message = textValue(error?.msg ?? error?.message) ?? "대중교통 경로를 찾지 못했어요.";
-    return new Error(code ? `${message} (${code})` : message);
+    return new OdsayApiError(code, code ? `${message} (${code})` : message);
 }
 
 export function odsayApiErrorMessage(error: unknown): string {
@@ -564,14 +573,14 @@ export function odsayApiErrorMessage(error: unknown): string {
     return error.message || "대중교통 경로를 불러오지 못했어요.";
 }
 
-/** 플랫폼에 등록된 모바일 키로 시간표 기반 정밀 대중교통 경로를 조회한다. */
+/** 플랫폼에 등록된 모바일 키로 대중교통 경로 추정값을 조회한다. 운행 시간표 확인과는 별개다. */
 export async function getOdsayTransitRouteOptions(
     origin: Place,
     destination: Place,
     departureAt = new Date()
 ): Promise<TransitRouteOption[]> {
     const apiKey = resolveOdsayApiKey();
-    if (!apiKey) throw new Error("대중교통 경로를 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
+    if (!apiKey) throw new OdsayApiError("KEY_MISSING", "대중교통 경로 인증키가 설정되지 않았습니다.");
 
     const response = await axios.get(`${ODSAY_API_BASE_URL}/maasRP`, {
         timeout: ODSAY_REQUEST_TIMEOUT_MS,
@@ -586,6 +595,19 @@ export async function getOdsayTransitRouteOptions(
             lang: 0,
             output: "json",
         },
+    }).catch((error: unknown) => {
+        if (axios.isAxiosError(error)) {
+            const providerError = responseError(error.response?.data);
+            if (providerError) throw providerError;
+            if (error.response?.status === 429) {
+                throw new OdsayApiError("429", "대중교통 경로 제공사의 조회 한도를 초과했습니다.");
+            }
+            // Never print Axios config/URL: it contains the provider key.
+            const code = error.response?.status ? `HTTP_${error.response.status}`
+                : error.code === "ECONNABORTED" ? "TIMEOUT" : "NETWORK_UNAVAILABLE";
+            throw new OdsayApiError(code, "대중교통 경로 서비스 요청에 실패했습니다.");
+        }
+        throw error;
     });
     const apiError = responseError(response.data);
     if (apiError) throw apiError;

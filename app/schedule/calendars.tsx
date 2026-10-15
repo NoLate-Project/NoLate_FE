@@ -38,6 +38,8 @@ import { getCachedScheduleCalendars } from "../../src/modules/schedule/scheduleC
 import ShareInvitationSheet from "../../src/modules/schedule/components/share/ShareInvitationSheet";
 import { useTheme } from "../../src/modules/theme/ThemeContext";
 import BrandedLoader from "../../src/ui/BrandedLoader";
+import { useScreenFirstPaintPerformance } from "../../src/modules/performance/useScreenFirstPaintPerformance";
+import { useImmediateNavigationTransition } from "../../src/modules/performance/ImmediateNavigationTransition";
 import { ColorPicker, ContentModeControl, MemberRow, roleLabel } from "../../src/routeSupport/schedule/CalendarsSettingsComponents";
 
 const BRAND_BLUE = "#2F80FF";
@@ -55,6 +57,8 @@ function contentModeLabel(mode: ScheduleShareContentMode) {
 
 /** 공유 캘린더 생성·선택·멤버 관리 흐름을 조율하는 설정 화면입니다. */
 export default function ScheduleCalendarsScreen() {
+    useScreenFirstPaintPerformance('/schedule/calendars');
+    const { runWithTransitionShell } = useImmediateNavigationTransition();
     const router = useRouter();
     const params = useLocalSearchParams<{ id?: string }>();
     const insets = useSafeAreaInsets();
@@ -503,7 +507,10 @@ export default function ScheduleCalendarsScreen() {
         );
     }, [busy, isCurrentDetailTarget, selectCalendar, selected]);
 
-    const goBack = () => router.canGoBack() ? router.back() : router.replace("/schedule");
+    const goBack = () => runWithTransitionShell(
+        { route: "/schedule", title: "일정", showBack: false },
+        () => router.canGoBack() ? router.back() : router.replace("/schedule"),
+    );
 
     return (
         <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>

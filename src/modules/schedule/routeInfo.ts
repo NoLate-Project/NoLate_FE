@@ -1,3 +1,7 @@
+import type { IntercityJourney } from './intercityJourney';
+import type { IntercityRideService } from './importedTicket';
+import { isIntercityRideKind } from "../map/transitModes";
+import { isTransitRideKind, transitModeLabel, intercityRideColor } from "../map/transitModes";
 import type {
     RouteAlternativeOption,
     RouteApiProvider,
@@ -6,6 +10,7 @@ import type {
     TransitLegDetail,
 } from "../map/tmapApi";
 import { getTransitBoardingDirectionHint } from "../map/transitStopLabelPresentation";
+import { validTotalDurationSeconds } from "../map/routeDuration";
 import type { Place, TravelMode } from "./types";
 
 export type RouteStepType =
@@ -16,7 +21,12 @@ export type RouteStepType =
     | "BUS"
     | "DRIVE"
     | "BIKE"
-    | "TRANSFER";
+    | "TRANSFER"
+    | "TRAIN"
+    | "EXPRESS_BUS"
+    | "INTERCITY_BUS"
+    | "COACH"
+    | "UNKNOWN";
 
 export type RouteCoordinate = {
     latitude: number;
@@ -30,11 +40,14 @@ export type RoutePassStop = {
 };
 
 export interface RouteStep {
+    intercityService?: IntercityRideService;
     id: string;
     type: RouteStepType;
     title: string;
     description?: string;
     durationMinutes?: number;
+    /** 원본 구간 초가 있으면 타임라인 계산에서 표시용 분보다 우선한다. */
+    durationSeconds?: number;
     /** 공급자 구간 시간에 포함된 승차 대기시간. 실시간 출발 ETA에서 교체하기 위해 보존한다. */
     waitingMinutes?: number;
     distanceMeters?: number;
@@ -53,12 +66,15 @@ export interface RouteStep {
 }
 
 export interface RouteInfo {
+    intercityJourney?: IntercityJourney;
     id: string;
     /** 시간표와 경로를 제공한 공급자. 기존 저장 데이터 호환을 위해 선택값으로 유지한다. */
     provider?: RouteApiProvider;
     originName: string;
     destinationName: string;
     totalDurationMinutes: number;
+    /** 원본 전체 초. 구간 합계와 임의로 맞추지 않는다. */
+    totalDurationSeconds?: number;
     departureTime: string;
     arrivalTime: string;
     fare?: number;
@@ -67,8 +83,10 @@ export interface RouteInfo {
     transferCount?: number;
     walkingDistanceMeters?: number;
     totalDistanceMeters?: number;
-    /** 공급자 시간표가 아닌 현재 시각 + 경로 소요시간으로 계산한 경우 estimated. */
-    timeBasis: "provider_schedule" | "estimated";
+    /** 실제 시간표 근거가 명시된 경우만 provider_schedule. 공급자가 계산한 예상시각도 estimated. */
+    timeBasis: "provider_schedule" | "estimated" | "anchored_journey";
+    /** 이전 ODsay 예상시각과 실제 시간표 연동 데이터를 구분하는 명시적 근거. */
+    providerTimeBasis?: "route_estimate" | "timetable";
     steps: RouteStep[];
 }
 
@@ -118,6 +136,10 @@ export const BUS_TYPE_COLORS = {
 
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
+}
+
+function validDurationSeconds(value: unknown): number | undefined {
+    return isFiniteNumber(value) && value >= 0 ? value : undefined;
 }
 
 function normalizeHexColor(value?: string): string | undefined {
@@ -231,6 +253,7 @@ export function getRouteStepColor(step: Pick<RouteStep, "type" | "lineName" | "l
     if (step.type === "BIKE") return ROUTE_POINT_COLORS.bike;
     if (step.type === "SUBWAY") return normalizeHexColor(step.lineColor) ?? getSubwayLineColor(step.lineName);
     if (step.type === "BUS") return getBusLineColor(step.lineName, step.lineColor);
+    if (intercityRideColor(step.type)) return normalizeHexColor(step.lineColor) ?? intercityRideColor(step.type)!;
     return ROUTE_POINT_COLORS.activeBlue;
 }
 
@@ -278,7 +301,7 @@ export function getRouteStepDirectionHint(
     step: RouteStep,
     description?: string
 ): string | undefined {
-    if (step.type !== "BUS" && step.type !== "SUBWAY") return undefined;
+    if (!isTransitRideKind(step.type)) return undefined;
 
     const directionHint = getTransitBoardingDirectionHint({
         directionName: step.directionName,
@@ -311,20 +334,21 @@ function buildWalkStep(leg: TransitLegDetail, index: number): RouteStep {
         title: "도보",
         description,
         durationMinutes,
+        durationSeconds: validDurationSeconds(leg.durationSeconds),
         distanceMeters: leg.distanceMeters,
         coordinates: pathToRouteCoordinates(leg.pathCoords),
     };
 }
 
 function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
-    const type = leg.kind === "BUS" ? "BUS" : "SUBWAY";
+    const type = isTransitRideKind(leg.kind) ? leg.kind : "UNKNOWN";
     const lineName = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label) ?? leg.lineName ?? leg.label;
     const lineColor = type === "BUS"
         ? getBusLineColor(lineName, leg.lineColor)
-        : normalizeHexColor(leg.lineColor) ?? getSubwayLineColor(lineName);
+        : normalizeHexColor(leg.lineColor) ?? intercityRideColor(type) ?? getSubwayLineColor(lineName);
     const startName = normalizeStopName(leg.startName);
     const endName = normalizeStopName(leg.endName);
-    const fallbackKind = type === "BUS" ? "버스" : "지하철";
+    const fallbackKind = transitModeLabel(type);
     const durationMinutes = legDuration(leg);
     const stationText = isFiniteNumber(leg.stationCount) ? `${leg.stationCount}정거장` : undefined;
     const durationText = isFiniteNumber(durationMinutes) ? `${durationMinutes}분` : undefined;
@@ -339,14 +363,16 @@ function buildRideStep(leg: TransitLegDetail, index: number): RouteStep {
         id: `leg-${index}`,
         type,
         title: startName ?? lineName ?? fallbackKind,
-        description: [destinationHint(endName), stationText, durationText].filter(Boolean).join(" · ") || undefined,
+        description: [destinationHint(endName), stationText, durationText, leg.intercityService && `${leg.intercityService.timingBasis === 'TICKET' ? '승차권 입력' : '시간표'} ${leg.intercityService.departureAt.slice(11, 16)} → ${leg.intercityService.arrivalAt.slice(11, 16)} · ${leg.intercityService.timingBasis === 'TICKET' ? '예매 상태 미검증' : '예매 미확인'}`].filter(Boolean).join(" · ") || undefined,
         durationMinutes,
+        intercityService: leg.intercityService,
         waitingMinutes: leg.waitingMinutes,
+        durationSeconds: validDurationSeconds(leg.durationSeconds),
         distanceMeters: leg.distanceMeters,
         stationCount: leg.stationCount,
         lineName,
         lineColor,
-        badgeText: lineName,
+        badgeText: isIntercityRideKind(type) ? [transitModeLabel(type), lineName].filter(Boolean).join(" · ") : lineName,
         directionName: leg.directionName,
         directionCode: leg.directionCode,
         boardingPlatform: leg.boardingPlatform,
@@ -409,15 +435,16 @@ function buildRouteSteps(option: RouteAlternativeOption, origin?: Place, destina
         legs.forEach((leg, index) => {
             if (leg.kind === "WALK") {
                 steps.push(buildWalkStep(leg, index));
-            } else if (leg.kind === "BUS" || leg.kind === "SUBWAY") {
+            } else if (isTransitRideKind(leg.kind)) {
                 steps.push(buildRideStep(leg, index));
             } else {
                 steps.push({
                     id: `leg-${index}`,
-                    type: "TRANSFER",
-                    title: leg.label || "환승",
+                    type: leg.journeyPhase === "BUFFER" ? "TRANSFER" : "UNKNOWN",
+                    title: leg.label || "이동 수단 확인",
                     description: buildWalkStep(leg, index).description,
                     durationMinutes: legDuration(leg),
+                    durationSeconds: validDurationSeconds(leg.durationSeconds),
                     distanceMeters: leg.distanceMeters,
                     coordinates: pathToRouteCoordinates(leg.pathCoords),
                 });
@@ -442,6 +469,7 @@ function buildRouteSteps(option: RouteAlternativeOption, origin?: Place, destina
             title,
             description: [formatRouteDistance(option.distanceMeters), formatRouteDuration(option.minutes)].filter(Boolean).join(" · "),
             durationMinutes: option.minutes,
+            durationSeconds: validTotalDurationSeconds(option.totalDurationSeconds),
             distanceMeters: option.distanceMeters,
             coordinates: pathToRouteCoordinates(option.pathCoords),
         });
@@ -467,21 +495,26 @@ export function buildRouteInfoFromAlternative(
     const totalDurationMinutes = Math.max(0, Math.round(option.minutes ?? 0));
     const providerDepartureAt = option.providerDepartureAt ? new Date(option.providerDepartureAt) : undefined;
     const providerArrivalAt = option.providerArrivalAt ? new Date(option.providerArrivalAt) : undefined;
-    const hasProviderSchedule = !!providerDepartureAt &&
+    const hasProviderTimes = !!providerDepartureAt &&
         !!providerArrivalAt &&
         Number.isFinite(providerDepartureAt.getTime()) &&
         Number.isFinite(providerArrivalAt.getTime()) &&
         providerArrivalAt.getTime() >= providerDepartureAt.getTime();
-    const effectiveDepartureAt = hasProviderSchedule ? providerDepartureAt : departureAt;
-    const arrivalAt = hasProviderSchedule
+    // maasRP의 start/endDateTime은 시간표가 아니라 SearchTime + 구간 시간이다.
+    // 시각 필드 존재만으로 시간표로 승격하면 심야에도 운행이 확정된 것처럼 저장된다.
+    const hasProviderSchedule = hasProviderTimes && option.providerTimeBasis === "timetable";
+    const effectiveDepartureAt = hasProviderTimes ? providerDepartureAt : departureAt;
+    const totalDurationSeconds = validTotalDurationSeconds(option.totalDurationSeconds, effectiveDepartureAt.getTime());
+    const arrivalAt = hasProviderTimes
         ? providerArrivalAt
-        : new Date(effectiveDepartureAt.getTime() + totalDurationMinutes * 60 * 1000);
+        : new Date(effectiveDepartureAt.getTime() + (totalDurationSeconds ?? totalDurationMinutes * 60) * 1000);
     return {
         id: option.id || `route-${routeIndex}`,
         provider: option.provider,
         originName: placeName(origin, "출발지"),
         destinationName: placeName(destination, "도착지"),
         totalDurationMinutes,
+        totalDurationSeconds,
         departureTime: effectiveDepartureAt.toISOString(),
         arrivalTime: arrivalAt.toISOString(),
         fare: option.fareWon,
@@ -490,7 +523,9 @@ export function buildRouteInfoFromAlternative(
         transferCount: option.transferCount,
         walkingDistanceMeters: option.walkMeters,
         totalDistanceMeters: option.distanceMeters,
-        timeBasis: hasProviderSchedule ? "provider_schedule" : "estimated",
+        timeBasis: option.intercityJourney ? "anchored_journey" : hasProviderSchedule ? "provider_schedule" : "estimated",
+        intercityJourney: option.intercityJourney,
+        providerTimeBasis: option.providerTimeBasis,
         steps: buildRouteSteps(option, origin, destination),
     };
 }
@@ -510,7 +545,7 @@ export function isRouteInfo(value: unknown): value is RouteInfo {
         typeof route.departureTime === "string" &&
         typeof route.arrivalTime === "string" &&
         (route.provider === undefined || ["tmap", "odsay", "kakao", "naver", "openstreetmap"].includes(route.provider)) &&
-        (route.timeBasis === undefined || route.timeBasis === "provider_schedule" || route.timeBasis === "estimated") &&
+        (route.timeBasis === undefined || route.timeBasis === "provider_schedule" || route.timeBasis === "estimated" || route.timeBasis === "anchored_journey") &&
         Array.isArray(route.steps) &&
         route.steps.every(isRouteStep);
 }
@@ -524,9 +559,9 @@ export function getRouteInfoFromRoute(
         travelMinutes?: number;
     }
 ): RouteInfo | undefined {
-    if (isRouteInfo(route)) return route;
+    if (isRouteInfo(route)) return normalizeStoredTimingEvidence(route);
     const routeObject = route as Record<string, unknown> | undefined;
-    if (isRouteInfo(routeObject?.routeInfo)) return routeObject.routeInfo;
+    if (isRouteInfo(routeObject?.routeInfo)) return normalizeStoredTimingEvidence(routeObject.routeInfo);
 
     if (
         routeObject &&
@@ -567,6 +602,14 @@ export function getRouteInfoFromRoute(
     return undefined;
 }
 
+function normalizeStoredTimingEvidence(route: RouteInfo): RouteInfo {
+    // DB를 덮어쓰지 않고 읽기 경계에서 구버전 maasRP의 과도한 시간표 표기만 바로잡는다.
+    if (route.provider === "odsay" && route.timeBasis === "provider_schedule" && route.providerTimeBasis !== "timetable") {
+        return { ...route, timeBasis: "estimated", providerTimeBasis: "route_estimate" };
+    }
+    return route;
+}
+
 export function buildRouteSummaryMetrics(routeInfo: RouteInfo): Array<{ key: string; label: string }> {
     const metrics: Array<{ key: string; label: string }> = [];
     if (isFiniteNumber(routeInfo.fare)) metrics.push({ key: "fare", label: `${routeInfo.fare.toLocaleString()}원` });
@@ -586,10 +629,10 @@ export function buildRouteSummaryMetrics(routeInfo: RouteInfo): Array<{ key: str
 
 export function getRouteStepBadges(routeInfo: RouteInfo): Array<{ id: string; label: string; color: string; type: RouteStepType }> {
     return routeInfo.steps
-        .filter((step) => step.type === "WALK" || step.type === "SUBWAY" || step.type === "BUS")
+        .filter((step) => step.type === "WALK" || isTransitRideKind(step.type))
         .map((step) => ({
             id: step.id,
-            label: step.type === "WALK" ? "도보" : (step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")),
+            label: step.type === "WALK" ? "도보" : (step.badgeText ?? step.lineName ?? transitModeLabel(step.type)),
             color: getRouteStepColor(step),
             type: step.type,
         }));

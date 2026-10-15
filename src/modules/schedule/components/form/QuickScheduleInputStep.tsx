@@ -1,5 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { type RefObject } from "react";
+import React, { useState, type RefObject } from "react";
+import ScheduleIcon from "../shared/ScheduleIcon";
+import { INPUT_DESIGN_ACCENT, inputDesignPreviewStyles, useScheduleInputDesignPreview } from "./ScheduleInputDesignPreviewContext";
 import {
   ActivityIndicator,
   Image,
@@ -157,6 +159,9 @@ export function QuickScheduleInputStep({
   voiceUri,
   isVoiceRecording,
 }: QuickScheduleInputStepProps) {
+  const isTossPreview = useScheduleInputDesignPreview();
+  const [inputFocused, setInputFocused] = useState(false);
+  const previewAccent = mode === "dark" ? "#72ADFF" : INPUT_DESIGN_ACCENT;
   return (
     <View style={styles.inputStep}>
       <ScrollView
@@ -180,8 +185,8 @@ export function QuickScheduleInputStep({
             style={[
               styles.modeSelectorIndicator,
               {
-                backgroundColor: selectedModeBackground,
-                borderColor: cardBorderColor,
+                backgroundColor: isTossPreview ? mode === "dark" ? "rgba(36,107,254,0.18)" : "#E8F3FF" : selectedModeBackground,
+                borderColor: isTossPreview ? "rgba(36,107,254,0.20)" : cardBorderColor,
               },
               modeIndicatorAnimatedStyle,
             ]}
@@ -220,7 +225,7 @@ export function QuickScheduleInputStep({
                     styles.modeText,
                     {
                       color: selected
-                        ? colors.textPrimary
+                        ? isTossPreview ? previewAccent : colors.textPrimary
                         : colors.textSecondary,
                     },
                   ]}
@@ -235,10 +240,10 @@ export function QuickScheduleInputStep({
         {inputMode === "text" && (
           <View style={styles.textModeContent}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>일정 내용</Text>
-              <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>날짜, 시간, 장소를 자유롭게 적어 주세요.</Text>
+              <Text style={[styles.sectionTitle, isTossPreview && inputDesignPreviewStyles.sectionTitle, { color: colors.textPrimary }]}>{isTossPreview ? "어떤 일정인가요?" : "일정 내용"}</Text>
+              {!isTossPreview && <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>날짜, 시간, 장소를 자유롭게 적어 주세요.</Text>}
             </View>
-            <View style={[styles.inputWrap, { backgroundColor: inputBackground, borderColor: text.length > 0 ? colors.inputBorderFocused : colors.inputBorder }]}>
+            <View style={[styles.inputWrap, { backgroundColor: inputBackground, borderColor: (isTossPreview ? inputFocused : text.length > 0) ? isTossPreview ? previewAccent : colors.inputBorderFocused : colors.inputBorder }]}>
               <TextInput
                 ref={inputRef}
                 accessibilityLabel="빠른 일정 문장"
@@ -247,12 +252,14 @@ export function QuickScheduleInputStep({
                 maxLength={QUICK_TEXT_LIMIT}
                 value={text}
                 onChangeText={setText}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
                 onSubmitEditing={onSubmit}
                 placeholder={placeholderForMode(inputMode)}
-                placeholderTextColor={colors.inputPlaceholder}
+                placeholderTextColor={isTossPreview ? mode === "dark" ? "#A7AFBA" : "#6B7684" : colors.inputPlaceholder}
                 returnKeyType="done"
                 selectionColor={BLUE}
-                style={[styles.input, { color: colors.textPrimary }]}
+                style={[styles.input, isTossPreview && inputDesignPreviewStyles.input, { color: colors.textPrimary }]}
               />
               <View style={styles.counterPill}>
                 <Text style={[styles.counter, { color: colors.textSecondary }]}>{text.length}/{QUICK_TEXT_LIMIT}</Text>
@@ -451,14 +458,15 @@ export function QuickScheduleInputStep({
         accessibilityState={{ disabled: !canSubmit, busy: submitting }}
         disabled={!canSubmit}
         onPress={onSubmit}
-        style={({ pressed }) => [styles.submitButton, { opacity: !canSubmit ? 0.45 : pressed ? 0.78 : 1 }]}
+        style={({ pressed }) => [styles.submitButton, isTossPreview && inputDesignPreviewStyles.action, { opacity: !canSubmit ? 0.45 : pressed ? 0.78 : 1 }]}
       >
         {submitting ? (
           <BrandedLoader size="button" variant="schedule" accessibilityLabel="일정을 만들고 있어요" />
         ) : (
           <>
-            <Ionicons accessible={false} name="calendar-outline" size={17} color="#fff" />
-            <Text style={styles.submitText}>일정 미리보기</Text>
+            {!isTossPreview && <Ionicons accessible={false} name="calendar-outline" size={17} color="#fff" />}
+            <Text style={[styles.submitText, isTossPreview && inputDesignPreviewStyles.actionText]}>{isTossPreview ? "일정 확인하기" : "일정 미리보기"}</Text>
+            {isTossPreview && <ScheduleIcon name="forward" role="formControl" color="#fff" />}
           </>
         )}
       </Pressable>

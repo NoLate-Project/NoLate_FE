@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "./transitModes";
 import {
     safeNumber,
     pickFirstValidCoordinatePair,
@@ -9,7 +10,42 @@ import type {
     RoutePathCoord,
     TransitLegKind,
     TransitPassStop,
+    TransitServiceClass,
 } from "./tmapApiCore.ts";
+
+// BE TmapTransitJourneyMapper와 같은 명시적 /transit/routes 지하철 종별 코드다.
+// 노선명에 급행 표기가 없다는 이유로 일반 열차라고 추정하지 않는다.
+const TMAP_EXPRESS_SUBWAY_TYPES = new Set(Array.from({ length: 8 }, (_, index) => 117 + index));
+const TMAP_LOCAL_SUBWAY_TYPES = new Set([
+    ...Array.from({ length: 11 }, (_, index) => index + 1),
+    21, 22, 31, 41, 42, 43, 44, 51, 71, 72, 73, 74, 78, 79,
+    100, 101, 104, 107, 108, 109, 110, 112, 113, 114, 115, 116, 125,
+]);
+
+function parseTmapNonnegativeInteger(value: unknown): number | undefined {
+    if (typeof value === "string" && !/^\d+$/.test(value.trim())) return undefined;
+    if (typeof value !== "number" && typeof value !== "string") return undefined;
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseTmapIdentifier(value: unknown): string | undefined {
+    if (typeof value === "number") return Number.isSafeInteger(value) ? String(value) : undefined;
+    return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
+/** 재조회 시 다른 Lane 대체노선과 혼동하지 않도록 본 노선 ID만 보존한다. */
+export function parseTransitLegProviderRouteId(leg: any): string | undefined {
+    return parseTmapIdentifier(leg?.routeId);
+}
+
+export function parseTransitLegServiceClass(leg: any): TransitServiceClass {
+    if (normalizeTransitLegKind(leg) !== "SUBWAY") return "UNKNOWN";
+    const type = parseTmapNonnegativeInteger(leg?.type);
+    if (type !== undefined && TMAP_EXPRESS_SUBWAY_TYPES.has(type)) return "EXPRESS";
+    if (type !== undefined && TMAP_LOCAL_SUBWAY_TYPES.has(type)) return "LOCAL";
+    return "UNKNOWN";
+}
 
 /** 공급자 원본 값을 `normalizeTransitLegKind` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function normalizeTransitLegKind(leg: any): TransitLegKind {
@@ -19,6 +55,13 @@ export function normalizeTransitLegKind(leg: any): TransitLegKind {
     if (trafficType === 3) return "WALK";
 
     const modeRaw = String(leg?.mode ?? leg?.type ?? leg?.travelType ?? "").toUpperCase();
+    if (modeRaw === "TRAIN") return "TRAIN";
+    if (modeRaw === "EXPRESSBUS") {
+        const type = parseTmapNonnegativeInteger(leg?.type);
+        if (type === 16 || type === 22) return "INTERCITY_BUS";
+        if (type === 23) return "EXPRESS_BUS";
+        return "COACH";
+    }
     if (modeRaw.includes("SUBWAY") || modeRaw.includes("METRO") || modeRaw.includes("RAIL")) return "SUBWAY";
     if (modeRaw.includes("BUS")) return "BUS";
     if (modeRaw.includes("WALK") || modeRaw.includes("FOOT")) return "WALK";
@@ -32,10 +75,10 @@ export function parseTransitLegLineName(leg: any): string | undefined {
         : Array.isArray(leg?.Lane)
             ? leg.Lane[0]
             : undefined;
-    const raw = firstLane?.name ?? firstLane?.route ?? firstLane?.busNo ?? firstLane?.no ?? leg?.route ?? leg?.routeNm ?? leg?.lineName;
-    if (typeof raw !== "string") return undefined;
-    const normalized = raw.trim();
-    return normalized.length > 0 ? normalized : undefined;
+    // Lane은 대체노선 목록이다. 본 노선 route를 우선하고 Lane-only 구형 응답의 표시만 호환한다.
+    const raw = [leg?.route, leg?.routeNm, leg?.lineName, firstLane?.name, firstLane?.route, firstLane?.busNo, firstLane?.no]
+        .find((value) => typeof value === "string" && value.trim().length > 0);
+    return typeof raw === "string" ? raw.trim() : undefined;
 }
 
 /** 공급자 원본 값을 `normalizeTransitColorCandidate` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
@@ -97,7 +140,7 @@ export function parseTransitLegStationCount(leg: any): number | undefined {
 /** 공급자 원본 값을 `parseTransitLegStartName` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitLegStartName(leg: any): string | undefined {
     const kind = normalizeTransitLegKind(leg);
-    if (kind === "BUS" || kind === "SUBWAY") {
+    if (isTransitRideKind(kind)) {
         const stationStart = parseTransitLegStationName(leg, "first");
         if (stationStart) return stationStart;
     }
@@ -110,7 +153,7 @@ export function parseTransitLegStartName(leg: any): string | undefined {
 /** 공급자 원본 값을 `parseTransitLegEndName` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitLegEndName(leg: any): string | undefined {
     const kind = normalizeTransitLegKind(leg);
-    if (kind === "BUS" || kind === "SUBWAY") {
+    if (isTransitRideKind(kind)) {
         const stationEnd = parseTransitLegStationName(leg, "last");
         if (stationEnd) return stationEnd;
     }
@@ -122,19 +165,22 @@ export function parseTransitLegEndName(leg: any): string | undefined {
 
 /** 공급자 원본 값을 `parseTransitLegDirectionName` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitLegDirectionName(leg: any): string | undefined {
-    const lane = ensureArray(leg?.Lane ?? leg?.lane)[0];
+    // 대체노선의 행선지를 본 노선 방향으로 저장하면 BE의 동일 경로 검증이 어긋난다.
     const candidates = [
         leg?.directionName,
         leg?.direction,
         leg?.routeDirection,
         leg?.headsign,
         leg?.destinationName,
-        lane?.directionName,
-        lane?.direction,
-        lane?.headsign,
     ];
     const raw = candidates.find((value) => typeof value === "string" && value.trim().length > 0);
     return typeof raw === "string" ? raw.trim() : undefined;
+}
+
+/** 공급자가 직접 제공한 본 노선 상·하행만 보존한다. */
+export function parseTransitLegDirectionCode(leg: any): "UP" | "DOWN" | undefined {
+    const code = typeof leg?.directionCode === "string" ? leg.directionCode.trim().toUpperCase() : undefined;
+    return code === "UP" || code === "DOWN" ? code : undefined;
 }
 
 /** TMAP 경로 처리의 `firstTransitGuideText` 계산 단계를 독립적으로 수행합니다. */
@@ -199,16 +245,7 @@ export function parseTransitLegRecommendedBoardingPosition(leg: any): string | u
 
 /** 공급자 원본 값을 `parseTransitStationSequence` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitStationSequence(station: any): number | undefined {
-    const sequence = safeNumber(
-        station?.index ??
-        station?.sequence ??
-        station?.seq ??
-        station?.stationSeq ??
-        station?.stopSequence
-    );
-    return typeof sequence === "number" && Number.isFinite(sequence)
-        ? sequence
-        : undefined;
+    return parseTmapNonnegativeInteger(station?.index);
 }
 
 /** 공급자 원본 값을 `parseTransitLegStations` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
@@ -221,19 +258,46 @@ export function parseTransitLegStations(leg: any): any[] {
         leg?.stopPoints
     );
 
-    // TMAP의 index가 모두 제공되면 응답 배열 순서보다 공식 통과 순서를 우선한다.
+    // BE와 동일하게 index가 전부 없으면 원본 순서, 있으면 유효하고 유일한 index만 허용한다.
+    // 일부 누락/중복 index를 임의로 정렬해 승하차 정류장 ID를 만들어 내지 않는다.
+    if (!stations.some((station) => station && Object.prototype.hasOwnProperty.call(station, "index"))) return stations;
     const indexed = stations.map((station, originalIndex) => ({
         station,
         originalIndex,
         sequence: parseTransitStationSequence(station),
     }));
-    if (indexed.length < 2 || indexed.some(({ sequence }) => sequence === undefined)) {
-        return stations;
-    }
+    if (indexed.some(({ sequence }) => sequence === undefined)) return [];
+    if (new Set(indexed.map(({ sequence }) => sequence)).size !== indexed.length) return [];
 
     return indexed
         .sort((a, b) => (a.sequence! - b.sequence!) || (a.originalIndex - b.originalIndex))
         .map(({ station }) => station);
+}
+
+/** 표시용 code와 별도로 원본 공급자 정류장 ID와 명시적 ARS를 보존한다. */
+export function parseTransitLegEndpointIdentifiers(leg: any): {
+    startID?: string;
+    endID?: string;
+    startArsID?: string;
+    endArsID?: string;
+} {
+    const stations = parseTransitLegStations(leg);
+    if (stations.length < 2) return {};
+    const first = stations[0];
+    const last = stations[stations.length - 1];
+    const explicitArs = (station: any): string | undefined => {
+        const raw = station?.arsId ?? station?.arsID;
+        const value = typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0
+            ? String(raw).padStart(5, "0")
+            : typeof raw === "string" ? raw.trim() : undefined;
+        return value && /^\d{5}$/.test(value) ? value : undefined;
+    };
+    return {
+        startID: parseTmapIdentifier(first?.stationID),
+        endID: parseTmapIdentifier(last?.stationID),
+        startArsID: explicitArs(first),
+        endArsID: explicitArs(last),
+    };
 }
 
 /** 공급자 원본 값을 `parseStationName` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
@@ -349,7 +413,7 @@ export function parseTransitLegStationPath(leg: any): RoutePathCoord[] | undefin
 /** 공급자 원본 값을 `parseTransitLegStartCoord` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitLegStartCoord(leg: any): RoutePathCoord | undefined {
     const kind = normalizeTransitLegKind(leg);
-    if (kind === "BUS" || kind === "SUBWAY") {
+    if (isTransitRideKind(kind)) {
         const stationStart = parseTransitLegStationCoord(leg, "first");
         if (stationStart) return stationStart;
     }
@@ -370,7 +434,7 @@ export function parseTransitLegStartCoord(leg: any): RoutePathCoord | undefined 
 /** 공급자 원본 값을 `parseTransitLegEndCoord` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
 export function parseTransitLegEndCoord(leg: any): RoutePathCoord | undefined {
     const kind = normalizeTransitLegKind(leg);
-    if (kind === "BUS" || kind === "SUBWAY") {
+    if (isTransitRideKind(kind)) {
         const stationEnd = parseTransitLegStationCoord(leg, "last");
         if (stationEnd) return stationEnd;
     }

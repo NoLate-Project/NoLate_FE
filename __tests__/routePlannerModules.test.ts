@@ -21,6 +21,7 @@ import {
     formatDistance,
     formatDuration,
     getTransitModeLabels,
+    getTransitServiceNotice,
     sortRouteAlternativesForPlanner,
 } from "../src/modules/schedule/routePlanner/presentation";
 
@@ -126,6 +127,48 @@ describe("route planner presentation", () => {
         expect(meta.departureText).toBe("오후 11:50");
         expect(meta.arrivalText).toBe("다음날 오전 12:15");
         expect(meta.combinedText).toContain("1,500원");
+    });
+
+    it("운행 미확인 경로는 지도 상세에서도 출발·도착 시각 대신 확인 안내를 표시한다", () => {
+        const option = routeOption("unknown-night", 65, {
+            mode: "TRANSIT",
+            provider: "odsay",
+            transitServiceState: "unknown",
+            providerTimeBasis: "route_estimate",
+            providerDepartureAt: "2026-10-04T01:40:00+09:00",
+            providerArrivalAt: "2026-10-04T02:45:00+09:00",
+            fareWon: 2_000,
+        });
+        const meta = buildTransitRouteTimeMeta(option, new Date("2026-10-04T02:31:00+09:00"));
+
+        expect(getTransitServiceNotice(option)).toBe("운행 시간 확인 필요");
+        expect(meta).toEqual({
+            departureText: "운행 시간 확인 필요",
+            fareText: "2,000원",
+            combinedText: "운행 시간 확인 필요 | 2,000원",
+        });
+        expect(meta.arrivalText).toBeUndefined();
+        expect(meta.timeRangeText).toBeUndefined();
+    });
+
+    it("운행 종료와 다른 이동수단은 운행 미확인 안내와 구분한다", () => {
+        expect(getTransitServiceNotice(routeOption("ended", 65, {
+            mode: "TRANSIT", transitServiceState: "not_operating",
+        }))).toBe("운행 종료");
+        expect(getTransitServiceNotice(routeOption("car", 65))).toBeUndefined();
+    });
+
+    it("명시적으로 검증된 시간표는 공통 검색 시각 대신 후보의 실제 시각을 표시한다", () => {
+        const meta = buildTransitRouteTimeMeta(routeOption("timetable", 65, {
+            mode: "TRANSIT",
+            transitServiceState: "operating",
+            providerTimeBasis: "timetable",
+            providerDepartureAt: "2026-10-04T05:35:00+09:00",
+            providerArrivalAt: "2026-10-04T06:40:00+09:00",
+        }), new Date("2026-10-04T02:31:00+09:00"));
+
+        expect(meta.departureText).toBe("오전 5:35");
+        expect(meta.arrivalText).toBe("오전 6:40");
     });
 });
 

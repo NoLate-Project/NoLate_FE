@@ -1,4 +1,4 @@
-export type TransitStopMarkerKind = "BUS" | "SUBWAY";
+export type TransitStopMarkerKind = "BUS" | "SUBWAY" | "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS" | "COACH";
 
 export type TransitStopMarkerPolicy = {
     visible: boolean;

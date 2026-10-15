@@ -4,6 +4,13 @@ export const NOLATE_ALARM_SOUNDS = [
     { id: "CHIME", label: "차임" },
     { id: "BELL", label: "벨" },
     { id: "BEEP", label: "비프" },
+    { id: "DIGITAL", label: "디지털" },
+    { id: "CRYSTAL", label: "크리스털" },
+    { id: "KNOCK", label: "노크" },
+    { id: "TRIPLE", label: "3연속" },
+    { id: "SWEEP", label: "상승 신호" },
+    { id: "SIREN", label: "사이렌" },
+    { id: "KLAXON", label: "경적" },
 ] as const;
 
 export type NoLateAlarmSoundId = (typeof NOLATE_ALARM_SOUNDS)[number]["id"];
@@ -16,10 +23,12 @@ let cachedSoundId: NoLateAlarmSoundId | undefined;
 let storageRevision = 0;
 let storageWriteQueue: Promise<void> = Promise.resolve();
 
+export function isNoLateAlarmSoundId(value: unknown): value is NoLateAlarmSoundId {
+    return NOLATE_ALARM_SOUNDS.some(sound => sound.id === value);
+}
+
 export function normalizeNoLateAlarmSoundId(value: unknown): NoLateAlarmSoundId {
-    return NOLATE_ALARM_SOUNDS.some(sound => sound.id === value)
-        ? (value as NoLateAlarmSoundId)
-        : DEFAULT_NOLATE_ALARM_SOUND_ID;
+    return isNoLateAlarmSoundId(value) ? value : DEFAULT_NOLATE_ALARM_SOUND_ID;
 }
 
 export function getNoLateAlarmSound(soundId: NoLateAlarmSoundId) {

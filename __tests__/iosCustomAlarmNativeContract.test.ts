@@ -7,6 +7,59 @@ const fs = jest.requireActual('fs') as {
 
 const read = (relativePath: string) => fs.readFileSync(relativePath, 'utf8');
 
+const expectedSoundMappings = [
+  {
+    caseName: 'chime',
+    id: 'CHIME',
+    notificationResourceName: 'nolate_departure_alert',
+  },
+  {
+    caseName: 'bell',
+    id: 'BELL',
+    notificationResourceName: 'nolate_alarm_bell_alert',
+  },
+  {
+    caseName: 'beep',
+    id: 'BEEP',
+    notificationResourceName: 'nolate_alarm_beep_alert',
+  },
+  {
+    caseName: 'digital',
+    id: 'DIGITAL',
+    notificationResourceName: 'nolate_alarm_digital_alert',
+  },
+  {
+    caseName: 'crystal',
+    id: 'CRYSTAL',
+    notificationResourceName: 'nolate_alarm_crystal_alert',
+  },
+  {
+    caseName: 'knock',
+    id: 'KNOCK',
+    notificationResourceName: 'nolate_alarm_knock_alert',
+  },
+  {
+    caseName: 'triple',
+    id: 'TRIPLE',
+    notificationResourceName: 'nolate_alarm_triple_alert',
+  },
+  {
+    caseName: 'sweep',
+    id: 'SWEEP',
+    notificationResourceName: 'nolate_alarm_sweep_alert',
+  },
+  {
+    caseName: 'siren',
+    id: 'SIREN',
+    notificationResourceName: 'nolate_alarm_siren_alert',
+  },
+  {
+    caseName: 'klaxon',
+    id: 'KLAXON',
+    notificationResourceName: 'nolate_alarm_klaxon_alert',
+  },
+] as const;
+
 describe('iOS NoLate custom alarm native contract', () => {
   const scheduler = read(
     'modules/nolate-alarm/ios/NoLateCustomAlarmNotification.swift',
@@ -155,20 +208,53 @@ describe('iOS NoLate custom alarm native contract', () => {
   });
 
   it('resolves only bundled long variants for the selected native alarm sound', () => {
-    [
-      'nolate_departure_alert.wav',
-      'nolate_alarm_bell_alert.wav',
-      'nolate_alarm_beep_alert.wav',
-    ].forEach(fileName => {
+    const preferenceStart = models.indexOf(
+      'enum NoLateAlarmSoundPreference',
+    );
+    const preferenceEnd = models.indexOf(
+      'enum NoLateCustomAlarmNotificationContract',
+      preferenceStart,
+    );
+    const preference = models.slice(preferenceStart, preferenceEnd);
+    const declaredCases = Array.from(
+      preference.matchAll(/case\s+(\w+)\s*=\s*"([A-Z][A-Z0-9_]*)"/g),
+      match => ({caseName: match[1], id: match[2]}),
+    );
+    const resourceMappings = Array.from(
+      preference.matchAll(/case\s+\.(\w+):\s*return\s+"([^"]+)"/g),
+      match => ({
+        caseName: match[1],
+        notificationResourceName: match[2],
+      }),
+    );
+
+    expect(preferenceStart).toBeGreaterThanOrEqual(0);
+    expect(preferenceEnd).toBeGreaterThan(preferenceStart);
+    expect(declaredCases).toEqual(
+      expectedSoundMappings.map(({caseName, id}) => ({caseName, id})),
+    );
+    expect(resourceMappings).toEqual(
+      expectedSoundMappings.map(
+        ({caseName, notificationResourceName}) => ({
+          caseName,
+          notificationResourceName,
+        }),
+      ),
+    );
+    expect(new Set(declaredCases.map(({id}) => id)).size).toBe(10);
+    expect(
+      new Set(
+        resourceMappings.map(
+          ({notificationResourceName}) => notificationResourceName,
+        ),
+      ).size,
+    ).toBe(10);
+
+    expectedSoundMappings.forEach(({notificationResourceName}) => {
+      const fileName = `${notificationResourceName}.wav`;
       expect(fs.existsSync(`assets/sounds/${fileName}`)).toBe(true);
       expect(xcodeProject).toContain(`${fileName} in Resources`);
     });
-    expect(models).toContain('case chime = "CHIME"');
-    expect(models).toContain('case bell = "BELL"');
-    expect(models).toContain('case beep = "BEEP"');
-    expect(models).toContain('return "nolate_departure_alert"');
-    expect(models).toContain('return "nolate_alarm_bell_alert"');
-    expect(models).toContain('return "nolate_alarm_beep_alert"');
     expect(scheduler).toContain('selectedPreference.notificationResourceName');
     expect(scheduler).toContain('let fileExtension = "wav"');
     expect(scheduler).toContain(

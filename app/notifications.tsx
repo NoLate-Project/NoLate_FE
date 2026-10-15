@@ -37,14 +37,34 @@ import {
     type ColorMode,
 } from "../src/modules/theme/ThemeContext";
 import { BrandedLoadingState } from "../src/ui/BrandedLoader";
+import { useScreenFirstPaintPerformance } from "../src/modules/performance/useScreenFirstPaintPerformance";
+import ScreenFirstPaintShell from "../src/modules/performance/ScreenFirstPaintShell";
+import { useDeferredScreenContent } from "../src/modules/performance/useDeferredScreenContent";
+import { useImmediateNavigationTransition } from "../src/modules/performance/ImmediateNavigationTransition";
 
 type InboxFilter = "all" | "unread";
 type LoadMode = "initial" | "refresh";
 
 const PAGE_SIZE = 30;
 
-export default function AppNotificationScreen() {
+export default function AppNotificationRoute() {
+    useScreenFirstPaintPerformance('/notifications');
+    const contentReady = useDeferredScreenContent();
+    if (!contentReady) {
+        return (
+            <ScreenFirstPaintShell
+                title="알림"
+                backAccessibilityLabel="뒤로 가기"
+                testID="notifications-first-paint-shell"
+            />
+        );
+    }
+    return <AppNotificationScreen />;
+}
+
+export function AppNotificationScreen() {
     const router = useRouter();
+    const { runWithTransitionShell } = useImmediateNavigationTransition();
     const insets = useSafeAreaInsets();
     const isFocused = useIsFocused();
     const { colors, mode } = useTheme();
@@ -62,9 +82,14 @@ export default function AppNotificationScreen() {
     const accent = mode === "dark" ? "#8BB7FF" : "#2F80FF";
 
     const goBack = useCallback(() => {
-        if (router.canGoBack()) router.back();
-        else router.replace("/schedule");
-    }, [router]);
+        runWithTransitionShell(
+            { route: '/schedule', title: '일정', showBack: false },
+            () => {
+                if (router.canGoBack()) router.back();
+                else router.replace("/schedule");
+            },
+        );
+    }, [router, runWithTransitionShell]);
 
     const loadFirstPage = useCallback(async (loadMode: LoadMode = "initial") => {
         const requestSequence = ++requestSequenceRef.current;

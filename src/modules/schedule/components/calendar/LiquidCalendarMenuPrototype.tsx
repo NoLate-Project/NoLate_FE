@@ -10,6 +10,7 @@ import {
 } from "react-native";
 
 import { CALENDAR_VIEW_OPTIONS, type CalendarViewMode } from "./viewMode";
+import useNativeCalendarIcons from "./useNativeCalendarIcons";
 import type {
     ViewModeGlassControlColorScheme,
     ViewModeGlassControlOpenChangeEvent,
@@ -49,6 +50,7 @@ export type LiquidCalendarMenuPrototypeProps = ViewProps & {
 };
 
 type NativeLiquidCalendarMenuPrototypeProps = ViewProps & {
+    outlineIcons?: Record<string, string>;
     selectedMode?: string;
     viewModeVariant?: LiquidCalendarMenuVariant;
     showsViewModeButton?: boolean;
@@ -136,6 +138,7 @@ export default function LiquidCalendarMenuPrototype({
     onManageCalendars,
     style,
 }: LiquidCalendarMenuPrototypeProps) {
+    const outlineIcons = useNativeCalendarIcons();
     const handleSelect = useCallback(
         (event: NativeSyntheticEvent<ViewModeGlassControlSelectEvent>) => {
             const { mode } = event.nativeEvent;
@@ -220,6 +223,7 @@ export default function LiquidCalendarMenuPrototype({
     return (
         <View pointerEvents="box-none" style={style}>
             <NativePrototype
+                outlineIcons={outlineIcons}
                 selectedMode={selectedMode}
                 viewModeVariant={viewModeVariant}
                 showsViewModeButton={showsViewModeButton}

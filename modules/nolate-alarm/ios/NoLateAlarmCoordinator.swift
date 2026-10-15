@@ -517,14 +517,6 @@ actor NoLateAlarmCoordinator {
   func clearAllAlarms() async throws -> Bool {
     await systemMutex.acquire()
     do {
-      let storedAlarms = Array(snapshot.alarms.values)
-      let hadStoredState =
-        initialPersistenceError != nil ||
-        !snapshot.alarms.isEmpty ||
-        !snapshot.tombstones.isEmpty
-      let hadFireEvidence = (try? !fireJournal.load().isEmpty) ?? true
-      let hadActionEvidence = (try? !actionJournal.load().isEmpty) ?? true
-      let hadNavigationEvidence = (try? !navigationJournal.load().isEmpty) ?? true
       // Logout is a privacy boundary. Purge healthy alarms, tombstones, and
       // corrupt bytes alike. Retaining tombstones here would reject the same
       // generation when this account logs in again and replays its snapshot.
@@ -538,16 +530,15 @@ actor NoLateAlarmCoordinator {
       // clearAllAlarms is an account cleanup/fresh-login privacy boundary, not a normal alarm
       // mutation. Remote pushes do not use the alarm identifier prefix, so remove every app-owned
       // pending/delivered notification to prevent the previous account's content surviving logout.
-      let pendingNotificationCount = await notificationCenter.pendingNotificationRequests().count
-      let deliveredNotificationCount = await notificationCenter.deliveredNotifications().count
+      // Removal does not require enumerating notifications first. On iOS 27 the
+      // pending-request query can stay unresolved during first-launch cleanup,
+      // holding this mutex and the authentication bootstrap indefinitely.
       notificationCenter.removeAllPendingNotificationRequests()
       notificationCenter.removeAllDeliveredNotifications()
 
-      var alarmKitDeliveryCount = 0
       #if canImport(AlarmKit) && !targetEnvironment(macCatalyst)
       if #available(iOS 26.0, *) {
         let appAlarms = try AlarmManager.shared.alarms
-        alarmKitDeliveryCount = appAlarms.count
         var cancellationError: Error?
         for alarm in appAlarms {
           if alarm.state == .alerting {
@@ -571,14 +562,9 @@ actor NoLateAlarmCoordinator {
       #endif
 
       await systemMutex.release()
-      return hadStoredState ||
-        hadFireEvidence ||
-        hadActionEvidence ||
-        hadNavigationEvidence ||
-        !storedAlarms.isEmpty ||
-        pendingNotificationCount > 0 ||
-        deliveredNotificationCount > 0 ||
-        alarmKitDeliveryCount > 0
+      // Success means the idempotent purge was applied, including an empty
+      // install. JS must also invalidate account validation caches in that case.
+      return true
     } catch {
       await systemMutex.release()
       throw error

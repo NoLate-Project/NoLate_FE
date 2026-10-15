@@ -1,3 +1,5 @@
+import { intercityRideColor, transitModeLabel } from "../map/transitModes";
+import { isTransitRideKind } from "../map/transitModes";
 import type { TransitLegDetail } from "../map/routingService";
 import {
     compactTransitLineLabel,
@@ -31,7 +33,7 @@ function getRideColor(leg: TransitLegDetail): string {
     const lineLabel = compactTransitLineLabel(leg.lineName) ?? compactTransitLineLabel(leg.label);
     if (leg.kind === "SUBWAY") return getSubwayLineColor(lineLabel);
     if (leg.kind === "BUS") return getBusLineColor(lineLabel, leg.lineColor);
-    return TRANSIT_PROGRESS_NEUTRAL_COLOR;
+    return intercityRideColor(leg.kind) ?? TRANSIT_PROGRESS_NEUTRAL_COLOR;
 }
 
 const TRANSIT_GUIDANCE_LABEL_PATTERN = /정류장|승차|하차|환승|출발|도착|도보|에서|까지|방면/u;
@@ -67,7 +69,7 @@ function getRideLineLabel(leg: TransitLegDetail): string {
         if (identity) return identity;
     }
 
-    return leg.kind === "BUS" ? "버스" : "지하철";
+    return transitModeLabel(leg.kind);
 }
 
 /** 최신 길찾기와 저장 일정이 같은 구간 비율·노선색·라벨 규칙을 사용한다. */
@@ -80,7 +82,7 @@ export function buildTransitRouteProgressSegments(
         const minutes = typeof leg.durationMinutes === "number" && Number.isFinite(leg.durationMinutes)
             ? Math.max(1, Math.round(leg.durationMinutes))
             : 1;
-        const isRide = leg.kind === "BUS" || leg.kind === "SUBWAY";
+        const isRide = isTransitRideKind(leg.kind);
         return {
             key: `${leg.kind}-${index}`,
             label: formatProgressDuration(minutes),

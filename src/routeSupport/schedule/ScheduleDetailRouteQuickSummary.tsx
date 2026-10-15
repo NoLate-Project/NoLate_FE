@@ -32,6 +32,7 @@ export function ScheduleDetailRouteQuickSummary({
     departureActionPending,
     departureCompleted,
     departureRemainingLabel,
+    departureTimeLabel,
     departureStatusAccent,
     effectiveRouteAccessibilityLabel,
     effectiveTransitRoutePresentation,
@@ -138,12 +139,12 @@ export function ScheduleDetailRouteQuickSummary({
           accessibilityRole="button"
           accessibilityLabel={[
             '일정 상세 시트 펼치기',
-            `권장 출발 ${recommendedDepartureTimeLabel}`,
+            `${departureTimeLabel} ${recommendedDepartureTimeLabel}`,
             departureRemainingLabel,
             routeArrivalSummary,
             effectiveRouteAccessibilityLabel,
             ...routeFactLabels,
-            routeProgressSegments.length > 0
+            !effectiveTransitRoutePresentation && routeProgressSegments.length > 0
               ? getTransitRouteSummaryAccessibilityLabel(routeProgressSegments)
               : undefined,
           ]
@@ -162,7 +163,7 @@ export function ScheduleDetailRouteQuickSummary({
                   { color: topCardAccentText },
                 ]}
               >
-                권장 출발
+                {departureTimeLabel}
               </Text>
               <View style={styles.improvedDepartureTimeRow}>
                 <Text
@@ -227,7 +228,7 @@ export function ScheduleDetailRouteQuickSummary({
                   { color: topCardAccentText },
                 ]}
               >
-                실시간 추천 경로 · {effectiveTransitRoutePresentation.itinerary}
+                {effectiveTransitRoutePresentation.guidanceTitle} · {effectiveTransitRoutePresentation.itinerary}
               </Text>
             </View>
           ) : departureCompleted ? (

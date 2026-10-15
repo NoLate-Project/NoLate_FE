@@ -160,6 +160,45 @@ describe("schedule agenda presentation", () => {
         expect(card.props.accessibilityLabel).toContain("경로 미설정");
     });
 
+    test("목록형에서도 공유 권한을 읽고 경로 미설정 일정의 이전 출발시각은 숨긴다", async () => {
+        const onEdit = jest.fn();
+        const onDelete = jest.fn();
+        await act(async () => {
+            renderer = TestRenderer.create(
+                <ThemeProvider>
+                    <MonthAgendaList
+                        visibleMonth="2026-07-14"
+                        items={[{
+                            ...schedule("shared-list", 14, 9, "긴 제목도 원문을 유지하는 공동 일정"),
+                            category: { ...category, shared: true, sharePermission: "EDITOR" },
+                            locationName: "회의실 A",
+                            departAt: new Date(2026, 6, 14, 8, 17).toISOString(),
+                            travelMinutes: 43,
+                            routeSetupRequired: true,
+                        }]}
+                        loading={false}
+                        error={null}
+                        bottomInset={0}
+                        onPressRetry={jest.fn()}
+                        onOpenSchedule={jest.fn()}
+                        getScheduleSwipeActions={() => ({ onEdit, onDelete })}
+                        onRequestViewMode={jest.fn()}
+                    />
+                </ThemeProvider>
+            );
+        });
+        expect(renderedText(renderer!)).toContain("공유");
+        expect(renderedText(renderer!)).toContain("경로 미설정");
+        expect(renderedText(renderer!)).not.toContain("8:17");
+        const card = renderer!.root.findByProps({ testID: "month-agenda-card" });
+        expect(card.props.accessibilityLabel).toContain("편집 공유");
+        expect(card.props.accessibilityLabel).not.toContain("출발");
+        act(() => card.props.onAccessibilityAction({ nativeEvent: { actionName: "edit" } }));
+        act(() => card.props.onAccessibilityAction({ nativeEvent: { actionName: "delete" } }));
+        expect(onEdit).toHaveBeenCalledTimes(1);
+        expect(onDelete).toHaveBeenCalledTimes(1);
+    });
+
     test("경로 미설정 안내는 캘린더를 덮지 않고 일정 목록 안에서 열린다", async () => {
         const onOpenRouteSetup = jest.fn();
 
@@ -410,8 +449,8 @@ describe("schedule agenda presentation", () => {
         });
 
         const text = renderedText(renderer!);
-        expect(text).not.toContain("7월 14일 화요일");
-        expect(text).not.toMatch(/2\s*개의 일정/);
+        expect(text).toContain("7월 14일 화요일");
+        expect(text).toMatch(/2\s*개의 일정/);
         expect(text.indexOf("오전 일정")).toBeLessThan(text.indexOf("오후 일정"));
         expect(text).not.toContain("다른 날 일정");
         const detailCards = renderer!.root.findAllByType(ScheduleAgendaCard);
@@ -422,7 +461,7 @@ describe("schedule agenda presentation", () => {
         })).toBeDefined();
         expect(StyleSheet.flatten(renderer!.root.findByProps({
             testID: "selected-day-agenda-group",
-        }).props.style).borderRadius).toBe(9);
+        }).props.style).borderRadius).toBe(16);
         const detailScroll = renderer!.root.findByType(ScrollView);
         expect(StyleSheet.flatten(detailScroll.props.style).marginBottom).toBe(70);
         expect(StyleSheet.flatten(detailScroll.props.contentContainerStyle).paddingBottom)
@@ -435,21 +474,21 @@ describe("schedule agenda presentation", () => {
         })[0];
         expect(StyleSheet.flatten(detailCard.props.style({
             pressed: false,
-        })).minHeight).toBe(52);
+        })).minHeight).toBe(64);
         expect(StyleSheet.flatten(renderer!.root.findAllByProps({
             testID: "selected-day-agenda-card-rail",
-        })[0].props.style).marginVertical).toBe(4);
+        })[0].props.style).marginVertical).toBe(14);
         expect(StyleSheet.flatten(renderer!.root.findAllByProps({
             testID: "selected-day-agenda-card-content",
         })[0].props.style)).toMatchObject({
-            paddingVertical: 5,
-            gap: 1,
+            paddingVertical: 12,
+            gap: 4,
         });
         expect(renderer!.root.findAllByType(View).filter((node) => (
             node.props.testID === "agenda-card-time-column"
         ))).toHaveLength(2);
         expect(renderer!.root.findAllByProps({
-            name: "chevron-forward",
+            name: "chevron-forward-outline",
         })).toHaveLength(0);
 
         const targetCard = renderer!.root.findAll((node) => (
@@ -526,7 +565,7 @@ describe("schedule agenda presentation", () => {
         const contextRow = renderer!.root.findByProps({
             testID: "agenda-card-context-row",
         });
-        expect(renderedNodeText(titleRow)).toContain("2박 3일");
+        expect(renderedNodeText(renderer!.root.findByProps({ testID: "agenda-multi-day-summary" }))).toContain("2박 3일");
         expect(renderedNodeText(timeColumn)).toContain("7/14 오전 9:00");
         expect(renderedNodeText(timeColumn)).toContain("7/16 오전 11:00");
         expect(renderedNodeText(timeColumn)).not.toContain("2박 3일");
@@ -536,9 +575,12 @@ describe("schedule agenda presentation", () => {
         ))).toBe(true);
         expect(renderedNodeText(contextRow)).toContain("인천역");
         expect(renderedNodeText(contextRow)).toContain("오전 8:17 출발 · 43분");
-        expect([titleRow, timeColumn, contextRow].every((row) => (
-            row.findAllByType(Text).every((node) => node.props.numberOfLines === 1)
-        ))).toBe(true);
+        expect(titleRow.findByType(Text).props.numberOfLines).toBe(2);
+        const locationRow = renderer!.root.findByProps({ testID: "agenda-card-location-row" });
+        const departureRow = renderer!.root.findByProps({ testID: "agenda-card-departure-row" });
+        expect(locationRow).not.toBe(departureRow);
+        expect(renderedNodeText(locationRow)).toBe("인천역");
+        expect(renderedNodeText(departureRow)).toBe("오전 8:17 출발 · 43분");
         const card = renderer!.root.findByType(ScheduleAgendaCard);
         expect(card.props.showMultiDaySummary).toBe(true);
         const pressable = renderer!.root.find((node) => (
@@ -551,7 +593,7 @@ describe("schedule agenda presentation", () => {
         expect(pressable.props.accessibilityLabel).toContain("대중교통 이동");
         expect(pressable.props.accessibilityLabel).toContain("오전 8:17 출발 · 43분");
         expect(renderer!.root.findAllByProps({ name: "bus-outline" })).toHaveLength(1);
-        expect(renderer!.root.findAllByProps({ name: "chevron-forward" })).toHaveLength(0);
+        expect(renderer!.root.findAllByProps({ name: "chevron-forward-outline" })).toHaveLength(0);
     });
 
     test("공유와 경로 미설정 상태는 상세형의 제목·맥락 행에 나눠 표시한다", async () => {
@@ -599,7 +641,8 @@ describe("schedule agenda presentation", () => {
         const contextRow = renderer!.root.findByProps({
             testID: "agenda-card-context-row",
         });
-        expect(renderedNodeText(titleRow)).toContain("공유");
+        expect(renderedNodeText(renderer!.root.findByProps({ testID: "agenda-shared-badge" }))).toContain("공유");
+        expect(renderedNodeText(titleRow)).toBe("병원 예약");
         expect(renderedNodeText(titleRow)).not.toContain("경로 미설정");
         expect(renderedNodeText(timeColumn)).toContain("오후 3:40");
         expect(renderedNodeText(timeColumn)).toContain("오후 4:10");
@@ -685,13 +728,10 @@ describe("schedule agenda presentation", () => {
             );
         });
 
-        const titleRow = renderer!.root.findByProps({
-            testID: "agenda-card-title-row",
-        });
         const timeColumn = renderer!.root.findByProps({
             testID: "agenda-card-time-column",
         });
-        expect(renderedNodeText(titleRow)).toContain("2박 3일");
+        expect(renderedNodeText(renderer!.root.findByProps({ testID: "agenda-multi-day-summary" }))).toContain("2박 3일");
         expect(renderedNodeText(timeColumn)).toContain("7/18 시작");
         expect(renderedNodeText(timeColumn)).toContain("7/20 종료");
         expect(renderer!.root.findAllByProps({
@@ -699,7 +739,7 @@ describe("schedule agenda presentation", () => {
         })).toHaveLength(0);
     });
 
-    test("당일 일정과 목록형 compact 카드에는 숙박 정보를 표시하지 않는다", async () => {
+    test("당일 일정에는 숙박 정보를 생략하고 목록형 연속 일정에는 실제 날짜를 표시한다", async () => {
         const sameDay = schedule("same-day", 14, 9, "당일 일정");
         const multiDay = {
             ...schedule("multi-day-list", 14, 9, "목록 연속 일정"),
@@ -743,18 +783,15 @@ describe("schedule agenda presentation", () => {
                 </ThemeProvider>
             );
         });
-        expect(renderedText(renderer!)).not.toContain("2박 3일");
-        expect(renderedText(renderer!)).toContain("9:00 - 11:00");
+        expect(renderedText(renderer!)).toContain("2박 3일");
+        expect(renderedText(renderer!)).toContain("7/14 오전 9:00");
+        expect(renderedText(renderer!)).toContain("7/16 오전 11:00");
         expect(renderer!.root.findByType(ScheduleAgendaCard).props.compact).toBe(true);
-        expect(renderer!.root.findByType(ScheduleAgendaCard).props.showMultiDaySummary)
-            .not.toBe(true);
-        expect(renderer!.root.findAll((node) => (
-            typeof node.props.testID === "string"
-            && node.props.testID.startsWith("agenda-card-")
-        ))).toHaveLength(0);
+        expect(renderer!.root.findByType(ScheduleAgendaCard).props.showMultiDaySummary).toBe(true);
+        expect(renderer!.root.findByProps({ testID: "agenda-card-time-column" })).toBeDefined();
     });
 
-    test("목록형은 필터와 날짜별 섹션 안에 시안형 compact 카드를 표시한다", async () => {
+    test("목록형은 필터와 날짜별 중립색 묶음에서 일정과 시간을 표시한다", async () => {
         const onOpenSchedule = jest.fn();
         const onRequestScheduleActions = jest.fn();
         const onRequestViewMode = jest.fn();
@@ -798,7 +835,9 @@ describe("schedule agenda presentation", () => {
         const cards = renderer!.root.findAllByType(ScheduleAgendaCard);
         expect(cards).toHaveLength(3);
         expect(cards.every((card) => card.props.compact === true)).toBe(true);
-        expect(cards.every((card) => card.props.groupRow !== true)).toBe(true);
+        expect(cards.every((card) => card.props.groupRow === true)).toBe(true);
+        expect(renderer!.root.findAllByType(View).filter((node) => node.props.testID === "month-agenda-group")).toHaveLength(2);
+        expect(renderer!.root.findAllByType(View).filter((node) => node.props.testID === "month-agenda-divider")).toHaveLength(1);
 
         const targetCard = renderer!.root.findAll((node) => (
             typeof node.props.onPress === "function"

@@ -22,6 +22,9 @@ const mockCanGoBack = jest.fn();
 const mockCompleteDeparture = jest.fn();
 const mockGetSchedule = jest.fn();
 
+// Route behavior is tested here; native navigation focus is tested separately.
+jest.mock('@react-navigation/native', () => ({ useIsFocused: () => true }));
+
 jest.mock("expo-crypto", () => ({
     randomUUID: jest.fn(),
 }));

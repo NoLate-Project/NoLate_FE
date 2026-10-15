@@ -7,15 +7,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AlarmSoundPreferencePolicyTest {
+  private val expectedSoundMappings = listOf(
+    "CHIME" to "nolate_departure_chime",
+    "BELL" to "nolate_alarm_bell",
+    "BEEP" to "nolate_alarm_beep",
+    "DIGITAL" to "nolate_alarm_digital",
+    "CRYSTAL" to "nolate_alarm_crystal",
+    "KNOCK" to "nolate_alarm_knock",
+    "TRIPLE" to "nolate_alarm_triple",
+    "SWEEP" to "nolate_alarm_sweep",
+    "SIREN" to "nolate_alarm_siren",
+    "KLAXON" to "nolate_alarm_klaxon"
+  )
+
   @Test
   fun exposesOnlyThePinnedBridgeWhitelist() {
     assertEquals(
-      listOf("CHIME", "BELL", "BEEP"),
-      NoLateAlarmSound.entries.map(NoLateAlarmSound::bridgeValue)
+      expectedSoundMappings,
+      NoLateAlarmSound.entries.map { it.bridgeValue to it.rawResourceName }
     )
-    assertEquals(NoLateAlarmSound.CHIME, NoLateAlarmSound.fromBridgeValue("CHIME"))
-    assertEquals(NoLateAlarmSound.BELL, NoLateAlarmSound.fromBridgeValue("BELL"))
-    assertEquals(NoLateAlarmSound.BEEP, NoLateAlarmSound.fromBridgeValue("BEEP"))
+    expectedSoundMappings.forEach { (bridgeValue, rawResourceName) ->
+      val sound = NoLateAlarmSound.fromBridgeValue(bridgeValue)
+      assertEquals(bridgeValue, sound?.bridgeValue)
+      assertEquals(rawResourceName, sound?.rawResourceName)
+    }
+    assertEquals(
+      expectedSoundMappings.size,
+      NoLateAlarmSound.entries.map(NoLateAlarmSound::bridgeValue).toSet().size
+    )
+    assertEquals(
+      expectedSoundMappings.size,
+      NoLateAlarmSound.entries.map(NoLateAlarmSound::rawResourceName).toSet().size
+    )
     assertNull(NoLateAlarmSound.fromBridgeValue("SYSTEM"))
     assertNull(NoLateAlarmSound.fromBridgeValue(" bell "))
   }
@@ -65,11 +88,7 @@ class AlarmSoundPreferencePolicyTest {
       assertEquals(sound, store.get())
     }
     assertEquals(
-      setOf(
-        "nolate_departure_chime",
-        "nolate_alarm_bell",
-        "nolate_alarm_beep"
-      ),
+      expectedSoundMappings.map { it.second }.toSet(),
       NoLateAlarmSound.entries.map(NoLateAlarmSound::rawResourceName).toSet()
     )
   }

@@ -1,3 +1,4 @@
+import { isTransitRideKind } from "./transitModes";
 import type {
     TravelMode,
 } from "../schedule/types";
@@ -323,7 +324,7 @@ export function styleNonTransitOverlay(
 
 /** 저장된 좌표 값을 `routeInfoStepMode` 표현으로 변환하고 유효하지 않은 좌표는 제거합니다. */
 export function routeInfoStepMode(step: RouteStep): TravelMode {
-    if (step.type === "BUS" || step.type === "SUBWAY") return "TRANSIT";
+    if (isTransitRideKind(step.type)) return "TRANSIT";
     if (step.type === "WALK" || step.type === "TRANSFER") return "WALK";
     if (step.type === "BIKE") return "BIKE";
     return "CAR";
@@ -334,7 +335,7 @@ export function inferRouteInfoMode(routeInfo: RouteInfo): TravelMode {
     const movementSteps = routeInfo.steps.filter(
         (step) => step.type !== "ORIGIN" && step.type !== "DESTINATION"
     );
-    if (movementSteps.some((step) => step.type === "BUS" || step.type === "SUBWAY")) return "TRANSIT";
+    if (movementSteps.some((step) => isTransitRideKind(step.type))) return "TRANSIT";
     if (movementSteps.some((step) => step.type === "BIKE")) return "BIKE";
     if (movementSteps.some((step) => step.type === "DRIVE")) return "CAR";
     if (movementSteps.some((step) => step.type === "WALK" || step.type === "TRANSFER")) return "WALK";
@@ -365,7 +366,7 @@ export function buildRouteInfoPathOverlays(
             coords,
         }, mapZoom, isDark);
 
-        if (step.type !== "BUS" && step.type !== "SUBWAY") return [overlay];
+        if (!isTransitRideKind(step.type)) return [overlay];
 
         const line = getTransitRouteLinePresentation(mapZoom);
         return [{

@@ -9,7 +9,14 @@ internal enum class NoLateAlarmSound(
 ) {
   CHIME("CHIME", "nolate_departure_chime"),
   BELL("BELL", "nolate_alarm_bell"),
-  BEEP("BEEP", "nolate_alarm_beep");
+  BEEP("BEEP", "nolate_alarm_beep"),
+  DIGITAL("DIGITAL", "nolate_alarm_digital"),
+  CRYSTAL("CRYSTAL", "nolate_alarm_crystal"),
+  KNOCK("KNOCK", "nolate_alarm_knock"),
+  TRIPLE("TRIPLE", "nolate_alarm_triple"),
+  SWEEP("SWEEP", "nolate_alarm_sweep"),
+  SIREN("SIREN", "nolate_alarm_siren"),
+  KLAXON("KLAXON", "nolate_alarm_klaxon");
 
   companion object {
     val default: NoLateAlarmSound = CHIME

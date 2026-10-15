@@ -1,3 +1,5 @@
+import { transitModeLabel } from "./transitModes";
+import { isTransitRideKind } from "./transitModes";
 import type {
     TravelMode,
 } from "../schedule/types";
@@ -7,6 +9,7 @@ import {
     clampPathCoords,
     dedupePathCoords,
     normalizeTransitLegDurationToMinutes,
+    normalizeTransitDurationSeconds,
     formatDistanceMetersCompact,
     ROUTE_ALTERNATIVE_LIMIT_BY_MODE,
 } from "./tmapApiCore.ts";
@@ -21,12 +24,16 @@ import type {
 import {
     normalizeTransitLegKind,
     parseTransitLegLineName,
+    parseTransitLegProviderRouteId,
+    parseTransitLegServiceClass,
     parseTransitLegLineColor,
     parseTransitLegServiceAvailable,
     parseTransitLegStationCount,
     parseTransitLegStartName,
     parseTransitLegEndName,
     parseTransitLegDirectionName,
+    parseTransitLegDirectionCode,
+    parseTransitLegEndpointIdentifiers,
     parseTransitLegBoardingPlatform,
     parseTransitLegBoardingExit,
     parseTransitLegRecommendedBoardingPosition,
@@ -167,7 +174,7 @@ export function parseTransitLegPathGeometry(
         }
     }
 
-    if (kind === "BUS" || kind === "SUBWAY") {
+    if (isTransitRideKind(kind)) {
         const direct = parseTransitDirectPathCoords(leg);
         if (direct) {
             return {
@@ -228,6 +235,10 @@ export function buildTransitLegLabel(detail: Omit<TransitLegDetail, "label">): s
         return `버스 ${chunks.join(" · ")}`.trim();
     }
 
+    if (isTransitRideKind(detail.kind)) {
+        return [transitModeLabel(detail.kind), detail.lineName, typeof detail.durationMinutes === "number" ? `${detail.durationMinutes}분` : undefined].filter(Boolean).join(" · ");
+    }
+
     const etcChunks: string[] = [];
     if (detail.lineName) etcChunks.push(detail.lineName);
     if (typeof detail.durationMinutes === "number") etcChunks.push(`${detail.durationMinutes}분`);
@@ -247,11 +258,18 @@ export function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathC
             const durationMinutes = normalizeTransitLegDurationToMinutes(
                 leg?.sectionTime ?? leg?.time ?? leg?.duration ?? leg?.moveTime
             );
+            const durationSeconds = normalizeTransitDurationSeconds(
+                leg?.sectionTime ?? leg?.time ?? leg?.duration ?? leg?.moveTime
+            );
             const stationCount = parseTransitLegStationCount(leg);
             const lineName = parseTransitLegLineName(leg);
+            const providerRouteId = parseTransitLegProviderRouteId(leg);
+            const serviceClass = parseTransitLegServiceClass(leg);
             const lineColor = parseTransitLegLineColor(leg);
             const serviceAvailable = parseTransitLegServiceAvailable(leg);
             const directionName = parseTransitLegDirectionName(leg);
+            const directionCode = parseTransitLegDirectionCode(leg);
+            const endpointIdentifiers = parseTransitLegEndpointIdentifiers(leg);
             const startName = parseTransitLegStartName(leg);
             const endName = parseTransitLegEndName(leg);
             const boardingPlatform = parseTransitLegBoardingPlatform(leg, startName);
@@ -315,11 +333,16 @@ export function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathC
             const base: Omit<TransitLegDetail, "label"> = {
                 kind,
                 durationMinutes,
+                durationSeconds,
                 distanceMeters,
                 stationCount,
                 lineName,
+                providerRouteId,
+                serviceClass,
                 lineColor,
                 directionName,
+                directionCode,
+                ...endpointIdentifiers,
                 boardingPlatform,
                 boardingExit,
                 recommendedBoardingPosition,
@@ -355,9 +378,10 @@ export function buildTransitModeSummary(transitLegs: TransitLegDetail[]): string
         BUS: "버스",
         WALK: "도보",
         ETC: "기타",
+        TRAIN: "기차", EXPRESS_BUS: "고속버스", INTERCITY_BUS: "시외버스", COACH: "고속·시외버스",
     };
 
-    const orderedKinds: TransitLegKind[] = ["SUBWAY", "BUS", "WALK", "ETC"];
+    const orderedKinds: TransitLegKind[] = ["SUBWAY", "BUS", "TRAIN", "EXPRESS_BUS", "INTERCITY_BUS", "COACH", "WALK", "ETC"];
     const used = new Set<TransitLegKind>(transitLegs.map((leg) => leg.kind));
     const summaryLabels = orderedKinds
         .filter((kind) => used.has(kind))

@@ -342,7 +342,7 @@ describe('calendar search open motion', () => {
       'private func morphAnimation',
     );
 
-    expect(nativeSearchField).toContain('prompt: Text("검색")');
+    expect(nativeSearchField).toContain('prompt: Text("일정·장소 검색")');
     expect(nativeMenuSurface).toContain(
       'alignment: activeAction == .search ? .topTrailing : .top',
     );

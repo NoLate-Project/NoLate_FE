@@ -67,15 +67,86 @@ export type TransitTimingBasis =
     | "TIMETABLE_ONLY"
     | "TIMETABLE_TRANSFER_UNKNOWN";
 
+export type EffectiveTransitRideTiming = {
+    /** Original matched train evidence, not current arrival information for future transfers. */
+    timetable: {
+        provider: string;
+        line: string;
+        serviceDate: string;
+        trainNumber: string;
+        directionCode: "UP" | "DOWN";
+        serviceClass: "LOCAL" | "EXPRESS";
+        fromStationCode: string;
+        toStationCode: string;
+        terminalName: string;
+        boardingAt: string;
+        arrivalAt: string;
+        fetchedAt: string;
+        realtimeTrainNumber?: string | null;
+    };
+    predictedBoardingAt: string;
+    predictedArrivalAt: string;
+    basis: "TIMETABLE" | "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE";
+};
+
 export type EffectiveTransitRouteSegment = {
     sequence: number;
-    kind: "WALK" | "BUS" | "SUBWAY" | "ETC";
+    kind: "WALK" | "BUS" | "SUBWAY" | "TRAIN" | "EXPRESS_BUS" | "INTERCITY_BUS" | "COACH" | "ETC";
     durationMinutes: number;
     waitingMinutes?: number | null;
     lineName?: string | null;
     fromName?: string | null;
     toName?: string | null;
     directionName?: string | null;
+    walkingScope?: "ACCESS" | "TRANSFER" | "EGRESS" | "UNKNOWN" | null;
+    /** Original WALK seconds, not inferred from rounded minutes. */
+    durationSeconds?: number | null;
+    /** Provider leg endpoints; station-interior/platform coverage is not established. */
+    walkingGeometry?: {
+        from?: { lat: number; lng: number } | null;
+        to?: { lat: number; lng: number } | null;
+        distanceMeters?: number | null;
+        endpointBasis?: "UNKNOWN" | "PROVIDER_LEG_ENDPOINTS";
+        /** 도보 공급자 조회용 연결 좌표. 역 출입구/승강장 좌표라는 뜻은 아니다. */
+        providerQueryEndpoints?: {
+            start: { lat: number; lng: number };
+            end: { lat: number; lng: number };
+        } | null;
+        /** Diagnostic evidence only: never replace WALK seconds with polyline distance. */
+        pathEvidence?: {
+            provider: string;
+            status: "PROVIDED" | "UNAVAILABLE" | "INVALID" | "LIMIT_EXCEEDED";
+            stationInteriorCoverage: "UNKNOWN" | "EXCLUDED" | "INCLUDED_TO_PLATFORM";
+            steps: Array<{
+                coordinates: Array<{ lat: number; lng: number }>;
+                distanceMeters?: number | null;
+                description?: string | null;
+            }>;
+        } | null;
+    } | null;
+    /** Absent on legacy/estimated routes. Never derive clocks from rounded minutes. */
+    rideTiming?: EffectiveTransitRideTiming | null;
+    /** 보행 예상과 공식 참조값을 구분한다. 참조값을 ETA에 다시 합산하지 않는다. */
+    walkingTiming?: {
+        source: "ROUTE_MINUTES" | "PROVIDER_LINK_SECONDS" | "ODSAY_FULL_PATH_SECONDS";
+        originalDurationMinutes: number;
+        movementSeconds: number;
+        fetchedAt?: string | null;
+        sameOrderedPathVerified: boolean;
+        transferReference?: {
+            stationName: string; fromLine: string; toLine: string;
+            distanceMeters: number; durationSeconds: number; datasetDate: string;
+            provider: string; walkingSpeedMetersPerSecond: number;
+            sourceUrl: string;
+            application: "REFERENCE_ONLY_DIRECTION_AND_PATH_UNVERIFIED";
+        } | null;
+    } | null;
+    /** 현재 계산의 환승 여유. 도보시간·대기에 이미 반영된 시간에 다시 더하지 않는다. */
+    transferTiming?: {
+        previousArrivalAt: string; walkingSeconds: number;
+        bufferSeconds: number; confidenceMarginSeconds: number; requiredMarginSeconds: number;
+        physicalReadyAt: string; confidenceReadyAt: string; boardingAt: string; remainingSlackSeconds: number;
+    } | null;
 };
 
 export type EffectiveTransitRoute = {
@@ -112,6 +183,8 @@ export type ScheduleDepartureStatus = {
     firstBoardingWaitMinutes?: number | null;
     routeChanged?: boolean;
     effectiveTransitRoute?: EffectiveTransitRoute | null;
+    /** 시간표 전용 미리보기. 정상 ETA/출발 알람의 대체값이 아니다. */
+    futureTimetablePrediction?: EffectiveTransitRoute | null;
 };
 
 export type ScheduleEtaArrivalObservation = {

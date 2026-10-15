@@ -8,6 +8,17 @@ import StackWeekEventLabels, {
 import { createStackCalendarLayout } from "../src/modules/schedule/components/calendar/stackCalendarLayout";
 import type { ScheduleItem } from "../src/modules/schedule/types";
 
+let mockThemeMode: "light" | "dark" = "light";
+
+jest.mock("../src/modules/theme/ThemeContext", () => ({
+    useTheme: () => ({
+        colors: {
+            textPrimary: mockThemeMode === "dark" ? "#ffffff" : "#111111",
+            textSecondary: "#777777",
+        },
+    }),
+}));
+
 jest.mock("@expo/vector-icons", () => {
     const ReactActual = jest.requireActual("react");
     const ReactNative = jest.requireActual("react-native");
@@ -52,6 +63,7 @@ describe("StackWeekEventLabels", () => {
     afterEach(() => {
         act(() => renderer?.unmount());
         renderer = undefined;
+        mockThemeMode = "light";
     });
 
     async function renderLabels(items: ScheduleItem[], eventTop = 52) {
@@ -109,6 +121,19 @@ describe("StackWeekEventLabels", () => {
         expect(style.right).toBe(`${4 * 100 / 7}%`);
         expect(style.marginLeft).toBe(2);
         expect(style.marginRight).toBe(2);
+    });
+
+    test.each(["light", "dark"] as const)("%s 모드 제목은 카테고리 색과 무관한 읽기 색을 쓴다", async (mode) => {
+        mockThemeMode = mode;
+        const { root } = await renderLabels([
+            allDayItem("pale", "2026-07-14", "2026-07-16", "#eeeeee"),
+        ]);
+        const title = root.findByProps({ testID: "stack-week-event-title" });
+        expect(StyleSheet.flatten(title.props.style).color)
+            .toBe(mode === "dark" ? "#ffffff" : "#111111");
+        const icon = root.findByProps({ testID: "mock-stack-week-icon" });
+        expect(icon.props.name).toBe("bus-outline");
+        expect(icon.props.size).toBe(10);
     });
 
     test("겹친 연속 일정은 각 lane에서 한 번씩만 제목을 표시한다", async () => {

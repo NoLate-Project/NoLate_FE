@@ -21,6 +21,8 @@ import {
 } from '../../src/api/sharingSafety';
 import { recoverDepartureAlarmsAfterMutation } from '../../src/modules/notification/departureAlarmMutationRecovery';
 import { useTheme } from '../../src/modules/theme/ThemeContext';
+import { useScreenFirstPaintPerformance } from '../../src/modules/performance/useScreenFirstPaintPerformance';
+import { useImmediateNavigationTransition } from '../../src/modules/performance/ImmediateNavigationTransition';
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '차단 목록을 불러오지 못했습니다.';
@@ -33,7 +35,9 @@ function blockedMemberLabel(member: BlockedSharingMember) {
 }
 
 export default function BlockedSharingMembersScreen() {
+  useScreenFirstPaintPerformance('/share/blocked');
   const router = useRouter();
+  const { closeActiveScene } = useImmediateNavigationTransition();
   const insets = useSafeAreaInsets();
   const { colors, mode } = useTheme();
   const mountedRef = useRef(true);
@@ -44,9 +48,10 @@ export default function BlockedSharingMembersScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const goBack = useCallback(() => {
+    if (closeActiveScene()) return;
     if (router.canGoBack()) router.back();
     else router.replace('/share/inbox');
-  }, [router]);
+  }, [closeActiveScene, router]);
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
