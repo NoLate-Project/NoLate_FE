@@ -1,0 +1,14 @@
+{
+  "observedDate": "2026-10-13",
+  "officialGuide": "https://txbus.t-money.co.kr/useinf/mobileInf.do",
+  "officialGuideDownloadLink": "https://bit.ly/3R1J2j6",
+  "observation": "Official guide download redirects to an iOS app-open bridge using tmoneytia://main/home plus attribution parameters. Product keeps only main-screen URL. Observed behavior is not a published deep-link contract.",
+  "appMainURL": "tmoneytia://main/home",
+  "actualCarrierAppValidated": false,
+  "webURLs": {
+    "intercity": "https://intercitybus.tmoney.co.kr/",
+    "express": "https://www.kobus.co.kr/",
+    "bustago": "https://www.bustago.or.kr/"
+  },
+  "nativeWebValidated": "intercity only; express and Bustago selection covered by unit tests"
+}

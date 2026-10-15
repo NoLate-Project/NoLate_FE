@@ -1,0 +1,136 @@
+{
+  "date": "2026-10-12",
+  "status": "synthetic_ticket_full_ios_journey_verified",
+  "scope": "P4 initial iOS single train information import, final destination/deadline editing, fixed ticket connection, save and relaunch",
+  "environment": {
+    "api": "127.0.0.1:5524; dedicated memory H2; normal signup/login; distinct synthetic UI/API accounts",
+    "metroPort": 8097,
+    "autoReload": false,
+    "simulator": {
+      "architecture": "arm64",
+      "deviceId": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+      "deviceName": "NoLate Intercity iOS27 E2E 20261012",
+      "modelName": "iPhone 18 Pro",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    },
+    "provider": "live TMAP for this test session; earlier ODsay quota exceeded; no operating default changed"
+  },
+  "frontend": {
+    "suites": 12,
+    "passed": 160,
+    "failed": 0,
+    "skipped": 0,
+    "typecheck": "passed",
+    "eslint": {
+      "errors": 0,
+      "warnings": 0,
+      "scope": "changed files in this followup"
+    }
+  },
+  "apiE2E": {
+    "passed": 1,
+    "failed": 0,
+    "notSelected": 2,
+    "connectionRequests": 2,
+    "tagoRequests": 0,
+    "pendingDeadlineEdited": true,
+    "pendingStatus": "NOT_CONFIGURED",
+    "checks": [
+      "pending ticket create and GET",
+      "edit final arrival deadline before connecting; ticket unchanged",
+      "live TMAP approach/egress",
+      "anchored journey save and DB restore",
+      "normal personal plan update",
+      "reject shifted departure and mismatched ticket train number",
+      "delete only synthetic API-created schedule"
+    ],
+    "evidence": "ticket-journey-api.json",
+    "originalCorridor": "previously captured actual TMAP response"
+  },
+  "nativeUI": {
+    "test": "testTrainTicketImageShareConnectRouteSaveReopen",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "xcodebuildExitCode": 0,
+    "durationSeconds": 210.558,
+    "startTime": 1791794521.369,
+    "finishTime": 1791794750.09,
+    "resultBundle": "/private/tmp/nolate-ticket-connection-20261012/native-03/result.xcresult",
+    "input": "synthetic train image; real UIKit share sheet and Vision OCR",
+    "checks": [
+      "review and correct uncertain station names",
+      "explicit confirmation before save",
+      "save/relaunch/reopen initial imported schedule",
+      "edit final deadline to 20:00; ticket stays 12:20 to 13:12",
+      "pending route setup opens schedule editing for final destination",
+      "choose original and final places through UI",
+      "choose live TMAP train corridor and imported ticket",
+      "explicitly confirm matching boarding/alighting places",
+      "connect real approach/egress and save with final destination",
+      "relaunch, reopen and assert fixed train clocks and unverified status"
+    ],
+    "screenshots": [
+      {
+        "file": "ticket-journey-reopened.png",
+        "sha256": "6600bc63b37ca63807fa7af07a48b11c378db6697975db9f3473fe02283f5087"
+      },
+      {
+        "file": "ticket-journey-mapping-confirmed.png",
+        "sha256": "89d4e98e1a8c4726eb34d96522772b4935b29777a3b1f82d569c2a74e8969aa3"
+      },
+      {
+        "file": "ticket-journey-target-edited.png",
+        "sha256": "8525394e30b6bb117b5d6dad26f0d1a8df9f46f6f956d47d1c4cf4b8c984249d"
+      }
+    ],
+    "databaseProof": "ticket-journey-native-db.json"
+  },
+  "fixes": [
+    "pending-ticket information and name-only origin survive both form and edit saves",
+    "pending-ticket form does not silently geocode its station name",
+    "pending-ticket route setup uses schedule editing so final destination and deadline can be saved together",
+    "timeline boarding-word cleanup preserves the complete word 승차권"
+  ],
+  "regressionEvidence": {
+    "pendingForm": "failed before fix; route and origin missing",
+    "pendingEdit": "failed before fix; route and origin missing",
+    "ticketLabel": "rendered row failed before fix with 권 입력; fixed to 승차권 입력"
+  },
+  "previousAttempts": [
+    {
+      "attempt": "01",
+      "status": "failed",
+      "reason": "test assumed origin search but initial missing-coordinate drawer was destination; pending edit preservation had passed"
+    },
+    {
+      "attempt": "02",
+      "status": "failed",
+      "reason": "full connection and save succeeded; ticket label cleanup removed 승차 and exact arrow punctuation assertion did not match presentation; fixed product text and assert both clocks"
+    }
+  ],
+  "priorValidation": "ticket-import-validation.json; previous test counts are not added to this overlapping regression run; backend and Swift parser sources unchanged in this followup",
+  "limitations": [
+    "No actual Korail app or purchased ticket used",
+    "iOS Simulator only; Android deferred",
+    "Original ticket/QR/payment information not uploaded or retained",
+    "No carrier booking or cancellation verification; this schedule is not a boarding credential",
+    "Bus/PDF/multiple tickets/deduplication/original viewing and carrier change synchronization pending",
+    "Device departure-alarm delivery not tested; saved alarm off"
+  ],
+  "sourceHashes": {
+    "NoLate_FE/src/modules/schedule/components/form/useScheduleAddFormState.ts": "6395b98d46d8b2f9f5601ece1bf9941130923bb4ebfd81f45ecaa2ca3913bafa",
+    "NoLate_FE/src/modules/schedule/components/form/useScheduleAddModalController.tsx": "16bed951f4d2b31b00d5319807e5c6465157617511c938e3edc1c83dee910c35",
+    "NoLate_FE/src/modules/schedule/screens/scheduleEditMutations.ts": "1838c51c7ca2fc5bd1c5211d6f853e9725216550372a3d8de69f78ab59f25f86",
+    "NoLate_FE/src/routeSupport/schedule/useScheduleDetailController.tsx": "a7122c69758ade4dd3c16a8d7a6235d91f4603c4e1edbacd0fbf516414c41b57",
+    "NoLate_FE/src/modules/schedule/components/detail/ImportedTicketSummary.tsx": "f0106b61906f3834a9fc4bbb32c12c5352a6eb570d0dd74fbcbd74f7b5d8ede7",
+    "NoLate_FE/src/modules/schedule/components/route/RouteStepTimeline.helpers.tsx": "88554ff262035db8b08ae01784d97d601f7c835f83f8d2804252595f74102bc7",
+    "NoLate_FE/__tests__/scheduleAddModalCloseFlow.test.tsx": "4b034b47a58532b636b74dda3cae05d0a8f2d96bb28f3c5da5f6694720210a96",
+    "NoLate_FE/__tests__/scheduleEditRouteReturn.test.tsx": "e33aa71d6df68955e520cc22e95d10db9fae1e3068a8e19bd25a29c16efb927f",
+    "NoLate_FE/__tests__/routeStepTimelineTiming.test.tsx": "522073b958e3cbea35c691027a95f42ccc349616b1f98287aa2b8faeb6444599",
+    "NoLate_FE/e2e/ios/NoLateE2ETests.swift": "0d54baf3ee9bce47df29e034147c01c73ac3b2cd984fd2dffed837d6351c1046",
+    "NoLate_FE/e2e/intercity-selection-api.e2e.ts": "2f02c0943a6cba5a4cd2f26743e4ab2961ee3809aeb671eccfbe3391fb0bdccb"
+  }
+}

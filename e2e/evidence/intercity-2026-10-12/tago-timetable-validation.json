@@ -1,0 +1,131 @@
+{
+  "date": "2026-10-12",
+  "scope": "P2 read-only public timetable lookup; iOS first",
+  "routingProvider": "tmap",
+  "timetableProvider": "TAGO",
+  "environment": {
+    "backend": "current compiled application; loopback 5524; separate in-memory H2",
+    "metroPort": 8097,
+    "authentication": "normal signup and login; separate synthetic UI/API members",
+    "providerMocks": false
+  },
+  "apiE2E": [
+    {
+      "kind": "TRAIN",
+      "status": "AVAILABLE",
+      "items": 14,
+      "cachedFetchedAtStable": true
+    },
+    {
+      "kind": "EXPRESS_BUS",
+      "status": "AVAILABLE",
+      "items": 31,
+      "cachedFetchedAtStable": true
+    },
+    {
+      "kind": "INTERCITY_BUS",
+      "status": "NO_SERVICES",
+      "items": 0,
+      "cachedFetchedAtStable": true
+    },
+    {
+      "futureIntercity": "DATE_UNSUPPORTED"
+    },
+    {
+      "wrongNamespaceHttp": 400
+    },
+    {
+      "unauthenticatedHttp": 401
+    },
+    {
+      "kind": "INTERCITY_BUS",
+      "route": "부산서부→진주",
+      "status": "NO_SERVICES",
+      "items": 0,
+      "execution": "initial isolated-server run"
+    }
+  ],
+  "backendTests": [
+    {
+      "name": "com.noLate.eta.application.TransitEtaCalculationServiceTest",
+      "tests": "30",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.noLate.intercity.IntercityTimetableServiceTest",
+      "tests": "14",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "frontendTests": {
+    "suites": 2,
+    "passed": 11,
+    "failed": 0,
+    "typecheck": "passed",
+    "eslint": "0 errors; 5 existing inline-style warnings in RouteSelectResultsScreen"
+  },
+  "iosE2E": {
+    "test": "testIntercityLiveTimetableSearchSaveReopen",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "xcresult": "/private/tmp/nolate-intercity-timetable-ui-20261012-04/result.xcresult",
+    "steps": [
+      "normal login",
+      "live TMAP train route search",
+      "select TAGO train cities and stop IDs",
+      "live train timetable: 14 services",
+      "live express bus timetable: 31 services",
+      "future intercity date unsupported",
+      "today intercity no services",
+      "close lookup",
+      "save original route with alerts off",
+      "terminate and relaunch",
+      "reopen schedule retaining TRAIN"
+    ]
+  },
+  "earlierAttempts": [
+    {
+      "attempt": "01",
+      "result": "failed",
+      "reason": "XCTest queried nested city list as ScrollView instead of its accessibility element type"
+    },
+    {
+      "attempt": "02",
+      "result": "failed",
+      "reason": "test swiped down an already-top iOS pageSheet and dismissed it"
+    },
+    {
+      "attempt": "03",
+      "result": "passed",
+      "note": "before final loading controls and provider validation hardening; not added to unique E2E case count"
+    }
+  ],
+  "screenshots": {
+    "tago-train-timetable.png": "65dda320d8788e8a8f9097b20727a09a41871e00c1b60287ded914b342201e0f",
+    "tago-express-timetable.png": "d343bba85687263da16c58a26885ce13ccc69eb0443df73933fb429c1c429589",
+    "tago-intercity-no-services.png": "3f7904c087a4835f25c413bb5f7f07f108ef6f71efd76df125f4276b9ceb0348",
+    "tago-intercity-future-unsupported.png": "c67481d6eba0e0b8db63da865bdef3744254f13fc48150f3ee53eb2471bd38da",
+    "tago-lookup-reopened-timeline.png": "304cdf374175e356ec7960e0ef71df4b17742c02d74a91c4a6120e8b2ba6ed3f"
+  },
+  "notCompleted": [
+    "timetable service selection/persistence",
+    "recompute approach and egress routes around chosen service",
+    "lock a confirmed reservation",
+    "official booking links and ticket import",
+    "intercity notification delivery",
+    "nonempty live intercity-bus timetable",
+    "Android E2E"
+  ],
+  "invariants": [
+    "timetable lookup does not overwrite route estimates",
+    "all services are TIMETABLE and UNCONFIRMED",
+    "intercity ETA guard retained",
+    "unknown coach kind requires user choice",
+    "same-name provider stops are not auto-merged"
+  ]
+}

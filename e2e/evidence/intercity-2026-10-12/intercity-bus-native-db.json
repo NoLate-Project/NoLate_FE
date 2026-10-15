@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "source": "NATIVE_UI_REAL_TMAP_SEARCH",
+  "scheduleId": 15,
+  "title": "Intercity Bus E2E 1791802835",
+  "origin": {
+    "name": "동서울종합터미널 E2E",
+    "address": null,
+    "lat": 37.5339323,
+    "lng": 127.09476136
+  },
+  "destination": {
+    "name": "속초시외버스터미널 E2E",
+    "address": null,
+    "lat": 38.21118713,
+    "lng": 128.59088288
+  },
+  "startAt": "2026-10-13T05:00:00Z",
+  "departAt": "2026-10-13T02:45:17Z",
+  "travelPlanStatus": "READY",
+  "notificationEnabled": false,
+  "provider": "tmap",
+  "schemaVersion": 2,
+  "legKinds": [
+    "WALK",
+    "INTERCITY_BUS",
+    "WALK"
+  ],
+  "ride": {
+    "kind": "INTERCITY_BUS",
+    "lineName": "시외버스:동서울-속초",
+    "durationMinutes": 130,
+    "serviceAvailable": true,
+    "startName": "동서울",
+    "endName": "속초시외"
+  },
+  "restoredStepKinds": [
+    "ORIGIN",
+    "WALK",
+    "INTERCITY_BUS",
+    "WALK",
+    "DESTINATION"
+  ],
+  "timingBasis": "estimated",
+  "freshScheduleFromThisNativeRun": true,
+  "listAndDetailRouteEqual": true
+}

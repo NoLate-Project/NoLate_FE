@@ -1,0 +1,161 @@
+{
+  "nativeUI": false,
+  "timetable": "LIVE_TAGO",
+  "connections": "LIVE_TMAP",
+  "selectedService": {
+    "id": "tago:2e132a5fbb2a13a38ed308d2a824050a9a2866b9d12451dfd2dd8cb3967df7c3",
+    "kind": "EXPRESS_BUS",
+    "departureId": "NAEK010",
+    "arrivalId": "NAEK320",
+    "departureName": "서울경부",
+    "arrivalName": "공주",
+    "departureAt": "2026-10-13T11:05+09:00",
+    "arrivalAt": "2026-10-13T12:35+09:00",
+    "serviceDate": "2026-10-13",
+    "grade": "프리미엄",
+    "trainNumber": null,
+    "fare": 19300,
+    "timingBasis": "TIMETABLE",
+    "bookingStatus": "UNCONFIRMED"
+  },
+  "requests": [
+    {
+      "departureAt": "2026-10-13T01:40:00.000Z",
+      "candidateCount": 10
+    },
+    {
+      "departureAt": "2026-10-13T03:40:00.000Z",
+      "candidateCount": 10
+    }
+  ],
+  "api": "REAL_LOCAL_POST_DB_GET",
+  "shiftedDepartureRejected": true,
+  "passed": true,
+  "originalCorridorSource": "previously captured actual TMAP response; connection requests are fresh live calls",
+  "journey": {
+    "version": 1,
+    "service": {
+      "id": "tago:2e132a5fbb2a13a38ed308d2a824050a9a2866b9d12451dfd2dd8cb3967df7c3",
+      "kind": "EXPRESS_BUS",
+      "departureId": "NAEK010",
+      "arrivalId": "NAEK320",
+      "departureName": "서울경부",
+      "arrivalName": "공주",
+      "departureAt": "2026-10-13T11:05+09:00",
+      "arrivalAt": "2026-10-13T12:35+09:00",
+      "serviceDate": "2026-10-13",
+      "grade": "프리미엄",
+      "trainNumber": null,
+      "fare": 19300,
+      "timingBasis": "TIMETABLE",
+      "bookingStatus": "UNCONFIRMED"
+    },
+    "fetchedAt": "2026-10-12T05:25:44.401248Z",
+    "selectedAt": "2026-10-12T05:25:44.447Z",
+    "departureAt": "2026-10-13T01:40:00.000Z",
+    "arrivalAt": "2026-10-13T03:50:55.000Z",
+    "boardingBufferMinutes": 15,
+    "alightingBufferMinutes": 5,
+    "connectionBasis": "ROUTE_ESTIMATE",
+    "mapping": {
+      "confirmed": true,
+      "departureName": "서울고속버스터미널",
+      "arrivalName": "공주종합버스터미널",
+      "departure": {
+        "lat": 37.505678,
+        "lng": 127.005844
+      },
+      "arrival": {
+        "lat": 36.468514,
+        "lng": 127.134731
+      }
+    }
+  },
+  "schemaVersion": 3,
+  "timeBasis": "anchored_journey",
+  "providerTimeBasis": "route_estimate",
+  "legs": [
+    {
+      "kind": "WALK",
+      "label": "도보 106m · 2분",
+      "durationSeconds": 103,
+      "startDateTime": "2026-10-13T01:40:00.000Z",
+      "endDateTime": "2026-10-13T01:41:43.000Z"
+    },
+    {
+      "kind": "SUBWAY",
+      "label": "지하철 수도권3호선 · 2정거장 · 5분",
+      "durationSeconds": 246,
+      "startDateTime": "2026-10-13T01:41:43.000Z",
+      "endDateTime": "2026-10-13T01:45:49.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 228m · 4분",
+      "durationSeconds": 227,
+      "startDateTime": "2026-10-13T01:45:49.000Z",
+      "endDateTime": "2026-10-13T01:49:36.000Z"
+    },
+    {
+      "kind": "ETC",
+      "label": "탑승 준비·대기 (준비 15분 포함)",
+      "journeyPhase": "BUFFER",
+      "durationSeconds": 924,
+      "startDateTime": "2026-10-13T01:49:36.000Z",
+      "endDateTime": "2026-10-13T02:05:00.000Z"
+    },
+    {
+      "kind": "EXPRESS_BUS",
+      "label": "프리미엄",
+      "durationSeconds": 5400,
+      "startDateTime": "2026-10-13T02:05:00.000Z",
+      "endDateTime": "2026-10-13T03:35:00.000Z",
+      "intercityService": {
+        "id": "tago:2e132a5fbb2a13a38ed308d2a824050a9a2866b9d12451dfd2dd8cb3967df7c3",
+        "kind": "EXPRESS_BUS",
+        "departureId": "NAEK010",
+        "arrivalId": "NAEK320",
+        "departureName": "서울경부",
+        "arrivalName": "공주",
+        "departureAt": "2026-10-13T11:05+09:00",
+        "arrivalAt": "2026-10-13T12:35+09:00",
+        "serviceDate": "2026-10-13",
+        "grade": "프리미엄",
+        "trainNumber": null,
+        "fare": 19300,
+        "timingBasis": "TIMETABLE",
+        "bookingStatus": "UNCONFIRMED"
+      }
+    },
+    {
+      "kind": "ETC",
+      "label": "하차 후 여유",
+      "journeyPhase": "BUFFER",
+      "durationSeconds": 300,
+      "startDateTime": "2026-10-13T03:35:00.000Z",
+      "endDateTime": "2026-10-13T03:40:00.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 118m · 2분",
+      "durationSeconds": 84,
+      "startDateTime": "2026-10-13T03:40:00.000Z",
+      "endDateTime": "2026-10-13T03:41:24.000Z"
+    },
+    {
+      "kind": "BUS",
+      "label": "버스 일반:200 · 3정거장 · 8분",
+      "durationSeconds": 451,
+      "startDateTime": "2026-10-13T03:41:24.000Z",
+      "endDateTime": "2026-10-13T03:48:55.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 127m · 2분",
+      "durationSeconds": 120,
+      "startDateTime": "2026-10-13T03:48:55.000Z",
+      "endDateTime": "2026-10-13T03:50:55.000Z"
+    }
+  ],
+  "privateRawSha256": "b656e07e1d7c1b64aefe428bebe81bcae5c8cc145d93a6fe95aa7d7711cb0d69"
+}

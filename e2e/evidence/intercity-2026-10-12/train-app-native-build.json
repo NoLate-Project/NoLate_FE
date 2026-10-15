@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-12",
+  "status": "native_build_completed_physical_validation_deferred_by_user",
+  "nativeBuild": {
+    "platform": "iphoneos",
+    "configuration": "Release",
+    "result": "BUILD SUCCEEDED",
+    "exitCode": 0,
+    "version": "1.3.0",
+    "build": "55",
+    "artifact": "/private/tmp/nolate-train-device-20261012/derived-data/Build/Products/Release-iphoneos/NoLateFE.app",
+    "bundleSHA256": "ec5c89e625d99ee3fb05823c5050b1c17e9c985a44aefd87593c8ba6ad57a478",
+    "compiledMainPlistSHA256": "06e8a3815f8e6f4fd5c87ac023bec5dc164716419254391415510b3ae3441d9d",
+    "korailQueryAllowlistPresent": true,
+    "appURLAndFallbackPresentInBundledJS": true,
+    "doesNotClaimCarrierScheme": true,
+    "releaseArtifactMetadataCheck": "passed: scene manifest, iPhone-only, all three extensions and bundled JS",
+    "deepStrictCodeSignatureCheck": "passed",
+    "buildLogSHA256": "56bbbd9902c01feca86359f218b6f0d4ae9c4d1f4e0080b0c9e78c173c0dcaac"
+  },
+  "simulatorValidation": "train-app-validation.json;127 frontend tests and 2 simulator UI E2E passed in prior run;not rerun or added to totals",
+  "physicalValidation": {
+    "status": "DEFERRED_BY_USER",
+    "instruction": "지금은 시뮬레이터 검증까지만",
+    "priorAttempt": "Carrier launch was denied by iOS device lock; app did not launch. Not an app-link validation result.",
+    "noLateInstalledOrReplaced": false,
+    "carrierAppRemovedOrModified": false,
+    "actualAppFlowVerified": false
+  },
+  "sourceHashes": {
+    "NoLate_FE/src/modules/schedule/components/route/TrainBookingAction.tsx": "3d80477f5e590e4c8203a890461543af77871b6ddeb25f167e31e6517330455e",
+    "NoLate_FE/ios/NoLateFE/Info.plist": "086ec3ba8910072c1320a45b30a361713441003154d0761f92a8f8d3c22e53ce",
+    "NoLate_FE/app.json": "be8910175002da822aa3c864a6fc6b73d7825b2c6816bd867c983d71e21b8794",
+    "NoLate_FE/ios/NoLateShareExtension/TrainTicketImport.swift": "b41fbde1ca506ef613d340b86070fcdea76fc3d42ac6f3c17d6ae273b395512c",
+    "NoLate_FE/ios/NoLateShareExtension/TrainTicketReviewController.swift": "9714e4fe206c89cb5901c67350b46aba8215a10b864699884ba276d2cc097695",
+    "NoLate_FE/ios/NoLateShareExtension/ShareViewController.swift": "e3a143c4da6c6974f46e85c927f1cf24e67c493b7d9e4c84c179a151c20f9b6b"
+  }
+}

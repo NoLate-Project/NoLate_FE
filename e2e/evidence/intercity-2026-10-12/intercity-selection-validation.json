@@ -1,0 +1,224 @@
+{
+  "date": "2026-10-12",
+  "status": "single_service_selection_verified",
+  "scope": "P2 single timetable service selection, approach/egress recomposition and persistence; iOS first",
+  "environment": {
+    "api": "127.0.0.1:5524; dedicated in-memory H2; current backend sources",
+    "metroPort": 8097,
+    "simulatorUDID": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+    "syntheticAccounts": "normal signup/login; distinct UI/API accounts; credentials excluded",
+    "provider": "TMAP for this development/test session after ODsay quota exceeded; live TAGO",
+    "metroAutoReload": false,
+    "metroVerificationMode": "CI=1 (installed Expo CLI watch disabled)",
+    "sharing": "disabled in isolated backend test profile; specific startup notice acknowledged through UI"
+  },
+  "frontend": {
+    "suites": 8,
+    "passed": 116,
+    "failed": 0,
+    "skipped": 0,
+    "typecheck": "passed",
+    "eslint": {
+      "errors": 0,
+      "existingInlineStyleWarnings": 5
+    }
+  },
+  "backend": {
+    "suites": 3,
+    "passed": 51,
+    "failed": 0,
+    "skipped": 0,
+    "classes": [
+      {
+        "name": "com.noLate.eta.application.TransitEtaCalculationServiceTest",
+        "tests": 30,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.noLate.intercity.IntercityJourneyValidatorTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.noLate.intercity.IntercityTimetableServiceTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "liveApiE2E": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "cases": [
+      "selected-service-train.json",
+      "selected-service-express_bus.json"
+    ],
+    "originalCorridor": "previously captured actual TMAP response",
+    "timetableAndConnections": "fresh live TAGO / TMAP calls",
+    "checks": [
+      "create schedule",
+      "DB GET roundtrip and FE restoration",
+      "valid personal plan update",
+      "reject shifted departure with HTTP 400",
+      "stored route unchanged after rejection",
+      "delete only synthetic schedules created by these API cases"
+    ]
+  },
+  "nativeUI": {
+    "status": "passed",
+    "test": "testIntercitySelectedServiceSaveReopen",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "xcodebuildExitCode": 0,
+    "durationSeconds": 172.779,
+    "resultBundle": "/private/tmp/nolate-intercity-selection-ui-20261012-14/result.xcresult",
+    "startTime": 1791784935.822,
+    "finishTime": 1791785116.871,
+    "selectedServiceDepartureAt": "2026-10-13T12:20:00+09:00",
+    "selectedServiceArrivalAt": "2026-10-13T13:12:00+09:00",
+    "restoredLabel": "기차, 수서, 공주까지 · 52분 · 시간표 12:20 · 13:12 · 예매 미확인",
+    "alarmSwitch": "off; confirmed in final before-save screenshot",
+    "screenshots": [
+      {
+        "file": "selected-service-reopened-timeline.png",
+        "sha256": "a7888ca81f71bd18fe319e6bd006ed5dd8b7bfcb63d46bae663a8c7c5bd7117a",
+        "capturedAt": 1791785116.196
+      },
+      {
+        "file": "selected-service-calendar.png",
+        "sha256": "962d67d46740c267a21a13e6946ba460b007534d16ed652d0f165cb141104a84",
+        "capturedAt": 1791785078.105
+      },
+      {
+        "file": "selected-service-before-save.png",
+        "sha256": "23e5e7871558db660d13d7de091cf75c250649075a1a0f1e8bf53713d76faafe",
+        "capturedAt": 1791785071.04
+      },
+      {
+        "file": "selected-service-connected.png",
+        "sha256": "3789883a3fe14fbd4a9f9044f82c8aef9b6afd1619fc7c6db600d77d92616418",
+        "capturedAt": 1791785064.321
+      },
+      {
+        "file": "selected-service-mapping.png",
+        "sha256": "004858dffd4baee13ec5ea38cfafa0e3b293af4b2e7952385a7da6b14f3ab2fb",
+        "capturedAt": 1791785061.494
+      }
+    ],
+    "checks": [
+      "normal authenticated UI",
+      "real TMAP full corridor search",
+      "real TAGO station and service lookup",
+      "apply disabled before same-place confirmation",
+      "live approach/egress recomposition",
+      "native calendar day selection",
+      "schedule save",
+      "terminate and relaunch app",
+      "server-backed restored TRAIN departure and UNCONFIRMED label"
+    ]
+  },
+  "limits": [
+    "One intercity ride only; station/terminal mapping explicitly confirmed by user using original route coordinates.",
+    "TAGO intercity buses support today only; observed route had no services, so no nonempty live INTERCITY_BUS selection verified.",
+    "Whole journey is an estimate; only selected ride is timetable anchored. No booking, seat, boarding platform, live operation or station interior validation.",
+    "Intercity ETA guard retained; native departure alarms disabled in these tests; delivery acceptance remains P5.",
+    "Android deferred; P3 booking links and P4 ticket import are not implemented."
+  ],
+  "sourceSha256": {
+    "src/modules/schedule/intercityJourney.ts": "8986ce9667c1649068b617089fadc5e2bc258458ce8a6d72c27344e9631fa848",
+    "src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "31d946a361591d7bbbc75b1dd645f3224634a770b35c7d92365c942a1ea01141",
+    "src/routeSupport/schedule/useRouteSelectRouteController.ts": "8cf959de3a146fc0488f65696681e7ad377fae784c7b41e02d1b01db9650a173",
+    "e2e/intercity-selection-api.e2e.ts": "41b340ca1b5ed9073678f534d7a610a84d5d97f56ac7fb2d0c5ac6fec84054b9",
+    "e2e/ios/NoLateE2ETests.swift": "c725e64f01ed8b5b9a16afb47dbb1fb77d1bb1dbe2f755cfd134578ba61d12ff",
+    "../NoLate_BE/src/main/kotlin/com/noLate/intercity/IntercityJourneyValidator.kt": "eb8dfe8e8e5fbbceba6e0d0586d9505a9230e64184955c8ded86c5675006895f"
+  },
+  "earlierNativeAttempts": [
+    {
+      "attempt": "01",
+      "status": "failed",
+      "reason": "Observed late OS password-save sheet obstructed manual entry.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-01"
+    },
+    {
+      "attempt": "02",
+      "status": "failed",
+      "reason": "Harness treated the underlying save button as modal completion.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-02"
+    },
+    {
+      "attempt": "03",
+      "status": "failed",
+      "reason": "Candidate tap did not expand the required train route.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-03"
+    },
+    {
+      "attempt": "04",
+      "status": "failed",
+      "reason": "Candidates changed between querying and selecting.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-04"
+    },
+    {
+      "attempt": "05",
+      "status": "failed",
+      "reason": "Observed leftover disabled-sharing alert blocked adding a schedule.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-05"
+    },
+    {
+      "attempt": "06",
+      "status": "interrupted",
+      "reason": "Interrupted after simulator/test connection stalled; not counted as a passing test.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-06"
+    },
+    {
+      "attempt": "07",
+      "status": "failed",
+      "reason": "Harness searched today instead of the saved future calendar day.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-07"
+    },
+    {
+      "attempt": "08",
+      "status": "failed",
+      "reason": "Save tap occurred during the sheet transition.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-08"
+    },
+    {
+      "attempt": "09",
+      "status": "failed",
+      "reason": "Previous synthetic draft dismissal required confirmation.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-09"
+    },
+    {
+      "attempt": "10",
+      "status": "failed",
+      "reason": "Observed synthetic draft cancellation dialog blocked the next close action.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-10"
+    },
+    {
+      "attempt": "11",
+      "status": "failed",
+      "reason": "Asynchronous disabled-sharing startup notice obstructed reopening the personal schedule.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-11"
+    },
+    {
+      "attempt": "12",
+      "status": "failed",
+      "reason": "Same startup notice arrived after the initial visibility check.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-12"
+    },
+    {
+      "attempt": "13",
+      "status": "failed",
+      "reason": "Candidate stability wait timed out; app observed back on calendar. Automatic development reloads disabled before final run.",
+      "privateOutput": "/private/tmp/nolate-intercity-selection-ui-20261012-13"
+    }
+  ],
+  "nativeCounting": "Final run: 1 passed, 0 failed, 0 skipped. Earlier unsuccessful attempts are listed separately and are not presented as passing E2E coverage."
+}

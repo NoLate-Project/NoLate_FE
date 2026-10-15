@@ -1,0 +1,223 @@
+{
+  "date": "2026-10-12",
+  "status": "ios_train_ticket_information_import_first_version_verified",
+  "scope": "P4 initial iOS single train image/text import; not completion of full P4",
+  "environment": {
+    "api": "127.0.0.1:5524; dedicated in-memory H2; current backend sources",
+    "metroPort": 8097,
+    "metroAutoReload": false,
+    "simulator": {
+      "architecture": "arm64",
+      "deviceId": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+      "deviceName": "NoLate Intercity iOS27 E2E 20261012",
+      "modelName": "iPhone 18 Pro",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    },
+    "accounts": "normal signup/login; distinct synthetic UI/API accounts; credentials excluded",
+    "provider": "live TMAP connections; development/test session switched after earlier ODsay quota exceeded",
+    "sharing": "isolated test profile disables shared calendars; known startup notice acknowledged"
+  },
+  "frontend": {
+    "suites": 9,
+    "passed": 138,
+    "failed": 0,
+    "skipped": 0,
+    "typecheck": "passed",
+    "eslint": {
+      "errors": 0,
+      "existingInlineStyleWarningsInSelectedFiles": 17
+    }
+  },
+  "backend": {
+    "suites": 3,
+    "passed": 50,
+    "failed": 0,
+    "skipped": 0,
+    "classes": [
+      {
+        "name": "com.noLate.schedule.application.service.ScheduleTravelPlanServiceUnitTest",
+        "tests": 26,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.noLate.intercity.IntercityTimetableServiceTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      {
+        "name": "com.noLate.intercity.IntercityJourneyValidatorTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    ]
+  },
+  "swiftPolicy": {
+    "assertions": 11,
+    "status": "passed",
+    "coverage": [
+      "text recognition",
+      "strict KST dates",
+      "no implicit date or overnight arrival",
+      "ambiguous times stay blank",
+      "unverified status",
+      "no raw ticket/seat fields"
+    ]
+  },
+  "nativeUI": {
+    "status": "passed",
+    "test": "testTrainTicketImageShareSaveReopen",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "xcodebuildExitCode": 0,
+    "durationSeconds": 100.416,
+    "resultBundle": "/private/tmp/nolate-ticket-import-20261012/native-12/result.xcresult",
+    "startTime": 1791791154.41,
+    "finishTime": 1791791262.814,
+    "input": "synthetic SRT 615 image; no real purchased ticket",
+    "ocr": "Vision on device; date, two times and train number recognized; both uncertain station names manually corrected",
+    "checks": [
+      "real iOS share sheet opens current NoLate extension",
+      "normal shared Keychain authentication",
+      "editable review; save disabled before explicit confirmation",
+      "structured ticket saved to private category",
+      "app terminated and relaunched; schedule reopened from API",
+      "ticket summary and unverified booking status retained",
+      "unconnected plan shows 경로 미설정; alarm off"
+    ],
+    "screenshots": [
+      {
+        "file": "ticket-share-reopened.png",
+        "sha256": "d019ca09aff173fe75b424fbedce30081b0a70320f01927ec849f0064cd3a65d"
+      },
+      {
+        "file": "ticket-share-review.png",
+        "sha256": "891bb37fc52c81a507de696288c4da9f8da07cd114230636ca34a71c04ef30f6"
+      }
+    ],
+    "textShareNativeE2E": "not run; parser policy verified separately"
+  },
+  "apiE2E": {
+    "passed": 1,
+    "failed": 0,
+    "notSelected": 2,
+    "case": "reviewed ticket import → live TMAP connections → database restore with fixed ticket times",
+    "input": "synthetic reviewed ticket + previously captured actual TMAP full corridor",
+    "connectionRequests": 2,
+    "tagoRequests": 0,
+    "evidence": "ticket-import-api.json",
+    "checks": [
+      "initial metadata-only plan NOT_CONFIGURED",
+      "create and GET ticket",
+      "fixed train times with live approach/egress",
+      "full schedule and personal plan update",
+      "DB GET and FE restoration",
+      "HTTP 400 for shifted departure and mismatched ticket train number",
+      "delete only the schedule created by the API test"
+    ]
+  },
+  "privacy": {
+    "originalImageUploaded": false,
+    "rawOcrPersisted": false,
+    "boardingCredentialImported": false,
+    "bookingVerified": false,
+    "alarmsEnabled": false
+  },
+  "previousAttempts": [
+    {
+      "attempt": "01",
+      "status": "failed_or_interrupted",
+      "reason": "fixture host missing SDK 27 scene lifecycle"
+    },
+    {
+      "attempt": "02",
+      "status": "failed_or_interrupted",
+      "reason": "share destination selector used buttons instead of cells"
+    },
+    {
+      "attempt": "03",
+      "status": "failed_or_interrupted",
+      "reason": "unsigned simulator extension lacked embedded shared Keychain entitlements"
+    },
+    {
+      "attempt": "04",
+      "status": "failed_or_interrupted",
+      "reason": "manually adding device entitlements prevented simulator main app launch"
+    },
+    {
+      "attempt": "05",
+      "status": "failed_or_interrupted",
+      "reason": "onboarding preparation interrupted; no pass claim"
+    },
+    {
+      "attempt": "06",
+      "status": "failed_or_interrupted",
+      "reason": "shared authentication unavailable before correct Xcode signing build"
+    },
+    {
+      "attempt": "07",
+      "status": "failed_or_interrupted",
+      "reason": "generic public.image representation was not a decodable image"
+    },
+    {
+      "attempt": "08",
+      "status": "failed_or_interrupted",
+      "reason": "OCR left station fields uncertain; test must review and correct blanks"
+    },
+    {
+      "attempt": "09",
+      "status": "failed_or_interrupted",
+      "reason": "save and reopen worked; ticket summary absent from plain detail presentation"
+    },
+    {
+      "attempt": "10",
+      "status": "failed_or_interrupted",
+      "reason": "old running JS/detail screen remained active after Metro restart"
+    },
+    {
+      "attempt": "11",
+      "status": "passed",
+      "durationSeconds": 89.526,
+      "note": "confirmation button contrast subsequently improved; rerun 12 passed"
+    }
+  ],
+  "limitations": [
+    "Actual Korail app and purchased-ticket sharing format not tested",
+    "Actual iPhone not tested; iOS Simulator only",
+    "Bus, PDF, multiple tickets, duplicate handling and original viewing pending",
+    "Carrier cancellation/reissue synchronization not implemented",
+    "Official booking links and boarding-platform guidance pending",
+    "Final ticket-to-route connection tested via API and UI component regression, not a new full native ticket-to-route journey",
+    "Device alarm recalculation/delivery not tested; Android deferred"
+  ],
+  "sourceHashes": {
+    "NoLate_FE/ios/NoLateShareExtension/TrainTicketImport.swift": "b41fbde1ca506ef613d340b86070fcdea76fc3d42ac6f3c17d6ae273b395512c",
+    "NoLate_FE/ios/NoLateShareExtension/TrainTicketReviewController.swift": "9714e4fe206c89cb5901c67350b46aba8215a10b864699884ba276d2cc097695",
+    "NoLate_FE/ios/NoLateShareExtension/ShareViewController.swift": "e3a143c4da6c6974f46e85c927f1cf24e67c493b7d9e4c84c179a151c20f9b6b",
+    "NoLate_FE/ios/NoLateShareExtension/Info.plist": "c46e96cfd0c1a954d28177c1b03fa014c1179b8cd42b0d113517df1b3c780c79",
+    "NoLate_FE/ios/NoLateFE.xcodeproj/project.pbxproj": "b0a1bccd5c4fdef8894b3ade3ead52946a3a9527ee94ceb2795895c2af055082",
+    "NoLate_FE/src/modules/schedule/importedTicket.ts": "40f1d1a5e5057b698bb736b1914e2e40ec4e368279ff8fb8ec1dee7a888221f8",
+    "NoLate_FE/src/modules/schedule/intercityJourney.ts": "4712f9f4e57ff0e696968571bbc823e7d6308eeb17cd8ae7bd7b5eecb7427d3b",
+    "NoLate_FE/src/modules/schedule/components/detail/ImportedTicketSummary.tsx": "3f424565c2fa8d15d5a09ae69b98cf32cc7d86dd855340efe5d901e69e7f7155",
+    "NoLate_FE/src/modules/schedule/components/detail/PlainScheduleDetailView.tsx": "564552c049b2764073610679ace203ff41dac12f99e71072e3f8cb269124608f",
+    "NoLate_FE/src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "cb519006d68f23a61ed397ef16f5bb8e341e2efbe3701819604003a1e485beb1",
+    "NoLate_FE/src/routeSupport/schedule/useRouteSelectRouteController.ts": "bee934999a8f04bbe5dbed1018e788e08509dd0f1f2c22d3e82375cb7dddf9d7",
+    "NoLate_FE/src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx": "1ca6c24047d92188edad72c9b65a752a5892b8f9b96e5fe9ea5413aab017aaf5",
+    "NoLate_FE/e2e/intercity-selection-api.e2e.ts": "7ca91191549c89c281af9572d1acac033e9c8979ddbbcb7fbecbc803c6679f57",
+    "NoLate_FE/e2e/ios/NoLateE2ETests.swift": "5492826568af8f49485cc650274ad5d4c36097460419af34e70a71943a1bea1d",
+    "NoLate_FE/e2e/ios/TicketShareFixture.swift": "b38912fba379ac29a8b95860b839c9e50eaf2fdc9760378cff177df7dd77e6d2",
+    "NoLate_FE/e2e/ios/TrainTicketImportPolicyTests.swift": "5203d153cdb07adfccad6cb3dcfe716e3516d78d8932703503d72dcb17360cde",
+    "NoLate_FE/e2e/ios/prepare-ticket-share-fixture.py": "fa13fc5cf970b5f2eb09662b202edaeff80cb2198bf0d8e1e6887cab86b6633c",
+    "NoLate_BE/src/main/kotlin/com/noLate/intercity/IntercityJourneyValidator.kt": "f43d89276786683eea796ba27600c9375be16ccee228fcccfcb15d735643334b",
+    "NoLate_BE/src/main/kotlin/com/noLate/schedule/application/service/ScheduleTravelPlanService.kt": "a3dff6f328640bfd7ce7df468c71c6225d38947d43a464f8174fa751d1e4b7c4",
+    "NoLate_BE/src/test/kotlin/com/noLate/intercity/IntercityJourneyValidatorTest.kt": "5430b9b442c45e9cfe3a86e441e1ef343d1dd7f83bcc339f3b057408157a1b68"
+  }
+}

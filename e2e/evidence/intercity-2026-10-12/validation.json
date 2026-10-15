@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-12",
+  "scope": "P0/P1 first release slice",
+  "overallRoadmapStatus": "PARTIAL",
+  "provider": {
+    "odsay": {
+      "probeCount": 1,
+      "responseCode": "429",
+      "liveIntercitySuccess": false
+    },
+    "tmap": {
+      "substitutedForTest": true,
+      "capturedItineraries": 10,
+      "backendAcceptedItineraries": 9,
+      "excluded": "one itinerary contains a city bus with service=0"
+    },
+    "releaseDefault": "odsay",
+    "permanentProviderSwitch": false,
+    "timeBasis": "route_estimate"
+  },
+  "nativeUI": {
+    "platform": "iOS Simulator",
+    "test": "NoLateE2ETests/testIntercitySearchSaveReopen",
+    "result": "Passed",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "device": "NoLate Intercity iOS27 E2E 20261012",
+    "flow": [
+      "normal login",
+      "real TMAP search: Seoul Nambu terminal to Gongju terminal",
+      "EXPRESS_BUS displayed",
+      "save schedule with notifications disabled",
+      "terminate and relaunch app",
+      "reopen saved detail and assert EXPRESS_BUS"
+    ],
+    "rawResult": "/private/tmp/nolate-intercity-ui-20261012-08/result.xcresult",
+    "screenshots": [
+      "reopened-timeline.png",
+      "before-save.png",
+      "live-search-result.png"
+    ]
+  },
+  "apiE2E": {
+    "nativeUI": false,
+    "cases": [
+      {
+        "kind": "EXPRESS_BUS",
+        "scheduleId": 371,
+        "rideKinds": [
+          "SUBWAY",
+          "EXPRESS_BUS",
+          "BUS"
+        ],
+        "source": "CAPTURED_LIVE_TMAP",
+        "api": "REAL_LOCAL_POST_GET",
+        "timeBasis": "estimated",
+        "passed": true
+      },
+      {
+        "kind": "TRAIN",
+        "scheduleId": 372,
+        "rideKinds": [
+          "SUBWAY",
+          "TRAIN",
+          "BUS"
+        ],
+        "source": "CAPTURED_LIVE_TMAP",
+        "api": "REAL_LOCAL_POST_GET",
+        "timeBasis": "estimated",
+        "passed": true
+      }
+    ],
+    "input": "captured live TMAP response; not a new provider request",
+    "cleanup": "only newly created schedules deleted"
+  },
+  "frontendRegression": {
+    "suites": 11,
+    "tests": 173,
+    "failed": 0,
+    "typecheck": "PASSED",
+    "scopedEslint": "PASSED; existing inline-style warnings in results screen"
+  },
+  "backendRegression": {
+    "suites": 8,
+    "tests": 97,
+    "failed": 0,
+    "includes": [
+      "ODsay/TMAP mapper contracts",
+      "selected route decoder",
+      "geometryless H2 save/clear/reload",
+      "rail speed quality",
+      "intercity timetable unavailable prevents automatic ETA acceptance"
+    ],
+    "nativeRunningBackendRebuiltForEtaGuard": false
+  },
+  "phases": {
+    "P0": "core implemented; native live TMAP express bus passed; ODsay trafficType 4/5/6 synthetic contract passed",
+    "P1": "core implemented; native restart, real API roundtrip, H2 persistence passed; ETA guard verified in current source tests",
+    "P2": "NOT IMPLEMENTED / E2E NOT RUN: dated intercity timetable and locked service matching",
+    "P3": "NOT IMPLEMENTED / E2E NOT RUN: official booking handoff",
+    "P4": "NOT IMPLEMENTED / E2E NOT RUN: ticket sharing/OCR confirmation and locked legs",
+    "P5": "NOT IMPLEMENTED / E2E NOT RUN: intercity journey guidance"
+  },
+  "notVerified": [
+    "live ODsay intercity response under current quota",
+    "native TRAIN or INTERCITY_BUS-specific UI",
+    "Android UI",
+    "actual scheduled service times, seat availability or boarding platform",
+    "intercity automatic departure alarm or real notification delivery",
+    "old saved ETC data without original mode evidence"
+  ]
+}

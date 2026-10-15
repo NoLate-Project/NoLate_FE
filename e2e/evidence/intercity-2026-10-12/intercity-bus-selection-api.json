@@ -1,0 +1,569 @@
+{
+  "passed": true,
+  "nativeUI": false,
+  "timetable": "LIVE_TAGO",
+  "initialRoute": "CAPTURED_REAL_TMAP",
+  "connections": "LIVE_TMAP_PEDESTRIAN",
+  "scheduleId": 19,
+  "selectedService": {
+    "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+    "kind": "INTERCITY_BUS",
+    "departureId": "NAI2238202",
+    "arrivalId": "NAI2839701",
+    "departureName": "인천공항2터미널",
+    "arrivalName": "청주",
+    "departureAt": "2026-10-12T23:00+09:00",
+    "arrivalAt": "2026-10-13T01:25+09:00",
+    "serviceDate": "2026-10-12",
+    "grade": "심야우등",
+    "trainNumber": null,
+    "fare": 31100,
+    "timingBasis": "TIMETABLE",
+    "bookingStatus": "UNCONFIRMED"
+  },
+  "requests": [
+    {
+      "origin": {
+        "name": "인천국제공항 제2여객터미널",
+        "id": "6994920",
+        "lat": 37.46792821,
+        "lng": 126.43237916,
+        "category": "공항",
+        "middle": "교통시설"
+      },
+      "destination": {
+        "name": "인천공항2터미널",
+        "lat": 37.468289,
+        "lng": 126.433969
+      },
+      "departureAt": "2026-10-12T13:42:00.000Z",
+      "seconds": 156
+    },
+    {
+      "origin": {
+        "name": "청주",
+        "lat": 36.625358,
+        "lng": 127.431719
+      },
+      "destination": {
+        "name": "청주시외버스터미널 환승주차장",
+        "lat": 36.62509886,
+        "lng": 127.43350618
+      },
+      "departureAt": "2026-10-12T16:30:00.000Z",
+      "seconds": 187
+    }
+  ],
+  "route": {
+    "id": "intercity:tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7:1791812520000",
+    "mode": "TRANSIT",
+    "source": "api",
+    "provider": "tmap",
+    "minutes": 172,
+    "totalDurationSeconds": 10267,
+    "transitLegs": [
+      {
+        "kind": "WALK",
+        "label": "도보",
+        "durationSeconds": 156,
+        "durationMinutes": 2.6,
+        "pathCoords": [
+          {
+            "lat": 37.4679453668948,
+            "lng": 126.43236527460198
+          },
+          {
+            "lat": 37.46809813403275,
+            "lng": 126.43277356642935
+          },
+          {
+            "lat": 37.4685814275379,
+            "lng": 126.43371235624974
+          },
+          {
+            "lat": 37.46844255694551,
+            "lng": 126.43383457112724
+          },
+          {
+            "lat": 37.46834812499511,
+            "lng": 126.43392067696986
+          },
+          {
+            "lat": 37.468287021722766,
+            "lng": 126.43396234151128
+          }
+        ],
+        "distanceMeters": 178,
+        "startDateTime": "2026-10-12T13:42:00.000Z",
+        "endDateTime": "2026-10-12T13:44:36.000Z"
+      },
+      {
+        "kind": "ETC",
+        "journeyPhase": "BUFFER",
+        "label": "탑승 준비·대기 (준비 15분 포함)",
+        "durationSeconds": 924,
+        "durationMinutes": 15.4,
+        "startDateTime": "2026-10-12T13:44:36.000Z",
+        "endDateTime": "2026-10-12T14:00:00.000Z",
+        "startCoord": {
+          "lat": 37.468289,
+          "lng": 126.433969
+        },
+        "endCoord": {
+          "lat": 37.468289,
+          "lng": 126.433969
+        }
+      },
+      {
+        "kind": "INTERCITY_BUS",
+        "label": "심야우등",
+        "lineName": "심야우등",
+        "durationSeconds": 8700,
+        "durationMinutes": 145,
+        "startName": "인천공항2터미널",
+        "endName": "청주",
+        "startCoord": {
+          "lat": 37.468289,
+          "lng": 126.433969
+        },
+        "endCoord": {
+          "lat": 36.625358,
+          "lng": 127.431719
+        },
+        "pathCoords": [
+          {
+            "lat": 37.468289,
+            "lng": 126.433969
+          },
+          {
+            "lat": 36.625358,
+            "lng": 127.431719
+          }
+        ],
+        "pathCoordsIsExact": false,
+        "pathGeometrySource": "UNKNOWN",
+        "distanceMeters": 128954,
+        "startDateTime": "2026-10-12T14:00:00.000Z",
+        "endDateTime": "2026-10-12T16:25:00.000Z",
+        "intercityService": {
+          "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+          "kind": "INTERCITY_BUS",
+          "departureId": "NAI2238202",
+          "arrivalId": "NAI2839701",
+          "departureName": "인천공항2터미널",
+          "arrivalName": "청주",
+          "departureAt": "2026-10-12T23:00+09:00",
+          "arrivalAt": "2026-10-13T01:25+09:00",
+          "serviceDate": "2026-10-12",
+          "grade": "심야우등",
+          "trainNumber": null,
+          "fare": 31100,
+          "timingBasis": "TIMETABLE",
+          "bookingStatus": "UNCONFIRMED"
+        }
+      },
+      {
+        "kind": "ETC",
+        "journeyPhase": "BUFFER",
+        "label": "하차 후 여유",
+        "durationSeconds": 300,
+        "durationMinutes": 5,
+        "startDateTime": "2026-10-12T16:25:00.000Z",
+        "endDateTime": "2026-10-12T16:30:00.000Z",
+        "startCoord": {
+          "lat": 36.625358,
+          "lng": 127.431719
+        },
+        "endCoord": {
+          "lat": 36.625358,
+          "lng": 127.431719
+        }
+      },
+      {
+        "kind": "WALK",
+        "label": "도보",
+        "durationSeconds": 187,
+        "durationMinutes": 3.1166666666666667,
+        "pathCoords": [
+          {
+            "lat": 36.625338231333565,
+            "lng": 127.43189520189541
+          },
+          {
+            "lat": 36.625054933957664,
+            "lng": 127.43208685917132
+          },
+          {
+            "lat": 36.62510215314503,
+            "lng": 127.43222017924192
+          },
+          {
+            "lat": 36.624591105830625,
+            "lng": 127.43250627876364
+          },
+          {
+            "lat": 36.624579996889956,
+            "lng": 127.432556274584
+          },
+          {
+            "lat": 36.62464943733937,
+            "lng": 127.43277847495692
+          },
+          {
+            "lat": 36.62485497874314,
+            "lng": 127.43330619972346
+          },
+          {
+            "lat": 36.6250299656632,
+            "lng": 127.43369782643153
+          },
+          {
+            "lat": 36.625149394903794,
+            "lng": 127.43361449728394
+          }
+        ],
+        "distanceMeters": 243,
+        "startDateTime": "2026-10-12T16:30:00.000Z",
+        "endDateTime": "2026-10-12T16:33:07.000Z"
+      }
+    ],
+    "pathCoords": [
+      {
+        "lat": 37.4679453668948,
+        "lng": 126.43236527460198
+      },
+      {
+        "lat": 37.46809813403275,
+        "lng": 126.43277356642935
+      },
+      {
+        "lat": 37.4685814275379,
+        "lng": 126.43371235624974
+      },
+      {
+        "lat": 37.46844255694551,
+        "lng": 126.43383457112724
+      },
+      {
+        "lat": 37.46834812499511,
+        "lng": 126.43392067696986
+      },
+      {
+        "lat": 37.468287021722766,
+        "lng": 126.43396234151128
+      },
+      {
+        "lat": 37.468289,
+        "lng": 126.433969
+      },
+      {
+        "lat": 36.625358,
+        "lng": 127.431719
+      },
+      {
+        "lat": 36.625338231333565,
+        "lng": 127.43189520189541
+      },
+      {
+        "lat": 36.625054933957664,
+        "lng": 127.43208685917132
+      },
+      {
+        "lat": 36.62510215314503,
+        "lng": 127.43222017924192
+      },
+      {
+        "lat": 36.624591105830625,
+        "lng": 127.43250627876364
+      },
+      {
+        "lat": 36.624579996889956,
+        "lng": 127.432556274584
+      },
+      {
+        "lat": 36.62464943733937,
+        "lng": 127.43277847495692
+      },
+      {
+        "lat": 36.62485497874314,
+        "lng": 127.43330619972346
+      },
+      {
+        "lat": 36.6250299656632,
+        "lng": 127.43369782643153
+      },
+      {
+        "lat": 36.625149394903794,
+        "lng": 127.43361449728394
+      }
+    ],
+    "distanceMeters": 129375,
+    "walkMeters": 421,
+    "transferCount": 0,
+    "providerDepartureAt": "2026-10-12T13:42:00.000Z",
+    "providerArrivalAt": "2026-10-12T16:33:07.000Z",
+    "providerTimeBasis": "route_estimate",
+    "transitDepartureAt": "2026-10-12T13:42:00.000Z",
+    "transitDepartureTimeSource": "requested",
+    "transitServiceState": "unknown",
+    "routeReliability": "provider_estimate",
+    "routeQualityLabel": "선택 운행편 연결",
+    "routeQualityNotice": "선택 편은 공공 시간표, 앞뒤 이동은 예상 시간입니다. 예매·좌석·탑승홈은 확인되지 않았습니다.",
+    "intercityJourney": {
+      "version": 1,
+      "service": {
+        "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+        "kind": "INTERCITY_BUS",
+        "departureId": "NAI2238202",
+        "arrivalId": "NAI2839701",
+        "departureName": "인천공항2터미널",
+        "arrivalName": "청주",
+        "departureAt": "2026-10-12T23:00+09:00",
+        "arrivalAt": "2026-10-13T01:25+09:00",
+        "serviceDate": "2026-10-12",
+        "grade": "심야우등",
+        "trainNumber": null,
+        "fare": 31100,
+        "timingBasis": "TIMETABLE",
+        "bookingStatus": "UNCONFIRMED"
+      },
+      "fetchedAt": "2026-10-12T13:13:15.901436Z",
+      "selectedAt": "2026-10-12T13:14:52.739Z",
+      "departureAt": "2026-10-12T13:42:00.000Z",
+      "arrivalAt": "2026-10-12T16:33:07.000Z",
+      "boardingBufferMinutes": 15,
+      "alightingBufferMinutes": 5,
+      "connectionBasis": "ROUTE_ESTIMATE",
+      "mapping": {
+        "confirmed": true,
+        "departureName": "인천공항T2",
+        "arrivalName": "청주",
+        "departure": {
+          "lat": 37.468289,
+          "lng": 126.433969
+        },
+        "arrival": {
+          "lat": 36.625358,
+          "lng": 127.431719
+        }
+      }
+    },
+    "schemaVersion": 3,
+    "routeInfo": {
+      "id": "intercity:tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7:1791812520000",
+      "provider": "tmap",
+      "originName": "인천국제공항 제2여객터미널",
+      "destinationName": "청주시외버스터미널 환승주차장",
+      "totalDurationMinutes": 172,
+      "totalDurationSeconds": 10267,
+      "departureTime": "2026-10-12T13:42:00.000Z",
+      "arrivalTime": "2026-10-12T16:33:07.000Z",
+      "transferCount": 0,
+      "walkingDistanceMeters": 421,
+      "totalDistanceMeters": 129375,
+      "timeBasis": "anchored_journey",
+      "intercityJourney": {
+        "version": 1,
+        "service": {
+          "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+          "kind": "INTERCITY_BUS",
+          "departureId": "NAI2238202",
+          "arrivalId": "NAI2839701",
+          "departureName": "인천공항2터미널",
+          "arrivalName": "청주",
+          "departureAt": "2026-10-12T23:00+09:00",
+          "arrivalAt": "2026-10-13T01:25+09:00",
+          "serviceDate": "2026-10-12",
+          "grade": "심야우등",
+          "trainNumber": null,
+          "fare": 31100,
+          "timingBasis": "TIMETABLE",
+          "bookingStatus": "UNCONFIRMED"
+        },
+        "fetchedAt": "2026-10-12T13:13:15.901436Z",
+        "selectedAt": "2026-10-12T13:14:52.739Z",
+        "departureAt": "2026-10-12T13:42:00.000Z",
+        "arrivalAt": "2026-10-12T16:33:07.000Z",
+        "boardingBufferMinutes": 15,
+        "alightingBufferMinutes": 5,
+        "connectionBasis": "ROUTE_ESTIMATE",
+        "mapping": {
+          "confirmed": true,
+          "departureName": "인천공항T2",
+          "arrivalName": "청주",
+          "departure": {
+            "lat": 37.468289,
+            "lng": 126.433969
+          },
+          "arrival": {
+            "lat": 36.625358,
+            "lng": 127.431719
+          }
+        }
+      },
+      "providerTimeBasis": "route_estimate",
+      "steps": [
+        {
+          "id": "origin",
+          "type": "ORIGIN",
+          "title": "인천국제공항 제2여객터미널",
+          "coordinates": [
+            {
+              "latitude": 37.46792821,
+              "longitude": 126.43237916
+            }
+          ]
+        },
+        {
+          "id": "leg-0",
+          "type": "WALK",
+          "title": "도보",
+          "description": "178m · 3분",
+          "durationMinutes": 3,
+          "durationSeconds": 156,
+          "distanceMeters": 178,
+          "coordinates": [
+            {
+              "latitude": 37.4679453668948,
+              "longitude": 126.43236527460198
+            },
+            {
+              "latitude": 37.46809813403275,
+              "longitude": 126.43277356642935
+            },
+            {
+              "latitude": 37.4685814275379,
+              "longitude": 126.43371235624974
+            },
+            {
+              "latitude": 37.46844255694551,
+              "longitude": 126.43383457112724
+            },
+            {
+              "latitude": 37.46834812499511,
+              "longitude": 126.43392067696986
+            },
+            {
+              "latitude": 37.468287021722766,
+              "longitude": 126.43396234151128
+            }
+          ]
+        },
+        {
+          "id": "leg-1",
+          "type": "TRANSFER",
+          "title": "탑승 준비·대기 (준비 15분 포함)",
+          "description": "15분",
+          "durationMinutes": 15,
+          "durationSeconds": 924
+        },
+        {
+          "id": "leg-2",
+          "type": "INTERCITY_BUS",
+          "title": "인천공항2터미널",
+          "description": "청주까지 · 145분 · 시간표 23:00 → 01:25 · 예매 미확인",
+          "durationMinutes": 145,
+          "intercityService": {
+            "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+            "kind": "INTERCITY_BUS",
+            "departureId": "NAI2238202",
+            "arrivalId": "NAI2839701",
+            "departureName": "인천공항2터미널",
+            "arrivalName": "청주",
+            "departureAt": "2026-10-12T23:00+09:00",
+            "arrivalAt": "2026-10-13T01:25+09:00",
+            "serviceDate": "2026-10-12",
+            "grade": "심야우등",
+            "trainNumber": null,
+            "fare": 31100,
+            "timingBasis": "TIMETABLE",
+            "bookingStatus": "UNCONFIRMED"
+          },
+          "durationSeconds": 8700,
+          "distanceMeters": 128954,
+          "lineName": "심야우등",
+          "lineColor": "#0F766E",
+          "badgeText": "시외버스 · 심야우등",
+          "coordinates": [
+            {
+              "latitude": 37.468289,
+              "longitude": 126.433969
+            },
+            {
+              "latitude": 36.625358,
+              "longitude": 127.431719
+            }
+          ]
+        },
+        {
+          "id": "leg-3",
+          "type": "TRANSFER",
+          "title": "하차 후 여유",
+          "description": "5분",
+          "durationMinutes": 5,
+          "durationSeconds": 300
+        },
+        {
+          "id": "leg-4",
+          "type": "WALK",
+          "title": "도보",
+          "description": "243m · 3분",
+          "durationMinutes": 3,
+          "durationSeconds": 187,
+          "distanceMeters": 243,
+          "coordinates": [
+            {
+              "latitude": 36.625338231333565,
+              "longitude": 127.43189520189541
+            },
+            {
+              "latitude": 36.625054933957664,
+              "longitude": 127.43208685917132
+            },
+            {
+              "latitude": 36.62510215314503,
+              "longitude": 127.43222017924192
+            },
+            {
+              "latitude": 36.624591105830625,
+              "longitude": 127.43250627876364
+            },
+            {
+              "latitude": 36.624579996889956,
+              "longitude": 127.432556274584
+            },
+            {
+              "latitude": 36.62464943733937,
+              "longitude": 127.43277847495692
+            },
+            {
+              "latitude": 36.62485497874314,
+              "longitude": 127.43330619972346
+            },
+            {
+              "latitude": 36.6250299656632,
+              "longitude": 127.43369782643153
+            },
+            {
+              "latitude": 36.625149394903794,
+              "longitude": 127.43361449728394
+            }
+          ]
+        },
+        {
+          "id": "destination",
+          "type": "DESTINATION",
+          "title": "청주시외버스터미널 환승주차장",
+          "coordinates": [
+            {
+              "latitude": 36.62509886,
+              "longitude": 127.43350618
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "shiftedDepartureRejected": true,
+  "cleanup": "Only this API case schedule deleted"
+}

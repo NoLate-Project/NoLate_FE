@@ -1,0 +1,2451 @@
+{
+  "metaData": {
+    "requestParameters": {
+      "busCount": 0,
+      "expressbusCount": 8,
+      "subwayCount": 0,
+      "airplaneCount": 0,
+      "locale": "ko",
+      "endY": "36.62545989",
+      "endX": "127.43158967",
+      "wideareaRouteCount": 0,
+      "subwayBusCount": 0,
+      "startY": "37.46792821",
+      "startX": "126.43237916",
+      "ferryCount": 0,
+      "trainCount": 2,
+      "reqDttm": "20261012221820"
+    },
+    "plan": {
+      "itineraries": [
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 23800,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 9096,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 128954,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 8760,
+              "route": "시외버스:인천공항T2-청주",
+              "routeId": "210028-210375-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.431719,36.625358"
+              },
+              "routePayment": 23800
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 336,
+          "transferCount": 0,
+          "totalDistance": 129118,
+          "pathType": 4,
+          "totalWalkDistance": 416
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 27000,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 9576,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 57231,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 3900,
+              "route": "시외버스:인천공항T2-수원",
+              "routeId": "210028-210136-ITC-ND001",
+              "service": 0,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "수원터미널",
+                    "lon": "127.019958",
+                    "lat": "37.251333",
+                    "stationID": "210136"
+                  }
+                ]
+              },
+              "end": {
+                "name": "수원터미널",
+                "lon": 127.01995833333334,
+                "lat": 37.251333333333335
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.019958,37.251333"
+              },
+              "routePayment": 18000
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 0,
+              "distance": 0,
+              "start": {
+                "name": "수원터미널",
+                "lon": 127.01995833333334,
+                "lat": 37.251333333333335
+              },
+              "end": {
+                "name": "수원터미널",
+                "lon": 127.01995833333334,
+                "lat": 37.251333333333335
+              },
+              "passShape": {
+                "linestring": "127.019958,37.251333 127.019958,37.251333"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 78550,
+              "start": {
+                "name": "수원터미널",
+                "lon": 127.01995833333334,
+                "lat": 37.251333333333335
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 5340,
+              "route": "시외버스:수원-청주",
+              "routeId": "210136-210375-ITC-G001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "수원터미널",
+                    "lon": "127.019958",
+                    "lat": "37.251333",
+                    "stationID": "210136"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "127.019958,37.251333 127.431719,36.625358"
+              },
+              "routePayment": 9000
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 336,
+          "transferCount": 1,
+          "totalDistance": 135945,
+          "pathType": 4,
+          "totalWalkDistance": 416
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 27200,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10004,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 66756,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 4560,
+              "route": "시외버스:인천공항T2-기지시",
+              "routeId": "210028-210333-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "기지시",
+                    "lon": "126.694403",
+                    "lat": "36.904136",
+                    "stationID": "210333"
+                  }
+                ]
+              },
+              "end": {
+                "name": "기지시",
+                "lon": 126.69440277777778,
+                "lat": 36.904136111111114
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 126.694403,36.904136"
+              },
+              "routePayment": 16600
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 8,
+              "distance": 11,
+              "start": {
+                "name": "기지시",
+                "lon": 126.69440277777778,
+                "lat": 36.904136111111114
+              },
+              "end": {
+                "name": "기지시정류소",
+                "lon": 126.69441388888889,
+                "lat": 36.904133333333334
+              },
+              "passShape": {
+                "linestring": "126.694403,36.904136 126.694447,36.904186 126.694414,36.904133"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 72735,
+              "start": {
+                "name": "기지시정류소",
+                "lon": 126.69441388888889,
+                "lat": 36.904133333333334
+              },
+              "type": 23,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 5100,
+              "route": "고속버스:당진기지시-청주고속터미널",
+              "routeId": "300109-300097-EXP-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "기지시정류소",
+                    "lon": "126.694414",
+                    "lat": "36.904133",
+                    "stationID": "300109"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주고속터미널",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "300097"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주고속터미널",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "126.694414,36.904133 127.431719,36.625358"
+              },
+              "routePayment": 10600
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주고속터미널",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 344,
+          "transferCount": 1,
+          "totalDistance": 139666,
+          "pathType": 4,
+          "totalWalkDistance": 427
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 22100,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10356,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 96376,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 7800,
+              "route": "시외버스:인천공항T2-천안",
+              "routeId": "210028-210330-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "천안",
+                    "lon": "127.156344",
+                    "lat": "36.820511",
+                    "stationID": "210330"
+                  }
+                ]
+              },
+              "end": {
+                "name": "천안",
+                "lon": 127.15634444444444,
+                "lat": 36.82051111111111
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.156344,36.820511"
+              },
+              "routePayment": 18100
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 0,
+              "distance": 0,
+              "start": {
+                "name": "천안",
+                "lon": 127.15634444444444,
+                "lat": 36.82051111111111
+              },
+              "end": {
+                "name": "천안",
+                "lon": 127.15634444444444,
+                "lat": 36.82051111111111
+              },
+              "passShape": {
+                "linestring": "127.156344,36.820511 127.156344,36.820511"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 32771,
+              "start": {
+                "name": "천안",
+                "lon": 127.15634444444444,
+                "lat": 36.82051111111111
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 2220,
+              "route": "시외버스:천안-청주",
+              "routeId": "210330-210375-ITC-G001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "천안",
+                    "lon": "127.156344",
+                    "lat": "36.820511",
+                    "stationID": "210330"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "127.156344,36.820511 127.431719,36.625358"
+              },
+              "routePayment": 4000
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 336,
+          "transferCount": 1,
+          "totalDistance": 129311,
+          "pathType": 4,
+          "totalWalkDistance": 416
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 23800,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10073,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 61768,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 4200,
+              "route": "시외버스:인천공항T2-야탑역",
+              "routeId": "210028-210164-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "야탑역",
+                    "lon": "127.128489",
+                    "lat": "37.413353",
+                    "stationID": "210164"
+                  }
+                ]
+              },
+              "end": {
+                "name": "야탑역",
+                "lon": 127.1284888888889,
+                "lat": 37.413352777777774
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.128489,37.413353"
+              },
+              "routePayment": 11100
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 137,
+              "distance": 193,
+              "start": {
+                "name": "야탑역",
+                "lon": 127.1284888888889,
+                "lat": 37.413352777777774
+              },
+              "end": {
+                "name": "성남",
+                "lon": 127.127325,
+                "lat": 37.413091666666666
+              },
+              "passShape": {
+                "linestring": "127.128489,37.413353 127.128458,37.412533 127.128364,37.412494 127.128339,37.412489 127.128189,37.412489 127.127325,37.413092"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 91511,
+              "start": {
+                "name": "성남",
+                "lon": 127.127325,
+                "lat": 37.413091666666666
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 5400,
+              "route": "시외버스:성남-청주",
+              "routeId": "210122-210375-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "성남",
+                    "lon": "127.127325",
+                    "lat": "37.413092",
+                    "stationID": "210122"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "127.127325,37.413092 127.431719,36.625358"
+              },
+              "routePayment": 12700
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 473,
+          "transferCount": 1,
+          "totalDistance": 153636,
+          "pathType": 4,
+          "totalWalkDistance": 609
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 21000,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10205,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 63996,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 4320,
+              "route": "시외버스:인천공항T2-세종그랑시아",
+              "routeId": "210028-210125-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "세종그랑시아",
+                    "lon": "127.115914",
+                    "lat": "37.277933",
+                    "stationID": "210125"
+                  }
+                ]
+              },
+              "end": {
+                "name": "세종그랑시아",
+                "lon": 127.11591388888888,
+                "lat": 37.27793333333333
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.115914,37.277933"
+              },
+              "routePayment": 12300
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 269,
+              "distance": 298,
+              "start": {
+                "name": "세종그랑시아",
+                "lon": 127.11591388888888,
+                "lat": 37.27793333333333
+              },
+              "end": {
+                "name": "기흥역정류소",
+                "lon": 127.11595277777778,
+                "lat": 37.27531666666667
+              },
+              "passShape": {
+                "linestring": "127.115914,37.277933 127.115731,37.277697 127.115731,37.277597 127.115739,37.277356 127.115731,37.277272 127.115733,37.276583 127.115733,37.276336 127.115639,37.276228 127.115606,37.276219 127.115675,37.275872 127.115728,37.275839 127.115953,37.275317"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 77411,
+              "start": {
+                "name": "기흥역정류소",
+                "lon": 127.11595277777778,
+                "lat": 37.27531666666667
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 5280,
+              "route": "시외버스:기흥역-청주",
+              "routeId": "210079-210375-ITC-G001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "기흥역정류소",
+                    "lon": "127.115953",
+                    "lat": "37.275317",
+                    "stationID": "210079"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "127.115953,37.275317 127.431719,36.625358"
+              },
+              "routePayment": 8700
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 605,
+          "transferCount": 1,
+          "totalDistance": 141869,
+          "pathType": 4,
+          "totalWalkDistance": 714
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 28900,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10418,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 65556,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 4440,
+              "route": "시외버스:인천공항T2-당진",
+              "routeId": "210028-210335-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "당진",
+                    "lon": "126.646186",
+                    "lat": "36.902636",
+                    "stationID": "210335"
+                  }
+                ]
+              },
+              "end": {
+                "name": "당진",
+                "lon": 126.6461861111111,
+                "lat": 36.902636111111114
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 126.646186,36.902636"
+              },
+              "routePayment": 17700
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 242,
+              "distance": 309,
+              "start": {
+                "name": "당진",
+                "lon": 126.6461861111111,
+                "lat": 36.902636111111114
+              },
+              "end": {
+                "name": "당진버스터미널",
+                "lon": 126.64586944444444,
+                "lat": 36.90258333333333
+              },
+              "passShape": {
+                "linestring": "126.646186,36.902636 126.646706,36.902433 126.646706,36.902342 126.646719,36.902317 126.646742,36.902300 126.646869,36.902294 126.646878,36.901994 126.646878,36.901900 126.646653,36.901894 126.646528,36.901892 126.646317,36.901886 126.645508,36.901881 126.645469,36.901881 126.645328,36.901867 126.645319,36.902081 126.645308,36.902386 126.645869,36.902583"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 76612,
+              "start": {
+                "name": "당진버스터미널",
+                "lon": 126.64586944444444,
+                "lat": 36.90258333333333
+              },
+              "type": 23,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 5400,
+              "route": "고속버스:당진-청주고속터미널",
+              "routeId": "300110-300097-EXP-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "당진버스터미널",
+                    "lon": "126.645869",
+                    "lat": "36.902583",
+                    "stationID": "300110"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주고속터미널",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "300097"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주고속터미널",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "126.645869,36.902583 127.431719,36.625358"
+              },
+              "routePayment": 11200
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주고속터미널",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 578,
+          "transferCount": 1,
+          "totalDistance": 142641,
+          "pathType": 4,
+          "totalWalkDistance": 725
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 28550,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 9653,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 55053,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 3720,
+              "route": "시외버스:인천공항T2-수원역",
+              "routeId": "210028-210238-ITC-ND001",
+              "service": 0,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "수원역",
+                    "lon": "127.001414",
+                    "lat": "37.266083",
+                    "stationID": "210238"
+                  }
+                ]
+              },
+              "end": {
+                "name": "수원역",
+                "lon": 127.00141388888889,
+                "lat": 37.266083333333334
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.001414,37.266083"
+              },
+              "routePayment": 18000
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 131,
+              "distance": 159,
+              "start": {
+                "name": "수원역",
+                "lon": 127.00141388888889,
+                "lat": 37.266083333333334
+              },
+              "end": {
+                "name": "수원",
+                "lon": 127.0001,
+                "lat": 37.26578888888889
+              },
+              "passShape": {
+                "linestring": "127.001414,37.266083 127.001281,37.266094 127.001264,37.266036 127.001264,37.265975 127.001283,37.265919 127.001314,37.265872 127.001364,37.265783 127.001339,37.265775 127.001028,37.265650 127.001000,37.265642 127.000939,37.265742 127.000750,37.266072 127.000650,37.266233 127.000100,37.265789"
+              }
+            },
+            {
+              "routeColor": "F75C4C",
+              "distance": 78331,
+              "start": {
+                "name": "수원",
+                "lon": 127.0001,
+                "lat": 37.26578888888889
+              },
+              "Lane": [
+                {
+                  "routeColor": "F75C4C",
+                  "route": "무궁화:수원-조치원",
+                  "routeId": "500003-500007-MGH-NOR-STD001",
+                  "service": 1,
+                  "type": 12
+                },
+                {
+                  "routeColor": "F75C4C",
+                  "route": "ITX마음:수원-조치원",
+                  "routeId": "500003-500007-ITXMAEUM-NOR-STD001",
+                  "service": 1,
+                  "type": 17
+                }
+              ],
+              "type": 15,
+              "mode": "TRAIN",
+              "sectionTime": 3209,
+              "route": "ITX새마을:수원-조치원",
+              "routeId": "500003-500007-ITXSME-NOR-STD001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "수원",
+                    "lon": "127.000100",
+                    "lat": "37.265789",
+                    "stationID": "500003"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "조치원",
+                    "lon": "127.296172",
+                    "lat": "36.601128",
+                    "stationID": "500007"
+                  }
+                ]
+              },
+              "end": {
+                "name": "조치원",
+                "lon": 127.29617222222222,
+                "lat": 36.601127777777776
+              },
+              "passShape": {
+                "linestring": "127.000100,37.265789 127.296172,36.601128"
+              },
+              "routePayment": 8500
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 60,
+              "distance": 71,
+              "start": {
+                "name": "조치원",
+                "lon": 127.29617222222222,
+                "lat": 36.601127777777776
+              },
+              "end": {
+                "name": "조치원역",
+                "lon": 127.29691944444444,
+                "lat": 36.601302777777775
+              },
+              "passShape": {
+                "linestring": "127.296172,36.601128 127.296403,36.601081 127.296781,36.601128 127.296778,36.601156 127.296919,36.601303"
+              }
+            },
+            {
+              "routeColor": "FF3300",
+              "distance": 15251,
+              "start": {
+                "name": "조치원역",
+                "lon": 127.29691944444444,
+                "lat": 36.601302777777775
+              },
+              "Lane": [
+                {
+                  "routeColor": "0068B7",
+                  "route": "간선:502",
+                  "routeId": "1003549001",
+                  "service": 1,
+                  "type": 11
+                }
+              ],
+              "type": 15,
+              "mode": "BUS",
+              "sectionTime": 2168,
+              "route": "급행:509",
+              "routeId": "1003604001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "조치원역",
+                    "lon": "127.296919",
+                    "lat": "36.601303",
+                    "stationID": "691352"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "조치원역",
+                    "lon": "127.297064",
+                    "lat": "36.601053",
+                    "stationID": "691345"
+                  },
+                  {
+                    "index": 2,
+                    "stationName": "오송3리",
+                    "lon": "127.326100",
+                    "lat": "36.610269",
+                    "stationID": "691553"
+                  },
+                  {
+                    "index": 3,
+                    "stationName": "오송역5",
+                    "lon": "127.327025",
+                    "lat": "36.619339",
+                    "stationID": "691806"
+                  },
+                  {
+                    "index": 4,
+                    "stationName": "탑연삼거리",
+                    "lon": "127.359553",
+                    "lat": "36.623675",
+                    "stationID": "691947"
+                  },
+                  {
+                    "index": 5,
+                    "stationName": "월곡리.충청대학교",
+                    "lon": "127.369900",
+                    "lat": "36.624083",
+                    "stationID": "691966"
+                  },
+                  {
+                    "index": 6,
+                    "stationName": "한국자산관리공사",
+                    "lon": "127.428475",
+                    "lat": "36.624567",
+                    "stationID": "691971"
+                  },
+                  {
+                    "index": 7,
+                    "stationName": "고속버스터미널",
+                    "lon": "127.430133",
+                    "lat": "36.626539",
+                    "stationID": "692038"
+                  }
+                ]
+              },
+              "end": {
+                "name": "고속버스터미널",
+                "lon": 127.43013333333333,
+                "lat": 36.62653888888889
+              },
+              "passShape": {
+                "linestring": "127.296928,36.601269 127.296906,36.601267 127.296864,36.601239 127.296842,36.601200 127.296853,36.601114 127.296886,36.601086 127.296928,36.601069 127.296972,36.601064 127.297014,36.601067 127.297025,36.601072 127.297036,36.601078 127.297042,36.601081 127.297058,36.601092 127.297089,36.601125 127.297242,36.601139 127.297442,36.601156 127.297831,36.601197 127.298008,36.601219 127.298028,36.601217 127.298103,36.601203 127.298178,36.601231 127.300008,36.601456 127.301419,36.601606 127.302667,36.602117 127.302750,36.602153 127.304914,36.603094 127.305744,36.603456 127.309447,36.604703 127.309828,36.604833 127.309881,36.604850 127.320719,36.608506 127.322978,36.609294 127.324244,36.609703 127.324308,36.609722 127.325714,36.610169 127.326081,36.610303 127.326475,36.610442 127.327414,36.610811 127.328406,36.611372 127.329306,36.611917 127.329253,36.612019 127.326542,36.613386 127.325594,36.613883 127.325344,36.614028 127.325242,36.614097 127.325553,36.614656 127.326592,36.616592 127.326481,36.617122 127.326464,36.617367 127.326469,36.617414 127.326644,36.617803 127.326831,36.618053 127.327161,36.618319 127.327156,36.618419 127.327150,36.618494 127.326994,36.618664 127.327242,36.618889 127.327289,36.619047 127.326994,36.619317 127.326525,36.619744 127.326431,36.619756 127.326100,36.619531 127.326067,36.619458 127.326069,36.619406 127.326225,36.619228 127.327081,36.618442 127.327161,36.618319 127.328281,36.617275 127.329544,36.616139 127.329831,36.615769 127.330269,36.615358 127.331803,36.613983 127.332064,36.613731 127.332208,36.613736 127.332331,36.613742 127.332417,36.613792 127.333758,36.614583 127.334511,36.615053 127.337708,36.616928 127.339736,36.618222 127.341475,36.619281 127.341633,36.619378 127.342481,36.619900 127.345839,36.621944 127.346519,36.622350 127.346764,36.622464 127.347022,36.622558 127.347294,36.622639 127.347819,36.622758 127.352900,36.623181 127.358581,36.623675 127.358714,36.623675 127.359092,36.623669 127.359550,36.623708 127.359581,36.623711 127.360206,36.623761 127.360525,36.623803 127.360792,36.623853 127.361061,36.623914 127.361400,36.623994 127.362903,36.624444 127.363717,36.624700 127.363861,36.624728 127.364017,36.624758 127.364219,36.624781 127.364344,36.624792 127.364589,36.624783 127.364778,36.624778 127.365817,36.624681 127.366592,36.624589 127.368314,36.624339 127.369336,36.624200 127.369417,36.624186 127.369906,36.624119 127.371117,36.623953 127.371550,36.623881 127.371800,36.623839 127.373703,36.623558 127.374339,36.623447 127.375844,36.623189 127.376550,36.623033 127.377472,36.622819 127.377611,36.622783 127.378186,36.622636 127.378644,36.622517 127.379081,36.622358 127.379483,36.622167 127.379819,36.621986 127.380303,36.621675 127.380697,36.621400 127.381147,36.621139 127.381633,36.620900 127.382083,36.620736 127.382550,36.620608 127.383058,36.620500 127.384181,36.620372 127.385317,36.620247 127.386039,36.620169 127.386253,36.620147 127.386836,36.620086 127.388031,36.619944 127.390147,36.619697 127.390214,36.619689 127.390311,36.619678 127.391244,36.619589 127.392108,36.619511 127.392958,36.619483 127.396278,36.619775 127.399600,36.619906 127.400614,36.619969 127.400769,36.619989 127.401125,36.620064 127.401356,36.620150 127.401931,36.620433 127.402181,36.620533 127.403081,36.620956 127.403250,36.621042 127.411000,36.625000 127.411550,36.625233 127.411969,36.625375 127.414139,36.625989 127.414733,36.626086 127.414997,36.626092 127.415608,36.626058 127.415967,36.626117 127.416769,36.626067 127.417242,36.626064 127.417978,36.626094 127.420167,36.626278 127.421311,36.626339 127.422561,36.626469 127.424769,36.626803 127.426067,36.626961 127.426464,36.626333 127.426983,36.625933 127.426342,36.624314 127.426308,36.623817 127.426486,36.623739 127.426689,36.623942 127.426958,36.624106 127.428458,36.624597 127.429336,36.624883 127.430633,36.625292 127.430731,36.625378 127.430750,36.625397 127.430753,36.625536 127.430058,36.626503"
+              }
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 209,
+              "distance": 210,
+              "start": {
+                "name": "고속버스터미널",
+                "lon": 127.43013333333333,
+                "lat": 36.62653888888889
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "2순환로",
+                  "distance": 112,
+                  "description": "2순환로를 따라 112m 이동",
+                  "linestring": "127.430214,36.62658 127.43087,36.62571"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "우측 횡단보도 후 보행자도로를 따라 8m 이동",
+                  "linestring": "127.43087,36.62571 127.43082,36.625656"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 15,
+                  "description": "직진 후 풍산로를 따라 15m 이동",
+                  "linestring": "127.43082,36.625656 127.43077,36.62561 127.43083,36.62555"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 26,
+                  "description": "횡단보도 후 보행자도로를 따라 26m 이동",
+                  "linestring": "127.43083,36.62555 127.43102,36.62537"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 49,
+                  "description": "좌회전 후 풍산로를 따라 49m 이동",
+                  "linestring": "127.43102,36.62537 127.43115,36.62542 127.43117,36.625423 127.431526,36.62555 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 556,
+          "transferCount": 2,
+          "totalDistance": 149190,
+          "pathType": 5,
+          "totalWalkDistance": 618
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 35100,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 12816,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 152864,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 10380,
+              "route": "시외버스:인천공항T2-대전복합",
+              "routeId": "210028-210046-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "대전복합",
+                    "lon": "127.437033",
+                    "lat": "36.350906",
+                    "stationID": "210046"
+                  }
+                ]
+              },
+              "end": {
+                "name": "대전복합",
+                "lon": 127.43703333333333,
+                "lat": 36.350905555555556
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.437033,36.350906"
+              },
+              "routePayment": 27700
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 0,
+              "distance": 0,
+              "start": {
+                "name": "대전복합",
+                "lon": 127.43703333333333,
+                "lat": 36.350905555555556
+              },
+              "end": {
+                "name": "대전복합",
+                "lon": 127.43703333333333,
+                "lat": 36.350905555555556
+              },
+              "passShape": {
+                "linestring": "127.437033,36.350906 127.437033,36.350906"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 30454,
+              "start": {
+                "name": "대전복합",
+                "lon": 127.43703333333333,
+                "lat": 36.350905555555556
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 2100,
+              "route": "시외버스:대전복합-청주",
+              "routeId": "210046-210375-ITC-ND001",
+              "service": 0,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "대전복합",
+                    "lon": "127.437033",
+                    "lat": "36.350906",
+                    "stationID": "210046"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "청주",
+                    "lon": "127.431719",
+                    "lat": "36.625358",
+                    "stationID": "210375"
+                  }
+                ]
+              },
+              "end": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "passShape": {
+                "linestring": "127.437033,36.350906 127.431719,36.625358"
+              },
+              "routePayment": 7400
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 180,
+              "distance": 238,
+              "start": {
+                "name": "청주",
+                "lon": 127.43171944444444,
+                "lat": 36.62535833333333
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 161,
+                  "description": "보행자도로를 따라 161m 이동",
+                  "linestring": "127.43189,36.62534 127.43208,36.625053 127.43222,36.625103 127.43253,36.625206 127.43265,36.625305 127.43267,36.625343 127.432335,36.62584"
+                },
+                {
+                  "streetName": "풍산로",
+                  "distance": 77,
+                  "description": "좌회전 후 풍산로를 따라 77m 이동",
+                  "linestring": "127.432335,36.62584 127.43226,36.62582 127.43195,36.62571 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 336,
+          "transferCount": 1,
+          "totalDistance": 183482,
+          "pathType": 4,
+          "totalWalkDistance": 416
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 31200,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 10065,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 156,
+              "distance": 178,
+              "start": {
+                "name": "출발지",
+                "lon": 126.43237916,
+                "lat": 37.46792821
+              },
+              "end": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "steps": [
+                {
+                  "streetName": "보행자도로",
+                  "distance": 139,
+                  "description": "보행자도로를 따라 139m 이동",
+                  "linestring": "126.432365,37.467945 126.43277,37.468098 126.433716,37.468582"
+                },
+                {
+                  "streetName": "",
+                  "distance": 31,
+                  "description": "우측 횡단보도 후 31m 이동",
+                  "linestring": "126.433716,37.468582 126.43384,37.46844 126.43392,37.46835"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 8,
+                  "description": "직진 후 보행자도로를 따라 8m 이동",
+                  "linestring": "126.43392,37.46835 126.43396,37.46829"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 55053,
+              "start": {
+                "name": "인천공항T2",
+                "lon": 126.43396944444444,
+                "lat": 37.468288888888885
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 3720,
+              "route": "시외버스:인천공항T2-수원역",
+              "routeId": "210028-210238-ITC-ND001",
+              "service": 0,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천공항T2",
+                    "lon": "126.433969",
+                    "lat": "37.468289",
+                    "stationID": "210028"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "수원역",
+                    "lon": "127.001414",
+                    "lat": "37.266083",
+                    "stationID": "210238"
+                  }
+                ]
+              },
+              "end": {
+                "name": "수원역",
+                "lon": 127.00141388888889,
+                "lat": 37.266083333333334
+              },
+              "passShape": {
+                "linestring": "126.433969,37.468289 127.001414,37.266083"
+              },
+              "routePayment": 18000
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 131,
+              "distance": 159,
+              "start": {
+                "name": "수원역",
+                "lon": 127.00141388888889,
+                "lat": 37.266083333333334
+              },
+              "end": {
+                "name": "수원",
+                "lon": 127.0001,
+                "lat": 37.26578888888889
+              },
+              "passShape": {
+                "linestring": "127.001414,37.266083 127.001281,37.266094 127.001264,37.266036 127.001264,37.265975 127.001283,37.265919 127.001314,37.265872 127.001364,37.265783 127.001339,37.265775 127.001028,37.265650 127.001000,37.265642 127.000939,37.265742 127.000750,37.266072 127.000650,37.266233 127.000100,37.265789"
+              }
+            },
+            {
+              "routeColor": "F75C4C",
+              "distance": 78331,
+              "start": {
+                "name": "수원",
+                "lon": 127.0001,
+                "lat": 37.26578888888889
+              },
+              "Lane": [
+                {
+                  "routeColor": "F75C4C",
+                  "route": "무궁화:수원-조치원",
+                  "routeId": "500003-500007-MGH-NOR-STD001",
+                  "service": 1,
+                  "type": 12
+                },
+                {
+                  "routeColor": "F75C4C",
+                  "route": "ITX마음:수원-조치원",
+                  "routeId": "500003-500007-ITXMAEUM-NOR-STD001",
+                  "service": 1,
+                  "type": 17
+                }
+              ],
+              "type": 15,
+              "mode": "TRAIN",
+              "sectionTime": 3209,
+              "route": "ITX새마을:수원-조치원",
+              "routeId": "500003-500007-ITXSME-NOR-STD001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "수원",
+                    "lon": "127.000100",
+                    "lat": "37.265789",
+                    "stationID": "500003"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "조치원",
+                    "lon": "127.296172",
+                    "lat": "36.601128",
+                    "stationID": "500007"
+                  }
+                ]
+              },
+              "end": {
+                "name": "조치원",
+                "lon": 127.29617222222222,
+                "lat": 36.601127777777776
+              },
+              "passShape": {
+                "linestring": "127.000100,37.265789 127.296172,36.601128"
+              },
+              "routePayment": 8500
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 140,
+              "distance": 141,
+              "start": {
+                "name": "조치원",
+                "lon": 127.29617222222222,
+                "lat": 36.601127777777776
+              },
+              "end": {
+                "name": "조치원역",
+                "lon": 127.29706388888889,
+                "lat": 36.60105277777778
+              },
+              "passShape": {
+                "linestring": "127.296172,36.601128 127.296403,36.601081 127.296781,36.601128 127.296792,36.601094 127.296839,36.600814 127.296956,36.600831 127.297208,36.600864 127.297064,36.601053"
+              }
+            },
+            {
+              "routeColor": "53B332",
+              "distance": 3405,
+              "start": {
+                "name": "조치원역",
+                "lon": 127.29706388888889,
+                "lat": 36.60105277777778
+              },
+              "Lane": [
+                {
+                  "routeColor": "FF3300",
+                  "route": "광역:18",
+                  "routeId": "1003629001",
+                  "service": 1,
+                  "type": 14
+                },
+                {
+                  "routeColor": "53B332",
+                  "route": "지선:300",
+                  "routeId": "1000051001",
+                  "service": 1,
+                  "type": 12
+                }
+              ],
+              "type": 12,
+              "mode": "BUS",
+              "sectionTime": 527,
+              "route": "지선:18",
+              "routeId": "1000117001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "조치원역",
+                    "lon": "127.297064",
+                    "lat": "36.601053",
+                    "stationID": "691345"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "조치원전통시장북측",
+                    "lon": "127.299678",
+                    "lat": "36.601378",
+                    "stationID": "691354"
+                  },
+                  {
+                    "index": 2,
+                    "stationName": "조치원버스터미널",
+                    "lon": "127.303614",
+                    "lat": "36.602489",
+                    "stationID": "691381"
+                  },
+                  {
+                    "index": 3,
+                    "stationName": "서평리.중봉리",
+                    "lon": "127.306619",
+                    "lat": "36.603678",
+                    "stationID": "1010803"
+                  },
+                  {
+                    "index": 4,
+                    "stationName": "서평리",
+                    "lon": "127.312978",
+                    "lat": "36.598669",
+                    "stationID": "691296"
+                  },
+                  {
+                    "index": 5,
+                    "stationName": "서평1리",
+                    "lon": "127.314594",
+                    "lat": "36.595531",
+                    "stationID": "691249"
+                  },
+                  {
+                    "index": 6,
+                    "stationName": "서평교",
+                    "lon": "127.316483",
+                    "lat": "36.591878",
+                    "stationID": "691180"
+                  },
+                  {
+                    "index": 7,
+                    "stationName": "동평3리",
+                    "lon": "127.318586",
+                    "lat": "36.586761",
+                    "stationID": "691091"
+                  }
+                ]
+              },
+              "end": {
+                "name": "동평3리",
+                "lon": 127.31858611111112,
+                "lat": 36.58676111111111
+              },
+              "passShape": {
+                "linestring": "127.297042,36.601081 127.297058,36.601092 127.297089,36.601125 127.297242,36.601139 127.297442,36.601156 127.297831,36.601197 127.298008,36.601219 127.298028,36.601217 127.298103,36.601203 127.298178,36.601231 127.299669,36.601414 127.300008,36.601456 127.301419,36.601606 127.302667,36.602117 127.302750,36.602153 127.303592,36.602519 127.304914,36.603094 127.305744,36.603456 127.306586,36.603742 127.309447,36.604703 127.309669,36.604725 127.309756,36.604717 127.309831,36.604697 127.309947,36.604628 127.313017,36.598681 127.314633,36.595544 127.316519,36.591889 127.316908,36.591142 127.317086,36.590675 127.317117,36.590136 127.317189,36.590094 127.317375,36.590053 127.317456,36.590014 127.317547,36.589908 127.318358,36.588350 127.318433,36.588258 127.318678,36.587753 127.318792,36.587575 127.318850,36.587350 127.318842,36.587228 127.318642,36.586758 127.318619,36.586739"
+              }
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 88,
+              "distance": 115,
+              "start": {
+                "name": "동평3리",
+                "lon": 127.31858611111112,
+                "lat": 36.58676111111111
+              },
+              "end": {
+                "name": "동평3리",
+                "lon": 127.31877777777778,
+                "lat": 36.58773333333333
+              },
+              "passShape": {
+                "linestring": "127.318586,36.586761 127.318703,36.586819 127.318794,36.587050 127.318875,36.587256 127.318869,36.587439 127.318828,36.587553 127.318778,36.587733"
+              }
+            },
+            {
+              "mode": "BUS",
+              "routeColor": "0068B7",
+              "sectionTime": 1346,
+              "route": "간선:512",
+              "routeId": "1003551001",
+              "distance": 13021,
+              "service": 1,
+              "start": {
+                "name": "동평3리",
+                "lon": 127.31877777777778,
+                "lat": 36.58773333333333
+              },
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "동평3리",
+                    "lon": "127.318778",
+                    "lat": "36.587733",
+                    "stationID": "691111"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "예양2리",
+                    "lon": "127.317231",
+                    "lat": "36.580858",
+                    "stationID": "690975"
+                  },
+                  {
+                    "index": 2,
+                    "stationName": "사곡리",
+                    "lon": "127.328353",
+                    "lat": "36.581050",
+                    "stationID": "690977"
+                  },
+                  {
+                    "index": 3,
+                    "stationName": "사곡1리",
+                    "lon": "127.330250",
+                    "lat": "36.582581",
+                    "stationID": "789706"
+                  },
+                  {
+                    "index": 4,
+                    "stationName": "사곡1리",
+                    "lon": "127.331017",
+                    "lat": "36.583453",
+                    "stationID": "691011"
+                  },
+                  {
+                    "index": 5,
+                    "stationName": "사곡1리",
+                    "lon": "127.333497",
+                    "lat": "36.584678",
+                    "stationID": "788963"
+                  },
+                  {
+                    "index": 6,
+                    "stationName": "사곡2리",
+                    "lon": "127.337878",
+                    "lat": "36.584867",
+                    "stationID": "788964"
+                  },
+                  {
+                    "index": 7,
+                    "stationName": "태성2리",
+                    "lon": "127.341911",
+                    "lat": "36.586281",
+                    "stationID": "691079"
+                  },
+                  {
+                    "index": 8,
+                    "stationName": "태성교회",
+                    "lon": "127.345236",
+                    "lat": "36.586758",
+                    "stationID": "691092"
+                  },
+                  {
+                    "index": 9,
+                    "stationName": "태성보건진료소",
+                    "lon": "127.349919",
+                    "lat": "36.586406",
+                    "stationID": "788965"
+                  },
+                  {
+                    "index": 10,
+                    "stationName": "태성리",
+                    "lon": "127.355231",
+                    "lat": "36.585803",
+                    "stationID": "691069"
+                  },
+                  {
+                    "index": 11,
+                    "stationName": "태성리요곡마을",
+                    "lon": "127.359964",
+                    "lat": "36.586903",
+                    "stationID": "691094"
+                  },
+                  {
+                    "index": 12,
+                    "stationName": "궁현2리(연꽃마을)",
+                    "lon": "127.365292",
+                    "lat": "36.585414",
+                    "stationID": "691055"
+                  },
+                  {
+                    "index": 13,
+                    "stationName": "궁현리",
+                    "lon": "127.369147",
+                    "lat": "36.583639",
+                    "stationID": "691014"
+                  },
+                  {
+                    "index": 14,
+                    "stationName": "궁현1리",
+                    "lon": "127.375139",
+                    "lat": "36.584594",
+                    "stationID": "691042"
+                  },
+                  {
+                    "index": 15,
+                    "stationName": "궁현(큰골)",
+                    "lon": "127.376733",
+                    "lat": "36.584136",
+                    "stationID": "691029"
+                  },
+                  {
+                    "index": 16,
+                    "stationName": "연정1리",
+                    "lon": "127.381478",
+                    "lat": "36.583789",
+                    "stationID": "691019"
+                  },
+                  {
+                    "index": 17,
+                    "stationName": "연정리",
+                    "lon": "127.384647",
+                    "lat": "36.584239",
+                    "stationID": "691031"
+                  },
+                  {
+                    "index": 18,
+                    "stationName": "재너머",
+                    "lon": "127.387681",
+                    "lat": "36.585472",
+                    "stationID": "691057"
+                  },
+                  {
+                    "index": 19,
+                    "stationName": "진다리",
+                    "lon": "127.391264",
+                    "lat": "36.585703",
+                    "stationID": "691063"
+                  },
+                  {
+                    "index": 20,
+                    "stationName": "청신운수",
+                    "lon": "127.393744",
+                    "lat": "36.587186",
+                    "stationID": "691100"
+                  },
+                  {
+                    "index": 21,
+                    "stationName": "고래기마을",
+                    "lon": "127.397950",
+                    "lat": "36.590417",
+                    "stationID": "834373"
+                  },
+                  {
+                    "index": 22,
+                    "stationName": "상발",
+                    "lon": "127.400322",
+                    "lat": "36.593761",
+                    "stationID": "691215"
+                  },
+                  {
+                    "index": 23,
+                    "stationName": "청주성신학교.신전동",
+                    "lon": "127.402539",
+                    "lat": "36.596844",
+                    "stationID": "691261"
+                  },
+                  {
+                    "index": 24,
+                    "stationName": "구암",
+                    "lon": "127.405367",
+                    "lat": "36.597900",
+                    "stationID": "691279"
+                  },
+                  {
+                    "index": 25,
+                    "stationName": "구암",
+                    "lon": "127.410225",
+                    "lat": "36.602425",
+                    "stationID": "1023801"
+                  },
+                  {
+                    "index": 26,
+                    "stationName": "호암마을입구",
+                    "lon": "127.420586",
+                    "lat": "36.608028",
+                    "stationID": "691487"
+                  },
+                  {
+                    "index": 27,
+                    "stationName": "석곡사거리.아이파크5단지후문",
+                    "lon": "127.424783",
+                    "lat": "36.609767",
+                    "stationID": "691532"
+                  }
+                ]
+              },
+              "end": {
+                "name": "석곡사거리.아이파크5단지후문",
+                "lon": 127.42478333333334,
+                "lat": 36.609766666666665
+              },
+              "type": 11,
+              "passShape": {
+                "linestring": "127.318739,36.587717 127.318708,36.587764 127.318464,36.588269 127.318369,36.588403 127.317517,36.590042 127.317419,36.590106 127.317200,36.590158 127.317117,36.590136 127.317089,36.589756 127.316958,36.589231 127.316114,36.587631 127.316003,36.587353 127.315883,36.586942 127.315806,36.586392 127.315803,36.586092 127.315822,36.585781 127.315900,36.585242 127.315864,36.585194 127.315856,36.585094 127.315883,36.585042 127.316000,36.584981 127.316022,36.584697 127.316297,36.583331 127.316703,36.581381 127.316789,36.581128 127.316839,36.581022 127.316944,36.580908 127.316994,36.580878 127.317228,36.580892 127.318589,36.580975 127.319075,36.580967 127.319897,36.580919 127.320869,36.580800 127.321217,36.580717 127.321283,36.580703 127.321483,36.580669 127.321742,36.580628 127.322214,36.580522 127.322292,36.580506 127.323178,36.580372 127.323878,36.580169 127.324578,36.580078 127.324842,36.580028 127.325564,36.579778 127.325931,36.579728 127.326194,36.579747 127.326389,36.579783 127.326600,36.579853 127.326919,36.580033 127.327939,36.580750 127.328275,36.581028 127.328306,36.581056 127.328319,36.581069 127.328322,36.581072 127.328336,36.581083 127.329289,36.581944 127.329428,36.582092 127.329728,36.582286 127.330192,36.582558 127.330236,36.582592 127.330297,36.582636 127.330319,36.582656 127.330569,36.582881 127.330725,36.583058 127.330892,36.583331 127.330983,36.583469 127.331008,36.583508 127.331164,36.583656 127.331878,36.584183 127.332997,36.584561 127.333481,36.584708 127.333836,36.584817 127.334261,36.584914 127.334756,36.584964 127.336208,36.585069 127.336464,36.585067 127.336689,36.585036 127.337208,36.584911 127.337508,36.584864 127.337658,36.584858 127.337814,36.584881 127.337861,36.584897 127.337961,36.584928 127.338283,36.585067 127.338447,36.585117 127.338586,36.585142 127.338939,36.585119 127.339489,36.585025 127.339639,36.585019 127.339817,36.585033 127.340042,36.585100 127.340325,36.585286 127.341006,36.585869 127.341353,36.586106 127.341603,36.586219 127.341800,36.586289 127.341897,36.586314 127.342656,36.586519 127.343119,36.586600 127.343922,36.586683 127.345164,36.586781 127.345231,36.586789 127.346203,36.586914 127.346869,36.586975 127.347283,36.587011 127.347656,36.587022 127.348019,36.587008 127.348192,36.586967 127.348944,36.586678 127.349356,36.586553 127.349931,36.586442 127.349936,36.586439 127.350142,36.586419 127.352906,36.585972 127.353806,36.585744 127.354306,36.585639 127.354372,36.585631 127.354517,36.585617 127.354808,36.585633 127.354958,36.585689 127.355114,36.585767 127.355200,36.585828 127.355322,36.585917 127.355706,36.586369 127.355850,36.586508 127.356214,36.586750 127.356319,36.586783 127.356481,36.586789 127.357508,36.586731 127.357831,36.586747 127.359958,36.586939 127.360114,36.586953 127.360497,36.586950 127.360944,36.586919 127.361256,36.586919 127.361867,36.586950 127.361967,36.586978 127.362269,36.586983 127.362522,36.586981 127.362806,36.586944 127.363039,36.586886 127.363475,36.586700 127.363669,36.586589 127.364272,36.586150 127.364953,36.585747 127.365150,36.585606 127.365325,36.585433 127.365653,36.585111 127.365919,36.584906 127.366042,36.584839 127.366475,36.584678 127.367367,36.584453 127.367706,36.584294 127.368025,36.584083 127.368414,36.583875 127.368717,36.583761 127.369072,36.583681 127.369153,36.583672 127.369375,36.583650 127.369767,36.583653 127.370069,36.583703 127.371814,36.584147 127.372142,36.584256 127.372636,36.584392 127.373058,36.584483 127.373189,36.584500 127.374017,36.584519 127.374844,36.584617 127.375000,36.584625 127.375139,36.584631 127.375189,36.584633 127.375372,36.584611 127.375594,36.584553 127.376525,36.584231 127.376747,36.584167 127.376828,36.584144 127.377528,36.584008 127.378392,36.583803 127.378889,36.583764 127.379239,36.583758 127.381128,36.583828 127.381478,36.583819 127.381650,36.583817 127.381808,36.583792 127.382053,36.583725 127.382931,36.583392 127.383128,36.583364 127.383294,36.583378 127.383400,36.583400 127.383589,36.583458 127.383692,36.583508 127.383808,36.583597 127.384317,36.584081 127.384456,36.584181 127.384622,36.584267 127.384628,36.584272 127.385756,36.584642 127.386053,36.584764 127.386575,36.585053 127.386625,36.585033 127.386692,36.585033 127.386736,36.585053 127.386764,36.585086 127.386756,36.585150 127.387392,36.585442 127.387669,36.585508 127.387689,36.585511 127.387989,36.585561 127.388350,36.585592 127.388719,36.585594 127.389067,36.585547 127.389672,36.585389 127.389864,36.585372 127.390064,36.585381 127.390364,36.585444 127.390781,36.585658 127.390983,36.585736 127.391264,36.585739 127.391428,36.585739 127.391639,36.585761 127.391875,36.585839 127.392014,36.585919 127.392133,36.586031 127.392494,36.586444 127.392664,36.586606 127.392911,36.586758 127.392975,36.586797 127.393614,36.587139 127.393717,36.587211 127.393850,36.587306 127.394683,36.588156 127.395056,36.588492 127.396436,36.589589 127.396664,36.589761 127.396986,36.589975 127.397781,36.590347 127.397919,36.590444 127.397989,36.590492 127.398203,36.590703 127.399450,36.592239 127.399600,36.592517 127.399783,36.593069 127.399872,36.593253 127.399994,36.593428 127.400289,36.593781 127.400425,36.593944 127.400494,36.594058 127.400631,36.594217 127.400919,36.594614 127.401181,36.595133 127.401489,36.596075 127.401589,36.596264 127.401728,36.596444 127.402114,36.596700 127.402517,36.596875 127.402983,36.597081 127.404658,36.597703 127.404839,36.597767 127.405111,36.597836 127.405175,36.597856 127.405294,36.597903 127.405342,36.597931 127.405550,36.598050 127.405850,36.598197 127.406175,36.598403 127.406383,36.598564 127.406778,36.598967 127.406931,36.599219 127.407033,36.599453 127.407358,36.600708 127.407464,36.600889 127.407617,36.601083 127.408811,36.600553 127.408856,36.600589 127.408947,36.600722 127.409469,36.601661 127.410056,36.602503 127.410589,36.603267 127.411469,36.604450 127.411494,36.604481 127.411633,36.604644 127.411756,36.604789 127.412217,36.605258 127.412644,36.605656 127.412914,36.605872 127.413136,36.606025 127.413300,36.606128 127.413800,36.606383 127.414342,36.606625 127.414858,36.606808 127.415236,36.606922 127.416853,36.607247 127.418911,36.607614 127.419239,36.607681 127.420144,36.607903 127.420567,36.608061 127.420728,36.608122 127.421211,36.608339 127.422181,36.608856 127.422750,36.609181 127.423028,36.609317 127.423331,36.609444 127.423917,36.609656 127.423956,36.609625 127.423981,36.609611 127.424114,36.609586 127.424203,36.609597 127.424264,36.609625 127.424336,36.609731 127.424775,36.609800"
+              }
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 136,
+              "distance": 187,
+              "start": {
+                "name": "석곡사거리.아이파크5단지후문",
+                "lon": 127.42478333333334,
+                "lat": 36.609766666666665
+              },
+              "end": {
+                "name": "석곡동",
+                "lon": 127.42394444444444,
+                "lat": 36.608475
+              },
+              "passShape": {
+                "linestring": "127.424783,36.609767 127.424531,36.609708 127.424414,36.609689 127.424392,36.609686 127.424367,36.609681 127.424331,36.609667 127.424314,36.609656 127.424294,36.609636 127.424272,36.609614 127.424236,36.609589 127.424214,36.609581 127.424178,36.609547 127.424164,36.609511 127.424150,36.609453 127.424133,36.609372 127.424103,36.609283 127.424056,36.609203 127.423972,36.609067 127.423931,36.608994 127.423914,36.608961 127.423900,36.608917 127.423889,36.608856 127.423886,36.608817 127.423839,36.608792 127.423944,36.608475"
+              }
+            },
+            {
+              "mode": "BUS",
+              "routeColor": "53B332",
+              "sectionTime": 610,
+              "route": "지선:416",
+              "routeId": "1003545001",
+              "distance": 2791,
+              "service": 1,
+              "start": {
+                "name": "석곡동",
+                "lon": 127.42394444444444,
+                "lat": 36.608475
+              },
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "석곡동",
+                    "lon": "127.423944",
+                    "lat": "36.608475",
+                    "stationID": "691499"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "가경아이파크5단지",
+                    "lon": "127.423464",
+                    "lat": "36.612467",
+                    "stationID": "835550"
+                  },
+                  {
+                    "index": 2,
+                    "stationName": "서현공원",
+                    "lon": "127.427836",
+                    "lat": "36.617525",
+                    "stationID": "691755"
+                  },
+                  {
+                    "index": 3,
+                    "stationName": "서현초등학교.가경아이파크아파트",
+                    "lon": "127.431681",
+                    "lat": "36.618744",
+                    "stationID": "691779"
+                  },
+                  {
+                    "index": 4,
+                    "stationName": "가로수마을휴먼시아",
+                    "lon": "127.433592",
+                    "lat": "36.621489",
+                    "stationID": "691873"
+                  },
+                  {
+                    "index": 5,
+                    "stationName": "하나병원",
+                    "lon": "127.432206",
+                    "lat": "36.623522",
+                    "stationID": "691935"
+                  },
+                  {
+                    "index": 6,
+                    "stationName": "시외버스터미널",
+                    "lon": "127.431586",
+                    "lat": "36.625553",
+                    "stationID": "692006"
+                  }
+                ]
+              },
+              "end": {
+                "name": "시외버스터미널",
+                "lon": 127.43158611111112,
+                "lat": 36.62555277777778
+              },
+              "type": 12,
+              "passShape": {
+                "linestring": "127.423900,36.608469 127.423894,36.608514 127.423903,36.608867 127.424022,36.609342 127.424114,36.609586 127.424203,36.609597 127.424264,36.609625 127.424336,36.609731 127.424319,36.609839 127.424261,36.609914 127.424122,36.609958 127.423650,36.611617 127.423422,36.612461 127.423256,36.613083 127.422814,36.614911 127.422706,36.615467 127.422628,36.616033 127.422600,36.616408 127.422622,36.616700 127.422631,36.616733 127.425928,36.617239 127.427425,36.617469 127.427825,36.617558 127.427886,36.617569 127.428939,36.617908 127.431664,36.618778 127.431950,36.618867 127.432633,36.619133 127.432981,36.619333 127.433542,36.619772 127.434003,36.620161 127.434164,36.620297 127.434211,36.620406 127.434219,36.620428 127.434250,36.620494 127.434194,36.620578 127.433556,36.621472 127.432511,36.622947 127.432444,36.623042 127.432131,36.623489 127.431783,36.623989 127.431039,36.625039 127.430861,36.625339 127.431281,36.625469 127.431531,36.625569 127.431569,36.625583"
+              }
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 2,
+              "distance": 4,
+              "start": {
+                "name": "시외버스터미널",
+                "lon": 127.43158611111112,
+                "lat": 36.62555277777778
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 127.43158967,
+                "lat": 36.62545989
+              },
+              "steps": [
+                {
+                  "streetName": "풍산로",
+                  "distance": 4,
+                  "description": "풍산로를 따라 4m 이동",
+                  "linestring": "127.43158,36.62557 127.43153,36.625553"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 653,
+          "transferCount": 4,
+          "totalDistance": 153361,
+          "pathType": 5,
+          "totalWalkDistance": 784
+        }
+      ]
+    }
+  },
+  "_noLateRouting": {
+    "provider": "tmap",
+    "fallbackUsed": false,
+    "candidateCount": 10,
+    "geometryCompleteCandidateCount": 10,
+    "rideLegCount": 23,
+    "rideShapeLegCount": 23,
+    "fastestMinutes": 152,
+    "fastestGeometryCompleteMinutes": 152,
+    "evaluatedProviders": [
+      {
+        "provider": "tmap",
+        "status": "usable",
+        "candidateCount": 10,
+        "geometryCompleteCandidateCount": 10,
+        "rideLegCount": 23,
+        "rideShapeLegCount": 23,
+        "fastestMinutes": 152
+      }
+    ]
+  }
+}

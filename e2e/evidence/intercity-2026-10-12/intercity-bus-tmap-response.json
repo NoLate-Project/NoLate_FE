@@ -1,0 +1,471 @@
+{
+  "metaData": {
+    "requestParameters": {
+      "busCount": 0,
+      "expressbusCount": 3,
+      "subwayCount": 0,
+      "airplaneCount": 0,
+      "locale": "ko",
+      "endY": "38.21118713",
+      "endX": "128.59088288",
+      "wideareaRouteCount": 0,
+      "subwayBusCount": 0,
+      "startY": "37.5339323",
+      "startX": "127.09476136",
+      "ferryCount": 0,
+      "trainCount": 0,
+      "reqDttm": "20261012195407"
+    },
+    "plan": {
+      "itineraries": [
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 21300,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 8083,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 232,
+              "distance": 316,
+              "start": {
+                "name": "출발지",
+                "lon": 127.09476136,
+                "lat": 37.5339323
+              },
+              "end": {
+                "name": "동서울",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "steps": [
+                {
+                  "streetName": "",
+                  "distance": 141,
+                  "description": "141m 이동",
+                  "linestring": "127.094826,37.533882 127.09493,37.533978 127.09489,37.534077 127.0948,37.534245 127.094734,37.534378 127.094444,37.53483 127.09432,37.53501"
+                },
+                {
+                  "streetName": "강변역로",
+                  "distance": 44,
+                  "description": "좌회전 후 강변역로를 따라 44m 이동",
+                  "linestring": "127.09432,37.53501 127.09421,37.53519 127.09415,37.53528 127.09411,37.53529 127.09403,37.535297"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 48,
+                  "description": "좌회전 후 보행자도로를 따라 48m 이동",
+                  "linestring": "127.09336,37.534798 127.09348,37.53461 127.09373,37.534714"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 151578,
+              "start": {
+                "name": "동서울",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 7800,
+              "route": "시외버스:동서울-속초",
+              "routeId": "210003-210258-ITC-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "동서울",
+                    "lon": "127.094061",
+                    "lat": "37.534392",
+                    "stationID": "210003"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "속초시외",
+                    "lon": "128.591108",
+                    "lat": "38.210961",
+                    "stationID": "210258"
+                  }
+                ]
+              },
+              "end": {
+                "name": "속초시외",
+                "lon": 128.59110833333332,
+                "lat": 38.21096111111111
+              },
+              "passShape": {
+                "linestring": "127.094061,37.534392 128.591108,38.210961"
+              },
+              "routePayment": 21300
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 51,
+              "distance": 68,
+              "start": {
+                "name": "속초시외",
+                "lon": 128.59110833333332,
+                "lat": 38.21096111111111
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 128.59088288,
+                "lat": 38.21118713
+              },
+              "steps": [
+                {
+                  "streetName": "장안로",
+                  "distance": 25,
+                  "description": "장안로를 따라 25m 이동",
+                  "linestring": "128.59123,38.21091 128.59135,38.21112"
+                },
+                {
+                  "streetName": "장안로",
+                  "distance": 43,
+                  "description": "세븐일레븐 속초시외터미널점에서 좌회전 후 장안로를 따라 43m 이동",
+                  "linestring": "128.59135,38.21112 128.59103,38.2112 128.59093,38.211227 128.5909,38.211235"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 283,
+          "transferCount": 0,
+          "totalDistance": 151691,
+          "pathType": 4,
+          "totalWalkDistance": 384
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 20900,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 9232,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 232,
+              "distance": 316,
+              "start": {
+                "name": "출발지",
+                "lon": 127.09476136,
+                "lat": 37.5339323
+              },
+              "end": {
+                "name": "동서울종합터미널",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "steps": [
+                {
+                  "streetName": "",
+                  "distance": 141,
+                  "description": "141m 이동",
+                  "linestring": "127.094826,37.533882 127.09493,37.533978 127.09489,37.534077 127.0948,37.534245 127.094734,37.534378 127.094444,37.53483 127.09432,37.53501"
+                },
+                {
+                  "streetName": "강변역로",
+                  "distance": 44,
+                  "description": "좌회전 후 강변역로를 따라 44m 이동",
+                  "linestring": "127.09432,37.53501 127.09421,37.53519 127.09415,37.53528 127.09411,37.53529 127.09403,37.535297"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 48,
+                  "description": "좌회전 후 보행자도로를 따라 48m 이동",
+                  "linestring": "127.09336,37.534798 127.09348,37.53461 127.09373,37.534714"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 151571,
+              "start": {
+                "name": "동서울종합터미널",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "type": 23,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 9000,
+              "route": "고속버스:동서울-속초",
+              "routeId": "300001-310005-EXP-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "동서울종합터미널",
+                    "lon": "127.094061",
+                    "lat": "37.534392",
+                    "stationID": "300001"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "속초시외버스터미널",
+                    "lon": "128.590875",
+                    "lat": "38.211167",
+                    "stationID": "310005"
+                  }
+                ]
+              },
+              "end": {
+                "name": "속초시외버스터미널",
+                "lon": 128.590875,
+                "lat": 38.211166666666664
+              },
+              "passShape": {
+                "linestring": "127.094061,37.534392 128.590875,38.211167"
+              },
+              "routePayment": 20900
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 0,
+              "distance": 0,
+              "start": {
+                "name": "속초시외버스터미널",
+                "lon": 128.590875,
+                "lat": 38.211166666666664
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 128.59088288,
+                "lat": 38.21118713
+              },
+              "steps": [
+                {
+                  "streetName": "장안로",
+                  "distance": 0,
+                  "description": "장안로를 따라 0m 이동",
+                  "linestring": "128.5909,38.21123 128.5909,38.211235"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 232,
+          "transferCount": 0,
+          "totalDistance": 151655,
+          "pathType": 4,
+          "totalWalkDistance": 316
+        },
+        {
+          "fare": {
+            "regular": {
+              "totalFare": 31300,
+              "currency": {
+                "symbol": "￦",
+                "currency": "원",
+                "currencyCode": "KRW"
+              }
+            }
+          },
+          "totalTime": 13566,
+          "legs": [
+            {
+              "mode": "WALK",
+              "sectionTime": 232,
+              "distance": 316,
+              "start": {
+                "name": "출발지",
+                "lon": 127.09476136,
+                "lat": 37.5339323
+              },
+              "end": {
+                "name": "동서울",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "steps": [
+                {
+                  "streetName": "",
+                  "distance": 141,
+                  "description": "141m 이동",
+                  "linestring": "127.094826,37.533882 127.09493,37.533978 127.09489,37.534077 127.0948,37.534245 127.094734,37.534378 127.094444,37.53483 127.09432,37.53501"
+                },
+                {
+                  "streetName": "강변역로",
+                  "distance": 44,
+                  "description": "좌회전 후 강변역로를 따라 44m 이동",
+                  "linestring": "127.09432,37.53501 127.09421,37.53519 127.09415,37.53528 127.09411,37.53529 127.09403,37.535297"
+                },
+                {
+                  "streetName": "보행자도로",
+                  "distance": 48,
+                  "description": "좌회전 후 보행자도로를 따라 48m 이동",
+                  "linestring": "127.09336,37.534798 127.09348,37.53461 127.09373,37.534714"
+                }
+              ]
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 36217,
+              "start": {
+                "name": "동서울",
+                "lon": 127.09406111111112,
+                "lat": 37.534391666666664
+              },
+              "type": 22,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 2460,
+              "route": "시외버스:동서울-인천",
+              "routeId": "210003-210026-ITC-G001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "동서울",
+                    "lon": "127.094061",
+                    "lat": "37.534392",
+                    "stationID": "210003"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "인천",
+                    "lon": "126.701492",
+                    "lat": "37.441550",
+                    "stationID": "210026"
+                  }
+                ]
+              },
+              "end": {
+                "name": "인천",
+                "lon": 126.70149166666667,
+                "lat": 37.44155
+              },
+              "passShape": {
+                "linestring": "127.094061,37.534392 126.701492,37.441550"
+              },
+              "routePayment": 5700
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 74,
+              "distance": 89,
+              "start": {
+                "name": "인천",
+                "lon": 126.70149166666667,
+                "lat": 37.44155
+              },
+              "end": {
+                "name": "인천종합터미널",
+                "lon": 126.70153333333333,
+                "lat": 37.441697222222224
+              },
+              "passShape": {
+                "linestring": "126.701492,37.441550 126.702000,37.441261 126.702069,37.441275 126.702369,37.441225 126.702264,37.441325 126.702225,37.441364 126.702208,37.441411 126.702217,37.441486 126.701533,37.441697"
+              }
+            },
+            {
+              "routeColor": "4A51C2",
+              "distance": 186938,
+              "start": {
+                "name": "인천종합터미널",
+                "lon": 126.70153333333333,
+                "lat": 37.441697222222224
+              },
+              "type": 23,
+              "mode": "EXPRESSBUS",
+              "sectionTime": 10800,
+              "route": "고속버스:인천-속초",
+              "routeId": "300046-310005-EXP-D001",
+              "service": 1,
+              "passStopList": {
+                "stations": [
+                  {
+                    "index": 0,
+                    "stationName": "인천종합터미널",
+                    "lon": "126.701533",
+                    "lat": "37.441697",
+                    "stationID": "300046"
+                  },
+                  {
+                    "index": 1,
+                    "stationName": "속초시외버스터미널",
+                    "lon": "128.590875",
+                    "lat": "38.211167",
+                    "stationID": "310005"
+                  }
+                ]
+              },
+              "end": {
+                "name": "속초시외버스터미널",
+                "lon": 128.590875,
+                "lat": 38.211166666666664
+              },
+              "passShape": {
+                "linestring": "126.701533,37.441697 128.590875,38.211167"
+              },
+              "routePayment": 25600
+            },
+            {
+              "mode": "WALK",
+              "sectionTime": 0,
+              "distance": 0,
+              "start": {
+                "name": "속초시외버스터미널",
+                "lon": 128.590875,
+                "lat": 38.211166666666664
+              },
+              "end": {
+                "name": "도착지",
+                "lon": 128.59088288,
+                "lat": 38.21118713
+              },
+              "steps": [
+                {
+                  "streetName": "장안로",
+                  "distance": 0,
+                  "description": "장안로를 따라 0m 이동",
+                  "linestring": "128.5909,38.21123 128.5909,38.211235"
+                }
+              ]
+            }
+          ],
+          "totalWalkTime": 306,
+          "transferCount": 1,
+          "totalDistance": 223328,
+          "pathType": 4,
+          "totalWalkDistance": 405
+        }
+      ]
+    }
+  },
+  "_noLateRouting": {
+    "provider": "tmap",
+    "fallbackUsed": false,
+    "candidateCount": 3,
+    "geometryCompleteCandidateCount": 3,
+    "rideLegCount": 4,
+    "rideShapeLegCount": 4,
+    "fastestMinutes": 135,
+    "fastestGeometryCompleteMinutes": 135,
+    "evaluatedProviders": [
+      {
+        "provider": "tmap",
+        "status": "usable",
+        "candidateCount": 3,
+        "geometryCompleteCandidateCount": 3,
+        "rideLegCount": 4,
+        "rideShapeLegCount": 4,
+        "fastestMinutes": 135
+      }
+    ]
+  }
+}

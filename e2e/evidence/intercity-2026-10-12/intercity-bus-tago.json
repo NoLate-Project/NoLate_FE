@@ -1,0 +1,25 @@
+{
+  "source": "TAGO",
+  "status": "AVAILABLE",
+  "date": "2026-10-12",
+  "departureId": "NAI0511601",
+  "arrivalId": "NAI2482701",
+  "serviceRows": 34,
+  "sample": {
+    "id": "tago:4736271815985349fc8f3dff1952b06f645dab7b14169df7ab1cacde74be3e66",
+    "kind": "INTERCITY_BUS",
+    "departureId": "NAI0511601",
+    "arrivalId": "NAI2482701",
+    "departureName": "동서울",
+    "arrivalName": "속초",
+    "departureAt": "2026-10-12T06:05+09:00",
+    "arrivalAt": "2026-10-12T08:15+09:00",
+    "serviceDate": "2026-10-12",
+    "grade": "우등",
+    "trainNumber": null,
+    "fare": 22500,
+    "timingBasis": "TIMETABLE",
+    "bookingStatus": "UNCONFIRMED"
+  },
+  "scope": "Normal authenticated API lookup only; includes past departures today. No seat inventory, booking or native service selection verified."
+}

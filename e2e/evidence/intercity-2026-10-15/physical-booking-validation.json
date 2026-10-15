@@ -1,0 +1,110 @@
+{
+  "date": "2026-10-15",
+  "requestedScope": "User explicitly requested physical iPhone testing, then limited it to app switching without a ticket.",
+  "device": {
+    "model": "iPhone 13",
+    "os": "26.6",
+    "physical": true
+  },
+  "installedNoLate": {
+    "version": "1.3.0",
+    "beforeBuild": "54",
+    "afterBuild": "55",
+    "installedOverExistingApp": true,
+    "uninstallOrDataReset": false
+  },
+  "nativeSmoke": {
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "run": "smoke-03",
+    "method": "Foreground XCTest runner dispatches the current product URL with UIApplication.open; OS chooses the registered handler; assert actual carrier foreground and return to NoLate.",
+    "cases": [
+      {
+        "test": "testActualKorailURLAndReturn",
+        "url": "korailtalk://gotoMainViewContoller",
+        "appBundle": "com.korail.KorailTalk",
+        "appName": "코레일+",
+        "appVersion": "5.0.16",
+        "passed": true,
+        "seconds": 4.375,
+        "dispatchByURLWithoutReceivingBundle": true,
+        "realCarrierForeground": true,
+        "noLateReturnedForeground": true
+      },
+      {
+        "test": "testActualTmoneyGOURLAndReturn",
+        "url": "tmoneytia://main/home",
+        "appBundle": "kr.co.tmoney.tia",
+        "appName": "티머니GO",
+        "appVersion": "2.7.1",
+        "passed": true,
+        "seconds": 10.675,
+        "dispatchByURLWithoutReceivingBundle": true,
+        "realCarrierForeground": true,
+        "noLateReturnedForeground": true
+      }
+    ]
+  },
+  "frontendRegression": {
+    "suites": 4,
+    "passed": 52,
+    "failed": 0,
+    "names": [
+      "busBookingAction",
+      "trainBookingAction",
+      "importedTicket",
+      "intercityJourney"
+    ]
+  },
+  "artifact": "artifact-verification.json",
+  "environment": {
+    "api": "https://nolate.jinuk.dev",
+    "transitProviderForThisInstalledBuild": "tmap",
+    "envFilesChanged": false,
+    "backendDeployed": false
+  },
+  "earlierAttempts": [
+    {
+      "run": "initial-build",
+      "result": "failed",
+      "reason": "Cloned module cache retained old absolute paths; only this run cloned cache removed, historical artifact preserved; fresh build passed."
+    },
+    {
+      "run": "smoke-01",
+      "result": "Failed: 2 tests",
+      "reason": "UIApplication.open from the background UI-test runner was refused; harness corrected to foreground runner. Not evidence of a carrier failure."
+    },
+    {
+      "run": "smoke-02",
+      "result": "Passed: 2 tests; excluded from final count",
+      "reason": "XCTest openURL named the receiving application explicitly; strengthened final test to actual scheme dispatch without receiving app ID."
+    }
+  ],
+  "notVerified": [
+    "Direct taps on NoLate booking buttons through the full route-screen UI",
+    "Carrier home-screen loading completion or booking/login/payment",
+    "Actual purchased-ticket sharing, parsing, saving and journey connection on physical device",
+    "Physical notification delivery and Live Activity display",
+    "Android and nationwide route coverage"
+  ],
+  "accountActions": {
+    "signOut": false,
+    "carrierLogin": false,
+    "purchase": false,
+    "ticketShare": false,
+    "scheduleCreateEditDelete": false
+  },
+  "cleanup": {
+    "ownedUIRunnerRemoved": true,
+    "noLateAndActualCarrierAppsRetained": true
+  },
+  "privacy": "Real calendar and carrier screenshots/videos/logs remain only in private temporary xcresults; no screenshots, accounts, tickets, UDID, credentials or API keys published.",
+  "privateXcresult": "/private/tmp/nolate-physical-ticket-20261015/smoke-03/result.xcresult",
+  "sha256": {
+    "summary": "c273555e4242d79712fc1da2dee9ddf07aa1d689cbfb253dad021ce6cb340ff2",
+    "nativeRunLog": "d409f5abdc7790c34944b80146ca6eaa25e2059fc9cd6f612208dea965d1e7fb",
+    "frontendLog": "304a0f9dc34ede96b77536805a1a5da03f5e1afe4013dab78ac3d9798185babb"
+  },
+  "sourceHashes": "source-hashes.json"
+}

@@ -1,0 +1,16 @@
+{
+  "version": "1.3.0",
+  "build": "55",
+  "metadata": "passed",
+  "deepStrictSignature": "passed",
+  "registeredDeviceIncluded": true,
+  "queriesCarrierSchemes": true,
+  "claimsCarrierSchemes": false,
+  "shareApi": "https://nolate.jinuk.dev",
+  "sha256": {
+    "main.jsbundle": "4b083fac628f0d59754e4f066780d90d081d41942fc42d46664ba83ec74ed2fb",
+    "mainExecutable": "ec649bc9696cbddf6ff3078ff24e060c393177d205129b43faba2f54442c55d8",
+    "shareExecutable": "ff6833ac78edbe3f66812eddde850aa5b8ba88441a04cde797d288093d2c6a8a",
+    "buildLog": "4f7ce3d192ebc579f7615975ab24c1ef6cb60f44e2e20645bba35a6ce02344d1"
+  }
+}

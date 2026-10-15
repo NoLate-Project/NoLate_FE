@@ -1,0 +1,257 @@
+{
+  "date": "2026-10-13",
+  "completionScope": "iOS single-ticket journey MVP in simulator; not full P4/P5 or production rollout",
+  "implemented": [
+    "Train/express/intercity ride kind preserved through search/save/restart",
+    "Official app-first main-screen entry; official web fallback; separate Bustago website",
+    "Reviewed image/text/single-page PDF ticket import; on-device PDF text extraction and scanned PDF OCR",
+    "User review required; strict Seoul calendar/time/kind/number-or-grade validation; recognized cancelled/refunded tickets blocked",
+    "Per-member concurrent duplicate protection across file formats and independent ticket IDs; delete then reimport",
+    "Ticket fixed ride plus real approach/egress routing; final deadline does not shift fixed departure",
+    "Fixed anchor preserved in departure status, worker alarm planning and Live Activity projection; unavailable realtime remains stale/LOW",
+    "Manual change/cancel guidance in detail"
+  ],
+  "finalValidation": {
+    "frontend": {
+      "suites": 14,
+      "passed": 170,
+      "failed": 0,
+      "skipped": 0
+    },
+    "backend": {
+      "suites": 7,
+      "passed": 276,
+      "failed": 0,
+      "skipped": 0,
+      "classes": [
+        {
+          "name": "com.noLate.schedule.application.service.ScheduleDepartureEtaServiceTest",
+          "tests": "93",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.schedule.application.SelectedRouteMetadataTest",
+          "tests": "9",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.intercity.IntercityTimetableServiceTest",
+          "tests": "14",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.eta.infrastructure.routejson.SelectedTransitRouteDecoderTest",
+          "tests": "7",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.intercity.IntercityJourneyValidatorTest",
+          "tests": "11",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.schedule.application.service.ScheduleServiceUnitTest",
+          "tests": "48",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        },
+        {
+          "name": "com.noLate.schedule.application.service.SchedulePushJobWorkerTest",
+          "tests": "94",
+          "failures": "0",
+          "errors": "0",
+          "skipped": "0"
+        }
+      ]
+    },
+    "swiftPolicy": {
+      "assertions": 24,
+      "passed": 24
+    },
+    "apiE2E": {
+      "suites": 1,
+      "passed": 2,
+      "failed": 0,
+      "liveTmapPedestrianRequests": 4,
+      "tagoRequests": 0,
+      "details": "ticket-completion-api.json"
+    },
+    "nativeUIE2E": [
+      {
+        "run": "native-bus-image-08",
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "testBodySeconds": 261.908,
+        "scope": "full bus journey; real official web return at three stages",
+        "source": "IOS_SHARE_IMAGE",
+        "xcresult": "/private/tmp/nolate-ticket-completion-20261013/native-bus-image-08/result.xcresult",
+        "xcresultSummarySHA256": "796e850d3b74a80e6873885074005e9334a89b635f00d5add76a11ee02cdc55b",
+        "runLogSHA256": "dcb4aba86543fa39e07c53f736f40e0631502ff1d471896d8de58ea0e9dfa88d",
+        "dbProof": "native-bus-image-08-db.json",
+        "simulatorOS": "iOS 27"
+      },
+      {
+        "run": "native-bus-pdf-core-02",
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "testBodySeconds": 100.962,
+        "scope": "text PDF pending schedule restored; duplicate rejected; no installed-app transition",
+        "source": "IOS_SHARE_PDF",
+        "xcresult": "/private/tmp/nolate-ticket-completion-20261013/native-bus-pdf-core-02/result.xcresult",
+        "xcresultSummarySHA256": "d52feace471cb01d960e2da280fca1bab4f424698008836503f4126316422107",
+        "runLogSHA256": "9d5e0f805b6b1a020551c03672f2d2ecf6cea2d672eef87afee48d0720332d4b",
+        "dbProof": "native-bus-pdf-core-02-db.json",
+        "simulatorOS": "iOS 26.5"
+      },
+      {
+        "run": "native-bus-scan-02",
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "testBodySeconds": 108.813,
+        "scope": "scanned PDF OCR; pending schedule restored",
+        "source": "IOS_SHARE_PDF",
+        "xcresult": "/private/tmp/nolate-ticket-completion-20261013/native-bus-scan-02/result.xcresult",
+        "xcresultSummarySHA256": "efa1a35eb3066683b907b7155409fda6c661e661f7647da1325688d82968c161",
+        "runLogSHA256": "a3436907c1eb78a7a78a929644880494f5ce4b0382f1ea1b95bdd7ac1007368b",
+        "dbProof": "native-bus-scan-02-db.json",
+        "simulatorOS": "iOS 26.5"
+      },
+      {
+        "run": "native-train-regression-02",
+        "result": "Passed",
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "testBodySeconds": 224.668,
+        "scope": "train full fixed journey regression",
+        "source": "IOS_SHARE_IMAGE",
+        "xcresult": "/private/tmp/nolate-ticket-completion-20261013/native-train-regression-02/result.xcresult",
+        "xcresultSummarySHA256": "dc67e85f3f0e940298b3ea3b9dd7f255a9aa89e9ce0dbc6f63432cd3a8dc8ff8",
+        "runLogSHA256": "f37f313bdd22201ee627c572a17c2ffc9776c1205d58f93256474785d3e6e506",
+        "dbProof": "native-train-regression-02-db.json",
+        "simulatorOS": "iOS 27"
+      }
+    ],
+    "typecheck": "passed",
+    "eslint": {
+      "errors": 0,
+      "warnings": 11,
+      "note": "Inline-style warnings in selected existing timeline and bus components; not suppressed."
+    },
+    "nativeReleaseBuild": "native-build.json"
+  },
+  "initialAttempts": [
+    {
+      "run": "native-bus-image-01",
+      "result": "preparation failed before XCTest; synthetic credential preparation corrected"
+    },
+    {
+      "run": "native-bus-image-02",
+      "result": "failed",
+      "reason": "OCR station correction left leading digit; added native clear control"
+    },
+    {
+      "run": "native-bus-image-03",
+      "result": "failed",
+      "reason": "Keyboard hid recent place row; reveal before hit-test and use two bus recents"
+    },
+    {
+      "run": "native-bus-image-04",
+      "result": "failed",
+      "reason": "UIKit batched correction dropped characters; per-character input",
+      "optionalPostFailureDiagnosticInterrupted": true
+    },
+    {
+      "run": "native-bus-image-05",
+      "result": "failed",
+      "reason": "Cold Metro/session recovery exceeded login readiness wait; stable authentication readiness wait"
+    },
+    {
+      "run": "native-bus-pdf-01",
+      "result": "failed",
+      "reason": "PDF saved/restored, then main thread blocked in LaunchServices openOptionsModifiedForOneTapOpen / sandbox extension issue; owned app terminated after test assertion failed"
+    },
+    {
+      "run": "native-bus-pdf-02",
+      "result": "failed",
+      "reason": "iOS27 app-opening hang reproduced after dedicated simulator restart; owned app terminated after assertion failed",
+      "optionalPostFailureDiagnosticInterrupted": true
+    },
+    {
+      "run": "native-bus-pdf-03",
+      "result": "failed",
+      "reason": "Fresh simulator Expo launcher lacked explicit Metro connection; test setup corrected"
+    },
+    {
+      "run": "native-bus-pdf-04",
+      "result": "failed",
+      "reason": "US simulator timezone selected a different calendar day; test launch now explicitly Asia/Seoul"
+    },
+    {
+      "run": "native-bus-pdf-05",
+      "result": "failed",
+      "reason": "Installed synthetic handler dispatch hang reproduced on iOS 26.5; not counted as passing"
+    },
+    {
+      "run": "native-train-regression-01",
+      "result": "failed",
+      "reason": "Clock digits parsed as station; product parser now requires Korean place character and excludes departure-label overlap"
+    },
+    {
+      "run": "native-bus-image-07",
+      "result": "failed",
+      "reason": "Previous synthetic UI account retained; guarded normal UI logout/login added before each test"
+    }
+  ],
+  "evidenceLimits": [
+    "All ticket documents synthetic; no actual purchased carrier ticket or carrier login/payment",
+    "Installed TmoneyGO branch native validation FAILED on both iOS 27 and iOS 26.5: main thread blocked within OS LaunchServices openOptionsModifiedForOneTapOpen / sandbox extension issuance. This is an observed stack, not a proven root cause. App-first/error/fallback unit tests passed; final native bus test verifies absent-app official-web fallback only. Real carrier apps were not run.",
+    "Bus image native destination is within 30m of arrival terminal; separate API cases exercise two live pedestrian connections",
+    "Text import covered by parser/API; not a native text-share UI E2E",
+    "Express bus URL/kind covered by unit/parser contracts; this native ticket scenario is intercity bus",
+    "No physical device execution, actual notification delivery, or actual Live Activity display",
+    "Android deferred by user",
+    "National route/timetable coverage and carrier schema compatibility not guaranteed",
+    "Original/QR/seat/payment not retained; no offline original boarding ticket; no automatic carrier cancellation/reissue sync; no multi-ride journey or full P5 guidance"
+  ],
+  "environment": {
+    "provider": "TMAP in dedicated dev/test session after ODsay quota failure in prior stage",
+    "productionDefaultAndEnvFilesChanged": false,
+    "api": "isolated local 127.0.0.1:5524 server with current backend",
+    "physicalDeviceScope": "deferred by user; no installation or device calls",
+    "commitPushDeploy": "not performed"
+  },
+  "sourceHashes": "source-hashes.json",
+  "historicalBusImage06SourceHashes": "bus-image-run-source-hashes.json",
+  "officialSources": "official-booking-sources.json",
+  "publicEvidence": "Only whitelisted structured synthetic data and selected screenshots; no credentials, API keys, access tokens, raw OCR or raw XCTest logs",
+  "intermediatePassedRunsExcludedFromFinalCounts": [
+    "native-bus-image-06",
+    "native-bus-scan-01",
+    "native-bus-pdf-core-01"
+  ],
+  "nativeInstalledBusAppDispatch": {
+    "status": "blocked in simulator OS; not verified",
+    "unitBranchTests": "passed",
+    "realCarrierAppValidated": false,
+    "officialWebFallbackNative": "passed",
+    "hostGlobalServicesModified": false
+  }
+}

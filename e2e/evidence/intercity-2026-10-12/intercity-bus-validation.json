@@ -1,0 +1,127 @@
+{
+  "date": "2026-10-12",
+  "result": "PASSED",
+  "scope": "One representative real INTERCITY_BUS route: Dong Seoul → Sokcho. Search, save, process termination/relaunch and restore on iOS Simulator. Nationwide coverage is not established.",
+  "productChangesThisRun": false,
+  "testChanges": [
+    "e2e/intercity-bus-api.e2e.ts",
+    "e2e/ios/NoLateE2ETests.swift: testIntercityBusSearchSaveReopen"
+  ],
+  "environment": {
+    "platform": "iOS Simulator",
+    "deviceId": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+    "api": "http://127.0.0.1:5524",
+    "metroPort": 8097,
+    "provider": "tmap",
+    "providerReason": "Prior ODsay quota code 429; TMAP used only in this dedicated development/test session. Operating defaults and env files unchanged.",
+    "bundlePreflight": {
+      "dotenvProviderOverrides": [],
+      "inlinedProvider": [
+        "tmap"
+      ]
+    },
+    "authentication": "Fresh separate synthetic UI/API accounts through normal signup/login; no database injection."
+  },
+  "liveProviderProbe": {
+    "candidateCount": 3,
+    "intercityRide": {
+      "mode": "EXPRESSBUS",
+      "type": 22,
+      "service": 1,
+      "route": "시외버스:동서울-속초",
+      "minutes": 130
+    },
+    "expressAlternativeType": 23,
+    "totalMinutesRounded": 135,
+    "timingBasis": "estimated",
+    "capture": "intercity-bus-tmap-response.json",
+    "places": {
+      "동서울종합터미널": {
+        "name": "동서울종합터미널",
+        "id": "182259",
+        "lat": 37.5339323,
+        "lng": 127.09476136,
+        "category": "버스터미널",
+        "middle": "교통시설"
+      },
+      "속초시외버스터미널": {
+        "name": "속초시외버스터미널",
+        "id": "43987",
+        "lat": 38.21118713,
+        "lng": 128.59088288,
+        "category": "버스터미널",
+        "middle": "교통시설"
+      }
+    }
+  },
+  "verification": {
+    "frontend": {
+      "suites": 6,
+      "passed": 171,
+      "failed": 0,
+      "durationSeconds": 3.082,
+      "typecheckExitCode": 0,
+      "newApiTestEslintExitCode": 0
+    },
+    "api": {
+      "passed": 1,
+      "failed": 0,
+      "durationSeconds": 4.488,
+      "fixture": "Captured real TMAP response, no fresh provider request in this API case",
+      "flow": "Current FE parser → normal authenticated POST → database GET → current FE restore; only created API schedule deleted",
+      "proof": "intercity-bus-api.json"
+    },
+    "native": {
+      "test": "testIntercityBusSearchSaveReopen",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "attempts": 1,
+      "testDurationSeconds": 173.9,
+      "summaryStartTime": 1791802669.631,
+      "summaryFinishTime": 1791802957.224,
+      "deadline": "2026-10-13T14:00:00+09:00",
+      "assertion": "INTERCITY_BUS remains a 130-minute ride after save and app process relaunch",
+      "databaseProof": "intercity-bus-native-db.json",
+      "originalXcresult": "/private/tmp/nolate-intercity-bus-20261012/native-01/result.xcresult",
+      "cleanup": "API case schedule deleted; native evidence schedule retained on its isolated synthetic UI account."
+    },
+    "tago": {
+      "status": "AVAILABLE",
+      "serviceRows": 34,
+      "date": "2026-10-12",
+      "scope": "API lookup only; includes already departed rows, not remaining departures or seats. Native timetable selection and fixed bus journey remain pending.",
+      "proof": "intercity-bus-tago.json"
+    }
+  },
+  "limitations": [
+    "Representative route only; nationwide missing-route coverage not verified",
+    "Estimated route, no fixed bus timetable selected in native E2E",
+    "Bus booking app connection and ticket import remain pending",
+    "No purchase, actual ticket, seat availability or boarding gate verification",
+    "Notifications disabled; device delivery and live departure guidance not tested",
+    "Physical iPhone and Android deferred by user",
+    "No backend source changes or backend regression rerun; new BE ETA guard deployment not verified"
+  ],
+  "sourceSha256": {
+    "e2e/ios/NoLateE2ETests.swift": "070a0e7a7266f35cb5aa53f166043f5317b1b0d5e64838d531bf6c9c21a6d2ca",
+    "e2e/intercity-bus-api.e2e.ts": "35b942adb9b001f6a333efb2de1182b00d6a96d12b7b523bb971546771ca243b",
+    "src/modules/map/tmapTransitFields.ts": "cf8d7b7c03c45c8349f448a31f1c1482faf68232f0fa37833a7fce7902ffabde",
+    "src/modules/map/tmapRouteProviders.ts": "e094201099a3281fae9325e3f54159fd30d632ad83714cb9a9d02494ec1ea661",
+    "src/modules/schedule/routeInfo.ts": "6594e62897d375c602279000a4ff7078e720a7e483be741dcc1bbaa01acb222e",
+    "src/modules/schedule/scheduleRouteTiming.ts": "ca1a16c6485e5c567d74487812bb89979c296eb706d580b5732380e6ceafa9c5",
+    "src/modules/schedule/components/route/RouteStepTimeline.tsx": "1f1d11d0ebd69b004f48ddec498a380671d0c9e13105dc8969d7da98e368ee66",
+    "src/routeSupport/schedule/RouteSelectResultsScreen.tsx": "850af5c77df8fd12e0e11c0ca75af90c94966bd5099a411204d3ce6f5054acb1",
+    "e2e/ios/metro-intercity-e2e.config.cjs": "2e41a33c5dcdd72c373a81fe09d650468022327e281255774e5229ba524beafd"
+  },
+  "sourceHashesRecheckedAfterRun": true,
+  "artifactSha256": {
+    "intercity-bus-search.png": "0bd2ded0db14e11f37bcb7a02c56f26154bb49af299786e0bffd5837f978b6a9",
+    "intercity-bus-before-save.png": "7174a0b09dada22df5fde656cbcab3ea363a292117032152b57325bc2268c893",
+    "intercity-bus-reopened.png": "62a6aca06b9ed80a094abd555f4329939c2155b9a387c746a6c280d45331f75a",
+    "intercity-bus-api.json": "1cba1a293154d3db130f7d2e7fc2acaea55a35c931debb7561379890d77ac8f8",
+    "intercity-bus-native-db.json": "3b42c64d6dcf1cc6bcb0f3152d8cc5d911182593f2edf28216a82c082a88741b",
+    "intercity-bus-tmap-response.json": "4db8dc6f981adc6ce52de50778644192fd89771b8b7f55d5c563d61bc1b74414",
+    "intercity-bus-tago.json": "5f59bfc83c958d89292deb381d1c92bfd8a26d63cf32965c3e90650d65824ca2"
+  }
+}

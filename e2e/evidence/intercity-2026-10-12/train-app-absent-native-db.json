@@ -1,0 +1,63 @@
+{
+  "passed": true,
+  "phase": "absent",
+  "input": "SYNTHETIC_IMAGE_SHARED_THROUGH_NATIVE_UI",
+  "scheduleId": 12,
+  "title": "기차 수서 → 공주",
+  "startAt": "2026-10-13T11:00:00Z",
+  "travelPlanStatus": "READY",
+  "notificationEnabled": false,
+  "origin": {
+    "name": "서울남부터미널 E2E",
+    "address": null,
+    "lat": 37.4849,
+    "lng": 127.0167
+  },
+  "destination": {
+    "name": "공주터미널 E2E",
+    "address": null,
+    "lat": 36.46,
+    "lng": 127.1246
+  },
+  "importedTicket": {
+    "grade": "SRT",
+    "departureAt": "2026-10-13T12:20:00+09:00",
+    "confirmedAt": "2026-10-12T09:40:46Z",
+    "version": 1,
+    "kind": "TRAIN",
+    "bookingStatus": "UNVERIFIED",
+    "departureName": "수서",
+    "id": "ticket:dbdeae77-a676-47a3-aeed-6e5bc891b3d7",
+    "arrivalAt": "2026-10-13T13:12:00+09:00",
+    "verification": "USER_CONFIRMED",
+    "source": "IOS_SHARE_IMAGE",
+    "arrivalName": "공주",
+    "trainNumber": "615"
+  },
+  "service": {
+    "id": "ticket:dbdeae77-a676-47a3-aeed-6e5bc891b3d7",
+    "kind": "TRAIN",
+    "departureId": "ticket:dbdeae77-a676-47a3-aeed-6e5bc891b3d7:departure",
+    "arrivalId": "ticket:dbdeae77-a676-47a3-aeed-6e5bc891b3d7:arrival",
+    "departureName": "수서",
+    "arrivalName": "공주",
+    "departureAt": "2026-10-13T12:20:00+09:00",
+    "arrivalAt": "2026-10-13T13:12:00+09:00",
+    "serviceDate": "2026-10-13",
+    "trainNumber": "615",
+    "grade": "SRT",
+    "timingBasis": "TICKET",
+    "bookingStatus": "UNVERIFIED"
+  },
+  "legKinds": [
+    "WALK",
+    "SUBWAY",
+    "WALK",
+    "ETC",
+    "TRAIN",
+    "WALK",
+    "BUS",
+    "WALK"
+  ],
+  "bookingStatusUnchanged": true
+}

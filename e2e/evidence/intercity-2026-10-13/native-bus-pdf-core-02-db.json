@@ -1,0 +1,36 @@
+{
+  "passed": true,
+  "syntheticInput": true,
+  "nativeShareAndRestart": true,
+  "scheduleId": 17,
+  "title": "시외버스 인천공항2터미널 → 청주",
+  "startAt": "2026-10-14T05:45:00Z",
+  "travelPlanStatus": "NOT_CONFIGURED",
+  "notificationEnabled": false,
+  "origin": {
+    "name": "인천공항2터미널",
+    "address": null,
+    "lat": null,
+    "lng": null
+  },
+  "destination": {
+    "name": "청주",
+    "address": null,
+    "lat": null,
+    "lng": null
+  },
+  "importedTicket": {
+    "bookingStatus": "UNVERIFIED",
+    "arrivalName": "청주",
+    "id": "ticket:611f8299-b22b-4601-a3e3-1a1d07f4b0f0",
+    "confirmedAt": "2026-10-12T17:31:51Z",
+    "version": 1,
+    "grade": "우등",
+    "departureName": "인천공항2터미널",
+    "source": "IOS_SHARE_PDF",
+    "arrivalAt": "2026-10-14T14:45:00+09:00",
+    "verification": "USER_CONFIRMED",
+    "departureAt": "2026-10-14T12:20:00+09:00",
+    "kind": "INTERCITY_BUS"
+  }
+}

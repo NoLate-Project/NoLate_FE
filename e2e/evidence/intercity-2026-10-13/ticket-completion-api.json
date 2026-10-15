@@ -1,0 +1,36 @@
+[
+  {
+    "passed": true,
+    "nativeUI": false,
+    "input": "SYNTHETIC_REVIEWED_BUS_TICKET",
+    "initialRoute": "CAPTURED_REAL_TMAP",
+    "connections": "LIVE_TMAP_PEDESTRIAN",
+    "tagoRequests": 0,
+    "concurrentDuplicateRejected": true,
+    "duplicateAfterConnectionRejected": true,
+    "shiftedDepartureRejected": true,
+    "mismatchedGradeRejected": true,
+    "departureStatusPreservesAnchor": true,
+    "departureConfidence": "LOW",
+    "source": "IOS_SHARE_TEXT",
+    "livePedestrianRequests": 2,
+    "deletionThenReimport": "passed; test-owned API schedules deleted"
+  },
+  {
+    "passed": true,
+    "nativeUI": false,
+    "input": "SYNTHETIC_REVIEWED_BUS_TICKET",
+    "initialRoute": "CAPTURED_REAL_TMAP",
+    "connections": "LIVE_TMAP_PEDESTRIAN",
+    "tagoRequests": 0,
+    "concurrentDuplicateRejected": true,
+    "duplicateAfterConnectionRejected": true,
+    "shiftedDepartureRejected": true,
+    "mismatchedGradeRejected": true,
+    "departureStatusPreservesAnchor": true,
+    "departureConfidence": "LOW",
+    "source": "IOS_SHARE_PDF",
+    "livePedestrianRequests": 2,
+    "deletionThenReimport": "passed; test-owned API schedules deleted"
+  }
+]

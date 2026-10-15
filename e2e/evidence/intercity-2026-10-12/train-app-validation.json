@@ -1,0 +1,150 @@
+{
+  "date": "2026-10-12",
+  "status": "iOS_train_app_first_implemented_simulator_dispatch_verified_real_carrier_app_pending",
+  "scope": "Korail app-first entry; no station/date prefill or booking verification",
+  "appURL": "korailtalk://gotoMainViewContoller",
+  "fallbackURL": "https://www.korail.com/",
+  "policy": [
+    "Query installed handler, open app first, fall back on absence/query rejection/launch rejection",
+    "Do not also open website after a successful app launch",
+    "No itinerary, account or ticket query parameters",
+    "Retain route, service choice, mapping and UNVERIFIED booking status",
+    "No automatic import from external app return"
+  ],
+  "officialSource": {
+    "officialPage": "https://www.korail.com/",
+    "officialBundle": "https://cdn.korail.com/bundle/bundle.993c51e2274ce9e459f6.js?v=1.0.221",
+    "sha256": "d34dfbdea3175b324f96f71a5f352676d7749c8c89f6c9225cedcbde5f4e1b19",
+    "observedMainScreenURL": "korailtalk://gotoMainViewContoller",
+    "scope": "Observed iOS webview main-screen bridge in official runtime code; not a published external integration contract. Real installed app remains unverified."
+  },
+  "frontend": {
+    "suites": 11,
+    "passed": 127,
+    "failed": 0,
+    "typecheck": "passed",
+    "eslintChangedTSFiles": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "nativePlistSyntax": "passed",
+    "syntheticSwiftTypecheck": "passed",
+    "pythonPreparationSyntax": "passed",
+    "cases": [
+      "app present, absent, query failure, launch failure",
+      "deduplicate taps during query and URL launch",
+      "web failure retry",
+      "Expo/native query scheme allowlist and no scheme ownership",
+      "route selection and compact ticket summary preserved"
+    ]
+  },
+  "nativeUI": [
+    {
+      "phase": "absent",
+      "handler": "none; official Safari fallback",
+      "test": "testTrainOfficialBookingOpenReturn",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 257.817,
+      "startTime": 1791797945.562,
+      "finishTime": 1791798218.663,
+      "resultBundle": "/private/tmp/nolate-train-app-20261012/native-absent-01/result.xcresult",
+      "databaseProof": "train-app-absent-native-db.json",
+      "transitionPoints": [
+        "pending-ticket",
+        "unsaved-route",
+        "confirmed-mapping"
+      ],
+      "savedRelaunchVerified": true
+    },
+    {
+      "phase": "installed",
+      "handler": "SYNTHETIC dev.nolate.trainbookingfixture; NOT actual Korail app",
+      "test": "testTrainAppBookingOpenReturn",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 238.89,
+      "startTime": 1791798255.512,
+      "finishTime": 1791798502.803,
+      "resultBundle": "/private/tmp/nolate-train-app-20261012/native-installed-01/result.xcresult",
+      "databaseProof": "train-app-installed-native-db.json",
+      "transitionPoints": [
+        "pending-ticket",
+        "unsaved-route",
+        "confirmed-mapping"
+      ],
+      "savedRelaunchVerified": true
+    }
+  ],
+  "screenshots": [
+    {
+      "phase": "absent",
+      "file": "train-app-entry.png",
+      "sha256": "c5c052fdf1fcadb23c61b5cbe9173de397f7e27c621e90588cdae064df35adfd"
+    },
+    {
+      "phase": "absent",
+      "file": "train-app-web-fallback.png",
+      "sha256": "8d21cd1cd21281365a320c100be204d29e23ca675bc12718f49b495113f6bbdb"
+    },
+    {
+      "phase": "installed",
+      "file": "train-app-synthetic-handler.png",
+      "sha256": "6deb5f70123081dd4963a0e92d674e313fe6a71a2ad6d4a38b56ec95f2146598"
+    },
+    {
+      "phase": "installed",
+      "file": "train-app-mapping-return.png",
+      "sha256": "65f3111c5b2a68023633af7ad9284f16eb94cb3a7a170ff60ef5567aeb1b6eaa"
+    },
+    {
+      "phase": "installed",
+      "file": "train-app-reopened.png",
+      "sha256": "8c6c70324215bac1c6d689e40b7ba770a3a9830f5e169123057ef1455777db17"
+    }
+  ],
+  "visualReview": {
+    "entry": "new app-first button and fallback note visible",
+    "browser": "confirmed-mapping and unsaved-route captures render official booking form; first pending-ticket capture occurred during blank browser paint despite accessible content becoming available",
+    "syntheticHandler": "explicit NOT actual Korail notice; exact main-screen URL",
+    "savedRoute": "fixed train and approach/egress timeline after relaunch"
+  },
+  "environment": {
+    "device": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+    "simulator": "NoLate Intercity iOS27 E2E 20261012",
+    "apiPort": 5524,
+    "metroPort": 8097,
+    "provider": "tmap",
+    "preflight": {
+      "dotenvProviderOverrides": [],
+      "inlinedProvider": [
+        "tmap"
+      ],
+      "appFirstURLPresent": true
+    },
+    "nativePreparation": "Existing native dev build copied, product LSApplicationQueriesSchemes applied, ad-hoc resigned and installed only on dedicated simulator. Not a release build.",
+    "operatingEnvModified": false,
+    "syntheticHandlerRemovedAfterTest": true
+  },
+  "priorValidation": "train-booking-validation.json is prior web-only evidence with its original code hashes and counts; not combined. Backend unchanged; API regression not rerun for this URL-only change.",
+  "limitations": [
+    "Actual installed Korail app on physical iPhone is NOT verified; official bundle bridge is not a published external integration contract",
+    "Existing installs require a native rebuild to apply the iOS query allowlist",
+    "No real ticket, purchase, carrier login, seat selection or payment used",
+    "Unsaved state checked across app foreground/background; saved state additionally across process termination/relaunch",
+    "Android and bus booking handoffs deferred",
+    "No original image, OCR text, QR or payment data uploaded/retained; alarms disabled"
+  ],
+  "sourceHashes": {
+    "NoLate_FE/src/modules/schedule/components/route/TrainBookingAction.tsx": "3d80477f5e590e4c8203a890461543af77871b6ddeb25f167e31e6517330455e",
+    "NoLate_FE/app.json": "be8910175002da822aa3c864a6fc6b73d7825b2c6816bd867c983d71e21b8794",
+    "NoLate_FE/ios/NoLateFE/Info.plist": "086ec3ba8910072c1320a45b30a361713441003154d0761f92a8f8d3c22e53ce",
+    "NoLate_FE/__tests__/trainBookingAction.test.tsx": "0c3b9bcc11a33692686831c77734c895b2cf545f26722829a5d9a99ddf60cdd8",
+    "NoLate_FE/e2e/ios/NoLateE2ETests.swift": "ce8ad175a6b0509cf25ddae8b8d3c075b5ee4af11709bd51ffeea01af74a38de",
+    "NoLate_FE/e2e/ios/TrainBookingFixture.swift": "0daa1c1fd2f552f5f8ab62487e96be6174143224f3710b1362346f51d8be46e1",
+    "NoLate_FE/e2e/ios/prepare-train-booking-e2e.py": "109b914c2973868759bb23d0f97bc7f6e95b66eea70188264e28826d2419f800",
+    "NoLate_FE/e2e/ios/metro-intercity-e2e.config.cjs": "2e41a33c5dcdd72c373a81fe09d650468022327e281255774e5229ba524beafd"
+  }
+}

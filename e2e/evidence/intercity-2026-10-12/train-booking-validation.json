@@ -1,0 +1,133 @@
+{
+  "date": "2026-10-12",
+  "status": "P3_initial_ios_train_official_web_entry_verified",
+  "bookingURL": "https://www.korail.com/",
+  "scope": "iOS train official HTTPS booking entry and return; not full P3",
+  "officialSources": [
+    {
+      "url": "https://www.korail.com/",
+      "checkedAt": "2026-10-12",
+      "purpose": "Official train booking public entry point"
+    },
+    {
+      "url": "https://www.srail.co.kr/cms/article/view.do?pageId=TK0502000000&pageIndex=58&postNo=922",
+      "checkedAt": "2026-10-12",
+      "purpose": "SR directs former SRT routes to Korail channels from 2026-09-01"
+    }
+  ],
+  "frontend": {
+    "suites": 11,
+    "passed": 122,
+    "failed": 0,
+    "typecheck": "passed",
+    "eslint": {
+      "errors": 0,
+      "existingInlineStyleWarnings": 17,
+      "newFilesWarnings": 0
+    }
+  },
+  "apiE2E": {
+    "passed": 1,
+    "failed": 0,
+    "notSelected": 2,
+    "liveTMAPConnections": 2,
+    "tagoRequests": 0,
+    "evidence": "train-booking-api.json",
+    "scope": "regression of ticket edit, fixed ride, save/restore and rejection of mismatched metadata; no new backend endpoint"
+  },
+  "nativeUI": {
+    "test": "testTrainOfficialBookingOpenReturn",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "durationSeconds": 236.673,
+    "startTime": 1791796939.928,
+    "finishTime": 1791797186.242,
+    "resultBundle": "/private/tmp/nolate-booking-20261012/native-03/result.xcresult",
+    "simulator": {
+      "architecture": "arm64",
+      "deviceId": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+      "deviceName": "NoLate Intercity iOS27 E2E 20261012",
+      "modelName": "iPhone 18 Pro",
+      "osBuildNumber": "24A434",
+      "osVersion": "27.0",
+      "platform": "iOS Simulator"
+    },
+    "input": "synthetic train image shared through actual UIKit share sheet and on-device Vision OCR",
+    "checks": [
+      "pending ticket opens actual official Safari website and returns with unverified ticket intact",
+      "selected unsaved live TMAP train corridor remains after Safari return",
+      "confirmed station mapping and selected ticket remain after Safari return",
+      "Safari foreground, official domain and booking-related page content verified on each opening",
+      "fixed train 12:20–13:12, final deadline 20:00 KST, final destination saved",
+      "app relaunch and API restore preserve fixed train and unverified booking status"
+    ],
+    "screenshots": [
+      {
+        "file": "train-booking-entry.png",
+        "sha256": "aed5418e4cc43729e94272e17e1261753403dd979db4493921509559357f1dec"
+      },
+      {
+        "file": "train-booking-official-browser.png",
+        "sha256": "936632c7d4d19e7fcd7bc51cbfdfeaa08a1398094311e193251188bb1b34a96f"
+      },
+      {
+        "file": "train-booking-mapping-return.png",
+        "sha256": "a711ee196d4962a7d712b1e57fb38f7b927bb4e79f84d737d829aa698edc290e"
+      },
+      {
+        "file": "train-booking-reopened.png",
+        "sha256": "fa92d89d663e6bd899084aa3a0545e8cd2bb8fd5e4b52e0d3fb3f289837ae259"
+      }
+    ],
+    "databaseProof": "train-booking-native-db.json"
+  },
+  "environment": {
+    "api": "127.0.0.1:5524; dedicated H2; normal authentication with separate synthetic UI/API accounts",
+    "metroPort": 8097,
+    "autoReload": false,
+    "cache": "task-private TMPDIR",
+    "preflight": {
+      "passed": true,
+      "processProvider": "tmap",
+      "dotenvProviderOverrides": [],
+      "isolatedConfig": "e2e/ios/metro-intercity-e2e.config.cjs",
+      "operatingEnvModified": false,
+      "finalServerLog": "metro-05.log"
+    },
+    "operatingEnvModified": false
+  },
+  "previousAttempts": [
+    {
+      "attempt": "native-01",
+      "status": "failed",
+      "reason": "Pending-ticket Safari handoff returned; subsequent route search used ODsay because Expo virtual .env overrides shell env. Isolated E2E Metro graph and compiled-provider preflight added. This attempt did not assert actual site content."
+    },
+    {
+      "attempt": "native-02",
+      "status": "failed",
+      "reason": "Actual official booking page and all three browser returns passed. Added booking action covered the collapsed detail expansion button after save. Hide the action until the route sheet expands; regression added."
+    }
+  ],
+  "priorValidation": "ticket-journey-validation.json; overlapping test counts are not added; backend unchanged",
+  "limitations": [
+    "Official carrier app installed/uninstalled behavior on a physical iPhone is not verified",
+    "No custom app scheme or automatic station/date prefill implemented",
+    "No real purchase, login, seat, payment or actual Korail ticket used",
+    "URL opening does not verify a booking or automatically import a ticket",
+    "Unsaved route preservation verified across background/foreground only; saved route additionally verified across app termination/relaunch",
+    "Bus booking links and Android deferred",
+    "Ticket image/QR/payment data not uploaded or retained; metadata only; alarms disabled"
+  ],
+  "sourceHashes": {
+    "NoLate_FE/src/modules/schedule/components/route/TrainBookingAction.tsx": "e26ddf18f8845fa4a73be7d0cd6f254eaac65a67494112e34928d3adb6765f34",
+    "NoLate_FE/src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "55ce51bfa950987a0d1007b5a64742631c445367db931623e54181131a2905d9",
+    "NoLate_FE/src/modules/schedule/components/route/RouteStepTimeline.tsx": "1f1d11d0ebd69b004f48ddec498a380671d0c9e13105dc8969d7da98e368ee66",
+    "NoLate_FE/src/modules/schedule/components/detail/ImportedTicketSummary.tsx": "eef3bb9fd2d4981abd2caca013cd67847d5ed3ca04fb47ed08462dd1ef3f6f8a",
+    "NoLate_FE/src/routeSupport/schedule/RouteSelectResultsScreen.tsx": "850af5c77df8fd12e0e11c0ca75af90c94966bd5099a411204d3ce6f5054acb1",
+    "NoLate_FE/e2e/ios/metro-intercity-e2e.config.cjs": "2e41a33c5dcdd72c373a81fe09d650468022327e281255774e5229ba524beafd",
+    "NoLate_FE/src/routeSupport/schedule/ScheduleDetailRouteSheet.tsx": "737e3d70e13ffd0fe708c71cbf92acb78adb0a792fb14b4ba5f3e2dc3e4ece1d",
+    "NoLate_FE/e2e/ios/NoLateE2ETests.swift": "7619a97429ba8286ee44af1c12f90af4a508552b591d0c76b6f6cbf6c3753a32",
+    "NoLate_FE/__tests__/trainBookingAction.test.tsx": "031334278b4c7d4d3d90660cd22533c4341d20408db2434453114594fdb4f352"
+  }
+}

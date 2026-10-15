@@ -1,0 +1,161 @@
+{
+  "nativeUI": false,
+  "timetable": "LIVE_TAGO",
+  "connections": "LIVE_TMAP",
+  "selectedService": {
+    "id": "tago:8c343872e9bb00824071594d2b7db596bad0f9e07c29337c92dcab802560a11d",
+    "kind": "TRAIN",
+    "departureId": "NATH30000",
+    "arrivalId": "NATH20438",
+    "departureName": "수서",
+    "arrivalName": "공주",
+    "departureAt": "2026-10-13T12:20+09:00",
+    "arrivalAt": "2026-10-13T13:12+09:00",
+    "serviceDate": "2026-10-13",
+    "grade": "KTX-산천(B-type)",
+    "trainNumber": "00615",
+    "fare": 21600,
+    "timingBasis": "TIMETABLE",
+    "bookingStatus": "UNCONFIRMED"
+  },
+  "requests": [
+    {
+      "departureAt": "2026-10-13T02:41:00.000Z",
+      "candidateCount": 10
+    },
+    {
+      "departureAt": "2026-10-13T04:17:00.000Z",
+      "candidateCount": 10
+    }
+  ],
+  "api": "REAL_LOCAL_POST_DB_GET",
+  "shiftedDepartureRejected": true,
+  "passed": true,
+  "originalCorridorSource": "previously captured actual TMAP response; connection requests are fresh live calls",
+  "journey": {
+    "version": 1,
+    "service": {
+      "id": "tago:8c343872e9bb00824071594d2b7db596bad0f9e07c29337c92dcab802560a11d",
+      "kind": "TRAIN",
+      "departureId": "NATH30000",
+      "arrivalId": "NATH20438",
+      "departureName": "수서",
+      "arrivalName": "공주",
+      "departureAt": "2026-10-13T12:20+09:00",
+      "arrivalAt": "2026-10-13T13:12+09:00",
+      "serviceDate": "2026-10-13",
+      "grade": "KTX-산천(B-type)",
+      "trainNumber": "00615",
+      "fare": 21600,
+      "timingBasis": "TIMETABLE",
+      "bookingStatus": "UNCONFIRMED"
+    },
+    "fetchedAt": "2026-10-12T05:25:40.521916Z",
+    "selectedAt": "2026-10-12T05:25:40.623Z",
+    "departureAt": "2026-10-13T02:41:00.000Z",
+    "arrivalAt": "2026-10-13T04:49:19.000Z",
+    "boardingBufferMinutes": 15,
+    "alightingBufferMinutes": 5,
+    "connectionBasis": "ROUTE_ESTIMATE",
+    "mapping": {
+      "confirmed": true,
+      "departureName": "수서",
+      "arrivalName": "공주",
+      "departure": {
+        "lat": 37.485308,
+        "lng": 127.104467
+      },
+      "arrival": {
+        "lat": 36.332508,
+        "lng": 127.096836
+      }
+    }
+  },
+  "schemaVersion": 3,
+  "timeBasis": "anchored_journey",
+  "providerTimeBasis": "route_estimate",
+  "legs": [
+    {
+      "kind": "WALK",
+      "label": "도보 106m · 2분",
+      "durationSeconds": 103,
+      "startDateTime": "2026-10-13T02:41:00.000Z",
+      "endDateTime": "2026-10-13T02:42:43.000Z"
+    },
+    {
+      "kind": "SUBWAY",
+      "label": "지하철 수도권3호선 · 8정거장 · 17분",
+      "durationSeconds": 968,
+      "startDateTime": "2026-10-13T02:42:43.000Z",
+      "endDateTime": "2026-10-13T02:58:51.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 338m · 6분",
+      "durationSeconds": 316,
+      "startDateTime": "2026-10-13T02:58:51.000Z",
+      "endDateTime": "2026-10-13T03:04:07.000Z"
+    },
+    {
+      "kind": "ETC",
+      "label": "탑승 준비·대기 (준비 15분 포함)",
+      "journeyPhase": "BUFFER",
+      "durationSeconds": 953,
+      "startDateTime": "2026-10-13T03:04:07.000Z",
+      "endDateTime": "2026-10-13T03:20:00.000Z"
+    },
+    {
+      "kind": "TRAIN",
+      "label": "KTX-산천(B-type) · 00615편",
+      "durationSeconds": 3120,
+      "startDateTime": "2026-10-13T03:20:00.000Z",
+      "endDateTime": "2026-10-13T04:12:00.000Z",
+      "intercityService": {
+        "id": "tago:8c343872e9bb00824071594d2b7db596bad0f9e07c29337c92dcab802560a11d",
+        "kind": "TRAIN",
+        "departureId": "NATH30000",
+        "arrivalId": "NATH20438",
+        "departureName": "수서",
+        "arrivalName": "공주",
+        "departureAt": "2026-10-13T12:20+09:00",
+        "arrivalAt": "2026-10-13T13:12+09:00",
+        "serviceDate": "2026-10-13",
+        "grade": "KTX-산천(B-type)",
+        "trainNumber": "00615",
+        "fare": 21600,
+        "timingBasis": "TIMETABLE",
+        "bookingStatus": "UNCONFIRMED"
+      }
+    },
+    {
+      "kind": "ETC",
+      "label": "하차 후 여유",
+      "journeyPhase": "BUFFER",
+      "durationSeconds": 300,
+      "startDateTime": "2026-10-13T04:12:00.000Z",
+      "endDateTime": "2026-10-13T04:17:00.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 72m · 2분",
+      "durationSeconds": 66,
+      "startDateTime": "2026-10-13T04:17:00.000Z",
+      "endDateTime": "2026-10-13T04:18:06.000Z"
+    },
+    {
+      "kind": "BUS",
+      "label": "버스 일반:201 · 17정거장 · 29분",
+      "durationSeconds": 1708,
+      "startDateTime": "2026-10-13T04:18:06.000Z",
+      "endDateTime": "2026-10-13T04:46:34.000Z"
+    },
+    {
+      "kind": "WALK",
+      "label": "도보 177m · 3분",
+      "durationSeconds": 165,
+      "startDateTime": "2026-10-13T04:46:34.000Z",
+      "endDateTime": "2026-10-13T04:49:19.000Z"
+    }
+  ],
+  "privateRawSha256": "53375d567a39854fa680185e28e65d37fe38d0457b1cf3135557aaca9db18a9e"
+}

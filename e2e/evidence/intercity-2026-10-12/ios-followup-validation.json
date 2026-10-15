@@ -1,0 +1,80 @@
+{
+  "platformPriority": "iOS first; Android deferred by user",
+  "trainNativeUI": {
+    "test": "testIntercityTrainSearchSaveReopen",
+    "result": "Passed",
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "provider": "real TMAP",
+    "ride": "TRAIN / SRT:수서-공주",
+    "timeBasis": "route_estimate",
+    "flow": [
+      "search",
+      "select train",
+      "save with notifications disabled",
+      "terminate and relaunch",
+      "reopen and verify TRAIN"
+    ],
+    "resultBundle": "/private/tmp/nolate-intercity-train-ui-20261012-02/result.xcresult",
+    "screenshots": [
+      "train-live-search-result.png",
+      "train-reopened-timeline.png"
+    ]
+  },
+  "regressionFound": {
+    "symptom": "available train omitted from five-route shortlist",
+    "reproducedNativeBeforeFix": true,
+    "capturedLiveFixtureRegressionFailedBeforeFix": true,
+    "fix": "preserve best train and coach alternatives among candidates passing existing outlier checks; keep first recommendation and route limit"
+  },
+  "frontendFollowup": {
+    "passedSuites": 4,
+    "passedTests": 39,
+    "failedTests": 0,
+    "typecheck": "PASSED",
+    "scopedEslint": "PASSED"
+  },
+  "P2LiveTimetable": {
+    "status": "NOT VERIFIED; needs provider access investigation",
+    "probes": [
+      {
+        "dataset": "15098552",
+        "httpStatus": 403,
+        "providerCode": null,
+        "itemCount": 0,
+        "probe": "city code list",
+        "endpoint": "apis.data.go.kr/1613000/TrainInfo/GetCtyCodeList",
+        "status": "NOT_AUTHORIZED_OR_UNAVAILABLE"
+      },
+      {
+        "dataset": "15098522",
+        "httpStatus": 403,
+        "providerCode": null,
+        "itemCount": 0,
+        "probe": "city code list",
+        "endpoint": "apis.data.go.kr/1613000/ExpBusInfo/GetCtyCodeList",
+        "status": "NOT_AUTHORIZED_OR_UNAVAILABLE"
+      },
+      {
+        "dataset": "15098541",
+        "httpStatus": 403,
+        "providerCode": null,
+        "itemCount": 0,
+        "probe": "city code list",
+        "endpoint": "apis.data.go.kr/1613000/SuburbsBusInfo/GetCtyCodeList",
+        "status": "NOT_AUTHORIZED_OR_UNAVAILABLE"
+      }
+    ],
+    "callsPerApi": 1,
+    "causeOf403": "not established",
+    "syntheticTimetableUsed": false
+  },
+  "limits": [
+    "train displayed label is source label; no booked service identity verification",
+    "no actual timetable, seat availability, platform or notification delivery verification",
+    "INTERCITY_BUS-specific native UI still not verified",
+    "Android deferred",
+    "initial train native run failed before shortlist fix and is not counted as a pass"
+  ]
+}

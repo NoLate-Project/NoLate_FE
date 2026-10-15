@@ -1,0 +1,146 @@
+{
+  "date": "2026-10-12",
+  "result": "PASSED",
+  "scope": "One real overnight INTERCITY_BUS service: Incheon Airport T2 → Cheongju, 23:00 → next day 01:25. iOS Simulator timetable selection, explicit terminal confirmation, connection, save and process relaunch.",
+  "productChangesThisRun": false,
+  "testChanges": [
+    "e2e/ios/NoLateE2ETests.swift: testIntercityBusSelectedServiceSaveReopen",
+    "e2e/intercity-bus-selection-api.e2e.ts"
+  ],
+  "environment": {
+    "platform": "iOS Simulator",
+    "deviceId": "32F98B59-AC45-4F4F-B944-A82B9B7705EB",
+    "api": "http://127.0.0.1:5524",
+    "metroPort": 8097,
+    "transitProvider": "tmap",
+    "providerReason": "Prior ODsay 429; dedicated TMAP session only, operating defaults and env files unchanged.",
+    "authentication": "Separate normal synthetic UI/API accounts; no database injection.",
+    "clock": "Actual current time on device/server. No clock override or elapsed-service bypass."
+  },
+  "selectedService": {
+    "id": "tago:ac2f84b46d4a69b9af267c04459c691b56097f386e7862bd003173c7378427b7",
+    "kind": "INTERCITY_BUS",
+    "departureId": "NAI2238202",
+    "arrivalId": "NAI2839701",
+    "departureName": "인천공항2터미널",
+    "arrivalName": "청주",
+    "departureAt": "2026-10-12T23:00+09:00",
+    "arrivalAt": "2026-10-13T01:25+09:00",
+    "serviceDate": "2026-10-12",
+    "grade": "심야우등",
+    "trainNumber": null,
+    "fare": 31100,
+    "timingBasis": "TIMETABLE",
+    "bookingStatus": "UNCONFIRMED"
+  },
+  "verification": {
+    "frontend": {
+      "suites": 6,
+      "passed": 80,
+      "failed": 0,
+      "durationSeconds": 1.202,
+      "typecheckExitCode": 0,
+      "newApiTestEslintExitCode": 0
+    },
+    "api": {
+      "passed": 1,
+      "failed": 0,
+      "durationSeconds": 1.136,
+      "initialRoute": "Captured real TMAP response for direct route geometry/type; its service=0 is not used as operating proof. Actual future service comes from live TAGO.",
+      "connections": "Two real TMAP pedestrian calls, approach and egress to a real terminal parking POI",
+      "flow": "Live TAGO → current FE connection builder → normal POST → GET → FE restore → normal personal travel-plan update → shifted departure rejected 400 → original preserved",
+      "deadline": "2026-10-13T03:00:00+09:00",
+      "proof": "intercity-bus-selection-api.json"
+    },
+    "native": {
+      "test": "testIntercityBusSelectedServiceSaveReopen",
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "testDurationSeconds": 226.625,
+      "summaryStartTime": 1791811768.97,
+      "summaryFinishTime": 1791812034.625,
+      "deadline": "2026-10-13T14:00:00+09:00",
+      "flow": "Real TMAP direct-route search → live TAGO today service → explicit same-terminal confirmation → real connection search → save with alarms disabled → process termination/relaunch → restored 23:00, 01:25 and unconfirmed booking label",
+      "proof": "intercity-bus-selection-native-db.json",
+      "originalXcresult": "/private/tmp/nolate-intercity-bus-selection-20261012/native-06/result.xcresult",
+      "nativeDestination": "Cheongju bus terminal; egress walk may be omitted within 30m of the terminal",
+      "scheduleRetained": "One evidence schedule on its isolated UI account; API cases deleted only their own schedules."
+    }
+  },
+  "priorAttempts": {
+    "native01": {
+      "result": "FAILED",
+      "testDurationSeconds": 140.552,
+      "reason": "Test recent-place seed used name instead of API label/placeName; fixed seed and verified returned labels."
+    },
+    "native02": {
+      "result": "FAILED",
+      "testDurationSeconds": 311.505,
+      "reason": "Test selected a multi-long-distance transfer route. Existing one-ride validation rejected it. Test now explicitly chooses the matching direct route with a daytime arrival deadline.",
+      "postFailureDiagnostics": "Optional simctl diagnostics collection stopped after test execution completed; test was not interrupted."
+    },
+    "native03": {
+      "result": "BUILD_FAILED",
+      "executedTests": 0,
+      "reason": "Test query used count on XCUIElement; corrected to XCUIElementQuery."
+    },
+    "native04": {
+      "result": "FAILED",
+      "testDurationSeconds": 174.243,
+      "reason": "Direct bus existed, but test compared abbreviated display name 인천T2 against raw provider name 인천공항T2. Corrected the display assertion. Optional post-failure diagnostics stopped after test completion."
+    },
+    "native05": {
+      "result": "INTERRUPTED_DURING_RUNNER_STARTUP",
+      "loggedTestBodyStarted": false,
+      "xcresultFailedEntries": 2,
+      "xcresultFailures": [
+        "Testing was canceled",
+        "Test crashed with signal term."
+      ],
+      "reason": "Dedicated simulator stopped responding to launch and screenshot. Canceled runner startup, restarted only owned simulator, preserved data, then reran."
+    },
+    "api01": {
+      "result": "FAILED",
+      "reason": "Expected error text was status 400 while helper returned : 400. Server correctly rejected the shifted departure; assertion corrected."
+    },
+    "typecheckInitial": {
+      "result": "FAILED",
+      "reason": "Optional Place.name was passed to URLSearchParams. Added normal fallback labels; final typecheck passed."
+    },
+    "counting": "Final checks are counted once. Prior failures, repeat API passes and earlier stages are not added to final counts."
+  },
+  "limitations": [
+    "Representative route and service only; nationwide coverage not established",
+    "No actual purchase, ticket, remaining seats, boarding gate or internal airport/terminal path verified",
+    "Connections and buffers remain estimates; public timetable is unconfirmed booking",
+    "Notifications disabled; live departure guidance and device delivery not tested",
+    "Bus booking app connection and ticket import remain pending",
+    "Physical iPhone and Android deferred by user",
+    "No backend source changes or backend regression rerun; general ETA guard deployment remains a separate check"
+  ],
+  "sourceSha256": {
+    "e2e/ios/NoLateE2ETests.swift": "38b0a19159a0637e112bc35e8cc8b070782434687898d801828a642769f69265",
+    "e2e/intercity-bus-selection-api.e2e.ts": "794f0eeb65089e77ca684376e4949aa97a81b0ddac76d3410634ea40c881b422",
+    "src/modules/schedule/intercityJourney.ts": "4712f9f4e57ff0e696968571bbc823e7d6308eeb17cd8ae7bd7b5eecb7427d3b",
+    "src/modules/schedule/components/route/IntercityTimetableSheet.tsx": "55ce51bfa950987a0d1007b5a64742631c445367db931623e54181131a2905d9",
+    "src/modules/schedule/intercityTimetableModel.ts": "b9a90ec5e4e2d04df33549b397f93fb0adf22ff08f7c1a567af22a96f4079777",
+    "src/modules/schedule/routeInfo.ts": "6594e62897d375c602279000a4ff7078e720a7e483be741dcc1bbaa01acb222e",
+    "src/modules/schedule/scheduleRouteTiming.ts": "ca1a16c6485e5c567d74487812bb89979c296eb706d580b5732380e6ceafa9c5",
+    "src/modules/map/routingService.ts": "415db50cbf564be5b6fb73fadf761ebc0d10e3e16247e152463092ff75c00832",
+    "src/routeSupport/schedule/RouteSelectResultsScreen.tsx": "850af5c77df8fd12e0e11c0ca75af90c94966bd5099a411204d3ce6f5054acb1",
+    "e2e/ios/metro-intercity-e2e.config.cjs": "2e41a33c5dcdd72c373a81fe09d650468022327e281255774e5229ba524beafd"
+  },
+  "sourceHashesRecheckedAfterRun": true,
+  "artifactSha256": {
+    "intercity-bus-selected-timetable.png": "299b88419471cbfbfbff309a7e533c998cd6f8535fdf6bf58bdec8a905460f89",
+    "intercity-bus-selected-mapping.png": "7291f021bec54f8e3ed07884f358872a151b82ea8459b669e38a4e5db93d9b3f",
+    "intercity-bus-selected-before-save.png": "648ac7d9eb2fafd71e964448857a93a627d4f69786e6ce6896768eb8e416049b",
+    "intercity-bus-selected-reopened.png": "92c1aba99cacbf1b9752b2a0d7d5b940fb2d794aeb94fcf5b5ec4a514f7703e7",
+    "intercity-bus-selection-api.json": "e576238bf28722c900b32e4358abceeb860a55cf6533573c216b1fccb49b9d89",
+    "intercity-bus-selection-native-db.json": "eccb38af3b2df59fb846a3a5225dfbab0c1e4cd044c80fd6b9f36b992208271d",
+    "intercity-bus-selection-tmap.json": "d494540c3688eebed38df5aa845284c064b9282ecf7d109cf1a26140c68c64d6"
+  },
+  "screenshotsVisuallyReviewed": true,
+  "apiAccountEmptyAfterCleanup": true
+}

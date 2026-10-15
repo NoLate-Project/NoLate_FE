@@ -1,0 +1,24 @@
+{
+  "result": "BUILD SUCCEEDED",
+  "configuration": "Release",
+  "platform": "iphoneos",
+  "version": "1.3.0",
+  "build": "55",
+  "artifact": "/private/tmp/nolate-ticket-completion-20261013/release-derived/Build/Products/Release-iphoneos/NoLateFE.app",
+  "metadataVerification": "passed",
+  "deepStrictCodeSignatureVerification": "passed",
+  "actualDeviceExecution": false,
+  "appQueryAllowlist": {
+    "korailtalk": true,
+    "tmoneytia": true
+  },
+  "doesNotClaimCarrierSchemes": true,
+  "bundledAppURLsAndPDFSupportPresent": true,
+  "shareExtensionSingleFileActivation": true,
+  "sha256": {
+    "main.jsbundle": "9ba01656d4674d937283b63950d353dc2e79144770900af1bcef9b880cd3218c",
+    "compiledMainPlist": "d7cca3b8d66230764cc486de319bcb6adc8ad374f3324f4adaef33e9220ea680",
+    "shareExecutable": "83c11a71f35778ef2054f10bd287f6e97461a78f43b4dee696497a467002c8ff",
+    "buildLog": "418410cb1e43b965c7b9936cbc651498bca0e3b37e9c3b043160347976f15dac"
+  }
+}

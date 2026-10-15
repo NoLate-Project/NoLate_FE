@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "source": "CAPTURED_REAL_TMAP_TYPE22_SERVICE1",
+  "nativeUI": false,
+  "scheduleId": 14,
+  "routeName": "시외버스:동서울-속초",
+  "rawRideMode": "EXPRESSBUS",
+  "rawRideType": 22,
+  "savedKind": "INTERCITY_BUS",
+  "restoredKinds": [
+    "ORIGIN",
+    "WALK",
+    "INTERCITY_BUS",
+    "WALK",
+    "DESTINATION"
+  ],
+  "timingBasis": "estimated",
+  "notificationEnabled": false,
+  "travelPlanStatus": "READY",
+  "cleanup": "Only the schedule created by this API case is deleted"
+}
