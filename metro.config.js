@@ -13,4 +13,8 @@
 
 const { getDefaultConfig } = require("expo/metro-config");
 
-module.exports = getDefaultConfig(__dirname);
+const config = getDefaultConfig(__dirname);
+// Isolated QA can use Node file watching when the local Watchman socket is unavailable.
+// Metro's useWatchman switch is top-level; a resolver field does not change its file map.
+if (process.env.NOLATE_QA_NO_WATCHMAN === "1") config.useWatchman = false;
+module.exports = config;

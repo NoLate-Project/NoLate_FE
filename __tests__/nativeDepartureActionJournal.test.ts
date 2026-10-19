@@ -3,6 +3,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { markScheduleDeparted } from "../src/api/schedule";
 import { ApiResponseError } from "../src/api/response";
 import { getAuthMember } from "../src/modules/auth/authStorage";
+import { isJourneyGuidanceEnabled } from "../src/modules/journey/journeyFeature";
+import { endLiveActivityForSchedule } from "../src/modules/notification/liveActivitySync";
 import { emitScheduleMutation } from "../src/modules/schedule/scheduleMutationEvents";
 import {
     enqueueNativeDepartureActionEvent,
@@ -22,6 +24,8 @@ import {
 } from "../src/modules/notification/nativeDepartureActionJournal";
 
 jest.mock("../src/api/schedule", () => ({ markScheduleDeparted: jest.fn() }));
+jest.mock("../src/modules/journey/journeyFeature", () => ({ isJourneyGuidanceEnabled: jest.fn(() => false) }));
+jest.mock("../src/modules/notification/liveActivitySync", () => ({ endLiveActivityForSchedule: jest.fn().mockResolvedValue(undefined) }));
 jest.mock("../src/modules/auth/authStorage", () => ({ getAuthMember: jest.fn() }));
 jest.mock("../src/modules/schedule/scheduleMutationEvents", () => ({
     createScheduleDepartureMutationEvent: (item: { id: string; departedAt?: string; myDepartedAt?: string }) => ({
@@ -71,6 +75,7 @@ const departedSchedule = { id: "41", departedAt: "2026-08-04T01:00:03.000Z" };
 describe("durable departure action journal", () => {
     beforeEach(async () => {
         jest.clearAllMocks();
+        jest.mocked(isJourneyGuidanceEnabled).mockReturnValue(false);
         resetNativeDepartureActionJournalForTests();
         await AsyncStorage.clear();
         jest.mocked(getAuthMember).mockResolvedValue({ id: 7 });
@@ -132,6 +137,15 @@ describe("durable departure action journal", () => {
         expect(emitScheduleMutation).not.toHaveBeenCalled();
         expect(recoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
         expect(removePendingNativeDepartureActionEvent).toHaveBeenCalledWith(event.eventId);
+    });
+
+    it("never locally retires a journey token after a delayed depart-now acknowledgement", async () => {
+        jest.mocked(isJourneyGuidanceEnabled).mockReturnValue(true);
+        jest.mocked(getPendingNativeDepartureActionEvents).mockResolvedValue([event]);
+        await expect(drainNativeDepartureActionJournal()).resolves.toMatchObject({ completed: 1, failed: 0 });
+        expect(markScheduleDeparted).toHaveBeenCalled();
+        expect(recoverDepartureAlarmsAfterMutation).toHaveBeenCalled();
+        expect(endLiveActivityForSchedule).not.toHaveBeenCalled();
     });
 
     it("drains a cold-start native action after authenticated app setup without routing", async () => {

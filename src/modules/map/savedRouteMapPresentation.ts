@@ -52,6 +52,7 @@ export function getSavedRouteFitCoords(
   route: unknown,
   origin?: Place,
   destination?: Place,
+  guidanceWalkingPaths?: ReadonlyMap<number, TmapLatLng[]>,
 ): TmapLatLng[] {
   const routeOption = getSavedRouteAlternative(route);
   const storedLegs = Array.isArray(routeOption?.transitLegs)
@@ -78,6 +79,8 @@ export function getSavedRouteFitCoords(
       ]),
     );
     const legGeometry = legs.flatMap((leg, legIndex) => {
+      const walking = leg.kind === 'WALK' ? guidanceWalkingPaths?.get(legIndex) : undefined;
+      if (walking) return walking;
       // A legacy WALK repaired below is authoritative. Reusing a persisted
       // overlay for that leg would put the old loop back into fit bounds.
       const overlayIndex =
@@ -89,7 +92,7 @@ export function getSavedRouteFitCoords(
         : getSavedTransitLegCoords(leg);
     });
     const hasMissingLegGeometry = legs.some(
-      leg => getSavedTransitLegCoords(leg).length < 2,
+      (leg, index) => !(leg.kind === 'WALK' && guidanceWalkingPaths?.has(index)) && getSavedTransitLegCoords(leg).length < 2,
     );
     const routeFallback = hasMissingLegGeometry
       ? getExplicitSavedRouteRootPathCoords(route)
@@ -119,6 +122,7 @@ export function buildSavedRouteMapPresentation({
   mapZoom,
   isDark,
   focusedLegIndex,
+  guidanceWalkingPaths,
 }: SavedRouteMapPresentationInput): SavedRouteMapPresentation {
   const storedRouteOption = getSavedRouteAlternative(route);
   const routeInfo = getRouteInfoFromRoute(route);
@@ -145,7 +149,8 @@ export function buildSavedRouteMapPresentation({
       : storedRouteOption;
   const pathCoords =
     routeOption?.mode === 'TRANSIT' && routeLegs.length > 0
-      ? compactConsecutiveMapCoords(routeLegs.flatMap(getSavedTransitLegCoords))
+      ? compactConsecutiveMapCoords(routeLegs.flatMap((leg, index) =>
+          leg.kind === 'WALK' && guidanceWalkingPaths?.has(index) ? guidanceWalkingPaths.get(index)! : getSavedTransitLegCoords(leg)))
       : getSavedRoutePathCoords(route, routeLegs);
   const storedOverlays = parseStoredPathOverlays(route);
   let pathOverlays: TmapPathOverlay[];
@@ -164,6 +169,7 @@ export function buildSavedRouteMapPresentation({
     const adoptedBaseCoordsByLeg = new Map<number, TmapLatLng[]>();
     const baseOverlays = routeLegs.flatMap(
       (leg, legIndex): TmapPathOverlay[] => {
+        const walking = leg.kind === 'WALK' ? guidanceWalkingPaths?.get(legIndex) : undefined;
         // Never resurrect a malformed persisted WALK overlay after its leg
         // geometry has been repaired for this presentation.
         const storedOverlayIndex =
@@ -174,7 +180,7 @@ export function buildSavedRouteMapPresentation({
           typeof storedOverlayIndex === 'number'
             ? storedOverlays[storedOverlayIndex]
             : undefined;
-        const overlay = storedOverlay
+        const baseOverlay = storedOverlay
           ? styleStoredTransitOverlay(
               storedOverlay,
               mapZoom,
@@ -183,6 +189,11 @@ export function buildSavedRouteMapPresentation({
               focusedLegIndex,
             )
           : buildTransitLegOverlay(leg, legIndex, mapZoom, focusedLegIndex);
+        // Style a separate path, not a relabelled saved leg. Even missing saved WALK geometry
+        // may render the server-owned path without manufacturing ODsay exactness/evidence.
+        const overlay = walking ? { ...(baseOverlay ?? styleStoredTransitOverlay({
+          id: `guidance-server-walk-${legIndex}`, coords: walking,
+        }, mapZoom, leg, legIndex, focusedLegIndex)), id: `guidance-server-walk-${legIndex}`, coords: walking } : baseOverlay;
         if (!overlay) return [];
         adoptedBaseCoordsByLeg.set(legIndex, overlay.coords);
         return [overlay];
@@ -197,7 +208,7 @@ export function buildSavedRouteMapPresentation({
           })
         : [];
     const hasMissingLegGeometry = routeLegs.some(
-      leg => getSavedTransitLegCoords(leg).length < 2,
+      (leg, index) => !(leg.kind === 'WALK' && guidanceWalkingPaths?.has(index)) && getSavedTransitLegCoords(leg).length < 2,
     );
     const explicitRootPath = hasMissingLegGeometry
       ? getExplicitSavedRouteRootPathCoords(route)
@@ -272,7 +283,7 @@ export function buildSavedRouteMapPresentation({
     destination,
     mapZoom,
   );
-  const fitCoords = getSavedRouteFitCoords(route, origin, destination);
+  const fitCoords = getSavedRouteFitCoords(route, origin, destination, guidanceWalkingPaths);
 
   return {
     routeOption,

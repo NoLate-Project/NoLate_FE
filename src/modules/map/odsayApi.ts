@@ -11,6 +11,7 @@ import type {
     TransitRouteOption,
     TransitServiceClass,
 } from "./tmapApi";
+import type { TransitNavigationEvidence, TransitNavigationStopOccurrence } from "./tmapApiCore";
 
 const ODSAY_API_BASE_URL = "https://api.odsay.com/v1/api";
 const ODSAY_REQUEST_TIMEOUT_MS = 25_000;
@@ -354,6 +355,96 @@ function parsePassStops(leg: any): TransitPassStop[] {
         .filter((stop): stop is TransitPassStop => !!stop);
 }
 
+function navigationNumber(value: unknown): number | undefined {
+    if (typeof value !== "number" && (
+        typeof value !== "string" || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())
+    )) return undefined;
+    const numberValue = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function navigationInteger(value: unknown): number | undefined {
+    const numberValue = navigationNumber(value);
+    return typeof numberValue === "number" && Number.isSafeInteger(numberValue) && numberValue >= 0
+        ? numberValue
+        : undefined;
+}
+
+function hasCompleteNavigationGraph(leg: any, delivered: RoutePathCoord[]): boolean {
+    // WALK routes는 여러 connector를 재조립하므로 이 slice에서는 완전성을 증명하지 않는다.
+    const kind = normalizeLegKind(leg?.trafficType);
+    if (kind !== "BUS" && kind !== "SUBWAY") return false;
+    if (typeof leg?.graph !== "string" || leg.graph.length > 200_000) return false;
+    const pairs: string[] = leg.graph.split("|");
+    // ODsay ride graph currently preserves every point; require exact order/count so a future
+    // display simplifier cannot silently weaken navigation evidence.
+    if (pairs.length < 2 || pairs.length !== delivered.length) return false;
+    return pairs.every((pair, index) => {
+        const parts = pair.trim().split(/\s+/);
+        if (parts.length !== 2) return false;
+        const lng = navigationNumber(parts[0]);
+        const lat = navigationNumber(parts[1]);
+        return typeof lat === "number" && typeof lng === "number" && !!routeCoord(lng, lat) &&
+            delivered[index]?.lat === lat && delivered[index]?.lng === lng;
+    });
+}
+
+function navigationIdentifier(value: unknown): string | undefined {
+    return typeof value === "string" ? value : typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? String(value) : undefined;
+}
+
+/** 표시용 passStops에서 손실되는 반복 정류장·빈 행·원본 순번을 별도로 보존한다. */
+function parseNavigationEvidence(leg: any, delivered: RoutePathCoord[]): TransitNavigationEvidence | undefined {
+    const kind = normalizeLegKind(leg?.trafficType);
+    const stations = ensureArray<any>(leg?.passStopList?.stations);
+    if (stations.length > 500) return undefined;
+    const stopOccurrences = Array.from(stations, (station, sourceIndex): TransitNavigationStopOccurrence => {
+        if (!station || typeof station !== "object" || Array.isArray(station)) return { sourceIndex };
+        const lng = navigationNumber(station.x);
+        const lat = navigationNumber(station.y);
+        return {
+            sourceIndex,
+            providerSequence: navigationInteger(station.index),
+            name: typeof station.stationName === "string" ? textValue(station.stationName) : undefined,
+            code: parseStopCode(station),
+            routingStationID: kind === "SUBWAY" ? navigationIdentifier(station.stationID) : undefined,
+            coord: typeof lat === "number" && typeof lng === "number" ? routeCoord(lng, lat) : undefined,
+            localStationID: navigationIdentifier(station.localStationID),
+            arsID: navigationIdentifier(station.arsID),
+            stationCityCode: navigationIdentifier(station.stationCityCode),
+            stationProviderCode: navigationIdentifier(station.stationProviderCode),
+        };
+    });
+    const wayCode = navigationInteger(leg?.wayCode);
+    const lane = ensureArray<any>(leg?.lane)[0];
+    const rawLanes = ensureArray<any>(leg?.lane);
+    return {
+        version: 1,
+        provider: "odsay",
+        busIdentifiers: kind === "BUS" ? {
+            localRouteId: navigationIdentifier(lane?.busLocalBlID), routeCityCode: navigationIdentifier(lane?.busCityCode),
+            routeProviderCode: navigationIdentifier(lane?.busProviderCode), startLocalStationID: navigationIdentifier(leg?.startLocalStationID),
+            startArsID: navigationIdentifier(leg?.startArsID), startStationCityCode: navigationIdentifier(leg?.startStationCityCode),
+            startStationProviderCode: navigationIdentifier(leg?.startStationProviderCode),
+        } : undefined,
+        subwayIdentifiers: kind === "SUBWAY" && rawLanes.length <= 64 ? {
+            startID: navigationIdentifier(leg?.startID),
+            endID: navigationIdentifier(leg?.endID),
+            wayCode: navigationIdentifier(leg?.wayCode),
+            lanes: Array.from(rawLanes, (rawLane, sourceIndex) => ({
+                sourceIndex,
+                subwayCode: navigationIdentifier(rawLane?.subwayCode),
+                subwayCityCode: navigationIdentifier(rawLane?.subwayCityCode),
+            })),
+        } : undefined,
+        stopOccurrences,
+        declaredStationCount: navigationInteger(leg?.stationCount),
+        directionName: typeof leg?.way === "string" ? leg.way : undefined,
+        directionCode: wayCode === 1 ? "UP" : wayCode === 2 ? "DOWN" : undefined,
+        geometryInputComplete: hasCompleteNavigationGraph(leg, delivered),
+    };
+}
+
 function parseOdsayDateTime(value: unknown): string | undefined {
     const raw = textValue(value);
     const match = raw?.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/);
@@ -480,6 +571,7 @@ function parseLegs(rawLegs: unknown): TransitLegDetail[] {
             startCoord,
             endCoord,
             passStops: passStops.length ? passStops : undefined,
+            navigationEvidence: parseNavigationEvidence(leg, graphPath),
             pathCoords: pathCoords.length >= 2 ? pathCoords : undefined,
             pathCoordsIsExact: graphPath.length >= 2,
             pathGeometrySource: graphPath.length >= 2

@@ -42,6 +42,10 @@ public struct NoLateDepartureAttributes: ActivityAttributes, Hashable, Sendable 
     URL(string: "nolate://schedule/\(scheduleId)")!
   }
 
+  public var journeyURL: URL {
+    URL(string: "nolate:///schedule/journey?scheduleId=\(scheduleId)")!
+  }
+
   public var identityKey: String {
     "\(recipientMemberId):\(scheduleId)"
   }

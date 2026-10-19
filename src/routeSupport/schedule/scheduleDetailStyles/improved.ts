@@ -7,6 +7,7 @@ export function createImprovedStyles(options: ScheduleDetailStylesOptions) {
   const { IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT, SHEET_HANDLE_HEIGHT } =
     options;
   return StyleSheet.create({
+    compactSummaryScroll: { flex: 1 },
     improvedCompactSummary: {
       minHeight: IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT - SHEET_HANDLE_HEIGHT,
       paddingHorizontal: 1,

@@ -17,10 +17,17 @@ let package = Package(
         "NoLateLiveActivity.podspec",
         "NoLateLiveActivityCoordinator.swift",
         "NoLateLiveActivityModule.swift",
+        "NoLateJourneyRuntime.swift",
+        "NoLateJourneyAutomaticRuntime.swift",
+        "NoLateAutomaticGuidanceActivity.swift",
+        "NoLateGuidancePushPilot.swift",
+        "NoLateSavedGuidanceArrivalTransport.swift",
+        "NoLateSavedGuidanceRideTransport.swift",
+        "NoLateSavedGuidanceSubwayTransport.swift",
         "Shared",
         "Tests"
       ],
-      sources: ["NoLateLiveActivityModels.swift"]
+      sources: ["NoLateServerWalkingSnapshot.swift", "NoLateLiveActivityModels.swift", "NoLateJourneyDiagnostics.swift", "NoLateJourneyEngineCore.swift", "NoLateJourneyCheckpointStore.swift", "NoLateJourneyRouteNormalizer.swift", "NoLateJourneyAutomaticSession.swift", "NoLateJourneyAutomaticStore.swift", "NoLateJourneyBusApproachCore.swift", "NoLateJourneyBusRideCore.swift", "NoLateJourneySubwayRideCore.swift", "NoLateSavedGuidanceSubwayPolicy.swift", "NoLateGuidanceContent.swift", "NoLateGuidancePublicationPolicy.swift", "NoLateAutomaticGuidanceProjection.swift", "NoLateSavedGuidanceArrivalPolicy.swift", "NoLateSavedGuidanceRidePolicy.swift"]
     ),
     .testTarget(
       name: "NoLateLiveActivityPolicyTests",

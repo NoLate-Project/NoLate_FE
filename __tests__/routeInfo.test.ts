@@ -11,6 +11,18 @@ const origin = { name: "서울역", address: "서울 중구", lat: 37.5547, lng:
 const destination = { name: "홍대입구역", address: "서울 마포구", lat: 37.5572, lng: 126.9254 };
 
 describe("routeInfo", () => {
+    it("시간이 없는 부분 경로에 현재 시각을 출발·도착 시각으로 만들어 넣지 않는다", () => {
+        const preview = { id: 'public-preview', mode: 'TRANSIT', transitLegs: [
+            { kind: 'BUS', lineName: '7016', startName: '서울역', endName: '경복궁역' },
+        ] } as unknown as RouteAlternativeOption;
+        const info = buildRouteInfoFromAlternative(preview, origin, destination);
+        expect(info.departureTime).toBe(''); expect(info.arrivalTime).toBe('');
+        expect(info.steps.some(step => step.type === 'BUS')).toBe(true);
+        const scheduled = buildRouteInfoFromAlternative({ ...preview,
+            providerDepartureAt: '2026-10-07T04:00:00Z', providerArrivalAt: '2026-10-07T04:10:00Z' });
+        expect(scheduled.departureTime).toBe('2026-10-07T04:00:00.000Z');
+        expect(scheduled.arrivalTime).toBe('2026-10-07T04:10:00.000Z');
+    });
     it("지도 배지에서 TMAP 버스 분류 접두사를 제거한다", () => {
         expect(compactTransitLineLabel("직행좌석:9007")).toBe("9007");
         expect(compactTransitLineLabel("간선:402")).toBe("402");

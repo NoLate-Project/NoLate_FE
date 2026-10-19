@@ -93,6 +93,7 @@ function validDate(value?: Date | string): Date | undefined {
 }
 
 function applyDepartureTime(routeInfo: RouteInfo, departureAt: Date): RouteInfo {
+    if (!validDate(routeInfo.departureTime) || !validDate(routeInfo.arrivalTime)) return routeInfo;
     return {
         ...routeInfo,
         departureTime: departureAt.toISOString(),
@@ -166,6 +167,8 @@ export function buildSavedRouteDetailInfo({
     const arrivalAt = new Date(
         effectiveDepartureAt.getTime() + (Math.max(0, totalDurationMinutes) * 60 * 1000)
     );
+    const timingKnown = (!!validDate(stored.departureTime) && !!validDate(stored.arrivalTime))
+        || (!!validDate(generated.departureTime) && !!validDate(generated.arrivalTime));
 
     return {
         ...generated,
@@ -173,8 +176,8 @@ export function buildSavedRouteDetailInfo({
         originName: generated.originName,
         destinationName: generated.destinationName,
         totalDurationMinutes,
-        departureTime: effectiveDepartureAt.toISOString(),
-        arrivalTime: arrivalAt.toISOString(),
+        departureTime: timingKnown ? effectiveDepartureAt.toISOString() : "",
+        arrivalTime: timingKnown ? arrivalAt.toISOString() : "",
         steps: mergeStoredSteps(generated.steps, stored.steps),
     };
 }

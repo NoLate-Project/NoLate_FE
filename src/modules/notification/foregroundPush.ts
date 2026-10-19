@@ -9,6 +9,7 @@ import * as Device from "expo-device";
 import type { Notification, NotificationResponse } from "expo-notifications";
 import { requireOptionalNativeModule } from "expo-modules-core";
 import { AppState, Platform } from "react-native";
+import { loadLocalNotificationModules } from './localNotificationModules';
 
 import { snoozeScheduleDepartureReminder } from "../../api/schedule";
 import { getAuthMember } from "../auth/authStorage";
@@ -131,9 +132,8 @@ async function getNotifications(): Promise<ExpoNotificationsModule | null> {
         return notificationsModule;
     }
 
-    // iOS Simulator는 APNs 원격 푸시를 지원하지 않는다. expo-notifications를 import하면
-    // 패키지 초기화 과정에서 서버 등록 정보를 Keychain에서 즉시 읽기 때문에, 서명되지
-    // 않은 시뮬레이터 런타임에서는 errSecMissingEntitlement 오류가 발생할 수 있다.
+    // This simulator path intentionally skips the root package's token manager/Keychain
+    // initialization. It is not a claim that modern simulators cannot receive actual APNs.
     if (Platform.OS === "ios" && !Device.isDevice) {
         notificationsModule = null;
         return notificationsModule;
@@ -171,23 +171,16 @@ async function getLocalNotificationsForCustomAlarm(): Promise<
     }
     if (process.env.NODE_ENV === "test") return null;
 
-    // Local UNNotifications work on iOS Simulator even though APNs token registration does not.
-    // Import listener/handler-only paths without requiring ExpoPushTokenManager. The handler lets
+    // Local UNNotifications do not require APNs token registration.
+    // Load listener/handler-only paths without requiring ExpoPushTokenManager. The handler lets
     // NoLate own foreground alarm audio on Simulator builds as well as signed physical devices.
     try {
-        const [Emitter, Handler] = await Promise.all([
-            import("expo-notifications/build/NotificationsEmitter"),
-            import("expo-notifications/build/NotificationsHandler"),
-        ]);
-        customAlarmNotificationsModule = {
-            ...Emitter,
-            setNotificationHandler: Handler.setNotificationHandler,
-        };
-    } catch (error) {
+        customAlarmNotificationsModule = loadLocalNotificationModules();
+    } catch {
         logPushDevelopment(
             "warn",
             "[custom-alarm] local notification listeners are unavailable in this build",
-            error,
+            "LOCAL_NOTIFICATION_MODULE_UNAVAILABLE",
         );
         customAlarmNotificationsModule = null;
     }

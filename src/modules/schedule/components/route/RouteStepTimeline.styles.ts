@@ -5,6 +5,9 @@ const styles = StyleSheet.create({
     root: {
         gap: 0,
     },
+    guidanceCurrentRow: { borderLeftWidth: 3, borderLeftColor: '#2979FF', paddingVertical: 8, backgroundColor: 'rgba(41,121,255,0.08)' },
+    guidanceCurrent: { paddingVertical: 4, paddingRight: 8 },
+    guidanceCurrentText: { color: '#1264C7', fontSize: 13, fontWeight: '600' },
     item: {
         flexDirection: "row",
         borderWidth: 0,
@@ -101,7 +104,7 @@ const styles = StyleSheet.create({
         position: "absolute",
         top: 35,
         minWidth: 48,
-        height: 23,
+        minHeight: 23,
         borderRadius: 5,
         borderWidth: StyleSheet.hairlineWidth,
         alignItems: "center",
@@ -112,7 +115,6 @@ const styles = StyleSheet.create({
     timelineClockText: {
         fontSize: 12,
         fontWeight: "800",
-        lineHeight: 16,
         letterSpacing: 0,
     },
     body: {
@@ -139,20 +141,20 @@ const styles = StyleSheet.create({
     badge: {
         minWidth: 32,
         maxWidth: 74,
-        height: 22,
+        minHeight: 22,
         borderRadius: 6,
         paddingHorizontal: 7,
         alignItems: "center",
         justifyContent: "center",
     },
     badgeCompact: {
-        height: 25,
+        minHeight: 25,
         borderRadius: 7,
         paddingHorizontal: 9,
     },
     pointBadge: {
         minWidth: 36,
-        height: 22,
+        minHeight: 22,
         borderRadius: 6,
         paddingHorizontal: 6,
         alignItems: "center",
@@ -160,7 +162,7 @@ const styles = StyleSheet.create({
     },
     pointBadgeCompact: {
         minWidth: 42,
-        height: 25,
+        minHeight: 25,
         borderRadius: 7,
     },
     pointBadgeText: {
@@ -171,7 +173,6 @@ const styles = StyleSheet.create({
     },
     pointBadgeTextCompact: {
         fontSize: 12,
-        lineHeight: 15,
     },
     badgeText: {
         color: "#FFFFFF",
@@ -181,37 +182,31 @@ const styles = StyleSheet.create({
     },
     badgeTextCompact: {
         fontSize: 13,
-        lineHeight: 16,
     },
     title: {
         flex: 1,
         minWidth: 0,
         fontSize: 17,
         fontWeight: "900",
-        lineHeight: 23,
         letterSpacing: 0,
     },
     titleCompact: {
         fontSize: 17,
         fontWeight: "900",
-        lineHeight: 23,
     },
     titleSuffix: {
         fontSize: 15,
         fontWeight: "900",
-        lineHeight: 22,
     },
     description: {
         marginTop: 6,
         fontSize: 14,
         fontWeight: "800",
-        lineHeight: 20,
     },
     descriptionCompact: {
         marginTop: 4,
         fontSize: 15,
         fontWeight: "800",
-        lineHeight: 20,
     },
     rideInfoRow: {
         marginTop: 4,
@@ -227,7 +222,6 @@ const styles = StyleSheet.create({
         marginTop: 3,
         fontSize: 14,
         fontWeight: "800",
-        lineHeight: 19,
         letterSpacing: 0,
     },
     boardingGuideRow: {
@@ -251,7 +245,6 @@ const styles = StyleSheet.create({
         flexShrink: 1,
         fontSize: 12,
         fontWeight: "800",
-        lineHeight: 16,
     },
     rideActionRow: {
         flexDirection: "row",
@@ -276,13 +269,11 @@ const styles = StyleSheet.create({
     rideActionText: {
         fontSize: 13,
         fontWeight: "900",
-        lineHeight: 17,
         letterSpacing: 0,
     },
     arrivalFreshnessText: {
         fontSize: 11,
         fontWeight: "800",
-        lineHeight: 14,
         letterSpacing: 0,
     },
     arrivalCard: {
@@ -319,21 +310,18 @@ const styles = StyleSheet.create({
         minWidth: 0,
         fontSize: 13,
         fontWeight: "700",
-        lineHeight: 18,
         letterSpacing: 0,
     },
     arrivalClockText: {
         minWidth: 52,
         fontSize: 17,
         fontWeight: "900",
-        lineHeight: 22,
         letterSpacing: 0,
     },
     arrivalWaitText: {
         color: "#FF5A52",
         fontSize: 16,
         fontWeight: "900",
-        lineHeight: 21,
         letterSpacing: 0,
     },
     arrivalMutedText: {
@@ -341,7 +329,6 @@ const styles = StyleSheet.create({
         minWidth: 0,
         fontSize: 15,
         fontWeight: "800",
-        lineHeight: 20,
         letterSpacing: 0,
     },
     arrivalAttributeList: {
@@ -361,7 +348,6 @@ const styles = StyleSheet.create({
     arrivalAttributeText: {
         fontSize: 12,
         fontWeight: "900",
-        lineHeight: 15,
     },
     busArrivalBadge: {
         minWidth: 44,
@@ -376,7 +362,6 @@ const styles = StyleSheet.create({
         color: "#FFFFFF",
         fontSize: 14,
         fontWeight: "900",
-        lineHeight: 18,
     },
     itemDivider: {
         height: StyleSheet.hairlineWidth,
@@ -422,7 +407,6 @@ const styles = StyleSheet.create({
         flex: 1,
         minWidth: 0,
         fontSize: 14,
-        lineHeight: 20,
         letterSpacing: 0,
     },
 });

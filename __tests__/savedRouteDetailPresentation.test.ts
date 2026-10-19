@@ -1,4 +1,5 @@
 import {
+    buildSavedRouteDetailInfo,
     getScheduleDetailLayout,
     getSavedRouteEntryPath,
     getSavedRouteSummaryKind,
@@ -9,6 +10,17 @@ const origin = { name: "서울시청", lat: 37.5666, lng: 126.9784 };
 const destination = { name: "강남역", lat: 37.4979, lng: 127.0276 };
 
 describe("saved route detail presentation", () => {
+    test("불완전 경로를 병합하거나 출발 시각을 적용해도 누락된 시간 정보를 생성하지 않는다", () => {
+        const route = { id: 'public-preview', mode: 'TRANSIT', transitLegs: [
+            { kind: 'BUS', lineName: '7016', startName: '서울역', endName: '경복궁역' },
+        ] };
+        for (const routeAlternative of [undefined, route]) {
+            const info = buildSavedRouteDetailInfo({ route,
+                routeAlternative: routeAlternative as unknown as Parameters<typeof buildSavedRouteDetailInfo>[0]['routeAlternative'],
+                departureAt: new Date('2026-10-07T04:00:00Z') });
+            expect(info?.departureTime).toBe(''); expect(info?.arrivalTime).toBe('');
+        }
+    });
     test("distinguishes a detailed route from a duration-only estimate and an empty route", () => {
         expect(getSavedRouteSummaryKind(true, 32)).toBe("detailed");
         expect(getSavedRouteSummaryKind(false, 32)).toBe("duration_only");

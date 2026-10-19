@@ -8,6 +8,8 @@ import {
 import type {
     RoutePathCoord,
     TransitLegKind,
+    TransitNavigationEvidence,
+    TransitNavigationStopOccurrence,
     TransitPassStop,
 } from "./tmapApiCore.ts";
 
@@ -209,6 +211,77 @@ export function parseTransitStationSequence(station: any): number | undefined {
     return typeof sequence === "number" && Number.isFinite(sequence)
         ? sequence
         : undefined;
+}
+
+/** 증거 필드는 null/공백/boolean을 숫자 0으로 승격하지 않는다. */
+function navigationNumber(value: unknown): number | undefined {
+    if (typeof value !== "number" && (
+        typeof value !== "string" || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())
+    )) return undefined;
+    const numberValue = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
+function navigationInteger(value: unknown): number | undefined {
+    const numberValue = navigationNumber(value);
+    return typeof numberValue === "number" && Number.isSafeInteger(numberValue) && numberValue >= 0
+        ? numberValue
+        : undefined;
+}
+
+function navigationStationCoord(station: any): RoutePathCoord | undefined {
+    if (!station || typeof station !== "object" || Array.isArray(station)) return undefined;
+    const pairs: Array<[unknown, unknown]> = [
+        [station.lat, station.lng],
+        [station.lat, station.lon],
+        [station.latitude, station.longitude],
+        [station.y, station.x],
+        [station.newLat, station.newLon],
+        [station.gpsY, station.gpsX],
+        [station.stationY, station.stationX],
+        [station.noorLat, station.noorLon],
+        [station.noorY, station.noorX],
+    ];
+    return pickFirstValidCoordinatePair(pairs.map(([lat, lng]) => [navigationNumber(lat), navigationNumber(lng)]));
+}
+
+/** UI용 정류장 정렬/중복 제거와 독립적으로 원본 occurrence와 명시 필드만 보존한다. */
+export function parseTransitLegNavigationEvidence(
+    leg: any,
+    geometryInputComplete = false
+): TransitNavigationEvidence | undefined {
+    const stations = ensureArray<any>(
+        leg?.passStopList?.stationList ??
+        leg?.passStopList?.stations ??
+        leg?.stations ??
+        leg?.stopList ??
+        leg?.stopPoints
+    );
+    if (stations.length > 500) return undefined;
+    const stopOccurrences = Array.from(stations, (station, sourceIndex): TransitNavigationStopOccurrence => {
+        if (!station || typeof station !== "object" || Array.isArray(station)) return { sourceIndex };
+        const rawName = station.name ?? station.stationName ?? station.poiName;
+        return {
+            sourceIndex,
+            providerSequence: navigationInteger(
+                station.index ?? station.sequence ?? station.seq ?? station.stationSeq ?? station.stopSequence
+            ),
+            name: typeof rawName === "string" ? rawName.trim() || undefined : undefined,
+            code: parseStationCode(station),
+            coord: navigationStationCoord(station),
+        };
+    });
+    return {
+        version: 1,
+        provider: "tmap",
+        stopOccurrences,
+        declaredStationCount: navigationInteger(leg?.stationCount ?? leg?.passStopCount),
+        directionName: parseTransitLegDirectionName(leg),
+        directionCode: leg?.directionCode === "UP" || leg?.directionCode === "DOWN"
+            ? leg.directionCode
+            : undefined,
+        geometryInputComplete,
+    };
 }
 
 /** 공급자 원본 값을 `parseTransitLegStations` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */

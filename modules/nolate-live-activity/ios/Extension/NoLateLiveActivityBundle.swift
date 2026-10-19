@@ -5,5 +5,6 @@ import WidgetKit
 struct NoLateLiveActivityBundle: WidgetBundle {
   var body: some Widget {
     NoLateDepartureLiveActivity()
+    NoLateGuidanceLiveActivity()
   }
 }

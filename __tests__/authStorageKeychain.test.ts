@@ -26,6 +26,9 @@ import {
     getAccessToken,
     getAuthMember,
     getRefreshToken,
+    getAuthCredentialRevision,
+    saveRefreshedAuthTokens,
+    saveAuthMember,
     resetAuthStorageMemoryCacheForTests,
     saveAuthTokens,
     subscribeAuthInvalidation,
@@ -42,6 +45,57 @@ const mockLocalStorage = {
     setItemAsync: jest.mocked(LocalStorage.setItemAsync),
     deleteItemAsync: jest.mocked(LocalStorage.deleteItemAsync),
 };
+
+beforeEach(() => {
+    mockSharedAuth.setItem.mockResolvedValue(true);
+    mockSharedAuth.deleteItem.mockResolvedValue(true);
+    mockLocalStorage.setItemAsync.mockResolvedValue(undefined);
+    mockLocalStorage.deleteItemAsync.mockResolvedValue(undefined);
+});
+test("late refresh cannot overwrite logout or a different account", async () => {
+    resetAuthStorageMemoryCacheForTests();
+    const old = getAuthCredentialRevision();
+    await saveAuthMember({ id: 8 });
+    await expect(saveRefreshedAuthTokens(old, "old-access", "old-refresh")).resolves.toBe(false);
+    const beforeLogout = getAuthCredentialRevision();
+    await clearAuthTokens({ notifyListeners: false });
+    await expect(saveRefreshedAuthTokens(beforeLogout, "old-access", "old-refresh")).resolves.toBe(false);
+    await expect(getAccessToken()).resolves.toBeNull();
+});
+test("logout deletion follows an already-started credential write", async () => {
+    resetAuthStorageMemoryCacheForTests();
+    let release!: () => void;
+    const gate = new Promise<void>(done => { release = done; });
+    mockLocalStorage.setItemAsync.mockImplementationOnce(() => gate);
+    const old = getAuthCredentialRevision();
+    const refresh = saveRefreshedAuthTokens(old, "late-access", "late-refresh");
+    await Promise.resolve(); // start durable write
+    const logout = clearAuthTokens({ notifyListeners: false });
+    release();
+    await expect(refresh).resolves.toBe(false);
+    await logout;
+    await expect(getAccessToken()).resolves.toBeNull();
+    expect(mockLocalStorage.deleteItemAsync).toHaveBeenCalledWith("nolte_access_token");
+});
+test("old logout cannot delete a login saved during listener cleanup", async () => {
+    resetAuthStorageMemoryCacheForTests();
+    let release!: () => void;
+    const wait = new Promise<void>(done => { release = done; });
+    const detach = subscribeAuthInvalidation(() => wait);
+    try {
+        const logout = clearAuthTokens();
+        await saveAuthTokens("new-login-access", "new-login-refresh");
+        release(); await logout;
+        await expect(getAccessToken()).resolves.toBe("new-login-access");
+    } finally { detach(); release(); }
+});
+test("same-member profile edits do not discard a single-use refresh rotation", async () => {
+    resetAuthStorageMemoryCacheForTests();
+    await saveAuthMember({ id: 7, name: "fixture" });
+    const revision = getAuthCredentialRevision();
+    await saveAuthMember({ id: 7, name: "updated" });
+    await expect(saveRefreshedAuthTokens(revision, "rotated-access", "rotated-refresh")).resolves.toBe(true);
+});
 
 describe("authStorage shared Keychain session", () => {
     beforeEach(() => {

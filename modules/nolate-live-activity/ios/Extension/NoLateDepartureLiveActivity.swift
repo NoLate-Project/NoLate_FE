@@ -6,7 +6,7 @@ struct NoLateDepartureLiveActivity: Widget {
   var body: some WidgetConfiguration {
     ActivityConfiguration(for: NoLateDepartureAttributes.self) { context in
       NoLateLockScreenView(context: context)
-        .widgetURL(context.attributes.scheduleURL)
+        .widgetURL(context.state.opensJourney ? context.attributes.journeyURL : context.attributes.scheduleURL)
     } dynamicIsland: { context in
       DynamicIsland {
         DynamicIslandExpandedRegion(.bottom) {
@@ -26,11 +26,11 @@ struct NoLateDepartureLiveActivity: Widget {
               }
               .frame(maxWidth: .infinity, alignment: .leading)
               VStack(alignment: .trailing, spacing: 0) {
-                Text("\(context.state.displayedTravelMinutes)분")
+                Text(context.state.summaryMetric)
                   .font(.system(size: 22, weight: .heavy, design: .rounded))
                   .foregroundStyle(Color(hex: NoLateLiveActivityThemeTokens.dark.accent))
                   .monospacedDigit()
-                Text(context.state.arrivalText)
+                Text(context.state.summaryDetail)
                   .font(.system(size: 10, weight: .medium))
                   .foregroundStyle(Color.white.opacity(0.62))
                   .lineLimit(1)
@@ -39,7 +39,8 @@ struct NoLateDepartureLiveActivity: Widget {
 
             NoLateRouteBarView(
               segments: context.state.routeSegments,
-              usesDarkSurface: true
+              usesDarkSurface: true,
+              journey: context.state.journey
             )
               .frame(height: 18)
 
@@ -61,7 +62,7 @@ struct NoLateDepartureLiveActivity: Widget {
       } minimal: {
         NoLateMarkView(size: 22)
       }
-      .widgetURL(context.attributes.scheduleURL)
+      .widgetURL(context.state.opensJourney ? context.attributes.journeyURL : context.attributes.scheduleURL)
       .keylineTint(Color(hex: NoLateLiveActivityThemeTokens.dark.accent))
     }
   }
@@ -72,7 +73,9 @@ private struct NoLateCompactStatusView: View {
 
   var body: some View {
     HStack(spacing: 4) {
-      if state.status == .preparing,
+      if let journey = state.journey, state.status == .inTransit {
+        Text(journey.compactLabel)
+      } else if state.status == .preparing,
          Date(timeIntervalSince1970: TimeInterval(state.recommendedDepartureEpochSeconds)) > .now {
         NoLateDepartureCountdownValueView(state: state)
       } else {
@@ -92,11 +95,7 @@ private struct NoLateCompactStatusView: View {
     .monospacedDigit()
     .lineLimit(1)
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(NoLateLiveActivityPresentation.headline(
-      status: state.status,
-      recommendedDepartureEpochSeconds: state.recommendedDepartureEpochSeconds,
-      nowEpochSeconds: Int64(Date().timeIntervalSince1970.rounded())
-    ))
+    .accessibilityLabel(state.accessibilityHeadline)
   }
 }
 
@@ -141,7 +140,9 @@ private struct NoLateDepartureHeadlineView: View {
       let departure = Date(
         timeIntervalSince1970: TimeInterval(state.recommendedDepartureEpochSeconds)
       )
-      if state.status == .preparing, departure > now {
+      if let journey = state.journey, state.status == .inTransit {
+        Text(journey.nextInstruction)
+      } else if state.status == .preparing, departure > now {
         HStack(spacing: 0) {
           Text("출발까지 ")
           NoLateDepartureCountdownValueView(state: state)
@@ -161,11 +162,7 @@ private struct NoLateDepartureHeadlineView: View {
     .lineLimit(1)
     .minimumScaleFactor(0.82)
     .accessibilityElement(children: .combine)
-    .accessibilityLabel(NoLateLiveActivityPresentation.headline(
-      status: state.status,
-      recommendedDepartureEpochSeconds: state.recommendedDepartureEpochSeconds,
-      nowEpochSeconds: Int64(Date().timeIntervalSince1970.rounded())
-    ))
+    .accessibilityLabel(state.accessibilityHeadline)
   }
 }
 
@@ -203,8 +200,8 @@ private struct NoLateLockScreenView: View {
       .frame(height: CGFloat(NoLateLiveActivityLayoutMetrics.headerHeight))
 
       HStack(alignment: .center, spacing: 8) {
-        Text("\(context.state.displayedTravelMinutes)분")
-          .font(.system(size: 36, weight: .heavy, design: .rounded))
+        Text(context.state.summaryMetric)
+          .font(.system(size: context.state.journey == nil ? 36 : 28, weight: .heavy, design: .rounded))
           .foregroundStyle(palette.accent)
           .monospacedDigit()
           .lineLimit(1)
@@ -212,7 +209,7 @@ private struct NoLateLockScreenView: View {
           .layoutPriority(2)
 
         VStack(alignment: .leading, spacing: 1) {
-          Text(context.state.arrivalText)
+          Text(context.state.summaryDetail)
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(palette.secondaryText)
             .lineLimit(1)
@@ -232,7 +229,8 @@ private struct NoLateLockScreenView: View {
 
       NoLateRouteBarView(
         segments: context.state.routeSegments,
-        themeOverride: palette.tokens
+        themeOverride: palette.tokens,
+        journey: context.state.journey
       )
         .frame(height: CGFloat(NoLateLiveActivityLayoutMetrics.routeHeight))
         .padding(.top, CGFloat(NoLateLiveActivityLayoutMetrics.routeTopSpacing))
@@ -334,7 +332,9 @@ private struct NoLateActivityActionsView: View {
 
   var body: some View {
     Group {
-      if compact {
+      if state.status == .inTransit || state.status == .arrived || state.status == .cancelled {
+        journeyAction
+      } else if compact {
         HStack(spacing: 8) {
           scheduleAction
           departureAction
@@ -354,6 +354,25 @@ private struct NoLateActivityActionsView: View {
     // 44 pt interactive child that overflows this unclipped visual row, so the
     // proportional layout does not sacrifice the system-sized hit target.
     .frame(height: visualHeight)
+  }
+
+  private var journeyAction: some View {
+    Link(destination: state.opensJourney ? attributes.journeyURL : attributes.scheduleURL) {
+      Label(
+        state.opensJourney ? "길안내 보기" : "일정 확인",
+        systemImage: state.opensJourney ? "arrow.turn.up.right" : "calendar"
+      )
+        .font(.system(size: compact ? 13 : 11, weight: .bold))
+        .foregroundStyle(Color(hex: theme.accent))
+        .frame(maxWidth: .infinity)
+        .frame(height: visualHeight)
+        .background(Color(hex: theme.surfaceStart).opacity(0.5), in: Capsule())
+        .overlay(Capsule().stroke(Color(hex: theme.accent), lineWidth: 1.25))
+    }
+    .buttonStyle(.plain)
+    .frame(maxWidth: .infinity)
+    .frame(height: hitHeight)
+    .contentShape(Capsule())
   }
 
   private var scheduleAction: some View {
@@ -469,6 +488,39 @@ private extension NoLateDepartureAttributes {
 }
 
 private extension NoLateDepartureContentState {
+  var opensJourney: Bool {
+    NoLateLiveActivityPresentation.opensJourney(status: status, journey: journey)
+  }
+
+  var summaryMetric: String {
+    if status == .arrived { return "도착" }
+    if status == .cancelled { return "종료" }
+    guard let journey, status == .inTransit else { return "\(displayedTravelMinutes)분" }
+    if (journey.phase == .riding || journey.phase == .alighting), let stops = journey.remainingStops {
+      return "\(stops)정거장"
+    }
+    if let progress = journey.overallProgress {
+      return "\(Int((min(1, max(0, progress)) * 100).rounded()))%"
+    }
+    return journey.compactLabel
+  }
+
+  var summaryDetail: String {
+    guard let journey, status == .inTransit else { return arrivalText }
+    return journey.phase.label
+  }
+
+  var accessibilityHeadline: String {
+    if let journey, status == .inTransit {
+      return "\(journey.phase.label). \(journey.nextInstruction)"
+    }
+    return NoLateLiveActivityPresentation.headline(
+      status: status,
+      recommendedDepartureEpochSeconds: recommendedDepartureEpochSeconds,
+      nowEpochSeconds: Int64(Date().timeIntervalSince1970.rounded())
+    )
+  }
+
   var arrivalText: String {
     guard let predictedArrivalEpochSeconds else {
       return "도착 시각 계산 중"

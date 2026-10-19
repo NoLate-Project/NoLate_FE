@@ -43,11 +43,125 @@ public struct NoLateRouteSegment: Codable, Hashable, Sendable {
   public let kind: NoLateRouteSegmentKind
   public let label: String
   public let colorHex: String
+  public let legIndex: Int?
 
-  public init(kind: NoLateRouteSegmentKind, label: String, colorHex: String) {
+  public init(kind: NoLateRouteSegmentKind, label: String, colorHex: String, legIndex: Int? = nil) {
     self.kind = kind
     self.label = label
     self.colorHex = colorHex
+    self.legIndex = legIndex
+  }
+}
+
+public enum NoLateJourneyPhase: String, Codable, CaseIterable, Sendable {
+  case ready = "READY"
+  case walkingToStop = "WALKING_TO_STOP"
+  case waiting = "WAITING"
+  case riding = "RIDING"
+  case alighting = "ALIGHTING"
+  case transferring = "TRANSFERRING"
+  case finalWalk = "FINAL_WALK"
+  case arrived = "ARRIVED"
+  case stopped = "STOPPED"
+
+  public var label: String {
+    switch self {
+    case .ready: return "출발 준비"
+    case .walkingToStop: return "정류장으로 이동"
+    case .waiting: return "탑승 대기"
+    case .riding: return "탑승 중"
+    case .alighting: return "하차 준비"
+    case .transferring: return "환승 중"
+    case .finalWalk: return "목적지로 이동"
+    case .arrived: return "도착"
+    case .stopped: return "안내 종료"
+    }
+  }
+
+  public var isTerminal: Bool { self == .arrived || self == .stopped }
+}
+
+/// Journey clocks are independent of the Live Activity's immutable generation
+/// and content revision. Every writer must preserve both ordering contracts.
+public struct NoLateJourneyProgress: Codable, Hashable, Sendable {
+  public let sessionId: String
+  public let generation: Int64
+  public let routeRevision: Int64
+  public let sequence: Int64
+  public let phase: NoLateJourneyPhase
+  public let activeLegIndex: Int
+  public let currentStopIndex: Int?
+  public let remainingStops: Int?
+  public let legProgress: Double
+  public let nextInstruction: String
+  public let observedAtEpochSeconds: Int64
+  public let overallProgress: Double?
+
+  public init(
+    sessionId: String,
+    generation: Int64,
+    routeRevision: Int64,
+    sequence: Int64,
+    phase: NoLateJourneyPhase,
+    activeLegIndex: Int,
+    currentStopIndex: Int? = nil,
+    remainingStops: Int? = nil,
+    legProgress: Double,
+    nextInstruction: String,
+    observedAtEpochSeconds: Int64,
+    overallProgress: Double? = nil
+  ) {
+    self.sessionId = sessionId
+    self.generation = generation
+    self.routeRevision = routeRevision
+    self.sequence = sequence
+    self.phase = phase
+    self.activeLegIndex = activeLegIndex
+    self.currentStopIndex = currentStopIndex
+    self.remainingStops = remainingStops
+    self.legProgress = legProgress
+    self.nextInstruction = nextInstruction
+    self.observedAtEpochSeconds = observedAtEpochSeconds
+    self.overallProgress = overallProgress
+  }
+
+  public var compactLabel: String {
+    if (phase == .riding || phase == .alighting), let remainingStops {
+      return "\(remainingStops)정거장"
+    }
+    switch phase {
+    case .ready: return "준비"
+    case .walkingToStop, .finalWalk: return "도보"
+    case .waiting: return "대기"
+    case .riding: return "탑승"
+    case .alighting: return "하차"
+    case .transferring: return "환승"
+    case .arrived: return "도착"
+    case .stopped: return "종료"
+    }
+  }
+
+  public func ending(
+    status: NoLateLiveActivityStatus,
+    observedAtEpochSeconds: Int64
+  ) -> NoLateJourneyProgress {
+    guard status == .arrived || status == .cancelled else { return self }
+    let terminalPhase: NoLateJourneyPhase = status == .arrived ? .arrived : .stopped
+    guard phase != terminalPhase else { return self }
+    return NoLateJourneyProgress(
+      sessionId: sessionId,
+      generation: generation,
+      routeRevision: routeRevision,
+      sequence: min(sequence + 1, noLateLiveActivityMaximumSafeInteger),
+      phase: terminalPhase,
+      activeLegIndex: activeLegIndex,
+      currentStopIndex: currentStopIndex,
+      remainingStops: status == .arrived ? 0 : remainingStops,
+      legProgress: status == .arrived ? 1 : legProgress,
+      nextInstruction: status == .arrived ? "목적지에 도착했어요" : "길안내를 종료했어요",
+      observedAtEpochSeconds: max(self.observedAtEpochSeconds, observedAtEpochSeconds),
+      overallProgress: status == .arrived ? 1 : overallProgress
+    )
   }
 }
 
@@ -131,6 +245,13 @@ public enum NoLateLiveActivityLayoutMetrics {
  * start time and `firstWaitMinutes` must never be used to derive this label.
  */
 public enum NoLateLiveActivityPresentation {
+  public static func opensJourney(
+    status: NoLateLiveActivityStatus,
+    journey: NoLateJourneyProgress?
+  ) -> Bool {
+    status == .inTransit && journey != nil
+  }
+
   public static func remainingDepartureMinutes(
     recommendedDepartureEpochSeconds: Int64,
     nowEpochSeconds: Int64
@@ -211,6 +332,7 @@ public struct NoLateDepartureContentState: Codable, Hashable, Sendable {
   // this device-scoped value because Lock Screen scene traits can differ from
   // the appearance selected by the app.
   public let appearance: NoLateLiveActivityAppearance?
+  public let journey: NoLateJourneyProgress?
 
   public init(
     revision: Int64,
@@ -222,7 +344,8 @@ public struct NoLateDepartureContentState: Codable, Hashable, Sendable {
     actionExpiresAtEpochSeconds: Int64,
     status: NoLateLiveActivityStatus,
     routeSegments: [NoLateRouteSegment],
-    appearance: NoLateLiveActivityAppearance? = nil
+    appearance: NoLateLiveActivityAppearance? = nil,
+    journey: NoLateJourneyProgress? = nil
   ) {
     self.revision = revision
     self.travelMinutes = travelMinutes
@@ -234,6 +357,7 @@ public struct NoLateDepartureContentState: Codable, Hashable, Sendable {
     self.status = status
     self.routeSegments = routeSegments
     self.appearance = appearance
+    self.journey = journey
   }
 
   public var displayedTravelMinutes: Int {
@@ -256,7 +380,8 @@ public struct NoLateDepartureContentState: Codable, Hashable, Sendable {
       actionExpiresAtEpochSeconds: actionExpiresAtEpochSeconds,
       status: newStatus,
       routeSegments: routeSegments,
-      appearance: appearance
+      appearance: appearance,
+      journey: journey?.ending(status: newStatus, observedAtEpochSeconds: newUpdatedAtEpochSeconds)
     )
   }
 }
@@ -346,6 +471,78 @@ public enum NoLateLiveActivityValidationError: Error, LocalizedError, Equatable 
 public enum NoLateLiveActivityPolicy {
   public static let maximumRouteSegments = 6
   public static let maximumEncodedStateBytes = 3_500
+
+  /// Called before the outer revision check for updates to the same Activity generation.
+  /// A late departure refresh must not remove an already-started journey.
+  public static func journeyUpdateRejection(
+    current: NoLateDepartureContentState,
+    incoming: NoLateDepartureContentState
+  ) -> String? {
+    if current.status == .arrived || current.status == .cancelled || current.journey?.phase.isTerminal == true {
+      return current == incoming ? "IDEMPOTENT" : "TERMINAL_STATE"
+    }
+    guard let previous = current.journey else { return nil }
+    guard let next = incoming.journey else { return "JOURNEY_REQUIRED" }
+    if next.generation < previous.generation { return "STALE_JOURNEY_GENERATION" }
+    if next.generation > previous.generation { return nil }
+    if next.sessionId != previous.sessionId { return "JOURNEY_SESSION_CONFLICT" }
+    if next.sequence < previous.sequence { return "STALE_JOURNEY_SEQUENCE" }
+    if next.sequence == previous.sequence {
+      return next == previous ? nil : "JOURNEY_SEQUENCE_CONFLICT"
+    }
+    if next.routeRevision < previous.routeRevision { return "STALE_ROUTE_REVISION" }
+    if next.observedAtEpochSeconds < previous.observedAtEpochSeconds { return "STALE_JOURNEY_OBSERVATION" }
+    if next.routeRevision == previous.routeRevision {
+      if next.activeLegIndex < previous.activeLegIndex { return "JOURNEY_PROGRESS_REGRESSION" }
+      if next.activeLegIndex == previous.activeLegIndex {
+        if next.legProgress < previous.legProgress { return "JOURNEY_PROGRESS_REGRESSION" }
+        if let oldStop = previous.currentStopIndex, let newStop = next.currentStopIndex, newStop < oldStop {
+          return "JOURNEY_PROGRESS_REGRESSION"
+        }
+      }
+    }
+    return nil
+  }
+
+  public static func validateJourney(
+    _ journey: NoLateJourneyProgress,
+    status: NoLateLiveActivityStatus
+  ) throws -> NoLateJourneyProgress {
+    guard !journey.sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          journey.sessionId.count <= 128 else {
+      throw NoLateLiveActivityValidationError.invalid("journey.sessionId is invalid.")
+    }
+    for value in [journey.generation, journey.routeRevision, journey.sequence, journey.observedAtEpochSeconds] {
+      guard isSafeInteger(value), value >= 0 else {
+        throw NoLateLiveActivityValidationError.invalid("Journey clocks must be nonnegative safe integers.")
+      }
+    }
+    for value in [journey.activeLegIndex, journey.currentStopIndex, journey.remainingStops].compactMap({ $0 }) {
+      guard value >= 0, Int64(value) <= noLateLiveActivityMaximumSafeInteger else {
+        throw NoLateLiveActivityValidationError.invalid("Journey indexes must be nonnegative safe integers.")
+      }
+    }
+    for value in [journey.legProgress, journey.overallProgress].compactMap({ $0 }) {
+      guard value.isFinite, (0...1).contains(value) else {
+        throw NoLateLiveActivityValidationError.invalid("Journey progress must be between 0 and 1.")
+      }
+    }
+    guard !journey.nextInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          journey.nextInstruction.count <= 120 else {
+      throw NoLateLiveActivityValidationError.invalid("journey.nextInstruction must contain 1 to 120 characters.")
+    }
+    let validStatus: Bool
+    switch journey.phase {
+    case .ready: validStatus = status == .preparing || status == .leaveNow
+    case .arrived: validStatus = status == .arrived
+    case .stopped: validStatus = status == .cancelled
+    default: validStatus = status == .inTransit
+    }
+    guard validStatus else {
+      throw NoLateLiveActivityValidationError.invalid("Journey phase and Activity status are inconsistent.")
+    }
+    return journey
+  }
 
   public static func preferredActivityID(
     in candidates: [NoLateActiveActivityIdentity]
@@ -440,7 +637,18 @@ public enum NoLateLiveActivityPolicy {
       let normalized = normalizedText($0, maximumLength: 200)
       return normalized.isEmpty ? nil : normalized
     }
-    let routeSegments = normalizedRouteSegments(command.contentState.routeSegments)
+    let journey = try command.contentState.journey.map {
+      try validateJourney($0, status: command.contentState.status)
+    }
+    for segment in command.contentState.routeSegments {
+      if let legIndex = segment.legIndex, legIndex < 0 || Int64(legIndex) > noLateLiveActivityMaximumSafeInteger {
+        throw NoLateLiveActivityValidationError.invalid("routeSegments.legIndex is invalid.")
+      }
+    }
+    let routeSegments = normalizedRouteSegments(
+      command.contentState.routeSegments,
+      activeLegIndex: journey?.activeLegIndex
+    )
     let state = NoLateDepartureContentState(
       revision: command.contentState.revision,
       travelMinutes: command.contentState.travelMinutes,
@@ -451,7 +659,8 @@ public enum NoLateLiveActivityPolicy {
       actionExpiresAtEpochSeconds: command.contentState.actionExpiresAtEpochSeconds,
       status: command.contentState.status,
       routeSegments: routeSegments,
-      appearance: command.contentState.appearance
+      appearance: command.contentState.appearance,
+      journey: journey
     )
     guard
       let encoded = try? JSONEncoder().encode(state),
@@ -519,7 +728,8 @@ public enum NoLateLiveActivityPolicy {
   }
 
   public static func normalizedRouteSegments(
-    _ incoming: [NoLateRouteSegment]
+    _ incoming: [NoLateRouteSegment],
+    activeLegIndex: Int? = nil
   ) -> [NoLateRouteSegment] {
     var normalized: [NoLateRouteSegment] = []
     for segment in incoming where segment.kind != .destination {
@@ -528,7 +738,8 @@ public enum NoLateLiveActivityPolicy {
       let candidate = NoLateRouteSegment(
         kind: segment.kind,
         label: label,
-        colorHex: color
+        colorHex: color,
+        legIndex: segment.legIndex
       )
       if normalized.last == candidate { continue }
       normalized.append(candidate)
@@ -540,7 +751,14 @@ public enum NoLateLiveActivityPolicy {
     )
     // The approved route bar always ends at a red destination pin. Reserve one of the six
     // bounded slots even when the upstream movement projection omits DESTINATION.
-    return Array(normalized.prefix(maximumRouteSegments - 1)) + [destination]
+    let movementSlots = maximumRouteSegments - 1
+    if let activeLegIndex,
+       let activePosition = normalized.firstIndex(where: { $0.legIndex == activeLegIndex }),
+       activePosition >= movementSlots {
+      let start = min(max(0, activePosition - 2), max(0, normalized.count - movementSlots))
+      return Array(normalized.dropFirst(start).prefix(movementSlots)) + [destination]
+    }
+    return Array(normalized.prefix(movementSlots)) + [destination]
   }
 
   /// Normalizes the JS projection (`WALK`, `BUS`, `SUBWAY`) and APNs raw values through

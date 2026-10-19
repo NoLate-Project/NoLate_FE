@@ -42,6 +42,7 @@ import {
     isRideLegKind,
 } from "./routeSelectRouteModel";
 import type { RouteSelectController } from "./useRouteSelectController";
+import { JourneySelectedRouteTrial } from "../../modules/journey/JourneySelectedRouteTrial";
 
 type RouteSelectResultsScreenProps = {
     controller: RouteSelectController;
@@ -603,6 +604,11 @@ export function RouteSelectResultsScreen({
                                             </Pressable>
                                         </View>
                                     )}
+
+                                    {__DEV__ && selected && option.mode === "TRANSIT" ? (
+                                        <JourneySelectedRouteTrial route={option} origin={origin} destination={destination}
+                                            disabled={routeLoading || routeSubmitPending} />
+                                    ) : null}
 	                                </AnimatedRouteCardShell>
 	                            </View>
                         );

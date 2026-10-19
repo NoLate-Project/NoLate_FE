@@ -1,5 +1,14 @@
 const mockMarkScheduleDeparted = jest.fn();
 const mockRecoverDepartureAlarmsAfterMutation = jest.fn();
+const mockEndLiveActivity = jest.fn();
+let mockJourneyEnabled = false;
+
+jest.mock("../src/modules/journey/journeyFeature", () => ({
+    isJourneyGuidanceEnabled: () => mockJourneyEnabled,
+}));
+jest.mock("../src/modules/notification/liveActivitySync", () => ({
+    endLiveActivityForSchedule: (...args: unknown[]) => mockEndLiveActivity(...args),
+}));
 
 jest.mock("../src/api/schedule", () => ({
     markScheduleDeparted: (...args: unknown[]) =>
@@ -30,6 +39,8 @@ const completedSchedule: ScheduleItem = {
 describe("schedule detail departure completion", () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockJourneyEnabled = false;
+        mockEndLiveActivity.mockResolvedValue(undefined);
         mockRecoverDepartureAlarmsAfterMutation.mockResolvedValue(undefined);
     });
 
@@ -41,6 +52,7 @@ describe("schedule detail departure completion", () => {
 
         expect(mockMarkScheduleDeparted).toHaveBeenCalledWith("41");
         expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(mockEndLiveActivity).toHaveBeenCalledWith("41");
         expect(mockMarkScheduleDeparted.mock.invocationCallOrder[0])
             .toBeLessThan(
                 mockRecoverDepartureAlarmsAfterMutation.mock.invocationCallOrder[0],
@@ -55,5 +67,13 @@ describe("schedule detail departure completion", () => {
             .rejects.toBe(mutationError);
 
         expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
+    });
+
+    it("lets the server fence late departure cleanup while the journey pilot is enabled", async () => {
+        mockJourneyEnabled = true;
+        mockMarkScheduleDeparted.mockResolvedValue(completedSchedule);
+        await completeScheduleDeparture("41");
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+        expect(mockEndLiveActivity).not.toHaveBeenCalled();
     });
 });

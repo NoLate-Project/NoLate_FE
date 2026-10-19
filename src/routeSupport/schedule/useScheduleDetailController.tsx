@@ -35,6 +35,9 @@ import { useTheme } from '../../modules/theme/ThemeContext';
 import { getAuthMember } from '../../modules/auth/authStorage';
 import { canOpenParticipantTravelPlan } from '../../modules/schedule/travelPlanPresentation';
 import { completeScheduleDeparture } from '../../modules/schedule/scheduleDepartureCompletion';
+import { canOpenJourneyGuidance, journeyGuidanceRoute } from '../../modules/journey/journeyFeature';
+import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
+import { revalidateAutomaticJourneySavedRoute } from '../../modules/journey/automaticJourneyTrial';
 import { saveScheduleRouteAsMyTravelPlan } from '../../modules/schedule/scheduleTravelPlanSave';
 import { classifyDepartureNudgeResult } from '../../modules/schedule/departureNudgeResult';
 import { measurePerformanceInteraction } from '../../modules/performance/interactionPerformance';
@@ -68,6 +71,8 @@ import { useScheduleDepartureStatusController } from './useScheduleDepartureStat
  */
 export function useScheduleDetailController({
   previewItem,
+  previewOfflineGuidanceMap = false,
+  previewGuidanceAuthenticationSource,
   initialSheetMode = 'compact',
   initialParticipantsExpanded = false,
   previewNowMs,
@@ -152,6 +157,13 @@ export function useScheduleDetailController({
     });
 
   const item = internalPreviewItem ?? (id ? state.itemsById[id] : undefined);
+  useEffect(() => {
+    if (!item || currentMemberId == null || internalPreviewItem) return;
+    // Only the authoritative own route invalidates; opening another schedule/participant does not.
+    const own = (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId;
+    const input = own ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null;
+    revalidateAutomaticJourneySavedRoute(String(item.id), input).catch(() => undefined);
+  }, [item, currentMemberId, internalPreviewItem]);
   const canManageSchedule = useMemo(
     () => canManagePresentedSchedule(item, currentMemberId),
     [currentMemberId, item],
@@ -227,6 +239,7 @@ export function useScheduleDetailController({
     displayMarkers,
     displayOrigin,
     displayPathOverlays,
+    guidanceWalkingPaths,
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,
@@ -244,6 +257,7 @@ export function useScheduleDetailController({
   } = useScheduleDetailMapController({
     scheduleId: id,
     item,
+    currentMemberId,
     inspectedTravelPlan,
     savedRecommendedDepartureAt,
     isDark,
@@ -357,8 +371,15 @@ export function useScheduleDetailController({
     routeSavePending,
   ]);
 
+  const journeyGuidanceAvailable = !internalPreviewItem && !inspectedTravelPlan && canOpenJourneyGuidance(item);
+
   const completeDeparture = useCallback(async () => {
     if (departureActionPending) return;
+    if (journeyGuidanceAvailable && id) {
+      // Enter the opt-in screen first; only its confirmed start records departure.
+      router.push(journeyGuidanceRoute(id));
+      return;
+    }
     if (internalPreviewItem) {
       setPreviewDepartedAt(new Date(nowMs).toISOString());
       return;
@@ -393,7 +414,9 @@ export function useScheduleDetailController({
     id,
     internalPreviewItem,
     item?.departureParticipants,
+    journeyGuidanceAvailable,
     nowMs,
+    router,
   ]);
 
   const requestDepartureNudge = useCallback(
@@ -633,6 +656,10 @@ export function useScheduleDetailController({
     mapRef,
     sheetScrollRef,
     internalPreviewItem,
+    offlineGuidancePreview: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
+      && currentMemberId === 7 && previewOfflineGuidanceMap,
+    guidancePreviewAuthenticationSource: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
+      && currentMemberId === 7 && previewOfflineGuidanceMap ? previewGuidanceAuthenticationSource : undefined,
     loading,
     loadError,
     setRetryKey,
@@ -678,6 +705,7 @@ export function useScheduleDetailController({
     displayTravelMode,
     routeOption,
     displayPathOverlays,
+    guidanceWalkingPaths,
     displayMarkers,
     mapCoords,
     routeDetailInfo,
@@ -689,6 +717,7 @@ export function useScheduleDetailController({
     handleMapZoomChanged,
     moveToCurrentLocation,
     completeDeparture,
+    journeyGuidanceAvailable,
     confirmDepartureNudge,
     openParticipantTravelPlan,
     openCurrentRoutePlanner,

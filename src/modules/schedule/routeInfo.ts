@@ -476,14 +476,17 @@ export function buildRouteInfoFromAlternative(
     const arrivalAt = hasProviderSchedule
         ? providerArrivalAt
         : new Date(effectiveDepartureAt.getTime() + totalDurationMinutes * 60 * 1000);
+    // Incomplete saved/provider previews are still renderable, but a missing
+    // duration must not become a fabricated "depart/arrive now" timetable.
+    const timingKnown = hasProviderSchedule || (isFiniteNumber(option.minutes) && option.minutes >= 0);
     return {
         id: option.id || `route-${routeIndex}`,
         provider: option.provider,
         originName: placeName(origin, "출발지"),
         destinationName: placeName(destination, "도착지"),
         totalDurationMinutes,
-        departureTime: effectiveDepartureAt.toISOString(),
-        arrivalTime: arrivalAt.toISOString(),
+        departureTime: timingKnown ? effectiveDepartureAt.toISOString() : "",
+        arrivalTime: timingKnown ? arrivalAt.toISOString() : "",
         fare: option.fareWon,
         tollFare: option.tollFareWon,
         taxiFare: option.taxiFareWon,

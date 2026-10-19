@@ -145,9 +145,15 @@ describe('iOS NoLate custom alarm native contract', () => {
       loaderStart,
     );
     const loader = foregroundRouter.slice(loaderStart, loaderEnd);
+    const localLoader = read('src/modules/notification/localNotificationModules.ts');
 
     expect(loaderStart).toBeGreaterThanOrEqual(0);
-    expect(loader).toContain('"expo-notifications/build/NotificationsEmitter"');
+    expect(loader).toContain('loadLocalNotificationModules()');
+    expect(localLoader).toContain("require('expo-notifications/build/NotificationsEmitter')");
+    expect(localLoader).toContain("require('expo-notifications/build/NotificationsHandler')");
+    expect(localLoader).not.toContain('await import(');
+    expect(localLoader).not.toMatch(/require\(['"]expo-notifications['"]\)/);
+    expect(localLoader).not.toMatch(/requestPermissionsAsync|getDevicePushTokenAsync|getExpoPushTokenAsync/);
     expect(loader).not.toContain('import("expo-notifications")');
     expect(loader).not.toContain(
       'requireOptionalNativeModule("ExpoPushTokenManager")',

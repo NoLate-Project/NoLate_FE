@@ -36,10 +36,28 @@ import {
     createNoLateCustomAlarmRoute,
     type NoLateCustomAlarmNavigationTarget,
 } from "../src/modules/notification/customAlarmNavigation";
+import { getAutomaticJourneySyncState, reconcileAutomaticJourneyCheckpoint, retryAutomaticJourneyStops } from '../src/modules/journey/automaticJourneyTrial';
+import {internalPreviewRoutes, isPublicInternalPreviewRoute} from '../src/modules/navigation/internalPreviewRoutes';
 
 export default function RootLayout() {
     const router = useRouter();
     const { isAuthenticated, isCurationCompleted, isLoading } = useAuth();
+    useEffect(() => {
+        if (!__DEV__ || isLoading || !isAuthenticated) return;
+        let active = true;
+        const check = async () => {
+            try {
+                await retryAutomaticJourneyStops();
+                if (active) await reconcileAutomaticJourneyCheckpoint();
+            } catch { /* Preserve pending records; never assume a failed server read means ended. */ }
+        };
+        check();
+        const foreground = AppState.addEventListener('change', state => { if (state === 'active') check(); });
+        const retry = setInterval(() => {
+            if (AppState.currentState === 'active' && getAutomaticJourneySyncState().checkpointState === 'WAITING') check();
+        }, 5000);
+        return () => { active = false; foreground.remove(); clearInterval(retry); };
+    }, [isAuthenticated, isLoading]);
     const pendingPushNavigation = useRef(createPendingPushNavigationQueue()).current;
     const pushNavigationReadyRef = useRef(isPushNavigationReady({
         isAuthenticated,
@@ -241,12 +259,7 @@ function RootNavigator() {
     const isPublicRoute =
         routeSegments[0] === "auth" ||
         routeSegments[0] === "legal" ||
-        (__DEV__ &&
-            routeSegments[0] === "internal" &&
-            (
-                routeSegments[1] === "schedule-ui-preview" ||
-                routeSegments[1] === "live-activity-preview"
-            )) ||
+        isPublicInternalPreviewRoute(routeSegments, __DEV__) ||
         (routeSegments[0] === "share" &&
             routeSegments[1] !== "inbox" &&
             routeSegments[1] !== "blocked" &&
@@ -276,8 +289,7 @@ function RootNavigator() {
                 name="share/[token]"
                 options={{ animation: "fade", animationDuration: 160 }}
             />
-            {__DEV__ ? <Stack.Screen name="internal/schedule-ui-preview" /> : null}
-            {__DEV__ ? <Stack.Screen name="internal/live-activity-preview" /> : null}
+            {__DEV__ ? internalPreviewRoutes.map(name => <Stack.Screen key={name} name={`internal/${name}`}/>) : null}
             <Stack.Protected guard={isAuthenticated}>
                 <Stack.Screen
                     name="onboarding/calendar-import"
@@ -312,6 +324,7 @@ function RootNavigator() {
                     name="schedule/index"
                     options={{ animation: "fade", animationDuration: 140 }}
                 />
+                <Stack.Screen name="schedule/journey" />
                 <Stack.Screen name="internal/quick-schedule-benchmark" />
                 <Stack.Screen
                     name="notifications"

@@ -31,6 +31,7 @@ import {
     parseTransitLegBoardingExit,
     parseTransitLegRecommendedBoardingPosition,
     parseTransitLegPassStops,
+    parseTransitLegNavigationEvidence,
     parseTransitLegStationPath,
     parseTransitLegStartCoord,
     parseTransitLegEndCoord,
@@ -138,6 +139,51 @@ export function parseTransitDirectPathCoords(leg: any): RoutePathCoord[] | undef
         leg?.path ??
         leg?.geometry
     );
+}
+
+/** 일부 유효점만 추출하는 표시 parser와 달리 원본 전체가 알려진 형식인지 검증한다. */
+function visitCompleteNavigationLineString(value: unknown, matches: (coordinate: RoutePathCoord) => boolean): boolean {
+    if (typeof value !== "string" || value.length > 200_000) return false;
+    const tokens = value.trim().split(/\s+/);
+    if (tokens.length < 2) return false;
+    return tokens.every((token) => {
+        const pair = token.split(",");
+        if (pair.length !== 2 || pair.some((part) => !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(part))) return false;
+        const [lng, lat] = pair.map(Number);
+        return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180 &&
+            matches({ lat, lng });
+    });
+}
+
+function hasCompleteNavigationGeometryInput(
+    leg: any,
+    source: TransitGeometrySource | undefined,
+    delivered: RoutePathCoord[] | undefined
+): boolean {
+    if (!Array.isArray(delivered) || delivered.length < 2) return false;
+    let nextIndex = 0;
+    let previous: RoutePathCoord | undefined;
+    const matchesNextCoordinate = (coordinate: RoutePathCoord): boolean => {
+        // The display parser only may remove adjacent duplicate points. Never certify sampling,
+        // simplification, reversal, or missing points, even when the shortened line looks plausible.
+        if (previous?.lat === coordinate.lat && previous.lng === coordinate.lng) return true;
+        previous = coordinate;
+        const actual = delivered[nextIndex++];
+        return actual?.lat === coordinate.lat && actual.lng === coordinate.lng;
+    };
+    if (source === "WALK_STEPS_LINESTRING") {
+        // path 별칭·형상이 없는 step·알 수 없는 표현은 검증 완료로 승격하지 않는다.
+        if (!Array.isArray(leg?.steps) || leg.steps.length === 0 || leg.steps.length > 500) return false;
+        for (let index = 0; index < leg.steps.length; index += 1) {
+            if (!visitCompleteNavigationLineString(leg.steps[index]?.linestring, matchesNextCoordinate)) return false;
+        }
+        return nextIndex === delivered.length;
+    }
+    if (source === "WALK_PASS_SHAPE_LINESTRING" || source === "TRANSIT_PASS_SHAPE_LINESTRING") {
+        return visitCompleteNavigationLineString(leg?.passShape?.linestring, matchesNextCoordinate) &&
+            nextIndex === delivered.length;
+    }
+    return false;
 }
 
 /** 공급자 원본 값을 `parseTransitLegPathGeometry` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
@@ -326,6 +372,10 @@ export function parseTransitLegDetails(legs: unknown, itineraryPath?: RoutePathC
                 startName,
                 endName,
                 passStops,
+                navigationEvidence: parseTransitLegNavigationEvidence(
+                    leg,
+                    pathCoordsIsExact && hasCompleteNavigationGeometryInput(leg, pathGeometrySource, pathCoords)
+                ),
                 startCoord: normalizedStartCoord,
                 endCoord: normalizedEndCoord,
                 pathCoords,

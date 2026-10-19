@@ -40,6 +40,8 @@ export type SavedRouteMapPresentationInput = {
     mapZoom: number;
     isDark: boolean;
     focusedLegIndex?: number;
+    /** Separately validated, session-scoped walking paths; never persisted as provider evidence. */
+    guidanceWalkingPaths?: ReadonlyMap<number, TmapLatLng[]>;
 };
 
 export type SavedRouteMapPresentation = {

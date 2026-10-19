@@ -9,6 +9,23 @@ let currentAuthApiBaseUrl: string | null = null;
 const authTokenMemoryCache = new Map<string, string | null>();
 const authTokenReadInFlight = new Map<string, Promise<string | null>>();
 let authTokenCacheGeneration = 0;
+// Network refreshes capture this revision before I/O. Login/member writes and logout
+// invalidate late replies. Serialize durable mutations so logout wins over an ongoing write.
+let authCredentialRevision = 0;
+let authCredentialWrites: Promise<unknown> = Promise.resolve();
+export const getAuthCredentialRevision = () => authCredentialRevision;
+function serializeAuthWrite<T>(write: () => Promise<T>): Promise<T> {
+    const next = authCredentialWrites.then(write, write);
+    authCredentialWrites = next.catch(() => undefined);
+    return next;
+}
+export async function saveRefreshedAuthTokens(revision: number, access: string, refresh: string): Promise<boolean> {
+    return serializeAuthWrite(async () => {
+        if (revision !== authCredentialRevision) return false;
+        await writeAuthTokens(access, refresh);
+        return revision === authCredentialRevision;
+    });
+}
 type AuthInvalidationListener = () => void | Promise<void>;
 
 const authInvalidationListeners = new Set<AuthInvalidationListener>();
@@ -154,6 +171,10 @@ function normalizeAuthMember(member: StoredAuthMember | null | undefined): Store
 }
 
 export async function saveAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
+    authCredentialRevision += 1;
+    return serializeAuthWrite(() => writeAuthTokens(accessToken, refreshToken));
+}
+async function writeAuthTokens(accessToken?: string | null, refreshToken?: string | null) {
     const writes: Promise<unknown>[] = [syncSharedApiBaseUrl()];
 
     if (accessToken) {
@@ -178,6 +199,14 @@ export async function saveAuthTokens(accessToken?: string | null, refreshToken?:
 }
 
 export async function saveAuthMember(member?: StoredAuthMember | null) {
+    // Profile/curation edits for the same known member must not discard a consumed
+    // refresh rotation; only account identity changes invalidate the flight.
+    if (!authMemberMemoryCacheInitialized || authMemberMemoryCache?.id !== normalizeAuthMember(member)?.id) {
+        authCredentialRevision += 1;
+    }
+    return serializeAuthWrite(() => writeAuthMember(member));
+}
+async function writeAuthMember(member?: StoredAuthMember | null) {
     const normalized = normalizeAuthMember(member);
 
     if (!normalized) {
@@ -279,6 +308,7 @@ export async function getRefreshToken(): Promise<string | null> {
 }
 
 export async function clearAuthTokens({ notifyListeners = true } = {}) {
+    const logoutRevision = ++authCredentialRevision; // Fence replies already in flight, even during listener cleanup.
     if (notifyListeners) {
         // Account-scoped native state (including system alarms) must be purged
         // while the current member binding is still readable. Each listener is
@@ -294,37 +324,45 @@ export async function clearAuthTokens({ notifyListeners = true } = {}) {
         }
     }
 
-    // Once account cleanup succeeds, new requests must not observe an old
-    // in-memory credential while durable Keychain deletion is still running.
-    authTokenCacheGeneration += 1;
-    authTokenReadInFlight.clear();
-    authTokenMemoryCache.set(ACCESS_TOKEN_KEY, null);
-    authTokenMemoryCache.set(REFRESH_TOKEN_KEY, null);
-    authMemberCacheGeneration += 1;
-    authMemberMemoryCacheInitialized = true;
-    authMemberMemoryCache = null;
-    authMemberReadInFlight = null;
+    // A login/account replacement completed while old account cleanup was pending.
+    // Its credentials must not be deleted by the old logout.
+    if (logoutRevision !== authCredentialRevision) return;
+    const deletionRevision = ++authCredentialRevision; // Also fence refreshes started by cleanup itself.
+    return serializeAuthWrite(async () => {
+        if (deletionRevision !== authCredentialRevision) return;
+        // Once account cleanup succeeds, new requests must not observe an old
+        // in-memory credential while durable Keychain deletion is still running.
+        authTokenCacheGeneration += 1;
+        authTokenReadInFlight.clear();
+        authTokenMemoryCache.set(ACCESS_TOKEN_KEY, null);
+        authTokenMemoryCache.set(REFRESH_TOKEN_KEY, null);
+        authMemberCacheGeneration += 1;
+        authMemberMemoryCacheInitialized = true;
+        authMemberMemoryCache = null;
+        authMemberReadInFlight = null;
 
-    const deletionResults = await Promise.allSettled([
-        SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
-        SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
-        SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
-        deleteSharedItem(ACCESS_TOKEN_KEY),
-        deleteSharedItem(REFRESH_TOKEN_KEY),
-        deleteSharedItem(AUTH_MEMBER_KEY),
-        deleteSharedItem(AUTH_API_BASE_URL_KEY),
-    ]);
-    if (__DEV__ && process.env.NODE_ENV !== "test") {
-        deletionResults.forEach((result) => {
-            if (result.status === "rejected") {
-                console.warn("[auth] 로컬 인증 정보 삭제 실패", result.reason);
-            }
-        });
-    }
+        const deletionResults = await Promise.allSettled([
+            SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY),
+            SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY),
+            SecureStore.deleteItemAsync(AUTH_MEMBER_KEY),
+            deleteSharedItem(ACCESS_TOKEN_KEY),
+            deleteSharedItem(REFRESH_TOKEN_KEY),
+            deleteSharedItem(AUTH_MEMBER_KEY),
+            deleteSharedItem(AUTH_API_BASE_URL_KEY),
+        ]);
+        if (__DEV__ && process.env.NODE_ENV !== "test") {
+            deletionResults.forEach((result) => {
+                if (result.status === "rejected") {
+                    console.warn("[auth] 로컬 인증 정보 삭제 실패", result.reason);
+                }
+            });
+        }
+    });
 }
 
 export function resetAuthStorageMemoryCacheForTests(): void {
     if (process.env.NODE_ENV !== "test") return;
+    authCredentialRevision += 1;
     authTokenCacheGeneration += 1;
     authTokenMemoryCache.clear();
     authTokenReadInFlight.clear();

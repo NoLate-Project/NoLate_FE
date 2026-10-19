@@ -34,6 +34,8 @@ export type SheetSnapMode = 'compact' | 'expanded';
 export type ScheduleDetailPreviewProps = {
   /** Internal QA only. Production routes always resolve the item from the schedule store. */
   previewItem?: ScheduleItem;
+  previewOfflineGuidanceMap?: boolean;
+  previewGuidanceAuthenticationSource?: import('../../modules/journey/automaticJourneyAuthentication').JourneyAuthenticationSource;
   initialSheetMode?: SheetSnapMode;
   initialParticipantsExpanded?: boolean;
   previewNowMs?: number;

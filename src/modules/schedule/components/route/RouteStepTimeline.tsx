@@ -1,4 +1,5 @@
 import styles from "./RouteStepTimeline.styles";
+import { routeColorInk } from '../../routeColorContrast';
 import React, { useEffect, useMemo, useState } from "react";
 import {
     Platform,
@@ -6,6 +7,7 @@ import {
     Text,
     UIManager,
     View,
+    useWindowDimensions,
 } from "react-native";
 
 import {
@@ -60,7 +62,10 @@ export default function RouteStepTimeline({
     initialExpandedStepId,
     compact = false,
     realtimeArrivalsEnabled = true,
+    currentGuidance,
+    stepDisplayNames,
 }: Props) {
+    const { fontScale } = useWindowDimensions();
     const { colors, mode } = useTheme();
     const isDark = forceDark ?? mode === "dark";
     const primaryColor = primaryTextColor ?? colors.textPrimary;
@@ -210,11 +215,12 @@ export default function RouteStepTimeline({
     };
 
     return (
-        <View style={styles.root}>
+        <View key={fontScale} style={styles.root}>
             {routeInfo.steps.map((step, index) => {
                 const isLast = index === routeInfo.steps.length - 1;
                 const stepColor = getRouteStepColor(step);
                 const selected = selectedStepId === step.id;
+                const current = currentGuidance?.stepId === step.id && !['ORIGIN', 'DESTINATION'].includes(step.type);
                 const isEndpointStep = step.type === "ORIGIN" || step.type === "DESTINATION";
                 const stepPressEnabled = !!onStepPress && (allowEndpointPress || !isEndpointStep);
                 const hasBadge = step.type === "SUBWAY" || step.type === "BUS";
@@ -264,7 +270,7 @@ export default function RouteStepTimeline({
                 const iconColor = isPointStep
                     ? stepColor
                     : compact && isColoredMovementStep
-                        ? "#FFFFFF"
+                        ? routeColorInk(stepColor)
                         : isDark
                         ? "#F5F7FA"
                         : isTransitStep
@@ -287,7 +293,7 @@ export default function RouteStepTimeline({
                             </View>
                             {compact && shouldShowTimelineClock && (
                                 <View style={[styles.timelineClockBadge, { backgroundColor: isDark ? "#22252C" : "#F8FAFC", borderColor: isDark ? "rgba(255,255,255,0.16)" : "#D1D5DB" }]}>
-                                    <Text style={[styles.timelineClockText, { color: isDark ? "#D7D7DA" : "#374151" }]}>
+                                    <Text maxFontSizeMultiplier={1.3} style={[styles.timelineClockText, { color: isDark ? "#D7D7DA" : "#374151" }]}>
                                         {timelineClockText}
                                     </Text>
                                 </View>
@@ -307,6 +313,9 @@ export default function RouteStepTimeline({
                             )}
                         </View>
                         <View style={[styles.body, compact && styles.bodyCompact]}>
+                            {current && <View testID={`journey-current-step-${step.id}`} style={styles.guidanceCurrent}>
+                                <Text style={styles.guidanceCurrentText} accessibilityLiveRegion="polite">현재 위치 · {currentGuidance?.label}</Text>
+                            </View>}
                             <View
                                 style={[
                                     styles.titleRow,
@@ -316,12 +325,12 @@ export default function RouteStepTimeline({
                             >
                                 {!!pointLabel && (
                                     <View style={[styles.pointBadge, compact && styles.pointBadgeCompact, { backgroundColor: stepColor }]}>
-                                        <Text style={[styles.pointBadgeText, compact && styles.pointBadgeTextCompact]}>{pointLabel}</Text>
+                                        <Text style={[styles.pointBadgeText, compact && styles.pointBadgeTextCompact, { color: routeColorInk(stepColor) }]}>{pointLabel}</Text>
                                     </View>
                                 )}
                                 {hasBadge && (
                                     <View style={[styles.badge, compact && styles.badgeCompact, { backgroundColor: stepColor }]}>
-                                        <Text numberOfLines={1} style={[styles.badgeText, compact && styles.badgeTextCompact]}>
+                                        <Text numberOfLines={1} maxFontSizeMultiplier={1.5} style={[styles.badgeText, compact && styles.badgeTextCompact, { color: routeColorInk(stepColor) }]}>
                                             {step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")}
                                         </Text>
                                     </View>
@@ -340,6 +349,8 @@ export default function RouteStepTimeline({
                                     )}
                                 </Text>
                             </View>
+                            {stepDisplayNames?.[step.id] && <Text testID={`route-step-full-name-${step.id}`}
+                                style={[styles.description, { color: primaryColor }]}>{stepDisplayNames[step.id]}</Text>}
                             {hasBadge && !compact && (
                                 <Text numberOfLines={1} style={[styles.description, compact && styles.descriptionCompact, { color: secondaryColor }]}>
                                     {rideDescription}
@@ -556,9 +567,10 @@ export default function RouteStepTimeline({
                 const stepAccessibilityLabel = isEndpointStep
                     ? `${pointLabel}, ${buildStepTitle(step)}`
                     : [
-                        step.badgeText ?? step.lineName,
+                        stepDisplayNames?.[step.id] ?? step.badgeText ?? step.lineName,
                         buildStepTitle(step),
                         hasBadge ? rideDescription : step.description,
+                        compact && shouldShowTimelineClock ? timelineClockText : null,
                     ].filter(Boolean).join(", ");
 
                 return (
@@ -568,13 +580,15 @@ export default function RouteStepTimeline({
                             styles.item,
                             compact && styles.itemCompact,
                             selectedStyle,
+                            current && styles.guidanceCurrentRow,
                         ]}
                     >
                         <Pressable
                             testID={`route-step-row-${step.id}`}
+                            accessible
                             disabled={!stepPressEnabled}
                             accessibilityRole={stepPressEnabled ? "button" : undefined}
-                            accessibilityLabel={stepPressEnabled ? stepAccessibilityLabel : undefined}
+                            accessibilityLabel={[stepAccessibilityLabel, current ? `현재 위치, ${currentGuidance?.label}` : null].filter(Boolean).join(', ')}
                             accessibilityState={stepPressEnabled ? {
                                 selected,
                             } : undefined}
@@ -590,7 +604,7 @@ export default function RouteStepTimeline({
                             <Pressable
                                 testID={`route-step-disclosure-${step.id}`}
                                 accessibilityRole="button"
-                                accessibilityLabel={`${step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")} 경유지 ${expanded ? "접기" : "보기"}`}
+                                accessibilityLabel={`${stepDisplayNames?.[step.id] ?? step.badgeText ?? step.lineName ?? (step.type === "BUS" ? "버스" : "지하철")} 경유지 ${expanded ? "접기" : "보기"}`}
                                 accessibilityState={{ expanded }}
                                 accessibilityHint="현재 시트를 유지한 채 경유지 목록만 열거나 닫습니다"
                                 hitSlop={10}

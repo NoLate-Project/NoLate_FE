@@ -66,8 +66,7 @@ describe('schedule route sheet controls', () => {
       'const IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT = 196;',
     );
     expect(detailStyleSource).toContain('minHeight: 120,');
-    expect(detailSource).toMatch(
-      /IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT \+ (?:insets\.bottom|bottomInset)/,
-    );
+    expect(detailSource).toContain('IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)');
+    expect(detailSource).toContain(') + bottomInset');
   });
 });

@@ -1,6 +1,9 @@
 /** Real auth storage, HTTP interceptors and coordinator; no network/native I/O. */
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' }, NativeModules: {} }));
 jest.mock('../src/api/env', () => ({ getEnv: () => undefined }));
+// This suite covers ordinary auth cleanup with diagnostic transport opt-in absent.
+// The enabled native transport and shared refresh flight are tested separately.
+jest.mock('../src/modules/journey/automaticJourney', () => ({ refreshAutomaticJourneyCredentials: async () => null }));
 jest.mock('../src/modules/storage/secureStorage', () => {
     const values = new Map<string, string>();
     return {

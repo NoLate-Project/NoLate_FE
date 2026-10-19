@@ -49,6 +49,11 @@ struct NoLateDepartureLiveActivityIntent: LiveActivityIntent {
       generation >= 0,
       NoLateLiveActivityPolicy.isCanonicalActionEventKey(actionEventKey),
       Activity<NoLateDepartureAttributes>.activities.contains(where: { activity in
+        NoLateLiveActivityPolicy.isDepartureActionAvailable(
+          status: activity.content.state.status,
+          nowEpochSeconds: now,
+          actionExpiresAtEpochSeconds: activity.content.state.actionExpiresAtEpochSeconds
+        ) && activity.content.state.journey == nil &&
         NoLateLiveActivityPolicy.mayRecordDepartureAction(
           requestedScheduleId: scheduleId,
           requestedRecipientMemberId: Int64(recipientMemberId),
@@ -86,6 +91,14 @@ struct NoLateDepartureLiveActivityIntent: LiveActivityIntent {
         )
       {
         let current = activity.content.state
+        // Recording crosses an await boundary. Guidance may have started while
+        // the action was persisted; a stale departure tap must not end it.
+        guard current.journey == nil,
+              NoLateLiveActivityPolicy.isDepartureActionAvailable(
+                status: current.status,
+                nowEpochSeconds: now,
+                actionExpiresAtEpochSeconds: current.actionExpiresAtEpochSeconds
+              ) else { continue }
         let terminal = current.replacingStatus(
           .cancelled,
           revision: min(current.revision + 1, noLateLiveActivityMaximumSafeInteger),

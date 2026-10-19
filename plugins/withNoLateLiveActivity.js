@@ -5,10 +5,13 @@ const MODULE_ROOT = "../modules/nolate-live-activity/ios";
 const APP_INTENT_PATH = `${MODULE_ROOT}/Shared/NoLateDepartureLiveActivityIntent.swift`;
 const EXTENSION_SOURCE_PATHS = [
   `${MODULE_ROOT}/NoLateLiveActivityModels.swift`,
+  `${MODULE_ROOT}/NoLateGuidanceContent.swift`,
+  `${MODULE_ROOT}/Shared/NoLateGuidanceAttributes.swift`,
   `${MODULE_ROOT}/Shared/NoLateDepartureActivityAttributes.swift`,
   APP_INTENT_PATH,
   `${MODULE_ROOT}/Extension/NoLateLiveActivityBundle.swift`,
   `${MODULE_ROOT}/Extension/NoLateDepartureLiveActivity.swift`,
+  `${MODULE_ROOT}/Extension/NoLateGuidanceLiveActivity.swift`,
   `${MODULE_ROOT}/Extension/NoLateRouteBarView.swift`,
 ];
 const ASSET_PATH = `${MODULE_ROOT}/Extension/Assets.xcassets`;
@@ -57,14 +60,18 @@ function fileReference(project, path, fileType) {
   for (const [uuid, reference] of Object.entries(references)) {
     if (uuid.endsWith("_comment") || typeof reference !== "object") continue;
     const existingPath = unquote(reference.path);
-    if (existingPath === path || existingPath === moduleRelativePath) return uuid;
+    if (existingPath === path) {
+      reference.sourceTree = 'SOURCE_ROOT';
+      return uuid;
+    }
+    if (existingPath === moduleRelativePath) return uuid;
   }
   const uuid = project.generateUuid();
   references[uuid] = {
     isa: "PBXFileReference",
     lastKnownFileType: fileType,
     path: `"${path}"`,
-    sourceTree: '"<group>"',
+    sourceTree: 'SOURCE_ROOT',
   };
   references[`${uuid}_comment`] = path.split("/").at(-1);
   return uuid;
