@@ -79,7 +79,6 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
     },
         topHeaderKindText: {
         fontSize: 10,
-        lineHeight: 14,
         fontWeight: "800",
         letterSpacing: 0,
     },
@@ -87,7 +86,6 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
         flex: 1,
         minWidth: 0,
         fontSize: 17,
-        lineHeight: 22,
         fontWeight: "900",
         letterSpacing: 0,
     },
@@ -124,7 +122,6 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
         flex: 1,
         minWidth: 0,
         fontSize: 13,
-        lineHeight: 18,
         fontWeight: "900",
         letterSpacing: 0,
     },
@@ -136,7 +133,6 @@ export function createHeaderStyles(options: ScheduleDetailStylesOptions) {
     },
         topHeaderTravelText: {
         fontSize: 11,
-        lineHeight: 15,
         fontWeight: "900",
         letterSpacing: 0,
     },

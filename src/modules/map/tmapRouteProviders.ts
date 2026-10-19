@@ -1,4 +1,5 @@
 import axios from "axios";
+import { parseTmapPedestrianGeometry } from './tmapPedestrianGeometry';
 
 import {
     getEnv,
@@ -158,16 +159,20 @@ export async function getWalkingRouteViaTmap(
     destination: Place,
     searchOption = "0"
 ): Promise<ParsedRoadRoute> {
+    // Bind the response to the actual request, not caller objects mutated during the await.
+    const requestedOrigin = { lat: origin.lat, lng: origin.lng };
+    const requestedDestination = { lat: destination.lat, lng: destination.lng };
     const client = tmapClient();
     const payload = new URLSearchParams({
-        startX: String(origin.lng),
-        startY: String(origin.lat),
-        endX: String(destination.lng),
-        endY: String(destination.lat),
+        startX: String(requestedOrigin.lng),
+        startY: String(requestedOrigin.lat),
+        endX: String(requestedDestination.lng),
+        endY: String(requestedDestination.lat),
         startName: origin.name ?? "출발",
         endName: destination.name ?? "도착",
         reqCoordType: "WGS84GEO",
         resCoordType: "WGS84GEO",
+        sort: "index",
         searchOption,
     });
     const response = await client.post(
@@ -179,7 +184,8 @@ export async function getWalkingRouteViaTmap(
         }
     );
 
-    return parseTmapRoadRouteResponse(response.data);
+    return { ...parseTmapRoadRouteResponse(response.data),
+        pedestrianGeometry: parseTmapPedestrianGeometry(response.data, requestedOrigin, requestedDestination) };
 }
 
 /** 공급자 원본 값을 `parseTransitOptionsFromTmap` 규칙으로 검증·정규화하고 잘못된 항목은 안전하게 제외합니다. */
@@ -411,6 +417,7 @@ export async function getWalkingAlternatives(origin: Place, destination: Place):
 
             return {
                 id: buildAlternativeId("walk-api", index),
+                pedestrianGeometry: parsed.pedestrianGeometry,
                 mode: "WALK",
                 minutes: parsed.minutes,
                 distanceMeters: parsed.distanceMeters,

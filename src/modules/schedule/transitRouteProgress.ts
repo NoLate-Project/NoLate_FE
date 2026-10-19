@@ -63,7 +63,9 @@ function compactProgressIdentity(rawValue?: string): string | undefined {
 }
 
 function getRideLineLabel(leg: TransitLegDetail): string {
-    const candidates = [leg.lineName, ...leg.label.split(/[·|]/u)];
+    // Saved JSON/provider previews can omit the display label. Its absence is not
+    // navigation evidence and must not crash the route detail's presentation.
+    const candidates = [leg.lineName, ...(typeof leg.label === "string" ? leg.label.split(/[·|]/u) : [])];
     for (const candidate of candidates) {
         const identity = compactProgressIdentity(candidate);
         if (identity) return identity;
@@ -79,13 +81,16 @@ export function buildTransitRouteProgressSegments(
     if (!Array.isArray(legs)) return [];
 
     return legs.map((leg, index) => {
-        const minutes = typeof leg.durationMinutes === "number" && Number.isFinite(leg.durationMinutes)
-            ? Math.max(1, Math.round(leg.durationMinutes))
+        const duration = leg.durationMinutes;
+        const durationKnown = typeof duration === "number" && Number.isFinite(duration);
+        const minutes = durationKnown
+            ? Math.max(1, Math.round(duration))
             : 1;
         const isRide = isTransitRideKind(leg.kind);
         return {
             key: `${leg.kind}-${index}`,
-            label: formatProgressDuration(minutes),
+            // Neutral layout weight is not an observed one-minute travel time.
+            label: durationKnown ? formatProgressDuration(minutes) : "시간 미확인",
             lineLabel: isRide ? getRideLineLabel(leg) : undefined,
             kind: leg.kind,
             minutes,

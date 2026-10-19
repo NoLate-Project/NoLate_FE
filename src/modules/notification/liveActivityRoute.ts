@@ -14,6 +14,8 @@ export type LiveActivityRouteSegment = {
     kind: LiveActivityRouteSegmentKind;
     label: string;
     colorHex: string;
+    /** Original journey leg index, before compact Lock Screen projection. */
+    legIndex?: number;
 };
 
 type WeightedLiveActivityRouteSegment = LiveActivityRouteSegment & {

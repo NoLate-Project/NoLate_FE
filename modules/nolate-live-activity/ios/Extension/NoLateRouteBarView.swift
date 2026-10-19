@@ -5,6 +5,7 @@ struct NoLateRouteBarView: View {
   var compact = false
   var usesDarkSurface = false
   var themeOverride: NoLateLiveActivityThemeTokens?
+  var journey: NoLateJourneyProgress?
   @Environment(\.colorScheme) private var colorScheme
 
   private var theme: NoLateLiveActivityThemeTokens {
@@ -19,10 +20,19 @@ struct NoLateRouteBarView: View {
         routeIcon(for: segment)
           .font(.system(size: compact ? 14 : 16, weight: .semibold))
           .foregroundStyle(routeColor(for: segment))
-          .accessibilityLabel(accessibilityLabel(for: segment))
+          .opacity(iconOpacity(for: segment, at: index))
+          .overlay {
+            if isActive(segment, at: index) {
+              Circle()
+                .stroke(Color(hex: theme.accent), lineWidth: 1.5)
+                .frame(width: compact ? 22 : 24, height: compact ? 22 : 24)
+                .accessibilityHidden(true)
+            }
+          }
+          .accessibilityLabel(progressAccessibilityLabel(for: segment, at: index))
 
         if index < segments.count - 1 {
-          routeConnector(after: segment)
+          routeConnector(after: segment, at: index)
         }
       }
     }
@@ -30,15 +40,51 @@ struct NoLateRouteBarView: View {
   }
 
   @ViewBuilder
-  private func routeConnector(after segment: NoLateRouteSegment) -> some View {
-    let connector = Capsule()
-      .fill(routeColor(for: segment).opacity(theme == .dark ? 1 : 0.9))
+  private func routeConnector(after segment: NoLateRouteSegment, at index: Int) -> some View {
+    GeometryReader { proxy in
+      ZStack(alignment: .leading) {
+        Capsule().fill(routeColor(for: segment).opacity(journey == nil ? 0 : 0.22))
+        Capsule()
+          .fill(routeColor(for: segment).opacity(theme == .dark ? 1 : 0.9))
+          .frame(width: proxy.size.width * connectorProgress(after: segment, at: index))
+      }
+    }
       .frame(height: 2.5)
-      .accessibilityHidden(true)
-
-    connector
       .frame(minWidth: compact ? 8 : 10, maxWidth: .infinity)
       .layoutPriority(1)
+      .accessibilityHidden(true)
+  }
+
+  private func legIndex(for segment: NoLateRouteSegment, at index: Int) -> Int {
+    segment.legIndex ?? segments.prefix(index).filter { $0.kind != .origin && $0.kind != .destination }.count
+  }
+
+  private func isActive(_ segment: NoLateRouteSegment, at index: Int) -> Bool {
+    guard let journey, !journey.phase.isTerminal,
+          segment.kind != .origin, segment.kind != .destination else { return false }
+    return legIndex(for: segment, at: index) == journey.activeLegIndex
+  }
+
+  private func connectorProgress(after segment: NoLateRouteSegment, at index: Int) -> Double {
+    guard let journey else { return 1 }
+    if journey.phase == .arrived || segment.kind == .origin { return 1 }
+    let segmentIndex = legIndex(for: segment, at: index)
+    if segmentIndex < journey.activeLegIndex { return 1 }
+    if segmentIndex > journey.activeLegIndex { return 0 }
+    return min(1, max(0, journey.legProgress))
+  }
+
+  private func iconOpacity(for segment: NoLateRouteSegment, at index: Int) -> Double {
+    guard let journey, journey.phase != .arrived else { return 1 }
+    if segment.kind == .origin { return 1 }
+    if segment.kind == .destination { return 0.45 }
+    return legIndex(for: segment, at: index) <= journey.activeLegIndex ? 1 : 0.4
+  }
+
+  private func progressAccessibilityLabel(for segment: NoLateRouteSegment, at index: Int) -> String {
+    let label = accessibilityLabel(for: segment)
+    guard isActive(segment, at: index), let journey else { return label }
+    return "\(label), 현재 구간, \(Int((journey.legProgress * 100).rounded()))퍼센트 진행"
   }
 
   private func routeColor(for segment: NoLateRouteSegment) -> Color {

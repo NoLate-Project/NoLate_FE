@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Animated,
   Pressable,
+  ScrollView,
   Text,
   View,
 } from 'react-native';
@@ -18,14 +19,22 @@ import {
 } from './ScheduleDetailChrome';
 import { createScheduleDetailStyles } from './schedule-detail.styles';
 import type { ScheduleDetailPresentation } from './scheduleDetailPresentationModel';
+import { SavedJourneyGuidanceCard } from '../../modules/journey/SavedJourneyGuidanceCard';
+import type { JourneyRouteInput } from '../../modules/journey/journeyRouteInput';
 
 type ScheduleDetailRouteQuickSummaryProps = {
   presentation: ScheduleDetailPresentation;
+  automaticGuidancePrepared?: boolean;
+  automaticGuidanceActive?: boolean;
+  automaticRouteInput?: JourneyRouteInput | null;
 };
 
 /** 축소된 경로 시트에 권장 출발, 남은 시간, 경로 막대와 출발 완료 동작을 요약한다. */
 export function ScheduleDetailRouteQuickSummary({
   presentation,
+  automaticGuidancePrepared = false,
+  automaticGuidanceActive = false,
+  automaticRouteInput = null,
 }: ScheduleDetailRouteQuickSummaryProps) {
   const {
     completeDeparture,
@@ -38,6 +47,7 @@ export function ScheduleDetailRouteQuickSummary({
     effectiveTransitRoutePresentation,
     hasDepartureInfo,
     isDark,
+    journeyGuidanceAvailable,
     primaryText,
     recommendedDepartureTimeLabel,
     routeArrivalSummary,
@@ -56,7 +66,7 @@ export function ScheduleDetailRouteQuickSummary({
       {...getScheduleAccessibilityVisibility(sheetMode === 'compact')}
       style={[styles.sheetQuickSummaryClip, sheetQuickSummaryAnimatedStyle]}
     >
-      <View style={styles.improvedCompactSummary}>
+      <ScrollView style={styles.compactSummaryScroll} contentContainerStyle={styles.improvedCompactSummary}>
         <View style={styles.improvedRouteIdentityCompact}>
           <Pressable
             onPress={() => snapSheet('expanded')}
@@ -82,18 +92,18 @@ export function ScheduleDetailRouteQuickSummary({
               {routeIdentityTitle}
             </Text>
           </Pressable>
-          {hasDepartureInfo && (
+          {!automaticGuidancePrepared && (hasDepartureInfo || journeyGuidanceAvailable) && (
             <Pressable
               onPress={completeDeparture}
-              disabled={departureCompleted || departureActionPending}
+              disabled={(departureCompleted && !journeyGuidanceAvailable) || departureActionPending}
               accessibilityRole="button"
               accessibilityLabel={
-                departureCompleted ? '출발 완료' : '출발했어요'
+                journeyGuidanceAvailable ? (departureCompleted ? '길안내 보기' : '길안내 시작') : departureCompleted ? '출발 완료' : '출발했어요'
               }
               accessibilityState={{
                 selected: departureCompleted,
                 busy: departureActionPending,
-                disabled: departureCompleted || departureActionPending,
+                disabled: (departureCompleted && !journeyGuidanceAvailable) || departureActionPending,
               }}
               style={({ pressed }) => [
                 styles.improvedCompactDepartureAction,
@@ -126,6 +136,8 @@ export function ScheduleDetailRouteQuickSummary({
               >
                 {departureActionPending
                   ? '처리 중'
+                  : journeyGuidanceAvailable
+                  ? (departureCompleted ? '길안내 보기' : '길안내 시작')
                   : departureCompleted
                   ? '출발 완료'
                   : '출발했어요'}
@@ -134,7 +146,7 @@ export function ScheduleDetailRouteQuickSummary({
           )}
         </View>
 
-        <Pressable
+        {!automaticGuidanceActive && <Pressable
           onPress={() => snapSheet('expanded')}
           accessibilityRole="button"
           accessibilityLabel={[
@@ -208,7 +220,7 @@ export function ScheduleDetailRouteQuickSummary({
           >
             {routeArrivalSummary}
           </Text>
-          {!effectiveTransitRoutePresentation ? (
+          {!automaticRouteInput && !effectiveTransitRoutePresentation ? (
             <CompactRouteProgressStrip
               segments={routeProgressSegments}
               isDark={isDark}
@@ -252,8 +264,9 @@ export function ScheduleDetailRouteQuickSummary({
               {routeFactLabels.join(' · ')}
             </Text>
           ) : null}
-        </Pressable>
-      </View>
+        </Pressable>}
+        {automaticRouteInput && <SavedJourneyGuidanceCard input={automaticRouteInput} scheduleId={String(presentation.item.id)} compact isDark={isDark} />}
+      </ScrollView>
     </Animated.View>
   );
 }

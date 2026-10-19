@@ -19,4 +19,7 @@ const config = getDefaultConfig(__dirname);
 if (process.env.NOLATE_E2E_METRO_CACHE_NAMESPACE?.startsWith("nolate-eta-real-e2e.")) {
     config.cacheVersion += ":" + process.env.NOLATE_E2E_METRO_CACHE_NAMESPACE;
 }
+// Isolated QA can use Node file watching when the local Watchman socket is unavailable.
+// Metro's useWatchman switch is top-level; a resolver field does not change its file map.
+if (process.env.NOLATE_QA_NO_WATCHMAN === "1") config.useWatchman = false;
 module.exports = config;

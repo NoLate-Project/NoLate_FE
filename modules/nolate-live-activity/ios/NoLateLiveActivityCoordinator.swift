@@ -169,6 +169,25 @@ actor NoLateLiveActivityCoordinator {
           )
         }
         let current = primary.content.state
+        if primary.activityState == .ended || primary.activityState == .dismissed {
+          return NoLateLiveActivityMutationResult(
+            applied: false,
+            operation: "ignored",
+            activityId: primary.id,
+            reason: "TERMINAL_STATE"
+          )
+        }
+        if let reason = NoLateLiveActivityPolicy.journeyUpdateRejection(
+          current: current,
+          incoming: command.contentState
+        ) {
+          return NoLateLiveActivityMutationResult(
+            applied: false,
+            operation: "ignored",
+            activityId: primary.id,
+            reason: reason
+          )
+        }
         if command.contentState.revision < current.revision {
           return NoLateLiveActivityMutationResult(
             applied: false,
@@ -330,6 +349,27 @@ actor NoLateLiveActivityCoordinator {
         "generation": Double(activity.attributes.generation),
         "revision": Double(state.revision),
         "status": state.status.rawValue,
+        "scheduleTitle": activity.attributes.scheduleTitle,
+        "destinationName": activity.attributes.destinationName,
+        "scheduleStartAt": activity.attributes.scheduleStartAt,
+        "actionEventKey": activity.attributes.actionEventKey,
+        "logicalEventKey": activity.attributes.logicalEventKey,
+        "journey": state.journey.map { journey -> [String: Any?] in
+          [
+            "sessionId": journey.sessionId,
+            "generation": Double(journey.generation),
+            "routeRevision": Double(journey.routeRevision),
+            "sequence": Double(journey.sequence),
+            "phase": journey.phase.rawValue,
+            "activeLegIndex": journey.activeLegIndex,
+            "currentStopIndex": journey.currentStopIndex,
+            "remainingStops": journey.remainingStops,
+            "legProgress": journey.legProgress,
+            "nextInstruction": journey.nextInstruction,
+            "observedAtEpochSeconds": Double(journey.observedAtEpochSeconds),
+            "overallProgress": journey.overallProgress
+          ]
+        },
         "updateToken": activity.pushToken?.noLateHexString
       ]
     }

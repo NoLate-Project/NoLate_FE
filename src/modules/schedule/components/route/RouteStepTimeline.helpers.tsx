@@ -94,6 +94,8 @@ export type RouteStepTimelineProps = {
   initialExpandedStepId?: string;
   compact?: boolean;
   realtimeArrivalsEnabled?: boolean;
+  currentGuidance?: { stepId: string; label: string };
+  stepDisplayNames?: Record<string, string>;
 };
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];

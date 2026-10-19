@@ -36,6 +36,8 @@ export type ScheduleDetailPreviewProps = {
   previewItem?: ScheduleItem;
   /** Cached production item used by the pre-mounted detail scene before route dispatch. */
   initialItem?: ScheduleItem;
+  previewOfflineGuidanceMap?: boolean;
+  previewGuidanceAuthenticationSource?: import('../../modules/journey/automaticJourneyAuthentication').JourneyAuthenticationSource;
   initialSheetMode?: SheetSnapMode;
   initialParticipantsExpanded?: boolean;
   previewNowMs?: number;

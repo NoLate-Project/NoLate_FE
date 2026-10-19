@@ -24,6 +24,8 @@ import type {
 } from '../../modules/schedule/types';
 import { isRouteDetailEntryRequested } from '../../modules/schedule/routeDetailNavigation';
 import { fromISO } from '../../../lib/util/data';
+import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
+import { useSavedJourneyMapView } from '../../modules/journey/useSavedJourneyPosition';
 import {
   APP_ACCENT_BLUE,
   DEFAULT_CAMERA,
@@ -34,6 +36,7 @@ import { mapCoordFromUnknown, type SheetSnapMode } from './scheduleDetailModel';
 type ScheduleDetailMapControllerOptions = {
   scheduleId?: string;
   item?: ScheduleItem;
+  currentMemberId?: number | null;
   inspectedTravelPlan?: ScheduleTravelPlan;
   savedRecommendedDepartureAt?: Date;
   isDark: boolean;
@@ -50,6 +53,7 @@ type ScheduleDetailMapControllerOptions = {
 export function useScheduleDetailMapController({
   scheduleId,
   item,
+  currentMemberId,
   inspectedTravelPlan,
   savedRecommendedDepartureAt,
   isDark,
@@ -97,6 +101,15 @@ export function useScheduleDetailMapController({
   );
 
   const displayRoute = inspectedTravelPlan?.route ?? item?.route;
+  const guidanceInput = useMemo(() => item && currentMemberId != null && !inspectedTravelPlan
+    && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === currentMemberId
+    ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
+    [item, currentMemberId, inspectedTravelPlan]);
+  const { position: guidancePosition, walkingPaths: guidanceWalkingPaths } = useSavedJourneyMapView(guidanceInput, String(item?.id ?? ''));
+  // Stabilize immutable geometry across the hook's freshness clock; do not refit every second.
+  const guidanceWalkingJSON = JSON.stringify(guidanceWalkingPaths);
+  const guidanceWalkingCoordinates = useMemo(() => new Map<number, {latitude: number; longitude: number}[]>(
+    (JSON.parse(guidanceWalkingJSON) as typeof guidanceWalkingPaths).map(path => [path.legIndex, path.coordinates])), [guidanceWalkingJSON]);
   const displayOrigin = inspectedTravelPlan?.origin ?? item?.origin;
   const displayDestination =
     inspectedTravelPlan?.destination ?? item?.destination;
@@ -115,6 +128,7 @@ export function useScheduleDetailMapController({
         mapZoom,
         isDark,
         focusedLegIndex,
+        guidanceWalkingPaths: guidanceWalkingCoordinates,
       }),
     [
       displayDestination,
@@ -123,6 +137,7 @@ export function useScheduleDetailMapController({
       focusedLegIndex,
       isDark,
       mapZoom,
+      guidanceWalkingCoordinates,
     ],
   );
   const {
@@ -132,6 +147,10 @@ export function useScheduleDetailMapController({
     markers,
   } = mapPresentation;
   const displayMarkers = useMemo(() => {
+    if (guidancePosition) return [...markers, {
+      id: 'schedule-detail-guidance-location', ...guidancePosition,
+      displayType: 'dot' as const, tintColor: APP_ACCENT_BLUE, badgeBorderColor: '#FFFFFF', dotSize: 14, zIndex: 1001,
+    }];
     if (!currentLocationCoord) return markers;
     return [
       ...markers,
@@ -145,15 +164,16 @@ export function useScheduleDetailMapController({
         zIndex: 1000,
       },
     ];
-  }, [currentLocationCoord, markers]);
+  }, [currentLocationCoord, markers, guidancePosition]);
   const mapCoords = useMemo(
     () =>
       getSavedRouteFitCoords(
         displayRoute,
         displayOrigin ?? undefined,
         displayDestination ?? undefined,
+        guidanceWalkingCoordinates,
       ),
-    [displayDestination, displayOrigin, displayRoute],
+    [displayDestination, displayOrigin, displayRoute, guidanceWalkingCoordinates],
   );
   const mapEdgePadding = useMemo(
     () => ({
@@ -240,7 +260,7 @@ export function useScheduleDetailMapController({
       const leg = routeLegs[legIndex];
       if (!leg) return;
 
-      const legCoords = getSavedTransitLegCoords(leg);
+      const legCoords = leg.kind === 'WALK' ? guidanceWalkingCoordinates.get(legIndex) ?? getSavedTransitLegCoords(leg) : getSavedTransitLegCoords(leg);
       if (legCoords.length < 2) return;
 
       setFocusedLegIndex(legIndex);
@@ -255,7 +275,7 @@ export function useScheduleDetailMapController({
         },
       });
     },
-    [routeLegs, sheetMinHeight, snapSheet, topInset],
+    [routeLegs, sheetMinHeight, snapSheet, topInset, guidanceWalkingCoordinates],
   );
 
   const focusRouteBoardingPoint = useCallback(
@@ -466,6 +486,7 @@ export function useScheduleDetailMapController({
     displayMarkers,
     displayOrigin,
     displayPathOverlays,
+    guidanceWalkingPaths,
     savedDisplayTravelMinutes,
     displayTravelMode,
     handleMapMarkerPress,

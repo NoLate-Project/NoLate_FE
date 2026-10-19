@@ -1,5 +1,5 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 
 import CalendarGlassSurface from "../../modules/schedule/components/calendar/CalendarGlassSurface";
 import {
@@ -19,6 +19,7 @@ type ScheduleDetailHeaderProps = {
 export function ScheduleDetailHeader({
   presentation,
 }: ScheduleDetailHeaderProps) {
+  const { fontScale } = useWindowDimensions();
   const {
     canEditSchedule,
     canManageSchedule,
@@ -44,7 +45,7 @@ export function ScheduleDetailHeader({
   } = presentation;
 
   return (
-      <View style={styles.topOverlay}>
+      <View key={fontScale} style={styles.topOverlay}>
         <CalendarGlassSurface
           variant="sheet"
           tone="flat"
@@ -122,6 +123,7 @@ export function ScheduleDetailHeader({
                     { color: primaryText },
                   ]}
                   numberOfLines={1}
+                  accessibilityLabel={isPlainSchedule ? '일정 상세' : item.title}
                 >
                   {isPlainSchedule ? '일정 상세' : item.title}
                 </Text>
@@ -209,6 +211,7 @@ export function ScheduleDetailHeader({
                 <Text
                   style={[styles.topHeaderRouteBarText, { color: primaryText }]}
                   numberOfLines={1}
+                  accessibilityLabel={routeTitle}
                 >
                   {routeTitle}
                 </Text>

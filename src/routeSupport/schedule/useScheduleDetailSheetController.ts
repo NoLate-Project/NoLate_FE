@@ -7,6 +7,7 @@ import {
   Platform,
   ScrollView,
   UIManager,
+  useWindowDimensions,
   type LayoutChangeEvent,
 } from "react-native";
 
@@ -45,12 +46,13 @@ export function useScheduleDetailSheetController({
     previewEnabled ? initialSheetMode : "compact",
   );
   const baseSheetHeights = getScheduleDetailSheetHeights(windowHeight);
+  const { fontScale } = useWindowDimensions();
   const sheetMaxHeight = baseSheetHeights.maxHeight;
   const sheetMinHeight = Math.min(
     sheetMaxHeight - 1,
     Math.max(
       baseSheetHeights.minHeight,
-      IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT + bottomInset,
+      Math.ceil(IMPROVED_COMPACT_SHEET_CONTENT_HEIGHT * Math.max(1, fontScale)) + bottomInset,
     ),
   );
   const sheetBottomPadding = Math.max(bottomInset, 14);

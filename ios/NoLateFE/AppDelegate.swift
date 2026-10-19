@@ -81,6 +81,7 @@ FirebaseApp.configure()
     open url: URL,
     options: [UIApplication.OpenURLOptionsKey: Any] = [:]
   ) -> Bool {
+  if kakao_login.RNKakaoLogins.isKakaoTalkLoginUrl(url) { return kakao_login.RNKakaoLogins.handleOpen(url) }
     if url.scheme == "kakao9586a8e3a28f3a6fbe3e23b9b34ec206" || kakao_login.RNKakaoLogins.isKakaoTalkLoginUrl(url) {
       return kakao_login.RNKakaoLogins.handleOpen(url)
     }

@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { markScheduleDeparted } from "../../api/schedule";
 import { ApiResponseError } from "../../api/response";
 import { getAuthMember } from "../auth/authStorage";
+import { isJourneyGuidanceEnabled } from "../journey/journeyFeature";
 import {
     createScheduleDepartureMutationEvent,
     emitScheduleMutation,
@@ -229,7 +230,8 @@ async function drainEpoch(epoch: number): Promise<NativeDepartureActionDrainResu
             emitScheduleMutation(createScheduleDepartureMutationEvent(updatedSchedule));
             await Promise.all([
                 recoverDepartureAlarmsAfterMutation(),
-                endLiveActivityForSchedule(event.scheduleId, event.recipientMemberId).catch(
+                // The server fences delayed depart-now replays against active journeys.
+                (isJourneyGuidanceEnabled() ? Promise.resolve() : endLiveActivityForSchedule(event.scheduleId, event.recipientMemberId)).catch(
                     (error) => {
                         if (__DEV__) {
                             console.warn("[live-activity] departure completion cleanup failed", error);

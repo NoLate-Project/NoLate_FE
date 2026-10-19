@@ -10,7 +10,7 @@ const detailSource = readFileSync(
 );
 const routeSummaryStart = detailSource.indexOf('styles.sheetRouteSummary');
 const routeSummaryEnd = detailSource.indexOf(
-  '<RouteStepTimeline',
+  '<SavedJourneyRouteTimeline',
   routeSummaryStart,
 );
 const routeSummarySource = detailSource.slice(
@@ -32,6 +32,9 @@ describe('schedule route detail information hierarchy', () => {
     expect(routeSummarySource).toMatch(
       /\{hhmmText\(fromISO\(routeDetailInfo\.departureTime\)\)\}\s+출발\s+기준/,
     );
-    expect(detailSource).toContain('<RouteStepTimeline');
+    expect(detailSource).toContain('<SavedJourneyRouteTimeline');
+    const timelineSource = readFileSync('src/modules/journey/SavedJourneyRouteTimeline.tsx', 'utf8');
+    expect(timelineSource).toContain('<RouteStepTimeline {...props}');
+    expect(timelineSource).toContain('currentGuidance={savedJourneyTimelineHighlight');
   });
 });

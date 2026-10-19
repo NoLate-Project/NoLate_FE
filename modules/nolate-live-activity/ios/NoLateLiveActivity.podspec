@@ -13,7 +13,7 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
 
-  s.source_files = '*.swift', 'Shared/NoLateDepartureActivityAttributes.swift'
+  s.source_files = '*.swift', 'Shared/NoLateDepartureActivityAttributes.swift', 'Shared/NoLateGuidanceAttributes.swift'
   s.frameworks = 'ActivityKit', 'Foundation'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

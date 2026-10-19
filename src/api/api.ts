@@ -8,7 +8,8 @@ import {
     configureSharedAuthApiBaseUrl,
     getAccessToken,
     getRefreshToken,
-    saveAuthTokens,
+    getAuthCredentialRevision,
+    saveRefreshedAuthTokens,
 } from "../modules/auth/authStorage";
 import { isDefinitiveRefreshStatus } from "../modules/auth/refreshPolicy";
 import { ApiResponseError, AuthSessionInvalidatedError } from "./response";
@@ -49,33 +50,44 @@ type RefreshedAuthTokens = {
     refreshToken: string;
 };
 
-type AuthRefreshResult =
+export type AuthRefreshResult =
     | { kind: "refreshed"; tokens: RefreshedAuthTokens }
     | { kind: "invalid"; cause?: unknown }
-    | { kind: "unavailable"; cause: unknown };
+    | { kind: "unavailable"; cause: unknown }
+    | { kind: "superseded" };
 
 const runAuthRefresh = createSingleFlightRunner<AuthRefreshResult>();
 
+/** Shared by normal 401 recovery and foreground journey renewal. Never clears a newer account. */
+export const refreshCurrentAuthTokens = () => runAuthRefresh(requestRefreshedAuthTokens);
 async function requestRefreshedAuthTokens(): Promise<AuthRefreshResult> {
+    const revision = getAuthCredentialRevision();
     const refreshToken = await getRefreshToken();
 
+    if (revision !== getAuthCredentialRevision()) return { kind: "superseded" };
     if (!refreshToken) {
         return { kind: "invalid" };
     }
 
     try {
-        const refreshResponse = await axios.post<{
+        type RefreshEnvelope = {
             success: boolean;
             data?: { accessToken?: string; refreshToken?: string };
             errorMessage?: string | null;
-        }>(
+        };
+        const native = __DEV__ && Platform.OS === "ios"
+            ? await (require("../modules/journey/automaticJourney") as typeof import("../modules/journey/automaticJourney"))
+                .refreshAutomaticJourneyCredentials(API_BASE_URL, refreshToken) : null;
+        const refreshResponse = native !== null ? { data: native as RefreshEnvelope } : await axios.post<RefreshEnvelope>(
             `${API_BASE_URL}/api/member/auth/refresh`,
             { refreshToken },
             { headers: { "Content-Type": "application/json" }, timeout: 10000 }
         );
+        if (revision !== getAuthCredentialRevision()) return { kind: "superseded" };
         const tokens = refreshResponse.data.data;
 
-        if (!refreshResponse.data.success || !tokens?.accessToken || !tokens.refreshToken) {
+        if (!refreshResponse.data.success || typeof tokens?.accessToken !== "string" || typeof tokens.refreshToken !== "string"
+            || !tokens.accessToken || !tokens.refreshToken || tokens.accessToken.length > 8192 || tokens.refreshToken.length > 8192) {
             return { kind: "invalid" };
         }
 
@@ -83,9 +95,12 @@ async function requestRefreshedAuthTokens(): Promise<AuthRefreshResult> {
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
         };
-        await saveAuthTokens(refreshedTokens.accessToken, refreshedTokens.refreshToken);
+        if (!await saveRefreshedAuthTokens(revision, refreshedTokens.accessToken, refreshedTokens.refreshToken)) {
+            return { kind: "superseded" };
+        }
         return { kind: "refreshed", tokens: refreshedTokens };
     } catch (error) {
+        if (revision !== getAuthCredentialRevision()) return { kind: "superseded" };
         // A connection loss, timeout, rate limit, or server outage does not mean the
         // refresh token is invalid. Keep the local session so the user can retry when
         // connectivity recovers; clear it only when the auth server definitively rejects it.
@@ -97,6 +112,7 @@ async function requestRefreshedAuthTokens(): Promise<AuthRefreshResult> {
 }
 
 function isDefinitiveRefreshRejection(error: unknown): boolean {
+    if (error instanceof Error && error.message === "AUTOMATIC_SERVER_REJECTED") return true;
     if (!axios.isAxiosError(error)) return false;
     return isDefinitiveRefreshStatus(error.response?.status);
 }
@@ -167,7 +183,11 @@ apiClient.interceptors.response.use(
 
             // Never await account cleanup inside the shared refresh flight:
             // cleanup's own HTTP requests may need to join that same flight.
-            const result = await runAuthRefresh(requestRefreshedAuthTokens);
+            const recoveryRevision = getAuthCredentialRevision();
+            const result = await refreshCurrentAuthTokens();
+            if (recoveryRevision !== getAuthCredentialRevision() || result.kind === "superseded") {
+                throw new AuthSessionInvalidatedError();
+            }
             if (result.kind === "refreshed") {
                 applyAccessToken(originalRequest, result.tokens.accessToken);
                 return apiClient(originalRequest);
@@ -177,7 +197,7 @@ apiClient.interceptors.response.use(
                     throw new AuthSessionInvalidatedError(result.cause);
                 }
                 await clearAuthTokens();
-            } else if (originalRequest.authFailureMode === "report-only") {
+            } else if (result.kind === "unavailable" && originalRequest.authFailureMode === "report-only") {
                 // Do not disguise an offline/5xx refresh as a revoked session.
                 // Lifecycle cleanup must retain its retry/failure boundary.
                 throw result.cause;

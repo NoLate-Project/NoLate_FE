@@ -13,6 +13,8 @@ import PlainScheduleDetailView, {
 } from "../../modules/schedule/components/detail/PlainScheduleDetailView";
 import ScheduleArrivalObservationAction from "../../modules/schedule/components/detail/ScheduleArrivalObservationAction";
 import TmapMapView from "../../modules/map/TmapMapView";
+import { SavedJourneyRoutePreview } from '../../modules/journey/SavedJourneyRoutePreview';
+import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
 import { travelPlanStatusLabel } from "../../modules/schedule/travelPlanPresentation";
 import {
   APP_ACCENT_BLUE,
@@ -72,7 +74,11 @@ export function ScheduleDetailBackground({
   return (
     <>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
-      {shouldRenderMap ? (
+      {presentation.offlineGuidancePreview && !presentation.inspectedTravelPlan ? (
+        <SavedJourneyRoutePreview input={buildSavedJourneyInput(item.route, item.origin, item.destination)}
+          walkingPaths={presentation.guidanceWalkingPaths}
+          position={displayMarkers.find(marker => marker.id === 'schedule-detail-guidance-location') ?? null} />
+      ) : shouldRenderMap ? (
         <TmapMapView
           ref={mapRef}
           errorOverlayTop={Math.max(insets.top + 188, 236)}

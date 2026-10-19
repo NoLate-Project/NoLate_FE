@@ -1,5 +1,5 @@
 import ImportedTicketSummary from '../../modules/schedule/components/detail/ImportedTicketSummary';
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 
 import CalendarGlassSurface from '../../modules/schedule/components/calendar/CalendarGlassSurface';
-import RouteStepTimeline from '../../modules/schedule/components/route/RouteStepTimeline';
+import { SavedJourneyRouteTimeline } from '../../modules/journey/SavedJourneyRouteTimeline';
 import TransitRouteProgressBar from '../../modules/schedule/components/route/TransitRouteProgressBar';
 import ScheduleArrivalObservationAction from '../../modules/schedule/components/detail/ScheduleArrivalObservationAction';
 import { fromISO } from '../../../lib/util/data';
@@ -29,6 +29,11 @@ import {
 import { createScheduleDetailStyles } from './schedule-detail.styles';
 import type { ScheduleDetailPresentation } from './scheduleDetailPresentationModel';
 import { ScheduleDetailRouteQuickSummary } from './ScheduleDetailRouteQuickSummary';
+import { SavedJourneyGuidanceCard } from '../../modules/journey/SavedJourneyGuidanceCard';
+import { buildSavedJourneyInput } from '../../modules/journey/savedJourneyGuidance';
+import { useSavedJourneyBinding } from '../../modules/journey/useSavedJourneyBinding';
+import { SavedJourneyTrialControls } from '../../modules/journey/SavedJourneyTrialControls';
+import { isAutomaticJourneyEntryEnabled } from '../../modules/journey/journeyFeature';
 
 type ScheduleDetailRouteSheetProps = {
   presentation: ScheduleDetailPresentation;
@@ -61,6 +66,7 @@ export function ScheduleDetailRouteSheet({
     inspectedTravelPlan,
     internalPreviewItem,
     isDark,
+    journeyGuidanceAvailable,
     isPlainSchedule,
     item,
     openCurrentRoutePlanner,
@@ -93,6 +99,16 @@ export function ScheduleDetailRouteSheet({
     topCardAccentText,
     topCardControlBg,
   } = presentation;
+  const guidanceInput = useMemo(() => presentation.currentMemberId != null && !inspectedTravelPlan
+    && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === presentation.currentMemberId
+    ? buildSavedJourneyInput(item.route, item.origin, item.destination) : null,
+    [presentation.currentMemberId, inspectedTravelPlan, item.route, item.origin, item.destination, item.myTravelPlan?.memberId, item.ownerMemberId]);
+  const guidanceBinding = useSavedJourneyBinding(guidanceInput, String(item.id));
+  const authenticatedGuidanceEntry = isAutomaticJourneyEntryEnabled()
+    && !internalPreviewItem && !presentation.offlineGuidancePreview && presentation.currentMemberId != null
+    && !inspectedTravelPlan && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === presentation.currentMemberId;
+  const guidancePrepared = (guidanceBinding?.savedRouteValidated === true && guidanceBinding.guidanceEnabled === true
+    && guidanceBinding.scheduleId === String(item.id)) || (presentation.offlineGuidancePreview && !!guidanceInput) || authenticatedGuidanceEntry;
 
   return !isPlainSchedule ? (
     <Animated.View
@@ -139,7 +155,16 @@ export function ScheduleDetailRouteSheet({
           scrollEnabled={sheetMode === 'expanded'}
         >
           <ImportedTicketSummary route={item.route} showBooking={sheetMode === 'expanded'} />
-          <ScheduleDetailRouteQuickSummary presentation={presentation} />
+          <ScheduleDetailRouteQuickSummary presentation={presentation} automaticGuidancePrepared={guidancePrepared}
+            automaticGuidanceActive={!!guidanceBinding?.savedRouteValidated && !!guidanceBinding.guidanceEnabled
+              && guidanceBinding.scheduleId === String(item.id)}
+            automaticRouteInput={guidanceBinding?.savedRouteValidated && guidanceBinding.guidanceEnabled
+              && guidanceBinding.scheduleId === String(item.id) ? guidanceInput : null} />
+          {sheetMode === 'expanded' && <SavedJourneyGuidanceCard input={guidanceInput} scheduleId={String(item.id)} isDark={isDark} />}
+          {sheetMode === 'expanded' && (presentation.offlineGuidancePreview || authenticatedGuidanceEntry) && !inspectedTravelPlan
+            ? <SavedJourneyTrialControls input={guidanceInput} savedRoute={item.route} authenticatedSchedule={authenticatedGuidanceEntry || presentation.guidancePreviewAuthenticationSource
+                ? { scheduleId: String(item.id), memberId: presentation.currentMemberId! } : undefined}
+                previewAuthenticationSource={presentation.guidancePreviewAuthenticationSource} /> : null}
           <View
             onLayout={handleExpandedContentLayout}
             pointerEvents={sheetMode === 'expanded' ? 'auto' : 'none'}
@@ -263,18 +288,18 @@ export function ScheduleDetailRouteSheet({
                     </Text>
                   </View>
 
-                  {hasDepartureInfo && (
+                  {!guidancePrepared && (hasDepartureInfo || journeyGuidanceAvailable) && (
                     <Pressable
                       onPress={completeDeparture}
-                      disabled={departureCompleted || departureActionPending}
+                      disabled={(departureCompleted && !journeyGuidanceAvailable) || departureActionPending}
                       accessibilityRole="button"
                       accessibilityLabel={
-                        departureCompleted ? '출발 완료' : '출발했어요'
+                        journeyGuidanceAvailable ? (departureCompleted ? '길안내 보기' : '길안내 시작') : departureCompleted ? '출발 완료' : '출발했어요'
                       }
                       accessibilityState={{
                         selected: departureCompleted,
                         busy: departureActionPending,
-                        disabled: departureCompleted || departureActionPending,
+                        disabled: (departureCompleted && !journeyGuidanceAvailable) || departureActionPending,
                       }}
                       style={({ pressed }) => [
                         styles.improvedExpandedDepartureAction,
@@ -311,6 +336,8 @@ export function ScheduleDetailRouteSheet({
                       >
                         {departureActionPending
                           ? '처리 중'
+                          : journeyGuidanceAvailable
+                          ? (departureCompleted ? '길안내 보기' : '길안내 시작')
                           : departureCompleted
                           ? '출발 완료'
                           : '출발했어요'}
@@ -702,7 +729,9 @@ export function ScheduleDetailRouteSheet({
                       </Text>
                     ) : null}
                   </View>
-                  <RouteStepTimeline
+                  <SavedJourneyRouteTimeline
+                    input={guidanceInput}
+                    scheduleId={String(item.id)}
                     routeInfo={routeDetailInfo}
                     selectedStepId={selectedRouteStepId}
                     selectedPassStop={selectedRoutePassStop}

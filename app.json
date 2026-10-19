@@ -12,6 +12,7 @@
   "orientation": "portrait",
   "userInterfaceStyle": "automatic",
   "plugins": [
+    "./plugins/withNoLateJourneyDiagnostics",
     "./plugins/withNoLateLiveActivity",
     "expo-router",
     "expo-secure-store",

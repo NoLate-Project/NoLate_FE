@@ -2,6 +2,17 @@ import type { TransitLegDetail } from "../src/modules/map/routingService";
 import { buildTransitRouteProgressSegments } from "../src/modules/schedule/transitRouteProgress";
 
 describe("buildTransitRouteProgressSegments", () => {
+    it("표시 label이 없는 저장 구간도 안전하게 그리고 노선명이 없으면 교통수단만 표시한다", () => {
+        const partial = [
+            { kind: "BUS", lineName: "7016", lineColor: "#36A84B" },
+            { kind: "BUS" },
+            { kind: "SUBWAY", label: null },
+        ] as unknown as TransitLegDetail[];
+        expect(buildTransitRouteProgressSegments(partial).map(segment => segment.lineLabel))
+            .toEqual(["7016", "버스", "지하철"]);
+        expect(buildTransitRouteProgressSegments(partial).map(segment => segment.label))
+            .toEqual(["시간 미확인", "시간 미확인", "시간 미확인"]);
+    });
     it("경로바 아래에는 노선명만 간결하게 표시한다", () => {
         const legs: TransitLegDetail[] = [
             {

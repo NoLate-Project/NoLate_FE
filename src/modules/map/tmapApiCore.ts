@@ -89,6 +89,48 @@ export type TransitPassStop = {
     code?: string;
 };
 
+/** 표시용 passStops와 달리 중복·누락 행을 제거하거나 순서를 재작성하지 않는 공급자 증거. */
+export type TransitNavigationStopOccurrence = {
+    /** 정렬 전 공급자 배열의 0-based 위치. 노선의 공식 정류장 순번이 아니다. */
+    sourceIndex: number;
+    /** 공급자가 명시한 비음수 정수 순번만 보존한다. sourceIndex로 대체하지 않는다. */
+    providerSequence?: number;
+    name?: string;
+    /** 기존 공급자 코드 표현을 보존하며, 단독으로 외부 API의 식별자 namespace를 증명하지 않는다. */
+    code?: string;
+    /** ODsay's raw stationID, never a Seoul realtime statnId or a display code. */
+    routingStationID?: string;
+    /** Raw provider namespace/IDs, never derived from display codes. */
+    localStationID?: string;
+    arsID?: string;
+    stationCityCode?: string;
+    stationProviderCode?: string;
+    coord?: RoutePathCoord;
+};
+
+/** 원본 공급자 응답을 파싱할 때 새로 생성한다. 저장된 legacy UI 필드에서 복원/추정하지 않는다. */
+export type TransitNavigationEvidence = {
+    busIdentifiers?: Record<string, string | undefined>;
+    /** Raw ODsay subway identity. Keep every lane occurrence; never pick a convenient lane.
+     * Absence/ambiguity requires a new provider route, not reconstruction from legacy UI fields. */
+    subwayIdentifiers?: {
+        startID?: string;
+        endID?: string;
+        wayCode?: string;
+        lanes: {sourceIndex: number; subwayCode?: string; subwayCityCode?: string}[];
+    };
+    version: 1;
+    provider: "tmap" | "odsay";
+    /** 최대 500행. 초과하면 evidence 전체를 생략하며 일부만 남기지 않는다. */
+    stopOccurrences: TransitNavigationStopOccurrence[];
+    /** 공급자 명시값만 보존하며, stopOccurrences 길이로 추정하지 않는다. */
+    declaredStationCount?: number;
+    directionName?: string;
+    directionCode?: "UP" | "DOWN";
+    /** 원본 좌표 전체가 유효하고 전달된 형상이 동일 순서를 보존할 때만 true(인접 중복 제거만 허용). 축약·누락·미지원 형식은 false. 최신성/현장 정확도 보장은 아니다. */
+    geometryInputComplete?: boolean;
+};
+
 export type TransitGeometrySource =
     | "WALK_STEPS_LINESTRING"
     | "WALK_PASS_SHAPE_LINESTRING"
@@ -157,6 +199,8 @@ export type TransitLegDetail = {
     startCoord?: RoutePathCoord;
     endCoord?: RoutePathCoord;
     passStops?: TransitPassStop[];
+    /** 자동 길안내 검증용 원본 증거. 없으면 표시용 passStops를 증거로 승격하지 않는다. */
+    navigationEvidence?: TransitNavigationEvidence;
     pathCoords?: RoutePathCoord[];
     /** steps[].linestring 또는 passShape.linestring에서 직접 파싱된 경우 true. itinerary snap fallback이면 false. */
     pathCoordsIsExact?: boolean;
@@ -193,6 +237,8 @@ export type TransitRouteOption = {
 export type RouteAlternativeOption = {
     intercityJourney?: IntercityJourney;
     importedTicket?: ImportedTrainTicket;
+    /** Separate raw pedestrian candidate; never substituted for transit navigationEvidence. */
+    pedestrianGeometry?: import('./tmapPedestrianGeometry').PedestrianGeometryResult;
     id: string;
     mode: TravelMode;
     minutes?: number;
@@ -245,6 +291,7 @@ export type RouteEtaResult = {
 };
 
 export type ParsedRoadRoute = {
+    pedestrianGeometry?: import('./tmapPedestrianGeometry').PedestrianGeometryResult;
     minutes?: number;
     distanceMeters?: number;
     tollFareWon?: number;

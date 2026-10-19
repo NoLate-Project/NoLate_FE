@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 
 import type { LiveActivityRouteSegment } from "./liveActivityRoute";
+import type { JourneyPhase } from "../journey/types";
 
 const NATIVE_MODULE_NAME = "NoLateLiveActivity";
 const MIN_TOKEN_LENGTH = 64;
@@ -15,6 +16,21 @@ export type LiveActivityStatus =
     | "cancelled";
 
 export type LiveActivityAppearance = "light" | "dark";
+
+export type LiveActivityJourneyProgress = {
+    sessionId: string;
+    generation: number;
+    routeRevision: number;
+    sequence: number;
+    phase: JourneyPhase;
+    activeLegIndex: number;
+    currentStopIndex?: number;
+    remainingStops?: number;
+    legProgress: number;
+    nextInstruction: string;
+    observedAtEpochSeconds: number;
+    overallProgress?: number;
+};
 
 export type LiveActivityCapabilities = {
     /** ActivityKit display surface exists on this OS/build. */
@@ -57,6 +73,7 @@ export type LiveActivityStartOrUpdateInput = {
     actionExpiresAt: string;
     logicalEventKey?: string;
     routeSegments: LiveActivityRouteSegment[];
+    journey?: LiveActivityJourneyProgress;
 };
 
 export type LiveActivityEndInput = {
