@@ -661,6 +661,7 @@ export function useScheduleDetailController({
     const saveRoute = saveScheduleRouteAsMyTravelPlan(item, payload, {
       upsertMyTravelPlan: upsertMyScheduleTravelPlan,
       reloadSchedule: getSchedule,
+      canResolveCommonDestination: canEditSchedule,
     });
 
     saveRoute
@@ -674,7 +675,7 @@ export function useScheduleDetailController({
       .finally(() => {
         setRouteSavePending(false);
       });
-  }, [dispatch, item, pathname, routePlannerSessionId]);
+  }, [canEditSchedule, dispatch, item, pathname, routePlannerSessionId]);
 
   return {
     id,

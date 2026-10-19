@@ -1365,6 +1365,72 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         print("ETA_JOURNEY_UI\n" + app.debugDescription)
     }
 
+    /// Regression: the first selected route becomes the saved schedule destination.
+    /// The fixture's route provider and database are private; this still drives the installed app.
+    func testSaveUnlocatedDestinationRoute() throws {
+        try require(environment["E2E_ALLOW_SAVE"] == "1" &&
+                    environment["E2E_SCHEDULE_ID"] == "363" &&
+                    environment["E2E_EXISTING_TITLE"] == "E2E 도착지만 저장",
+                    "Only the private unlocated-destination fixture may be changed")
+        try require(app.staticTexts["E2E 도착지만 저장"].firstMatch.waitForExistence(timeout: 20),
+                    "The saved schedule without a route must be open")
+        let setup = app.buttons["내 이동 경로 수정"]
+        try require(setup.waitForExistence(timeout: 10), "Route setup action is missing")
+        capture("unlocated-before-route")
+        try tap(setup)
+        // A saved destination without coordinates opens the destination search first.
+        for (target, place) in [("도착지", "신림역"), ("출발지", "노원역")] {
+            let field = app.textFields[target + " 검색"]
+            if !field.waitForExistence(timeout: 10) {
+                let current = buttonBeginning(target + " 재선택, 현재 ")
+                try require(current.waitForExistence(timeout: 10), "Route place selector is missing: " + target)
+                try tap(current)
+            }
+            try require(field.waitForExistence(timeout: 15), "Route place input is missing: " + target)
+            if !labeled("장소 검색 닫기").exists { try tap(field) }
+            let clear = app.buttons[target + " 검색어 지우기"]
+            if clear.exists { try tap(clear) }
+            let recent = app.buttons[place + ", 최근 장소 선택"]
+            try require(recent.waitForExistence(timeout: 15), "Private recent place is missing: " + place)
+            try tap(recent)
+        }
+        try tap(labeled("대중교통"))
+        let candidate = app.buttons["1시간 9분 경로"]
+        try require(candidate.waitForExistence(timeout: 30), "Fixture route was not returned")
+        if candidate.value as? String != "expanded" { try tap(candidate) }
+        capture("unlocated-route-selected")
+        let save = labeled("이 경로 저장")
+        try reveal(save)
+        try tap(save)
+        try require(app.staticTexts["E2E 도착지만 저장"].firstMatch.waitForExistence(timeout: 20),
+                    "Saving the route did not return to the existing detail")
+        try require(!app.alerts["경로 저장 실패"].exists, "Route save was rejected")
+        capture("unlocated-route-save-returned")
+        print("UNLOCATED_ROUTE_UI_SAVE_RETURNED")
+    }
+
+    /// Run after reopening the app and clearing only the known stale H2 calendar notice.
+    func testVerifyUnlocatedDestinationRouteReopened() throws {
+        try require(environment["E2E_SCHEDULE_ID"] == "363" &&
+                    environment["E2E_EXISTING_TITLE"] == "E2E 도착지만 저장",
+                    "Only the private unlocated-destination fixture may be inspected")
+        try require(app.staticTexts["E2E 도착지만 저장"].firstMatch.waitForExistence(timeout: 20),
+                    "The saved schedule did not reopen")
+        try require(app.staticTexts["신림역"].firstMatch.exists,
+                    "The selected route destination was not saved")
+        try require(app.staticTexts["대중교통 69분"].firstMatch.waitForExistence(timeout: 15),
+                    "The saved transit route is absent after reopening")
+        let summary = app.buttons.matching(NSPredicate(
+            format: "label BEGINSWITH %@ AND label CONTAINS %@",
+            "일정 상세 시트 펼치기, ", "4호선 49분"
+        )).firstMatch
+        try require(summary.exists &&
+                    summary.label.contains("2호선 9분"),
+                    "The persisted transfer itinerary is not visible")
+        capture("unlocated-route-reopened")
+        print("UNLOCATED_ROUTE_REOPENED_WITH_SELECTED_DESTINATION_AND_TRANSFER")
+    }
+
     /// Acknowledge only the previously inspected app notice, not any system permission or generic alert.
     func testDismissPrivateSharingDisabledNotice() throws {
         try require(environment["E2E_PRIVATE_NOTICE"] == "1", "Marked private server is required")

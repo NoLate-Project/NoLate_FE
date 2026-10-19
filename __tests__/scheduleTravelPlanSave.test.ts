@@ -138,4 +138,59 @@ describe("schedule travel plan save policy", () => {
         expect(mockRecoverDepartureAlarmsAfterMutation).not.toHaveBeenCalled();
         expect(reloadSchedule).not.toHaveBeenCalled();
     });
+
+    it("sends the saved destination snapshot when saving the first selected route", async () => {
+        const upsertMyTravelPlan = jest.fn().mockResolvedValue(savedPlan);
+        const itemWithoutRoute = { ...ownerItem, route: undefined };
+        const reloadSchedule = jest.fn().mockResolvedValue(itemWithoutRoute);
+
+        await saveScheduleRouteAsMyTravelPlan(itemWithoutRoute, routeUpdate, {
+            upsertMyTravelPlan,
+            reloadSchedule,
+            canResolveCommonDestination: true,
+        });
+
+        expect(upsertMyTravelPlan).toHaveBeenCalledTimes(1);
+        expect(upsertMyTravelPlan).toHaveBeenCalledWith("147", expect.objectContaining({
+            resolveUnlocatedCommonDestination: true,
+            expectedCommonDestination: { name: "공용 목적지" },
+            destination: routeUpdate.destination,
+        }));
+        expect(mockRecoverDepartureAlarmsAfterMutation).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses the selected destination for a first route even when the schedule has coordinates", async () => {
+        const upsertMyTravelPlan = jest.fn().mockResolvedValue(savedPlan);
+        await saveScheduleRouteAsMyTravelPlan({
+            ...ownerItem,
+            route: undefined,
+            destination: { name: "공용 목적지", address: "서울시 중구", lat: 37.5, lng: 127.0 },
+        }, routeUpdate, {
+            upsertMyTravelPlan,
+            reloadSchedule: jest.fn().mockResolvedValue(ownerItem),
+            canResolveCommonDestination: true,
+        });
+
+        expect(upsertMyTravelPlan).toHaveBeenCalledTimes(1);
+        expect(upsertMyTravelPlan.mock.calls[0][1]).toEqual(expect.objectContaining({
+            resolveUnlocatedCommonDestination: true,
+            expectedCommonDestination: {
+                name: "공용 목적지",
+                address: "서울시 중구",
+                lat: 37.5,
+                lng: 127.0,
+            },
+        }));
+    });
+
+    it("does not replace the shared destination when editing an existing route", async () => {
+        const upsertMyTravelPlan = jest.fn().mockResolvedValue(savedPlan);
+        await saveScheduleRouteAsMyTravelPlan(ownerItem, routeUpdate, {
+            upsertMyTravelPlan,
+            reloadSchedule: jest.fn().mockResolvedValue(ownerItem),
+            canResolveCommonDestination: true,
+        });
+
+        expect(upsertMyTravelPlan.mock.calls[0][1].resolveUnlocatedCommonDestination).toBeUndefined();
+    });
 });

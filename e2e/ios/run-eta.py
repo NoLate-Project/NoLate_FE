@@ -40,9 +40,12 @@ METHODS += ('testVerifyIsolatedQuotaEta',)
 SAVE_METHODS += ('testCommitNaverComparisonJourney',)
 SAVE_METHODS += ('testRescheduleNaverComparisonJourney',)
 METHODS += ('testVerifyNaturalEtaFixture',)
+METHODS += ('testSaveUnlocatedDestinationRoute',)
+METHODS += ('testVerifyUnlocatedDestinationRouteReopened',)
 METHODS += ('testInspectIsolatedNativeAlarm', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState')
 SAVE_METHODS += ('testSaveIsolatedEtaTarget',)
 SAVE_METHODS += ('testCreateIsolatedEtaJourney',)
+SAVE_METHODS += ('testSaveUnlocatedDestinationRoute',)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', required=True)
@@ -377,6 +380,10 @@ if private_notice and (args.api_base != 'http://127.0.0.1:5523' or args.title !=
     parser.error('Only the observed sharing-disabled notice in private H2 may be acknowledged')
 if private_target_save and (args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E isolated fixture' or args.schedule_id != 363):
     parser.error('Target-save contract E2E is restricted to the marked private H2 server and fixture')
+unlocated_route_test = args.only in ('testSaveUnlocatedDestinationRoute', 'testVerifyUnlocatedDestinationRouteReopened')
+if unlocated_route_test and (args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E unlocated' or
+                             args.schedule_id != 363 or args.existing_title != 'E2E 도착지만 저장'):
+    parser.error('Unlocated-destination route E2E is restricted to its private H2 fixture')
 if args.fixture_phase is not None and (args.only != 'testVerifyIsolatedEtaFixture' or args.api_base != 'http://127.0.0.1:5523'):
     parser.error('Mock fixture assertions require the private H2 server and their explicit UI method')
 if args.only == 'testVerifyIsolatedEtaFixture' and args.fixture_phase is None:
@@ -462,7 +469,7 @@ if args.existing_title is not None or args.schedule_id is not None:
         (args.schedule_id, args.existing_title, args.title) in (
             (364, 'ETA E2E NAVER 1007 01', 'ETA E2E NAVER 1007 01'),
             (367, 'ETA E2E NAVER 1007 04', 'ETA E2E NAVER 1007 04')))
-    if not real_comparison_edit and (args.schedule_id != 363 or args.existing_title not in titles):
+    if not real_comparison_edit and not unlocated_route_test and (args.schedule_id != 363 or args.existing_title not in titles):
         parser.error('Existing-schedule operations are restricted to the observed synthetic schedule 363')
 
 # CoreSimulator may stop responding under host pressure. Fail before any app writes

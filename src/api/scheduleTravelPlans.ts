@@ -14,6 +14,8 @@ export type ScheduleTravelPlanPayload = {
     travelMode?: TravelMode;
     origin?: Place;
     destination?: Place;
+    resolveUnlocatedCommonDestination?: boolean;
+    expectedCommonDestination?: Place;
     route?: unknown;
     notificationEnabled?: boolean;
     notificationLeadMinutes?: number;
