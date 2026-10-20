@@ -5,19 +5,20 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
-const { configureJourneyDiagnostics, configureJourneyPushPilot, configureDeviceFieldTest } = require("../plugins/withNoLateJourneyDiagnostics").__internal;
+const { configureJourneyDiagnostics, configureJourneyPushPilot, configureDeviceFieldTest, configureJourneyProduct } = require("../plugins/withNoLateJourneyDiagnostics").__internal;
 const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const expoCLI = join(dirname(require.resolve("expo/package.json")), "bin/cli");
 const diagnosticDescription = "길안내 개발 검증 중 전경과 잠금 상태의 위치 수신을 확인합니다. 위치 좌표는 서버에 전송하지 않습니다.";
 const normalDescription = "NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.";
 
-function introspectIOSInfoPlist(enabled) {
+function introspectIOSInfoPlist(enabled, product = false) {
   // In-memory only: never write or print full Expo config, and never load .env.
   let output;
   try {
     output = execFileSync(process.execPath, [expoCLI, "config", "--type", "introspect", "--json"], {
       cwd: projectRoot,
-      env: { ...process.env, EXPO_NO_DOTENV: "1", NOLATE_JOURNEY_DIAGNOSTICS_BUILD: enabled ? "1" : "0" },
+      env: { ...process.env, EXPO_NO_DOTENV: "1", NOLATE_JOURNEY_DIAGNOSTICS_BUILD: enabled ? "1" : "0",
+        NOLATE_JOURNEY_PRODUCT_BUILD: product ? "1" : "0" },
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf8",
       timeout: 30_000,
@@ -106,4 +107,25 @@ test("resolved diagnostic plist restores the actual normal permission and capabi
   assert.equal(restored.NoLateJourneyDiagnosticsOriginalBackgroundModes, undefined);
   assert.equal(restored.NSLocationWhenInUseUsageDescription, normalDescription);
   assert.deepEqual(restored.UIBackgroundModes, ["remote-notification"]);
+});
+
+test("product guidance uses its own capability and preserves the normal permission on rollback", () => {
+  const original = { UIBackgroundModes: ["remote-notification"], NSLocationWhenInUseUsageDescription: normalDescription };
+  const product = configureJourneyProduct(original, true);
+  assert.equal(product.NoLateJourneyProductEnabled, true);
+  assert.equal(product.NoLateJourneyAuthenticatedEnabled, true);
+  assert.equal(product.NoLateJourneyDiagnosticsEnabled, undefined);
+  assert.deepEqual(product.UIBackgroundModes, ["remote-notification", "location"]);
+  assert.match(product.NSLocationWhenInUseUsageDescription, /대중교통 길안내 중 현재 위치/);
+  assert.deepEqual(configureJourneyProduct(product, true), product);
+  assert.deepEqual(configureJourneyProduct(product, false), original);
+  assert.throws(() => configureJourneyProduct(configureJourneyDiagnostics(original, true), true));
+});
+
+test("real Expo plugin chain keeps product and diagnostics mutually exclusive", () => {
+  const info = introspectIOSInfoPlist(false, true);
+  assert.equal(info.NoLateJourneyProductEnabled, true);
+  assert.equal(info.NoLateJourneyDiagnosticsEnabled, undefined);
+  assert.deepEqual(info.UIBackgroundModes, ["remote-notification", "location"]);
+  assert.deepEqual(configureJourneyProduct(info, false).UIBackgroundModes, ["remote-notification"]);
 });

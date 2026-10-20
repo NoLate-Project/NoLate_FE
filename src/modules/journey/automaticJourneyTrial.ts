@@ -27,7 +27,8 @@ export function journeyTrialExecution(scope: AutomaticJourneyBinding['syncScope'
     (require('expo-device') as typeof import('expo-device')).isDevice): AutomaticJourneyBinding['execution'] {
     if (!physicalDevice) return 'SIMULATOR';
     if (scope !== 'AUTHENTICATED'
-        || getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED') !== 'true') {
+        || (getEnv('EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED') !== 'true'
+            && getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED') !== 'true')) {
         throw new Error('DEVICE_FIELD_TEST_DISABLED');
     }
     return 'DEVICE';

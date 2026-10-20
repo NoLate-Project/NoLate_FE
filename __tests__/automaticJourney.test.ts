@@ -18,6 +18,8 @@ const mockNative = {
 };
 const mockRequire = jest.fn(() => mockNative);
 jest.mock("expo-modules-core", () => ({ requireOptionalNativeModule: () => mockRequire() }), { virtual: true });
+const mockGetEnv = jest.fn((_key: string): string | undefined => undefined);
+jest.mock("../src/api/env", () => ({ getEnv: (key: string) => mockGetEnv(key) }));
 const runtime = globalThis as typeof globalThis & { __DEV__: boolean };
 const originalDev = runtime.__DEV__;
 const originalOS = Platform.OS;
@@ -123,6 +125,7 @@ test.each(["x".repeat(65537), "<private malformed body>", "null"])("native refre
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockGetEnv.mockReturnValue(undefined);
     runtime.__DEV__ = true;
     Object.defineProperty(Platform, "OS", { value: "ios", configurable: true });
     mockRequire.mockReturnValue(mockNative);
@@ -218,6 +221,15 @@ test("release and Android guards never load native or read an outbox", async () 
     Object.defineProperty(Platform, "OS", { value: "android", configurable: true });
     expect((await getAutomaticJourneySnapshot()).reason).toBe("DEVELOPMENT_IOS_ONLY");
     expect(mockRequire).not.toHaveBeenCalled();
+});
+test("an explicitly enabled iOS Release candidate resolves the native runtime", async () => {
+    mockGetEnv.mockImplementation(key => key === "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED" ? "true" : undefined);
+    runtime.__DEV__ = false;
+    expect((await getAutomaticJourneySnapshot()).enabled).toBe(true);
+    expect(mockNative.getAutomaticJourneySnapshot).toHaveBeenCalledTimes(1);
+    Object.defineProperty(Platform, "OS", { value: "android", configurable: true });
+    expect((await getAutomaticJourneySnapshot()).enabled).toBe(false);
+    expect(mockNative.getAutomaticJourneySnapshot).toHaveBeenCalledTimes(1);
 });
 test("reading readiness does not arm or restore", async () => {
     await getAutomaticJourneySnapshot();

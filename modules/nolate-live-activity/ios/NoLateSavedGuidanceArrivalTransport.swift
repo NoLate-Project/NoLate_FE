@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Debug simulator transport. Sandbox is credential-free; authenticated requests require an ephemeral identity/origin fence.
@@ -115,7 +114,8 @@ import Foundation
   }
   private enum LifetimeError: Error { case rejected }
   static func refreshRequest(apiOrigin: String, refreshToken: String) async -> [String: Any] {
-    guard Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true,
+    guard (Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool == true ||
+      Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true),
       Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAuthenticatedEnabled") as? Bool == true else { return ["available": false] }
     // Refresh endpoint verifies REFRESH signature/type/current generation server-side.
     // No access credential is required here, and redirects cannot replay the refresh body.
@@ -132,7 +132,8 @@ import Foundation
     catch { return ["available": true, "accepted": false, "errorCode": "AUTOMATIC_SERVER_UNAVAILABLE"] }
   }
   static func authenticatedRequest(authJSON: String, path: String, bodyJSON: String) async -> [String: Any] {
-    guard Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true,
+    guard (Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool == true ||
+      Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true),
       Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAuthenticatedEnabled") as? Bool == true,
       authJSON.utf8.count <= 12288, bodyJSON.utf8.count <= 1100000,
       let auth = try? JSONDecoder().decode(NoLateJourneyAuthentication.self, from: Data(authJSON.utf8)),
@@ -187,4 +188,3 @@ import Foundation
     return data
   }
 }
-#endif

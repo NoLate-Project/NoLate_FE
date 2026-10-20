@@ -42,8 +42,46 @@ function withNoLateJourneyDiagnostics(config) {
       process.env.NOLATE_JOURNEY_APNS_PILOT_BUILD === "1");
     mod.modResults = configureDeviceFieldTest(mod.modResults,
       process.env.NOLATE_JOURNEY_DEVICE_FIELD_TEST_BUILD === "1");
+    mod.modResults = configureJourneyProduct(mod.modResults,
+      process.env.NOLATE_JOURNEY_PRODUCT_BUILD === "1");
     return mod;
   });
+}
+
+// Separate from the diagnostic entitlement: a release must never inherit a QA
+// field-test flag or a development location permission string.
+function configureJourneyProduct(info, enabled) {
+  if (!enabled) {
+    if (info.NoLateJourneyProductEnabled !== true) return info;
+    const restored = { ...info };
+    const previousModes = restored.NoLateJourneyProductOriginalBackgroundModes;
+    if (Array.isArray(previousModes)) restored.UIBackgroundModes = previousModes;
+    const previousDescription = restored.NoLateJourneyProductOriginalLocationDescription;
+    if (typeof previousDescription === "string") {
+      if (previousDescription) restored.NSLocationWhenInUseUsageDescription = previousDescription;
+      else delete restored.NSLocationWhenInUseUsageDescription;
+    }
+    delete restored.NoLateJourneyProductEnabled;
+    delete restored.NoLateJourneyProductOriginalBackgroundModes;
+    delete restored.NoLateJourneyProductOriginalLocationDescription;
+    delete restored.NoLateJourneyAuthenticatedEnabled;
+    return restored;
+  }
+  if (info.NoLateJourneyDiagnosticsEnabled === true || info.NoLateJourneyDeviceFieldTestEnabled === true) {
+    throw new Error("Product guidance cannot share a diagnostic or device field-test build");
+  }
+  return {
+    ...info,
+    NoLateJourneyProductEnabled: true,
+    NoLateJourneyAuthenticatedEnabled: true,
+    NoLateJourneyProductOriginalBackgroundModes:
+      info.NoLateJourneyProductOriginalBackgroundModes ?? [...(info.UIBackgroundModes ?? [])],
+    NoLateJourneyProductOriginalLocationDescription:
+      info.NoLateJourneyProductOriginalLocationDescription ?? info.NSLocationWhenInUseUsageDescription ?? "",
+    NSLocationWhenInUseUsageDescription:
+      "대중교통 길안내 중 현재 위치를 이용해 출발·승차·하차·환승 시점을 안내합니다. 위치 좌표는 서버에 저장하지 않습니다.",
+    UIBackgroundModes: [...new Set([...(info.UIBackgroundModes ?? []), "location"])],
+  };
 }
 
 function configureJourneyPushPilot(info, authenticated, pushPilot) {
@@ -68,4 +106,4 @@ function configureDeviceFieldTest(info, requested) {
 }
 
 module.exports = withNoLateJourneyDiagnostics;
-module.exports.__internal = { configureJourneyDiagnostics, configureJourneyPushPilot, configureDeviceFieldTest };
+module.exports.__internal = { configureJourneyDiagnostics, configureJourneyPushPilot, configureDeviceFieldTest, configureJourneyProduct };

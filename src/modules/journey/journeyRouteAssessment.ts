@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 
 import { JOURNEY_ROUTE_INPUT_LIMITS, journeyRouteUTF8Bytes, type JourneyRouteInput } from "./journeyRouteInput";
+import { isAutomaticJourneyDevelopment } from "./automaticJourney";
 
 export type JourneyRouteLegAssessment = {
     index: number;
@@ -90,7 +91,7 @@ export function normalizeJourneyRouteAssessment(value: unknown, input: JourneyRo
 
 /** Read-only development bridge: deliberately separate from arm/start and the location runtime. */
 export async function assessJourneyRouteInput(input: JourneyRouteInput): Promise<JourneyRouteAssessmentResult> {
-    if (!__DEV__ || Platform.OS !== "ios") return { available: false, reason: "DEVELOPMENT_IOS_ONLY" };
+    if (!isAutomaticJourneyDevelopment() || Platform.OS !== "ios") return { available: false, reason: "DEVELOPMENT_IOS_ONLY" };
     try {
         if (!input || !Array.isArray(input.legs) || input.legs.length > JOURNEY_ROUTE_INPUT_LIMITS.legs) {
             return { available: false, reason: "INVALID_ROUTE_INPUT" };

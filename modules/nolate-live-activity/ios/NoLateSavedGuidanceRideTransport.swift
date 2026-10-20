@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Authenticated native-only, ephemeral vehicle input. Never derives buses from user GPS.
@@ -70,4 +69,3 @@ import Foundation
     }
   }
 }
-#endif

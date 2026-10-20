@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Opt-in, memory-only remote UPDATE pilot. No production token repository or automatic fallback.
@@ -77,4 +76,3 @@ import Foundation
     requested = false; tokenAvailable = false; providerAcceptedCount = 0; state = "OFF"
   }
 }
-#endif

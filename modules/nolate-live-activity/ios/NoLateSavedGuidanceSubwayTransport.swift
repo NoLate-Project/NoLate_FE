@@ -1,4 +1,3 @@
-#if DEBUG
 import Foundation
 
 /// Same authenticated fixed-origin transport and immutable session fence as bus input.
@@ -54,4 +53,3 @@ import Foundation
     }
   }
 }
-#endif

@@ -8,8 +8,9 @@ import { savedJourneyProviderPreflight } from './savedJourneyProviderPreflight';
 import {composeServerWalkingInput,requestWalkingContext,requestWalkingSnapshot,savedWalkingBaseJSON} from './serverWalkingSnapshot';
 import {JourneyNoticeControls} from './JourneyNoticeControls';
 import {journeyNoticeAvailability} from './journeyNoticeAvailability';
+import {isAutomaticJourneyDevelopment} from './automaticJourney';
 
-/** Debug-only opt-in entry. Native and server independently enforce execution and account ownership. */
+/** Opt-in saved-route entry. Native and server independently enforce execution and account ownership. */
 export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authenticatedSchedule, previewAuthenticationSource, showDiagnostics=false, onTrialEnded }: {
     input: JourneyRouteInput | null; savedRoute?: unknown; authenticatedSchedule?: { scheduleId: string; memberId: number };
     /** Internal QA caller only; never installed in real authentication storage. */
@@ -37,7 +38,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     }, [memberId, previewAuthenticationSource]);
     // The owned saved-route entry has the same server/native fences as internal QA.
     // Preview credentials are not a prerequisite for a real account's single subway leg.
-    const subwayTrial=__DEV__&&!!authenticatedSchedule;
+    const subwayTrial=isAutomaticJourneyDevelopment()&&!!authenticatedSchedule;
     const preflight = savedJourneyProviderPreflight(input, savedRoute,subwayTrial);
     const issue = preflight.issue;
     const scheduleId = authenticatedSchedule?.scheduleId ?? '9001';
@@ -61,7 +62,7 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     };
     const ownRunning = trial.running && ownsRunning();
     const connectWalking=async()=>{
-        if(!__DEV__||connectionBusy.current||noticeBusy.current||trial.running||trial.pending||!baseInput||!authenticatedSchedule)return;
+        if(!isAutomaticJourneyDevelopment()||connectionBusy.current||noticeBusy.current||trial.running||trial.pending||!baseInput||!authenticatedSchedule)return;
         connectionBusy.current=true;const revision=connectionRevision.current;setConnecting(true);setConnectionError(false);setConnected(null);
         try {
             const context=await requestWalkingContext(source,Number(authenticatedSchedule.scheduleId));

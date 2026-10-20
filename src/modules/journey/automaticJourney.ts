@@ -212,7 +212,17 @@ type NativeAutomaticJourney = {
     acknowledgeAutomaticJourneyDeparture(eventKey: string, bindingJSON: string): Promise<unknown>;
     addListener(event: string, listener: (value: unknown) => void): { remove(): void };
 };
-export const isAutomaticJourneyDevelopment = () => __DEV__ && Platform.OS === "ios";
+/** The product build is independently fenced again by the native Info.plist. */
+function productBuildRequested(): boolean {
+    try {
+        const env = require("../../api/env") as typeof import("../../api/env");
+        return env.getEnv("EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED") === "true";
+    } catch {
+        return false;
+    }
+}
+export const isAutomaticJourneyDevelopment = () => Platform.OS === "ios"
+    && (__DEV__ || productBuildRequested());
 function nativeAutomaticJourney(): NativeAutomaticJourney | null {
     const { requireOptionalNativeModule } = require("expo-modules-core");
     return requireOptionalNativeModule("NoLateLiveActivity") as NativeAutomaticJourney | null;

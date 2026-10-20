@@ -75,7 +75,7 @@ describe("journey feature gate", () => {
         mockedGetEnv.mockImplementation(key => key === "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED" ? "true" : "false");
         expect(canOpenJourneyGuidance(item())).toBe(false);
 
-        mockedGetEnv.mockReturnValue("true");
+        mockedGetEnv.mockImplementation(key => key === 'EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED' ? 'false' : 'true');
         const development = __DEV__;
         try {
             (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
@@ -110,7 +110,7 @@ describe("journey feature gate", () => {
     });
 
     it('GPS entry remains disabled on Android and release builds even with both flags',()=>{
-        mockedGetEnv.mockReturnValue('true');
+        mockedGetEnv.mockImplementation(key => key === 'EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED' ? 'false' : 'true');
         const os=Platform.OS,dev=__DEV__;
         try {
             Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
@@ -118,6 +118,22 @@ describe("journey feature gate", () => {
             Object.defineProperty(Platform,'OS',{configurable:true,value:'ios'});
             (globalThis as unknown as {__DEV__:boolean}).__DEV__=false;
             expect(isAutomaticJourneyEntryEnabled()).toBe(false);
+        } finally {
+            Object.defineProperty(Platform,'OS',{configurable:true,value:os});
+            (globalThis as unknown as {__DEV__:boolean}).__DEV__=dev;
+        }
+    });
+
+    it('explicit product flag permits the iOS release entry but not Android', () => {
+        mockedGetEnv.mockReturnValue('true');
+        const os=Platform.OS,dev=__DEV__;
+        try {
+            (globalThis as unknown as {__DEV__:boolean}).__DEV__=false;
+            Object.defineProperty(Platform,'OS',{configurable:true,value:'ios'});
+            expect(isAutomaticJourneyEntryEnabled()).toBe(true);
+            expect(canOpenJourneyGuidance(item())).toBe(true);
+            Object.defineProperty(Platform,'OS',{configurable:true,value:'android'});
+            expect(canOpenJourneyGuidance(item())).toBe(false);
         } finally {
             Object.defineProperty(Platform,'OS',{configurable:true,value:os});
             (globalThis as unknown as {__DEV__:boolean}).__DEV__=dev;

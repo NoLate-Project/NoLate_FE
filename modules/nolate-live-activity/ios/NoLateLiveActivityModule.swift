@@ -124,18 +124,18 @@ public final class NoLateLiveActivityModule: Module {
     Events("onLiveActivityPushToken", "onLiveActivityStateChange", "onJourneyEngineStateChange", "onAutomaticJourneyStateChange")
 
     OnCreate { [weak self] in
-      #if DEBUG
       if let owner = self?.journeyEventOwner {
         Task { @MainActor [weak self] in
+          #if DEBUG
           NoLateJourneyRuntime.shared.setEventSink(owner: owner) { [weak self] body in
             self?.sendEvent("onJourneyEngineStateChange", body)
           }
+          #endif
           NoLateJourneyAutomaticRuntime.shared.setEventSink(owner: owner) { [weak self] body in
             self?.sendEvent("onAutomaticJourneyStateChange", body)
           }
         }
       }
-      #endif
       guard #available(iOS 16.1, *) else { return }
       Task {
         await NoLateLiveActivityCoordinator.shared.setEventSink { [weak self] name, body in
@@ -148,15 +148,15 @@ public final class NoLateLiveActivityModule: Module {
     }
 
     OnDestroy { [weak self] in
-      #if DEBUG
       if let owner = self?.journeyEventOwner {
         Task { @MainActor in
           // JS/module teardown only detaches observation, not the native journey lifetime.
+          #if DEBUG
           NoLateJourneyRuntime.shared.removeEventSink(owner: owner)
+          #endif
           NoLateJourneyAutomaticRuntime.shared.removeEventSink(owner: owner)
         }
       }
-      #endif
       #if DEBUG
       Task { @MainActor in
         _ = NoLateJourneyDiagnostics.shared.stopProbe()
@@ -177,95 +177,43 @@ public final class NoLateLiveActivityModule: Module {
     }
 
     AsyncFunction("refreshAutomaticJourneyCredentials") { (apiOrigin: String, refreshToken: String) in
-      #if DEBUG
       return await NoLateSavedGuidanceArrivalTransport.refreshRequest(apiOrigin: apiOrigin, refreshToken: refreshToken)
-      #else
-      return ["available": false]
-      #endif
     }
     AsyncFunction("configureAutomaticJourneyPushPilot") { (fcmToken: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.configurePushPilot(fcmToken: fcmToken)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("configureAutomaticJourneyNoticeMode") { (mode: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.configureNoticeMode(mode)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("postAuthenticatedAutomaticJourney") { (authJSON: String, path: String, bodyJSON: String) in
-      #if DEBUG
       return await NoLateSavedGuidanceArrivalTransport.authenticatedRequest(authJSON: authJSON, path: path, bodyJSON: bodyJSON)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("configureAutomaticJourneyAuthentication") { (authJSON: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.configureAuthentication(authJSON)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("updateAutomaticJourneyAuthentication") { (authJSON: String, bindingJSON: String, previousAccessToken: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.updateAuthentication(authJSON, bindingJSON: bindingJSON, previousAccessToken: previousAccessToken)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("armAutomaticJourney") { (routeJSON: String, bindingJSON: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.arm(routeJSON: routeJSON, bindingJSON: bindingJSON)
-      #else
-      return ["enabled": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
     AsyncFunction("getAutomaticJourneySnapshot") {
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.snapshot()
-      #else
-      return ["enabled": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
     AsyncFunction("stopAutomaticJourney") {
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.stop()
-      #else
-      return ["enabled": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
     AsyncFunction("restoreAutomaticJourney") { (routeJSON: String, bindingJSON: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.restore(routeJSON: routeJSON, bindingJSON: bindingJSON)
-      #else
-      return ["enabled": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
     AsyncFunction("reconcileAutomaticJourneyTerminal") { (bindingJSON: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.reconcileTerminal(bindingJSON: bindingJSON)
-      #else
-      return ["accepted": false]
-      #endif
     }
     AsyncFunction("getAutomaticJourneyDeparture") {
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.departure()
-      #else
-      return ["available": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
     AsyncFunction("acknowledgeAutomaticJourneyDeparture") { (eventKey: String, bindingJSON: String) in
-      #if DEBUG
       return await NoLateJourneyAutomaticRuntime.shared.acknowledge(eventKey: eventKey, bindingJSON: bindingJSON)
-      #else
-      return ["enabled": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any?]
-      #endif
     }
 
     AsyncFunction("getJourneyEngineSnapshot") {
@@ -278,18 +226,15 @@ public final class NoLateLiveActivityModule: Module {
 
     // Pure, bounded route assessment. Never calls the journey/location runtime or ActivityKit.
     AsyncFunction("assessJourneyRouteInput") { (json: String) in
-      #if DEBUG
-      guard Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true else {
-        return ["available": false, "reason": "DIAGNOSTICS_BUILD_REQUIRED"] as [String: Any]
+      guard Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool == true ||
+        Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true else {
+        return ["available": false, "reason": "JOURNEY_BUILD_REQUIRED"] as [String: Any]
       }
       do {
         return ["available": true, "summaryJSON": try NoLateJourneyRouteNormalizer.summaryJSON(json: json)] as [String: Any]
       } catch {
         return ["available": false, "reason": "INVALID_ROUTE_INPUT"] as [String: Any]
       }
-      #else
-      return ["available": false, "reason": "DEVELOPMENT_SIMULATOR_ONLY"] as [String: Any]
-      #endif
     }
 
     AsyncFunction("armJourneyEngine") { (mode: String) in

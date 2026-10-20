@@ -1,4 +1,3 @@
-#if DEBUG
 import ActivityKit
 import Foundation
 import UIKit
@@ -38,7 +37,7 @@ import UIKit
   private func apply(_ value: NoLateGuidanceContent?, routeLegs: [NoLateGuidanceRouteLeg], revision appliedRevision: Int) async {
     guard enabled, let value, ["ARMED", "ACTIVE"].contains(value.status) else {
       // Cold launch / explicit stop must also clear a guidance surface left by a crashed
-      // diagnostic process. This Activity type is never used for production departure/APNs.
+      // journey process. This Activity type never replaces a departure Activity.
       for old in Activity<NoLateGuidanceAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) }
       tokenTask?.cancel(); tokenTask = nil
       activity = nil; last = nil; state = "ENDED"; return
@@ -59,7 +58,7 @@ import UIKit
       }
       guard ActivityAuthorizationInfo().areActivitiesEnabled else { state = "DISABLED"; return }
       do {
-        // Remove only abandoned diagnostic guidance surfaces. Never end departure Activities.
+        // Remove only abandoned guidance surfaces. Never end departure Activities.
         for old in Activity<NoLateGuidanceAttributes>.activities { await old.end(nil, dismissalPolicy: .immediate) }
         guard enabled, revision == appliedRevision,
           NoLateGuidanceActivityStartPolicy.allows(value, legs: routeLegs, now: Date().timeIntervalSince1970,
@@ -82,4 +81,3 @@ import UIKit
     }
   }
 }
-#endif

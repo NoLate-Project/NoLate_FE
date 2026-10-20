@@ -8,10 +8,11 @@ export function isJourneyGuidanceEnabled(): boolean {
 
 /** UI entry only. Native capability and the authenticated server still gate preparation. */
 export function isAutomaticJourneyEntryEnabled(): boolean {
-    return isJourneyGuidanceEnabled() && __DEV__ && Platform.OS === 'ios'
+    const product = getEnv('EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED') === 'true';
+    return isJourneyGuidanceEnabled() && (__DEV__ || product) && Platform.OS === 'ios'
         && getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED') === 'true'
         && (!(require('expo-device') as typeof import('expo-device')).isDevice
-            || getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED') === 'true');
+            || product || getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED') === 'true');
 }
 
 export function canOpenJourneyGuidance(item?: ScheduleItem): boolean {

@@ -78,6 +78,10 @@
 	<string>q25m6dcvfx</string>
 	<key>NMFNcpKeyId</key>
 	<string>q25m6dcvfx</string>
+	<key>NoLateJourneyProductEnabled</key>
+	<true/>
+	<key>NoLateJourneyAuthenticatedEnabled</key>
+	<true/>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>추천 출발 시각을 놓치지 않도록 출발 알람을 울립니다.</string>
 	<key>NSAppTransportSecurity</key>
@@ -92,7 +96,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>NoLate에서 사진을 촬영해 빠른 일정을 만들기 위해 카메라 권한이 필요합니다.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>NoLate에서 현재 위치를 출발지로 설정하기 위해 위치 권한이 필요합니다.</string>
+	<string>현재 위치를 출발지로 설정하고 대중교통 길안내 중 출발·승차·하차·환승 시점을 안내합니다. 위치 좌표는 서버에 저장하지 않습니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>NoLate에서 음성으로 빠른 일정을 만들기 위해 마이크 권한이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -137,6 +141,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>location</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>SplashScreen</string>

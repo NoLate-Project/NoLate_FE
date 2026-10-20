@@ -1,11 +1,12 @@
-#if DEBUG
 import CoreLocation
 import Foundation
 import UIKit
 import UserNotifications
 import CryptoKit
+import AVFoundation
 
-/// Opt-in development GPS inference and local Activity. No GPS upload.
+/// Opt-in GPS inference and local Activity. Product and diagnostic builds have
+/// separate Info.plist gates and checkpoint directories. No GPS upload.
 @MainActor
 final class NoLateJourneyAutomaticRuntime: NSObject {
   static let shared = NoLateJourneyAutomaticRuntime()
@@ -63,15 +64,20 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
     #if targetEnvironment(simulator)
     return "SIMULATOR"
     #else
+    if productBuild { return "DEVICE" }
     return Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDeviceFieldTestEnabled") as? Bool == true ? "DEVICE" : nil
     #endif
   }
+  private var productBuild: Bool {
+    Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool == true
+  }
   private var enabled: Bool {
-    Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true && expectedExecution != nil
+    (productBuild || Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true)
+      && expectedExecution != nil
   }
   private var checkpointURL: URL? {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-      .appendingPathComponent("NoLateJourneyDevelopment", isDirectory: true)
+      .appendingPathComponent(productBuild ? "NoLateJourney" : "NoLateJourneyDevelopment", isDirectory: true)
       .appendingPathComponent("automatic-selected-route-v1.json")
   }
   private lazy var store = checkpointURL.map { NoLateJourneyAutomaticStore<Session.Envelope>(url: $0) }
@@ -85,7 +91,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   }
 
   func snapshot() -> [String: Any?] {
-    guard enabled else { return ["enabled": false, "reason": "DIAGNOSTICS_BUILD_REQUIRED"] }
+    guard enabled else { return ["enabled": false, "reason": "JOURNEY_BUILD_REQUIRED"] }
     advanceClock()
     return viewState()
   }
@@ -134,8 +140,10 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   func arm(routeJSON: String, bindingJSON: String) -> [String: Any?] {
     guard enabled else { return snapshot() }
     guard UIApplication.shared.applicationState == .active else { lastError = "FOREGROUND_REQUIRED"; return snapshot() }
+    #if DEBUG
     _ = NoLateJourneyRuntime.shared.snapshot()
     guard !NoLateJourneyRuntime.shared.hasLiveSession else { lastError = "OTHER_JOURNEY_RUNTIME_RUNNING"; return snapshot() }
+    #endif
     advanceClock()
     guard !running, session?.pendingDeparture == nil else { lastError = "SESSION_ALREADY_RUNNING"; return viewState() }
     guard !revocationFailed else { lastError = "AUTOMATIC_REVOCATION_FAILED"; return viewState() }
@@ -191,8 +199,10 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   func restore(routeJSON: String, bindingJSON: String) -> [String: Any?] {
     guard enabled else { return snapshot() }
     guard UIApplication.shared.applicationState == .active else { lastError = "FOREGROUND_REQUIRED"; return snapshot() }
+    #if DEBUG
     _ = NoLateJourneyRuntime.shared.snapshot()
     guard !NoLateJourneyRuntime.shared.hasLiveSession else { lastError = "OTHER_JOURNEY_RUNTIME_RUNNING"; return snapshot() }
+    #endif
     advanceClock()
     guard !running, session?.pendingDeparture == nil else { lastError = "SESSION_ALREADY_RUNNING"; return viewState() }
     guard !revocationFailed else { lastError = "AUTOMATIC_REVOCATION_FAILED"; return viewState() }
@@ -218,7 +228,7 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   }
 
   func departure() -> [String: Any?] {
-    guard enabled else { return ["available": false, "reason": "DIAGNOSTICS_BUILD_REQUIRED"] }
+    guard enabled else { return ["available": false, "reason": "JOURNEY_BUILD_REQUIRED"] }
     advanceClock()
     guard let event = session?.pendingDeparture else { return ["available": true, "eventJSON": NSNull()] }
     do {
@@ -515,10 +525,11 @@ final class NoLateJourneyAutomaticRuntime: NSObject {
   }
 }
 
-/// Test-build delivery only. No permission request, APNs, alarm mutation, persistent event history
-/// or background audio loop. Local notification acceptance is NOT proof of a visible banner.
+/// No permission request, alarm mutation, persistent event history or background audio loop.
+/// Local notification acceptance is not proof of a visible banner.
 @MainActor
 private final class NoLateJourneyNoticeDelivery {
+  private let speech = NoLateJourneySpeechDelivery()
   private(set) var mode = "OFF"
   private(set) var state = "OFF"
   private(set) var scheduledCount = 0
@@ -561,7 +572,7 @@ private final class NoLateJourneyNoticeDelivery {
   func clear() {
     epoch = UUID(); binding = nil; phase = nil; lastUsable = false; policy.reset()
     clearDelivered()
-    NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
+    speech.cancel()
     state = mode == "OFF" ? "OFF" : "IDLE"
   }
   private func clearDelivered() {
@@ -579,25 +590,25 @@ private final class NoLateJourneyNoticeDelivery {
     // A phase transition invalidates even a still-pending settings/add callback whose
     // event has no replacement (for example walking -> approaching the boarding stop).
     if phase != content.phase {
-      epoch = UUID(); clearDelivered(); NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
+      epoch = UUID(); clearDelivered(); speech.cancel()
       phase = content.phase
     }
     let now = Date().timeIntervalSince1970
     let usable = NoLateGuidanceRoutePositionPolicy.position(content, legs: legs, now: now) != nil
     if !usable {
-      if lastUsable { epoch = UUID(); clearDelivered(); NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech() }
+      if lastUsable { epoch = UUID(); clearDelivered(); speech.cancel() }
       lastUsable = false; state = "EVIDENCE_UNAVAILABLE"; return
     }
     lastUsable = true
     guard let notice = policy.next(content, legs: legs, now: now) else { return }
-    epoch = UUID(); clearDelivered(); NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
+    epoch = UUID(); clearDelivered(); speech.cancel()
     let fence = epoch
     let remaining = max(0, notice.expiresAt - now)
     expiryTask = Task { @MainActor [weak self] in
       try? await Task.sleep(nanoseconds: UInt64(min(10, remaining) * 1_000_000_000))
       guard !Task.isCancelled, let self, self.epoch == fence, self.binding == identity else { return }
       self.epoch = UUID(); self.clearDelivered()
-      NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
+      self.speech.cancel()
       self.state = "NOTICE_EXPIRED"
     }
     let identifier = "nolate.guidance.notice." + SHA256.hash(data: Data((identity + notice.kind).utf8)).map { String(format: "%02x", $0) }.joined()
@@ -611,8 +622,8 @@ private final class NoLateJourneyNoticeDelivery {
         self.permission = permission
         var voiceQueued = false
         if self.mode == "VOICE_AND_NOTIFICATIONS", UIApplication.shared.applicationState == .active {
-          NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
-          voiceQueued = NoLateJourneyDiagnostics.shared.queueGuidanceInstruction(notice.body)
+          self.speech.cancel()
+          voiceQueued = self.speech.queue(notice.body)
           if voiceQueued { self.voiceQueuedCount += 1 }
         }
         guard authorized else {
@@ -641,4 +652,37 @@ private final class NoLateJourneyNoticeDelivery {
     }
   }
 }
-#endif
+
+@MainActor
+private final class NoLateJourneySpeechDelivery {
+  #if !DEBUG
+  private let synthesizer = AVSpeechSynthesizer()
+  #endif
+
+  func queue(_ text: String) -> Bool {
+    #if DEBUG
+    return NoLateJourneyDiagnostics.shared.queueGuidanceInstruction(text)
+    #else
+    guard UIApplication.shared.applicationState == .active,
+      !text.isEmpty, text.utf8.count <= 512,
+      !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+      !synthesizer.isSpeaking else { return false }
+    do {
+      // Ambient audio obeys the hardware silent switch; navigation never overrides it.
+      try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+    } catch { return false }
+    let utterance = AVSpeechUtterance(string: text)
+    utterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
+    synthesizer.speak(utterance)
+    return true
+    #endif
+  }
+
+  func cancel() {
+    #if DEBUG
+    NoLateJourneyDiagnostics.shared.cancelGuidanceSpeech()
+    #else
+    if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
+    #endif
+  }
+}

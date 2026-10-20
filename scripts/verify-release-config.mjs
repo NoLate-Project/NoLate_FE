@@ -18,21 +18,35 @@ const localFlag = (name) => localEnv
   .match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]
   ?.trim()
   .replace(/^(["'])(.*)\1$/, "$2");
-// The automatic GPS runtime, authenticated transport, notices and guidance Activity
-// are still DEBUG-only. Reject a release configuration that advertises navigation
-// or enables the diagnostic build switches before a separately verified product
-// runtime exists. A feature flag alone cannot make the Release binary capable.
+const journeyCandidate = process.argv.includes("--journey-candidate");
+const flagEnabled = (name) => ["true", "1"].includes(process.env[name] ?? localFlag(name));
+// The public release remains closed until a separately verified product journey
+// has passed its UI, provider, APNs and lifecycle E2E. This flag validates an
+// isolated candidate; it never turns a normal public release into that candidate.
+if (journeyCandidate) {
+  assert.equal(releasePlatform, "ios", "Journey guidance candidate is iOS-only");
+  for (const name of [
+    "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
+    "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED",
+    "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
+    "NOLATE_JOURNEY_PRODUCT_BUILD",
+  ]) assert.ok(flagEnabled(name), `${name} is required for the journey candidate`);
+} else {
+  for (const name of [
+    "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
+    "EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED",
+    "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
+    "NOLATE_JOURNEY_PRODUCT_BUILD",
+  ]) assert.ok(!flagEnabled(name), `${name} must remain off in the public Release configuration`);
+}
 for (const name of [
-  "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
-  "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
   "EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED",
   "NOLATE_JOURNEY_DIAGNOSTICS_BUILD",
   "NOLATE_JOURNEY_AUTHENTICATED_BUILD",
   "NOLATE_JOURNEY_APNS_PILOT_BUILD",
   "NOLATE_JOURNEY_DEVICE_FIELD_TEST_BUILD",
 ]) {
-  const value = process.env[name] ?? localFlag(name);
-  assert.ok(value !== "true" && value !== "1", `${name} must remain off in Release until product guidance passes E2E`);
+  assert.ok(!flagEnabled(name), `${name} must remain off in Release`);
 }
 const localAndroidInterstitialAdUnitId = localEnv
   .match(/^EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID=(.*)$/m)?.[1]
@@ -56,6 +70,12 @@ const androidGradle = read("android/app/build.gradle");
 const androidManifest = read("android/app/src/main/AndroidManifest.xml");
 const iosProject = read("ios/NoLateFE.xcodeproj/project.pbxproj");
 const iosInfo = read("ios/NoLateFE/Info.plist");
+if (journeyCandidate) {
+  assert.match(iosInfo, /<key>NoLateJourneyProductEnabled<\/key>\s*<true\/>/);
+  assert.match(iosInfo, /<key>NoLateJourneyAuthenticatedEnabled<\/key>\s*<true\/>/);
+  assert.match(iosInfo, /<key>UIBackgroundModes<\/key>\s*<array>[\s\S]*?<string>location<\/string>[\s\S]*?<\/array>/);
+  assert.match(iosInfo, /<key>NSLocationWhenInUseUsageDescription<\/key>\s*<string>[^<]*길안내[^<]*<\/string>/);
+}
 const iosAppDelegate = read("ios/NoLateFE/AppDelegate.swift");
 const iosPodLock = read("ios/Podfile.lock");
 const liveActivityPlugin = read("plugins/withNoLateLiveActivity.js");
