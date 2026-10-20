@@ -14,6 +14,26 @@ assert.ok(
 );
 const localEnvPath = resolve(root, ".env");
 const localEnv = existsSync(localEnvPath) ? readFileSync(localEnvPath, "utf8") : "";
+const localFlag = (name) => localEnv
+  .match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]
+  ?.trim()
+  .replace(/^(["'])(.*)\1$/, "$2");
+// The automatic GPS runtime, authenticated transport, notices and guidance Activity
+// are still DEBUG-only. Reject a release configuration that advertises navigation
+// or enables the diagnostic build switches before a separately verified product
+// runtime exists. A feature flag alone cannot make the Release binary capable.
+for (const name of [
+  "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED",
+  "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
+  "EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED",
+  "NOLATE_JOURNEY_DIAGNOSTICS_BUILD",
+  "NOLATE_JOURNEY_AUTHENTICATED_BUILD",
+  "NOLATE_JOURNEY_APNS_PILOT_BUILD",
+  "NOLATE_JOURNEY_DEVICE_FIELD_TEST_BUILD",
+]) {
+  const value = process.env[name] ?? localFlag(name);
+  assert.ok(value !== "true" && value !== "1", `${name} must remain off in Release until product guidance passes E2E`);
+}
 const localAndroidInterstitialAdUnitId = localEnv
   .match(/^EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID=(.*)$/m)?.[1]
   ?.trim()

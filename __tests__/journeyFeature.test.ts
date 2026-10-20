@@ -85,6 +85,12 @@ describe("journey feature gate", () => {
         }
     });
 
+    it("자동 준비 플래그만 켜져도 상세 경로의 시험 제어 화면을 노출하지 않는다", () => {
+        mockedGetEnv.mockImplementation(key => key === "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED" ? "true" : "false");
+        expect(isAutomaticJourneyEntryEnabled()).toBe(false);
+        expect(canOpenJourneyGuidance(item())).toBe(false);
+    });
+
     it.each([undefined,'','false','TRUE','1','true'])('GPS entry requires its own exact flag (%s)',value=>{
         mockedGetEnv.mockImplementation(key=>key==='EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED'?value:'true');
         expect(isAutomaticJourneyEntryEnabled()).toBe(value==='true');

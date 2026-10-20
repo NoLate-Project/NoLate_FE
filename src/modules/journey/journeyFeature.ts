@@ -8,7 +8,7 @@ export function isJourneyGuidanceEnabled(): boolean {
 
 /** UI entry only. Native capability and the authenticated server still gate preparation. */
 export function isAutomaticJourneyEntryEnabled(): boolean {
-    return __DEV__ && Platform.OS === 'ios'
+    return isJourneyGuidanceEnabled() && __DEV__ && Platform.OS === 'ios'
         && getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED') === 'true'
         && (!(require('expo-device') as typeof import('expo-device')).isDevice
             || getEnv('EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED') === 'true');
