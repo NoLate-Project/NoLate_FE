@@ -15,7 +15,9 @@ export function isAutomaticJourneyEntryEnabled(): boolean {
 }
 
 export function canOpenJourneyGuidance(item?: ScheduleItem): boolean {
-    if (!item || !isJourneyGuidanceEnabled()) return false;
+    // Never replace the existing departure action with an unavailable entry screen.
+    // In particular, the guidance flag alone does not make the Release engine usable.
+    if (!item || !isJourneyGuidanceEnabled() || !isAutomaticJourneyEntryEnabled()) return false;
     if (item.travelCollaborationEnabled === false || item.routeSetupRequired) return false;
     return (item.myTravelPlan?.travelMode ?? item.travelMode) === "TRANSIT";
 }

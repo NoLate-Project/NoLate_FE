@@ -71,6 +71,20 @@ describe("journey feature gate", () => {
         }))).toBe(true);
     });
 
+    it("길안내 플래그만 켜져도 사용할 수 없는 진입 화면으로 기존 출발 동작을 바꾸지 않는다", () => {
+        mockedGetEnv.mockImplementation(key => key === "EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED" ? "true" : "false");
+        expect(canOpenJourneyGuidance(item())).toBe(false);
+
+        mockedGetEnv.mockReturnValue("true");
+        const development = __DEV__;
+        try {
+            (globalThis as unknown as { __DEV__: boolean }).__DEV__ = false;
+            expect(canOpenJourneyGuidance(item())).toBe(false);
+        } finally {
+            (globalThis as unknown as { __DEV__: boolean }).__DEV__ = development;
+        }
+    });
+
     it.each([undefined,'','false','TRUE','1','true'])('GPS entry requires its own exact flag (%s)',value=>{
         mockedGetEnv.mockImplementation(key=>key==='EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED'?value:'true');
         expect(isAutomaticJourneyEntryEnabled()).toBe(value==='true');
