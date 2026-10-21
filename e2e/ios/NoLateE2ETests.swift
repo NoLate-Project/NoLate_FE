@@ -128,6 +128,59 @@ final class NoLateE2ETests: XCTestCase {
         try createAndEditSchedule()
     }
 
+    /// Fresh synthetic member on the loopback-only H2 server in a Release build.
+    func testIsolatedReleaseMemberLoginAndOnboarding() throws {
+        let environment = ProcessInfo.processInfo.environment
+        let emailValue = try XCTUnwrap(environment["E2E_EMAIL"])
+        let passwordValue = try XCTUnwrap(environment["E2E_PASSWORD"])
+        XCTAssertTrue(emailValue.hasSuffix("@example.test"))
+        let email = app.textFields["이메일"]
+        if email.waitForExistence(timeout: 5) {
+            replace(email, with: emailValue)
+            XCTAssertEqual(email.value as? String, emailValue)
+            replaceSecure(app.secureTextFields["비밀번호"], with: passwordValue)
+            // A focused secure field can consume the first outside tap as keyboard dismissal.
+            app.staticTexts["NoLate"].firstMatch.tap()
+            let login = app.buttons["로그인"]
+            XCTAssertTrue(login.isEnabled)
+            login.tap()
+            let loginAlert = app.alerts.firstMatch
+            if loginAlert.waitForExistence(timeout: 12) {
+                if loginAlert.label == "공유 캘린더" && loginAlert.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+                    // The isolated backend intentionally disables sharing; this alert is
+                    // unrelated to authentication or the saved journey under test.
+                    loginAlert.buttons["확인"].tap()
+                } else {
+                    capture("isolated-release-login-alert")
+                    XCTFail("Isolated login returned an alert: \(loginAlert.label)")
+                    return
+                }
+            }
+        }
+        let skipImport = app.buttons["일정 없이 시작하기"]
+        if skipImport.waitForExistence(timeout: 5) {
+            skipImport.tap()
+            let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
+            XCTAssertTrue(skipTour.waitForExistence(timeout: 20))
+            skipTour.tap()
+        }
+        XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        capture("isolated-release-calendar")
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 20), "The actual saved route must appear in the calendar")
+        // iOS 27 XCTest can report an invalid (-1, -1) hit point after it
+        // auto-scrolls this nested agenda card. Tap its visible frame directly.
+        let frame = saved.frame
+        app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                      dy: frame.midY / app.frame.height)).tap()
+        let expand = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기")).firstMatch
+        XCTAssertTrue(expand.waitForExistence(timeout: 20))
+        expand.tap()
+        XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 15),
+                      "Release must expose the authenticated saved-route guidance entry")
+        capture("isolated-release-saved-route-guidance")
+    }
+
     func testCalendarCreateAndEdit() throws {
         let environment = ProcessInfo.processInfo.environment
         XCTAssertTrue(environment["E2E_EMAIL"]?.hasSuffix("@example.test") == true,
