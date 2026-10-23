@@ -20,11 +20,40 @@ export type EffectiveTransitRoutePresentation = {
     guidanceTitle: string;
     summary: string;
     itinerary: string;
+    compactSummary?: string;
     waitMeta?: string;
     mapNote: string;
 };
 
 const MAP_SAVED_ROUTE_NOTE = "지도에는 저장한 경로가 표시돼요";
+
+/** 출발 뒤의 계획 여정은 실제 탑승 확인이 아니며 출발 알람의 정상 ETA와 섞지 않는다. */
+export function buildPlannedJourneyArrivalPresentation(
+    status: ScheduleDepartureStatus | null | undefined,
+    nowMs: number,
+): EffectiveTransitRoutePresentation | undefined {
+    const prediction = status?.plannedJourneyArrivalPrediction;
+    if (!status || !prediction || !Number.isFinite(nowMs) ||
+        !/^[0-9a-f]{64}$/.test(prediction.routeIdentity)) return undefined;
+    const arrival = parseDate(prediction.predictedArrivalAt);
+    const presented = parseDate(prediction.presentedAt);
+    const maxDisplayAgeMs = prediction.basis === "MATCHED_TRAIN_REALTIME" ? 120_000 : 300_000;
+    if (!arrival || !presented || arrival.getTime() <= nowMs ||
+        presented.getTime() > nowMs + 5_000 || nowMs - presented.getTime() > maxDisplayAgeMs) return undefined;
+    const arrivalClock = formatClock(prediction.predictedArrivalAt, status.timeZone);
+    if (!arrivalClock) return undefined;
+    const observed = prediction.basis === "MATCHED_TRAIN_REALTIME";
+    return {
+        guidanceTitle: "계획 경로 기준 · 잠정 도착",
+        summary: `${arrivalClock} 도착 예상`,
+        compactSummary: `${arrivalClock} 도착 예상 · 탑승 미확인`,
+        itinerary: observed
+            ? "같은 환승 열차의 신선한 관측을 반영했어요. 다른 구간은 계획 시각이에요"
+            : "마지막으로 확인된 경로의 계획 도착시각이에요. 새 차량 관측은 없어요",
+        waitMeta: "실제 탑승·환승 여부는 확인하지 못했어요. 출발 알림 시각은 바뀌지 않아요",
+        mapNote: MAP_SAVED_ROUTE_NOTE,
+    };
+}
 
 function isPositiveMinute(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -123,7 +152,8 @@ export function resolveScheduleDetailDepartureTiming({
     }
 
     const fresh = getFreshDepartureTiming(status);
-    const protectedDeparture = !fresh && status?.stale && status.failureReason
+    const protectedDeparture = !fresh && status?.stale &&
+        (status.failureReason || status.originReplanDiagnostic)
         ? parseDate(status.recommendedDepartureAt) : undefined;
     // The backend validates schedule/route ownership and returns the protected job time.
     // A failure may keep an earlier departure, but can never delay the saved departure
@@ -166,10 +196,19 @@ function rideTimingLabel(segment: EffectiveTransitRouteSegment, timeZone?: strin
     if (!boarding || !arrival || !scheduledBoarding || !scheduledArrival ||
         arrival <= boarding || scheduledArrival <= scheduledBoarding) return undefined;
     const shift = boarding.getTime() - scheduledBoarding.getTime();
-    if (arrival.getTime() !== scheduledArrival.getTime() + shift ||
-        (timing.basis === "TIMETABLE" ? shift !== 0
-            : timing.basis !== "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE")) return undefined;
-    const basis = timing.basis === "TIMETABLE" ? "시간표" : "첫 승차 실시간 반영";
+    const alightingObserved = timing.basis === "TRANSFER_ALIGHTING_REALTIME";
+    const transferObserved = alightingObserved ||
+        timing.basis === "TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE";
+    if (transferObserved && !parseDate(timing.observationSourceUpdatedAt)) return undefined;
+    if (alightingObserved
+        ? shift !== 0
+        : arrival.getTime() !== scheduledArrival.getTime() + shift ||
+            (timing.basis === "TIMETABLE" ? shift !== 0
+                : timing.basis !== "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE" &&
+                    timing.basis !== "TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE")) return undefined;
+    const basis = timing.basis === "TIMETABLE" ? "시간표"
+        : timing.basis === "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE" ? "첫 승차 실시간 반영"
+            : alightingObserved ? "하차역 실시간 예측" : "환승역 실시간 반영";
     // This is a prediction based on a train timetable, not measured actual arrival.
     return `${table.trainNumber}열차 · ${basis} · ${formatClock(timing.predictedBoardingAt, timeZone, true)} 승차 → ${formatClock(timing.predictedArrivalAt, timeZone, true)} 하차 예측`;
 }

@@ -23,6 +23,12 @@ export function getTransitEtaTrustPresentation({
   const ownStatus = isInspectingTravelPlan ? undefined : status;
   if (intercityTicketSelected) return { departureLabel: '연결 경로 예상 출발', warning: '승차권 입력 시각 · 앞뒤 이동 예상 · 예매 상태 미검증' };
   if (intercityJourneySelected) return { departureLabel: '연결 경로 예상 출발', warning: '선택 편 시간표 · 앞뒤 운행·예매 미확인' };
+  if (ownStatus?.plannedJourneyArrivalPrediction) {
+    return { departureLabel: '기존 출발 안내', warning: '계획 경로의 잠정 도착 · 실제 탑승 미확인' };
+  }
+  if (ownStatus?.originReplanDiagnostic) {
+    return { departureLabel: '기존 출발 안내', warning: '새 출발지 경로 조회와 기존 계획 여정은 별개예요' };
+  }
   const verifiedProvider = ownStatus?.source === 'LIVE_PROVIDER' || ownStatus?.source === 'TIMETABLE_PROVIDER';
   if (verifiedProvider && getFreshDepartureTiming(ownStatus)) {
     return { departureLabel: '권장 출발' };

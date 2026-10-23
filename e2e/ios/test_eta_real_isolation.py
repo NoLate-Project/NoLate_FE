@@ -42,6 +42,42 @@ class RealIsolationVerifierTest(unittest.TestCase):
                 'walkingRefinement': {'failureCounts': {code: 1}}}))
         self.assertTrue(runner.provider_error_requires_stop({'providerWire': [{'outcome': 'rate_limited'}]}))
 
+    def test_postdeparture_audit_keeps_recommendation_evidence_separate_from_live_success(self):
+        runner_spec = importlib.util.spec_from_file_location('postdeparture_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        records = [{'recommendedDepartureAt': '2026-10-22T05:48:29+09:00', 'automaticAlarmStateCount': 0},
+                   {'recommendedDepartureAt': '2026-10-22T05:48:29+09:00', 'automaticAlarmStateCount': 0}]
+        partial = runner.postdeparture_audit(records, False)
+        self.assertEqual(partial['result'], 'PARTIAL')
+        self.assertTrue(partial['departureRecommendationUnchanged'])
+        self.assertTrue(partial['automaticAlarmStateAbsent'])
+        self.assertFalse(partial['nativeAlarmDeliveryTested'])
+        self.assertEqual(runner.postdeparture_audit(records, True)['result'], 'PASSED')
+        changed = [records[0], {**records[1], 'recommendedDepartureAt': '2026-10-22T05:49:29+09:00'}]
+        self.assertEqual(runner.postdeparture_audit(changed, True)['result'], 'PARTIAL')
+
+    def test_postdeparture_status_separates_new_origin_failure_from_saved_plan(self):
+        runner_spec = importlib.util.spec_from_file_location('split_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
+        runner = importlib.util.module_from_spec(runner_spec)
+        runner_spec.loader.exec_module(runner)
+        worker = {'travelMinutes': 62, 'source': 'TIMETABLE_PROVIDER', 'stale': True,
+                  'failureReason': 'TRANSIT_TRAIN_NOT_YET_OBSERVED: safe'}
+        public = {'travelMinutes': None, 'source': None, 'liveFetchedAt': None,
+                  'failureReason': None, 'predictedArrivalAt': None,
+                  'effectiveTransitRoute': None, 'stale': True,
+                  'originReplanDiagnostic': worker.copy()}
+        runner.verify_postdeparture_status_split(worker, public)
+        for field in ('travelMinutes', 'source', 'failureReason', 'predictedArrivalAt'):
+            leaked = copy.deepcopy(public)
+            leaked[field] = worker.get(field) or 'leaked'
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                runner.verify_postdeparture_status_split(worker, leaked)
+        missing_diagnostic = copy.deepcopy(public)
+        missing_diagnostic['originReplanDiagnostic'] = None
+        with self.assertRaises(RuntimeError):
+            runner.verify_postdeparture_status_split(worker, missing_diagnostic)
+
     def test_explicit_comparison_appointment_only_changes_future_input(self):
         runner_spec = importlib.util.spec_from_file_location('comparison_runner', Path(__file__).with_name('run-eta-real-isolated.py'))
         runner = importlib.util.module_from_spec(runner_spec)

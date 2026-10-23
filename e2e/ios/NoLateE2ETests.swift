@@ -1522,6 +1522,18 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         // Permission prompts must be reported to the operator, never auto-approved.
         try require(springboard.alerts.count == 0,
                     "A system permission/confirmation prompt requires operator review")
+        // A previous private H2 run can leave a calendar ID in the installed test app.
+        // Record and close only this exact stale-calendar alert; never dismiss other errors.
+        if environment["E2E_FIXTURE_PHASE"] == "planned-postdeparture" {
+            let staleCalendar = app.alerts["멤버 조회 실패"]
+            if staleCalendar.exists &&
+                staleCalendar.staticTexts["공유 캘린더가 존재하지 않습니다."].exists &&
+                staleCalendar.buttons["확인"].isHittable {
+                capture("eta-private-stale-calendar-alert")
+                staleCalendar.buttons["확인"].tap()
+                print("ETA_PRIVATE_STALE_CALENDAR_ALERT_DISMISSED")
+            }
+        }
         // Pre-mounted calendar scenes can retain non-interactive alert AX nodes.
         // The isolated detail journey must still stop for any actionable app alert.
         let hasAppAlert = environment["E2E_FIXTURE_PHASE"] == nil || environment["E2E_FIXTURE_PHASE"] == ""
@@ -2422,7 +2434,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     environment["E2E_EXISTING_TITLE"] == "ETA E2E isolated fixture",
                     "Only the isolated fixture is authorized")
         let phase = try XCTUnwrap(environment["E2E_FIXTURE_PHASE"])
-        try require(["success", "reconnect", "early-transfer", "unknown", "missed", "recovered", "late", "contract-save"].contains(phase), "Unknown fixture phase")
+        try require(["success", "reconnect", "early-transfer", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "unknown", "missed", "recovered", "late", "contract-save"].contains(phase), "Unknown fixture phase")
         // An imminent fixture alarm may cover the calendar. Close its in-app
         // presentation only; never mark departure or turn off the automatic alarm.
         if app.buttons["알람 화면 닫기"].exists && app.buttons["경로 보기"].exists {
@@ -2906,6 +2918,42 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         }
     }
 
+    /// A real same-train observation after departure is a provisional arrival, never a new departure ETA.
+    func testVerifyIsolatedRealProviderPlannedArrival() throws {
+        try verifyIsolatedRealProviderPlannedArrival("same-train")
+    }
+
+    /// Without a qualifying same-train delay, the original plan stays provisional and the departure remains frozen.
+    func testVerifyIsolatedRealProviderPlannedFallback() throws {
+        try verifyIsolatedRealProviderPlannedArrival("fallback")
+    }
+
+    private func verifyIsolatedRealProviderPlannedArrival(_ kind: String) throws {
+        try require(environment["E2E_REAL_ISOLATED"] == "1" && environment["E2E_SCHEDULE_ID"] == "363" &&
+                    environment["E2E_EXISTING_TITLE"] == "ETA E2E real isolated fixture",
+                    "Only the scoped real-provider H2 schedule is allowed")
+        try openRealIsolatedDetail()
+        let departure = try XCTUnwrap(environment["E2E_REAL_DEPARTURE_CLOCK"])
+        let arrival = try XCTUnwrap(environment["E2E_REAL_PROVISIONAL_CLOCK"])
+        let summary = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "계획 경로 기준 · 잠정 도착")).firstMatch
+        if summary.waitForExistence(timeout: 20) && summary.isHittable {
+            try require(summary.label.contains("기존 출발 안내 " + departure) &&
+                        summary.label.contains(arrival + " 도착 예상") &&
+                        !summary.label.contains("현재 보정 여정"),
+                        "A provisional arrival must not replace the frozen departure guidance")
+            try tap(summary)
+        }
+        let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "계획 경로 기준 · 잠정 도착,")).firstMatch
+        try reveal(guidance)
+        try require(guidance.exists && guidance.isHittable &&
+                    guidance.label.contains(arrival + " 도착 예상") &&
+                    guidance.label.contains("실제 탑승·환승 여부는 확인하지 못했어요") &&
+                    guidance.label.contains("출발 알림 시각은 바뀌지 않아요"),
+                    "The installed app must label the observed arrival as provisional")
+        capture("eta-real-isolated-planned-" + kind)
+        print("ETA_REAL_ISOLATED_PROVISIONAL_\(kind.uppercased())_UI_VERIFIED: " + guidance.label)
+    }
+
     /// Select the saved fixture's actual date, including a target after midnight.
     /// This only opens existing data; it never saves or changes a schedule/calendar style.
     private func openRealIsolatedDetail() throws {
@@ -3081,7 +3129,7 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                     environment["E2E_EXISTING_TITLE"] == "ETA E2E isolated fixture",
                     "Only the isolated fixture is authorized")
         let phase = try XCTUnwrap(environment["E2E_FIXTURE_PHASE"])
-        try require(["success", "reconnect", "early-transfer", "unknown", "missed", "recovered", "late"].contains(phase), "Unknown fixture phase")
+        try require(["success", "reconnect", "early-transfer", "transfer-observed", "transfer-first-unobserved", "planned-postdeparture", "unknown", "missed", "recovered", "late"].contains(phase), "Unknown fixture phase")
         if app.buttons["알람 화면 닫기"].exists && app.buttons["경로 보기"].exists {
             try tap(app.buttons["알람 화면 닫기"])
         }
@@ -3090,9 +3138,29 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
         // Keep the assertion on the visible detail rather than virtual calendar nodes.
         try require(app.staticTexts["ETA E2E isolated fixture"].firstMatch.waitForExistence(timeout: 20) &&
                     app.buttons["일정 수정"].exists, "Private fixture detail did not open")
-        let accepted = ["success", "reconnect", "early-transfer", "recovered"].contains(phase)
+        if phase == "planned-postdeparture" {
+            let clock = try XCTUnwrap(environment["E2E_FIXTURE_PROVISIONAL_CLOCK"])
+            let departure = try XCTUnwrap(environment["E2E_FIXTURE_DEPARTURE_CLOCK"])
+            let guidance = app.otherElements.matching(NSPredicate(format: "label BEGINSWITH %@", "계획 경로 기준 · 잠정 도착,")).firstMatch
+            let summary = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "계획 경로 기준 · 잠정 도착")).firstMatch
+            if summary.exists && summary.isHittable {
+                try require(summary.label.contains("기존 출발 안내 " + departure) && !summary.label.contains("현재 보정 여정"),
+                            "A confirmed departure ETA was mixed into the compact provisional arrival")
+                try tap(summary)
+            }
+            try reveal(guidance)
+            try require(guidance.exists && guidance.isHittable &&
+                        guidance.label.contains(clock + " 도착 예상") &&
+                        guidance.label.contains("실제 탑승·환승 여부는 확인하지 못했어요") &&
+                        guidance.label.contains("출발 알림 시각은 바뀌지 않아요"),
+                        "Expanded route must explain provisional evidence and unchanged alarm")
+            capture("eta-isolated-planned-postdeparture")
+            print("ETA_ISOLATED_PROVISIONAL_UI_VERIFIED: " + guidance.label)
+            return
+        }
+        let accepted = ["success", "reconnect", "early-transfer", "transfer-observed", "recovered"].contains(phase)
         let prefix = accepted ? "일정 상세 시트 펼치기, 권장 출발 " : "일정 상세 시트 펼치기, 예상 출발 "
-        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "unknown" ? "운행시각 미확인" : nil
+        let warning = phase == "missed" ? "환승 불가" : phase == "late" ? "정시 도착 불가" : phase == "unknown" ? "운행시각 미확인" : phase == "transfer-first-unobserved" ? "실시간 도착정보 없음" : nil
         let summaries = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix))
         var visible: XCUIElement?
         let expected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -3114,8 +3182,9 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
             try require(summary.label.contains("권장 출발 " + departure), "Displayed departure differs from fixture calculation")
             try require(summary.label.contains("현재 이동 " + minutes + "분"), "Displayed duration is still the stored estimate")
             // Independent synthetic timetable expectations: never rescale the saved 48/8-minute rides.
-            let firstRide = ["success", "early-transfer"].contains(phase) ? "22" : "25"
-            let secondRide = ["success", "early-transfer"].contains(phase) ? "11" : "13"
+            // Earlier boarding shortens this ride's verified wait + train duration to 21 minutes.
+            let firstRide = phase == "transfer-observed" ? "7" : phase == "early-transfer" ? "21" : phase == "success" ? "22" : "25"
+            let secondRide = phase == "transfer-observed" ? "12" : ["success", "early-transfer"].contains(phase) ? "11" : "13"
             try require(summary.label.contains("현재 보정 여정") &&
                         summary.label.contains("수도권 4호선 · 노원역→사당 · 약 " + firstRide + "분") &&
                         summary.label.contains("수도권 2호선 · 사당→신림 · 약 " + secondRide + "분") &&
@@ -3147,6 +3216,10 @@ final class NoLateEtaJourneyE2ETests: XCTestCase {
                         "Expanded journey must retain walking scopes and original seconds")
             try require(guidance.label.contains("지도에는 저장한 경로가 표시돼요"),
                         "Saved map must be explicitly distinguished from corrected guidance")
+            if phase == "transfer-observed" {
+                try require(guidance.label.contains("2012열차 · 환승역 실시간 반영"),
+                            "Observed transfer train must be identified in the installed app")
+            }
             try require(guidance.label.contains("도착 도보는 총시간에 포함돼요") &&
                         guidance.label.contains("역 내부 이동 포함 범위는 확인되지 않았어요"),
                         "Expanded guidance must explain egress inclusion and unknown coverage")
