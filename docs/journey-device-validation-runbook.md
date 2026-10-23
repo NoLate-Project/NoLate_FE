@@ -6,7 +6,8 @@
 TestFlight 길안내 후보는 다음 명령으로 아카이브한다. 래퍼가 공개 길안내·제품 진입·
 인증 세션·네이티브 제품 플래그를 `true`/`1`로 강제하고, 진단·pilot 플래그를 OFF로
 고정한 뒤 후보 구성을 검증한다. 로컬 `.env`의 API/지도 키는 별도로 준비해야 하며
-키 원문을 로그나 저장소에 넣지 않는다.
+키 원문을 로그나 저장소에 넣지 않는다. 래퍼는 임시 worktree의 `/tmp`/`/private/tmp`
+경로 불일치를 피하도록 JavaScript 진입 파일을 상대 경로 `index.js`로 고정한다.
 
 ```sh
 npm run with:ios-journey-candidate -- --env-file /path/to/private/.env xcodebuild archive \

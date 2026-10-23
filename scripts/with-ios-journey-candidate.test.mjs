@@ -10,6 +10,7 @@ test("iOS TestFlight candidate enables the complete product gate", () => {
     "EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED",
   ]) assert.equal(env[name], "true");
   assert.equal(env.NOLATE_JOURNEY_PRODUCT_BUILD, "1");
+  assert.equal(env.ENTRY_FILE, "index.js");
   for (const name of [
     "EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED",
     "NOLATE_JOURNEY_DIAGNOSTICS_BUILD",

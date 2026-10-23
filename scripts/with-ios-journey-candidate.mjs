@@ -12,6 +12,8 @@ export function iosJourneyCandidateEnvironment(base = process.env) {
     EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED: "true",
     EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED: "true",
     NOLATE_JOURNEY_PRODUCT_BUILD: "1",
+    // A relative entry avoids /tmp vs /private/tmp resolution mismatches in worktrees.
+    ENTRY_FILE: "index.js",
     // A TestFlight product candidate must not inherit development-only switches.
     EXPO_PUBLIC_AUTOMATIC_JOURNEY_DEVICE_FIELD_TEST_ENABLED: "false",
     NOLATE_JOURNEY_DIAGNOSTICS_BUILD: "0",
