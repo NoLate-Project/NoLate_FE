@@ -179,12 +179,33 @@ class RealIsolationVerifierTest(unittest.TestCase):
                 verifier.verify_evaluation_cadence(previous, {**worker, key: value})
 
     def test_comparison_export_audit_catches_changed_anchor_train_and_accuracy_claim(self):
-        path = Path(__file__).parents[1] / 'evidence/2026-10-12-tmap-final-evaluation-3.json'
-        worker = json.loads(path.read_text())
+        # A clean checkout must not depend on an untracked private live-run file.
+        # This synthetic payload tests export integrity, never real-provider accuracy.
+        arrival = '2026-10-12T04:20:51Z'
+        worker = {'classification': 'REAL_PROVIDER_ISOLATED_WORKER', 'providersMocked': False,
+            'clockMode': 'SYSTEM_WALL_CLOCK', 'source': 'LIVE_PROVIDER', 'stale': False,
+            'failureReason': None, 'scheduleId': 363, 'latestHistoryId': 3,
+            'evaluatedAt': '2026-10-12T03:59:30Z',
+            'recommendedDepartureAt': '2026-10-12T04:00:00Z', 'predictedArrivalAt': arrival,
+            'effectiveSnapshot': {'accepted': True, 'effectiveTransitRoute': {
+                'departureAt': '2026-10-12T04:00:26Z', 'arrivalAt': arrival,
+                'segments': [
+                    {'kind': 'WALK', 'walkingScope': 'ACCESS', 'walkingGeometry': {
+                        'from': {'lat': 37.65, 'lng': 127.06}}},
+                    {'kind': 'SUBWAY', 'rideTiming': {
+                        'predictedBoardingAt': '2026-10-12T04:03:13Z',
+                        'predictedArrivalAt': '2026-10-12T04:18:00Z',
+                        'timetable': {'provider': 'seoul-timetable', 'line': 'LINE_4',
+                            'fromStationCode': '0411', 'toStationCode': '0433',
+                            'directionCode': 'DOWN', 'serviceClass': 'LOCAL',
+                            'serviceDate': '2026-10-12', 'trainNumber': '4012'}}},
+                    {'kind': 'WALK', 'walkingScope': 'EGRESS', 'walkingGeometry': {
+                        'to': {'lat': 37.48, 'lng': 126.93}}},
+                ]}}}
         export_spec = importlib.util.spec_from_file_location('comparison_export', Path(__file__).with_name('verify-eta-comparison.py'))
         exporter = importlib.util.module_from_spec(export_spec)
         export_spec.loader.exec_module(exporter)
-        prediction = exporter.worker_prediction(worker, path.name)
+        prediction = exporter.worker_prediction(worker, 'synthetic-comparison-export-regression')
         self.assertEqual(verifier.verify_comparison_export(worker, prediction)['result'], 'PASSED')
         for mutation in ('alarm_anchor', 'train', 'round_boarding', 'platform', 'actual_accuracy', 'precision', 'coordinate'):
             with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
