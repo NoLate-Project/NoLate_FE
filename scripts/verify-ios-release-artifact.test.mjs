@@ -24,6 +24,17 @@ const verify = ({ main, extensions }) => verifyIosReleaseMetadata(main, extensio
 test('accepts the scene-enabled iPhone-only release and all three extensions', () => {
   assert.doesNotThrow(() => verify(fixture()));
 });
+test('journey candidate requires native product, authenticated guidance and location modes', () => {
+  const f = fixture();
+  f.main.NoLateJourneyProductEnabled = true;
+  f.main.NoLateJourneyAuthenticatedEnabled = true;
+  f.main.UIBackgroundModes = ['remote-notification', 'location'];
+  assert.doesNotThrow(() => verifyIosReleaseMetadata(f.main, f.extensions,
+    { version: '1.2.0', build: '55' }, true));
+  delete f.main.NoLateJourneyProductEnabled;
+  assert.throws(() => verifyIosReleaseMetadata(f.main, f.extensions,
+    { version: '1.2.0', build: '55' }, true), /native journey product/);
+});
 test('rejects the reviewed build 54 crash pattern: absent scene manifest', () => {
   const f = fixture(); delete f.main.UIApplicationSceneManifest;
   f.main.CFBundleVersion = '54';

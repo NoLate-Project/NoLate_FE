@@ -12,7 +12,7 @@ export const extensionBundles = [
 
 // This checks the compiled artifact, not the source Info.plist: an older archive
 // can otherwise pass source checks while still crashing during UIKit launch.
-export function verifyIosReleaseMetadata(main, extensions, expected) {
+export function verifyIosReleaseMetadata(main, extensions, expected, journeyCandidate = false) {
   assert.equal(main.CFBundleIdentifier, 'com.anonymous.nolatefe');
   const manifest = main.UIApplicationSceneManifest;
   assert.ok(manifest, 'Missing UIApplicationSceneManifest: iOS 27 launch crash');
@@ -23,6 +23,18 @@ export function verifyIosReleaseMetadata(main, extensions, expected) {
   assert.equal(scenes[0].UISceneDelegateClassName, 'NoLateFE.SceneDelegate',
     'Scene delegate must be expanded to its runtime class in the built plist');
   assert.deepEqual(main.UIDeviceFamily, [1], 'Keep iPhone-only distribution');
+  if (journeyCandidate) {
+    assert.equal(main.NoLateJourneyProductEnabled, true,
+      'TestFlight archive did not enable the native journey product');
+    assert.equal(main.NoLateJourneyAuthenticatedEnabled, true,
+      'TestFlight archive did not enable authenticated native guidance');
+    assert.ok(main.UIBackgroundModes?.includes('location'),
+      'TestFlight archive is missing background location');
+    assert.notEqual(main.NoLateJourneyDiagnosticsEnabled, true,
+      'TestFlight archive must not contain the diagnostics gate');
+    assert.notEqual(main.NoLateJourneyDeviceFieldTestEnabled, true,
+      'TestFlight archive must not contain the device field-test gate');
+  }
   assert.equal(extensions.length, extensionBundles.length);
   assert.deepEqual(extensions.map(info => info.CFBundleIdentifier).sort(),
     [...extensionBundles].sort(), 'All three expected extensions must be embedded');
@@ -52,7 +64,7 @@ function verifyArtifact(input) {
   const config = JSON.parse(readFileSync(join(root, 'app.json'), 'utf8'));
   verifyIosReleaseMetadata(main, extensions, {
     version: config.version, build: config.ios.buildNumber,
-  });
+  }, process.argv.includes('--journey-candidate'));
   assert.ok(existsSync(join(appPath, 'main.jsbundle')), 'Release JS bundle is missing');
   assert.ok(existsSync(join(appPath, main.CFBundleExecutable)), 'Native executable is missing');
   console.log(`Verified ${main.CFBundleShortVersionString} (${main.CFBundleVersion}): scene manifest, iPhone-only family, three extensions and bundled JS.`);

@@ -1,5 +1,27 @@
 # 대중교통 길안내 실기기 오류·검증 절차
 
+## TestFlight 제품 후보 빌드 스위치
+
+`main`의 일반 빌드는 다른 배포에 영향이 없도록 길안내 기본값을 OFF로 둔다. iOS
+TestFlight 길안내 후보는 다음 명령으로 아카이브한다. 래퍼가 공개 길안내·제품 진입·
+인증 세션·네이티브 제품 플래그를 `true`/`1`로 강제하고, 진단·pilot 플래그를 OFF로
+고정한 뒤 후보 구성을 검증한다. 로컬 `.env`의 API/지도 키는 별도로 준비해야 하며
+키 원문을 로그나 저장소에 넣지 않는다.
+
+```sh
+npm run with:ios-journey-candidate -- --env-file /path/to/private/.env xcodebuild archive \
+  -workspace ios/NoLateFE.xcworkspace -scheme NoLateFE -configuration Release \
+  -destination 'generic/platform=iOS' -archivePath /path/to/NoLateFE.xcarchive
+npm run verify:ios-artifact -- /path/to/NoLateFE.xcarchive --journey-candidate
+```
+
+TestFlight 업로드와 서버 배포는 이 명령만으로 수행되지 않는다. 서버에는
+`prod,journey-testflight` 프로필을 명시적으로 적용한다. 해당 프로필은 자동 안내,
+버스·지하철 공식 증명, 보행, 만료 worker, Live Activity를 모두 ON으로 두지만,
+암호화 키·공급자 키·서울시 HTTP 전송 허용은 배포 환경에서 충족해야 한다. 하나라도
+빠지면 서버의 운영 준비 검사가 기동을 차단한다. 기존 운영 서버에 프로필을 추가하기
+전에 배포 설정과 롤백 방법을 확인한다.
+
 ## 2026-10-22 제품 후보 인계 — 이전 Debug 전용 절보다 우선
 
 현재 iOS 제품 후보는 Debug 현장 시험 플래그가 아니라 `NOLATE_JOURNEY_PRODUCT_BUILD=1`,

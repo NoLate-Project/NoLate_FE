@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "verify:release-config": "node scripts/verify-release-config.mjs",
+    "with:ios-journey-candidate": "node scripts/with-ios-journey-candidate.mjs",
     "verify:ios-artifact": "node scripts/verify-ios-release-artifact.mjs",
     "test:ios-artifact": "node --test scripts/verify-ios-release-artifact.test.mjs",
     "verify:release-config:android": "node scripts/verify-release-config.mjs --platform android",
