@@ -228,7 +228,7 @@ export function ScheduleDetailRouteQuickSummary({
                   { color: topCardAccentText },
                 ]}
               >
-                {effectiveTransitRoutePresentation.guidanceTitle} · {effectiveTransitRoutePresentation.itinerary}
+                {effectiveTransitRoutePresentation.guidanceTitle} · {effectiveTransitRoutePresentation.compactSummary ?? effectiveTransitRoutePresentation.itinerary}
               </Text>
             </View>
           ) : departureCompleted ? (

@@ -3,10 +3,24 @@
 No uninstall, data deletion, notification deletion, or other-device operation.
 Starting a fresh H2 server must not inherit mounted screens from an older H2 login.
 """
+from pathlib import Path
 import subprocess
 
 DEVICE = '9EFFB87E-1E6D-4C2B-A81C-2D38CCF6EC69'
 BUNDLE = 'com.anonymous.nolatefe'
+
+
+def require_private_development_client(device):
+    """Fail before real provider calls if the pinned simulator has a Release app."""
+    if device != DEVICE:
+        raise ValueError('Unexpected simulator; no app operation performed')
+    result = subprocess.run(
+        ['xcrun', 'simctl', 'get_app_container', device, BUNDLE, 'app'],
+        capture_output=True, text=True, timeout=30,
+    )
+    app_path = result.stdout.strip()
+    if result.returncode != 0 or not app_path or not (Path(app_path) / 'EXDevLauncher.bundle').is_dir():
+        raise RuntimeError('Pinned simulator needs the Expo development client before provider calls')
 
 
 def open_private_test_endpoint(device):

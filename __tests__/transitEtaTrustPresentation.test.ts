@@ -5,6 +5,13 @@ test('protected earlier departure remains estimated and explains why the clock i
     failureReason: 'TRANSIT_ITINERARY_REFRESH_UNSUPPORTED: unsupported' }), preservingEarlierDeparture: true }))
     .toEqual({ departureLabel: '예상 출발', warning: '출발 시각 안전 유지 · 재조회 미지원 · 경로 재선택 필요' });
 });
+test('post-departure replan failure is not described as failure of the saved journey', () => {
+  expect(getTransitEtaTrustPresentation({ travelMode: 'TRANSIT', status: status({
+    source: null, travelMinutes: null, stale: true, failureReason: null,
+    originReplanDiagnostic: { travelMinutes: 63, source: 'TIMETABLE_PROVIDER', stale: true,
+      failureReason: 'TRANSIT_TRAIN_NOT_YET_OBSERVED: safe', providerFetchedAt: null },
+  }) })).toEqual({ departureLabel: '기존 출발 안내', warning: '새 출발지 경로 조회와 기존 계획 여정은 별개예요' });
+});
 import type { ScheduleDepartureStatus } from '../src/api/schedule';
 
 const status = (override: Partial<ScheduleDepartureStatus> = {}): ScheduleDepartureStatus => ({

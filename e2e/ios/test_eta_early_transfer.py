@@ -18,7 +18,8 @@ class EarlyTransferAuditTest(unittest.TestCase):
             return {'kind': 'SUBWAY', 'rideTiming': {
                 'timetable': {'trainNumber': train, 'boardingAt': at(raw_board), 'arrivalAt': at(raw_arrival)},
                 'predictedBoardingAt': at(board), 'predictedArrivalAt': at(arrival)}}
-        route = {'totalMinutes': 41, 'departureAt': at(0), 'arrivalAt': at(2452), 'segments': [
+        # The route's second-precision departure is 26s after the minute-rounded alert decision.
+        route = {'totalMinutes': 41, 'departureAt': at(26), 'arrivalAt': at(2452), 'segments': [
             {'kind': 'WALK', 'durationSeconds': 111}, ride('4012', 330, 1530, 197, 1397),
             {'kind': 'WALK', 'durationSeconds': 243}, ride('2012', 1800, 2281, 1800, 2281),
             {'kind': 'WALK', 'durationSeconds': 171}]}
@@ -45,6 +46,39 @@ class EarlyTransferAuditTest(unittest.TestCase):
         self.assertEqual(result['syntheticImprovementSeconds'], 300)
         self.assertTrue(result['walkingAndMarginPreserved'])
         self.assertFalse(result['actualTripAccuracyVerified'])
+
+    def test_observed_transfer_recalculates_notification_and_final_arrival_together(self):
+        worker, public = self.fixture()
+        epoch = dt.datetime.fromisoformat(worker['epoch'])
+        at = lambda seconds: (epoch + dt.timedelta(seconds=seconds)).isoformat()
+        worker['phase'] = 'transfer-observed'
+        public['confidence'] = 'MEDIUM'
+        worker['effectiveSnapshot']['transitTimingBasis'] = public['transitTimingBasis'] = (
+            'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED')
+        route = public['effectiveTransitRoute']
+        route['totalMinutes'] = public['travelMinutes'] = 27
+        route['arrivalAt'] = worker['predictedArrivalAt'] = public['predictedArrivalAt'] = at(1612)
+        first = route['segments'][1]['rideTiming']
+        first.update(basis='FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+                     predictedBoardingAt=at(210), predictedArrivalAt=at(513))
+        first['timetable'].update(boardingAt=at(197), arrivalAt=at(500))
+        onward = route['segments'][3]['rideTiming']
+        onward.update(basis='TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE',
+                      predictedBoardingAt=at(960), predictedArrivalAt=at(1441),
+                      observationSourceUpdatedAt=worker['evaluatedAt'])
+        onward['timetable'].update(boardingAt=at(840), arrivalAt=at(1321))
+        route['segments'][3]['transferTiming'] = {'requiredMarginSeconds': 60}
+        worker['effectiveSnapshot']['effectiveTransitRoute'] = copy.deepcopy(route)
+        worker['fencedNotificationPayloads'] = [{
+            'recommendedDepartureAt': at(0), 'predictedArrivalAt': at(1612),
+            'etaTimingBasis': 'FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED',
+        }]
+
+        self.assertTrue(verifier.verify_prediction(worker, public, 'transfer-observed')
+                        ['notificationPayloadMatchesUpdatedEta'])
+        worker['fencedNotificationPayloads'][0]['predictedArrivalAt'] = at(1492)
+        with self.assertRaises(AssertionError):
+            verifier.verify_prediction(worker, public, 'transfer-observed')
 
     def test_real_feed_wrong_scope_alarm_or_unaccepted_result_is_rejected(self):
         for key, value in [('providersMocked', False), ('database', 'production'),

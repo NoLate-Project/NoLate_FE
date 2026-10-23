@@ -11,7 +11,10 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-from eta_pinned_app import reset_private_navigation, restore_private_endpoint, open_private_test_endpoint
+from eta_pinned_app import (
+    require_private_development_client, reset_private_navigation,
+    restore_private_endpoint, open_private_test_endpoint,
+)
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -48,6 +51,35 @@ def provider_error_requires_stop(value):
                    ('HTTP_AUTH', 'HTTP_QUOTA', 'PROVIDER_APPLICATION_ERROR')))
 
 
+def postdeparture_audit(evaluations, same_train_provisional):
+    """Report frozen recommendation separately from an untested native alarm."""
+    first = evaluations[0].get('recommendedDepartureAt') if evaluations else None
+    recommendation_unchanged = bool(first and len(evaluations) > 1 and all(
+        item.get('recommendedDepartureAt') == first for item in evaluations[1:]))
+    no_automatic_alarm_state = bool(evaluations and all(
+        item.get('automaticAlarmStateCount') == 0 for item in evaluations))
+    return {'result': 'PASSED' if same_train_provisional and recommendation_unchanged
+            and no_automatic_alarm_state else 'PARTIAL',
+            'classification': 'REAL_PROVIDER_POSTDEPARTURE_SAME_TRAIN_PROVISIONAL_NOT_PHYSICAL_TRIP',
+            'evaluationCount': len(evaluations),
+            'departureRecommendationUnchanged': recommendation_unchanged,
+            'automaticAlarmStateAbsent': no_automatic_alarm_state,
+            'nativeAlarmDeliveryTested': False}
+
+
+def verify_postdeparture_status_split(worker, public):
+    """A new origin search must not masquerade as the saved journey's ETA/failure."""
+    diagnostic = public.get('originReplanDiagnostic') or {}
+    for key, value in [('travelMinutes', worker['travelMinutes']), ('source', worker['source']),
+                       ('stale', worker['stale']), ('failureReason', worker['failureReason'])]:
+        if diagnostic.get(key) != value:
+            raise RuntimeError('origin_replan_diagnostic_does_not_match_worker')
+    if any(public.get(key) is not None for key in
+           ('travelMinutes', 'source', 'liveFetchedAt', 'failureReason', 'predictedArrivalAt',
+            'effectiveTransitRoute')) or public.get('stale') is not True:
+        raise RuntimeError('origin_replan_leaked_into_saved_journey_eta')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--java', required=True)
@@ -66,7 +98,11 @@ def main():
                         help='Wait for this real wall-clock instant before the first evaluation; never uses a fake clock')
     parser.add_argument('--verify-observation-expiry', action='store_true',
                         help='After the final accepted evaluation, wait for actual observation expiry and verify API/app degradation without requery')
+    parser.add_argument('--verify-planned-postdeparture', action='store_true',
+                        help='One accepted plan, then at most two real-clock post-departure checks of its final train')
     args = parser.parse_args()
+    if args.verify_planned_postdeparture and (args.max_evaluations != 3 or args.verify_observation_expiry):
+        parser.error('Post-departure verification permits exactly three bounded evaluations and no expiry phase')
     departure = None
     if args.planned_departure_at:
         departure = dt.datetime.fromisoformat(args.planned_departure_at.replace('Z', '+00:00'))
@@ -98,6 +134,7 @@ def main():
     report['comparisonRequestedDepartureAt'] = args.planned_departure_at
     report['comparisonTargetArrivalAt'] = target_arrival_at
     report['evaluationNotBefore'] = args.evaluation_not_before
+    report['plannedPostdepartureRequested'] = args.verify_planned_postdeparture
 
     def emit(**value):
         print(json.dumps(value), flush=True)
@@ -158,6 +195,7 @@ def main():
 
     try:
         emit(state='starting', evidenceRoot=str(root))
+        require_private_development_client(DEVICE)
         free(5523)
         free(8086)
         with log('compile.log') as output:
@@ -193,6 +231,7 @@ def main():
         ui('testLoginDedicatedEtaAccount', 'ui-login', ('--credentials', str(root / 'credentials.json')))
         accepted_streak = 0
         previous = None
+        initial_plan = None
         max_evaluations = args.max_evaluations
         if evaluation_not_before and dt.datetime.now(dt.timezone.utc) < evaluation_not_before:
             seconds = (evaluation_not_before - dt.datetime.now(dt.timezone.utc)).total_seconds()
@@ -212,11 +251,64 @@ def main():
             is_accepted = (value['source'] == 'LIVE_PROVIDER' and value['stale'] is False and value['failureReason'] is None
                            and (value['effectiveSnapshot'] or {}).get('accepted') is True)
             record = {'index': index, 'accepted': is_accepted, 'uiResult': 'NOT_RUN', 'evaluatedAt': value['evaluatedAt'],
+                      'recommendedDepartureAt': value['recommendedDepartureAt'],
+                      'automaticAlarmStateCount': len(value['alarmStates']),
                       'failureCode': (value['failureReason'] or '').split(':')[0], 'providerWire': value['providerWire'],
                       'providerFailures': value.get('providerFailures', [])}
             report['evaluations'].append(record)
             emit(state='real_evaluation', **record)
-            if is_accepted:
+            if args.verify_planned_postdeparture and index > 1:
+                plan = (value.get('effectiveSnapshot') or {}).get('inProgressPlannedRoute')
+                observation = (value.get('effectiveSnapshot') or {}).get('plannedArrivalObservation')
+                if plan != initial_plan:
+                    raise RuntimeError('original_planned_route_not_preserved')
+                if value['recommendedDepartureAt'] != report['evaluations'][0]['recommendedDepartureAt']:
+                    raise RuntimeError('departure_alert_was_changed')
+                if observation and observation.get('routeIdentity') == plan.get('identity'):
+                    source_at = dt.datetime.fromisoformat(observation['sourceUpdatedAt'])
+                    evaluated_at = dt.datetime.fromisoformat(value['evaluatedAt'])
+                    if (0 <= (evaluated_at - source_at).total_seconds() <= 120 and
+                            dt.datetime.fromisoformat(observation['predictedArrivalAt']) > evaluated_at):
+                        ui('testVerifyIsolatedRealProviderPlannedArrival', f'ui-planned-{index}',
+                           ('--real-isolated-evidence', str(path),
+                            '--real-isolated-previous-evidence', str(root / 'evaluation-1.json'),
+                            '--schedule-id', '363', '--existing-title', TITLE))
+                        public = json.loads((root / 'ui-status.json').read_text())
+                        verify_postdeparture_status_split(value, public)
+                        prediction = public.get('plannedJourneyArrivalPrediction') or {}
+                        if (prediction.get('basis') != 'MATCHED_TRAIN_REALTIME' or
+                                dt.datetime.fromisoformat(prediction['predictedArrivalAt']) !=
+                                dt.datetime.fromisoformat(observation['predictedArrivalAt']) or
+                                public['recommendedDepartureAt'] != value['recommendedDepartureAt'] or
+                                public.get('predictedArrivalAt') is not None or
+                                public.get('effectiveTransitRoute') is not None):
+                            raise RuntimeError('public_provisional_arrival_does_not_match_worker')
+                        (root / f'ui-status-planned-{index}.json').write_text(json.dumps(public, indent=2))
+                        record['uiResult'] = 'PROVISIONAL_PASSED'
+                        record['plannedArrivalPrediction'] = prediction
+                        report['sameTrainProvisionalOnly'] = True
+                        break
+                record['uiResult'] = 'NO_QUALIFYING_SAME_TRAIN_DELAY_OBSERVATION'
+                if (not observation and dt.datetime.fromisoformat(plan['arrivalAt']) >
+                        dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=2)):
+                    ui('testVerifyIsolatedRealProviderPlannedFallback', f'ui-planned-fallback-{index}',
+                       ('--real-isolated-evidence', str(path),
+                        '--real-isolated-previous-evidence', str(root / 'evaluation-1.json'),
+                        '--schedule-id', '363', '--existing-title', TITLE))
+                    public = json.loads((root / 'ui-status.json').read_text())
+                    verify_postdeparture_status_split(value, public)
+                    prediction = public.get('plannedJourneyArrivalPrediction') or {}
+                    if (prediction.get('basis') != 'LAST_ACCEPTED_PLAN' or
+                            dt.datetime.fromisoformat(prediction['predictedArrivalAt']) !=
+                            dt.datetime.fromisoformat(plan['arrivalAt']) or
+                            public['recommendedDepartureAt'] != value['recommendedDepartureAt'] or
+                            public.get('predictedArrivalAt') is not None or
+                            public.get('effectiveTransitRoute') is not None):
+                        raise RuntimeError('public_planned_fallback_does_not_match_worker')
+                    (root / f'ui-status-planned-fallback-{index}.json').write_text(json.dumps(public, indent=2))
+                    record['uiResult'] = 'FALLBACK_PASSED_NOT_LIVE_CORRECTION'
+                    report['plannedFallbackUiVerified'] = True
+            elif is_accepted:
                 # Export the calculation's actual departure anchor and train IDs.
                 # This is evidence for a subsequent map comparison, not a pass:
                 # station-platform coverage and external clock precision remain unknown.
@@ -231,6 +323,8 @@ def main():
                 (root / f'ui-status-{index}.json').write_bytes((root / 'ui-status.json').read_bytes())
                 record['uiResult'] = 'PASSED'
                 accepted_streak += 1
+                if args.verify_planned_postdeparture:
+                    initial_plan = value['effectiveSnapshot']['effectiveTransitRoute']
             elif args.journey_provider == 'odsay':
                 ui('testVerifyIsolatedRealProviderDiagnostic', f'ui-diagnostic-{index}', ('--real-isolated-evidence', str(path),
                     '--schedule-id', '363', '--existing-title', TITLE))
@@ -238,14 +332,28 @@ def main():
                 record['uiResult'] = 'DIAGNOSTIC_PASSED_NOT_ACCEPTED_ETA'
             if not is_accepted:
                 accepted_streak = 0
-            if accepted_streak >= 2 or index == max_evaluations:
+            if args.verify_planned_postdeparture and index == 1 and not is_accepted:
+                break
+            if (not args.verify_planned_postdeparture and accepted_streak >= 2) or index == max_evaluations:
                 break
             if provider_error_requires_stop(value):
                 report['providerErrorRetriesStopped'] = True
                 break
             due = dt.datetime.fromisoformat(value['nextCheckAt'])
+            if args.verify_planned_postdeparture:
+                if initial_plan is None:
+                    break
+                last_ride = [s for s in initial_plan['segments'] if s['kind'] == 'SUBWAY'][-1]
+                timetable = last_ride['rideTiming']['timetable']
+                planned_at = dt.datetime.fromisoformat(initial_plan['departureAt'])
+                station_at = dt.datetime.fromisoformat(timetable['boardingAt' if index == 1 else 'arrivalAt'])
+                due = max(due, planned_at + dt.timedelta(seconds=10),
+                          station_at - dt.timedelta(minutes=5))
+                if due >= dt.datetime.fromisoformat(value['targetArrivalAt']) - dt.timedelta(minutes=3):
+                    report['observationWindowUnavailable'] = True
+                    break
             seconds = max(0, (due - dt.datetime.now(dt.timezone.utc)).total_seconds())
-            if seconds > 330:
+            if seconds > (75 * 60 if args.verify_planned_postdeparture else 330):
                 raise RuntimeError('next_due_outside_bounded_observation')
             emit(state='waiting_persisted_due_time', seconds=round(seconds), nextCheckAt=value['nextCheckAt'])
             wait(lambda: dt.datetime.now(dt.timezone.utc) >= due, server, seconds + 10)
@@ -253,7 +361,10 @@ def main():
         spec = importlib.util.spec_from_file_location('real_audit', Path(__file__).with_name('verify-real-isolated-eta.py'))
         audit = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(audit)
-        report['audit'] = audit.verify(root, require_comparison_evidence=True)
+        if args.verify_planned_postdeparture:
+            report['audit'] = postdeparture_audit(report['evaluations'], report.get('sameTrainProvisionalOnly', False))
+        else:
+            report['audit'] = audit.verify(root, require_comparison_evidence=True)
         report['result'] = report['audit']['result']
         if args.verify_observation_expiry:
             if not is_accepted:

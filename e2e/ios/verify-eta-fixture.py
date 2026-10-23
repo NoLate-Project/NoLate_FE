@@ -35,6 +35,7 @@ def expected_walking_geometries():
     middle = [{'lat': 37.6552, 'lng': 127.0611}, None, {'lat': 37.4841, 'lng': 126.9296}]
     return [{'from': start, 'to': end, 'distanceMeters': meters,
              'endpointBasis': 'PROVIDER_LEG_ENDPOINTS',
+             'providerQueryEndpoints': None,
              'pathEvidence': {'provider': 'tmap', 'status': 'UNAVAILABLE' if i == 1 else 'PROVIDED',
                  'stationInteriorCoverage': 'UNKNOWN', 'steps': [] if i == 1 else [
                      {'coordinates': [start, middle[i], end], 'distanceMeters': meters, 'description': descriptions[i]}]}}

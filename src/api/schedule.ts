@@ -61,6 +61,8 @@ export type TransitRouteProvenance =
 
 export type TransitTimingBasis =
     | "FIRST_BOARDING_REALTIME_FUTURE_TIMETABLE"
+    | "FIRST_BOARDING_REALTIME_TRANSFER_OBSERVED"
+    | "FIRST_BOARDING_TIMETABLE_TRANSFER_OBSERVED"
     | "FIRST_BOARDING_REALTIME_TRANSFER_UNKNOWN"
     | "FIRST_BOARDING_REALTIME_ROUTE_ESTIMATE"
     | "ROUTE_ESTIMATE_ONLY"
@@ -86,7 +88,9 @@ export type EffectiveTransitRideTiming = {
     };
     predictedBoardingAt: string;
     predictedArrivalAt: string;
-    basis: "TIMETABLE" | "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE";
+    observationSourceUpdatedAt?: string | null;
+    basis: "TIMETABLE" | "FIRST_BOARDING_REALTIME_ADJUSTED_TIMETABLE"
+        | "TRANSFER_BOARDING_REALTIME_ADJUSTED_TIMETABLE" | "TRANSFER_ALIGHTING_REALTIME";
 };
 
 export type EffectiveTransitRouteSegment = {
@@ -185,6 +189,21 @@ export type ScheduleDepartureStatus = {
     effectiveTransitRoute?: EffectiveTransitRoute | null;
     /** 시간표 전용 미리보기. 정상 ETA/출발 알람의 대체값이 아니다. */
     futureTimetablePrediction?: EffectiveTransitRoute | null;
+    /** 출발 후 마지막 정상 계획 여정의 잠정 도착. 실제 탑승 확인/출발 알림 ETA와 별개다. */
+    plannedJourneyArrivalPrediction?: {
+        predictedArrivalAt: string;
+        presentedAt: string;
+        routeIdentity: string;
+        basis: "LAST_ACCEPTED_PLAN" | "MATCHED_TRAIN_REALTIME";
+    } | null;
+    /** 출발 후 원래 출발지에서 새로 출발할 경우의 재검색 진단. 저장된 여정의 ETA가 아니다. */
+    originReplanDiagnostic?: {
+        travelMinutes: number;
+        source: ScheduleDepartureEtaSource;
+        stale: boolean;
+        failureReason: string | null;
+        providerFetchedAt: string | null;
+    } | null;
 };
 
 export type ScheduleEtaArrivalObservation = {

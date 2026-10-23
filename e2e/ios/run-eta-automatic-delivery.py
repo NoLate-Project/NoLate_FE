@@ -15,7 +15,10 @@ import subprocess
 import tempfile
 import time
 import urllib.request
-from eta_pinned_app import reset_private_navigation, open_private_test_endpoint, restore_private_endpoint
+from eta_pinned_app import (
+    require_private_development_client, reset_private_navigation,
+    open_private_test_endpoint, restore_private_endpoint,
+)
 
 WORKSPACE = Path(__file__).resolve().parents[3]
 BE, FE = WORKSPACE / 'NoLate_BE', WORKSPACE / 'NoLate_FE'
@@ -167,6 +170,7 @@ def main():
 
     try:
         emit(state='starting', evidenceRoot=str(root))
+        require_private_development_client(DEVICE)
         for port in (5523, 8086):
             occupied = subprocess.run(['/usr/sbin/lsof', '-t', f'-iTCP:{port}', '-sTCP:LISTEN'], capture_output=True)
             assert occupied.returncode in (0, 1) and not occupied.stdout.strip(), 'Do not stop unrelated servers'

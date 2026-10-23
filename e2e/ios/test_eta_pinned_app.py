@@ -1,8 +1,45 @@
 """Pure launcher tests, not simulator execution evidence."""
 import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
-from eta_pinned_app import DEVICE, reset_private_navigation, restore_private_endpoint, open_private_test_endpoint
+from eta_pinned_app import (
+    DEVICE, require_private_development_client, reset_private_navigation,
+    restore_private_endpoint, open_private_test_endpoint,
+)
+
+
+class PinnedDevelopmentClientTest(unittest.TestCase):
+    @patch('eta_pinned_app.subprocess.run')
+    def test_installed_development_client_passes(self, run):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / 'EXDevLauncher.bundle').mkdir()
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=root)
+            require_private_development_client(DEVICE)
+        run.assert_called_once_with(
+            ['xcrun', 'simctl', 'get_app_container', DEVICE, 'com.anonymous.nolatefe', 'app'],
+            capture_output=True, text=True, timeout=30,
+        )
+
+    @patch('eta_pinned_app.subprocess.run')
+    def test_release_app_fails_before_provider_calls(self, run):
+        with tempfile.TemporaryDirectory() as root:
+            run.return_value = subprocess.CompletedProcess([], 0, stdout=root)
+            with self.assertRaises(RuntimeError):
+                require_private_development_client(DEVICE)
+
+    @patch('eta_pinned_app.subprocess.run')
+    def test_missing_app_fails_before_provider_calls(self, run):
+        run.return_value = subprocess.CompletedProcess([], 1, stdout='')
+        with self.assertRaises(RuntimeError):
+            require_private_development_client(DEVICE)
+
+    @patch('eta_pinned_app.subprocess.run')
+    def test_another_simulator_is_not_inspected(self, run):
+        with self.assertRaises(ValueError):
+            require_private_development_client('another-device')
+        run.assert_not_called()
 
 
 class PinnedColdLaunchTest(unittest.TestCase):

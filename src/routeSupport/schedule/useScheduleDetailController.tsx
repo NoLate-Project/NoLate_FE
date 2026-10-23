@@ -44,6 +44,7 @@ import { useImmediateNavigationTransition } from '../../modules/performance/Imme
 import {
   buildEffectiveTransitRoutePresentation,
   buildFutureTimetablePredictionPresentation,
+  buildPlannedJourneyArrivalPresentation,
   resolveScheduleDetailDepartureTiming,
 } from '../../modules/schedule/effectiveTransitRoutePresentation';
 import {
@@ -276,7 +277,9 @@ export function useScheduleDetailController({
   const currentTravelMinutes = displayedDepartureTiming.travelMinutes;
   const effectiveTransitRoutePresentation = inspectedTravelPlan
     ? undefined
-    : buildEffectiveTransitRoutePresentation(departureStatus) ?? buildFutureTimetablePredictionPresentation(departureStatus);
+    : buildPlannedJourneyArrivalPresentation(departureStatus, nowMs) ??
+      buildEffectiveTransitRoutePresentation(departureStatus) ??
+      buildFutureTimetablePredictionPresentation(departureStatus);
   const departureDisplayState: DepartureDisplayState = item
     ? getDepartureDisplayState(
         recommendedDepartureAt,

@@ -34,6 +34,7 @@ METHODS += ('testVerifyRealEtaDiagnostic',)
 METHODS += ('testVerifyRealLateEtaComparison',)
 METHODS += ('testVerifyProtectedRealEtaDiagnostic',)
 METHODS += ('testVerifyIsolatedRealProviderEta',)
+METHODS += ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback')
 METHODS += ('testVerifyIsolatedRealProviderDiagnostic',)
 METHODS += ('testVerifyIsolatedRealProviderObservationExpiry',)
 METHODS += ('testVerifyIsolatedQuotaEta',)
@@ -62,7 +63,7 @@ parser.add_argument('--assert-quota-failure', action='store_true')
 parser.add_argument('--inspect-tmap-after-login', action='store_true')
 parser.add_argument('--expected-diagnostic', choices=('TRANSIT_ARRIVAL_UNAVAILABLE', 'TRANSIT_ARRIVAL_OUT_OF_HORIZON'))
 parser.add_argument('--api-base', choices=('http://127.0.0.1:5522', 'http://127.0.0.1:5523'), default='http://127.0.0.1:5522')
-parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'unknown', 'missed', 'recovered', 'late'))
+parser.add_argument('--fixture-phase', choices=('success', 'reconnect', 'early-transfer', 'transfer-observed', 'transfer-first-unobserved', 'planned-postdeparture', 'unknown', 'missed', 'recovered', 'late'))
 parser.add_argument('--fixture-evidence', type=Path, help='Private H2 phase result; verifies exact displayed time/duration')
 parser.add_argument('--natural-evidence', type=Path, help='Private natural due-time Worker result')
 parser.add_argument('--native-evidence', type=Path, help='Private Worker result, followed by actual native OS delivery')
@@ -71,6 +72,8 @@ parser.add_argument('--real-evidence', type=Path, help='Scoped read-only real me
 parser.add_argument('--real-isolated', action='store_true', help='Explicit separate H2 DB with real ETA providers, not mock fixture')
 parser.add_argument('--real-automatic', action='store_true', help='Real feeds + automatic scheduler + UI creation/native delivery in H2 only')
 parser.add_argument('--real-isolated-evidence', type=Path)
+parser.add_argument('--real-isolated-previous-evidence', type=Path,
+                    help='Accepted pre-departure evaluation from the same private real-provider run')
 parser.add_argument('--quota-evidence', type=Path, help='Synthetic quota Worker evidence; never actual provider acceptance')
 args = parser.parse_args()
 quota_ui = args.only == 'testVerifyIsolatedQuotaEta'
@@ -115,8 +118,44 @@ if args.real_automatic and not args.real_isolated:
 if args.real_isolated:
     automatic_methods = ('testCreateIsolatedEtaJourney', 'testObserveIsolatedNativeAlarmDelivery', 'testVerifyIsolatedNativeAlarmState') if args.real_automatic else ()
     if (args.api_base != 'http://127.0.0.1:5523' or args.title != 'ETA E2E real isolated fixture' or
-            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testInspectEtaJourney') + automatic_methods):
+            args.only not in ('testLoginDedicatedEtaAccount', 'testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry', 'testInspectEtaJourney') + automatic_methods):
         parser.error('Real isolation is restricted to its explicit account-296 methods on the separate memory DB')
+    if args.only in ('testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback'):
+        if args.real_isolated_evidence is None or args.real_isolated_previous_evidence is None:
+            parser.error('Post-departure UI requires both real Worker evaluations')
+        current_path = args.real_isolated_evidence.resolve(strict=True)
+        previous_path = args.real_isolated_previous_evidence.resolve(strict=True)
+        if (current_path.parent != previous_path.parent or
+                not str(current_path).startswith('/private/tmp/nolate-eta-real-e2e.')):
+            parser.error('Both evaluations must belong to one private real-provider run')
+        current, previous = json.loads(current_path.read_text()), json.loads(previous_path.read_text())
+        snapshot = current.get('effectiveSnapshot') or {}
+        plan = snapshot.get('inProgressPlannedRoute') or {}
+        prior_route = (previous.get('effectiveSnapshot') or {}).get('effectiveTransitRoute') or {}
+        observation = snapshot.get('plannedArrivalObservation') or {}
+        evaluated = dt.datetime.fromisoformat(current['evaluatedAt'])
+        source = dt.datetime.fromisoformat(observation['sourceUpdatedAt']) if observation.get('sourceUpdatedAt') else None
+        same_train_mode = args.only == 'testVerifyIsolatedRealProviderPlannedArrival'
+        observation_is_valid = (observation.get('routeIdentity') == plan.get('identity') and
+                                source is not None and 0 <= (evaluated - source).total_seconds() <= 120)
+        if (any(row.get('classification') != 'REAL_PROVIDER_ISOLATED_WORKER' or
+                row.get('database') != 'H2_MEMORY_ONLY' or row.get('providersMocked') is not False or
+                row.get('clockMode') != 'SYSTEM_WALL_CLOCK' or row.get('memberId') != 296 or
+                row.get('scheduleId') != 363 or row.get('processed') != 1 for row in (previous, current)) or
+                previous.get('stale') is not False or previous.get('source') != 'LIVE_PROVIDER' or
+                not prior_route or plan != prior_route or
+                (not observation_is_valid if same_train_mode else bool(observation)) or
+                evaluated < dt.datetime.fromisoformat(plan['departureAt']) or
+                current['recommendedDepartureAt'] != previous['recommendedDepartureAt'] or
+                dt.datetime.fromisoformat(current['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival) or
+                abs((dt.datetime.now(dt.timezone.utc) - evaluated).total_seconds()) > 180):
+            parser.error('A scoped real post-departure plan and frozen departure are required')
+        predicted = observation['predictedArrivalAt'] if same_train_mode else plan['arrivalAt']
+        real_expected = {'TEST_RUNNER_E2E_REAL_ISOLATED': '1',
+                         'TEST_RUNNER_E2E_REAL_DEPARTURE_CLOCK': dt.datetime.fromisoformat(
+                             previous['recommendedDepartureAt']).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
+                         'TEST_RUNNER_E2E_REAL_PROVISIONAL_CLOCK': dt.datetime.fromisoformat(
+                             predicted).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M')}
     if args.only == 'testVerifyIsolatedRealProviderObservationExpiry':
         if args.real_isolated_evidence is None:
             parser.error('Original accepted Worker evidence is required for an expired API read')
@@ -247,7 +286,7 @@ if args.real_isolated:
                 '접근 도보', '환승 도보', '도착 도보']:
             parser.error('Recorded public-station ODsay fixture must preserve all three walking distances')
         real_expected['TEST_RUNNER_E2E_REAL_WALK_TEXT'] = json.dumps(walking, ensure_ascii=False)
-elif args.real_isolated_evidence is not None or args.only in ('testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry'):
+elif args.real_isolated_evidence is not None or args.real_isolated_previous_evidence is not None or args.only in ('testVerifyIsolatedRealProviderEta', 'testVerifyIsolatedRealProviderPlannedArrival', 'testVerifyIsolatedRealProviderPlannedFallback', 'testVerifyIsolatedRealProviderDiagnostic', 'testVerifyIsolatedRealProviderObservationExpiry'):
     parser.error('Real-isolated verification requires its explicit mode')
 if args.only in ('testVerifyAcceptedRealEtaComparison', 'testVerifyRealEtaDiagnostic', 'testVerifyRealLateEtaComparison', 'testVerifyProtectedRealEtaDiagnostic'):
     real_scopes = {'ETA E2E NAVER 1007 02': ('365', '02'), 'ETA E2E NAVER 1007 03': ('366', '03'),
@@ -428,12 +467,23 @@ if args.fixture_phase:
         parser.error('Fixture phase was not processed exactly once')
     if dt.datetime.fromisoformat(evidence['targetArrivalAt']) != dt.datetime.fromisoformat(args.target_arrival):
         parser.error('UI target must match the actual private schedule')
-    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'recovered'):
+    if args.fixture_phase in ('success', 'reconnect', 'early-transfer', 'transfer-observed', 'recovered'):
         # These expectations are independent of the returned ETA values.
         epoch = dt.datetime.fromisoformat(evidence['epoch'])
         fixture_expected = {
             'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK': epoch.astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
-            'TEST_RUNNER_E2E_FIXTURE_MINUTES': '41' if args.fixture_phase in ('success', 'early-transfer') else '46',
+            'TEST_RUNNER_E2E_FIXTURE_MINUTES': '27' if args.fixture_phase == 'transfer-observed' else
+                '41' if args.fixture_phase in ('success', 'early-transfer') else '46',
+        }
+    elif args.fixture_phase == 'planned-postdeparture':
+        prediction = evidence.get('provisionalPrediction') or {}
+        if prediction.get('basis') != 'MATCHED_TRAIN_REALTIME' or not prediction.get('predictedArrivalAt'):
+            parser.error('A same-train post-departure observation is required')
+        fixture_expected = {
+            'TEST_RUNNER_E2E_FIXTURE_DEPARTURE_CLOCK': dt.datetime.fromisoformat(evidence['recommendedDepartureAt']).astimezone(
+                dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
+            'TEST_RUNNER_E2E_FIXTURE_PROVISIONAL_CLOCK': dt.datetime.fromisoformat(prediction['predictedArrivalAt']).astimezone(
+                dt.timezone(dt.timedelta(hours=9))).strftime('%H:%M'),
         }
 elif args.fixture_evidence is not None:
     parser.error('Fixture evidence is only valid for an isolated fixture phase')
