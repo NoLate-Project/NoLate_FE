@@ -14,7 +14,9 @@ struct NoLateJourneyAuthentication: Decodable, Sendable {
       let host = c.host, !host.isEmpty, let url = c.url, url.absoluteString == value else { return nil }
     if let port = c.port, port > 65535 || (c.scheme == "https" && port == 443) || (c.scheme == "http" && port == 80) { return nil }
     if c.scheme == "https" { return url }
-    #if DEBUG
+    // An ad-hoc signed Release simulator runs the isolated loopback E2E server.
+    // Physical iOS builds stay HTTPS-only in every configuration.
+    #if targetEnvironment(simulator) || os(macOS)
     if c.scheme == "http", ["127.0.0.1", "localhost"].contains(host) { return url }
     #endif
     return nil

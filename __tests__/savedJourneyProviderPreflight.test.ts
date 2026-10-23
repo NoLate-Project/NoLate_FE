@@ -27,18 +27,26 @@ it.each(['tmap', 'seoul-topis', 'UNKNOWN'])('does not admit unsupported provider
     expect(result.canAssess).toBe(false);
     expect(result.checks.find(c => c.code === 'BUS_PROVIDER')?.state).toBe('MISSING');
 });
-it.each(['walking', 'bus', 'connection', 'raw-id', 'direction', 'occurrence', 'namespace'])('blocks missing or conflicting %s without repairing the route', mode => {
+it.each(['walking', 'bus', 'connection', 'raw-id', 'occurrence', 'namespace'])('blocks missing or conflicting %s without repairing the route', mode => {
     const f = savedJourneyProviderFixture(), bus = f.route.transitLegs[1];
     if (mode === 'walking') f.route.transitLegs[2].navigationEvidence.geometryInputComplete = false;
     if (mode === 'bus') bus.pathGeometrySource = 'DISPLAY_CONNECTOR';
     if (mode === 'connection') f.route.transitLegs[2].startCoord.lng += .002;
     if (mode === 'raw-id') bus.navigationEvidence.busIdentifiers.localRouteId = '999999998';
-    if (mode === 'direction') delete bus.navigationEvidence.directionName;
     if (mode === 'occurrence') bus.navigationEvidence.stopOccurrences[1].providerSequence = 9;
     if (mode === 'namespace') bus.routeCityCode = '2';
     const before = JSON.stringify(f.route);
     const result = savedJourneyProviderPreflight(buildSavedJourneyInput(f.route, f.origin, f.destination), f.route);
     expect(result.canAssess).toBe(false); expect(result.issue).toBeTruthy();
+    expect(JSON.stringify(f.route)).toBe(before);
+});
+it('sends missing ODsay direction to official crosswalk without claiming readiness or changing the saved route', () => {
+    const f = savedJourneyProviderFixture();
+    delete f.route.transitLegs[1].navigationEvidence.directionName;
+    const before = JSON.stringify(f.route);
+    const result = savedJourneyProviderPreflight(buildSavedJourneyInput(f.route, f.origin, f.destination), f.route);
+    expect(result.canAssess).toBe(true);
+    expect(result.checks.find(c => c.code === 'SERVER_NATIVE')?.state).toBe('RECHECK_REQUIRED');
     expect(JSON.stringify(f.route)).toBe(before);
 });
 it('does not borrow IDs from a different saved input or accept missing raw metadata', () => {

@@ -1,5 +1,6 @@
-import { authenticatedAutomaticJourneyRequest, automaticPositiveInteger, automaticRecord, type AutomaticJourneyBinding } from "./automaticJourney";
+import { authenticatedAutomaticJourneyRequest, automaticPositiveInteger, automaticRecord, isAutomaticJourneyDevelopment, type AutomaticJourneyBinding } from "./automaticJourney";
 import { createSingleFlightRunner } from "../../api/singleFlight";
+import { Platform } from "react-native";
 
 /** Ephemeral credentials. Only identity/origin metadata may enter a persisted binding. */
 export type JourneyAuthentication = {
@@ -43,13 +44,18 @@ export function createRenewingJourneyAuthenticationSource(read: JourneyAuthentic
     };
 }
 export const journeyLoginGeneration = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-export function journeyAuthenticationOrigin(value: unknown): string | null {
+export function journeyAuthenticationOrigin(value: unknown, physicalDevice =
+    (require('expo-device') as typeof import('expo-device')).isDevice): string | null {
     if (typeof value !== "string" || value.length > 256) return null;
     // Intentionally accept a canonical origin, not an arbitrary URL or RN's partial URL polyfill.
     const match = /^(https?):\/\/([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::([1-9]\d{0,4}))?$/.exec(value);
     if (!match || match[3] === "15543" || match[3] && (Number(match[3]) > 65535
         || (match[1] === "https" && match[3] === "443") || (match[1] === "http" && match[3] === "80"))) return null;
-    return match[1] === "https" || (__DEV__ && match[1] === "http" && ["127.0.0.1", "localhost"].includes(match[2])) ? value : null;
+    // A signed Release simulator can exercise the loopback-only H2 E2E server.
+    // Physical devices remain HTTPS-only, even with development/product flags.
+    const simulatorLoopback = Platform.OS === 'ios' && !physicalDevice &&
+        ["127.0.0.1", "localhost"].includes(match[2]);
+    return match[1] === "https" || match[1] === "http" && simulatorLoopback ? value : null;
 }
 function decodeClaims(encoded: string): unknown {
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -100,7 +106,7 @@ export function requireJourneyAuthenticationIdentity(auth: JourneyAuthentication
 export function createAuthenticatedJourneyPost(source: JourneyAuthenticationSource, identity: Pick<JourneyAuthentication, "apiOrigin" | "authMemberId" | "loginGeneration">,
     send: typeof authenticatedAutomaticJourneyRequest = authenticatedAutomaticJourneyRequest) {
     return async (path: string, body: Record<string, unknown>): Promise<unknown> => {
-        if (!__DEV__ || !/^\/api\/schedules\/[1-9]\d{0,17}\/automatic-journey\/(?:prepare-saved|[a-f0-9-]{36}\/(?:departure|validate|stop|reconcile))$/.test(path)) {
+        if (!isAutomaticJourneyDevelopment() || !/^\/api\/schedules\/[1-9]\d{0,17}\/automatic-journey\/(?:prepare-saved|[a-f0-9-]{36}\/(?:departure|validate|stop|reconcile))$/.test(path)) {
             throw new Error("INVALID_AUTHENTICATED_JOURNEY_PATH");
         }
         const auth = await source(); requireJourneyAuthenticationIdentity(auth, identity);

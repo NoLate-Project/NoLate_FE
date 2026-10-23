@@ -129,7 +129,7 @@ describe("routingService", () => {
             minutes: 58,
             distanceMeters: 50_000,
             source: "api",
-            provider: "tmap",
+            provider: "odsay",
             transitLegs: [{ kind: "SUBWAY", label: "2호선", serviceAvailable: true }],
             pathCoords: [
                 { lat: origin.lat!, lng: origin.lng! },
@@ -155,7 +155,7 @@ describe("routingService", () => {
             minutes: 40,
             distanceMeters: 9_000,
             source: "api",
-            provider: "tmap",
+            provider: "odsay",
             pathCoords: [
                 { lat: origin.lat!, lng: origin.lng! },
                 { lat: destination.lat!, lng: destination.lng! },
@@ -227,7 +227,7 @@ describe("routingService", () => {
             minutes: 34,
             distanceMeters: 9_000,
             source: "api" as const,
-            provider: "tmap" as const,
+            provider: "odsay" as const,
             pathCoords: [
                 { lat: origin.lat!, lng: origin.lng! },
                 { lat: destination.lat!, lng: destination.lng! },
@@ -265,7 +265,7 @@ describe("routingService", () => {
             minutes: 40,
             distanceMeters: 9_000,
             source: "api" as const,
-            provider: "tmap" as const,
+            provider: "odsay" as const,
             pathCoords: [
                 { lat: origin.lat!, lng: origin.lng! },
                 { lat: destination.lat!, lng: destination.lng! },

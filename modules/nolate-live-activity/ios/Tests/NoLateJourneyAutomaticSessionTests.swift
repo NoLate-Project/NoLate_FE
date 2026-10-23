@@ -60,6 +60,57 @@ final class NoLateJourneyAutomaticSessionTests: XCTestCase {
       bindingJSON: bindingJSON(route, scope: "SANDBOX", patch: ["execution": "DEVICE"]), now: 1_000))
   }
 
+  func testOfficialBusAdmissionBindingIsDeviceAuthenticatedAndBounded() throws {
+    let route = try routeJSON(context: "SAVED_ROUTE")
+    let proof: [String: Any] = ["schemaVersion": 1, "identityEvidence": "OFFICIAL_STOP_SHAPE_CROSSWALK",
+      "busLegIndex": 1, "routeId": "100100185", "direction": "상행", "stationCount": 2,
+      "firstStopSequence": 10, "lastStopSequence": 12]
+    let device: [String: Any] = ["execution": "DEVICE", "apiOrigin": "https://nolate.example.com",
+      "authMemberId": 42, "loginGeneration": 1, "savedRouteValidated": true,
+      "guidanceEnabled": true, "officialBusAdmission": proof]
+    let decoded = try Session.decodeBinding(bindingJSON(route, scope: "AUTHENTICATED", patch: device), now: 1_000)
+    XCTAssertEqual(decoded.officialBusAdmission?.routeId, "100100185")
+    var bad = proof; bad["lastStopSequence"] = 13
+    XCTAssertThrowsError(try Session.decodeBinding(bindingJSON(route, scope: "AUTHENTICATED",
+      patch: device.merging(["officialBusAdmission": bad]) { _, new in new }), now: 1_000))
+    XCTAssertThrowsError(try Session.decodeBinding(bindingJSON(route, scope: "SANDBOX", patch: device), now: 1_000))
+  }
+
+  func testDeviceSubwayRequiresMatchingOfficialAdmission() throws {
+    var route = try routeDictionary(context: "SAVED_ROUTE")
+    route["provider"] = "odsay"; route["serviceState"] = "UNKNOWN"
+    route["destination"] = coord(600)
+    var first = (route["legs"] as! [[String: Any]])[0]
+    first["coordinates"] = [coord(0), coord(100)]
+    first["end"] = coord(100); first["stopEvidenceProvider"] = "odsay"
+    let subway: [String: Any] = ["index": 1, "kind": "SUBWAY", "geometrySource": "TRANSIT_PASS_SHAPE_LINESTRING",
+      "exact": true, "geometryInputComplete": true, "coordinates": [coord(100), coord(300), coord(500)],
+      "start": coord(100), "end": coord(500), "providerRouteId": "1000:2", "directionCode": "UP",
+      "directionName": "상행", "serviceAvailable": true, "declaredStationCount": 2,
+      "stopEvidenceProvider": "odsay", "stopEvidenceVersion": 1,
+      "stops": (0...2).map { index in ["sourceIndex": index, "name": "역 \(index)",
+        "code": "station-\(index)", "coordinate": coord(100 + Double(index) * 200),
+        "routingStationId": String(222 + index)] as [String: Any] }]
+    let last: [String: Any] = ["index": 2, "kind": "WALK", "geometrySource": "WALK_STEPS_LINESTRING",
+      "exact": true, "geometryInputComplete": true, "coordinates": [coord(500), coord(600)],
+      "start": coord(500), "end": coord(600), "stops": [], "stopEvidenceProvider": "odsay", "stopEvidenceVersion": 1]
+    route["legs"] = [first, subway, last]
+    let input = try encode(route)
+    let proof: [String: Any] = ["schemaVersion": 1, "identityEvidence": "OFFICIAL_STATION_PATH_CROSSWALK",
+      "subwayLegIndex": 1, "providerRouteId": "1000:2", "startRoutingStationId": "222",
+      "endRoutingStationId": "224", "stationCount": 2]
+    let device: [String: Any] = ["execution": "DEVICE", "apiOrigin": "https://nolate.example.com",
+      "authMemberId": 42, "loginGeneration": 1, "savedRouteValidated": true,
+      "guidanceEnabled": true, "officialSubwayAdmission": proof]
+    let binding = try bindingJSON(input, scope: "AUTHENTICATED", patch: device)
+    XCTAssertEqual(try Session(routeJSON: input, bindingJSON: binding, now: 1_000).binding.execution, "DEVICE")
+    XCTAssertThrowsError(try Session(routeJSON: input,
+      bindingJSON: bindingJSON(input, scope: "AUTHENTICATED", patch: device.merging(["officialSubwayAdmission": NSNull()]) { _, new in new }), now: 1_000))
+    var wrong = proof; wrong["endRoutingStationId"] = "225"
+    XCTAssertThrowsError(try Session(routeJSON: input,
+      bindingJSON: bindingJSON(input, scope: "AUTHENTICATED", patch: device.merging(["officialSubwayAdmission": wrong]) { _, new in new }), now: 1_000))
+  }
+
   func testSyntheticRequiresSandboxAndStaysSyntheticReplay() throws {
     let session = try makeSession()
     XCTAssertEqual(session.core.snapshot.route.provenance, .syntheticReplay)

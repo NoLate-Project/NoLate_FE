@@ -9,6 +9,18 @@ export type AutomaticJourneyBinding = {
     execution: "SIMULATOR" | "DEVICE"; syncScope: "LOCAL_ONLY" | "SANDBOX" | "AUTHENTICATED";
     apiOrigin?: string; authMemberId?: number; loginGeneration?: number;
     savedRouteValidated?: true; guidanceEnabled?: true;
+    /** Static official stop/shape proof from the authenticated prepare response, not a live bus claim. */
+    officialBusAdmission?: OfficialBusAdmission;
+    /** Static official subway path crosswalk; never a train or passenger-position claim. */
+    officialSubwayAdmission?: OfficialSubwayAdmission;
+};
+export type OfficialBusAdmission = {
+    schemaVersion: 1; identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK'; busLegIndex: 1;
+    routeId: string; direction: string; stationCount: number; firstStopSequence: number; lastStopSequence: number;
+};
+export type OfficialSubwayAdmission = {
+    schemaVersion: 1; identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK'; subwayLegIndex: 1;
+    providerRouteId: string; startRoutingStationId: string; endRoutingStationId: string; stationCount: number;
 };
 export type AutomaticJourneyDeparture = Pick<AutomaticJourneyBinding,
     "sessionId" | "scheduleId" | "generation" | "routeRevision" | "clientOwnerId" | "routeInputDigest" | "execution"
@@ -73,6 +85,34 @@ const noticeCount = (value: unknown): number => typeof value === 'number' && Num
     && value >= 0 && value <= 100_000 ? value : 0;
 const safeCode = (value: unknown): string | null => typeof value === "string" && /^[A-Z][A-Z0-9_]{0,95}$/.test(value) ? value : null;
 const epoch = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0 && value < 253_402_300_800;
+const officialBusAdmission = (value: unknown): OfficialBusAdmission | null => {
+    const item = automaticRecord(value);
+    if (!item || item.schemaVersion !== 1 || item.identityEvidence !== 'OFFICIAL_STOP_SHAPE_CROSSWALK'
+        || item.busLegIndex !== 1 || typeof item.routeId !== 'string' || !/^[1-9][0-9]{8}$/.test(item.routeId)
+        || typeof item.direction !== 'string' || !item.direction.trim() || item.direction.length > 128
+        || Array.from(item.direction).some(c => { const code = c.codePointAt(0)!; return code <= 31 || code >= 127 && code <= 159; })
+        || !Number.isSafeInteger(item.stationCount) || (item.stationCount as number) < 1 || (item.stationCount as number) > 63
+        || !Number.isSafeInteger(item.firstStopSequence) || (item.firstStopSequence as number) < 0
+        || !Number.isSafeInteger(item.lastStopSequence)
+        || (item.lastStopSequence as number) - (item.firstStopSequence as number) !== item.stationCount) return null;
+    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+        routeId: item.routeId, direction: item.direction, stationCount: item.stationCount as number,
+        firstStopSequence: item.firstStopSequence as number, lastStopSequence: item.lastStopSequence as number };
+};
+const officialSubwayAdmission = (value: unknown): OfficialSubwayAdmission | null => {
+    const item = automaticRecord(value);
+    const stationId = (id: unknown) => typeof id === 'string' && /^[0-9]{1,20}$/.test(id) && /[1-9]/.test(id);
+    if (!item || item.schemaVersion !== 1 || item.identityEvidence !== 'OFFICIAL_STATION_PATH_CROSSWALK'
+        || item.subwayLegIndex !== 1 || typeof item.providerRouteId !== 'string'
+        || !/^1000:[0-9]{1,20}$/.test(item.providerRouteId) || !/[1-9]/.test(item.providerRouteId.slice(5))
+        || !stationId(item.startRoutingStationId) || !stationId(item.endRoutingStationId)
+        || item.startRoutingStationId === item.endRoutingStationId
+        || !Number.isSafeInteger(item.stationCount) || (item.stationCount as number) < 1
+        || (item.stationCount as number) > 63) return null;
+    return { schemaVersion: 1, identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK', subwayLegIndex: 1,
+        providerRouteId: item.providerRouteId, startRoutingStationId: item.startRoutingStationId as string,
+        endRoutingStationId: item.endRoutingStationId as string, stationCount: item.stationCount as number };
+};
 
 export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourneyBinding | null {
     const binding = automaticRecord(value);
@@ -85,6 +125,11 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
         || binding.expiresAtEpochSeconds - binding.preparedAtEpochSeconds > (binding.syncScope === 'AUTHENTICATED' ? 7200.001 : 600.001)
         || !["SIMULATOR", "DEVICE"].includes(String(binding.execution))
         || binding.execution === "DEVICE" && binding.syncScope !== "AUTHENTICATED"
+        || binding.officialBusAdmission != null && (binding.execution !== 'DEVICE'
+            || binding.syncScope !== 'AUTHENTICATED' || !officialBusAdmission(binding.officialBusAdmission))
+        || binding.officialSubwayAdmission != null && (binding.execution !== 'DEVICE'
+            || binding.syncScope !== 'AUTHENTICATED' || !officialSubwayAdmission(binding.officialSubwayAdmission)
+            || binding.officialBusAdmission != null)
         || !["LOCAL_ONLY", "SANDBOX", "AUTHENTICATED"].includes(String(binding.syncScope))) return null;
     if (binding.syncScope === "AUTHENTICATED" && (!journeyAuthenticationOrigin(binding.apiOrigin)
         || !automaticPositiveInteger(binding.authMemberId) || !journeyLoginGeneration(binding.loginGeneration)
@@ -98,6 +143,8 @@ export function normalizeAutomaticJourneyBinding(value: unknown): AutomaticJourn
             authMemberId: binding.authMemberId as number, loginGeneration: binding.loginGeneration as number } : {}),
         ...(binding.savedRouteValidated === true && binding.guidanceEnabled === true && binding.syncScope !== "LOCAL_ONLY"
             ? { savedRouteValidated: true as const, guidanceEnabled: true as const } : {}),
+        ...(binding.officialBusAdmission != null ? { officialBusAdmission: officialBusAdmission(binding.officialBusAdmission)! } : {}),
+        ...(binding.officialSubwayAdmission != null ? { officialSubwayAdmission: officialSubwayAdmission(binding.officialSubwayAdmission)! } : {}),
     };
 }
 

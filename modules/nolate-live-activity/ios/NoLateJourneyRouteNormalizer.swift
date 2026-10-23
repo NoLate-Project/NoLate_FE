@@ -59,6 +59,70 @@ enum NoLateJourneyRouteNormalizer {
     var walkingSnapshot: NoLateServerWalkingSnapshot? = nil
   }
 
+  /// Authenticated server prepare proof for one saved bus leg. Static identity only;
+  /// it never claims current service, a vehicle, or passenger boarding.
+  struct OfficialBusAdmission: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let identityEvidence: String
+    let busLegIndex: Int
+    let routeId: String
+    let direction: String
+    let stationCount: Int
+    let firstStopSequence: Int
+    let lastStopSequence: Int
+
+    func matches(_ input: Input) -> Bool {
+      let span = lastStopSequence.subtractingReportingOverflow(firstStopSequence)
+      guard schemaVersion == 1, identityEvidence == "OFFICIAL_STOP_SHAPE_CROSSWALK",
+        busLegIndex == 1, input.context == "SAVED_ROUTE", input.provider == "odsay",
+        input.legs.count == 3, input.legs[1].kind == "BUS",
+        input.serviceState == "operating" || input.serviceState == "UNKNOWN",
+        routeId.range(of: "^[1-9][0-9]{8}$", options: .regularExpression) != nil,
+        !direction.isEmpty, direction.utf8.count <= 128,
+        !direction.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+        (1...63).contains(stationCount), firstStopSequence >= 0,
+        !span.overflow, span.partialValue == stationCount,
+        input.legs[1].localRouteId == routeId,
+        input.legs[1].stops.count == stationCount + 1,
+        input.legs[1].directionName.map({ $0 == direction }) ?? true,
+        input.legs[1].declaredStationCount.map({ $0 == stationCount }) ?? true,
+        input.legs[1].serviceAvailable != false else { return false }
+      return true
+    }
+  }
+
+  /// Authenticated server proof for one saved ODsay subway leg. It proves only the
+  /// static official station path; live train and passenger evidence remain separate.
+  struct OfficialSubwayAdmission: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let identityEvidence: String
+    let subwayLegIndex: Int
+    let providerRouteId: String
+    let startRoutingStationId: String
+    let endRoutingStationId: String
+    let stationCount: Int
+
+    func matches(_ input: Input) -> Bool {
+      guard schemaVersion == 1, identityEvidence == "OFFICIAL_STATION_PATH_CROSSWALK",
+        subwayLegIndex == 1, input.context == "SAVED_ROUTE", input.provider == "odsay",
+        input.source == "api", input.legs.count == 3, input.legs[1].kind == "SUBWAY",
+        input.serviceState == "operating" || input.serviceState == "UNKNOWN",
+        providerRouteId.range(of: "^1000:[0-9]{1,20}$", options: .regularExpression) != nil,
+        providerRouteId.dropFirst(5).contains(where: { $0 != "0" }),
+        startRoutingStationId.range(of: "^[0-9]{1,20}$", options: .regularExpression) != nil,
+        endRoutingStationId.range(of: "^[0-9]{1,20}$", options: .regularExpression) != nil,
+        startRoutingStationId.contains(where: { $0 != "0" }),
+        endRoutingStationId.contains(where: { $0 != "0" }),
+        startRoutingStationId != endRoutingStationId, (1...63).contains(stationCount),
+        input.legs[1].providerRouteId == providerRouteId,
+        input.legs[1].stops.count == stationCount + 1,
+        input.legs[1].stops.first?.routingStationId == startRoutingStationId,
+        input.legs[1].stops.last?.routingStationId == endRoutingStationId,
+        input.legs[1].serviceAvailable != false else { return false }
+      return true
+    }
+  }
+
   struct LegSummary: Codable, Equatable, Sendable {
     let index: Int
     let kind: String
@@ -137,11 +201,17 @@ enum NoLateJourneyRouteNormalizer {
   }
 
   /// Only the caller's explicit sandbox binding may exercise synthetic geometry. It stays synthetic.
-  static func prepareWalkingRoute(json: String, allowSyntheticSandbox: Bool = false, allowValidatedSavedRoute: Bool = false) throws -> PreparedWalkingRoute {
-    let summary = try normalize(json: json)
+  static func prepareWalkingRoute(json: String, allowSyntheticSandbox: Bool = false, allowValidatedSavedRoute: Bool = false,
+    officialBusAdmission: OfficialBusAdmission? = nil, officialSubwayAdmission: OfficialSubwayAdmission? = nil) throws -> PreparedWalkingRoute {
+    let summary = try normalize(json: json, officialBusAdmission: officialBusAdmission,
+      officialSubwayAdmission: officialSubwayAdmission)
     let synthetic = summary.context == "SYNTHETIC_FIXTURE" && allowSyntheticSandbox
+    let unknownSingleSubway = summary.provider == "odsay" && summary.legs.count == 3
+      && summary.legs[1].kind == "SUBWAY"
+      && summary.reasonCodes == ["SAVED_ROUTE_REVALIDATION_REQUIRED", "ROUTE_SERVICE_UNVERIFIED"]
     let saved = summary.context == "SAVED_ROUTE" && allowValidatedSavedRoute
-      && summary.reasonCodes == ["SAVED_ROUTE_REVALIDATION_REQUIRED"] && summary.legs.first?.geometryUsable == true
+      && (summary.reasonCodes == ["SAVED_ROUTE_REVALIDATION_REQUIRED"] || unknownSingleSubway)
+      && summary.legs.first?.geometryUsable == true
     guard (summary.eligibleDepartureLegIndex == 0 && summary.context == "ROUTING_RESPONSE")
       || saved || (synthetic && summary.reasonCodes == ["SYNTHETIC_FIXTURE_ONLY"]
           && summary.legs.first?.kind == "WALK" && summary.legs.first?.geometryUsable == true) else {
@@ -229,28 +299,35 @@ enum NoLateJourneyRouteNormalizer {
   private static let maximumIntersectionComparisons = 200_000
   private static let earthRadius = 6_371_000.0
 
-  static func normalize(json: String) throws -> Summary {
+  static func normalize(json: String, officialBusAdmission: OfficialBusAdmission? = nil,
+    officialSubwayAdmission: OfficialSubwayAdmission? = nil) throws -> Summary {
     guard !json.isEmpty, json.utf8.count <= 1_048_576 else { throw ValidationError.payloadSize }
     let input: Input
     do { input = try JSONDecoder().decode(Input.self, from: Data(json.utf8)) }
     catch { throw ValidationError.invalidJSON }
     try validateShape(input)
     if let snapshot = input.walkingSnapshot { try snapshot.validate(input: input) }
-    var routeReasons = routeReasons(input)
+    // An absent/mismatched proof is never partially applied. Read-only assessment calls
+    // normalize without proof and continues to report the original ODsay gaps.
+    let official = officialBusAdmission?.matches(input) == true ? officialBusAdmission : nil
+    let officialSubway = officialSubwayAdmission?.matches(input) == true ? officialSubwayAdmission : nil
+    var routeReasons = routeReasons(input, officialBusAdmission: official, officialSubwayAdmission: officialSubway)
     var summaries: [LegSummary] = []
     for leg in input.legs {
       let geometry = evaluateGeometry(leg, provider: input.provider,
         walkingPath: input.walkingSnapshot?.walks.first(where: { $0.legIndex == leg.index })?.coordinates)
       var reasons = geometry.reasons
       let ride = leg.kind == "BUS" || leg.kind == "SUBWAY"
-      let direction = explicit(leg.directionName) || leg.directionCode == "UP" || leg.directionCode == "DOWN"
+      let busProof = leg.index == 1 && leg.kind == "BUS" ? official : nil
+      let direction = explicit(leg.directionName) || leg.directionCode == "UP" || leg.directionCode == "DOWN" || busProof != nil
       let stopsUsable: Bool
       if ride {
         let stopReasons = evaluateStops(leg, geometry: geometry, provider: input.provider)
+            .filter { busProof == nil || $0 != "STATION_COUNT_MISMATCH_OR_MISSING" }
         stopsUsable = stopReasons.isEmpty
         reasons += stopReasons
         if !direction { reasons.append("DIRECTION_NOT_EXPLICIT") }
-        if !explicit(leg.providerRouteId) { reasons.append("PROVIDER_ROUTE_ID_MISSING") }
+        if !explicit(leg.providerRouteId) && busProof == nil { reasons.append("PROVIDER_ROUTE_ID_MISSING") }
       } else {
         stopsUsable = false
       }
@@ -259,7 +336,7 @@ enum NoLateJourneyRouteNormalizer {
         index: leg.index, kind: leg.kind, geometryUsable: geometry.usable,
         stopSequenceUsable: stopsUsable, directionExplicit: direction,
         rideNavigationEligible: ride && geometry.usable && stopsUsable && direction
-          && explicit(leg.providerRouteId) && leg.serviceAvailable != false && routeReasons.isEmpty,
+          && (explicit(leg.providerRouteId) || busProof != nil) && leg.serviceAvailable != false && routeReasons.isEmpty,
         geometryLengthMeters: geometry.length, shapePointCount: leg.coordinates.count,
         stopCount: leg.stops.count, reasonCodes: unique(reasons)
       ))
@@ -305,7 +382,8 @@ enum NoLateJourneyRouteNormalizer {
     }
   }
 
-  private static func routeReasons(_ input: Input) -> [String] {
+  private static func routeReasons(_ input: Input, officialBusAdmission: OfficialBusAdmission? = nil,
+    officialSubwayAdmission: OfficialSubwayAdmission? = nil) -> [String] {
     var reasons: [String] = []
     switch input.context {
     case "SYNTHETIC_FIXTURE": reasons.append("SYNTHETIC_FIXTURE_ONLY")
@@ -316,7 +394,10 @@ enum NoLateJourneyRouteNormalizer {
     if input.source != "api" { reasons.append("NON_API_ROUTE") }
     if input.reliability == "fallback_estimate" || input.reliability == "UNKNOWN" { reasons.append("ROUTE_RELIABILITY_UNVERIFIED") }
     if input.plausibility != "normal" { reasons.append("ROUTE_PLAUSIBILITY_UNVERIFIED") }
-    if input.serviceState != "operating" { reasons.append("ROUTE_SERVICE_UNVERIFIED") }
+    if input.serviceState != "operating" && !(input.serviceState == "UNKNOWN" &&
+      (officialBusAdmission != nil || officialSubwayAdmission != nil)) {
+      reasons.append("ROUTE_SERVICE_UNVERIFIED")
+    }
     if input.legs.contains(where: { $0.serviceAvailable == false }) { reasons.append("LEG_SERVICE_UNAVAILABLE") }
     guard let origin = input.origin, let destination = input.destination else {
       reasons.append("ROUTE_ENDPOINT_MISSING")

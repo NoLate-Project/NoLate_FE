@@ -4,6 +4,38 @@ import XCTest
 
 final class NoLateServerWalkingSnapshotTests:XCTestCase {
   typealias S=NoLateJourneyAutomaticSession
+  func testOptInSavedODsayInputFromIsolatedSimulator() throws {
+    guard let path=ProcessInfo.processInfo.environment["NOLATE_ODSAY_INPUT_JSON"] else {
+      throw XCTSkip("No isolated ODsay input requested")
+    }
+    let json=try String(contentsOfFile:path,encoding:.utf8)
+    let input=try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(json.utf8))
+    XCTAssertNotNil(input.walkingSnapshot)
+    try input.walkingSnapshot!.validate(input:input)
+    let summary=try NoLateJourneyRouteNormalizer.normalize(json:json)
+    XCTAssertTrue(summary.legs[0].geometryUsable)
+    XCTAssertFalse(try NoLateJourneyRouteNormalizer.summaryJSON(json:json).isEmpty)
+  }
+  func testODsayCentimetreRoundingIsNotAConnector() throws {
+    var p=try payload(),legs=p["legs"] as! [[String:Any]]
+    var first=legs[0],start=first["start"] as! [String:Double],end=first["end"] as! [String:Double]
+    start["latitude"]! += 0.0000005;end["latitude"]! += 0.0000005
+    first["start"]=start;first["end"]=end;legs[0]=first;p["legs"]=legs
+    XCTAssertNoThrow(try session(p))
+    end["latitude"]! += 0.00002;first["end"]=end;legs[0]=first;p["legs"]=legs
+    XCTAssertThrowsError(try session(p))
+  }
+  func testUnknownODsaySubwayMayBeAssessedOnlyAfterSavedValidation() throws {
+    var p=try payload(),legs=p["legs"] as! [[String:Any]],ride=legs[1]
+    ride["kind"]="SUBWAY";legs[1]=ride;p["legs"]=legs;p["serviceState"]="UNKNOWN"
+    let json=try encode(p)
+    let summary=try NoLateJourneyRouteNormalizer.normalize(json:json)
+    XCTAssertEqual(summary.reasonCodes,["SAVED_ROUTE_REVALIDATION_REQUIRED","ROUTE_SERVICE_UNVERIFIED"])
+    XCTAssertNoThrow(try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json:json,allowValidatedSavedRoute:true))
+    XCTAssertThrowsError(try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json:json,allowValidatedSavedRoute:false))
+    ride["kind"]="BUS";legs[1]=ride;p["legs"]=legs
+    XCTAssertThrowsError(try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json:encode(p),allowValidatedSavedRoute:true))
+  }
   func testV4TwoHourSessionDoesNotRenewAdmissionOrLocationFreshness() throws {
     var p=try payload(),w=p["walkingSnapshot"] as! [String:Any]
     w["schemaVersion"]=4;w["navigationExpiresAtMs"]=8_500_000;p["walkingSnapshot"]=w
@@ -100,7 +132,7 @@ final class NoLateServerWalkingSnapshotTests:XCTestCase {
       if mode == "endpoint" {walks[0]["points"]=[["lat":37.5665,"lng":126.99],["lat":37.5665,"lng":126.9901]]}
       if mode == "provider" {walks[0]["provider"]="odsay"}
       if mode == "walk-order" {walks.reverse()}
-      if mode == "tuple" {var legs=p["legs"] as! [[String:Any]];legs[0]["end"]=point(201);p["legs"]=legs}
+      if mode == "tuple" {var legs=p["legs"] as! [[String:Any]];legs[0]["end"]=point(202);p["legs"]=legs}
       w["walks"]=walks;p["walkingSnapshot"]=w;XCTAssertThrowsError(try session(p))
     }
   }

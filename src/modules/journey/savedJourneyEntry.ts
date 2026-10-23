@@ -13,8 +13,13 @@ export function savedJourneyEntryIssue(input: JourneyRouteInput | null, subwayTr
     const valid = (point: JourneyRouteCoordinate | null) => !!point && Number.isFinite(point.latitude)
         && Number.isFinite(point.longitude) && Math.abs(point.latitude) <= 90 && Math.abs(point.longitude) <= 180;
     if (!valid(input.origin) || !valid(input.destination)) return '출발지와 도착지 좌표가 필요해요. 경로를 다시 저장해 주세요.';
+    // ODsay can provide an exact saved path without a verified departure. Admit
+    // only a single bus/subway leg to assessment; server official data and native
+    // runtime evidence still decide whether navigation can actually prepare.
+    const officialTransitRecheck = input.provider === 'odsay' && input.serviceState === 'UNKNOWN'
+        && input.legs.length === 3 && (input.legs[1].kind === 'BUS' || subwayTrial && input.legs[1].kind === 'SUBWAY');
     if (input.source !== 'api' || !['tmap', 'odsay'].includes(input.provider)
-        || input.plausibility !== 'normal' || input.serviceState !== 'operating') {
+        || input.plausibility !== 'normal' || input.serviceState !== 'operating' && !officialTransitRecheck) {
         return '공급자 경로와 운행 상태를 확인할 수 없어 위치 안내를 준비할 수 없어요.';
     }
     if(input.walkingSnapshot){try{composeServerWalkingInput(input,input.walkingSnapshot);}catch{return '서버 도보 경로가 만료되었거나 저장 경로와 달라요. 다시 연결해 주세요.';}}

@@ -301,8 +301,10 @@ async function selectedInput(input: JourneyRouteInput, scope: AutomaticJourneyBi
         && summary.reasonCodes.length === 1 && summary.reasonCodes[0] === "SYNTHETIC_FIXTURE_ONLY"
         && first?.kind === "WALK" && first.geometryUsable && first.geometryLengthMeters !== null
         && first.geometryLengthMeters >= 70 && first.geometryLengthMeters <= 100_000;
-    const savedCandidate = saved && copied.context === "SAVED_ROUTE" && scope !== "LOCAL_ONLY"
-        && summary.reasonCodes.length === 1 && summary.reasonCodes[0] === "SAVED_ROUTE_REVALIDATION_REQUIRED"
+    const savedReasons = summary.reasonCodes.length === 1 && summary.reasonCodes[0] === 'SAVED_ROUTE_REVALIDATION_REQUIRED'
+        || copied.provider === 'odsay' && copied.serviceState === 'UNKNOWN' && summary.reasonCodes.length === 2
+            && summary.reasonCodes.includes('SAVED_ROUTE_REVALIDATION_REQUIRED') && summary.reasonCodes.includes('ROUTE_SERVICE_UNVERIFIED');
+    const savedCandidate = saved && copied.context === "SAVED_ROUTE" && scope !== "LOCAL_ONLY" && savedReasons
         && first?.kind === "WALK" && first.geometryUsable;
     if (!(copied.context === "ROUTING_RESPONSE" && summary.eligibleDepartureLegIndex === 0) && !syntheticCandidate && !savedCandidate) {
         throw new Error("ROUTE_NOT_ELIGIBLE");

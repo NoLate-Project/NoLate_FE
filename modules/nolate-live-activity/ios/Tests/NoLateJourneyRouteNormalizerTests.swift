@@ -497,6 +497,80 @@ final class NoLateJourneyRouteNormalizerTests: XCTestCase {
     XCTAssertEqual(invalid.summary, prepared.summary)
   }
 
+  func testOfficialBusCrosswalkFillsOnlyMissingStaticClaimsForSavedODsayRoute() throws {
+    var bus = ride()
+    bus["localRouteId"] = "100100185"
+    bus.removeValue(forKey: "providerRouteId")
+    bus.removeValue(forKey: "directionName")
+    bus.removeValue(forKey: "declaredStationCount")
+    bus.removeValue(forKey: "serviceAvailable")
+    bus["stopEvidenceProvider"] = "odsay"
+    var first = walk(); first["stopEvidenceProvider"] = "odsay"
+    var last = walk(end: 600)
+    last["index"] = 2; last["start"] = point(500)
+    last["coordinates"] = [point(500), point(600)]
+    last["stopEvidenceProvider"] = "odsay"
+    var input = route(legs: [first, bus, last], destination: point(600))
+    input["provider"] = "odsay"; input["context"] = "SAVED_ROUTE"; input["serviceState"] = "UNKNOWN"
+    let proof = Normalizer.OfficialBusAdmission(schemaVersion: 1, identityEvidence: "OFFICIAL_STOP_SHAPE_CROSSWALK",
+      busLegIndex: 1, routeId: "100100185", direction: "상행", stationCount: 2,
+      firstStopSequence: 1, lastStopSequence: 3)
+    let savedJSON = try json(input)
+    let unverified = try Normalizer.normalize(json: savedJSON)
+    XCTAssertTrue(unverified.reasonCodes.contains("ROUTE_SERVICE_UNVERIFIED"))
+    XCTAssertFalse(unverified.legs[1].stopSequenceUsable)
+    XCTAssertFalse(unverified.legs[1].directionExplicit)
+    XCTAssertThrowsError(try Normalizer.prepareWalkingRoute(json: savedJSON, allowValidatedSavedRoute: true))
+
+    let accepted = try Normalizer.prepareWalkingRoute(json: savedJSON,
+      allowValidatedSavedRoute: true, officialBusAdmission: proof)
+    XCTAssertEqual(accepted.summary.reasonCodes, ["SAVED_ROUTE_REVALIDATION_REQUIRED"])
+    XCTAssertTrue(accepted.summary.legs[1].stopSequenceUsable)
+    XCTAssertTrue(accepted.summary.legs[1].directionExplicit)
+    XCTAssertNotNil(accepted.busRoute)
+    XCTAssertFalse(accepted.summary.fieldValidated)
+    XCTAssertFalse(accepted.summary.fullAutomaticGuidance)
+
+    let wrong = Normalizer.OfficialBusAdmission(schemaVersion: 1, identityEvidence: "OFFICIAL_STOP_SHAPE_CROSSWALK",
+      busLegIndex: 1, routeId: "100100186", direction: "상행", stationCount: 2,
+      firstStopSequence: 1, lastStopSequence: 3)
+    XCTAssertThrowsError(try Normalizer.prepareWalkingRoute(json: savedJSON,
+      allowValidatedSavedRoute: true, officialBusAdmission: wrong))
+    input["serviceState"] = "not_operating"
+    XCTAssertThrowsError(try Normalizer.prepareWalkingRoute(json: json(input),
+      allowValidatedSavedRoute: true, officialBusAdmission: proof))
+  }
+
+  func testOfficialSubwayCrosswalkMatchesOnlyTheSavedSingleLeg() throws {
+    var subway = ride(kind: "SUBWAY")
+    subway["providerRouteId"] = "1000:2"
+    subway["directionCode"] = "UP"
+    subway["stopEvidenceProvider"] = "odsay"
+    var stops = subway["stops"] as! [[String: Any]]
+    for index in stops.indices { stops[index]["routingStationId"] = String(222 + index) }
+    subway["stops"] = stops
+    var first = walk(); first["stopEvidenceProvider"] = "odsay"
+    var last = walk(end: 600)
+    last["index"] = 2; last["start"] = point(500)
+    last["coordinates"] = [point(500), point(600)]
+    last["stopEvidenceProvider"] = "odsay"
+    var input = route(legs: [first, subway, last], destination: point(600))
+    input["provider"] = "odsay"; input["context"] = "SAVED_ROUTE"; input["serviceState"] = "UNKNOWN"
+    let proof = Normalizer.OfficialSubwayAdmission(schemaVersion: 1,
+      identityEvidence: "OFFICIAL_STATION_PATH_CROSSWALK", subwayLegIndex: 1,
+      providerRouteId: "1000:2", startRoutingStationId: "222", endRoutingStationId: "224", stationCount: 2)
+    let decoded = try JSONDecoder().decode(Normalizer.Input.self, from: Data(json(input).utf8))
+    XCTAssertTrue(proof.matches(decoded))
+    XCTAssertEqual(try Normalizer.normalize(json: json(input), officialSubwayAdmission: proof).reasonCodes,
+      ["SAVED_ROUTE_REVALIDATION_REQUIRED"])
+    let wrong = Normalizer.OfficialSubwayAdmission(schemaVersion: 1,
+      identityEvidence: "OFFICIAL_STATION_PATH_CROSSWALK", subwayLegIndex: 1,
+      providerRouteId: "1000:2", startRoutingStationId: "223", endRoutingStationId: "224", stationCount: 2)
+    XCTAssertFalse(wrong.matches(decoded))
+    input["serviceState"] = "not_operating"
+    XCTAssertFalse(proof.matches(try JSONDecoder().decode(Normalizer.Input.self, from: Data(json(input).utf8))))
+  }
+
   private func point(_ east: Double, north: Double = 0) -> [String: Double] {
     ["latitude": north / metersPerDegree, "longitude": east / metersPerDegree]
   }

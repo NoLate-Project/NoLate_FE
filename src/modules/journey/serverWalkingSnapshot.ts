@@ -17,10 +17,13 @@ export const walkingSnapshotWire = (value:WalkingSnapshot):WalkingSnapshotWire =
 export function composeServerWalkingInput(input:JourneyRouteInput,value:WalkingSnapshot,now=Date.now()):JourneyRouteInput {
     const snapshot=walkingSnapshotWire(parseWalkingSnapshot(walkingSnapshotWire(value),value,
         {authMemberId:value.memberId,loginGeneration:value.loginGeneration},now));
-    const same=(a:JourneyRouteCoordinate|null|undefined,b:JourneyRouteCoordinate|null|undefined)=>!!a&&!!b&&a.latitude===b.latitude&&a.longitude===b.longitude;
+    // ODsay walk interpolation can differ from the adjacent saved ride point
+    // by centimetres. Accept only that rounding gap, never a synthetic connector.
+    const same=(a:JourneyRouteCoordinate|null|undefined,b:JourneyRouteCoordinate|null|undefined)=>!!a&&!!b&&
+        distance({lat:a.latitude,lng:a.longitude},{lat:b.latitude,lng:b.longitude})<=1;
     const first=input.legs[0],last=input.legs.at(-1)!;
     if(input.context!=='SAVED_ROUTE'||input.provider!=='odsay'||input.source!=='api'||input.plausibility!=='normal'
-        ||input.serviceState!=='operating'||!['live_provider','provider_estimate'].includes(input.reliability)
+        ||!['operating','UNKNOWN'].includes(input.serviceState)||!['live_provider','provider_estimate'].includes(input.reliability)
         ||input.legs.length<3||input.legs.length>31||input.legs.length%2!==1
         ||input.legs.some((leg,i)=>leg.index!==i||(i%2===0?leg.kind!=='WALK':!['BUS','SUBWAY'].includes(leg.kind)))
         ||snapshot.walks.length!==(input.legs.length+1)/2||!same(first.start,input.origin)||!same(last.end,input.destination)

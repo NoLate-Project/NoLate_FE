@@ -1,6 +1,5 @@
 import axios from "axios";
 import { getEnv } from "../src/api/env";
-import { getTransitRouteViaProxy } from "../src/api/transitRouting";
 import { getRouteAlternativeOptions as getProviderRouteOptions, getTransitRouteOptions } from "../src/modules/map/tmapApi";
 import { getRouteAlternativeOptions, invalidateRouteSearch } from "../src/modules/map/routingService";
 import { hasTransitRouteProvider } from "../src/modules/map/tmapApiCore";
@@ -8,33 +7,16 @@ import type { Place } from "../src/modules/schedule/types";
 
 jest.mock("axios");
 jest.mock("../src/api/env", () => ({ getEnv: jest.fn() }));
-jest.mock("../src/api/transitRouting", () => ({ getTransitRouteViaProxy: jest.fn() }));
 
 const mockedGetEnv = jest.mocked(getEnv);
 const mockedGet = jest.mocked(axios.get);
 const mockedCreate = jest.mocked(axios.create);
-const mockedTmapProxy = jest.mocked(getTransitRouteViaProxy);
 const mockRoadPost = jest.fn();
 const origin: Place = { name: "노원역", lat: 37.656, lng: 127.063 };
 const destination: Place = { name: "신림역", lat: 37.484, lng: 126.93 };
 const departureAt = new Date("2026-10-03T15:51:00.000Z");
 const runtime = globalThis as typeof globalThis & { __DEV__: boolean | undefined };
 const originalDevelopmentMode = runtime.__DEV__;
-
-function tmapRouteResponse(service?: number) {
-    return { metaData: { plan: { itineraries: [{
-        totalTime: 3900,
-        totalDistance: 30_000,
-        transferCount: 0,
-        legs: [{
-            mode: "SUBWAY",
-            route: "수도권4호선",
-            sectionTime: 3900,
-            service,
-            passShape: { linestring: "127.063,37.656 126.93,37.484" },
-        }],
-    }] } } };
-}
 
 function odsayRouteResponse() {
     return { data: { result: { paths: [{
@@ -55,24 +37,17 @@ function odsayRouteResponse() {
 
 function expectNoTmapTransitFallback() {
     expect(mockedCreate).not.toHaveBeenCalled();
-    expect(mockedTmapProxy).not.toHaveBeenCalled();
 }
 
 describe("transit route provider selection", () => {
-    let transitProvider: string | undefined;
-    let proxyEnabled: boolean;
-
     beforeEach(() => {
         jest.resetAllMocks();
         jest.spyOn(console, "info").mockImplementation(() => {});
         runtime.__DEV__ = true;
-        transitProvider = undefined;
-        proxyEnabled = true;
         invalidateRouteSearch(origin, destination, "TRANSIT");
-        // TMAP 키와 프록시가 있어도 명시적 개발 설정이 없으면 ODsay를 사용한다.
+        // 이전 TMAP 선택값·키·프록시 설정이 있어도 대중교통은 ODsay만 사용한다.
         mockedGetEnv.mockImplementation((key) => {
-            if (key === "EXPO_PUBLIC_TRANSIT_PROVIDER") return transitProvider;
-            if (key === "EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED") return String(proxyEnabled);
+            if (key === "EXPO_PUBLIC_TRANSIT_PROVIDER") return "tmap";
             if (["EXPO_PUBLIC_ODSAY_IOS_API_KEY", "EXPO_PUBLIC_ODSAY_ANDROID_API_KEY"].includes(key)) return "test-odsay-key";
             if (key === "EXPO_PUBLIC_TMAP_APP_KEY") return "test-tmap-key";
             return undefined;
@@ -86,6 +61,7 @@ describe("transit route provider selection", () => {
     });
 
     test("returns ODsay identity and preserves unverified operating and timing evidence", async () => {
+        expect(hasTransitRouteProvider()).toBe(true);
         mockedGet.mockResolvedValue(odsayRouteResponse());
 
         const [route] = await getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt });
@@ -107,14 +83,8 @@ describe("transit route provider selection", () => {
         expectNoTmapTransitFallback();
     });
 
-    test.each([
-        [true, "odsay"],
-        [true, "invalid-provider"],
-        [false, "tmap"],
-        [undefined, "tmap"],
-    ])("uses ODsay with development mode %s and provider setting %s", async (developmentMode, provider) => {
+    test.each([true, false, undefined])("uses ODsay with development mode %s despite a stale TMAP setting", async (developmentMode) => {
         runtime.__DEV__ = developmentMode;
-        transitProvider = provider;
         mockedGet.mockResolvedValue(odsayRouteResponse());
 
         const [route] = await getTransitRouteOptions(origin, destination, { departureAt });
@@ -124,109 +94,21 @@ describe("transit route provider selection", () => {
         expectNoTmapTransitFallback();
     });
 
-    test.each([
-        [undefined, "unknown"],
-        [1, "operating"],
-        [0, "not_operating"],
-    ])("explicit development TMAP preserves service %s as %s with estimated timing", async (service, state) => {
-        transitProvider = "tmap";
-        mockedTmapProxy.mockResolvedValue(tmapRouteResponse(service));
-
-        const [route] = await getRouteAlternativeOptions(origin, destination, "TRANSIT", {
-            departureAt,
-            searchFutureService: false,
-        });
-
-        expect(route).toMatchObject({
-            provider: "tmap",
-            minutes: 65,
-            providerTimeBasis: "route_estimate",
-            routeReliability: "provider_estimate",
-            transitServiceState: state,
-            transitDepartureAt: departureAt.toISOString(),
-        });
-        expect(route.providerDepartureAt).toBeUndefined();
-        expect(route.providerArrivalAt).toBeUndefined();
-        expect(mockedTmapProxy).toHaveBeenCalledTimes(1);
-        expect(mockedTmapProxy).toHaveBeenCalledWith(expect.objectContaining({ searchDttm: "202610040051" }));
-        expect(mockedGet).not.toHaveBeenCalled();
-        expect(mockedCreate).not.toHaveBeenCalled();
-    });
-
-    test("explicit development TMAP can use the direct transit endpoint without an ODsay key", async () => {
-        mockedGetEnv.mockImplementation((key) => {
-            if (key === "EXPO_PUBLIC_TRANSIT_PROVIDER") return "tmap";
-            if (key === "EXPO_PUBLIC_TMAP_APP_KEY") return "test-tmap-key";
-            return undefined;
-        });
-        mockRoadPost.mockResolvedValue({ data: tmapRouteResponse() });
-
-        expect(hasTransitRouteProvider()).toBe(true);
-        const [route] = await getTransitRouteOptions(origin, destination, { departureAt });
-
-        expect(route.provider).toBe("tmap");
-        expect(mockRoadPost).toHaveBeenCalledWith("/transit/routes", expect.objectContaining({
-            searchDttm: "202610040051",
-        }), expect.any(Object));
-        expect(mockedTmapProxy).not.toHaveBeenCalled();
-        expect(mockedGet).not.toHaveBeenCalled();
-    });
-
-    test("selected TMAP failure is propagated without trying ODsay", async () => {
-        transitProvider = "tmap";
-        proxyEnabled = false;
-        const failure = new Error("TMAP request timed out");
-        mockRoadPost.mockRejectedValue(failure);
-
-        await expect(getTransitRouteOptions(origin, destination, { departureAt })).rejects.toBe(failure);
-
-        expect(mockRoadPost).toHaveBeenCalledTimes(1);
-        expect(mockedGet).not.toHaveBeenCalled();
-    });
-
-    test("selected TMAP without credentials fails instead of using the available ODsay key", async () => {
-        mockedGetEnv.mockImplementation((key) => {
-            if (key === "EXPO_PUBLIC_TRANSIT_PROVIDER") return "tmap";
-            if (key === "EXPO_PUBLIC_ODSAY_IOS_API_KEY") return "test-odsay-key";
-            return undefined;
-        });
-
-        expect(hasTransitRouteProvider()).toBe(false);
-        await expect(getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt }))
-            .rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
-
-        expect(mockedGet).not.toHaveBeenCalled();
-        expect(mockRoadPost).not.toHaveBeenCalled();
-        expect(mockedTmapProxy).not.toHaveBeenCalled();
-    });
-
-    test("selected TMAP empty result stays empty without trying ODsay", async () => {
-        transitProvider = "tmap";
-        mockedTmapProxy.mockResolvedValue({ metaData: { plan: { itineraries: [] } } });
-
-        await expect(getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt }))
-            .rejects.toMatchObject({ code: "NO_PROVIDER_ROUTE" });
-
-        expect(mockedTmapProxy).toHaveBeenCalledTimes(1);
-        expect(mockedGet).not.toHaveBeenCalled();
-    });
-
-    test("a provider switch does not reuse the previous provider's cached route", async () => {
+    test("a stale provider switch does not change the cached ODsay route", async () => {
         mockedGet.mockResolvedValue(odsayRouteResponse());
-        mockedTmapProxy.mockResolvedValue(tmapRouteResponse());
 
         const [odsayRoute] = await getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt });
-        transitProvider = "tmap";
-        const [tmapRoute] = await getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt });
+        const [sameRoute] = await getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt });
 
         expect(odsayRoute.provider).toBe("odsay");
-        expect(tmapRoute.provider).toBe("tmap");
+        expect(sameRoute.provider).toBe("odsay");
         expect(mockedGet).toHaveBeenCalledTimes(1);
-        expect(mockedTmapProxy).toHaveBeenCalledTimes(1);
+        expectNoTmapTransitFallback();
     });
 
     test("missing ODsay key is a provider failure even when TMAP is configured", async () => {
         mockedGetEnv.mockImplementation((key) => key === "EXPO_PUBLIC_TMAP_APP_KEY" ? "test-tmap-key" : undefined);
+        expect(hasTransitRouteProvider()).toBe(false);
 
         await expect(getRouteAlternativeOptions(origin, destination, "TRANSIT", { departureAt }))
             .rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });

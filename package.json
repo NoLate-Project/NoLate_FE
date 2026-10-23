@@ -20,7 +20,6 @@
     "eas-build-post-install": "bash scripts/install-tmap-native-sdk.sh \"${EAS_BUILD_PLATFORM:-all}\"",
     "postinstall": "patch-package",
     "start": "react-native start",
-    "start:eta:tmap": "EXPO_PUBLIC_TRANSIT_PROVIDER=tmap expo start --dev-client",
     "test": "jest"
   },
   "main": "./index.js",

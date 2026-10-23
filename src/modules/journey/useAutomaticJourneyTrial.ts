@@ -25,8 +25,11 @@ export function canPrepareAutomaticJourneyAssessment(
     if (scope === "LOCAL_ONLY") return input.context === "ROUTING_RESPONSE" && result.summary.eligibleDepartureLegIndex === 0;
     const summary = result.summary;
     const first = summary.legs[0];
-    return ((scope === "SANDBOX" && input.context === "SYNTHETIC_FIXTURE") || (saved && input.context === "SAVED_ROUTE")) && summary.reasonCodes.length === 1
-        && summary.reasonCodes[0] === (saved ? "SAVED_ROUTE_REVALIDATION_REQUIRED" : "SYNTHETIC_FIXTURE_ONLY") && first?.index === 0 && first.kind === "WALK"
+    const savedReasons = summary.reasonCodes.length === 1 && summary.reasonCodes[0] === 'SAVED_ROUTE_REVALIDATION_REQUIRED'
+        || input.provider === 'odsay' && input.serviceState === 'UNKNOWN' && summary.reasonCodes.length === 2
+            && summary.reasonCodes.includes('SAVED_ROUTE_REVALIDATION_REQUIRED') && summary.reasonCodes.includes('ROUTE_SERVICE_UNVERIFIED');
+    return ((scope === "SANDBOX" && input.context === "SYNTHETIC_FIXTURE" && summary.reasonCodes.length === 1
+        && summary.reasonCodes[0] === 'SYNTHETIC_FIXTURE_ONLY') || (saved && input.context === "SAVED_ROUTE" && savedReasons)) && first?.index === 0 && first.kind === "WALK"
         && first.geometryUsable && typeof first.geometryLengthMeters === "number"
         && first.geometryLengthMeters >= 70 && first.geometryLengthMeters <= 100_000;
 }

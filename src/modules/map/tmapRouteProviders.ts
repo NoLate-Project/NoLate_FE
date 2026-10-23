@@ -1,31 +1,17 @@
 import axios from "axios";
 import { parseTmapPedestrianGeometry } from './tmapPedestrianGeometry';
 
-import {
-    getEnv,
-} from "../../api/env";
-import type {
-    TransitRouteProxyRequest,
-} from "../../api/transitRouting";
 import type {
     Place,
 } from "../schedule/types";
 import {
-    buildRecoveredLoopTransitOption,
-    createTransitLoopRecoveryPlan,
-    selectTransitLoopSubroute,
-} from "./transitLoopRecovery";
-import {
     getOdsayTransitRouteOptions,
 } from "./odsayApi";
-import { getTransitRouteProvider } from "./transitProviderConfig";
 
 import {
     infoMapDebug,
     scheduleOpenStreetMapRequest,
     safeNumber,
-    hasTmapAppKey,
-    requestTransitRouteProxy,
     tmapClient,
     tmapApiErrorMessage,
     clampPathCoords,
@@ -34,7 +20,6 @@ import {
     normalizeTransitTotalDurationSeconds,
     OPENSTREETMAP_BIKE_ROUTING_BASE_URL,
     OPENSTREETMAP_REQUEST_TIMEOUT_MS,
-    TMAP_TRANSIT_REQUEST_COUNT,
 } from "./tmapApiCore.ts";
 import type {
     RoutePathCoord,
@@ -231,129 +216,16 @@ export function parseTransitOptionsFromTmap(data: any): TransitRouteOption[] {
     return parsed.sort((a: TransitRouteOption, b: TransitRouteOption) => a.minutes - b.minutes);
 }
 
-/** 정규화된 경로 데이터를 조합해 `formatTransitSearchDateTime` 결과를 생성합니다. */
-export function formatTransitSearchDateTime(date = new Date()): string {
-    const year = String(date.getFullYear()).padStart(4, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hour = String(date.getHours()).padStart(2, "0");
-    const minute = String(date.getMinutes()).padStart(2, "0");
-    return `${year}${month}${day}${hour}${minute}`;
-}
-
-// Tmap 원본 API 호출 블록.
-// 실제 네트워크 요청은 여기서만 하고, 화면 쪽은 아래 exported helper만 사용한다.
-/** 지도 공급자 호출과 대체 경로를 조율해 `requestTransitRouteViaTmap` 결과를 반환합니다. */
-export async function requestTransitRouteViaTmap(
-    origin: Place,
-    destination: Place,
-    departureAt = new Date()
-): Promise<TransitRouteOption[]> {
-    const payload: TransitRouteProxyRequest = {
-        startX: String(origin.lng),
-        startY: String(origin.lat),
-        endX: String(destination.lng),
-        endY: String(destination.lat),
-        count: TMAP_TRANSIT_REQUEST_COUNT,
-        lang: 0,
-        format: "json",
-        searchDttm: formatTransitSearchDateTime(departureAt),
-    };
-
-    if (getEnv("EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED") === "true") {
-        try {
-            const data = await requestTransitRouteProxy<any>(payload);
-            return parseTransitOptionsFromTmap(data);
-        } catch (error) {
-            if (!hasTmapAppKey()) throw error;
-            infoMapDebug("[대중교통옵션] 서버 프록시 실패, direct fallback →", tmapApiErrorMessage(error));
-        }
-    }
-
-    const client = tmapClient();
-    const response = await client.post("/transit/routes", payload, {
-        headers: { "Content-Type": "application/json" },
-    });
-    return parseTransitOptionsFromTmap(response.data);
-}
-
-/** 지도 공급자 호출과 대체 경로를 조율해 `getTransitRouteViaTmap` 결과를 반환합니다. */
-export async function getTransitRouteViaTmap(
-    origin: Place,
-    destination: Place,
-    departureAt = new Date()
-): Promise<TransitRouteOption[]> {
-    const directOptions = await requestTransitRouteViaTmap(origin, destination, departureAt);
-    if (
-        typeof origin.lat !== "number" ||
-        typeof origin.lng !== "number" ||
-        typeof destination.lat !== "number" ||
-        typeof destination.lng !== "number"
-    ) {
-        return directOptions;
-    }
-    const recoveryPlan = createTransitLoopRecoveryPlan(
-        directOptions,
-        { name: origin.name, lat: origin.lat, lng: origin.lng },
-        { name: destination.name, lat: destination.lat, lng: destination.lng }
-    );
-    if (!recoveryPlan) return directOptions;
-
-    try {
-        const anchorPlace: Place = {
-            name: recoveryPlan.anchor.name ?? "순환선 중간역",
-            address: recoveryPlan.anchor.name ?? "순환선 중간역",
-            lat: recoveryPlan.anchor.lat,
-            lng: recoveryPlan.anchor.lng,
-        };
-        const leftOptions = await requestTransitRouteViaTmap(origin, anchorPlace, departureAt);
-        const leftOption = selectTransitLoopSubroute(
-            leftOptions,
-            recoveryPlan.lineToken,
-            recoveryPlan.anchor,
-            "TO_ANCHOR"
-        );
-        if (!leftOption) return directOptions;
-
-        const rightDepartureAt = new Date(departureAt.getTime() + leftOption.minutes * 60_000);
-        const rightOptions = await requestTransitRouteViaTmap(anchorPlace, destination, rightDepartureAt);
-        const rightOption = selectTransitLoopSubroute(
-            rightOptions,
-            recoveryPlan.lineToken,
-            recoveryPlan.anchor,
-            "FROM_ANCHOR"
-        );
-        if (!rightOption) return directOptions;
-
-        const recovered = buildRecoveredLoopTransitOption(recoveryPlan, leftOption, rightOption);
-        if (!recovered) return directOptions;
-
-        infoMapDebug("[대중교통옵션] 순환선 반대 방향 후보 복구", {
-            line: recoveryPlan.lineToken,
-            anchor: recoveryPlan.anchor.name,
-            directMinutes: recoveryPlan.directOption.minutes,
-            recoveredMinutes: recovered.minutes,
-        });
-        return [recovered, ...directOptions];
-    } catch (error) {
-        infoMapDebug("[대중교통옵션] 순환선 후보 복구 실패, 원본 유지 →", tmapApiErrorMessage(error));
-        return directOptions;
-    }
-}
-
 /**
- * 기본값은 저장 후 ETA 재조회와 같은 공급자인 ODsay다.
- * 개발/테스트 빌드는 EXPO_PUBLIC_TRANSIT_PROVIDER=tmap으로 명시적으로 전환할 수 있다.
- * 선택한 공급자의 키 누락·외부 오류·빈 결과는 다른 공급자로 대체하지 않는다.
+ * 저장·ETA 재조회·길안내가 같은 ODsay 원본 경로를 사용한다.
+ * 키 누락·외부 오류·빈 결과를 TMAP 경로로 대체하지 않는다.
  */
 export async function getTransitRouteViaPreferredProvider(
     origin: Place,
     destination: Place,
     departureAt = new Date()
 ): Promise<TransitRouteOption[]> {
-    const provider = getTransitRouteProvider();
-    infoMapDebug("[대중교통옵션] 선택한 공급자", provider);
-    if (provider === "tmap") return getTransitRouteViaTmap(origin, destination, departureAt);
+    infoMapDebug("[대중교통옵션] 선택한 공급자", "odsay");
     return getOdsayTransitRouteOptions(origin, destination, departureAt);
 }
 

@@ -14,7 +14,6 @@ import {
 } from "./tmapApi";
 import { assessRoutePlausibility } from "./routePlausibility";
 import { OdsayApiError } from "./odsayApiError";
-import { getTransitRouteProvider } from "./transitProviderConfig";
 
 export type {
     PlaceSearchItem,
@@ -313,7 +312,7 @@ function buildFutureTransitSearchTimes(departureAt: Date): Date[] {
 
 /**
  * 화면이 직접 provider API를 호출하지 않게 하는 라우팅 경계.
- * 대중교통은 ODsay를 기본으로 하며 개발/테스트에서만 명시적 공급자 선택을 허용한다.
+ * 대중교통은 ODsay로 고정한다. 지도 렌더러와 자동차·도보 공급자는 별개다.
  * 자동차/도보 등 다른 수단의 공급자 정책은 기존 래퍼에 위임한다.
  */
 export async function getRouteAlternativeOptions(
@@ -331,10 +330,11 @@ export async function getRouteAlternativeOptions(
         ? new Date(options.departureAt)
         : new Date();
     const requestKey = buildRouteCacheKey(origin, destination, mode, options.departureAt);
-    const cacheKey = mode === "TRANSIT" ? `${requestKey}:${getTransitRouteProvider()}` : requestKey;
+    const cacheKey = requestKey;
     const now = Date.now();
     const cached = routeCache.get(cacheKey);
-    if (!options.forceRefresh && cached && cached.expiresAt > now) {
+    if (!options.forceRefresh && cached && cached.expiresAt > now
+        && (mode !== "TRANSIT" || cached.options.every((route) => route.provider === "odsay"))) {
         return cloneRouteOptions(cached.options);
     }
     if (cached) routeCache.delete(cacheKey);
@@ -347,9 +347,14 @@ export async function getRouteAlternativeOptions(
         destination,
         mode,
         { departureAt }
-    ).then((legacyOptions) => legacyOptions
-        .filter(isRenderableProviderRoute)
-        .map((option) => attachRouteQuality(option, origin, destination)));
+    ).then((legacyOptions) => {
+        const renderableOptions = legacyOptions.filter(isRenderableProviderRoute);
+        if (mode === "TRANSIT" && renderableOptions.some((option) => option.provider !== "odsay")) {
+            throw new RouteSearchError("PROVIDER_UNAVAILABLE", "ODsay 대중교통 경로를 확인할 수 없습니다. 다시 검색해 주세요.");
+        }
+        return renderableOptions
+            .map((option) => attachRouteQuality(option, origin, destination));
+    });
 
     const resolveTransitServiceState = async (
         providerOptions: RouteAlternativeOption[]

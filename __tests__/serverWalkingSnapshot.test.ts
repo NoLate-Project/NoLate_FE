@@ -3,6 +3,7 @@ import {savedJourneyProviderFixture} from '../test-support/savedJourneyProviderF
 import {savedJourneyProviderPreflight} from '../src/modules/journey/savedJourneyProviderPreflight';
 import {journeyAuthentication} from '../src/modules/journey/automaticJourneyAuthentication';
 import {Buffer} from 'buffer';
+jest.mock('expo-device',()=>({isDevice:false}));
 jest.mock('../src/api/env',()=>({getEnv:()=>{throw new Error('NO_NETWORK_KEYS');}}));
 const now=1791792000000;
 const context={scheduleId:9001,routeRevision:1,routeFingerprint:'a'.repeat(64)};
@@ -113,9 +114,29 @@ test('separate server paths connect missing saved walking geometry without chang
     expect(savedJourneyProviderPreflight(input,f.route).canAssess).toBe(true);
     expect(savedWalkingBaseJSON({...f.input,routeRevision:2})).not.toBe(savedWalkingBaseJSON(input));
 });
+test('unverified ODsay service can receive walking geometry without gaining navigation admission',()=>{
+    const f=mixedFixture();
+    f.input.serviceState='UNKNOWN';
+    f.route.transitServiceState='unknown';
+    const composed=composeServerWalkingInput(f.input,f.snapshot,now);
+    expect(composed.serviceState).toBe('UNKNOWN');
+    expect(composed.walkingSnapshot?.navigationReady).toBe(false);
+    const preflight=savedJourneyProviderPreflight(composed,f.route);
+    expect(preflight.canAssess).toBe(true);
+    expect(preflight.checks.find(check=>check.code==='SERVER_NATIVE')?.state).toBe('RECHECK_REQUIRED');
+    f.input.serviceState='not_operating';
+    expect(()=>composeServerWalkingInput(f.input,f.snapshot,now)).toThrow('INVALID_WALKING_SNAPSHOT');
+});
+test('centimetre ODsay walk endpoint rounding is accepted without inserting a connector',()=>{
+    const f=mixedFixture();
+    f.input.legs[0].end!.longitude+=.0000001;
+    const composed=composeServerWalkingInput(f.input,f.snapshot,now);
+    expect(composed.legs[0].end).toEqual(f.input.legs[0].end);
+    expect(composed.walkingSnapshot?.navigationReady).toBe(false);
+});
 test.each(['tuple','endpoint','expired','bus-provider','stops'])('mixed input rejects %s without repair',mode=>{
     const f=mixedFixture();
-    if(mode==='tuple')f.input.legs[0].end!.longitude+=.00001;
+    if(mode==='tuple')f.input.legs[0].end!.longitude+=.00003;
     if(mode==='endpoint')f.snapshot.walks[0].points[0].lng+=.001;
     if(mode==='bus-provider')f.input.provider='tmap';
     if(mode==='stops')f.input.legs[1].stops[0].coordinate=null;

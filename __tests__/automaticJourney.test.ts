@@ -57,6 +57,36 @@ test('device execution is accepted only for an owned authenticated route and ret
         .toMatchObject({ execution: 'DEVICE' });
     expect(normalizeAutomaticJourneyDeparture(event, normalized!)).toBeNull();
 });
+test('official bus crosswalk is bounded to the authenticated binding and malformed claims fail closed', () => {
+    const device = { ...binding, execution: 'DEVICE', syncScope: 'AUTHENTICATED',
+        apiOrigin: 'https://api.example.com', authMemberId: 7, loginGeneration: 2,
+        savedRouteValidated: true, guidanceEnabled: true };
+    const proof = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+        routeId: '100100185', direction: '상행', stationCount: 2, firstStopSequence: 10, lastStopSequence: 12 };
+    expect(normalizeAutomaticJourneyBinding({ ...device, officialBusAdmission: { ...proof, secret: 'private' } })?.officialBusAdmission).toEqual(proof);
+    for (const malformed of [{ ...proof, routeId: '12345' }, { ...proof, stationCount: 3 },
+        { ...proof, identityEvidence: 'PROVIDER_GUESS' }, { ...proof, direction: 'bad\nname' }]) {
+        expect(normalizeAutomaticJourneyBinding({ ...device, officialBusAdmission: malformed })).toBeNull();
+    }
+    expect(normalizeAutomaticJourneyBinding({ ...binding, officialBusAdmission: proof })).toBeNull();
+});
+test('official subway crosswalk stays in a DEVICE saved-route binding and rejects malformed or mixed proofs', () => {
+    const device = { ...binding, execution: 'DEVICE', syncScope: 'AUTHENTICATED',
+        apiOrigin: 'https://api.example.com', authMemberId: 7, loginGeneration: 2,
+        savedRouteValidated: true, guidanceEnabled: true };
+    const proof = { schemaVersion: 1, identityEvidence: 'OFFICIAL_STATION_PATH_CROSSWALK', subwayLegIndex: 1,
+        providerRouteId: '1000:2', startRoutingStationId: '222', endRoutingStationId: '224', stationCount: 2 };
+    expect(normalizeAutomaticJourneyBinding({ ...device, officialSubwayAdmission: { ...proof, secret: 'private' } })?.officialSubwayAdmission)
+        .toEqual(proof);
+    for (const malformed of [{ ...proof, providerRouteId: '1000:0' }, { ...proof, stationCount: 0 },
+        { ...proof, startRoutingStationId: '224' }, { ...proof, identityEvidence: 'RAW_ODsay' }]) {
+        expect(normalizeAutomaticJourneyBinding({ ...device, officialSubwayAdmission: malformed })).toBeNull();
+    }
+    expect(normalizeAutomaticJourneyBinding({ ...binding, officialSubwayAdmission: proof })).toBeNull();
+    expect(normalizeAutomaticJourneyBinding({ ...device, officialSubwayAdmission: proof,
+        officialBusAdmission: { schemaVersion: 1, identityEvidence: 'OFFICIAL_STOP_SHAPE_CROSSWALK', busLegIndex: 1,
+            routeId: '100100185', direction: '상행', stationCount: 2, firstStopSequence: 10, lastStopSequence: 12 } })).toBeNull();
+});
 test('notice mode requires explicit supported native acceptance and never requests OS permission', async () => {
     mockNative.configureAutomaticJourneyNoticeMode.mockResolvedValueOnce({ accepted: true });
     await expect(configureAutomaticJourneyNoticeMode('NOTIFICATIONS')).resolves.toBeUndefined();

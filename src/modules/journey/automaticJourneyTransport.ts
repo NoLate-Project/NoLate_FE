@@ -71,6 +71,8 @@ export function createAutomaticJourneyTransport(post: AutomaticJourneyPost, auth
                 execution: data.execution, syncScope: authentication ? "AUTHENTICATED" : "SANDBOX",
                 ...(authentication ?? {}),
                 ...(request.routeInputJSON && data.savedRouteValidated === true ? { savedRouteValidated: true, guidanceEnabled: true } : {}),
+                ...(request.routeInputJSON && data.officialBusAdmission != null ? { officialBusAdmission: data.officialBusAdmission } : {}),
+                ...(request.routeInputJSON && data.officialSubwayAdmission != null ? { officialSubwayAdmission: data.officialSubwayAdmission } : {}),
             });
             if (!binding || data.state !== "ARMED" || data.sequence !== 0 || binding.sessionId !== request.requestId
                 || binding.scheduleId !== scheduleId || binding.clientOwnerId !== request.clientOwnerId

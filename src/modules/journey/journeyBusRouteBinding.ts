@@ -16,6 +16,15 @@ const distance = (a: { latitude: number; longitude: number }, b: { latitude: num
 };
 /** Preview only. Server independently repeats this against the owned, unchanged saved route. */
 export function resolveJourneyBusRouteMapping(value: unknown, busLegIndex=1): JourneyBusRouteMapping {
+    return resolve(value, busLegIndex, false);
+}
+
+/** Local raw-evidence preflight only. Missing ODsay way/count still need official SERVER proof. */
+export function resolveJourneyBusOfficialCrosswalkInput(value: unknown, busLegIndex=1): JourneyBusRouteMapping {
+    return resolve(value, busLegIndex, true);
+}
+
+function resolve(value: unknown, busLegIndex: number, allowMissingOfficialClaims: boolean): JourneyBusRouteMapping {
     const root = record(value), info = record(root?.routeInfo);
     const candidates = [root?.transitLegs, info?.transitLegs, record(root?.transitJourney)?.legs,
         record(root?.selectedItinerary)?.legs, record(root?.itinerary)?.legs, root?.legs].filter(v => Array.isArray(v) && v.length > 0);
@@ -38,10 +47,13 @@ export function resolveJourneyBusRouteMapping(value: unknown, busLegIndex=1): Jo
     if (!rawIds || ["localRouteId", "routeCityCode", "routeProviderCode", "startLocalStationID", "startArsID", "startStationCityCode", "startStationProviderCode"]
         .some(key => typeof rawIds[key] !== "string" || rawIds[key] !== leg[key])) return blocked("RAW_BUS_IDENTIFIERS_REQUIRED");
     const direction = evidence.directionName;
-    if (typeof direction !== "string" || !direction.trim() || direction.length > 128
-        || Array.from(direction).some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159)) return blocked("DIRECTION_REQUIRED");
+    const missingDirection = direction == null;
+    if ((!allowMissingOfficialClaims || !missingDirection) && (typeof direction !== "string" || !direction.trim() || direction.length > 128
+        || Array.from(direction).some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) >= 127 && c.charCodeAt(0) <= 159))) return blocked("DIRECTION_REQUIRED");
     const stops = evidence.stopOccurrences;
-    if (!Array.isArray(stops) || stops.length < 2 || stops.length > 500 || evidence.declaredStationCount !== stops.length - 1) return blocked("STOP_OCCURRENCE_REQUIRED");
+    const missingCount = evidence.declaredStationCount == null;
+    if (!Array.isArray(stops) || stops.length < 2 || stops.length > 500
+        || (!allowMissingOfficialClaims || !missingCount) && evidence.declaredStationCount !== stops.length - 1) return blocked("STOP_OCCURRENCE_REQUIRED");
     let previous = -1;
     for (const [index, raw] of stops.entries()) {
         const stop = record(raw), sequence = stop?.providerSequence;
@@ -55,6 +67,7 @@ export function resolveJourneyBusRouteMapping(value: unknown, busLegIndex=1): Jo
     const position = coord(first.coord)!, start = coord(leg.startCoord);
     if (!start) return blocked("BOARDING_COORDINATE_REQUIRED");
     if (distance(position, start) > 30) return blocked("BOARDING_OCCURRENCE_MISMATCH");
+    if (missingDirection || missingCount) return blocked("OFFICIAL_CROSSWALK_REQUIRED");
     return { status: "SUPPORTED", query: { namespace: "SEOUL_BUS", arsId: stopArs, providerRouteId: leg.localRouteId, directionLabel: direction, legIndex: busLegIndex },
         boarding: { sourceIndex: 0, providerSequence: first.providerSequence as number, localStationId: leg.startLocalStationID, ...position } };
 }

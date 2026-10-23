@@ -8,6 +8,21 @@ const origin = { name: "노원", lat: 37.6563, lng: 127.0635 };
 const destination = { name: "신림", lat: 37.4842, lng: 126.9297 };
 describe("ODsay safe error identity", () => {
     beforeEach(() => jest.clearAllMocks());
+    test("sends every required maasRP field with a Korean-local search time", async () => {
+        jest.mocked(getEnv).mockImplementation((name) => name === "EXPO_PUBLIC_ODSAY_IOS_API_KEY"
+            ? "verified-mobile-key" : undefined);
+        jest.mocked(axios.get).mockResolvedValueOnce({ data: { result: { paths: [] } } });
+
+        await getOdsayTransitRouteOptions(origin, destination, new Date("2026-10-21T09:10:00Z"));
+
+        expect(axios.get).toHaveBeenCalledWith("https://api.odsay.com/v1/api/maasRP", expect.objectContaining({
+            params: expect.objectContaining({
+                apiKey: "verified-mobile-key", SX: origin.lng, SY: origin.lat,
+                EX: destination.lng, EY: destination.lat,
+                SearchTime: "202610211810", SearchMethod: 2,
+            }),
+        }));
+    });
     test("missing configuration is distinct and makes no provider request", async () => {
         jest.mocked(getEnv).mockReturnValue(undefined);
         await expect(getOdsayTransitRouteOptions(origin, destination)).rejects.toMatchObject({ providerCode: "KEY_MISSING" });

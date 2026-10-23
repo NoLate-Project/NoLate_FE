@@ -131,6 +131,7 @@ export function useScheduleDetailController({
     initialParticipantsExpanded,
   });
   const [loading, setLoading] = useState(false);
+  const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
   const [shareSheetVisible, setShareSheetVisible] = useState(false);
@@ -364,7 +365,10 @@ export function useScheduleDetailController({
         'NETWORK',
       )
         .then(detail => {
-          if (!cancelled) dispatch({ type: 'UPDATE_ITEM', item: detail });
+          if (!cancelled) {
+            dispatch({ type: 'UPDATE_ITEM', item: detail });
+            setLoadedDetailId(id);
+          }
         })
         .catch(error => {
           const routeFlowActive =
@@ -715,6 +719,7 @@ export function useScheduleDetailController({
     guidancePreviewAuthenticationSource: __DEV__ && !!internalPreviewItem && internalPreviewItem.id === '9001'
       && currentMemberId === 7 && previewOfflineGuidanceMap ? previewGuidanceAuthenticationSource : undefined,
     loading,
+    authoritativeDetailLoaded: !internalPreviewItem && loadedDetailId === id,
     loadError,
     setRetryKey,
     sheetMaxHeight,

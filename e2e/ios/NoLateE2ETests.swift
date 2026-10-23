@@ -159,15 +159,36 @@ final class NoLateE2ETests: XCTestCase {
         }
         let skipImport = app.buttons["일정 없이 시작하기"]
         if skipImport.waitForExistence(timeout: 5) {
+            // Tap the actual control first. A coordinate-only tap has occasionally
+            // landed on the footer boundary without activating the handler.
             skipImport.tap()
+            if skipImport.waitForExistence(timeout: 2) {
+                let frame = skipImport.frame
+                app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                              dy: frame.midY / app.frame.height)).tap()
+            }
             let skipTour = app.buttons["사용법 건너뛰고 NoLate 시작하기"]
             XCTAssertTrue(skipTour.waitForExistence(timeout: 20))
             skipTour.tap()
         }
         XCTAssertTrue(app.buttons["일정 추가"].waitForExistence(timeout: 20))
+        // Fresh installs can show the system password-save sheet after the
+        // calendar becomes visible. Decline only this exact prompt before
+        // interacting with the saved route beneath it.
+        let passwordSave = app.sheets["암호를 저장하겠습니까?"]
+        if passwordSave.buttons["지금 안 함"].waitForExistence(timeout: 3) {
+            passwordSave.buttons["지금 안 함"].tap()
+        }
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+            sharingNotice.buttons["확인"].tap()
+        }
         capture("isolated-release-calendar")
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 20), "The actual saved route must appear in the calendar")
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+            sharingNotice.buttons["확인"].tap()
+        }
         // iOS 27 XCTest can report an invalid (-1, -1) hit point after it
         // auto-scrolls this nested agenda card. Tap its visible frame directly.
         let frame = saved.frame
@@ -178,7 +199,184 @@ final class NoLateE2ETests: XCTestCase {
         expand.tap()
         XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 15),
                       "Release must expose the authenticated saved-route guidance entry")
+        XCTAssertFalse(app.staticTexts["지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요."].exists,
+                       "Release route detail must receive the map configuration")
         capture("isolated-release-saved-route-guidance")
+    }
+
+    /// The saved ODsay subway route must connect its two walking legs through the
+    /// server before automatic guidance assessment. This does not forge GPS or boarding.
+    func testIsolatedOdsaySubwayWalkingConnection() throws {
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].waitForExistence(timeout: 4) {
+            sharingNotice.buttons["확인"].tap()
+        }
+        if !app.otherElements["saved-detail-controls"].exists {
+            let saved = app.buttons["selected-day-agenda-card"]
+            XCTAssertTrue(saved.waitForExistence(timeout: 35), "The isolated saved ODsay route must be on today's calendar")
+            XCTAssertTrue(saved.label.hasPrefix("격리 Release 합성 경로"), "Open only the isolated ODsay schedule")
+            let frame = saved.frame
+            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                          dy: frame.midY / app.frame.height)).tap()
+            let expand = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기")).firstMatch
+            if expand.waitForExistence(timeout: 10) { expand.tap() }
+        }
+        XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 20))
+        let connect = app.buttons["saved-detail-connect-walking"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 15), "Saved ODsay subway route needs server-owned walking geometry")
+        try reveal(connect)
+        connect.tap()
+        let connected = app.staticTexts["saved-detail-walking-connected"]
+        XCTAssertTrue(connected.waitForExistence(timeout: 35),
+                      "Officially saved ODsay route must connect both real TMAP walking legs")
+        XCTAssertFalse(app.staticTexts["saved-detail-unsupported"].exists,
+                       "A connected route must be available for independent server/native assessment")
+        capture("isolated-odsay-subway-walking-connected")
+    }
+
+    /// A connected real ODsay route must still pass the independent native
+    /// assessment and server admission before it can arm location guidance.
+    func testIsolatedOdsaySubwayAutomaticPreparation() throws {
+        // Reopen the installed product app rather than inheriting an expanded
+        // route sheet and its stale local assessment from another test.
+        app.terminate()
+        app.activate()
+        // A newly installed signed build can re-prompt for location before the
+        // saved calendar loads. Accept only this isolated simulator's prompt.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowLocation = springboard.alerts.buttons["앱을 사용하는 동안 허용"]
+        if allowLocation.waitForExistence(timeout: 4) { allowLocation.tap() }
+        else if app.alerts.buttons["앱을 사용하는 동안 허용"].exists {
+            app.alerts.buttons["앱을 사용하는 동안 허용"].tap()
+        }
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].waitForExistence(timeout: 4) {
+            sharingNotice.buttons["확인"].tap()
+        }
+        if !app.otherElements["saved-detail-controls"].exists {
+            let saved = app.buttons["selected-day-agenda-card"]
+            XCTAssertTrue(saved.waitForExistence(timeout: 25))
+            let frame = saved.frame
+            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                          dy: frame.midY / app.frame.height)).tap()
+            let expand = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "일정 상세 시트 펼치기")).firstMatch
+            if expand.waitForExistence(timeout: 10) { expand.tap() }
+        }
+        XCTAssertTrue(app.otherElements["saved-detail-controls"].waitForExistence(timeout: 20))
+        let connect = app.buttons["saved-detail-connect-walking"]
+        XCTAssertTrue(connect.waitForExistence(timeout: 10))
+        try reveal(connect)
+        connect.tap()
+        XCTAssertTrue(app.staticTexts["saved-detail-walking-connected"].waitForExistence(timeout: 30))
+        let assess = app.buttons["saved-detail-assess"]
+        XCTAssertTrue(assess.waitForExistence(timeout: 10))
+        try reveal(assess)
+        assess.tap()
+        let consent = app.descendants(matching: .any)["saved-detail-consent"]
+        XCTAssertTrue(consent.waitForExistence(timeout: 15))
+        let consentReady = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: consent)
+        XCTWaiter().wait(for: [consentReady], timeout: 20)
+        XCTAssertTrue(consent.isEnabled, "Native assessment did not accept the connected route")
+        consent.tap()
+        let prepare = app.buttons["saved-detail-prepare"]
+        XCTAssertTrue(prepare.isEnabled)
+        prepare.tap()
+        // The first CoreLocation request can occur only after preparation. Do
+        // not count a hidden ARMED label behind a system permission sheet as
+        // visible screen evidence.
+        if allowLocation.waitForExistence(timeout: 4) { allowLocation.tap() }
+        else if app.alerts.buttons["앱을 사용하는 동안 허용"].exists {
+            app.alerts.buttons["앱을 사용하는 동안 허용"].tap()
+        }
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "위치 안내 시험 · ARMED")).firstMatch.waitForExistence(timeout: 30),
+                      "Server/native admission did not arm the ODsay subway route")
+        capture("isolated-odsay-subway-armed")
+        let stop = app.buttons["saved-detail-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10), "The isolated test must leave no armed session behind")
+        try reveal(stop)
+        stop.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "위치 안내 시험 · STOPPED")).firstMatch.waitForExistence(timeout: 15),
+                      "The isolated test must end its session after capturing ARMED")
+    }
+
+    /// Read-only iOS provider E2E on the dedicated isolated Release simulator.
+    /// It searches a real ODsay route from an existing synthetic draft and never saves it.
+    func testIsolatedIOSOdsayRouteSearch() throws {
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+            sharingNotice.buttons["확인"].tap()
+        }
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
+        if saved.exists {
+            let frame = saved.frame
+            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                          dy: frame.midY / app.frame.height)).tap()
+        }
+        XCTAssertTrue(app.staticTexts["격리 Release 합성 경로"].waitForExistence(timeout: 20),
+                      "Open only the isolated synthetic saved schedule before this test")
+        let edit = app.buttons["일정 수정"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        edit.tap()
+        let route = app.buttons["location-input-pressable"]
+        XCTAssertTrue(route.waitForExistence(timeout: 15), "The edit draft has no route selector")
+        if !route.isHittable { app.swipeUp() }
+        route.tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "출발지 재선택, 현재 합성 출발")).firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "도착지 재선택, 현재 합성 도착")).firstMatch.exists)
+        let transit = app.buttons["대중교통"]
+        XCTAssertTrue(transit.waitForExistence(timeout: 10))
+        transit.tap()
+        let candidate = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", " 경로")).firstMatch
+        XCTAssertTrue(candidate.waitForExistence(timeout: 45), "Real ODsay maasRP returned no selectable iOS route")
+        candidate.tap()
+        XCTAssertTrue(app.buttons["이 경로 저장"].waitForExistence(timeout: 15),
+                      "An ODsay result must expand into a selectable route detail")
+        capture("isolated-ios-odsay-real-route-search")
+        print("ISOLATED_IOS_ODSAY_ROUTE: " + candidate.label)
+        print("ISOLATED_IOS_ODSAY_NOT_SAVED")
+    }
+
+    /// Persist a real ODsay result only in the synthetic isolated member's schedule.
+    func testIsolatedIOSOdsayRouteSaveAndReopen() throws {
+        let sharingNotice = app.alerts["공유 캘린더"]
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+            sharingNotice.buttons["확인"].tap()
+        }
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "격리 Release 합성 경로")).firstMatch
+        if saved.exists {
+            let frame = saved.frame
+            app.coordinate(withNormalizedOffset: CGVector(dx: frame.midX / app.frame.width,
+                                                          dy: frame.midY / app.frame.height)).tap()
+        }
+        XCTAssertTrue(app.staticTexts["격리 Release 합성 경로"].waitForExistence(timeout: 20))
+        if sharingNotice.staticTexts["현재 사용할 수 없는 기능입니다."].exists {
+            sharingNotice.buttons["확인"].tap()
+        }
+        let edit = app.buttons["일정 수정"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        edit.tap()
+        let route = app.buttons["location-input-pressable"]
+        XCTAssertTrue(route.waitForExistence(timeout: 15))
+        if !route.isHittable { app.swipeUp() }
+        route.tap()
+        let transit = app.buttons["대중교통"]
+        XCTAssertTrue(transit.waitForExistence(timeout: 10))
+        transit.tap()
+        let candidate = app.buttons.matching(NSPredicate(format: "label ENDSWITH %@", " 경로")).firstMatch
+        XCTAssertTrue(candidate.waitForExistence(timeout: 45))
+        candidate.tap()
+        let routeSave = app.buttons["이 경로 저장"]
+        XCTAssertTrue(routeSave.waitForExistence(timeout: 15))
+        routeSave.tap()
+        let scheduleSave = app.buttons["일정 수정 저장"]
+        XCTAssertTrue(scheduleSave.waitForExistence(timeout: 15))
+        scheduleSave.tap()
+        XCTAssertTrue(app.buttons["일정 수정"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.staticTexts["격리 Release 합성 경로"].exists)
+        XCTAssertFalse(app.staticTexts["지도 설정을 불러오지 못했습니다. 앱을 최신 버전으로 업데이트해 주세요."].exists,
+                       "Saved ODsay route must render with the configured map provider")
+        capture("isolated-ios-odsay-route-saved-and-reopened")
+        print("ISOLATED_IOS_ODSAY_ROUTE_PERSISTED")
     }
 
     func testCalendarCreateAndEdit() throws {

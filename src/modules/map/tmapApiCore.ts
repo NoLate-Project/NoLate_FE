@@ -7,16 +7,12 @@ import {
     getEnv,
 } from "../../api/env";
 import type {
-    TransitRouteProxyRequest,
-} from "../../api/transitRouting";
-import type {
     TravelMode,
 } from "../schedule/types";
 
 import {
     hasOdsayApiKey,
 } from "./odsayApi";
-import { getTransitRouteProvider } from "./transitProviderConfig";
 import { validTotalDurationSeconds } from "./routeDuration";
 
 /** TMAP 경로 처리의 `warnMapDebug` 계산 단계를 독립적으로 수행합니다. */
@@ -307,7 +303,6 @@ export const TMAP_REQUEST_TIMEOUT_MS = 12000;
 export const OPENSTREETMAP_REQUEST_TIMEOUT_MS = 15000;
 export const OPENSTREETMAP_MIN_REQUEST_INTERVAL_MS = 1000;
 // TMAP 공식 스펙의 최대값은 10이다. 범위를 넘기면 공급자별로 요청이 거절되거나 잘릴 수 있다.
-export const TMAP_TRANSIT_REQUEST_COUNT = 10;
 export const SEARCH_RESULT_LIMIT = 12;
 // 경로 렌더링 시 메모리/성능 보호를 위한 최대 path point 수.
 export const MAX_PATH_POINTS = 1200;
@@ -417,21 +412,9 @@ export function hasTmapAppKey(): boolean {
     return !!resolveTmapAppKey();
 }
 
-/** 현재 설정이나 좌표가 `hasTmapTransitRouteProvider` 조건을 만족하는지 확인합니다. */
-export function hasTmapTransitRouteProvider(): boolean {
-    return getEnv("EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED") === "true" || hasTmapAppKey();
-}
-
 /** 현재 설정이나 좌표가 `hasTransitRouteProvider` 조건을 만족하는지 확인합니다. */
 export function hasTransitRouteProvider(): boolean {
-    return getTransitRouteProvider() === "tmap" ? hasTmapTransitRouteProvider() : hasOdsayApiKey();
-}
-
-/** 지도 공급자 호출과 대체 경로를 조율해 `requestTransitRouteProxy` 결과를 반환합니다. */
-export async function requestTransitRouteProxy<T>(payload: TransitRouteProxyRequest): Promise<T> {
-    // 인증 저장소를 사용하는 API 모듈은 실제 프록시 요청 시점에만 로드한다.
-    const proxy = require("../../api/transitRouting") as typeof import("../../api/transitRouting");
-    return proxy.getTransitRouteViaProxy<T>(payload);
+    return hasOdsayApiKey();
 }
 
 // Tmap API 요청 공통 헤더를 구성한다.

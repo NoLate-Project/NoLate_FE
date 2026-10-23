@@ -1,4 +1,4 @@
-import { resolveJourneyBusRouteMapping } from './journeyBusRouteBinding';
+import { resolveJourneyBusOfficialCrosswalkInput } from './journeyBusRouteBinding';
 import { buildJourneyRouteInput, type JourneyRouteCoordinate, type JourneyRouteInput } from './journeyRouteInput';
 import { savedJourneyEntryIssue } from './savedJourneyEntry';
 import {savedWalkingBaseJSON} from './serverWalkingSnapshot';
@@ -49,16 +49,17 @@ export function savedJourneyProviderPreflight(input: JourneyRouteInput | null, s
         sameInput = !!built && built.ok && savedWalkingBaseJSON({...built.input,routeRevision:input?.walkingSnapshot?1:built.input.routeRevision}) === savedWalkingBaseJSON(input!);
         if (sameInput) {
             mappingPresent = input!.legs.filter(leg=>leg.kind==='BUS').every(leg=>{
-                const mapping=resolveJourneyBusRouteMapping(savedRoute,leg.index);
-                return mapping.status === 'SUPPORTED' && /^[1-9][0-9]{8}$/.test(mapping.query?.providerRouteId ?? '');
+                const mapping=resolveJourneyBusOfficialCrosswalkInput(savedRoute,leg.index);
+                return (mapping.status === 'SUPPORTED' || mapping.status === 'OFFICIAL_CROSSWALK_REQUIRED')
+                    && /^[1-9][0-9]{8}$/.test(leg.localRouteId ?? '');
             });
             if(input!.legs.some(leg=>leg.kind==='SUBWAY'))mappingPresent=mappingPresent&&subwayTrial&&input!.legs.filter(leg=>leg.kind==='SUBWAY').every(leg=>
                 leg.stops.length>=2&&leg.stops.every(stop=>typeof stop.routingStationId==='string'&&/^[0-9]{1,20}$/.test(stop.routingStationId)));
         }
     } catch { /* Corrupt/malformed saved claims remain unavailable; no exception text is exposed. */ }
     add('SAVED_INPUT_MATCH', sameInput, '표시 중인 경로와 원본 저장 입력이 같아요.', '표시 중인 경로와 원본 저장 입력을 함께 확인해야 해요.');
-    add('BUS_IDENTIFIERS', mappingPresent, subway?'저장 경로의 지하철 ID·역 순서 입력이 있어요. 서울 역 ID 대응의 증명은 아니에요.':'서울 버스 원본 ID·방면·정류장 순서 입력이 있어요.',
-        '서울 버스 원본 ID·방면·정류장 순서를 확인할 수 없어요. 노선명·표시용 정류장으로 대체하지 않아요.');
+    add('BUS_IDENTIFIERS', mappingPresent, subway?'저장 경로의 지하철 ID·역 순서 입력이 있어요. 서울 역 ID 대응의 증명은 아니에요.':'서울 버스 원본 ID·정류장 순서 입력이 있어요. 누락된 방면·정류장 수는 서버 공식 자료로 다시 대조해야 해요.',
+        '서울 버스 원본 ID·정류장 순서를 확인할 수 없어요. 노선명·표시용 정류장으로 대체하지 않아요.');
     if(subwayTrial&&input?.legs.some(leg=>leg.kind==='SUBWAY'))checks.push({code:'SUBWAY_CATALOG',state:'RECHECK_REQUIRED',
         detail:'지하철 초기 연결 시험입니다. 공식 역 대응·정차 순서와 실시간 열차를 서버에서 다시 확인하며, 환승·하차 확정은 지원하지 않습니다.'});
     // Coarse endpoint/connection preflight only. Native/server still check every segment,

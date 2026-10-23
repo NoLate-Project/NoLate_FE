@@ -7,8 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-        E10000000000000000000041 /* TrainTicketImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000042; };
-        E10000000000000000000043 /* TrainTicketReviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000044; };
 		00E356F11AD99517003FC87E /* SharedKeychainContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00E356F01AD99517003FC87E /* SharedKeychainContractTests.swift */; };
 		00E356F31AD99517003FC87E /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 00E356F21AD99517003FC87E /* XCTest.framework */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
@@ -51,6 +49,8 @@
 		E10000000000000000000001 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000011 /* ShareViewController.swift */; };
 		E10000000000000000000002 /* NoLateShareExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E10000000000000000000014 /* NoLateShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E10000000000000000000003 /* icon.png in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000015 /* icon.png */; };
+		E10000000000000000000041 /* TrainTicketImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000042 /* TrainTicketImport.swift */; };
+		E10000000000000000000043 /* TrainTicketReviewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000044 /* TrainTicketReviewController.swift */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 		F20000000000000000000001 /* NoLateLiveActivityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000011 /* NoLateLiveActivityModels.swift */; };
 		F20000000000000000000002 /* NoLateDepartureActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000012 /* NoLateDepartureActivityAttributes.swift */; };
@@ -121,8 +121,6 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-        E10000000000000000000042 /* TrainTicketImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainTicketImport.swift; sourceTree = "<group>"; };
-        E10000000000000000000044 /* TrainTicketReviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainTicketReviewController.swift; sourceTree = "<group>"; };
 		00E356EE1AD99517003FC87E /* NoLateFETests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NoLateFETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		00E356F01AD99517003FC87E /* SharedKeychainContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedKeychainContractTests.swift; sourceTree = "<group>"; };
 		00E356F21AD99517003FC87E /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
@@ -170,6 +168,8 @@
 		E10000000000000000000013 /* NoLateShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NoLateShareExtension.entitlements; sourceTree = "<group>"; };
 		E10000000000000000000014 /* NoLateShareExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NoLateShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E10000000000000000000015 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ../../assets/icon.png; sourceTree = "<group>"; };
+		E10000000000000000000042 /* TrainTicketImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainTicketImport.swift; sourceTree = "<group>"; };
+		E10000000000000000000044 /* TrainTicketReviewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainTicketReviewController.swift; sourceTree = "<group>"; };
 		E9F6E964DC304126BA862332 /* NoLateGuidanceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../modules/nolate-live-activity/ios/Extension/NoLateGuidanceLiveActivity.swift"; sourceTree = SOURCE_ROOT; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = NoLateFE/AppDelegate.swift; sourceTree = "<group>"; };
@@ -381,8 +381,8 @@
 			isa = PBXGroup;
 			children = (
 				E10000000000000000000011 /* ShareViewController.swift */,
-                E10000000000000000000042 /* TrainTicketImport.swift */,
-                E10000000000000000000044 /* TrainTicketReviewController.swift */,
+				E10000000000000000000042 /* TrainTicketImport.swift */,
+				E10000000000000000000044 /* TrainTicketReviewController.swift */,
 				E10000000000000000000012 /* Info.plist */,
 				E10000000000000000000013 /* NoLateShareExtension.entitlements */,
 				E10000000000000000000015 /* icon.png */,
@@ -875,8 +875,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				E10000000000000000000001 /* ShareViewController.swift in Sources */,
-                E10000000000000000000041 /* TrainTicketImport.swift in Sources */,
-                E10000000000000000000043 /* TrainTicketReviewController.swift in Sources */,
+				E10000000000000000000041 /* TrainTicketImport.swift in Sources */,
+				E10000000000000000000043 /* TrainTicketReviewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1126,7 +1126,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../NoLate_FE/node_modules/react-native";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
@@ -1186,7 +1186,7 @@
 				);
 				LIBRARY_SEARCH_PATHS = "$(SDKROOT)/usr/lib/swift\"$(inherited)\"";
 				MTL_ENABLE_DEBUG_INFO = NO;
-				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../NoLate_FE/node_modules/react-native";
+				REACT_NATIVE_PATH = "${PODS_ROOT}/../../../../../Users/mac/IdeaProjects/NoLate/NoLate_FE/node_modules/react-native";
 				SDKROOT = iphoneos;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;

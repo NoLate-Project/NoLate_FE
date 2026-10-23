@@ -1,5 +1,29 @@
 # 대중교통 길안내 실기기 오류·검증 절차
 
+## 2026-10-22 제품 후보 인계 — 이전 Debug 전용 절보다 우선
+
+현재 iOS 제품 후보는 Debug 현장 시험 플래그가 아니라 `NOLATE_JOURNEY_PRODUCT_BUILD=1`,
+`EXPO_PUBLIC_JOURNEY_GUIDANCE_ENABLED=true`, `EXPO_PUBLIC_JOURNEY_PRODUCT_ENABLED=true`,
+`EXPO_PUBLIC_AUTOMATIC_JOURNEY_AUTHENTICATED_ENABLED=true`로 빌드한다. QA 진단·APNs pilot·
+device field-test 플래그는 모두 OFF다. `scripts/verify-release-config.mjs --platform ios
+--journey-candidate`를 통과하고 실제 archive의 Info.plist/entitlement/API HTTPS 주소를
+확인한다. 이 opt-in 빌드는 기본 공개 Release 구성이 아니며, 빌드 성공만으로 배포를 승인하지 않는다.
+
+서버의 `DEVICE` 준비는 저장된 ODsay 원본·서버 소유 보행 형상을 재검증한다. 단일 지하철
+`WALK/SUBWAY/WALK`는 공식 역 대응·정차 순서 live catalog의 증명이 있을 때만
+`officialSubwayAdmission`을 발급한다. 앱은 그 증명의 노선 ID·양끝 역 ID·정차 수가
+준비된 원본 경로와 일치할 때만 native 입력을 허용한다. 공식 catalog 또는 별도 서버
+opt-in이 없으면 준비 실패가 정상이다. 이 증명은 승객 탑승이나 열차 현재 위치의 증거가 아니다.
+
+실기기 TestFlight 전에 서버 배포 버전·`journey.automatic.device-enabled`·지하철
+observation/공식 catalog/admission opt-in·health를 함께 확인한다. 서버가 아직 기본 OFF라면
+앱만 배포해도 `DEVICE` 길안내는 시작되지 않는다. 실제 본인 계정/저장 ODsay 일정으로
+보행→역 접근→GPS 자동 출발→신선한 열차 현재역/승객 판단→하차 1정거장 전→최종 도보→
+도착/종료를 확인하고, 각 단계의 상세 화면·잠금 Live Activity·음성/무음 알림을 대조한다.
+위치·열차 신선도·권한이 부족하면 확정 안내를 숨기는지도 확인한다. 좌표, 토큰, 키,
+원시 열차 ID는 공유 기록에 남기지 않는다. 이전 합성 시뮬레이터·APNs 결과를 이 현장
+완주 증거로 대체하지 않는다.
+
 ## 최신 기준 — 2026-10-15
 
 제한된 실기기 현장 시험용 `DEVICE` 실행 경로는 **Debug 전용·기본 OFF**로 분리했다.

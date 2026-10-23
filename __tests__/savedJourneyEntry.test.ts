@@ -24,6 +24,14 @@ it('allows multiple alternating bus legs only as preflight, not boarding authori
     const legs=['WALK','BUS','WALK','BUS','WALK'].map((kind,index)=>({...input.legs[kind==='BUS'?1:0],kind,index}));
     expect(savedJourneyEntryIssue({...input,legs} as JourneyRouteInput)).toBeNull();
 });
+it('admits an ODsay single subway leg with unknown service only to official recheck',()=>{
+    const legs=input.legs.map(leg=>leg.index===1?{...leg,kind:'SUBWAY' as const}:leg);
+    const trial={...input,provider:'odsay' as const,serviceState:'UNKNOWN' as const,legs};
+    expect(savedJourneyEntryIssue(trial)).toContain('지하철 탑승');
+    expect(savedJourneyEntryIssue(trial,true)).toBeNull();
+    expect(savedJourneyEntryIssue({...trial,provider:'tmap'},true)).toContain('공급자');
+    expect(savedJourneyEntryIssue({...trial,serviceState:'not_operating' as const},true)).toContain('공급자');
+});
 it.each([{ origin: null }, { destination: { ...point, latitude: 91 } }, { destination: { ...point, longitude: NaN } }])('blocks invalid endpoints', patch => {
     expect(savedJourneyEntryIssue({ ...input, ...patch })).toContain('좌표');
 });

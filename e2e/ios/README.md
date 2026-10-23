@@ -405,6 +405,17 @@ BE의 읽기 전용 공급자 검증에는 동일 미래 시각을 명시할 수
 
 ## 도착 도보 포함 앱 검증
 
+독립 iOS 시뮬레이터의 Release 로그인·ODsay 경로 검색 E2E는 앱을
+`CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=-`로 빌드한다.
+`CODE_SIGNING_ALLOWED=NO` 빌드는 로그인 요청 전 iOS Keychain 조회에서
+`ERR_KEY_CHAIN`으로 실패할 수 있어, 서버 로그인 장애나 ODsay 장애로 판정하면 안 된다.
+`testIsolatedReleaseMemberLoginAndOnboarding`은 저장된 합성 일정 상세까지,
+`testIsolatedIOSOdsayRouteSearch`는 실제 ODsay 검색 결과의 펼친 상세와 저장 버튼까지
+검증한다. `testIsolatedIOSOdsayRouteSaveAndReopen`은 격리 시험 계정의 합성 일정에만
+실제 ODsay 경로를 저장해 다시 열고 지도 설정을 확인한다. 이 세 테스트는 GPS 이동·실제
+차량 탑승·APNs 전달을 검증하지 않는다. 시험 Release 빌드에는 ODsay 키와 함께
+`EXPO_PUBLIC_TMAP_APP_KEY`도 전달해야 경로 상세 지도가 설정 오류로 빠지지 않는다.
+
 ### 실제 여정의 도보·시간표 자동 감사
 
 실제 ODsay를 한 번 시험하려면 기존 실제 공급자 격리 실행기에

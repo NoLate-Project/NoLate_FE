@@ -1,26 +1,26 @@
-jest.mock("expo/virtual/env", () => ({ env: { EXPO_PUBLIC_TRANSIT_PROVIDER: "odsay" } }));
-const providerKey = "EXPO_PUBLIC_TRANSIT_PROVIDER";
+jest.mock("expo/virtual/env", () => ({ env: { EXPO_PUBLIC_MAP_PROVIDER: "TMAP" } }));
+const settingKey = "EXPO_PUBLIC_MAP_PROVIDER";
 describe("development environment overrides", () => {
-    const oldProvider = process.env[providerKey];
+    const oldSetting = process.env[settingKey];
     const oldDev = __DEV__;
     afterEach(() => {
-        if (oldProvider === undefined) delete process.env[providerKey];
-        else process.env[providerKey] = oldProvider;
+        if (oldSetting === undefined) delete process.env[settingKey];
+        else process.env[settingKey] = oldSetting;
         (globalThis as any).__DEV__ = oldDev;
         jest.resetModules();
     });
     test("current development override wins over a previously initialized static value", () => {
         (globalThis as any).__DEV__ = true;
-        process.env[providerKey] = "odsay";
+        process.env[settingKey] = "TMAP";
         const { getEnv } = require("../src/api/env");
-        process.env[providerKey] = "tmap";
-        expect(getEnv("EXPO_PUBLIC_TRANSIT_PROVIDER")).toBe("tmap");
+        process.env[settingKey] = "NAVER";
+        expect(getEnv(settingKey)).toBe("NAVER");
     });
     test("release retains the static compiled public configuration", () => {
         (globalThis as any).__DEV__ = false;
-        process.env[providerKey] = "odsay";
+        process.env[settingKey] = "TMAP";
         const { getEnv } = require("../src/api/env");
-        process.env[providerKey] = "tmap";
-        expect(getEnv("EXPO_PUBLIC_TRANSIT_PROVIDER")).toBe("odsay");
+        process.env[settingKey] = "NAVER";
+        expect(getEnv(settingKey)).toBe("TMAP");
     });
 });

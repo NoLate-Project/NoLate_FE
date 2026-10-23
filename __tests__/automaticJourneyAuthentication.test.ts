@@ -1,5 +1,6 @@
 import { Buffer } from "buffer";
 import { createAuthenticatedJourneyPost, createRenewingJourneyAuthenticationSource, journeyAuthentication, journeyRenewalCandidate, journeyAuthenticationOrigin, requireJourneyAuthenticationIdentity, requireJourneyAuthenticationLifetime } from "../src/modules/journey/automaticJourneyAuthentication";
+jest.mock('expo-device', () => ({ isDevice: false }));
 import { normalizeAutomaticJourneyBinding } from "../src/modules/journey/automaticJourney";
 import { journeyJSONRequest } from "../src/modules/journey/journeyJSONRequest";
 
@@ -88,6 +89,10 @@ beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(now * 1000); });
 afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
 it.each(["https://api.example.invalid", "http://127.0.0.1:15544", "http://localhost:15544"])("accepts canonical origin %s", origin => {
     expect(journeyAuthenticationOrigin(origin)).toBe(origin);
+});
+it("keeps physical-device authentication HTTPS-only even for loopback", () => {
+    expect(journeyAuthenticationOrigin("http://127.0.0.1:5522", true)).toBeNull();
+    expect(journeyAuthenticationOrigin("https://api.example.invalid", true)).toBe("https://api.example.invalid");
 });
 it.each(["http://127.0.0.1:15543", "http://example.invalid", "https://user:pass@example.invalid", "https://api.example.invalid/",
     "https://api.example.invalid/path", "https://api.example.invalid?q=x", "https://api.example.invalid#x", "https://api.example.invalid:443",

@@ -18,6 +18,14 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
   func validate(input:Input) throws {
     let safe:Int64=9_007_199_254_740_991
     func require(_ value:Bool) throws { if !value { throw NoLateJourneyRouteNormalizer.ValidationError.schema } }
+    // ODsay rounds independently serialized leg and station coordinates by
+    // centimetres. Match the same real-world point, never synthesize a link.
+    func samePoint(_ a:Coordinate?,_ b:Coordinate?) -> Bool {
+      guard let a,let b else { return false }
+      return distance(a,b)<=1
+    }
+    let unknownSingleSubway=input.serviceState == "UNKNOWN" && input.legs.count == 3
+      && input.legs[1].kind == "SUBWAY"
     try require((schemaVersion == 1 && walks.count == 2 || schemaVersion == 2 && (3...16).contains(walks.count)
       || [3,4].contains(schemaVersion) && (2...16).contains(walks.count)) && UUID(uuidString:snapshotId)?.uuidString.lowercased() == snapshotId
       && (1...safe).contains(memberId) && (1...safe).contains(scheduleId)
@@ -27,7 +35,7 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
       && transitProvider == "odsay" && walkProvider == "tmap" && !navigationReady && reason == "TRANSIT_ADMISSION_PENDING"
       && input.context == "SAVED_ROUTE" && input.provider == "odsay" && input.source == "api"
       && ["live_provider","provider_estimate"].contains(input.reliability)
-      && input.plausibility == "normal" && input.serviceState == "operating"
+      && input.plausibility == "normal" && (input.serviceState == "operating" || unknownSingleSubway)
       && (3...31).contains(input.legs.count) && input.legs.count % 2 == 1
       && input.legs.enumerated().allSatisfy { $0.offset % 2 == 0 ? $0.element.kind == "WALK" : ["BUS","SUBWAY"].contains($0.element.kind) }
       && walks.map(\.legIndex) == Array(stride(from:0,to:input.legs.count,by:2))
@@ -35,10 +43,11 @@ struct NoLateServerWalkingSnapshot: Codable, Equatable, Sendable {
     try require([3,4].contains(schemaVersion) ? navigationExpiresAtMs.map {
       (1...safe).contains($0) && $0-expiresAtMs == (schemaVersion == 4 ? 7_200_000 : 600_000)
     } == true : navigationExpiresAtMs == nil)
-    guard let origin=input.origin, let destination=input.destination,
-      input.legs.first?.start == origin, input.legs.last?.end == destination else { throw NoLateJourneyRouteNormalizer.ValidationError.schema }
-    try require(zip(input.legs,input.legs.dropFirst()).allSatisfy { $0.end == $1.start }
-      && input.legs.filter { $0.kind != "WALK" }.allSatisfy { $0.start != nil && $0.end != nil && $0.stops.first?.coordinate == $0.start && $0.stops.last?.coordinate == $0.end })
+    try require(samePoint(input.legs.first?.start,input.origin) && samePoint(input.legs.last?.end,input.destination))
+    try require(zip(input.legs,input.legs.dropFirst()).allSatisfy { samePoint($0.end,$1.start) }
+      && input.legs.filter { $0.kind != "WALK" }.allSatisfy {
+        samePoint($0.stops.first?.coordinate,$0.start) && samePoint($0.stops.last?.coordinate,$0.end)
+      })
     for walk in walks {
       try require(walk.provider == "tmap" && (2...2000).contains(walk.points.count))
       let points=walk.coordinates

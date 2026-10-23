@@ -22,6 +22,8 @@ struct NoLateJourneyAutomaticSession: Sendable {
     let apiOrigin: String?
     let authMemberId: Int64?
     let loginGeneration: Int64?
+    var officialBusAdmission: NoLateJourneyRouteNormalizer.OfficialBusAdmission? = nil
+    var officialSubwayAdmission: NoLateJourneyRouteNormalizer.OfficialSubwayAdmission? = nil
   }
 
   struct Departure: Codable, Equatable, Sendable {
@@ -344,6 +346,29 @@ struct NoLateJourneyAutomaticSession: Sendable {
         let login = binding.loginGeneration, (0...safe).contains(login),
         binding.savedRouteValidated == true, binding.guidanceEnabled == true else { throw Failure.invalidBinding }
     }
+    if let official = binding.officialBusAdmission {
+      let span = official.lastStopSequence.subtractingReportingOverflow(official.firstStopSequence)
+      guard binding.syncScope == "AUTHENTICATED", binding.execution == "DEVICE",
+        official.schemaVersion == 1, official.identityEvidence == "OFFICIAL_STOP_SHAPE_CROSSWALK",
+        official.busLegIndex == 1, official.routeId.range(of: "^[1-9][0-9]{8}$", options: .regularExpression) != nil,
+        !official.direction.isEmpty, official.direction.utf8.count <= 128,
+        !official.direction.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+        (1...63).contains(official.stationCount), official.firstStopSequence >= 0,
+        !span.overflow, span.partialValue == official.stationCount else { throw Failure.invalidBinding }
+    }
+    if let official = binding.officialSubwayAdmission {
+      guard binding.syncScope == "AUTHENTICATED", binding.execution == "DEVICE",
+        binding.officialBusAdmission == nil, official.schemaVersion == 1,
+        official.identityEvidence == "OFFICIAL_STATION_PATH_CROSSWALK",
+        official.subwayLegIndex == 1, (1...63).contains(official.stationCount),
+        official.providerRouteId.range(of: "^1000:[0-9]{1,20}$", options: .regularExpression) != nil,
+        official.providerRouteId.dropFirst(5).contains(where: { $0 != "0" }),
+        official.startRoutingStationId.range(of: "^[0-9]{1,20}$", options: .regularExpression) != nil,
+        official.endRoutingStationId.range(of: "^[0-9]{1,20}$", options: .regularExpression) != nil,
+        official.startRoutingStationId.contains(where: { $0 != "0" }),
+        official.endRoutingStationId.contains(where: { $0 != "0" }),
+        official.startRoutingStationId != official.endRoutingStationId else { throw Failure.invalidBinding }
+    }
     return binding
   }
 
@@ -359,12 +384,16 @@ struct NoLateJourneyAutomaticSession: Sendable {
   private static func prepare(_ routeJSON: String, binding: Binding, now:Double) throws -> NoLateJourneyRouteNormalizer.PreparedWalkingRoute {
     guard routeJSON.utf8.count <= 1_048_576, digest(routeJSON) == binding.routeInputDigest else { throw Failure.invalidRoute }
     let input = try JSONDecoder().decode(NoLateJourneyRouteNormalizer.Input.self,from:Data(routeJSON.utf8))
+    if binding.execution == "DEVICE" && input.legs.count == 3 && input.legs[1].kind == "SUBWAY" &&
+        binding.officialSubwayAdmission?.matches(input) != true { throw Failure.invalidRoute }
     if binding.expiresAtEpochSeconds-binding.preparedAtEpochSeconds > 600 {
       guard input.walkingSnapshot?.schemaVersion == 4 else { throw Failure.invalidRoute }
     }
     if let walking = input.walkingSnapshot { try walking.validate(input:input); try walking.validate(binding:binding,now:now) }
     let prepared = try NoLateJourneyRouteNormalizer.prepareWalkingRoute(json: routeJSON, allowSyntheticSandbox: binding.syncScope == "SANDBOX",
-      allowValidatedSavedRoute: ["SANDBOX", "AUTHENTICATED"].contains(binding.syncScope) && binding.savedRouteValidated == true)
+      allowValidatedSavedRoute: ["SANDBOX", "AUTHENTICATED"].contains(binding.syncScope) && binding.savedRouteValidated == true,
+      officialBusAdmission: binding.officialBusAdmission,
+      officialSubwayAdmission: binding.officialSubwayAdmission)
     guard prepared.routeRevision == binding.routeRevision else { throw Failure.invalidRoute }
     return prepared
   }

@@ -134,10 +134,11 @@ import Foundation
   static func authenticatedRequest(authJSON: String, path: String, bodyJSON: String) async -> [String: Any] {
     guard (Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyProductEnabled") as? Bool == true ||
       Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyDiagnosticsEnabled") as? Bool == true),
-      Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAuthenticatedEnabled") as? Bool == true,
-      authJSON.utf8.count <= 12288, bodyJSON.utf8.count <= 1100000,
-      let auth = try? JSONDecoder().decode(NoLateJourneyAuthentication.self, from: Data(authJSON.utf8)),
-      auth.valid(now: Date().timeIntervalSince1970),
+      Bundle.main.object(forInfoDictionaryKey: "NoLateJourneyAuthenticatedEnabled") as? Bool == true else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
+    guard authJSON.utf8.count <= 12288, bodyJSON.utf8.count <= 1100000,
+      let auth = try? JSONDecoder().decode(NoLateJourneyAuthentication.self, from: Data(authJSON.utf8)) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
+    guard auth.valid(now: Date().timeIntervalSince1970) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }
+    guard
       path.range(of: "^/api/schedules/[1-9][0-9]{0,17}/automatic-journey/(prepare-saved|[a-f0-9-]{36}/(departure|validate|stop|reconcile|live-activity))$", options: .regularExpression) != nil,
       let body = (try? JSONSerialization.jsonObject(with: Data(bodyJSON.utf8))) as? [String: Any],
       let url = URL(string: auth.apiOrigin + path) else { return ["accepted": false, "errorCode": "AUTOMATIC_SERVER_REJECTED"] }

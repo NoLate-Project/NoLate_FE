@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import type { JourneyRouteInput } from "./journeyRouteInput";
 import { useAutomaticJourneyTrial } from "./useAutomaticJourneyTrial";
@@ -27,9 +27,13 @@ export function SavedJourneyTrialControls({ input:baseInput, savedRoute, authent
     const noticeBusy=useRef(false);
     const noticePendingChanged=useCallback((pending:boolean)=>{noticeBusy.current=pending;setNoticePending(pending);},[]);
     const connectionRevision=useRef(0); const connectionBusy=useRef(false);
+    // A schedule refresh creates a new input object even when its saved route
+    // is byte-for-byte unchanged. Keep the owned walking snapshot for that same
+    // route; invalidate it only when the actual saved input or owner changes.
+    const baseRouteIdentity=useMemo(()=>baseInput?savedWalkingBaseJSON(baseInput):null,[baseInput]);
     useEffect(()=>{const revision=connectionRevision;++revision.current;setConnected(null);setConnectionError(false);setConnecting(false);
-        return ()=>{++revision.current;};},[baseInput,authenticatedSchedule?.scheduleId,authenticatedSchedule?.memberId]);
-    const input=connected&&baseInput&&savedWalkingBaseJSON(connected)===savedWalkingBaseJSON(baseInput)?connected:baseInput;
+        return ()=>{++revision.current;};},[baseRouteIdentity,authenticatedSchedule?.scheduleId,authenticatedSchedule?.memberId]);
+    const input=connected&&baseInput&&savedWalkingBaseJSON(connected)===baseRouteIdentity?connected:baseInput;
     const memberId = authenticatedSchedule?.memberId;
     const source = useCallback(async (requiredUntilEpochSeconds?: number) => {
         const auth = await (__DEV__ && previewAuthenticationSource ? previewAuthenticationSource(requiredUntilEpochSeconds) : currentJourneyAuthentication(requiredUntilEpochSeconds));

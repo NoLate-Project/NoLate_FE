@@ -105,7 +105,8 @@ export function ScheduleDetailRouteSheet({
     [presentation.currentMemberId, inspectedTravelPlan, item.route, item.origin, item.destination, item.myTravelPlan?.memberId, item.ownerMemberId]);
   const guidanceBinding = useSavedJourneyBinding(guidanceInput, String(item.id));
   const authenticatedGuidanceEntry = isAutomaticJourneyEntryEnabled()
-    && !internalPreviewItem && !presentation.offlineGuidancePreview && presentation.currentMemberId != null
+    && !internalPreviewItem && presentation.authoritativeDetailLoaded && !presentation.loadError
+    && !presentation.offlineGuidancePreview && presentation.currentMemberId != null
     && !inspectedTravelPlan && (item.myTravelPlan?.memberId ?? item.ownerMemberId) === presentation.currentMemberId;
   const guidancePrepared = (guidanceBinding?.savedRouteValidated === true && guidanceBinding.guidanceEnabled === true
     && guidanceBinding.scheduleId === String(item.id)) || (presentation.offlineGuidancePreview && !!guidanceInput) || authenticatedGuidanceEntry;
