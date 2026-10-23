@@ -282,6 +282,8 @@ struct NoLateJourneyBusSeparationCore: Sendable {
   private var lastNow = 0.0
   private var stopped = false
 
+  init(route: Ride.Route) { self.route = route }
+
   mutating func ingest(_ location:E.Observation, priorRide:Ride.Snapshot?, associatedId:String?, vehicles:[Ride.Vehicle], now:Double) {
     guard !stopped, now.isFinite, now >= lastNow, location.identity == route.identity,
       location.sequence > lastSequence, location.sequence < Int64.max else { return }
@@ -401,6 +403,8 @@ struct NoLateJourneyFinalWalkCore: Sendable {
   private var lastSequence: Int64 = -1
   private var lastNow = 0.0
   private var stopped = false
+
+  init(route: Route) { self.route = route }
 
   static func prepare(json: String, ride: NoLateJourneyBusRideCore.Route) -> Route? {
     let busIndex = ride.approach.legIndex, walkIndex = busIndex + 1

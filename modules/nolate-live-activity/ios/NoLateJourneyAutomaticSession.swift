@@ -291,8 +291,10 @@ struct NoLateJourneyAutomaticSession: Sendable {
   }
   mutating func disconnectRide() { retireEvidence(includingBus:false); ride?.stop(); ride = nil; alightingRoute = nil; separation?.stop(); separation = nil; finalWalk?.stop(); finalWalk = nil; transferWalk?.stop(); transferWalk = nil }
   private mutating func retireEvidence(includingBus:Bool) {
-    for value in [includingBus ? bus?.snapshot.sequence ?? 0 : 0,ride?.snapshot.sequence ?? 0,
-      finalWalk?.snapshot.sequence ?? 0,transferWalk?.snapshot.sequence ?? 0] {
+    let sequences: [Int64] = [includingBus ? (bus?.snapshot.sequence ?? 0) : 0,
+      ride?.snapshot.sequence ?? 0, finalWalk?.snapshot.sequence ?? 0,
+      transferWalk?.snapshot.sequence ?? 0]
+    for value in sequences {
       let sum=completedLegSequence.addingReportingOverflow(value)
       completedLegSequence = sum.overflow ? Int64.max : sum.partialValue
     }
