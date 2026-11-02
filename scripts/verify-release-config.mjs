@@ -14,6 +14,10 @@ assert.ok(
 );
 const localEnvPath = resolve(root, ".env");
 const localEnv = existsSync(localEnvPath) ? readFileSync(localEnvPath, "utf8") : "";
+const publicSetting = (name) => process.env[name] ?? localEnv
+  .match(new RegExp(`^${name}=(.*)$`, "m"))?.[1]
+  ?.trim()
+  .replace(/^(["'])(.*)\1$/, "$2");
 const localAndroidInterstitialAdUnitId = localEnv
   .match(/^EXPO_PUBLIC_ADMOB_ANDROID_ROUTE_DETAIL_INTERSTITIAL_ID=(.*)$/m)?.[1]
   ?.trim()
@@ -25,6 +29,7 @@ const app = JSON.parse(read("app.json"));
 const pkg = JSON.parse(read("package.json"));
 const packageLock = JSON.parse(read("package-lock.json"));
 const publicEnvSource = read("src/api/env.ts");
+const naverAuthSource = read("src/modules/auth/socialLogin.ts") + read("src/modules/auth/naverOAuth.ts");
 const adMobAdUnits = read("src/modules/advertising/adMobAdUnits.ts");
 const routeDetailInterstitial = read("src/modules/advertising/routeDetailInterstitial.ts");
 const trackingTransparency = read("src/modules/privacy/trackingTransparency.ts");
@@ -67,12 +72,30 @@ const dependencyPatches = readdirSync(resolve(root, "patches"))
   .filter((name) => name.endsWith(".patch"))
   .map((name) => ({ name, source: read(`patches/${name}`) }));
 
-assert.equal(app.version, "1.2.0");
+assert.equal(app.version, "1.3.0");
 assert.equal(app.orientation, "portrait", "The phone UI is designed and verified for portrait only");
 assert.equal(pkg.version, app.version);
 assert.equal(packageLock.version, app.version);
 assert.equal(packageLock.packages?.[""]?.version, app.version);
-assert.equal(app.ios.buildNumber, "55");
+assert.equal(app.ios.buildNumber, "58");
+if (publicSetting("EXPO_PUBLIC_TRANSIT_PROVIDER") === "tmap") {
+  assert.equal(
+    publicSetting("EXPO_PUBLIC_ROUTE_API_PROXY_ENABLED"),
+    "true",
+    "A release TMAP transit route must use the server proxy; direct app-key routing is not allowed",
+  );
+}
+assert.ok(
+  !Object.hasOwn(process.env, "EXPO_PUBLIC_NAVER_CONSUMER_SECRET") &&
+    !Object.hasOwn(process.env, "EXPO_PUBLIC_NAVER_LOGIN_CLIENT_SECRET") &&
+    !/^EXPO_PUBLIC_NAVER_(?:CONSUMER_SECRET|LOGIN_CLIENT_SECRET)=/m.test(localEnv),
+  "Remove legacy public NAVER login secrets from release and local environment",
+);
+assert.doesNotMatch(
+  publicEnvSource + naverAuthSource,
+  /EXPO_PUBLIC_NAVER_(?:CONSUMER_SECRET|LOGIN_CLIENT_SECRET)/,
+  "NAVER client secret must never be referenced from the app's public environment",
+);
 assert.equal(
   pkg.dependencies["react-native-google-mobile-ads"],
   "16.3.4",
@@ -311,9 +334,9 @@ assert.ok(androidManifest.includes(adsPlugin[1].androidAppId));
 assert.match(androidManifest, /com\.google\.android\.gms\.ads\.DELAY_APP_MEASUREMENT_INIT[\s\S]*?android:value="true"/);
 
 assert.equal(
-  (iosProject.match(/CURRENT_PROJECT_VERSION = 55;/g) ?? []).length,
-  8,
-  "The app and all three embedded extensions must use iOS build 55 in Debug and Release",
+  (iosProject.match(/CURRENT_PROJECT_VERSION = 58;/g) ?? []).length,
+  10,
+  "The app, test target, and all three embedded extensions must use iOS build 58 in Debug and Release",
 );
 // Xcode 27 builds without scene adoption compile, but UIKit terminates at launch.
 assert.match(iosInfo, /<key>UIApplicationSceneManifest<\/key>/);
@@ -323,12 +346,7 @@ assert.match(iosInfo, /<key>UISceneDelegateClassName<\/key>\s*<string>\$\(PRODUC
 assert.match(iosAppDelegate, /class SceneDelegate: UIResponder, UIWindowSceneDelegate/);
 assert.match(iosAppDelegate, /UIWindow\(windowScene: scene\)/);
 assert.match(iosAppDelegate, /window = appDelegate\?\.connectWindow\(to: windowScene, options: connectionOptions\)/);
-assert.equal(
-  (iosProject.match(/CURRENT_PROJECT_VERSION = 52;/g) ?? []).length,
-  2,
-  "Only the two non-embedded test-target configurations may retain build 52",
-);
-assert.ok((iosProject.match(/MARKETING_VERSION = 1\.2\.0;/g) ?? []).length >= 10);
+assert.ok((iosProject.match(/MARKETING_VERSION = 1\.3\.0;/g) ?? []).length >= 10);
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = com\.anonymous\.nolatefe;/.test(iosProject), "Main iOS bundle identifier is missing");
 assert.ok(/PRODUCT_BUNDLE_IDENTIFIER = "com\.anonymous\.nolatefe\.quick-schedule";/.test(iosProject), "Share extension bundle identifier is missing");
 assert.ok(/APS_ENVIRONMENT = production;/.test(iosProject), "Release APNs environment must be production");

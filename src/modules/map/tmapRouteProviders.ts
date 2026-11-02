@@ -259,7 +259,8 @@ export async function requestTransitRouteViaTmap(
             const data = await requestTransitRouteProxy<any>(payload);
             return parseTransitOptionsFromTmap(data);
         } catch (error) {
-            if (!hasTmapAppKey()) throw error;
+            // 운영에서는 프록시 실패를 앱 내 공개 키의 직접 호출로 우회하지 않는다.
+            if (!(typeof __DEV__ === "boolean" && __DEV__) || !hasTmapAppKey()) throw error;
             infoMapDebug("[대중교통옵션] 서버 프록시 실패, direct fallback →", tmapApiErrorMessage(error));
         }
     }
@@ -337,7 +338,7 @@ export async function getTransitRouteViaTmap(
 
 /**
  * 기본값은 저장 후 ETA 재조회와 같은 공급자인 ODsay다.
- * 개발/테스트 빌드는 EXPO_PUBLIC_TRANSIT_PROVIDER=tmap으로 명시적으로 전환할 수 있다.
+ * 개발 빌드는 직접 호출도 가능하지만, 배포 빌드의 TMAP 전환은 서버 프록시가 필수다.
  * 선택한 공급자의 키 누락·외부 오류·빈 결과는 다른 공급자로 대체하지 않는다.
  */
 export async function getTransitRouteViaPreferredProvider(

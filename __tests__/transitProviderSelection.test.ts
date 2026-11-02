@@ -110,7 +110,6 @@ describe("transit route provider selection", () => {
     test.each([
         [true, "odsay"],
         [true, "invalid-provider"],
-        [false, "tmap"],
         [undefined, "tmap"],
     ])("uses ODsay with development mode %s and provider setting %s", async (developmentMode, provider) => {
         runtime.__DEV__ = developmentMode;
@@ -121,6 +120,43 @@ describe("transit route provider selection", () => {
 
         expect(route.provider).toBe("odsay");
         expect(mockedGet).toHaveBeenCalledTimes(1);
+        expectNoTmapTransitFallback();
+    });
+
+    test("release build uses explicitly selected TMAP only through the server proxy", async () => {
+        runtime.__DEV__ = false;
+        transitProvider = "tmap";
+        mockedTmapProxy.mockResolvedValue(tmapRouteResponse());
+
+        const [route] = await getTransitRouteOptions(origin, destination, { departureAt });
+
+        expect(route.provider).toBe("tmap");
+        expect(mockedTmapProxy).toHaveBeenCalledTimes(1);
+        expect(mockedGet).not.toHaveBeenCalled();
+        expect(mockRoadPost).not.toHaveBeenCalled();
+    });
+
+    test("release TMAP proxy failure never falls back to a direct app-key call or ODsay", async () => {
+        runtime.__DEV__ = false;
+        transitProvider = "tmap";
+        const failure = new Error("proxy unavailable");
+        mockedTmapProxy.mockRejectedValue(failure);
+
+        await expect(getTransitRouteOptions(origin, destination, { departureAt })).rejects.toBe(failure);
+
+        expect(mockRoadPost).not.toHaveBeenCalled();
+        expect(mockedGet).not.toHaveBeenCalled();
+    });
+
+    test("release without a TMAP proxy retains the ODsay default", async () => {
+        runtime.__DEV__ = false;
+        transitProvider = "tmap";
+        proxyEnabled = false;
+        mockedGet.mockResolvedValue(odsayRouteResponse());
+
+        const [route] = await getTransitRouteOptions(origin, destination, { departureAt });
+
+        expect(route.provider).toBe("odsay");
         expectNoTmapTransitFallback();
     });
 

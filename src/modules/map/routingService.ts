@@ -313,7 +313,7 @@ function buildFutureTransitSearchTimes(departureAt: Date): Date[] {
 
 /**
  * 화면이 직접 provider API를 호출하지 않게 하는 라우팅 경계.
- * 대중교통은 ODsay를 기본으로 하며 개발/테스트에서만 명시적 공급자 선택을 허용한다.
+ * 대중교통은 ODsay를 기본으로 하며 운영의 Tmap 명시 선택에는 서버 프록시를 요구한다.
  * 자동차/도보 등 다른 수단의 공급자 정책은 기존 래퍼에 위임한다.
  */
 export async function getRouteAlternativeOptions(

@@ -50,7 +50,7 @@ import {
 import {
     loginWithAppleSdk,
     loginWithKakaoSdk,
-    loginWithNaverSdk,
+    loginWithNaverOAuth,
     type SocialSdkLoginResult,
 } from "../../src/modules/auth/socialLogin";
 import { registerPushAfterLogin } from "../../src/modules/notification/pushRegistration";
@@ -204,7 +204,7 @@ export default function Login() {
                 provider === "kakao"
                     ? await loginWithKakaoSdk()
                     : provider === "naver"
-                        ? await loginWithNaverSdk()
+                        ? await loginWithNaverOAuth()
                         : await loginWithAppleSdk();
 
             const registration = await getSnsRegistrationStatus({

@@ -6,12 +6,11 @@
 
 - Naver Developers의 사용 API에서 `네이버 로그인`을 선택합니다.
 - 제공 정보는 `회원이름(필수)`, `이메일 주소(추가)`로 설정합니다.
-- iOS URL Scheme은 앱 설정과 동일한 `nolate-naver`를 사용합니다.
-- 실행 환경에 아래 값을 설정한 뒤 네이티브 앱을 다시 빌드합니다.
-  - `EXPO_PUBLIC_NAVER_CONSUMER_KEY`
-  - `EXPO_PUBLIC_NAVER_CONSUMER_SECRET`
-  - `EXPO_PUBLIC_NAVER_SERVICE_URL_SCHEME_IOS=nolate-naver`
-  - `EXPO_PUBLIC_NAVER_APP_NAME=NoLate` (선택, 미설정 시 NoLate)
+- 네이버 개발자 콘솔에 모바일 웹 로그인 콜백 `https://nolate.jinuk.dev/api/member/auth/naver/callback`을 등록하고 OIDC `openid` 사용을 허용합니다.
+- 앱에는 공개 Client ID인 `EXPO_PUBLIC_NAVER_CONSUMER_KEY`만 둡니다. `EXPO_PUBLIC_NAVER_CONSUMER_SECRET`은 앱 빌드 환경에서 제거합니다.
+- BE 배포 환경에 `SNS_NAVER_CLIENT_ID`, `SNS_NAVER_CLIENT_SECRET`을 설정합니다. 서버가 PKCE 인가 코드를 교환하고, 앱의 `nolate://auth/naver` 복귀 URL을 사용합니다.
+- 기존에 앱 빌드에 포함된 Client Secret은 네이버 콘솔에서 교체한 뒤 새 값을 서버에만 배포합니다.
+- 출시 전 실제 네이버 테스트 계정으로 로그인·신규가입·로그아웃·연결해제까지 TestFlight에서 확인합니다.
 - 검수 계정은 Naver Developers의 `테스터 ID`에 등록하고, 이메일 제공에도 동의합니다.
 
 ### 캡처 순서
