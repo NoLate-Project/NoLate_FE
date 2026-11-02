@@ -83,6 +83,10 @@ eas-builds.json
 
 # testing
 /coverage
+# Historical QA runs stay local. Referenced regression fixtures are explicitly tracked.
+/e2e/evidence/**
+**/__pycache__/
+*.py[cod]
 
 # TMAP native SDK binaries (installed from the official distribution endpoint)
 /modules/nolate-tmap/ios/Vendor/
