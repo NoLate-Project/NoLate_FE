@@ -1,8 +1,11 @@
-import { getEnv } from "../../api/env";
 import * as AppleAuthentication from "expo-apple-authentication";
 import * as Crypto from "expo-crypto";
 import * as KakaoLogin from "@react-native-seoul/kakao-login";
-import NaverLogin from "@react-native-seoul/naver-login";
+import { exchangeNaverCode, revokeNaverAccessToken } from "../../api/member";
+import * as SecureStore from "../storage/secureStorage";
+import { authorizeNaver } from "./naverOAuth";
+
+const NAVER_ACCESS_TOKEN_KEY = "nolate_naver_oauth_access_token";
 
 export type SocialSdkLoginResult = {
     loginType: "KAKAO" | "NAVER" | "APPLE";
@@ -48,59 +51,31 @@ export async function loginWithKakaoSdk(): Promise<SocialSdkLoginResult> {
     };
 }
 
-export async function loginWithNaverSdk(): Promise<SocialSdkLoginResult> {
-    const consumerKey = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_KEY") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_ID");
-    const consumerSecret = getEnv("EXPO_PUBLIC_NAVER_CONSUMER_SECRET") ?? getEnv("EXPO_PUBLIC_NAVER_LOGIN_CLIENT_SECRET");
-    const appName = getEnv("EXPO_PUBLIC_NAVER_APP_NAME") ?? "NoLate";
-    const serviceUrlSchemeIOS =
-        getEnv("EXPO_PUBLIC_NAVER_SERVICE_URL_SCHEME_IOS") ?? (consumerKey ? `naver${consumerKey}` : undefined);
-
-    if (!consumerKey || !consumerSecret || !serviceUrlSchemeIOS) {
-        throw new Error("네이버 로그인을 지금 사용할 수 없어요. 잠시 후 다시 시도해 주세요.");
-    }
-
-    const loginConfig = {
-        appName,
-        consumerKey,
-        consumerSecret,
-        serviceUrlSchemeIOS,
-        disableNaverAppAuthIOS: true,
-    };
-
-    NaverLogin.initialize(loginConfig);
-
-    const token = await NaverLogin.login();
-    if (token?.isSuccess === false) {
-        throw new Error("네이버 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
-    }
-
-    const accessToken = stringify(token?.successResponse?.accessToken);
-
-    if (!accessToken) {
-        throw new Error("네이버 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
-    }
-
-    const profileResult = await NaverLogin.getProfile(accessToken);
-    const profile = profileResult?.response ?? profileResult;
-    // The server verifies the access token and reads the authoritative profile.
-    // Do not block an otherwise valid login just because the optional display
-    // name scope was not granted on the device.
-    const name = firstString(profile?.name, profile?.nickname, profile?.email) || "사용자";
+export async function loginWithNaverOAuth(): Promise<SocialSdkLoginResult> {
+    const { code, codeVerifier } = await authorizeNaver();
+    const identity = await exchangeNaverCode({ code, codeVerifier });
+    if (!identity.accessToken) throw new Error("네이버 로그인을 완료하지 못했어요. 다시 시도해 주세요.");
+    await SecureStore.setItemAsync(NAVER_ACCESS_TOKEN_KEY, identity.accessToken);
 
     return {
         loginType: "NAVER",
-        providerToken: accessToken,
-        name,
-        email: optionalString(profile?.email),
+        providerToken: identity.accessToken,
+        name: firstString(identity.name, identity.email) || "사용자",
+        email: optionalString(identity.email),
     };
 }
 
-export async function logoutFromNaverSdk(): Promise<void> {
-    await NaverLogin.logout();
+export async function logoutFromNaverOAuth(): Promise<void> {
+    await SecureStore.deleteItemAsync(NAVER_ACCESS_TOKEN_KEY);
 }
 
-export async function unlinkNaverSdk(): Promise<void> {
-    await NaverLogin.deleteToken();
+export async function unlinkNaverOAuth(): Promise<void> {
+    const accessToken = await SecureStore.getItemAsync(NAVER_ACCESS_TOKEN_KEY);
+    try {
+        if (accessToken) await revokeNaverAccessToken(accessToken);
+    } finally {
+        await SecureStore.deleteItemAsync(NAVER_ACCESS_TOKEN_KEY);
+    }
 }
 
 export async function logoutFromKakaoSdk(): Promise<void> {

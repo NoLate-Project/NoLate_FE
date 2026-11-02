@@ -19,7 +19,7 @@ import {
     saveAuthTokens,
     type StoredAuthMember,
 } from "../modules/auth/authStorage";
-import { logoutFromKakaoSdk, logoutFromNaverSdk, unlinkKakaoSdk, unlinkNaverSdk } from "../modules/auth/socialLogin";
+import { logoutFromKakaoSdk, logoutFromNaverOAuth, unlinkKakaoSdk, unlinkNaverOAuth } from "../modules/auth/socialLogin";
 import {
     getCalendarConnectionSnapshot,
     refreshCalendarConnectionSnapshotFromDevice,
@@ -231,8 +231,8 @@ export function useProfileScreen() {
                     setSigningOut(true);
                     try {
                         if (isNaverAccount) {
-                            await logoutFromNaverSdk().catch((error) => {
-                                console.warn("[naver] sdk logout failed", error);
+                            await logoutFromNaverOAuth().catch((error) => {
+                                console.warn("[naver] OAuth logout failed", error);
                             });
                         }
                         if (isKakaoAccount) {
@@ -279,8 +279,8 @@ export function useProfileScreen() {
                             setWithdrawing(true);
                             await runWithDepartureAlarmWithdrawalGuard(() => withdrawMember());
                             if (isNaverAccount) {
-                                await unlinkNaverSdk().catch((error) => {
-                                    console.warn("[naver] sdk unlink failed", error);
+                                await unlinkNaverOAuth().catch((error) => {
+                                    console.warn("[naver] OAuth unlink failed", error);
                                 });
                             }
                             if (isKakaoAccount) {

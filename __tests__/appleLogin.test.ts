@@ -6,6 +6,9 @@ import { loginWithAppleSdk } from "../src/modules/auth/socialLogin";
 jest.mock("../src/api/env", () => ({
     getEnv: jest.fn(),
 }));
+jest.mock("../src/api/member", () => ({}));
+jest.mock("../src/modules/auth/naverOAuth", () => ({}));
+jest.mock("../src/modules/storage/secureStorage", () => ({}));
 
 jest.mock("@react-native-seoul/naver-login", () => ({
     __esModule: true,

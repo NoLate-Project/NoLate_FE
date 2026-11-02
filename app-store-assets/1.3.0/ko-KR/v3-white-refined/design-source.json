@@ -1,0 +1,61 @@
+{
+  "theme": "white-only",
+  "revision": "v3-refined",
+  "font": "Pretendard Bold / Regular",
+  "reference_urls": [
+    "https://dribbble.com/shots/27273314-App-Store-Screenshots-Amie-Todos-calendar",
+    "https://apps.apple.com/us/app/structured-daily-planner-todo/id1499198946"
+  ],
+  "app_captures": {
+    "calendar": "source/calendar.png",
+    "list": "source/list.png",
+    "quick": "source/quick.png",
+    "preview": "source/preview.png",
+    "route": "source/route.png",
+    "details": "source/details.png",
+    "icon": "icon-256.png"
+  },
+  "capture_note": "Native QA captures dated 2026-10-12/13; demo data. No release build verification implied.",
+  "assets": [
+    {
+      "name": "01-from-plan-to-departure",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "02-one-sentence-to-schedule",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "03-route-and-departure",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "04-every-step-of-your-route",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "05-calendar-and-list",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "06-capture-your-plans",
+      "width": 1206,
+      "height": 2622
+    },
+    {
+      "name": "header-3840x1646",
+      "width": 3840,
+      "height": 1646
+    },
+    {
+      "name": "search-3840x2560",
+      "width": 3840,
+      "height": 2560
+    }
+  ]
+}

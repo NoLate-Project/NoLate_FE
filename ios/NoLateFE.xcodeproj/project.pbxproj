@@ -937,7 +937,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
@@ -946,7 +946,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -963,7 +963,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 52;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.6;
@@ -972,7 +972,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -994,7 +994,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_BITCODE = NO;
 				ENABLE_DEBUG_DYLIB = NO;
@@ -1009,7 +1009,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -1039,7 +1039,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateFE/NoLateFE.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1049,7 +1049,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -1203,7 +1203,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -1213,7 +1213,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				NOLATE_API_BASE_URL = "http://127.0.0.1:5522";
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.quick-schedule";
@@ -1233,7 +1233,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateShareExtension/NoLateShareExtension.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateShareExtension/Info.plist;
@@ -1243,7 +1243,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				NOLATE_API_BASE_URL = "https://nolate.jinuk.dev";
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.quick-schedule";
@@ -1261,7 +1261,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
@@ -1271,7 +1271,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.live-activity";
 				PRODUCT_NAME = NoLateLiveActivityExtension;
@@ -1289,7 +1289,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "../modules/nolate-live-activity/ios/Extension/Info.plist";
@@ -1299,7 +1299,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = "com.anonymous.nolatefe.live-activity";
 				PRODUCT_NAME = NoLateLiveActivityExtension;
@@ -1317,7 +1317,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateWidget/NoLateWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateWidget/Info.plist;
@@ -1327,7 +1327,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.widget;
 				PRODUCT_NAME = NoLateWidget;
@@ -1346,7 +1346,7 @@
 				CODE_SIGN_ENTITLEMENTS = NoLateWidget/NoLateWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 55;
+				CURRENT_PROJECT_VERSION = 58;
 				DEVELOPMENT_TEAM = 457QQLB6H6;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NoLateWidget/Info.plist;
@@ -1356,7 +1356,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anonymous.nolatefe.widget;
 				PRODUCT_NAME = NoLateWidget;

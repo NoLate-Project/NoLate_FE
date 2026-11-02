@@ -50,6 +50,13 @@ export type SnsLoginPayload = {
 
 type SnsRegistrationPayload = SnsLoginPayload;
 
+type NaverCodeExchangePayload = { code: string; codeVerifier: string };
+export type NaverCodeExchangeResult = {
+    accessToken: string;
+    name?: string | null;
+    email?: string | null;
+};
+
 type SnsRegistrationStatusDto = {
     registered: boolean;
 };
@@ -108,6 +115,22 @@ export async function getSnsRegistrationStatus(
         payload
     );
     return unwrapApiResponse(response);
+}
+
+export async function exchangeNaverCode(payload: NaverCodeExchangePayload): Promise<NaverCodeExchangeResult> {
+    const response = await apiPost<ApiEnvelope<NaverCodeExchangeResult>, NaverCodeExchangePayload>(
+        "/api/member/auth/naver/exchange",
+        payload
+    );
+    return unwrapApiResponse(response);
+}
+
+export async function revokeNaverAccessToken(accessToken: string): Promise<void> {
+    const response = await apiPost<ApiEnvelope<boolean>, { accessToken: string }>(
+        "/api/member/auth/naver/revoke",
+        { accessToken }
+    );
+    assertApiSuccess(response);
 }
 
 export async function snsSignUpMember(payload: SnsSignUpPayload): Promise<MemberDto> {

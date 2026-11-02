@@ -1,0 +1,73 @@
+{
+  "classification": "REAL_FUTURE_TIMETABLE_AND_NAVER_UI_COMPARISON_NOT_APP_LIVE_ACCURACY",
+  "route": "노원 4호선 → 사당 환승 → 신림 2호선",
+  "origin": {"lat": 37.65636195, "lng": 127.06342739},
+  "destination": {"lat": 37.48426844, "lng": 126.92977778},
+  "inputBoundary": "EXACT_SHARED_PUBLIC_STREET_POINTS_NOT_VERIFIED_PLATFORM_OR_ENTRANCE",
+  "observations": [
+    {
+      "id": "tmap-seoul-timetable-2050",
+      "kind": "PROVIDER_TIMETABLE",
+      "evidence": "NoLate_BE/e2e/live-timetable-comparison-2026-10-09-2050-original.xml",
+      "mocked": false,
+      "queryMode": "DEPART_AT",
+      "observedAt": "2026-10-09T11:34:49.104826Z",
+      "requestedDepartureAt": "2026-10-09T20:50:00+09:00",
+      "departureAt": "2026-10-09T20:50:00+09:00",
+      "arrivalAt": "2026-10-09T21:57:21+09:00",
+      "originBoundary": "PUBLIC_STREET_37.65636195_127.06342739",
+      "destinationBoundary": "PUBLIC_STREET_37.48426844_126.92977778",
+      "rides": [
+        {"line": "4", "from": "노원", "to": "사당", "direction": "DOWN", "serviceClass": "LOCAL", "trainNumber": "K4669", "terminal": "오이도", "boardingAt": "2026-10-09T20:53:00+09:00", "arrivalAt": "2026-10-09T21:41:00+09:00"},
+        {"line": "2", "from": "사당", "to": "신림", "direction": "UP", "serviceClass": "LOCAL", "trainNumber": "2398", "terminal": "신도림", "boardingAt": "2026-10-09T21:47:00+09:00", "arrivalAt": "2026-10-09T21:54:30+09:00"}
+      ],
+      "walkingSeconds": [111, 243, 171],
+      "walkingDistanceMeters": [128, 205, 126],
+      "stationInteriorCoverage": "UNKNOWN",
+      "boardingBufferSeconds": 60,
+      "transferMarginSeconds": 60,
+      "transferReadyAt": "2026-10-09T21:46:03+09:00",
+      "displayTravelMinutes": 68,
+      "realtimeRequested": false,
+      "simulatorE2eVerified": false
+    },
+    {
+      "id": "naver-ui-2050",
+      "kind": "MAP_PREDICTION",
+      "evidence": "2026-10-09-naver-same-coordinates-2050.jpg",
+      "mocked": false,
+      "queryMode": "DEPART_AT",
+      "observedAt": "2026-10-09T11:35:26.795Z",
+      "requestedDepartureAt": "2026-10-09T20:50:00+09:00",
+      "departureAt": "2026-10-09T20:53:00+09:00",
+      "arrivalAt": "2026-10-09T21:54:00+09:00",
+      "originBoundary": "PUBLIC_STREET_37.65636195_127.06342739",
+      "destinationBoundary": "PUBLIC_STREET_37.48426844_126.92977778",
+      "rides": [
+        {"line": "4", "from": "노원", "to": "사당", "direction": "DOWN", "serviceClass": "UNKNOWN", "trainNumber": null, "terminal": "오이도", "boardingAt": "2026-10-09T20:53:00+09:00", "arrivalAt": "2026-10-09T21:41:00+09:00", "arrivalEvidence": "BOARDING_CLOCK_PLUS_DISPLAYED_48_MINUTES_NOT_SECOND_RESOLUTION", "fastTransferCarDoor": "5-2"},
+        {"line": "2", "from": "사당", "to": "신림", "direction": "UP", "serviceClass": "UNKNOWN", "trainNumber": null, "terminal": "신도림", "boardingAt": "2026-10-09T21:47:00+09:00", "arrivalAt": "2026-10-09T21:54:00+09:00", "arrivalEvidence": "BOARDING_CLOCK_PLUS_DISPLAYED_7_MINUTES_AND_FINAL_ARRIVAL_CLOCK_NOT_SECOND_RESOLUTION"}
+      ],
+      "displayTravelMinutes": 61,
+      "displayTransferWalkMinutes": 2,
+      "transferWalkDistanceMeters": 155,
+      "accessAndEgressWalk": "NOT_SEPARATELY_DISPLAYED_NOT_PROVEN_ZERO",
+      "stationInteriorCoverage": "UNKNOWN",
+      "clockPrecision": "MINUTE_DISPLAY_NOT_SECOND_ACCURACY",
+      "coordinateTokensPreviouslyObservedFromExactCoordinateSearch": {"origin": "3zlfnI,2APOLi", "destination": "3zfDHk,2AIB4g"}
+    }
+  ],
+  "assessment": {
+    "rawDisplayedArrivalDeltaSeconds": 201,
+    "firstAndTransferBoardingClocksMatchAtMinuteResolution": true,
+    "firstTrainIdentityConfirmedAcrossProviders": false,
+    "lastAlightingDisplayDeltaSeconds": 30,
+    "postAlightingResidualDeltaSeconds": 171,
+    "requestedToArrivalSeconds": {"provider": 4041, "naver": 3840},
+    "explanation": "이번 표본은 양쪽 승차 시각과 환승편 표시가 같다. 최종 도착 표시 차이 201초는 마지막 하차 시각의 표시 차이 30초와 하차 뒤 잔여 시간 차이 171초로 산술 분해된다. 네이버에 접근·도착 도보가 표시되지 않는 것을 실제 도보 0초로 해석하지 않는다.",
+    "productionWalkingOrMarginsChanged": false,
+    "comparable": false,
+    "withinTwoMinutes": null,
+    "actualTripVerified": false,
+    "separateRealAppE2eEvidence": "2026-10-09-arrival-quality-real-repeat-e2e.json"
+  }
+}
