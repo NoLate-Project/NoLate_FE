@@ -1,0 +1,58 @@
+[
+  {
+    "file": "01-from-plan-to-departure.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "58622f38531f38da0a45a2700523e64e52f639cfdf72412ee606b23d31b3b5d3"
+  },
+  {
+    "file": "02-one-sentence-to-schedule.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "ff1c726ec5d18e1d1eed382a69a29760e0a085be8aa32e5d4811c87814815d99"
+  },
+  {
+    "file": "03-route-and-departure.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "23ae027f1c3566fd8a235d6a96c90ed45bb76540b91f39526d5b20eab626d68b"
+  },
+  {
+    "file": "04-every-step-of-your-route.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "b75f9833be3064fe4d69130ac0301423010272856fc69c19374b31b28df65e71"
+  },
+  {
+    "file": "05-calendar-and-list.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "043d7a6f8f6eab4a6f5201514a296345f1710d9b2124f05ee6e6ca7ccfcb76bc"
+  },
+  {
+    "file": "06-capture-your-plans.png",
+    "width": 1206,
+    "height": 2622,
+    "alpha": false,
+    "sha256": "51614366d69ff3c3aa9054c32958c73c7940eedb5e40d23eeb00301d93cab9ac"
+  },
+  {
+    "file": "header-3840x1646.png",
+    "width": 3840,
+    "height": 1646,
+    "alpha": false,
+    "sha256": "9c3e8f9d0fb374d70fc0371fa2d72063039d55ec5e09b81f7d5e359c9906e99b"
+  },
+  {
+    "file": "search-3840x2560.png",
+    "width": 3840,
+    "height": 2560,
+    "alpha": false,
+    "sha256": "a2ebc43fe0da89a7106d104e1841701d30f38065286019000384e491c96b7da6"
+  }
+]

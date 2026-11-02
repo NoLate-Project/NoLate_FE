@@ -1,0 +1,7 @@
+# Reproducible intermediate renders and local review screenshots.
+/0*.svg
+/header-3840x1646.svg
+/search-3840x2560.svg
+/preview-*.jpg
+/review-6-screens.jpg
+/app-store-connect-registered.png
